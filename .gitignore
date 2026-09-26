@@ -1,0 +1,20 @@
+/target
+/target-perf
+/target-trace
+/target-audit
+
+# What a `--features bevy/trace_chrome` build drops in the working directory on
+# every run — gigabytes of it (2.9 GB for a 32-second run).
+/trace-*.json
+
+# Edit folder of Vale IDE
+/Edit
+
+# Python bytecode.
+__pycache__/
+*.pyc
+
+# Editor and OS files.
+*.bak
+*.orig
+.DS_Store

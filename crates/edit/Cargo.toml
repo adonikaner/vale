@@ -1,0 +1,22 @@
+[package]
+name = "vale-edit"
+description = "What an edit to the game's own files is, and how it is written back. No renderer, no window."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "vale_edit"
+path = "src/lib.rs"
+
+[dependencies]
+# The file formats and the coordinate conventions. This crate writes the files
+# `vale-assets` reads, and takes every rule about what they mean from there:
+# the vertex layout of a map chunk, the tile grid, the world axes. A second
+# reading of any of those is how an editor moves a doodad a unit off the ground
+# the client walks on.
+vale-assets.workspace = true
+# Publishing a project as a patch archive. The same crate the chain is read
+# through, so what the editor writes and what the client reads cannot drift.
+wow-mpq.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,65 @@
+[package]
+name = "vale-client"
+description = "The Bevy renderer: draws the world the protocol and asset crates describe."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# `src/main.rs` is a thin launcher so the app itself stays in `lib.rs`, where it
+# can be unit-tested without opening a window.
+[[bin]]
+name = "vale-client"
+path = "src/main.rs"
+
+[lib]
+name = "vale_client"
+path = "src/lib.rs"
+
+[dependencies]
+vale-assets.workspace = true
+vale-protocol.workspace = true
+vale-config.workspace = true
+# The API surface this crate registers, held as data so `vale framexml` can
+# report on it without linking Bevy. `lua::manifest` is the test that keeps the
+# two honest — see `crates/api/src/lib.rs`.
+vale-api.workspace = true
+bevy.workspace = true
+bevy_egui.workspace = true
+# The glyph rasteriser for `render::labels` — see the workspace manifest.
+ab_glyph.workspace = true
+# Copy and paste in the game's own edit boxes — `lua::keyboard` is the only
+# file that names it, on the rule that the interface decides *what* is copied
+# and this crate's Bevy half does the copying.
+arboard.workspace = true
+mlua.workspace = true
+# The probe in `sound::mixer` — see the workspace manifest's note: bevy_audio
+# unwraps its decoder, so an undecodable file must be caught before it is
+# handed over or it panics the app.
+rodio.workspace = true
+
+[features]
+default = ["diagnostics"]
+
+# **The whole diagnostic surface**: the HUD, the settings panel, the per-pass
+# HUD lines every subsystem writes, and the render-graph timing spans under
+# them.
+#
+#   cargo build -p vale-client --no-default-features   # and they are gone
+#
+# On by default because every measurement this project has ever argued about was
+# read off that window, and *removable* because it is not free: the HUD walks
+# every mesh in the world five times a second, `RenderDiagnosticsPlugin` adds a
+# GPU span to every render pass, and `DrawCallPlugin` counts in the render world.
+# Without the feature the systems do not exist rather than returning early —
+# there is no `ui::report::HudReport` for a pass to write to, so a report system
+# that survived the gate is a compile error rather than a silent cost. See
+# `ui/debug.rs`.
+diagnostics = []
+# Bevy's cold build is minutes and its incremental link is most of that. This
+# feature trades a slower first build for a much faster edit-compile-run loop:
+#
+#   cargo run -p vale-client --features fast-dev
+#
+# Not on by default because the resulting binary needs Bevy's dynamic library
+# beside it, which makes it awkward to move — fine for iterating, wrong to ship.
+fast-dev = ["bevy/dynamic_linking"]

@@ -1,0 +1,1397 @@
+//! `MODF`: the buildings standing on a tile. Select one, move it, turn it, take
+//! it away.
+//!
+//! ## It is called WMO because that is what it is
+//!
+//! The rail says WMO and not Buildings, and the difference is not
+//! decoration. `MWMO` names them, `MODF` places them, `vale wmos` checks
+//! them, and half of what a `.wmo` holds is not a building at all — a bridge, a
+//! gate, an elevator's shaft, the canals under Stormwind. A tool that renamed
+//! the thing would be a tool whose panel could not be grepped for.
+//!
+//! ## It is the doodad tool one list along, and three things are different
+//!
+//! Picking, dragging, nudging, turning and removing all work the way
+//! [`super::doodads`] does — the same rule that a drag belongs to where it
+//! began, the same `unique_id` crossing the boundary rather than a list index,
+//! the same `before` read off the file. What is not the same:
+//!
+//! * There is no scale. `MODF` in 1.12 is a position, three angles, a
+//!   world-space box, a doodad set and a name set; the two bytes later versions
+//!   put a scale in are padding here. Offering one would be offering to write a
+//!   number the reference client does not read.
+//! * The placement carries its own bounding box, and it is load-bearing.
+//!   See [`refit`], which is the part of this file worth reading.
+//! * There is no resident list to keep in step. A doodad's transform is
+//!   cached by `ResidentDoodads` so that a re-spawn keeps it; a building is
+//!   spawned once from `PendingWmos` and read from the file again whenever its
+//!   tile is, so moving the entity and the file is the whole of it.
+//!
+//! ## What a move does not carry with it, and why that is now cheap
+//!
+//! A building's collision is a hull placed by a task at spawn and keyed on the
+//! placement's id, its interior lighting is `Interior`'s inverse matrix, and its
+//! `MOLT` lamps are resolved into world space once. The middle one is written
+//! here — it is one matrix and the playtest's indoor test reads it — and the
+//! other two come back when the tile is read again, which this asks for when the
+//! button comes up. That used to be a third of a second with a hole in the
+//! world; since `super::terrain::swap` it is invisible, which is what makes
+//! re-reading an acceptable answer rather than a last resort.
+
+use crate::pick::Cursor;
+use crate::session::EditSession;
+use crate::tools::Tool;
+use vale_client::render::axes;
+use vale_client::render::doodads::Doodad;
+use vale_client::render::wmos::{self as wmo_render, Interior, WmoCache, WmoPart, WmoPlacement};
+use vale_client::world::camera::WorldCamera;
+use vale_edit::adt::place::Building;
+use vale_edit::ops::Edit;
+use bevy::camera::primitives::Aabb;
+use bevy::prelude::*;
+
+/// Which building the tool is holding: the primary, and the rest of the group
+/// beside it — [`super::doodads::Selection`]'s shape, for its reasons.
+#[derive(Resource, Debug, Default, Clone)]
+pub struct Selection {
+    pub at: Option<Selected>,
+    pub also: Vec<Selected>,
+}
+
+/// One selected building, and everything a panel needs to say about it.
+#[derive(Debug, Clone)]
+pub struct Selected {
+    pub tile: (u32, u32),
+    pub index: usize,
+    /// The id the renderer knows it by.
+    pub unique_id: u32,
+    /// Its `MWMO` path.
+    pub path: String,
+    pub record: Building,
+}
+
+impl Selection {
+    /// Select one building, or none, and drop the rest of the group.
+    pub fn only(&mut self, at: Option<Selected>) {
+        self.at = at;
+        self.also.clear();
+    }
+
+    /// How many buildings are selected.
+    pub fn count(&self) -> usize {
+        usize::from(self.at.is_some()) + self.also.len()
+    }
+
+    /// Every selected building, the primary first.
+    pub fn members(&self) -> impl Iterator<Item = &Selected> {
+        self.at.iter().chain(self.also.iter())
+    }
+
+    /// Whether a building is selected, as the primary or as a member.
+    pub fn holds(&self, unique_id: u32) -> bool {
+        self.members().any(|at| at.unique_id == unique_id)
+    }
+
+    /// Shift+click — see [`super::doodads::Selection::toggle`].
+    pub fn toggle(&mut self, found: Selected) {
+        if self.at.as_ref().is_some_and(|at| at.unique_id == found.unique_id) {
+            self.at = self.also.pop();
+            return;
+        }
+        if let Some(at) = self.also.iter().position(|m| m.unique_id == found.unique_id) {
+            self.also.remove(at);
+            return;
+        }
+        if let Some(was) = self.at.replace(found) {
+            self.also.push(was);
+        }
+    }
+
+    /// Make a member the primary, keeping the group.
+    pub fn promote(&mut self, unique_id: u32) {
+        let Some(at) = self.also.iter().position(|m| m.unique_id == unique_id) else {
+            return;
+        };
+        let member = self.also.remove(at);
+        if let Some(was) = self.at.replace(member) {
+            self.also.insert(at, was);
+        }
+    }
+
+    /// The record a panel has just edited, or `None` when nothing moved.
+    pub fn edited(&self, was: &Building) -> Option<Building> {
+        let at = self.at.as_ref()?;
+        (at.record != *was).then_some(at.record)
+    }
+}
+
+/// Yards a nudge moves a building, and degrees a turn turns it.
+///
+/// Ten times the doodad tool's, because a building is. Shift is ten times again.
+const STEP: f32 = 5.0;
+const TURN: f32 = 5.0;
+
+pub struct WmoToolPlugin;
+
+impl Plugin for WmoToolPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Selection>()
+            .init_resource::<Held>()
+            .add_systems(
+                Update,
+                (
+                    select, enclose, drag, nudge, remove, reconcile, publish, settle, resync,
+                )
+                    .chain()
+                    .after(crate::pick::aim)
+                    // After the undo key, for the reason
+                    // `super::doodads::resync` is: an undo puts the file back
+                    // without telling the panel holding a copy of the record.
+                    .after(super::shortcuts),
+            )
+            .add_systems(Update, draw_marker);
+    }
+}
+
+/// Whether a drag is being held — [`super::doodads::Held`]'s counterpart, and
+/// the same three fields for the same three reasons.
+#[derive(Resource, Default)]
+pub(crate) struct Held {
+    armed: bool,
+    dragging: bool,
+    from: Option<Vec3>,
+    was: Option<Building>,
+    /// The record as it stood when this building was last put where it is.
+    ///
+    /// [`publish`] re-fits the `MODF` box from the drawn geometry, and it must
+    /// do that only when the placement has actually moved. Re-fitting
+    /// unconditionally makes selecting a building an edit: this tool's box is
+    /// the union of what is drawn and Blizzard's is the whole model, so the two
+    /// differ on nearly every placement and the first click marks the tile
+    /// unsaved. That is what the first picture of this tool showed —
+    /// `Save 1 tile` after touching nothing.
+    picked: Option<Building>,
+    /// The two sets as of the last time the tile was asked for again.
+    ///
+    /// Which dressing a placement wears is decided when the building is spawned —
+    /// the `MODD` furniture of the chosen set is folded into world space and
+    /// handed to the doodad pass, once — so changing the field changes the record
+    /// and nothing on screen. It was reported as exactly that: *"the model does
+    /// not update when you change doodad set."* See [`settle`].
+    dressed: Option<(u16, u16)>,
+    /// The other members as they stood when the button went down — see
+    /// [`super::doodads::Held`], which has the same field.
+    group_was: Vec<Selected>,
+    /// Whether this press landed on a member of a group.
+    collapse: bool,
+    /// Frames to wait before the group's members' boxes are re-fitted
+    /// ([`publish`]); zero when nothing is waiting.
+    ///
+    /// A count rather than a flag because the box is taken from the drawn
+    /// parts' `GlobalTransform`, which Bevy propagates after `Update`. On the
+    /// frame a key moves the group, the parts still stand where they were, and
+    /// a box taken then is the old one. Two frames is one for the transform to
+    /// be written and one for it to propagate.
+    pub(crate) refit_members: u8,
+    /// Whether the group has moved since its members were last put in the
+    /// tiles their origins are in ([`settle`]).
+    pub(crate) unsettled: bool,
+}
+
+/// Pick a building, or drop the one held.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn select(
+    mut selection: ResMut<Selection>,
+    mut held: ResMut<Held>,
+    session: Option<Res<EditSession>>,
+    tool: Res<Tool>,
+    state: Res<crate::playtest::Playtest>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    wants: Res<bevy_egui::input::EguiWantsInput>,
+    viewport: Res<crate::ui::Viewport>,
+    windows: Query<&Window>,
+    camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
+    parts: Query<(&ChildOf, &GlobalTransform, &Aabb), With<WmoPart>>,
+    placements: Query<&WmoPlacement>,
+    // The narrow phase's triangles — see the walk below.
+    mut buildings: ResMut<WmoCache>,
+    cursor: Res<Cursor>,
+    // Tuples, because this system is past Bevy's limit of sixteen parameters.
+    (gizmo, placing): (Res<super::gizmo::Gizmo>, Res<super::place::Placing>),
+    (keys, mut marquee): (Res<ButtonInput<KeyCode>>, ResMut<super::group::Marquee>),
+) {
+    // A click that places must not also select — see [`super::place`].
+    if *tool != Tool::Wmos || !state.editing() || placing.armed() {
+        return;
+    }
+    if !buttons.just_pressed(MouseButton::Left) {
+        return;
+    }
+    if !crate::ui::over_the_world(&viewport, &wants, &windows) {
+        held.armed = false;
+        return;
+    }
+    if gizmo.holding() {
+        held.armed = false;
+        return;
+    }
+    let Some(session) = session else { return };
+    let Ok(window) = windows.single() else { return };
+    let Some(at) = window.cursor_position() else {
+        return;
+    };
+    let Ok((camera, eye)) = camera.single() else {
+        return;
+    };
+    let Ok(ray) = camera.viewport_to_world(eye, at * window.scale_factor()) else {
+        return;
+    };
+
+    // Against the drawn batches, exactly as the doodad pick is, and up to
+    // the placement through the parent. A building's own `MODF` box would be the
+    // obvious thing to ray against and is the wrong one: it is the axis-aligned
+    // hull of a cathedral, so clicking the empty air beside a spire would select
+    // it and clicking through an archway would too.
+    let boxed = super::doodads::boxes_hit(
+        parts.iter().filter_map(|(parent, at, aabb)| {
+            let id = placements.get(parent.parent()).ok()?.unique_id;
+            Some((id, at, aabb))
+        }),
+        ray.origin,
+        *ray.direction,
+    );
+    let hit = solid_hit(&boxed, &session, &mut buildings, ray.origin, *ray.direction)
+        .or_else(|| boxed.first().map(|&(_, unique_id, _)| unique_id))
+        .and_then(|unique_id| find(&session, unique_id));
+    // The same four cases as the doodad pick — see `super::doodads::select`.
+    let adding = super::group::shift(&keys);
+    held.dragging = false;
+    held.collapse = false;
+    match hit {
+        Some(found) if adding => {
+            selection.toggle(found);
+            held.armed = false;
+            picked_primary(&mut held, &selection);
+            return;
+        }
+        Some(found) if !selection.also.is_empty() && selection.holds(found.unique_id) => {
+            selection.promote(found.unique_id);
+            held.collapse = true;
+        }
+        Some(found) => selection.only(Some(found)),
+        None => {
+            if !adding {
+                selection.only(None);
+            }
+            marquee.begin(Tool::Wmos, at, adding);
+            held.armed = false;
+            picked_primary(&mut held, &selection);
+            return;
+        }
+    }
+    held.armed = true;
+    held.from = cursor.ground;
+    held.group_was = selection.also.clone();
+    picked_primary(&mut held, &selection);
+}
+
+/// Take the primary's record as the one [`publish`] and [`settle`] compare
+/// against, so selecting a building is not an edit — see [`Held::picked`].
+fn picked_primary(held: &mut Held, selection: &Selection) {
+    held.was = selection.at.as_ref().map(|at| at.record);
+    held.picked = held.was;
+    held.dressed = held.was.map(|record| (record.doodad_set, record.name_set));
+}
+
+/// Select every building drawn whose origin is inside a finished rectangle —
+/// [`super::doodads::enclose`]'s counterpart, over the `WmoPlacement`s.
+#[allow(clippy::too_many_arguments)]
+fn enclose(
+    mut selection: ResMut<Selection>,
+    mut held: ResMut<Held>,
+    mut marquee: ResMut<super::group::Marquee>,
+    session: Option<Res<EditSession>>,
+    tool: Res<Tool>,
+    windows: Query<&Window>,
+    camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
+    placements: Query<&WmoPlacement>,
+) {
+    if *tool != Tool::Wmos {
+        return;
+    }
+    let Some(done) = marquee.finished(Tool::Wmos) else {
+        return;
+    };
+    let Some(session) = session else { return };
+    let Some((camera, eye, window)) = super::group::view(&camera, &windows) else {
+        return;
+    };
+    let shown: std::collections::HashSet<u32> = placements.iter().map(|p| p.unique_id).collect();
+    let mut found: Vec<(f32, Selected)> = Vec::new();
+    for (coord, tile) in &session.tiles {
+        let names = tile.building_names();
+        for (index, record) in tile.building_list().iter().enumerate() {
+            if !shown.contains(&record.unique_id) {
+                continue;
+            }
+            let world = vale_assets::world::adt::placement_to_world(record.position);
+            if vale_assets::tile_for_position(world[0], world[1]) != *coord {
+                continue;
+            }
+            let Some(point) = super::group::on_screen(camera, eye, window, Vec3::from(world))
+            else {
+                continue;
+            };
+            if !done.rect.contains(point) {
+                continue;
+            }
+            found.push((
+                point.distance(done.rect.center()),
+                Selected {
+                    tile: *coord,
+                    index,
+                    unique_id: record.unique_id,
+                    path: names
+                        .get(record.name_id as usize)
+                        .cloned()
+                        .unwrap_or_default(),
+                    record: *record,
+                },
+            ));
+        }
+    }
+    found.sort_by(|a, b| a.0.total_cmp(&b.0));
+    if !done.adding {
+        selection.only(None);
+    }
+    for (_, at) in found {
+        if selection.holds(at.unique_id) {
+            continue;
+        }
+        match selection.at.is_none() {
+            true => selection.at = Some(at),
+            false => selection.also.push(at),
+        }
+    }
+    picked_primary(&mut held, &selection);
+}
+
+/// The narrow phase: the nearest of the candidate buildings whose own solid
+/// triangles the ray crosses, or `None` when it crosses none.
+///
+/// The same two-phase pick the doodads have and for the same reason — see
+/// [`super::doodads::nearest`], where the fault a box alone has is written up.
+/// A building's batches are per group, so the boxes are tighter than a doodad's
+/// to begin with; what they are still wrong about is the large flat ones, where
+/// a city wall's box is a slab of empty air in front of it.
+///
+/// It is the collision hull and not the drawn triangles, which is the one
+/// thing here that is a compromise rather than a choice: the WMO cache keeps a
+/// `CollisionMesh` on the CPU and does not keep the drawn geometry, so a batch
+/// the file marks as not solid — a banner, a window frame, a rail — has nothing
+/// here to hit. Those fall back to their box, which is what they had before, so
+/// nothing is made worse and the buildings people actually click are made right.
+fn solid_hit(
+    boxed: &[(f32, u32, &GlobalTransform)],
+    session: &EditSession,
+    buildings: &mut WmoCache,
+    origin: Vec3,
+    direction: Vec3,
+) -> Option<u32> {
+    let mut best: Option<(f32, u32)> = None;
+    let mut tested: Vec<u32> = Vec::new();
+    for (_, unique_id, at) in boxed {
+        if tested.contains(unique_id) {
+            continue;
+        }
+        tested.push(*unique_id);
+        let Some(path) = find(session, *unique_id).map(|found| found.path) else {
+            continue;
+        };
+        let wmo_render::Lookup::Ready(ready) = buildings.lookup(&path) else {
+            continue;
+        };
+        let hull = ready.collision();
+        let placed = at.affine();
+        // The hull's vertices are the file's own, in the world's axes and in the
+        // building's model space; the part's transform is the placement's,
+        // because a part is a child of the placement and carries the identity.
+        let corner = |index: u32| {
+            hull.positions.get(index as usize).map(|&p| {
+                placed
+                    .transform_point3(Vec3::from(axes::to_bevy(p)))
+                    .to_array()
+            })
+        };
+        for triangle in hull.indices.chunks_exact(3) {
+            let (Some(a), Some(b), Some(c)) = (
+                corner(triangle[0]),
+                corner(triangle[1]),
+                corner(triangle[2]),
+            ) else {
+                continue;
+            };
+            let Some(distance) = vale_assets::look::pick::ray_triangle(
+                origin.to_array(),
+                direction.to_array(),
+                a,
+                b,
+                c,
+            ) else {
+                continue;
+            };
+            if best.is_none_or(|(had, _)| distance < had) {
+                best = Some((distance, *unique_id));
+            }
+        }
+    }
+    best.map(|(_, unique_id)| unique_id)
+}
+
+/// Find the open tile and list position a unique id belongs to.
+///
+/// The copy the renderer is drawing, not the first one found. A model
+/// touching two tiles is listed in both with one `unique_id` — a city is listed
+/// in many — and `render::terrain` draws the copy whose origin is in the tile
+/// that holds it. Taking the first match instead means editing a row nobody
+/// draws: the thing on screen does not move, and the row that does move is one
+/// the claim rule will never look at.
+///
+/// So the claim rule is asked here too, and it is the renderer's own line. A
+/// placement that no tile claims — which is what a half-finished edit leaves —
+/// falls back to the first match, because refusing to select it would leave no
+/// way to put it right.
+fn find(session: &EditSession, unique_id: u32) -> Option<Selected> {
+    let mut fallback: Option<Selected> = None;
+    for (coord, tile) in &session.tiles {
+        let names = tile.building_names();
+        for (index, record) in tile.building_list().iter().enumerate() {
+            if record.unique_id != unique_id {
+                continue;
+            }
+            let found = Selected {
+                tile: *coord,
+                index,
+                unique_id,
+                path: names
+                    .get(record.name_id as usize)
+                    .cloned()
+                    .unwrap_or_default(),
+                record: *record,
+            };
+            // The claim rule, asked of this row: `render::terrain` draws the copy
+            // whose origin is in the tile that lists it.
+            let world = vale_assets::world::adt::placement_to_world(record.position);
+            if vale_assets::tile_for_position(world[0], world[1]) == *coord {
+                return Some(found);
+            }
+            fallback.get_or_insert(found);
+        }
+    }
+    fallback
+}
+
+/// Every placement of one building in the open tiles, each the copy the
+/// renderer draws — [`super::doodads::all_of`]'s counterpart.
+pub(crate) fn all_of(session: &EditSession, path: &str) -> Vec<Selected> {
+    let mut found = Vec::new();
+    for (coord, tile) in &session.tiles {
+        let names = tile.building_names();
+        for (index, record) in tile.building_list().iter().enumerate() {
+            let named = names.get(record.name_id as usize).cloned().unwrap_or_default();
+            if !named.eq_ignore_ascii_case(path) {
+                continue;
+            }
+            let world = vale_assets::world::adt::placement_to_world(record.position);
+            if vale_assets::tile_for_position(world[0], world[1]) != *coord {
+                continue;
+            }
+            found.push(Selected {
+                tile: *coord,
+                index,
+                unique_id: record.unique_id,
+                path: named,
+                record: *record,
+            });
+        }
+    }
+    found
+}
+
+/// Drag the held building across the ground.
+#[allow(clippy::too_many_arguments)]
+fn drag(
+    mut selection: ResMut<Selection>,
+    mut held: ResMut<Held>,
+    mut session: Option<ResMut<EditSession>>,
+    tool: Res<Tool>,
+    state: Res<crate::playtest::Playtest>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    cursor: Res<Cursor>,
+    gizmo: Res<super::gizmo::Gizmo>,
+) {
+    if *tool != Tool::Wmos || !state.editing() || gizmo.holding() {
+        return;
+    }
+    let Some(session) = session.as_mut() else {
+        return;
+    };
+    if buttons.just_released(MouseButton::Left) {
+        session.history.end();
+        // A press on a member that never moved selects that member alone.
+        if held.collapse && !held.dragging {
+            let primary = selection.at.take();
+            selection.only(primary);
+        }
+        held.dragging = false;
+        held.armed = false;
+        held.collapse = false;
+        return;
+    }
+    if !buttons.pressed(MouseButton::Left) || !held.armed {
+        return;
+    }
+    let (Some(at), Some(from), Some(was)) = (selection.at.as_mut(), held.from, held.was) else {
+        return;
+    };
+    let Some(now) = cursor.ground else { return };
+    let step = now - from;
+    if step.length_squared() < 1e-6 && !held.dragging {
+        return;
+    }
+    if !held.dragging {
+        held.dragging = true;
+        session.history.begin(match held.group_was.len() {
+            0 => "Move WMO".to_string(),
+            more => format!("Move {} WMOs", more + 1),
+        });
+    }
+
+    let drop = keys.pressed(KeyCode::ControlLeft);
+    let world = vale_assets::world::adt::placement_to_world(was.position);
+    let mut moved = Vec3::from(world) + step;
+    if drop {
+        moved.z = now.z;
+    }
+    set_world_position(&mut at.record, &was, [moved.x, moved.y, moved.z]);
+    write_record(session, at);
+
+    // The rest of the group by the same step, each from where it began, and
+    // with a ctrl-drag each onto the ground under its own origin.
+    let group = std::mem::take(&mut held.group_was);
+    for member in &group {
+        let Some(standing) = selection
+            .also
+            .iter_mut()
+            .find(|at| at.unique_id == member.unique_id)
+        else {
+            continue;
+        };
+        let world = vale_assets::world::adt::placement_to_world(member.record.position);
+        let mut moved = Vec3::from(world) + step;
+        if drop {
+            if let Some(z) = super::doodads::ground_height(session, moved.x, moved.y) {
+                moved.z = z;
+            }
+        }
+        set_world_position(&mut standing.record, &member.record, moved.to_array());
+        write_record(session, standing);
+    }
+    if !group.is_empty() {
+        held.refit_members = 2;
+        held.unsettled = true;
+    }
+    held.group_was = group;
+}
+
+/// Move a building to a world position, taking its box with it.
+///
+/// See [`refit`]. `pub(crate)` because the panel moves a building too, and a
+/// second copy of this would be a second place the box could be forgotten.
+/// The record is moved from `was` rather than from itself so that
+/// a drag is exact rather than an accumulation of frames, which is the same
+/// reason the doodad tool holds a `was`.
+pub(crate) fn set_world_position(record: &mut Building, was: &Building, to: [f32; 3]) {
+    let position = vale_assets::world::adt::placement_from_world(to);
+    let step = [
+        position[0] - was.position[0],
+        position[1] - was.position[1],
+        position[2] - was.position[2],
+    ];
+    record.position = position;
+    for axis in 0..3 {
+        record.bounds_lower[axis] = was.bounds_lower[axis] + step[axis];
+        record.bounds_upper[axis] = was.bounds_upper[axis] + step[axis];
+    }
+}
+
+/// Turn, nudge and the rest, from the keyboard.
+#[allow(clippy::too_many_arguments)]
+fn nudge(
+    mut selection: ResMut<Selection>,
+    mut held: ResMut<Held>,
+    mut session: Option<ResMut<EditSession>>,
+    tool: Res<Tool>,
+    state: Res<crate::playtest::Playtest>,
+    keys: Res<ButtonInput<KeyCode>>,
+    wants: Res<bevy_egui::input::EguiWantsInput>,
+    time: Res<Time>,
+) {
+    if *tool != Tool::Wmos || !state.editing() || wants.wants_keyboard_input() {
+        return;
+    }
+    let Some(session) = session.as_mut() else {
+        return;
+    };
+    let Some(at) = selection.at.as_mut() else {
+        return;
+    };
+    let was = at.record;
+    let far = if keys.pressed(KeyCode::ShiftLeft) {
+        10.0
+    } else {
+        1.0
+    };
+
+    let mut step = Vec3::ZERO;
+    for (key, direction) in [
+        (KeyCode::ArrowUp, Vec3::X),
+        (KeyCode::ArrowDown, Vec3::NEG_X),
+        (KeyCode::ArrowLeft, Vec3::Y),
+        (KeyCode::ArrowRight, Vec3::NEG_Y),
+        (KeyCode::PageUp, Vec3::Z),
+        (KeyCode::PageDown, Vec3::NEG_Z),
+    ] {
+        if keys.just_pressed(key) {
+            step += direction;
+        }
+    }
+    if step != Vec3::ZERO {
+        let world = Vec3::from(vale_assets::world::adt::placement_to_world(was.position));
+        let moved = world + step * STEP * far;
+        set_world_position(&mut at.record, &was, [moved.x, moved.y, moved.z]);
+    }
+
+    let mut turn = 0.0;
+    if keys.just_pressed(KeyCode::Comma) {
+        turn -= TURN * far;
+    }
+    if keys.just_pressed(KeyCode::Period) {
+        turn += TURN * far;
+    }
+    if turn != 0.0 {
+        let mut world = vale_assets::world::adt::placement_euler_to_world(was.rotation);
+        world[2] = (world[2] + turn).rem_euclid(360.0);
+        at.record.rotation = vale_assets::world::adt::placement_euler_from_world(world);
+    }
+
+    if at.record == was {
+        return;
+    }
+    let (label, kind) = what_changed(&was, &at.record);
+    let group = !selection.also.is_empty();
+    let Some(at) = selection.at.as_ref() else {
+        return;
+    };
+    let subject = match group {
+        false => format!("wmo {} {kind}", at.unique_id),
+        true => format!("wmo group {} {kind}", at.unique_id),
+    };
+    session
+        .history
+        .begin_gesture(label, subject, time.elapsed_secs_f64());
+    write_record(session, at);
+
+    // The rest of the group: the same step, and a turn about the primary's
+    // origin — see `super::doodads::nudge`.
+    let pivot = Vec3::from(vale_assets::world::adt::placement_to_world(was.position));
+    let spin = super::group::turn_about(Vec3::Z, turn);
+    for member in selection.also.iter_mut() {
+        let before = member.record;
+        let world = Vec3::from(vale_assets::world::adt::placement_to_world(before.position));
+        let moved = super::group::orbit(pivot, world, spin) + step * STEP * far;
+        set_world_position(&mut member.record, &before, moved.to_array());
+        if turn != 0.0 {
+            member.record.rotation = super::group::turn_record(before.rotation, spin);
+        }
+        write_record(session, member);
+    }
+    if group {
+        held.refit_members = 2;
+        held.unsettled = true;
+        session.status = format!("{label} · {} selected", selection.count());
+    }
+    session.history.end();
+}
+
+/// What changed between two records: a name for the history, and the subject a
+/// gesture folds by — [`super::doodads::what_changed`]'s counterpart.
+pub(crate) fn what_changed(was: &Building, now: &Building) -> (&'static str, &'static str) {
+    if was.position != now.position {
+        return ("Move WMO", "position");
+    }
+    if was.rotation != now.rotation {
+        return ("Turn WMO", "rotation");
+    }
+    if was.doodad_set != now.doodad_set {
+        return ("Set WMO doodads", "doodadset");
+    }
+    if was.name_set != now.name_set {
+        return ("Set WMO names", "nameset");
+    }
+    ("Edit WMO", "record")
+}
+
+/// Take the held building out of the tile.
+///
+/// The same shape as a doodad removal and for the same reason: it renumbers
+/// every `MODF` reference above it in all 256 chunks' `MCRF`, so it is recorded
+/// as the placement lists whole and the tile is read again.
+fn remove(
+    mut selection: ResMut<Selection>,
+    mut session: Option<ResMut<EditSession>>,
+    tool: Res<Tool>,
+    state: Res<crate::playtest::Playtest>,
+    keys: Res<ButtonInput<KeyCode>>,
+    wants: Res<bevy_egui::input::EguiWantsInput>,
+) {
+    if *tool != Tool::Wmos || !state.editing() || wants.wants_keyboard_input() {
+        return;
+    }
+    if !keys.just_pressed(KeyCode::Delete) {
+        return;
+    }
+    let Some(session) = session.as_mut() else {
+        return;
+    };
+    let Some(at) = selection.at.take() else {
+        return;
+    };
+    // Every member, as one entry — see [`super::group::remove_rows`].
+    let rows: Vec<((u32, u32), usize)> = std::iter::once(&at)
+        .chain(selection.also.iter())
+        .map(|member| (member.tile, member.index))
+        .collect();
+    let label = match rows.len() {
+        1 => "Remove WMO".to_string(),
+        more => format!("Remove {more} WMOs"),
+    };
+    selection.also.clear();
+    let removed = super::group::remove_rows(session, &rows, true, &label);
+    session.status = match removed {
+        1 => format!("removed {}", super::textures::leaf(&at.path)),
+        more => format!("removed {more} WMOs"),
+    };
+}
+
+/// Write one building's new record into the tile and onto the history.
+///
+/// `before` is read off the file by `Edit::move_building`, which is the whole of
+/// why this takes no `was` — see `vale_edit::ops::Edit::move_doodad`, where
+/// the invariant is.
+pub(crate) fn write_record(session: &mut EditSession, at: &Selected) {
+    let key = session.key(at.tile);
+    let Some(tile) = session.tiles.get_mut(&at.tile) else {
+        return;
+    };
+    let Some(edit) = Edit::move_building(tile, at.index, at.record) else {
+        return;
+    };
+    edit.apply(tile);
+    session.history.record(&key, [edit]);
+    session.moved_building(at.tile, at.index);
+}
+
+/// Put the drawn buildings where the file now says they are.
+///
+/// ## Three things, and the one that was missed is the one you can see
+///
+/// The transform is obvious. [`Interior::inverse`] is invisible when it is
+/// forgotten — the playtest's indoor test brings a character into the building's
+/// own frame with it, so a stale one lights whoever walks in as though they were
+/// outdoors and lights the empty ground where it stood as though they were in
+/// the cathedral.
+///
+/// And the furniture, which was missed. A building's `MODD` spawns are folded
+/// into world space when it is spawned — `mul4(&placement.matrix, &d.matrix)`
+/// — and handed to the doodad pass as placements of their own, so they are not
+/// children of the building and do not move with it. Moving the shell and leaving
+/// the beds, barrels and bookshelves standing in a field is exactly what that
+/// looks like, and it is what was reported.
+///
+/// They are movable because a `MODD` spawn carries its building's
+/// `unique_id` (`wmos::interior_placement`), so the delta between where the
+/// placement was and where it is going applies to every one of them. Taking the
+/// delta from the entity's current transform rather than from a remembered
+/// matrix is what makes it idempotent: a building that has just been spawned from
+/// the file is already where it is going, the delta is the identity, and the
+/// furniture is left alone.
+///
+/// The collision hulls move by the same delta, through
+/// `CollisionWorld::move_placement`: the building's own and its furniture's
+/// carry the building's `unique_id`. What still cannot move live is the `MOLT`
+/// lamps, which come back when the tile is read again.
+fn reconcile(
+    mut session: Option<ResMut<EditSession>>,
+    mut placements: Query<(&WmoPlacement, &mut Transform, Option<&mut Interior>)>,
+    mut furniture: Query<(&Doodad, &mut Transform), Without<WmoPlacement>>,
+    solids: Res<vale_client::world::session::Solids>,
+    focus: Res<vale_client::render::focus::WorldFocus>,
+) {
+    let Some(session) = session.as_mut() else {
+        return;
+    };
+    if session.moved_buildings.is_empty() {
+        return;
+    }
+    let mut wanted: Vec<((u32, u32), u32, Mat4)> = Vec::new();
+    for (coord, indices) in std::mem::take(&mut session.moved_buildings) {
+        let Some(tile) = session.tiles.get(&coord) else {
+            continue;
+        };
+        for index in indices {
+            let Some(record) = tile.building_at(index) else {
+                continue;
+            };
+            wanted.push((coord, record.unique_id, matrix_of(&record)));
+        }
+    }
+
+    let mut moved: Vec<(u32, Mat4)> = Vec::new();
+    for (placement, mut transform, interior) in &mut placements {
+        let Some((_, _, matrix)) = wanted.iter().find(|(_, id, _)| *id == placement.unique_id)
+        else {
+            continue;
+        };
+        let to = axes::to_bevy_affine(*matrix);
+        // The delta, in the axes the entities are drawn in, before the placement
+        // is written — see the note above on why it comes from the entity.
+        let delta = to * transform.to_matrix().inverse();
+        *transform = Transform::from_matrix(to);
+        // In the world's own axes, which is what `Interior` is documented to
+        // hold: the entities it tests arrive from the object manager in those.
+        if let Some(mut interior) = interior {
+            interior.inverse = matrix.inverse();
+        }
+        // The hulls, by the same delta in the world's own axes. A building
+        // just spawned from the file is already where it is going, and a
+        // rebuild of its hull for an identity move would cost milliseconds
+        // for nothing.
+        if !delta.abs_diff_eq(Mat4::IDENTITY, 1.0e-5) {
+            let in_world = axes::from_bevy_affine(delta).to_cols_array();
+            solids.0.move_placement(focus.map_id, placement.unique_id, &in_world);
+        }
+        moved.push((placement.unique_id, delta));
+    }
+
+    for (doodad, mut transform) in &mut furniture {
+        let Some((_, delta)) = moved.iter().find(|(id, _)| *id == doodad.unique_id) else {
+            continue;
+        };
+        *transform = Transform::from_matrix(*delta * transform.to_matrix());
+    }
+
+    // A placement with no entity is not a request to drop, which is what
+    // taking the set above used to be. It happens while a tile is part-way
+    // through being replaced — the outgoing copy is gone and the incoming one has
+    // not spawned — and the write that would have corrected it is lost, so the
+    // building stays wherever the in-flight read put it. Asking for the tile
+    // again is the answer that converges: the file is already right, and
+    // `remesh` starts a replacement once the one in flight has landed.
+    for (coord, unique_id, _) in wanted {
+        if !placements.iter().any(|(p, _, _)| p.unique_id == unique_id) {
+            session.stale.insert(coord);
+        }
+    }
+}
+
+/// One `MODF` record as the matrix the renderer places it with.
+fn matrix_of(record: &Building) -> Mat4 {
+    let world = vale_assets::world::adt::placement_to_world(record.position);
+    Mat4::from_cols_array(&vale_assets::world::adt::placement_matrix(
+        world,
+        record.rotation,
+        1.0,
+    ))
+}
+
+/// Take the selected building's `MODF` box from what is actually drawn.
+///
+/// ## The box is not decoration and a stale one is not a cosmetic fault
+///
+/// `MODF` states each placement's own world-space box, and the mover reads it
+/// twice before the `.wmo` has been loaded at all: `awaiting_building` decides
+/// whether to wait rather than take the terrain — the ground under a city is
+/// far below its streets, so taking it is falling through the world — and
+/// `inside_building` decides whether terrain above the character's head may be
+/// stood on, which is what stops Ironforge snapping somebody to the top of the
+/// mountain.
+///
+/// So a building whose box stayed behind breaks both rules in both places: the
+/// old spot still says "wait", and the new one says nothing.
+///
+/// A translation moves the box exactly and [`set_position`] does that as it goes.
+/// A turn does not, and there is no arithmetic on the stored box that
+/// recovers it — rotating a box and re-fitting it inflates, and inflates again
+/// on the next turn. What does recover it is the thing already on screen: the
+/// union of the placement's own drawn batches, each an `Aabb` the renderer
+/// computed from the real geometry. That is what this takes, once, when the
+/// button comes up.
+///
+/// It is not identical to Blizzard's: theirs is the whole model and this is what
+/// is drawn, so a group that draws nothing is not in it. It is the right shape
+/// and the right place, which is what both readers of it need.
+fn refit(
+    unique_id: u32,
+    parts: &Query<(&ChildOf, &GlobalTransform, &Aabb), With<WmoPart>>,
+    placements: &Query<&WmoPlacement>,
+) -> Option<([f32; 3], [f32; 3])> {
+    let mut lower = Vec3::splat(f32::INFINITY);
+    let mut upper = Vec3::splat(f32::NEG_INFINITY);
+    let mut found = false;
+    for (parent, transform, aabb) in parts.iter() {
+        if placements.get(parent.parent()).ok()?.unique_id != unique_id {
+            continue;
+        }
+        let centre = Vec3::from(aabb.center);
+        let half = Vec3::from(aabb.half_extents);
+        for corner in 0..8 {
+            let offset = Vec3::new(
+                if corner & 1 == 0 { -half.x } else { half.x },
+                if corner & 2 == 0 { -half.y } else { half.y },
+                if corner & 4 == 0 { -half.z } else { half.z },
+            );
+            let point = transform.affine().transform_point3(centre + offset);
+            lower = lower.min(point);
+            upper = upper.max(point);
+            found = true;
+        }
+    }
+    if !found {
+        return None;
+    }
+    // Back into the file's own frame, and re-sorted: the conversion swaps axes
+    // and negates two of them, so the corner that was lowest is not any more.
+    let a = vale_assets::world::adt::placement_from_world(axes::to_wow(lower));
+    let b = vale_assets::world::adt::placement_from_world(axes::to_wow(upper));
+    let mut low = [0.0f32; 3];
+    let mut high = [0.0f32; 3];
+    for axis in 0..3 {
+        low[axis] = a[axis].min(b[axis]);
+        high[axis] = a[axis].max(b[axis]);
+    }
+    Some((low, high))
+}
+
+/// Whether two corners of a box are far enough apart to be worth writing.
+///
+/// A tolerance and not `!=`. This tool's box is the union of what is drawn
+/// and Blizzard's is the whole model, and `vale wmos` measures the two as
+/// agreeing to 0.00 yards — but "agreeing" there is a physical claim and `!=` on
+/// an `f32` is not, so an exact comparison writes a change for a difference
+/// nothing can see. Two centimetres is far below anything either reader of this
+/// box cares about: both of them ask whether a point is inside it.
+fn moved_by(was: [f32; 3], now: [f32; 3]) -> bool {
+    (0..3).any(|axis| (was[axis] - now[axis]).abs() > 0.02)
+}
+
+/// Publish the edited bytes, re-fit the box, and ask for the tile again.
+///
+/// All three when the placement has settled and none of them while it is
+/// being moved: laying out a tile is two megabytes, the box wants a transform
+/// that has stopped, and the tile re-read is what brings the collision hull and
+/// the `MOLT` lamps to where the building now is.
+///
+/// Settled and not "the left button came up", which is what this used to
+/// be. A drag is one of four ways to turn a building and the only one with a
+/// release in it: `,` and `.` step it, `Alt` and the mouse sweep it, and the
+/// panel's own field drags it. Each of those changed `MODF`'s three angles and
+/// left the box behind — and a stale box is the one thing here that nothing
+/// on screen reports, because both of its readers are the character's mover
+/// asking about a building it has not loaded yet. See [`refit`].
+///
+/// So the trigger is the state rather than an edge: no mouse button down, no
+/// `Alt` held, and the record different from the one the selection was picked
+/// with. That fires exactly once per settle, because the last thing it does is
+/// take a fresh copy.
+#[allow(clippy::too_many_arguments)]
+fn publish(
+    mut session: Option<ResMut<EditSession>>,
+    mut selection: ResMut<Selection>,
+    mut held: ResMut<Held>,
+    tool: Res<Tool>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    parts: Query<(&ChildOf, &GlobalTransform, &Aabb), With<WmoPart>>,
+    placements: Query<&WmoPlacement>,
+) {
+    let Some(session) = session.as_mut() else {
+        return;
+    };
+    if *tool != Tool::Wmos {
+        return;
+    }
+    // Still being moved by one of the four: the box would be fitted to a
+    // transform that is about to change again, and the tile would be read once
+    // a frame.
+    if buttons.pressed(MouseButton::Left)
+        || keys.pressed(KeyCode::AltLeft)
+        || keys.pressed(KeyCode::AltRight)
+    {
+        return;
+    }
+    // Only when the placement actually moved. A click that selected and
+    // nothing else must not be an edit — see [`Held::picked`], which is the whole
+    // of this guard and which the first picture of this tool paid for.
+    let moved = match (selection.at.as_ref(), held.picked) {
+        (Some(at), Some(picked)) => {
+            at.record.position != picked.position || at.record.rotation != picked.rotation
+        }
+        _ => false,
+    };
+    // …and the rest of a group, which is re-fitted whenever the group has
+    // moved: a group change moves every member, so there is no member that
+    // was merely selected.
+    // Counted down to the frame the parts' transforms have caught up with the
+    // move — see [`Held::refit_members`].
+    let members = match held.refit_members {
+        0 => false,
+        1 => {
+            held.refit_members = 0;
+            true
+        }
+        _ => {
+            held.refit_members -= 1;
+            false
+        }
+    };
+    if !moved && !members {
+        return;
+    }
+
+    // Into the move's own entry and not beside it. The re-fit is a
+    // consequence of the move rather than something anybody asked for, and as
+    // an entry of its own it is what the first `Ctrl+Z` after a drag lands on —
+    // so the building stays where it was put and it takes a second press to
+    // bring it back. See `vale_edit::undo::History::amend`, including the
+    // case where there is nothing to fold into.
+    let mut opened = false;
+    let mut fit = |session: &mut EditSession, at: &mut Selected| {
+        let Some((lower, upper)) = refit(at.unique_id, &parts, &placements) else {
+            return;
+        };
+        if !moved_by(at.record.bounds_lower, lower) && !moved_by(at.record.bounds_upper, upper) {
+            return;
+        }
+        at.record.bounds_lower = lower;
+        at.record.bounds_upper = upper;
+        if !opened {
+            opened = true;
+            if !session.history.amend() {
+                session.history.begin("Fit WMO bounds");
+            }
+        }
+        write_record(session, at);
+    };
+    if moved {
+        if let Some(at) = selection.at.as_mut() {
+            fit(session, at);
+        }
+    }
+    if members {
+        for member in selection.also.iter_mut() {
+            fit(session, member);
+        }
+    }
+    if opened {
+        session.history.end();
+    }
+    held.picked = selection.at.as_ref().map(|at| at.record);
+
+    let unsaved: Vec<(u32, u32)> = session.unsaved.iter().copied().collect();
+    for coord in unsaved {
+        session.publish(coord);
+    }
+    // The hull and the lamps, which only a re-read moves. Invisible now that a
+    // replacement keeps the old tile up — see `super::terrain::swap`.
+    let tiles: Vec<(u32, u32)> = match members {
+        true => selection.members().map(|at| at.tile).collect(),
+        false => selection.at.iter().map(|at| at.tile).collect(),
+    };
+    session.stale.extend(tiles);
+}
+
+/// The two things that are only true once a change has settled: a record that
+/// has left its tile, and a dressing nothing has re-read.
+///
+/// Only while no button is down, which is what debounces it. A `DragValue`
+/// held for a second writes the record sixty times, and asking for a tile back on
+/// each of those would be sixty rebuilds; waiting for the button lets one change
+/// be one re-read. A value typed and entered has no button down at all, so it
+/// fires on the next frame.
+fn settle(
+    mut session: Option<ResMut<EditSession>>,
+    mut selection: ResMut<Selection>,
+    mut held: ResMut<Held>,
+    tool: Res<Tool>,
+    state: Res<crate::playtest::Playtest>,
+    buttons: Res<ButtonInput<MouseButton>>,
+) {
+    let Some(session) = session.as_mut() else {
+        return;
+    };
+    if *tool != Tool::Wmos || !state.editing() || buttons.pressed(MouseButton::Left) {
+        return;
+    }
+    let Some(at) = selection.at.as_ref() else {
+        return;
+    };
+    let (tile, index) = (at.tile, at.index);
+
+    // The dressing, which only a re-read applies: the `MODD` spawns of the
+    // chosen set are folded into world space when the building is spawned and
+    // never again.
+    let sets = (at.record.doodad_set, at.record.name_set);
+    if held.dressed.is_some_and(|had| had != sets) {
+        held.dressed = Some(sets);
+        session.publish(tile);
+        session.stale.insert(tile);
+        session.status = format!("doodad set {} · name set {}", sets.0, sets.1);
+    }
+
+    // …and the files' own agreement about where this placement is: one row, in
+    // the tile its origin is in. See [`super::rehome`], which is where that whole
+    // argument is — including why it is stated as an invariant rather than as a
+    // move, and why a city listed in a dozen tiles made that the difference
+    // between one copy and fifteen.
+    let _ = index;
+    if let Some((coord, index)) = super::rehome::settle_building(session, at.unique_id) {
+        if let Some(at) = selection.at.as_mut() {
+            at.tile = coord;
+            at.index = index;
+            // And the record, because `add_building` gave it this tile's own
+            // `name_id`. Without it `resync` sees a mismatch, searches, and the
+            // next frame starts again from whatever it found.
+            if let Some(row) = session.tiles.get(&coord).and_then(|t| t.building_at(index)) {
+                at.record = row;
+            }
+        }
+        held.picked = selection.at.as_ref().map(|at| at.record);
+        held.dressed = selection
+            .at
+            .as_ref()
+            .map(|at| (at.record.doodad_set, at.record.name_set));
+    }
+
+    // The rest of the group, once after a change to it, and after its boxes
+    // have been re-fitted, so a member is moved into its new tile with the box
+    // it will keep. See `super::doodads::settle` for why not every frame.
+    if held.refit_members > 0 || !std::mem::take(&mut held.unsettled) {
+        return;
+    }
+    let members: Vec<u32> = selection.also.iter().map(|m| m.unique_id).collect();
+    for unique_id in members {
+        let Some((coord, index)) = super::rehome::settle_building(session, unique_id) else {
+            continue;
+        };
+        let row = session.tiles.get(&coord).and_then(|t| t.building_at(index));
+        if let (Some(member), Some(row)) = (
+            selection.also.iter_mut().find(|m| m.unique_id == unique_id),
+            row,
+        ) {
+            member.tile = coord;
+            member.index = index;
+            member.record = row;
+        }
+    }
+}
+
+/// Put the selection back in step with the file — [`super::doodads::resync`]'s
+/// counterpart, by `unique_id` for the same reason, members included.
+fn resync(mut selection: ResMut<Selection>, session: Option<Res<EditSession>>) {
+    let Some(session) = session else { return };
+    let standing = |at: &Selected| {
+        session
+            .tiles
+            .get(&at.tile)
+            .and_then(|tile| tile.building_at(at.index))
+            .is_some_and(|row| row.unique_id == at.unique_id && row == at.record)
+    };
+    if selection.members().all(|at| standing(at)) {
+        return;
+    }
+    if let Some(at) = selection.at.as_ref() {
+        if !standing(at) {
+            selection.at = find(&session, at.unique_id);
+        }
+    }
+    selection.also.retain_mut(|member| {
+        if standing(member) {
+            return true;
+        }
+        match find(&session, member.unique_id) {
+            Some(found) => {
+                *member = found;
+                true
+            }
+            None => false,
+        }
+    });
+    if selection.at.is_none() {
+        selection.at = selection.also.pop();
+    }
+}
+
+/// A box around whatever is selected.
+///
+/// The drawn batches' boxes and not the `MODF` one, for the same reason the
+/// pick uses them: the `MODF` box is the axis-aligned hull of the whole
+/// cathedral, and a marker that size says nothing about which building it is
+/// around. The `MODF` box is drawn too, in a second colour, because it is a
+/// thing this tool edits and a thing that can be wrong.
+fn draw_marker(
+    // In front of the world — see [`super::gizmo::EditorHandles`]. This is
+    // the case that made it necessary: a cathedral's box is drawn entirely
+    // inside the cathedral.
+    mut gizmos: Gizmos<super::gizmo::EditorHandles>,
+    selection: Res<Selection>,
+    tool: Res<Tool>,
+    parts: Query<(&ChildOf, &GlobalTransform, &Aabb), With<WmoPart>>,
+    placements: Query<&WmoPlacement>,
+) {
+    if *tool != Tool::Wmos {
+        return;
+    }
+    let Some(at) = selection.at.as_ref() else {
+        return;
+    };
+    let colour = Color::srgb(0.4, 0.85, 1.0).with_alpha(0.5);
+    // The rest of a group paler, so the primary is still the one that stands out.
+    let member = Color::srgb(0.55, 0.75, 0.9).with_alpha(0.3);
+    // Sorted and searched rather than hashed — see `super::doodads::draw_marker`.
+    let others = super::group::sorted(selection.also.iter().map(|m| m.unique_id));
+    for (parent, transform, aabb) in &parts {
+        let Ok(placement) = placements.get(parent.parent()) else {
+            continue;
+        };
+        let colour = match placement.unique_id == at.unique_id {
+            true => colour,
+            false if super::group::holds(&others, placement.unique_id) => member,
+            false => continue,
+        };
+        let centre = transform.affine().transform_point3(Vec3::from(aabb.center));
+        let half = Vec3::from(aabb.half_extents) * transform.scale();
+        gizmos.cube(
+            Transform::from_translation(centre)
+                .with_rotation(transform.rotation())
+                .with_scale(half * 2.0),
+            colour,
+        );
+    }
+
+    // …and the file's own box, which is what the mover reads.
+    let a = vale_assets::world::adt::placement_to_world(at.record.bounds_lower);
+    let b = vale_assets::world::adt::placement_to_world(at.record.bounds_upper);
+    let lower = Vec3::new(a[0].min(b[0]), a[1].min(b[1]), a[2].min(b[2]));
+    let upper = Vec3::new(a[0].max(b[0]), a[1].max(b[1]), a[2].max(b[2]));
+    let centre = (lower + upper) * 0.5;
+    let size = upper - lower;
+    gizmos.cube(
+        Transform::from_translation(axes::to_bevy(centre.to_array()))
+            .with_scale(Vec3::from(axes::to_wow(size)).abs()),
+        Color::srgb(1.0, 0.8, 0.3).with_alpha(0.35),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn building(position: [f32; 3]) -> Building {
+        Building {
+            name_id: 0,
+            unique_id: 7,
+            position,
+            rotation: [0.0; 3],
+            bounds_lower: [position[0] - 10.0, position[1] - 5.0, position[2] - 20.0],
+            bounds_upper: [position[0] + 10.0, position[1] + 5.0, position[2] + 20.0],
+            flags: 0,
+            doodad_set: 0,
+            name_set: 0,
+            padding: 0,
+        }
+    }
+
+    /// Moving a building moves its box with it. The box is what the mover
+    /// reads before the `.wmo` has loaded — to decide whether to wait rather
+    /// than fall through the world, and whether terrain overhead may be stood
+    /// on — so one left behind is wrong in two places at once.
+    #[test]
+    fn a_moved_building_takes_its_box_with_it() {
+        let was = building([100.0, 50.0, 200.0]);
+        let mut record = was;
+        let world = vale_assets::world::adt::placement_to_world(was.position);
+        set_world_position(
+            &mut record,
+            &was,
+            [world[0] + 30.0, world[1] - 12.0, world[2] + 4.0],
+        );
+
+        // The box moved by exactly what the position did, on every axis.
+        for axis in 0..3 {
+            let step = record.position[axis] - was.position[axis];
+            assert!(
+                (record.bounds_lower[axis] - (was.bounds_lower[axis] + step)).abs() < 1e-3,
+                "axis {axis}"
+            );
+            assert!(
+                (record.bounds_upper[axis] - (was.bounds_upper[axis] + step)).abs() < 1e-3,
+                "axis {axis}"
+            );
+        }
+        // …and it is still the same size, which a re-fit from the wrong frame
+        // would not be.
+        for axis in 0..3 {
+            let was_span = was.bounds_upper[axis] - was.bounds_lower[axis];
+            let now_span = record.bounds_upper[axis] - record.bounds_lower[axis];
+            assert!((was_span - now_span).abs() < 1e-3, "axis {axis}");
+        }
+    }
+
+    /// A drag is measured from where it started, so the same pointer position
+    /// always produces the same record however many frames it took to get there.
+    #[test]
+    fn a_drag_is_measured_from_where_it_began() {
+        let was = building([100.0, 50.0, 200.0]);
+        let world = vale_assets::world::adt::placement_to_world(was.position);
+        let to = [world[0] + 30.0, world[1], world[2]];
+
+        let mut once = was;
+        set_world_position(&mut once, &was, to);
+        // …and the same again from a record that has already been moved, still
+        // measured against `was`.
+        let mut twice = once;
+        set_world_position(&mut twice, &was, to);
+        assert_eq!(once, twice);
+    }
+
+    /// The four things a `MODF` edit can be, named apart so that a gesture folds
+    /// only with its own kind.
+    #[test]
+    fn each_kind_of_change_has_its_own_subject() {
+        let was = building([0.0; 3]);
+        let mut turned = was;
+        turned.rotation[1] = 90.0;
+        assert_eq!(what_changed(&was, &turned).1, "rotation");
+        let mut dressed = was;
+        dressed.doodad_set = 2;
+        assert_eq!(what_changed(&was, &dressed).1, "doodadset");
+        let mut named = was;
+        named.name_set = 1;
+        assert_eq!(what_changed(&was, &named).1, "nameset");
+        let mut moved = was;
+        moved.position[0] = 5.0;
+        assert_eq!(what_changed(&was, &moved).1, "position");
+    }
+}

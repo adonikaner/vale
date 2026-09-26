@@ -1,0 +1,13 @@
+[package]
+name = "vale-api"
+description = "The names this client answers, as data — shared by the renderer that registers them and the CLI that reports on them."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# **No dependencies, and that is the whole point.** This crate exists so that
+# `vale-cli` can read the renderer's API surface without depending on
+# `vale-client` — which would drag Bevy, wgpu and mlua into a headless tool
+# whose cold build is currently seconds. Anything added here that is not a
+# `&'static str` defeats it.
+[dependencies]

@@ -1,0 +1,40 @@
+[package]
+name = "vale-cli"
+description = "Headless driver for the protocol spike and the asset/terrain parsers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "vale"
+path = "src/main.rs"
+
+[dependencies]
+vale-protocol.workspace = true
+vale-assets.workspace = true
+# **The editing model, for the one command that checks it.** `vale bake`
+# generates a minimap and an MCSH and scores each against the file the game
+# shipped, which is the only check either can have — and it is a headless check
+# over the archives, so it belongs here rather than in the editor. No renderer
+# comes with it: `vale-edit` has none, which is the whole reason it is a
+# separate crate from `vale-ide`.
+vale-edit.workspace = true
+# …and what a *row* of the server's world means, for `vale spelltemplate`:
+# the 151 columns of `spell_template`, which `Spell.dbc` field feeds each, and
+# the statements an edit becomes. No connection comes with it — that crate has
+# no driver, which is what lets this check run on a machine with the archives
+# and nothing else.
+vale-mangos.workspace = true
+vale-config.workspace = true
+# The renderer's API surface, so `vale framexml` reports the gap against what
+# the client really registers rather than against a transcription of it. This is
+# the whole reason the crate exists — see `crates/api/src/lib.rs`.
+vale-api.workspace = true
+# Decode-only: `vale sound` probes every referenced file with the same
+# decoder the client plays through, because bevy_audio panics on one it
+# cannot eat. See the workspace manifest's note on this dependency.
+rodio.workspace = true
+# `vale bake <Map> <x> <y> minimap <dir>` writes the drawn and the shipped
+# picture side by side, which is the only way a minimap's look is judged. The
+# same version Bevy already pulls in, so it costs nothing to build.
+png = "0.18"

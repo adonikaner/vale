@@ -1,0 +1,17 @@
+[package]
+name = "vale-assets"
+description = "Reads 1.12.1 game data: MPQ archive chain plus hand-written WDT/ADT terrain parsers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The MPQ *container* (encryption, hash/block tables, PKWARE implode) is a
+# solved problem we delegate. Everything layered on top is written here.
+wow-mpq.workspace = true
+# …and the *other* container this crate reads rather than owns: a TrueType
+# file's table directory, `cmap` sub-formats and `hmtx` are a solved problem
+# with nothing WoW-specific in them. What is WoW-specific — which four faces
+# exist and what a `<FontHeight>` means — is in `font.rs`.
+ttf-parser.workspace = true
+thiserror.workspace = true

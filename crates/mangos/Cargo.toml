@@ -1,0 +1,21 @@
+[package]
+name = "vale-mangos"
+description = "What a row of the server's world means, and the statements that change one."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "vale_mangos"
+path = "src/lib.rs"
+
+[dependencies]
+# **The editable DBC**, which is what a row is written *from*: an edit is a
+# `Spell.dbc` this project changed, and the statement is the difference between
+# that and the file the game shipped. No renderer and no window comes with it —
+# that is the whole reason `vale-edit` is a crate of its own.
+vale-edit.workspace = true
+# …and the connection, which is the only thing in this crate that talks to
+# anything. See `conn.rs` for why it is not behind a feature.
+mysql.workspace = true
+vale-config.workspace = true

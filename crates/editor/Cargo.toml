@@ -1,0 +1,70 @@
+[package]
+name = "vale-ide"
+description = "The world editor: a separate binary that draws the client's own world and changes the files it is made of."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# A launcher, so the app itself stays in `lib.rs` where it can be tested without
+# opening a window — the same split `vale-client` keeps.
+[[bin]]
+name = "vale-ide"
+path = "src/main.rs"
+
+[lib]
+name = "vale_ide"
+path = "src/lib.rs"
+
+[dependencies]
+# **The renderer, as a library.** Every pass this editor's viewport wants — the
+# terrain, the buildings, the doodads, the water, the sky, the models — is one
+# the client already has, and a second reading of any of them would be a second
+# thing to keep true. What this crate adds is the parts a client has no use for:
+# a free camera, a pointer that means something, tools, and panels.
+#
+# It is a one-way dependency. Nothing in `vale-client` names this crate, and
+# building the client does not build it.
+vale-client.workspace = true
+# …and the editing model, which is where every decision that does not need a
+# renderer lives.
+vale-edit.workspace = true
+vale-assets.workspace = true
+vale-config.workspace = true
+# **The wire, for the editor's server half.** `src/server/` puts a GM command on
+# the playtest's own session and reads the line that answers it, which needs the
+# chat kinds by name. It is the same build the client already has — this crate
+# depends on `vale-client`, which depends on this — so the edge costs nothing
+# to compile and buys not having to re-export a protocol enum through the
+# renderer to reach it.
+vale-protocol.workspace = true
+# …and what a *row* of the server's world means, for `src/server/rows.rs`: a
+# save turns the project's edited DBCs into the statements that change the
+# server's own tables. No connection comes with it.
+vale-mangos.workspace = true
+bevy.workspace = true
+bevy_egui.workspace = true
+
+# **The process's working set, for `--tour`.** One call into `psapi`, behind
+# `cfg(windows)`; the instrument reports "unavailable" elsewhere. The version
+# is the one already in the tree under Bevy, so it costs no second build of it.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+] }
+
+[features]
+default = ["diagnostics"]
+# Passed through to the client, whose HUD, settings panel and per-pass report
+# lines this feature owns. The editor has its own panels and does not add to
+# that window; what the feature buys here is the F4 window itself, which is the
+# only place the frame cost of an edited scene can be read.
+diagnostics = ["vale-client/diagnostics"]
+# **The size-class census on the heap** — `src/heap.rs`, printed by `--tour`.
+# Off by default and deliberately not part of `diagnostics`: it is a
+# `#[global_allocator]`, so it is two relaxed atomics on every allocation the
+# process makes rather than a number read once a frame, and that cost has not
+# been priced. Turn it on when a leak is reported and no count explains it:
+# `cargo run -p vale-ide --features heap-census -- --tour "…"`.
+heap-census = []

@@ -1,0 +1,13 @@
+[package]
+name = "vale-protocol"
+description = "1.12.1 (build 5875) network protocol: SRP6 logon, world session, opcodes."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+num-bigint.workspace = true
+num-traits.workspace = true
+sha1.workspace = true
+rand.workspace = true
+flate2.workspace = true
