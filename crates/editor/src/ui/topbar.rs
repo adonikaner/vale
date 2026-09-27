@@ -14,9 +14,10 @@
 //! three rows: it moves the camera, which is the same kind of action as choosing
 //! a map, and it is used once and then not again for some time. The playtest
 //! login control has the same shape and sits behind the same kind of popover,
-//! with one difference: its button label states the answer (who the playtest
-//! logs in as), so the fact a person would open it to check is readable without
-//! opening it.
+//! with one difference: its button label states who the playtest logs in as,
+//! and gains " · cached" while the query cache is kept, so the facts a person
+//! would open it to check are readable without opening it. The query cache
+//! switch is in that popover.
 //!
 //! After Go to… comes the workspace control ([`super::rail::workspaces`]):
 //! World, Spells, Items, Quests. World returns to the last rail tool; the other
@@ -116,7 +117,8 @@ pub fn draw(
         let at_server = ui
             .button("Server…")
             .on_hover_text(
-                "Where this machine's vmangos is, whether a save applies to it, and the way                  to put it back.",
+                "What this project has applied to the world database, Apply and Put back \
+                 for each subject, and where this machine's vmangos is.",
             );
         popovers.server.track(&at_server);
         if at_server.clicked() {
@@ -129,9 +131,8 @@ pub fn draw(
         // with the pointer. It is not on the rail, because the rail lists what
         // the pointer edits. See [`super::mapview`].
         //
-        // This is a button, and every other control on this bar that opens a
-        // window is a `selectable_label`. A selectable label is drawn flat
-        // until it is on, so as one it read as a piece of text among buttons.
+        // This is a button rather than a `selectable_label`. A selectable label
+        // is drawn flat until it is on, so among buttons it reads as text.
         if ui
             .add_enabled(!in_world, egui::Button::new("Edit WDT/ADT"))
             .on_hover_text(
@@ -243,14 +244,19 @@ fn not_running(
     // The button's label states the answer rather than a word like "Login":
     // `as Corwin`, or `login screen` when there is no password to skip it
     // with. The fact a person would open the popover to check is readable
-    // without opening it.
-    let label = match playing.login.can_go_straight_in() && playing.login.straight_in {
+    // without opening it. `cached` is added when the query cache is kept,
+    // since that is the setting that makes an edit look as if it did not
+    // take.
+    let mut label = match playing.login.can_go_straight_in() && playing.login.straight_in {
         true => format!("as {}", playing.login.who()),
         false => "login screen".to_string(),
     };
+    if !playing.server.disable_caching {
+        label.push_str(" \u{b7} cached");
+    }
     let who = ui
         .button(label)
-        .on_hover_text("Who the playtest logs in as, and whether it asks.");
+        .on_hover_text("Who the playtest logs in as, whether it asks, and whether the client keeps its query cache.");
     popovers.login.track(&who);
     if who.clicked() {
         popovers.login.toggle(&who);
@@ -298,10 +304,10 @@ fn separator(ui: &mut egui::Ui) {
 /// The project section: which project is open, the Save button and the
 /// Publish button.
 ///
-/// The Save button's label names what it will save. It once read `Save 1`,
-/// where the number was the count of tiles with unsaved changes and nothing on
-/// screen said so. A button that says what it will do to what needs no
-/// explanation under it.
+/// The Save button's label names what it will save, for example `Save 2 tiles
+/// and server rows`, or `Saved` when there is nothing. A bare count such as
+/// `Save 1`, which counted tiles with unsaved changes, does not say what it
+/// counts.
 fn project(
     ui: &mut egui::Ui,
     session: &mut EditSession,
@@ -347,11 +353,12 @@ fn project(
         popovers.project.toggle(&which);
     }
 
-    // Three kinds of unsaved work, not two. The server rows are written by the
-    // same press, and while nothing counted them this read "Saved" with a
-    // creature or waypoint edit outstanding and disabled the button that would
-    // have written it, leaving Ctrl+S as the only route and nothing on screen
-    // saying a save was owed. See `EditSession::server_unsaved`.
+    // Three kinds of unsaved work: tiles, tables and server rows. The same
+    // press writes the server rows, so they are counted too. Without them the
+    // label read "Saved" and the button was disabled while a creature or
+    // waypoint edit was outstanding, which left Ctrl+S as the only way to
+    // write it and nothing on screen saying a save was owed. See
+    // `EditSession::server_unsaved`.
     let tiles = session.unsaved.len();
     let tables = session.unsaved_tables.len();
     let mut parts: Vec<String> = Vec::new();
@@ -363,8 +370,7 @@ fn project(
     }
     if session.server_unsaved() {
         // Not a count: the two stores hold rows and whole paths, which do not
-        // add up to one number. What matters is that a save is owed, not how
-        // much of one.
+        // add up to one number. The label says only that a save is owed.
         parts.push("server rows".to_string());
     }
     let anything = !parts.is_empty();
@@ -476,10 +482,9 @@ pub struct Projects {
     ///
     /// Deleting a project is the one action in this editor that destroys work
     /// and cannot be undone, so it is the one action here that asks first.
-    /// The dialog's own note argues against confirming a switch, on the
-    /// grounds that a confirmation nobody reads is how work gets lost; that
-    /// argument is about an action which saves first, and this is its
-    /// opposite.
+    /// The dialog's own note gives the reason a switch is not confirmed: a
+    /// confirmation nobody reads is how work gets lost, and a switch saves
+    /// first. A delete does not save first, so that reason does not apply.
     pub confirming: Option<Doomed>,
 }
 
@@ -511,8 +516,9 @@ impl Doomed {
 
     /// Whether the destructive button is enabled: always for a project that
     /// has applied nothing, and otherwise only once the project's name has
-    /// been typed. The record of what to put back is in the folder about to
-    /// go, so proceeding leaves the database as it is with nothing that knows.
+    /// been typed. The record of what to put back is in the folder being
+    /// deleted or cleared, so proceeding leaves the applied rows in the
+    /// database with no record of how to put them back.
     pub fn may_proceed(&self) -> bool {
         self.held.is_empty() || self.typed.trim() == self.name
     }
@@ -575,9 +581,9 @@ mod tests {
     use super::*;
 
     /// A project that has applied nothing is cleared or deleted on one press.
-    /// One that has applied anything needs its own name typed, exactly, so a
-    /// press that would lose the only record of what to put back is a press
-    /// somebody meant.
+    /// One that has applied anything needs its own name typed exactly, apart
+    /// from surrounding spaces, because the press loses the only record of
+    /// what to put back.
     #[test]
     fn a_project_with_rows_on_the_server_needs_its_name_typed() {
         let free = Doomed::new("goldshire".into(), false, &crate::server::held::Held::default());

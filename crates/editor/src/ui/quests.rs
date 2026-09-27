@@ -1,7 +1,7 @@
 //! The workspace a quest is edited in: the list, the form, and the quest as the
 //! game would show it with who gives and takes it.
 //!
-//! ## Three parts, and the third is the inspector
+//! ## Layout: the list, the form and the inspector
 //!
 //! ```text
 //! left       which quest          the table, searched by title, entry or
@@ -11,19 +11,19 @@
 //!                                 the givers, the takers and the chain
 //! ```
 //!
-//! [`super::items`]' shape with a different third part. An item's row points
-//! at one thing nobody can read, its appearance; a quest's row is mostly text
-//! and ids, and what nobody can read off the form is what those come to — the
-//! sentence the log shows for `ReqCreatureOrGOId2 = -1627`, the reward list,
-//! and the two facts that are not in the row at all, which are who hands the
-//! quest out and who takes it back.
+//! The layout is [`super::items`]' with a different third part. The item
+//! workspace's third part shows the item's appearance, which its row holds
+//! only as an id. A quest's row is mostly text and ids, so the third part shows
+//! what they resolve to: the sentence the log shows for
+//! `ReqCreatureOrGOId2 = -1627`, the reward list, and two facts the row does
+//! not hold at all, who hands the quest out and who takes it back.
 //!
-//! **The third part is drawn in the shell's inspector rather than in a column
-//! of its own** ([`inspector`]). The shell's rule is that the inspector is
-//! about the selection, and this is: it is the spell workspace's arrangement,
-//! whose inspector is what the open row points at. A column of its own beside
-//! the inspector left the form 250 points at a 1280-point window, which is less
-//! than one page row is wide.
+//! The third part is drawn in the shell's inspector ([`inspector`]), not in a
+//! column of its own. The shell's rule is that the inspector describes the
+//! selection; the spell workspace uses the same arrangement, with an inspector
+//! that shows what the open row points at. A separate column beside the
+//! inspector left the form 250 points wide in a 1280-point window, which is
+//! narrower than one page row.
 //!
 //! ## Objectives and rewards are lines, not numbered columns
 //!
@@ -98,7 +98,7 @@ const ICON: f32 = 18.0;
 pub struct Workspace<'a> {
     pub session: &'a mut EditSession,
     pub quests: &'a mut Quests,
-    /// The item workspace's state, for one thing: what a display id's icon is,
+    /// The item workspace's state, used only to look up a display id's icon,
     /// which it already memoises — see `crate::tools::items::Items::look`.
     pub items: &'a mut Items,
     pub assets: &'a GameAssets,
@@ -107,8 +107,8 @@ pub struct Workspace<'a> {
     pub now: f64,
 }
 
-/// …and what only the list and the head of the form need, which is the shell's
-/// own: the inspector draws its part without any of it.
+/// What only the list and the head of the form need, which belongs to the
+/// shell. The inspector draws its part without any of it.
 pub struct Shell<'a> {
     /// The queue an apply's reloads go on, whose status the form shows.
     pub reloads: &'a mut crate::server::reload::Reloads,
@@ -145,10 +145,10 @@ fn shown(session: &EditSession, open: &Open, column: &Column) -> Shown {
         .map(str::to_string);
     let in_database = column.literal(&open.row);
     Shown {
-        // A `NULL` is drawn as nothing, not as the word. The six text
+        // A `NULL` is drawn as an empty value, not as the word. The six text
         // columns default to `NULL` in the DDL and about a fifth of the shipped
-        // rows leave `EndText` that way; a box that said `NULL` would be a box
-        // whose first keystroke had to delete it.
+        // rows leave `EndText` that way; a box showing `NULL` would make the
+        // user delete the word before typing.
         showing: edited
             .clone()
             .or_else(|| in_database.clone())
@@ -169,7 +169,7 @@ fn number_of(session: &EditSession, open: &Open, name: &str) -> i64 {
         .unwrap_or(0)
 }
 
-/// …and as text, unquoted.
+/// The value of a column by name, as unquoted text.
 fn text_of(session: &EditSession, open: &Open, name: &str) -> String {
     quest::column(quest::TEMPLATE, name)
         .map(|column| unquote(&shown(session, open, column).showing))
@@ -202,7 +202,9 @@ fn commit(session: &mut EditSession, open: &Open, column: &Column, written: Stri
 
 /// Draw the list and the form into the region the panels left.
 pub fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>, mut shell: Shell<'_>) {
-    // It paints its own ground — `ui::data`'s own note.
+    // Fill the region with the shell colour. The world is still drawn behind
+    // the workspace, and an unpainted strip would show it through; see the
+    // same note in `ui::data`.
     let all = ui.available_rect_before_wrap();
     ui.painter().rect_filled(all, 0.0, theme::SHELL);
 
@@ -281,7 +283,7 @@ fn name_the_zones(work: &mut Workspace<'_>) {
 pub(super) fn name_field(table: &str) -> Option<usize> {
     match table {
         "AreaTable" => Some(11),
-        "QuestSort" | "QuestInfo" | "Emotes" | "SpellFocusObject" | "Languages" => Some(1),
+        "QuestSort" | "QuestInfo" | "Emotes" | "EmotesText" | "SpellFocusObject" | "Languages" => Some(1),
         "Faction" => Some(19),
         "SkillLine" => Some(3),
         "Map" => Some(4),
@@ -617,7 +619,7 @@ fn form(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>, open
 }
 
 /// What this project changes about the server's quests, and the way to the
-/// panel that applies it — [`super::items`]' block, one subject along.
+/// panel that applies it — the same block [`super::items`] draws for items.
 fn edits_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>) {
     let standing = super::sync::standing(super::sync::Half::Quests, work.session, work.assets);
     if standing.quiet() {
@@ -716,7 +718,7 @@ const SECTIONS: [Group; 8] = [
     Group::Advanced,
 ];
 
-/// …and the ones open when a quest is first opened.
+/// The sections that are expanded when a quest is first opened.
 const OPEN: [Group; 4] = [
     Group::Identity,
     Group::Text,
@@ -995,7 +997,9 @@ fn resolved(ui: &mut egui::Ui, work: &mut Workspace<'_>, column: &'static Column
         _ => return,
     };
     let id = value.unsigned_abs() as u32;
-    // The two readings of a signed quest reference are a fact about the row.
+    // The sign of a signed quest reference changes what it means (for
+    // `PrevQuestId`, rewarded first or active at the time), so that reading is
+    // drawn before the quest's title.
     if matches!(column.kind, Kind::Either(quest::TEMPLATE, _)) {
         let (rewarded, active) = either_words(column.name);
         meaning(
@@ -1036,8 +1040,8 @@ fn resolved(ui: &mut egui::Ui, work: &mut Workspace<'_>, column: &'static Column
 
 /// An item's icon and its name in its quality's colour, as a link: a click
 /// on either opens the item in the item workspace. The name is underlined
-/// while the pointer is over it and keeps its colour, which is a fact about
-/// the item rather than a link colour.
+/// while the pointer is over it and keeps its quality colour rather than a
+/// link colour, because the colour states the item's quality.
 fn item_name(ui: &mut egui::Ui, work: &mut Workspace<'_>, entry: u32) {
     let Some(found) = work.quests.item(entry) else {
         match work.quests.item_known(entry) {
@@ -1298,7 +1302,8 @@ fn objective_lines(
             count,
             drawn,
         );
-        // The two that qualify the line above are drawn only under a used one.
+        // `ReqSpellCast` and `ObjectiveText` qualify the objective line above,
+        // and are drawn only when that slot is used.
         if used[slot - 1] {
             field(ui, work, open, cast);
             field(ui, work, open, text);
@@ -1809,8 +1814,8 @@ fn relations(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
 }
 
 /// One relation of the open quest: who, what this project says about the row,
-/// and the button that removes or keeps it. The name narrows the list to that
-/// creature's quests, which is the question a giver's name raises.
+/// and the button that removes or keeps it. Clicking the name narrows the list
+/// to that creature's quests.
 fn relation_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, relation: Relation, life: Life) {
     ui.horizontal(|ui| {
         let colour = match life {
@@ -1872,8 +1877,8 @@ fn relation_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, relation: Relation,
 }
 
 /// Where the quest sits among the others: what it needs, what it leads to,
-/// and — which no column of its own row says — what names *it* as a
-/// prerequisite.
+/// and which other quests name it as a prerequisite, which no column of its
+/// own row records.
 fn chain(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
     theme::heading(ui, "Chain");
     let entry = open.known.entry as i32;
@@ -1967,7 +1972,8 @@ fn search_a_table(session: &mut EditSession, assets: &GameAssets, picker: &mut P
         if !hit || name.is_empty() {
             continue;
         }
-        // A spell's rank is the only thing that tells nine Fireballs apart.
+        // Ranks of one spell share its name (there are nine Fireballs), so the
+        // rank, field 129, is the sub-line that tells them apart.
         let sub = match table {
             "Spell" => open.string_at(record, 129).unwrap_or_default(),
             _ => String::new(),
@@ -2294,10 +2300,9 @@ pub fn holder_window(ctx: &egui::Context, mut subject: HolderQuests<'_>) -> Opti
             if kept {
                 not_a_questgiver(ui, &mut subject, entry);
             }
-            // The rows are drawn through the workspace's own function, which
-            // wants the workspace's argument; only four of its fields are read
-            // on this path and the rest are not reachable from here, so the
-            // window draws its rows itself.
+            // The workspace's `relation_row` takes a `Workspace`, of which this
+            // path would read only four fields, and the rest are not reachable
+            // from here, so the window draws its rows itself with `window_row`.
             egui::ScrollArea::vertical()
                 .auto_shrink([false, true])
                 .show(ui, |ui| {

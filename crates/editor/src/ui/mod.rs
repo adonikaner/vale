@@ -116,16 +116,15 @@
 //! In egui 0.35 `egui::Panel::left(..).show(ui, ..)` takes a `Ui`, and there is
 //! no `Context` form of it. bevy_egui hands out a `Context`, so the shell opens
 //! a root `Ui` over `ctx.viewport_rect()` on the background layer and docks
-//! into that, as bevy_egui's own `side_panel` example does. The missing
-//! `Context` form of the call is the only thing that stood in the way of
-//! docked panels here; the shell was one floating window until the root `Ui`
-//! was added.
+//! into that, as bevy_egui's own `side_panel` example does. Without the root
+//! `Ui` no panel can be docked from a `Context`, and the shell was one
+//! floating window before it was added.
 //!
 //! ## How the viewport rectangle is decided
 //!
 //! The camera renders the whole window and the panels are painted over it, so
-//! the viewport is whatever the four regions leave. The pick is unchanged: it
-//! reads `Window::cursor_position` against a camera that still covers the
+//! the viewport is whatever the four regions leave. The pick reads
+//! `Window::cursor_position` against that camera, which covers the whole
 //! window.
 //!
 //! Whether the pointer is over the chrome cannot be taken from egui here.
@@ -196,11 +195,13 @@ use vale_client::render::focus::WorldFocus;
 /// The part of the window the chrome leaves for the world, in window points.
 ///
 /// It has two parts because the chrome has two kinds of element. The docked
-/// panels shrink the root `Ui`, so what they leave is one rectangle. A popover
-/// floats over that rectangle and shrinks nothing, so its rectangle is listed
-/// separately; without that, a press on a popover's password box is a press
-/// on the ground behind it, the same fault the docked panels had. [`popover`]
-/// returns its rectangles for this purpose.
+/// panels shrink the root `Ui`, so what they leave is one rectangle. A popover,
+/// a window or a modal floats over that rectangle and shrinks nothing, so its
+/// rectangle is listed separately; without that, a press on a popover's
+/// password box is a press on the ground behind it, the same fault the docked
+/// panels had. [`popover`] and the windows return their rectangles for this
+/// purpose, and [`areas_over_the_world`] adds every other egui area at the end
+/// of the pass.
 ///
 /// This is the one place that decides whether a press belongs to the viewport
 /// or to a panel. The module comment explains why the two egui answers do not
@@ -217,18 +218,18 @@ pub struct Viewport {
     /// `None` before the panels are first drawn; on that frame the whole
     /// window is the world.
     rect: Option<egui::Rect>,
-    /// The rectangles this shell drew floating over it this frame.
+    /// The rectangles drawn floating over it this frame: popovers, windows,
+    /// modals and egui areas.
     floating: Vec<egui::Rect>,
 }
 
 impl Viewport {
     /// Whether a pointer position is over the world.
     ///
-    /// `false` over any of the four panels and over anything floating. A menu
-    /// or a tooltip that a panel opens is not covered here; that is answered
-    /// by `is_using_pointer` and `is_pointer_over_area`, so this is asked
-    /// together with egui's own answer rather than instead of it. See
-    /// [`over_the_world`].
+    /// `false` over any of the four panels and over anything floating. A
+    /// widget held by the pointer and an open combo box list are answered by
+    /// `is_using_pointer` and `is_popup_open`, so this is asked together with
+    /// egui's own answer rather than instead of it. See [`over_the_world`].
     pub fn holds(&self, at: Vec2) -> bool {
         let at = egui::pos2(at.x, at.y);
         let inside = match self.rect {
@@ -244,11 +245,12 @@ impl Viewport {
 /// Whether a press belongs to the world. Every tool asks this before acting.
 ///
 /// Both halves are needed. [`Viewport::holds`] answers for the four docked
-/// panels, which egui cannot answer for here. `is_pointer_over_area` answers
-/// for what egui opens itself, a combo box's list or a tooltip, through
-/// `is_popup_open`. That
-/// check is deliberately coarse: while any list is open no press reaches the
-/// world, so the click that closes a list does not also act in the world.
+/// panels and for every floating window, which egui cannot answer for here.
+/// `is_using_pointer` answers for a widget being dragged past the edge of its
+/// window, and `is_popup_open` for what egui opens itself, such as a combo
+/// box's list. The popup check is coarse on purpose: while any list is open no
+/// press reaches the world, so the click that closes a list does not also act
+/// in the world.
 pub fn over_the_world(
     viewport: &Viewport,
     wants: &bevy_egui::input::EguiWantsInput,
@@ -1228,8 +1230,9 @@ fn draw(
     // A reference clicked on the item, creature or game object form: a client
     // table's row opens the table browser on it under the spell subject, which
     // browses any table a reference reaches; a quest opens the quest
-    // workspace. The item form's mailboxes are on the item tool and the other
-    // two forms' are on the quest tool, which is the state they hold.
+    // workspace. The item form writes these requests to `show_row` and
+    // `show_quest` on the item tool's state, and the other two forms write
+    // them to the same fields on the quest tool's state.
     let row = editing.items.show_row.take().or_else(|| editing.quests.show_row.take());
     if let Some((table, id)) = row {
         if session.open_table(&assets, table) && editing.browser.follow(session, table, id) {
@@ -1274,7 +1277,46 @@ fn draw(
     // last so it is over everything. See [`status::sync_toast`].
     status::sync_toast(&ctx, &playing.queue, bars_top, time.elapsed_secs_f64());
 
+    // Every window, modal and area drawn this pass, including the ones a
+    // window opens from inside itself, such as the display picker and the
+    // reference picker. See [`areas_over_the_world`].
+    viewport.floating.extend(areas_over_the_world(&ctx));
+
     Ok(())
+}
+
+/// The rectangle of every egui area drawn above the background layer this
+/// pass or the one before: each `egui::Window`, each `egui::Modal`, and each
+/// `egui::Area`. While a modal is open, the whole screen.
+///
+/// The windows above register their own rectangles, but a window that opens a
+/// modal from inside itself returns only its own rectangle. A modal is drawn
+/// at the centre of the screen, usually over the viewport, so a press on its
+/// Next button reached the world, and under Place it spawned a creature. This
+/// list covers every area whoever drew it.
+///
+/// A modal's area is only its frame. Its backdrop is a child `Ui` that does
+/// not grow the area, so the area's rectangle leaves a press on the dimmed
+/// backdrop to the world. `Memory::top_modal_layer` names a modal open on the
+/// pass before, and while there is one the whole screen is listed.
+///
+/// `Order::Tooltip` is left out. The hover card is a tooltip-order area drawn
+/// beside the pointer, and near the window's edge `constrain` can move it
+/// under the pointer; it is not interactable and must not stop a press on the
+/// creature it names.
+fn areas_over_the_world(ctx: &egui::Context) -> Vec<egui::Rect> {
+    let screen = ctx.content_rect();
+    ctx.memory(|mem| {
+        if mem.top_modal_layer().is_some() {
+            return vec![screen];
+        }
+        let visible = mem.areas().visible_layer_ids();
+        mem.layer_ids()
+            .filter(|layer| matches!(layer.order, egui::Order::Middle | egui::Order::Foreground))
+            .filter(|layer| visible.contains(layer))
+            .filter_map(|layer| mem.area_rect(layer.id))
+            .collect()
+    })
 }
 
 /// The frame a top or bottom bar is drawn in: a fill, a hairline on the inside
@@ -1347,6 +1389,65 @@ mod tests {
         assert!(!viewport.holds(Vec2::new(700.0, 100.0)), "in the popover");
         assert!(viewport.holds(Vec2::new(700.0, 400.0)), "under it");
         assert!(viewport.holds(Vec2::new(500.0, 100.0)), "beside it");
+    }
+
+    /// Two egui passes over a 1280x720 screen, then the viewport they leave
+    /// when the four panels leave the whole screen. Two, because egui draws a
+    /// new area invisible on its first pass to measure it.
+    fn after_two_passes(mut draw: impl FnMut(&mut egui::Ui)) -> Viewport {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 720.0));
+        for _ in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input, &mut draw);
+        }
+        Viewport {
+            rect: Some(screen),
+            floating: areas_over_the_world(&ctx),
+        }
+    }
+
+    /// A modal that a window opens from inside itself returns no rectangle to
+    /// the shell, and a press on its buttons reached the tool behind it.
+    /// [`areas_over_the_world`] lists the whole screen while a modal is open,
+    /// so neither a press on the modal nor one on its backdrop reaches the
+    /// world.
+    #[test]
+    fn a_press_while_a_modal_is_open_is_not_the_worlds() {
+        let viewport = after_two_passes(|ui| {
+            egui::Modal::new(egui::Id::new("a-modal")).show(ui.ctx(), |ui| {
+                ui.label("a modal");
+            });
+        });
+        assert!(!viewport.holds(Vec2::new(640.0, 360.0)), "on the modal");
+        assert!(!viewport.holds(Vec2::new(20.0, 20.0)), "on its backdrop");
+    }
+
+    /// A middle-order area, which is what an `egui::Window` is, refuses a
+    /// press. A tooltip-order area such as the hover card does not: it is
+    /// drawn beside the pointer to name what is under it.
+    #[test]
+    fn a_window_area_floats_and_a_tooltip_area_does_not() {
+        let viewport = after_two_passes(|ui| {
+            egui::Area::new(egui::Id::new("a-window"))
+                .order(egui::Order::Middle)
+                .fixed_pos(egui::pos2(200.0, 300.0))
+                .show(ui.ctx(), |ui| {
+                    ui.label("a window");
+                });
+            egui::Area::new(egui::Id::new("a-card"))
+                .order(egui::Order::Tooltip)
+                .interactable(false)
+                .fixed_pos(egui::pos2(600.0, 300.0))
+                .show(ui.ctx(), |ui| {
+                    ui.label("a card");
+                });
+        });
+        assert!(!viewport.holds(Vec2::new(210.0, 305.0)), "on the window");
+        assert!(viewport.holds(Vec2::new(610.0, 305.0)), "on the card");
     }
 
     /// Before anything is drawn the whole window is viewport, as it would be

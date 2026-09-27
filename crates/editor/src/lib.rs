@@ -524,6 +524,13 @@ pub struct Args {
     pub events_window: bool,
     pub event_add: bool,
     pub spells_window: bool,
+    /// `--script <table>:<id>`: open the script window on one script, with
+    /// every step unfolded, which a scripted run cannot reach by a press on
+    /// an event's action.
+    pub script_window: Option<(&'static str, u32)>,
+    /// `--find-event <text>`: open the events window and the chooser that
+    /// adds an existing event, with `text` searched.
+    pub find_event: Option<String>,
     /// `--apply-behaviour` / `--revert-behaviour`: the Server panel's two
     /// buttons for the behaviour half. The apply also asks a running playtest
     /// to reload the events, the spell lists and the script tables that have
@@ -772,6 +779,8 @@ impl Default for Args {
             events_window: false,
             event_add: false,
             spells_window: false,
+            script_window: None,
+            find_event: None,
             apply_behaviour: false,
             revert_behaviour: false,
             apply_creatures: false,
@@ -997,6 +1006,16 @@ impl Args {
                     parsed.events_window = true;
                 }
                 "--spells" => parsed.spells_window = true,
+                "--find-event" => {
+                    parsed.find_event = args.next().filter(|text| !text.trim().is_empty());
+                    parsed.events_window = parsed.find_event.is_some() || parsed.events_window;
+                }
+                "--script" => {
+                    parsed.script_window = args.next().as_deref().and_then(|v| {
+                        let (table, id) = v.split_once(':')?;
+                        Some((vale_mangos::scripts::table_named(table.trim())?, id.trim().parse().ok()?))
+                    });
+                }
                 "--apply-behaviour" => parsed.apply_behaviour = true,
                 "--revert-behaviour" => parsed.revert_behaviour = true,
                 "--apply-creatures" => parsed.apply_creatures = true,
@@ -1252,7 +1271,7 @@ mod tests {
             parse(&["--taxi-node-add", "-9450,-50"]).taxi_node_add,
             Some((-9450.0, -50.0))
         );
-        assert_eq!(parse(&["--tool", "flightpaths"]).tool, Some(tools::Tool::Flightpaths));
+        assert_eq!(parse(&["--tool", "taxi"]).tool, Some(tools::Tool::Flightpaths));
     }
 
     /// `--overlay` and `--doom` each take one argument; `--doom` also opens the

@@ -27,16 +27,15 @@
 //!               rather than started with
 //! ```
 //!
-//! Lights and Flightpaths are client tables, but a light's sphere and a taxi
-//! node are picked and dragged in the viewport, so both answer
+//! Lights and Taxi edit client tables, but a light's sphere and a taxi node
+//! are picked and dragged in the viewport, so both answer
 //! [`crate::tools::Surface::Inspector`] and are tiles.
 //!
 //! ## Why the rail is a grid
 //!
-//! The rail was a column of named rows, one per subject. At 1280x720 it had no
-//! height left: two pairs of subjects shared rows to fit, and each new subject
-//! needed another squeeze. Two tiles to a row halves the height per subject.
-//! The workspaces and the pointer tools left the rail at the same time.
+//! Two tiles to a row take half the height of one named row per subject. At
+//! 1280x720 a column of one row per subject does not fit the height the bars
+//! leave, and each new subject makes it longer.
 //!
 //! ## Icons
 //!
@@ -138,9 +137,9 @@ const GROUPS: [(&str, &[Subject]); 3] = [
                  dragged like a doodad.",
             ),
             s(
-                "Flightpaths",
+                "Taxi",
                 Tool::Flightpaths,
-                "The flight paths: TaxiNodes, TaxiPath and TaxiPathNode. Nodes and \
+                "The taxi network: TaxiNodes, TaxiPath and TaxiPathNode. Nodes and \
                  the paths between them are drawn on the map; drag a node or a \
                  point, add points, connect two nodes, make a node.",
             ),

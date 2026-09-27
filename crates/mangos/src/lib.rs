@@ -30,6 +30,8 @@
 //!              a row has no key of its own
 //! creaturespells.rs `creature_spells`: the eight spells a creature casts in
 //!              combat, one row of ninety columns per list. Live on a reload
+//! broadcast.rs `broadcast_text`: the lines a Talk step says, yells or emotes.
+//!              Read at start, so a change is live after a restart
 //! schema.rs    the vocabulary the row subjects (creature, gameobject, item,
 //!              quest, loot, event, script, spell list) are described in:
 //!              what a column is, how it is read, and which part of a form it
@@ -84,6 +86,7 @@
 //! knows nothing about the server's database. The editor and the CLI are the
 //! two hosts that use this crate.
 
+pub mod broadcast;
 pub mod conn;
 pub mod creature;
 pub mod creaturespells;

@@ -13,12 +13,13 @@
 //!
 //! ## Why each popover reports its rectangle to the shell
 //!
-//! [`super::Chrome`] is how a tool knows a press was on the interface and not
-//! on the world. A docked panel is in the chrome because the root `Ui` shrinks
-//! around it. A window floats over the viewport and shrinks nothing, so a press
-//! on the password box would otherwise read as a press on the ground behind
-//! it, the same fault the docked panels had. Each popover returns its rectangle
-//! and the shell adds it to the chrome for the frame.
+//! [`super::Viewport`] is how a tool knows a press was on the interface and not
+//! on the world. A docked panel is outside the viewport's rectangle because the
+//! root `Ui` shrinks around it. A window floats over the viewport and shrinks
+//! nothing, so without its rectangle a press on the password box would read as
+//! a press on the ground behind it, the same fault the docked panels had. Each
+//! popover returns its rectangle and the shell adds it to the viewport's
+//! floating list for the frame.
 
 use bevy::prelude::*;
 use bevy_egui::egui;
@@ -41,6 +42,8 @@ pub struct Popovers {
     pub publish: Popover,
     /// The name typed into the publish popover. Empty means the UTC stamp.
     pub patch_name: String,
+    /// Which tab of the server popover is showing.
+    pub server_tab: ServerTab,
     /// Whether `--server` has already opened the server popover. Its anchor is
     /// the button's rectangle, which does not exist until the bar has been
     /// drawn once, so the flag cannot be acted on at startup. `--projects`
@@ -143,7 +146,8 @@ impl Popovers {
     }
 }
 
-/// Draw every open popover and return their rectangles for the chrome.
+/// Draw every open popover and return their rectangles for
+/// [`super::Viewport`]'s floating list.
 ///
 /// The windows are drawn against the context rather than into the root `Ui`,
 /// because they float over the panels and the docked regions must not shrink
@@ -189,7 +193,7 @@ pub fn draw(
     }
     if popovers.login.open {
         if let Some(response) = window(ctx, "playtest-login", popovers.login.under, |ui| {
-            who(ui, login);
+            who(ui, login, server, assets);
         }) {
             seen[1] = (true, response);
             rects.push(response);
@@ -199,8 +203,8 @@ pub fn draw(
     // table of choices with consequences: every row is a switch that saves
     // and empties the undo stack. So it sits in the middle with a backdrop,
     // and a press outside it lands on the backdrop and nothing else. For the
-    // same reason the whole viewport is reported as chrome while it is up,
-    // and `follow` is told the press was inside.
+    // same reason the whole viewport rectangle goes into the floating list
+    // while it is up, and `follow` is told the press was inside.
     if popovers.project.open {
         let mut ask_server = false;
         let response = egui::Modal::new(egui::Id::new("projects")).show(ctx, |ui| {
@@ -236,7 +240,7 @@ pub fn draw(
     }
     if popovers.server.open {
         if let Some(response) = window(ctx, "server", popovers.server.under, |ui| {
-            the_server(ui, session, assets, server, queue, standings, now, playing, step);
+            the_server(ui, &mut popovers.server_tab, session, assets, server, queue, standings, now, playing, step);
         }) {
             seen[3] = (true, response);
             rects.push(response);
@@ -270,7 +274,7 @@ fn the_patch(
     name: &mut String,
     session: &mut crate::session::EditSession,
     assets: &vale_client::assets::GameAssets,
-    server: &crate::server::settings::ServerSettings,
+    server: &mut crate::server::settings::ServerSettings,
     queue: &mut crate::server::queue::ServerQueue,
     step: &crate::server::datadir::Step,
     playing: bool,
@@ -290,8 +294,8 @@ fn the_patch(
             true => {
                 "One folder under the project's publish\\, holding everything a server and \
                  its players need with a README saying where each file goes. The client \
-                 archive is also written into this install's Data folder (the Server \
-                 panel's switch); the server and the database are not touched."
+                 archive is also written into this install's Data folder (the switch \
+                 below); the server and the database are not touched."
             }
         },
     );
@@ -327,6 +331,38 @@ fn the_patch(
             format!("Server tiles unchanged since patch {last} are taken from it rather than rebuilt."),
         ),
         None => theme::note(ui, "The first patch: every tile the project carries is built."),
+    }
+    // The two switches that change what a publish does, kept per project.
+    ui.add_space(6.0);
+    theme::heading(ui, "What a publish does");
+    if ui
+        .checkbox(&mut server.regenerate_tiles, "Regenerate the server's tiles")
+        .on_hover_text(
+            "Publish runs the four map tools over every tile this project changed since the \
+             last publish and writes the results into the server's maps, vmaps and mmaps. \
+             A terrain edit is a second of extraction and a navmesh build for the tile and \
+             its four neighbours; a moved building adds the vmap half of the whole map. Off \
+             for a publish that is about the client alone.",
+        )
+        .changed()
+    {
+        server.save(&assets.root);
+    }
+    // Whether the archive the tools read is also left in `Data\`. Off, the
+    // tools read a staged copy of the install and nothing on this machine
+    // changes; on, the archive goes where a client launched against this
+    // install reads it. See `ServerSettings::copy_archive`.
+    if ui
+        .checkbox(&mut server.copy_archive, "Copy the client archive into Data")
+        .on_hover_text(
+            "A publish, and a regeneration of the server's tiles, also write this \
+             project's Patch-<X>.MPQ into this install's Data folder, replacing the one \
+             the project wrote before. Off, they build it where the tools can read it \
+             and leave Data alone.",
+        )
+        .changed()
+    {
+        server.save(&assets.root);
     }
     let busy = queue.busy();
     let mut close = false;
@@ -375,222 +411,134 @@ fn the_patch(
     close
 }
 
-/// The server popover: where this machine's server is, and what this project
-/// has done to it.
+/// Which half of the server popover is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ServerTab {
+    /// What this project has done to the server, and the operations on it.
+    #[default]
+    Project,
+    /// Where this machine's server and its map tools are.
+    Setup,
+}
+
+/// The server popover: what this project has done to the server, and where
+/// this machine's server is.
 ///
-/// The panel has three kinds of section: where the server is, what a playtest
-/// does with it, and what this project has done to it. The third is
-/// [`super::sync`], which holds every server operation in one place. Which
-/// rows and which columns were written is the project's own `sql\` folder,
-/// which is plain text.
+/// The panel has two tabs. *This project* is what a person opens it for
+/// during work: the Apply on save switch, one block per subject with its
+/// Apply and Put back ([`super::sync`]), the regeneration of the server's
+/// tiles, and the migration. *Setup* is set once per machine: the
+/// `mangosd.conf` the connection is read from, and the folder of the four
+/// vmangos map tools. The line above the tabs says whether there is a
+/// database, so the answer to the most common question is on both tabs.
 ///
-/// The panel is on the top bar rather than in the project dialog, where it
-/// first was. The connection is a setting of this machine and not of the
-/// project, so it did not belong in a per-project window; and the first
-/// question asked of the feature was where its configuration was, so it was
-/// moved to where the bar shows it.
+/// Two kinds of control are not here. The publish switches (regenerate the
+/// server's tiles, copy the client archive into `Data\`) are in the publish
+/// popover, beside the button they change. The query cache switch is in the
+/// playtest login popover, since it changes what a playtest's client does
+/// and nothing about the server.
+///
+/// The panel is on the top bar rather than in the project dialog. The
+/// connection is a setting of this machine and not of the project, so it does
+/// not belong in a per-project window.
+#[allow(clippy::too_many_arguments)]
 fn the_server(
     ui: &mut egui::Ui,
+    tab: &mut ServerTab,
     session: &mut crate::session::EditSession,
     assets: &vale_client::assets::GameAssets,
     server: &mut crate::server::settings::ServerSettings,
     // The queue an Apply, a Put back and the Test button go on. See
     // [`crate::server::queue`].
     queue: &mut crate::server::queue::ServerQueue,
-    // Where each subject last stood. This is a cache and not a fact: the panel
-    // is drawn sixty times a second and one of its answers reads a whole DBC.
-    // See [`super::sync::Standings`].
+    // Where each subject last stood, cached between frames: the panel is drawn
+    // sixty times a second and one of its answers reads a whole DBC. See
+    // [`super::sync::Standings`].
     standings: &mut super::sync::Standings,
     now: f64,
     playing: bool,
     step: &crate::server::datadir::Step,
 ) {
-    use crate::server::settings::Source;
-
-    ui.set_width(520.0);
-    ui.label(egui::RichText::new("The server").strong().size(14.0));
-    theme::note(
-        ui,
-        "vmangos reads its world from a database, not from the archives — so an edit to a \
-         spell is a file for the client and a row for the server. A save writes both.",
-    );
-    ui.add_space(8.0);
-
-    // ---- where it is.
-    theme::heading(ui, "Where it is");
-    let found = server.resolve();
-    let from_env = matches!(found, Some((_, Source::Env(_))));
+    ui.set_width(540.0);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("mangosd.conf").color(theme::INK_DIM));
-        let field = ui.add_enabled(
-            !from_env,
-            egui::TextEdit::singleline(&mut server.conf)
-                .desired_width(300.0)
-                .hint_text("C:\\MaNGOS"),
-        );
-        // The setting is written when the box loses focus, not on every
-        // keystroke. A file rewritten per character is written while the
-        // person is still deciding what to type.
-        if field.lost_focus() {
-            server.conf = server.conf.trim().to_string();
-            server.save(&assets.root);
-            server.tried = None;
+        ui.label(egui::RichText::new("The server").strong().size(14.0));
+        match server.resolve() {
+            Some((at, source)) => {
+                ui.label(
+                    egui::RichText::new(format!("connected to {}", at.line()))
+                        .small()
+                        .color(theme::GOOD),
+                )
+                .on_hover_text(format!("From {}.", source.line()));
+            }
+            None => {
+                ui.label(
+                    egui::RichText::new("no database: a save writes sql\\ and applies nothing")
+                        .small()
+                        .color(theme::WARN),
+                );
+            }
         }
     });
-    theme::note(
-        ui,
-        "The folder or the file. Its WorldDatabase.Info line is the connection, so the \
-         password stays in the server's own conf and not in this editor.",
-    );
-
-    match &found {
-        Some((at, source)) => {
-            ui.label(
-                egui::RichText::new(format!("{}  ({})", at.line(), source.line()))
-                    .small()
-                    .color(theme::GOOD),
-            );
-        }
-        None => {
-            ui.label(
-                egui::RichText::new("no database — nothing is applied, only written to sql\\")
-                    .small()
-                    .color(theme::WARN),
-            );
-        }
-    }
-    // Say when the environment overrides the box, rather than leaving a field
-    // that accepts typing and does nothing. The precedence is in `settings`.
-    if from_env {
-        theme::note(
+    ui.add_space(4.0);
+    ui.allocate_ui(egui::vec2(ui.available_width(), 26.0), |ui| {
+        theme::segmented(
             ui,
-            "The environment is set and wins over this box, so the box is held. Unset \
-             VALE_WORLDDB and VALE_MANGOSD to use it.",
+            tab,
+            &[("This project", ServerTab::Project), ("Setup", ServerTab::Setup)],
+            |a, b| a == b,
         );
-    }
-
-    ui.horizontal(|ui| {
-        if ui
-            .add_enabled(found.is_some() && !queue.testing(), egui::Button::new("Test"))
-            .on_hover_text("Connect, count the rows, and change nothing.")
-            .on_disabled_hover_text("There is nowhere to connect to.")
-            .clicked()
-        {
-            // The test runs on a worker, so a server that is not answering
-            // holds the button and not the window. See
-            // [`crate::server::queue`].
-            if let Some((at, _)) = server.resolve() {
-                queue.test(at);
-            }
-        }
-        if let Some(done) = queue.tested() {
-            server.tried = Some(done);
-        }
-        if queue.testing() {
-            ui.label(
-                egui::RichText::new("connecting\u{2026}")
-                    .small()
-                    .color(theme::INK_DIM),
-            );
-        }
-        match &server.tried {
-            Some(Ok(line)) => {
-                ui.label(egui::RichText::new(line).small().color(theme::GOOD));
-            }
-            Some(Err(e)) => {
-                ui.label(egui::RichText::new(e).small().color(theme::BAD));
-            }
-            None => {}
-        }
     });
-
-    // ---- its tiles, which are files and not rows.
-    ui.add_space(10.0);
-    theme::heading(ui, "Its tiles");
-    let tools_from_env = std::env::var_os(vale_mangos::datadir::TOOLS_ENV).is_some();
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("vmangos tools").color(theme::INK_DIM));
-        let field = ui.add_enabled(
-            !tools_from_env,
-            egui::TextEdit::singleline(&mut server.tools)
-                .desired_width(300.0)
-                .hint_text("C:\\vmangos\\core\\bin\\Release"),
-        );
-        if field.lost_focus() {
-            server.tools = server.tools.trim().to_string();
-            server.save(&assets.root);
-        }
-    });
-    theme::note(
-        ui,
-        "The folder holding mapextractor, vmapextractor, VMapAssembler and \
-         MoveMapGenerator, a patched build. A Release build: the \
-         navmesh generator is minutes a tile optimised and unusable otherwise.",
-    );
-    if tools_from_env {
-        theme::note(
-            ui,
-            "VALE_VMANGOS_TOOLS is set and wins over this box, so the box is held.",
-        );
-    }
-    // The tools folder is checked once per folder, not once per frame: the
-    // check runs both extractors for their usage text. See
-    // `ServerSettings::tools_status`.
-    let asked = std::env::var(vale_mangos::datadir::TOOLS_ENV)
-        .unwrap_or_else(|_| server.tools.trim().to_string());
-    if server.tools_status.as_ref().map(|(dir, _)| dir.as_str()) != Some(asked.as_str()) {
-        let status = crate::server::datadir::tools(server).and_then(|tools| {
-            tools.check_patched()?;
-            Ok(format!(
-                "found, patched{}",
-                match (&tools.off_mesh, &tools.config) {
-                    (Some(_), Some(_)) => "; offmesh.txt and config.json found",
-                    (None, None) => {
-                        "; offmesh.txt and config.json not found — the navmesh is built \
-                         without them"
+    ui.add_space(6.0);
+    match tab {
+        ServerTab::Project => {
+            if server.resolve().is_none() {
+                ui.horizontal(|ui| {
+                    theme::note(ui, "No world database is set, so nothing can be applied.");
+                    if ui.small_button("Setup").clicked() {
+                        *tab = ServerTab::Setup;
                     }
-                    (Some(_), None) => "; config.json not found",
-                    (None, Some(_)) => "; offmesh.txt not found",
-                }
-            ))
-        });
-        server.tools_status = Some((asked, status));
-    }
-    match server.tools_status.as_ref().map(|(_, status)| status) {
-        Some(Ok(line)) => {
-            ui.label(egui::RichText::new(line).small().color(theme::GOOD));
+                });
+            }
+            this_project(ui, session, assets, server, queue, standings, now, playing, step);
         }
-        Some(Err(e)) => {
-            ui.label(egui::RichText::new(e).small().color(theme::WARN));
-        }
-        None => {}
+        ServerTab::Setup => setup(ui, assets, server, queue),
     }
-    match crate::server::datadir::data_dir(server) {
-        Ok(dir) => {
-            ui.label(
-                egui::RichText::new(format!("DataDir {}", dir.display()))
-                    .small()
-                    .color(theme::INK_DIM),
-            );
-        }
-        Err(e) => {
-            ui.label(egui::RichText::new(e).small().color(theme::WARN));
-        }
-    }
-    if ui
-        .checkbox(&mut server.regenerate_tiles, "Regenerate tiles on publish")
-        .on_hover_text(
-            "Publish runs the four tools over every tile this project changed since the \
-             last publish and writes the results into the server's maps, vmaps and mmaps. \
-             A terrain edit is a second of extraction and a navmesh build for the tile and \
-             its four neighbours; a moved building adds the vmap half of the whole map.",
-        )
-        .changed()
-    {
-        server.save(&assets.root);
-    }
-    // The tile step on its own, so it can be checked apart from the rest of a
-    // publish. The map window has the per-tile form of this button.
+}
+
+/// The *This project* tab: every server operation of the project, then the
+/// server's tiles and the migration.
+#[allow(clippy::too_many_arguments)]
+fn this_project(
+    ui: &mut egui::Ui,
+    session: &mut crate::session::EditSession,
+    assets: &vale_client::assets::GameAssets,
+    server: &mut crate::server::settings::ServerSettings,
+    queue: &mut crate::server::queue::ServerQueue,
+    standings: &mut super::sync::Standings,
+    now: f64,
+    playing: bool,
+    step: &crate::server::datadir::Step,
+) {
+    // Every server operation of the project. See [`super::sync`], whose
+    // module comment says why they are in one panel.
+    super::sync::project(
+        ui,
+        &mut super::sync::Work {
+            session,
+            assets,
+            server,
+            queue,
+            standings,
+            now,
+        },
+    );
+
+    // The server's tiles, which are files and not rows. The tile step on its
+    // own, so it can be checked apart from the rest of a publish; the map
+    // window has the per-tile form of this button.
+    ui.add_space(10.0);
+    theme::heading(ui, "Server tiles");
     let changed = standings.changed_tiles(session, assets, now);
     let busy = queue.busy();
     ui.horizontal(|ui| {
@@ -628,27 +576,12 @@ fn the_server(
     });
     theme::note(
         ui,
-        "One tile at a time is the map window's Server files button, on Edit WDT/ADT. \
-         The bar at the bottom says which step is running and how far along it is.",
+        "maps, vmaps and mmaps under the server's DataDir, built by the four map tools set \
+         under Setup. One tile at a time is the map window's Server files button, on Edit \
+         WDT/ADT.",
     );
-    // Whether the archive the tools read is also left in `Data\`. Off, the
-    // tools read a staged copy of the install and nothing on this machine
-    // changes; on, the archive goes where a client launched against this
-    // install reads it. See `ServerSettings::copy_archive`.
-    if ui
-        .checkbox(&mut server.copy_archive, "Copy the client archive into Data")
-        .on_hover_text(
-            "A publish, and a regeneration of the server's tiles, also write this \
-             project's Patch-<X>.MPQ into this install's Data folder, replacing the one \
-             the project wrote before. Off, they build it where the tools can read it \
-             and leave Data alone. Kept per project.",
-        )
-        .changed()
-    {
-        server.save(&assets.root);
-    }
 
-    // ---- what a publish hands over as rows.
+    // What a publish hands over as rows.
     ui.add_space(10.0);
     theme::heading(ui, "Migration");
     let released = crate::server::release::released(&session.project);
@@ -659,57 +592,203 @@ fn the_server(
         ),
         None => "no migration written yet".to_string(),
     };
-    ui.label(egui::RichText::new(last).small().color(theme::INK_DIM));
-    if ui
-        .button("Write migration")
-        .on_hover_text(
-            "Save every subject's rows, then write publish\\migrations\\<stamp>_world.sql in \
-             vmangos' own add_migration form, holding the change since this project's last \
-             migration. What Publish does for the rows, and nothing else. Nothing is \
-             written when nothing changed. Apply it with the mysql client.",
-        )
-        .clicked()
-    {
-        session.status = crate::server::release::migrate(session, assets);
-        standings.forget();
-    }
+    ui.horizontal(|ui| {
+        if ui
+            .button("Write migration")
+            .on_hover_text(
+                "Save every subject's rows, then write publish\\migrations\\<stamp>_world.sql in \
+                 vmangos' own add_migration form, holding the change since this project's last \
+                 migration. What Publish does for the rows, and nothing else. Nothing is \
+                 written when nothing changed. Apply it with the mysql client.",
+            )
+            .clicked()
+        {
+            session.status = crate::server::release::migrate(session, assets);
+            standings.forget();
+        }
+        ui.label(egui::RichText::new(last).small().color(theme::INK_DIM));
+    });
+}
 
-    // ---- what a playtest does with what it is told.
-    ui.add_space(10.0);
-    theme::heading(ui, "Playtesting");
-    if ui
-        .checkbox(&mut server.disable_caching, "Disable caching")
-        .on_hover_text(
-            "The client writes every query answer to WDB\\ and reads them back at the \
-             next login, so an edited creature, item or quest keeps its old name and its \
-             old stats. With caching off, a playtest starts with none of them and asks \
-             the server for everything it meets.",
-        )
-        .changed()
-    {
-        server.save(&assets.root);
-    }
+/// The *Setup* tab: where this machine's world database and map tools are.
+fn setup(
+    ui: &mut egui::Ui,
+    assets: &vale_client::assets::GameAssets,
+    server: &mut crate::server::settings::ServerSettings,
+    queue: &mut crate::server::queue::ServerQueue,
+) {
+    use crate::server::settings::Source;
+
     theme::note(
         ui,
-        "It costs one query per thing the character meets, and it is what makes a row \
-         edited here show up in the next playtest rather than after a restart.",
+        "vmangos reads its world from a database, not from the archives, so an edit to a \
+         spell is a file for the client and a row for the server. These two settings are \
+         this machine's and are kept in Edit\\server.txt, not in the project.",
     );
 
-    // ---- what this project has done to the server: every server operation.
-    // See [`super::sync`], whose module comment says why they are in one
-    // panel.
-    ui.add_space(10.0);
-    super::sync::project(
+    // ---- the world database.
+    theme::heading(ui, "World database");
+    let found = server.resolve();
+    let from_env = matches!(found, Some((_, Source::Env(_))));
+    setting_row(ui, "mangosd.conf", |ui| {
+        let field = ui.add_enabled(
+            !from_env,
+            egui::TextEdit::singleline(&mut server.conf)
+                .desired_width(ui.available_width() - 60.0)
+                .hint_text("C:\\MaNGOS"),
+        );
+        // The setting is written when the box loses focus, not on every
+        // keystroke. A file rewritten per character is written while the
+        // person is still deciding what to type.
+        if field.lost_focus() {
+            server.conf = server.conf.trim().to_string();
+            server.save(&assets.root);
+            server.tried = None;
+        }
+        if ui
+            .add_enabled(found.is_some() && !queue.testing(), egui::Button::new("Test"))
+            .on_hover_text("Connect, count the rows, and change nothing.")
+            .on_disabled_hover_text("There is nowhere to connect to.")
+            .clicked()
+        {
+            // The test runs on a worker, so a server that is not answering
+            // holds the button and not the window. See
+            // [`crate::server::queue`].
+            if let Some((at, _)) = server.resolve() {
+                queue.test(at);
+            }
+        }
+    });
+    theme::note(
         ui,
-        &mut super::sync::Work {
-            session,
-            assets,
-            server,
-            queue,
-            standings,
-            now,
-        },
+        "The folder or the file. Its WorldDatabase.Info line is the connection, so the \
+         password stays in the server's own conf and not in this editor.",
     );
+    match &found {
+        Some((at, source)) => {
+            ui.label(
+                egui::RichText::new(format!("{}  ({})", at.line(), source.line()))
+                    .small()
+                    .color(theme::GOOD),
+            );
+        }
+        None => {
+            ui.label(
+                egui::RichText::new("no database: nothing is applied, only written to sql\\")
+                    .small()
+                    .color(theme::WARN),
+            );
+        }
+    }
+    // Say when the environment overrides the box, rather than leaving a field
+    // that accepts typing and does nothing. The precedence is in `settings`.
+    if from_env {
+        theme::note(
+            ui,
+            "The environment is set and wins over this box, so the box is held. Unset \
+             VALE_WORLDDB and VALE_MANGOSD to use it.",
+        );
+    }
+    if let Some(done) = queue.tested() {
+        server.tried = Some(done);
+    }
+    if queue.testing() {
+        theme::waiting(ui, "connecting\u{2026}");
+    }
+    match &server.tried {
+        Some(Ok(line)) => {
+            ui.label(egui::RichText::new(line).small().color(theme::GOOD));
+        }
+        Some(Err(e)) => {
+            ui.label(egui::RichText::new(e).small().color(theme::BAD));
+        }
+        None => {}
+    }
+
+    // ---- the map tools, which build the server's tiles.
+    ui.add_space(10.0);
+    theme::heading(ui, "Map tools");
+    let tools_from_env = std::env::var_os(vale_mangos::datadir::TOOLS_ENV).is_some();
+    setting_row(ui, "vmangos tools", |ui| {
+        let field = ui.add_enabled(
+            !tools_from_env,
+            egui::TextEdit::singleline(&mut server.tools)
+                .desired_width(ui.available_width())
+                .hint_text("C:\\vmangos\\core\\bin\\Release"),
+        );
+        if field.lost_focus() {
+            server.tools = server.tools.trim().to_string();
+            server.save(&assets.root);
+        }
+    });
+    theme::note(
+        ui,
+        "The folder holding mapextractor, vmapextractor, VMapAssembler and \
+         MoveMapGenerator, a patched build. A Release build: the \
+         navmesh generator is minutes a tile optimised and unusable otherwise.",
+    );
+    if tools_from_env {
+        theme::note(
+            ui,
+            "VALE_VMANGOS_TOOLS is set and wins over this box, so the box is held.",
+        );
+    }
+    // The tools folder is checked once per folder, not once per frame: the
+    // check runs both extractors for their usage text. See
+    // `ServerSettings::tools_status`.
+    let asked = std::env::var(vale_mangos::datadir::TOOLS_ENV)
+        .unwrap_or_else(|_| server.tools.trim().to_string());
+    if server.tools_status.as_ref().map(|(dir, _)| dir.as_str()) != Some(asked.as_str()) {
+        let status = crate::server::datadir::tools(server).and_then(|tools| {
+            tools.check_patched()?;
+            Ok(format!(
+                "found, patched{}",
+                match (&tools.off_mesh, &tools.config) {
+                    (Some(_), Some(_)) => "; offmesh.txt and config.json found",
+                    (None, None) => {
+                        "; offmesh.txt and config.json not found; the navmesh is built \
+                         without them"
+                    }
+                    (Some(_), None) => "; config.json not found",
+                    (None, Some(_)) => "; offmesh.txt not found",
+                }
+            ))
+        });
+        server.tools_status = Some((asked, status));
+    }
+    match server.tools_status.as_ref().map(|(_, status)| status) {
+        Some(Ok(line)) => {
+            ui.label(egui::RichText::new(line).small().color(theme::GOOD));
+        }
+        Some(Err(e)) => {
+            ui.label(egui::RichText::new(e).small().color(theme::WARN));
+        }
+        None => {}
+    }
+    match crate::server::datadir::data_dir(server) {
+        Ok(dir) => {
+            ui.label(
+                egui::RichText::new(format!("DataDir {}", dir.display()))
+                    .small()
+                    .color(theme::INK_DIM),
+            );
+        }
+        Err(e) => {
+            ui.label(egui::RichText::new(e).small().color(theme::WARN));
+        }
+    }
+}
+
+/// One setting of the Setup tab: its name in a fixed column wide enough for
+/// the longest, then the control.
+fn setting_row(ui: &mut egui::Ui, label: &str, contents: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [96.0, ui.spacing().interact_size.y],
+            egui::Label::new(egui::RichText::new(label).color(theme::INK_DIM)).selectable(false),
+        );
+        contents(ui);
+    });
 }
 
 /// The project dialog: which project the edits go into, the other projects
@@ -720,17 +799,17 @@ fn the_server(
 /// for a new one.
 ///
 /// The open project is its own section at the top, because it is what a
-/// person opens the dialog to find out. In one flat list it was a row among
-/// rows, distinguished only by the word "open" where the others had a button.
-/// Under its name is its manifest (`super::manifest`): every file the folder
+/// person opens the dialog to find out. In one flat list it would be a row
+/// among rows, distinguished only by the word "open" where the others have a
+/// button. Under its name is its manifest (`super::manifest`): every file the folder
 /// holds and what each one changes against the archives, read once when the
 /// dialog opens. The other projects follow under their own heading, each with
 /// a count by kind, then the new-project box, so the three things the dialog
 /// does are three blocks in that order.
 ///
-/// Switching saves first. That is stated on the row rather than asked about:
-/// there is no case where somebody wants the work dropped, and a confirmation
-/// nobody reads is how work gets lost.
+/// Switching saves first. The row states this rather than asking: nobody
+/// switching projects wants the unsaved work dropped, and a confirmation that
+/// is clicked through unread can drop it.
 ///
 /// Clear files and Delete are gated. `crate::server::held::held_by` reads what
 /// the project has applied to the server from its revert files; the
@@ -1131,16 +1210,16 @@ fn ago(now: std::time::SystemTime, then: std::time::SystemTime) -> String {
 ///
 /// The contents scroll rather than running off the bottom of the screen. A
 /// popover sits at a fixed position under its button and grows downward to
-/// hold its contents, so on a short viewport its lower part is off screen with
-/// nothing to say so. The server panel is four subjects with an Apply, a Put
-/// back and a paragraph each, and on a 1000-point screen `Quests`, the last of
-/// the four, was below the bottom edge; a panel that ends in whitespace looks
-/// complete, so the report was that quests appeared to have no Apply.
+/// hold its contents, so on a short viewport its lower part would be off
+/// screen with nothing to say so; a panel cut off at the bottom edge looks
+/// complete, and its last subject looks as if it had no Apply.
 ///
-/// The height cap is the room between the button and the bottom edge, so a
-/// panel that fits is laid out as before and no scrollbar appears. The two
-/// popovers with a list inside keep their own inner caps; those bound a long
-/// list, this bounds a short screen.
+/// The height is the room between the button and the bottom edge: a panel
+/// that fits is laid out at its own height with no scrollbar, and a panel
+/// that does not is exactly that tall and scrolls. Without the minimum a
+/// scroll area inside a window that sizes itself is drawn at a fraction of
+/// the room. The two popovers with a list inside keep their own inner caps;
+/// those bound a long list, this bounds a short screen.
 fn window(
     ctx: &egui::Context,
     id: &str,
@@ -1161,7 +1240,9 @@ fn window(
         )
         .show(ctx, |ui| {
             egui::ScrollArea::vertical()
+                .id_salt(id)
                 .max_height(room)
+                .min_scrolled_height(room)
                 .show(ui, contents);
         })
         .map(|response| response.response.rect)
@@ -1348,17 +1429,23 @@ fn typed(ui: &mut egui::Ui, text: &mut String, hint: &str) -> bool {
     field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
 }
 
-/// The playtest login popover: who a playtest logs in as, and whether it shows
-/// the login screen.
+/// The playtest login popover: who a playtest logs in as, whether it shows the
+/// login screen, and whether its client caches query answers.
 ///
-/// Nothing in it is a setting of the editor's own. The account is
+/// The login fields are not settings of the editor's own. The account is
 /// `WTF\Config.wtf`'s `accountName`, the character is `VALE_CHARACTER` or
-/// `lastCharacterIndex`, and the password is the one stand-in this project
-/// has. Nothing is written back. The popover lets all three be changed for the
-/// session without a restart, which an editor needs because it logs in
-/// repeatedly.
-fn who(ui: &mut egui::Ui, login: &mut Login) {
-    ui.set_min_width(260.0);
+/// `lastCharacterIndex`, and the password is `VALE_PASSWORD`, the one stand-in
+/// this project has. Nothing is written back. The popover lets all three be
+/// changed for the session without a restart, which an editor needs because
+/// it logs in repeatedly. The Disable caching switch is the exception: it is
+/// `ServerSettings::disable_caching` and is saved with the other switches.
+fn who(
+    ui: &mut egui::Ui,
+    login: &mut Login,
+    server: &mut crate::server::settings::ServerSettings,
+    assets: &vale_client::assets::GameAssets,
+) {
+    ui.set_min_width(300.0);
     theme::heading(ui, "Log in as");
     egui::Grid::new("playtest-login-grid")
         .num_columns(2)
@@ -1389,6 +1476,29 @@ fn who(ui: &mut egui::Ui, login: &mut Login) {
         ui,
         "neither is written down here: the account comes from Config.wtf and \
          the password is not stored at all",
+    );
+
+    // The query cache is a switch of the playtest's client, not of the
+    // server, so it is here beside the login. It is kept per project with the
+    // other switches. See `ServerSettings::disable_caching`.
+    ui.add_space(6.0);
+    theme::heading(ui, "Query cache");
+    if ui
+        .checkbox(&mut server.disable_caching, "Disable caching")
+        .on_hover_text(
+            "The client writes every query answer to WDB\\ and reads them back at the \
+             next login, so an edited creature, item or quest keeps its old name and its \
+             old stats. With caching off, a playtest starts with none of them and asks \
+             the server for everything it meets.",
+        )
+        .changed()
+    {
+        server.save(&assets.root);
+    }
+    theme::note(
+        ui,
+        "With caching disabled, each thing the character meets costs one query, and a \
+         row edited here shows up in the next playtest.",
     );
 }
 

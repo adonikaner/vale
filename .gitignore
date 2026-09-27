@@ -10,7 +10,10 @@
 # Edit folder of Vale IDE
 /Edit
 
+# Client folders
 /Data
+/WTF
+/Interface
 
 # Python bytecode.
 __pycache__/

@@ -1,10 +1,10 @@
 //! What a project changes about a creature's behaviour, as SQL, applied when
 //! a person asks, and live on a reload of each table written.
 //!
-//! ## Three tables, two shapes
+//! ## How events, spell lists, texts and scripts are written
 //!
-//! `creature_ai_events` and `creature_spells` are keyed rows in the project's
-//! store, on [`super::loot`]'s terms: a created row is a `DELETE` and an
+//! `creature_ai_events`, `creature_spells` and `broadcast_text` are keyed rows
+//! in the project's store, on [`super::loot`]'s terms: a created row is a `DELETE` and an
 //! `INSERT`, an edited one an `UPDATE`, a removed one a `DELETE`. The eleven
 //! `*_scripts` tables have no key, so a script is the unit and lives in the
 //! session's second store (`EditSession::server_scripts`), written whole on
@@ -19,11 +19,13 @@
 //! tables reload under their own names and the other six are read at start
 //! (`vale_mangos::scripts::Table::reload`). A creature already in the
 //! world keeps the events and the list it spawned with until it respawns.
+//! `broadcast_text` has no reload and is read at start, so an applied text is
+//! said after the server restarts.
 //!
 //! ```text
 //! sql\behaviour.sql          what this project does to the behaviour tables
 //! sql\behaviour-revert.sql   what puts those rows back
-//! server\rows.txt            the store the events and lists are written from
+//! server\rows.txt            the store the events, lists and texts are written from
 //! server\scripts.txt         the store the scripts are written from
 //! ```
 
@@ -31,7 +33,7 @@ use crate::session::EditSession;
 use vale_mangos::conn::Db;
 use vale_mangos::row::{self, Assignment, Key, Life};
 use vale_mangos::scripts::Script;
-use vale_mangos::{creaturespells, eventai, scripts};
+use vale_mangos::{broadcast, creaturespells, eventai, scripts};
 use bevy::prelude::*;
 
 pub use super::creatures::Undo;
@@ -47,12 +49,14 @@ pub const REVERT_VPATH: &str = "sql\\behaviour-revert.sql";
 pub const SCRIPTS_VPATH: &str = "server\\scripts.txt";
 
 /// The tables the row store may hold for this subject.
-pub const ROW_TABLES: [&str; 2] = [eventai::TABLE, creaturespells::TABLE];
+pub const ROW_TABLES: [&str; 3] = [eventai::TABLE, creaturespells::TABLE, broadcast::TABLE];
 
-/// Whether a table is this subject's: an event, a spell list or a script.
+/// Whether a table is this subject's: an event, a spell list, a text or a
+/// script.
 pub fn owns(table: &str) -> bool {
     eventai::table_named(table).is_some()
         || creaturespells::table_named(table).is_some()
+        || broadcast::table_named(table).is_some()
         || scripts::table_named(table).is_some()
 }
 
@@ -70,6 +74,7 @@ impl Row {
     pub fn statements(&self) -> Vec<String> {
         match self.table {
             eventai::TABLE => eventai::statements(&self.key, self.life, &self.changes),
+            broadcast::TABLE => broadcast::statements(&self.key, self.life, &self.changes),
             _ => creaturespells::statements(&self.key, self.life, &self.changes),
         }
     }
@@ -169,9 +174,14 @@ pub fn plan_from(edits: &row::Edits, scripts: &scripts::Scripts) -> Plan {
     let mut out = Plan::default();
     for (table, key, row) in edits.rows() {
         let (table, columns): (&'static str, &'static [vale_mangos::schema::Column]) =
-            match (eventai::table_named(table), creaturespells::table_named(table)) {
-                (Some(table), _) => (table, &eventai::COLUMNS),
-                (_, Some(table)) => (table, &creaturespells::COLUMNS),
+            match (
+                eventai::table_named(table),
+                creaturespells::table_named(table),
+                broadcast::table_named(table),
+            ) {
+                (Some(table), _, _) => (table, &eventai::COLUMNS),
+                (_, Some(table), _) => (table, &creaturespells::COLUMNS),
+                (_, _, Some(table)) => (table, &broadcast::COLUMNS),
                 _ => continue,
             };
         let mut changes = Vec::new();
@@ -241,7 +251,8 @@ pub fn write_sql(session: &mut EditSession) -> Result<usize, String> {
          --   .reload creature_spells\n\
          --   .reload gossip_scripts, generic_scripts, event_scripts,\n\
          --           quest_start_scripts, creature_spells_scripts, as written\n\
-         -- The other script tables are read at start, so restart the server for them.\n\n",
+         -- The other script tables and broadcast_text are read at start, so restart\n\
+         -- the server for them.\n\n",
         session.project.name
     );
     for row in &plan.rows {
@@ -427,6 +438,7 @@ pub fn apply_step(
 fn undo_of_a_row(db: &mut Db, row: &Row) -> Result<Option<Vec<String>>, String> {
     let (exists, read) = match row.table {
         eventai::TABLE => (eventai::exists_query(&row.key), eventai::row_query(&row.key)),
+        broadcast::TABLE => (broadcast::exists_query(&row.key), broadcast::row_query(&row.key)),
         _ => (
             creaturespells::exists_query(&row.key),
             format!(
@@ -640,6 +652,41 @@ mod tests {
         assert_eq!(plan.line(), "1 row(s) edited, 1 created, 1 script(s) replaced");
         let empty = plan_from(&Edits::default(), &scripts::Scripts::default());
         assert!(empty.is_empty());
+    }
+
+    /// An event, a spell list and a text made for a creature this project
+    /// creates, as the behaviour tool makes them, are written whole and
+    /// refused nowhere: not here, and not by the creature writer, which walks
+    /// the same store. An edit to a text the database holds is an `UPDATE`.
+    #[test]
+    fn a_new_creatures_event_and_list_are_written() {
+        let entry = vale_mangos::creature::RESERVED_ENTRY_BASE;
+        let mut edits = Edits::default();
+        let event = eventai::Event::new(eventai::next_id(entry, &[]), entry);
+        let list = creaturespells::List::new(entry, "a new list");
+        let text = broadcast::Text::new(90_001, "Stand fast!");
+        for (table, key, assignments) in [
+            (eventai::TABLE, event.key(), event.assignments()),
+            (creaturespells::TABLE, list.key(), list.assignments()),
+            (broadcast::TABLE, text.key(), text.assignments()),
+        ] {
+            let mut row = RowEdit { life: Life::Insert, ..RowEdit::default() };
+            for change in assignments {
+                row.columns.insert(change.column.to_string(), change.value);
+            }
+            edits.set_row_line(table, &key, Some(&row.to_line()));
+        }
+        edits.set(broadcast::TABLE, &broadcast::key(1234), "male_text", Some("'Hold the line'".into()));
+        let plan = plan_from(&edits, &scripts::Scripts::default());
+        assert!(plan.refused.is_empty(), "{:?}", plan.refused);
+        assert_eq!(plan.rows.len(), 4);
+        let sql = plan.statements();
+        assert!(sql.iter().any(|s| s.starts_with("INSERT INTO `broadcast_text`") && s.contains("'Stand fast!'")), "{sql:?}");
+        assert!(sql.contains(&"UPDATE `broadcast_text` SET `male_text` = 'Hold the line' WHERE `entry` = 1234;".to_string()), "{sql:?}");
+        assert!(owns(broadcast::TABLE));
+        let creatures = super::super::creatures::plan_from(&edits, &Default::default());
+        assert!(creatures.refused.is_empty(), "{:?}", creatures.refused);
+        assert!(creatures.rows.is_empty());
     }
 
     /// A created row missing a column is refused by name, and a key column

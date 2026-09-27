@@ -1,11 +1,13 @@
 //! A *patch* is the folder a publish writes: every file a server and its
 //! players need, in one place, with a note saying where each file goes.
 //!
-//! ## A publish writes a folder and changes nothing else
+//! ## What a publish writes, and what it leaves alone
 //!
 //! A patch is distributed, not applied. The person publishing hands the files
 //! to a server and to players. A publish does not write to this machine's
-//! `Data\`, `DataDir` or database. The development loop uses other routes: a
+//! `DataDir` or database, and writes its client archive into this install's
+//! `Data\` only when the project's *Copy the client archive into Data* switch
+//! is on. The development loop uses other routes: a
 //! save applies rows, and the "Server files" button on the map window and
 //! "Regenerate changed tiles" on the Server panel write the live server's
 //! folders. A publish is for finished work.
@@ -24,6 +26,12 @@
 //!
 //! `<name>` is the typed name, or the UTC stamp when none is typed. Publishing
 //! under an existing name rewrites that folder.
+//!
+//! `server\5875\dbc\` holds only the tables the server reads as files. A client
+//! table the project edits that the server reads as rows is not copied there:
+//! `Spell.dbc` is `spell_template` and `TaxiNodes.dbc` is `taxi_nodes`. The
+//! README's `server\5875\dbc\` section names each such table and points it at
+//! `server\sql\`, where its edits are rows of the migration.
 //!
 //! ## Every patch holds the whole project
 //!
@@ -450,6 +458,33 @@ fn collect(staged: &Path, into: &Path, outcome: &Outcome) -> Result<(), String> 
     Ok(())
 }
 
+/// The README lines for the client tables the project edits that the server
+/// reads as rows rather than as files: one line per table of
+/// `super::rows::MAPPED` that `files` (the project's virtual paths) carries.
+///
+/// Such a table is not copied to `server\5875\dbc\`, because vmangos never
+/// opens the file: `Spell.dbc` is `spell_template` on the server and
+/// `TaxiNodes.dbc` is `taxi_nodes`. Its edit reaches the server as rows of
+/// the migration in `server\sql\`. Without this line the dbc folder reads
+/// "none" for a project whose only edit is a spell, and the spell looks as
+/// if it had not been published.
+fn sent_as_rows(files: &[String]) -> String {
+    let mut out = String::new();
+    for (dbc, table) in super::rows::MAPPED {
+        let wanted = format!("DBFilesClient\\{dbc}.dbc");
+        let carried = files
+            .iter()
+            .any(|vpath| vpath.replace('/', "\\").eq_ignore_ascii_case(&wanted));
+        if carried {
+            out.push_str(&format!(
+                "  {dbc}.dbc is not copied here: the server reads {table} from the world\n\
+                 \x20   database, so this project's {dbc}.dbc edits are rows in server\\sql\\.\n"
+            ));
+        }
+    }
+    out
+}
+
 /// Writes the README and the manifest, once the folder holds every other
 /// file.
 fn finish(project: &Project, head: &Head, outcome: Option<&Outcome>) -> Result<(), String> {
@@ -489,17 +524,19 @@ fn finish(project: &Project, head: &Head, outcome: Option<&Outcome>) -> Result<(
     }
     text.push_str("server\\5875\\dbc\\\n");
     match head.dbcs.is_empty() {
-        true => text.push_str("  (none: this project changes no table the server reads as a file)\n\n"),
+        true => text.push_str("  (none: this project changes no table the server reads as a file)\n"),
         false => {
             for name in &head.dbcs {
                 text.push_str(&format!("  {name}\n"));
             }
             text.push_str(
                 "    -> DataDir\\5875\\dbc\\ on the server (DataDir is in mangosd.conf). Read at\n\
-                 \x20      startup: restart the server.\n\n",
+                 \x20      startup: restart the server.\n",
             );
         }
     }
+    text.push_str(&sent_as_rows(&project.files()));
+    text.push('\n');
     text.push_str(&format!(
         "server\\maps\\ ({maps} files), server\\vmaps\\ ({vmaps}), server\\mmaps\\ ({mmaps})\n"
     ));
@@ -623,6 +660,22 @@ pub fn on_the_command_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A spell edit is named in the README's dbc section as rows in
+    /// `server\sql\`, and a table the server reads as a file is not.
+    #[test]
+    fn a_table_the_server_reads_as_rows_is_pointed_at_the_sql() {
+        let files = vec![
+            "DBFilesClient\\Spell.dbc".to_string(),
+            "DBFilesClient/SpellRange.dbc".to_string(),
+            "World\\Maps\\Azeroth\\Azeroth_32_48.adt".to_string(),
+        ];
+        let said = sent_as_rows(&files);
+        assert!(said.contains("Spell.dbc is not copied here: the server reads spell_template"), "{said}");
+        assert!(!said.contains("SpellRange") && !said.contains("TaxiNodes"), "{said}");
+        assert_eq!(sent_as_rows(&["dbfilesclient/taxinodes.dbc".to_string()]).lines().count(), 2);
+        assert!(sent_as_rows(&[]).is_empty());
+    }
 
     #[test]
     fn a_patch_name_is_a_folder_name_that_is_not_hidden() {

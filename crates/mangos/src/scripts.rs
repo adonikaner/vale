@@ -43,6 +43,13 @@
 //! `target_param2` narrowing the search for the types that search.
 //! `data_flags` is [`DATA_FLAGS`], and `condition_id` a row of `conditions`.
 //!
+//! `delay` is seconds after the script starts: `Map::ScriptsStart`
+//! (`Map.cpp:2541`) adds it to the game clock, which counts seconds.
+//! `creature_ai_scripts` is the exception. An event runs every row of its
+//! script at once, and the loader logs a row with a delay as unsupported
+//! (`ScriptMgr.cpp:1631`); [`waits`] says which tables take one. An event
+//! that waits starts a `generic_scripts` script, whose rows do.
+//!
 //! ## Live on a reload
 //!
 //! `.reload creature_ai_events` re-reads `creature_ai_scripts` first and says
@@ -257,6 +264,27 @@ pub fn target(value: u32) -> Option<&'static Target> {
     TARGETS.iter().find(|target| target.value == value)
 }
 
+/// Whether a table's rows may wait: `delay` is honoured in every script table
+/// but `creature_ai_scripts`, whose rows run at once. See the module comment.
+pub fn waits(table: &str) -> bool {
+    table != CREATURE_AI
+}
+
+/// A target as the object of a sentence: `the current victim`, `the provided
+/// target`, `target type 40` for one this list does not name.
+pub fn target_phrase(value: u32) -> String {
+    match target(value) {
+        Some(target) => {
+            let name = target.name.to_lowercase();
+            match name.starts_with("the ") {
+                true => name,
+                false => format!("the {name}"),
+            }
+        }
+        None => format!("target type {value}"),
+    }
+}
+
 /// One column a command reads: what it is called in `ScriptCommands.h`, and
 /// what a form draws it as.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -290,7 +318,7 @@ pub struct Command {
     pub source: &'static str,
     /// What `datalong` to `datalong4` mean, or `None` for one not read.
     pub datalong: [Option<Param>; 4],
-    /// …and `dataint` to `dataint4`.
+    /// What `dataint` to `dataint4` mean, or `None` for one not read.
     pub dataint: [Option<Param>; 4],
     /// Whether `x`, `y`, `z` and `o` are read.
     pub coords: bool,
@@ -429,7 +457,7 @@ pub fn command(value: u32) -> Option<&'static Command> {
 /// BY`) and `comments` (never read by the server, kept for the person).
 pub const COLUMNS: [Column; 22] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "which script the row belongs to" },
-    Column { name: "delay", kind: Kind::Unsigned, group: Group::Identity, about: "milliseconds after the script starts" },
+    Column { name: "delay", kind: Kind::Seconds, group: Group::Identity, about: "seconds after the script starts; 0 in creature_ai_scripts" },
     Column { name: "priority", kind: Kind::Unsigned, group: Group::Identity, about: "order among rows with one delay" },
     Column { name: "command", kind: Kind::Choice(&COMMAND_VALUES), group: Group::Behaviour, about: "what the row does" },
     Column { name: "datalong", kind: Kind::Unsigned, group: Group::Behaviour, about: "named by the command" },
@@ -649,6 +677,190 @@ impl ScriptRow {
         }
     }
 
+    /// The row as a sentence: `Say: "Stand fast!"`, `Cast Shoot on the
+    /// current victim`, `Set phase to 2`. `names` resolves the spells,
+    /// creatures, emotes and texts a column names; `broadcast_text` is the
+    /// table a Talk row's text is looked up under. A command with no sentence
+    /// of its own lists the columns it reads, named, as [`ScriptRow::summary`]
+    /// does.
+    pub fn sentence(&self, names: crate::schema::Names<'_>) -> String {
+        let d = self.datalong;
+        let named = |table: &str, id: u32| match id {
+            0 => "nothing".to_string(),
+            id => names(table, id).unwrap_or_else(|| format!("{} {id}", crate::schema::ref_word(table))),
+        };
+        let on_off = |value: u32| match value {
+            0 => "off",
+            _ => "on",
+        };
+        let body = match self.command {
+            0 => {
+                let how = value_word(&CHAT_TYPES, d[0]);
+                let texts: Vec<u32> = self.dataint.iter().filter(|id| **id > 0).map(|id| *id as u32).collect();
+                let quoted = |id: u32| match names("broadcast_text", id) {
+                    Some(text) => format!("\u{201c}{text}\u{201d}"),
+                    None => format!("text {id}"),
+                };
+                match texts.as_slice() {
+                    [] => format!("{how}: no text"),
+                    [one] => format!("{how}: {}", quoted(*one)),
+                    [first, ..] => format!("{how} one of {} texts: {}, \u{2026}", texts.len(), quoted(*first)),
+                }
+            }
+            1 => format!("Emote {}", named("Emotes", d[0])),
+            3 => format!(
+                "Move to {}, {}, {}",
+                crate::sql::float(self.x),
+                crate::sql::float(self.y),
+                crate::sql::float(self.z)
+            ),
+            10 => match d[1] {
+                0 => format!("Summon {}", named("creature_template", d[0])),
+                despawn => format!(
+                    "Summon {} for {}",
+                    named("creature_template", d[0]),
+                    crate::schema::span_words(u64::from(despawn))
+                ),
+            },
+            14 => format!("Remove {}", named("Spell", d[0])),
+            15 => match d[1] {
+                0 => format!("Cast {}", named("Spell", d[0])),
+                flags => format!("Cast {} ({})", named("Spell", d[0]), mask_words(&CAST_FLAGS, flags).to_lowercase()),
+            },
+            18 => match d[0] {
+                0 => "Despawn".to_string(),
+                delay => format!("Despawn after {}", crate::schema::span_words(u64::from(delay))),
+            },
+            20 => format!(
+                "Movement: {}",
+                MOVEMENT_TYPES.get(d[0] as usize).copied().unwrap_or("unknown type")
+            ),
+            22 => match d[0] {
+                0 => "Restore the template's faction".to_string(),
+                faction => format!("Set faction to {}", named("FactionTemplate", faction)),
+            },
+            25 => match d[0] {
+                0 => "Walk".to_string(),
+                _ => "Run".to_string(),
+            },
+            26 => "Attack".to_string(),
+            33 => "Evade".to_string(),
+            39 => {
+                let ids: Vec<String> = d.iter().filter(|id| **id != 0).map(|id| id.to_string()).collect();
+                match ids.len() {
+                    0 => "Start no generic script".to_string(),
+                    1 => format!("Start generic script {}", ids[0]),
+                    _ => format!("Start one of generic scripts {}", ids.join(", ")),
+                }
+            }
+            42 => format!("Melee attack {}", on_off(d[0])),
+            43 => format!("Combat movement {}", on_off(d[0])),
+            44 => match d[1] {
+                1 => format!("Raise the phase by {}", d[0]),
+                2 => format!("Lower the phase by {}", d[0]),
+                _ => format!("Set phase to {}", d[0]),
+            },
+            45 => {
+                let phases: Vec<String> = d.iter().map(|phase| phase.to_string()).collect();
+                format!("Set phase to one of {}", phases.join(", "))
+            }
+            46 => format!("Set phase to one of {} to {}", d[0], d[1]),
+            47 => match d[0] {
+                0 => "Flee".to_string(),
+                _ => "Flee for help".to_string(),
+            },
+            48 => format!(
+                "Deal {}{} damage",
+                d[0],
+                match d[1] {
+                    0 => "",
+                    _ => "%",
+                }
+            ),
+            50 => "Call for help".to_string(),
+            52 => match (d[0], d[1]) {
+                (0, _) => "Invincibility off".to_string(),
+                (health, 0) => format!("Cannot drop below {health} health"),
+                (health, _) => format!("Cannot drop below {health}% health"),
+            },
+            71 => "Respawn".to_string(),
+            73 => "Stop combat".to_string(),
+            74 => format!("Add {}", named("Spell", d[0])),
+            _ => self.described(names),
+        };
+        match self.target_words(names) {
+            Some(target) => format!("{body} on {target}"),
+            None => body,
+        }
+    }
+
+    /// Who the row acts on, when the command reads a target and the target is
+    /// not the one the script was started with: `the current victim`,
+    /// `the nearest Defias Thug within 30 yards`.
+    fn target_words(&self, names: crate::schema::Names<'_>) -> Option<String> {
+        let command = command(self.command)?;
+        if !command.targets || self.target_type == 0 {
+            return None;
+        }
+        let target = target(self.target_type)?;
+        let (a, b) = (self.target_param1, self.target_param2);
+        let entry = |table: &str| names(table, a).unwrap_or_else(|| format!("{} {a}", crate::schema::ref_word(table)));
+        let within = match b {
+            0 => String::new(),
+            yards => format!(" within {yards} yards"),
+        };
+        Some(match self.target_type {
+            10 => format!("the nearest {}{within}", entry("creature_template")),
+            13 => format!("the nearest {}{within}", entry("gameobject_template")),
+            28 => format!("a random {}{within}", entry("creature_template")),
+            29 => format!("a random {}{within}", entry("gameobject_template")),
+            _ => {
+                let phrase = target_phrase(self.target_type);
+                match (target.param1.is_empty(), target.param2.is_empty()) {
+                    (true, _) => phrase,
+                    (false, true) => format!("{phrase} ({} {a})", target.param1),
+                    (false, false) => format!("{phrase} ({} {a}, {} {b})", target.param1, target.param2),
+                }
+            }
+        })
+    }
+
+    /// [`ScriptRow::summary`] with the references named.
+    fn described(&self, names: crate::schema::Names<'_>) -> String {
+        let Some(command) = command(self.command) else {
+            return format!("command {}", self.command);
+        };
+        let word = |kind: Kind, value: u32| match kind {
+            Kind::Ref(table) if value != 0 => names(table, value).unwrap_or_else(|| value.to_string()),
+            kind => named(kind, value),
+        };
+        let mut parts: Vec<String> = Vec::new();
+        for (at, param) in command.datalong.iter().enumerate() {
+            if let Some(param) = param {
+                let value = self.datalong[at];
+                if value != 0 || at == 0 {
+                    parts.push(format!("{} {}", param.name, word(param.kind, value)));
+                }
+            }
+        }
+        for (at, param) in command.dataint.iter().enumerate() {
+            if let Some(param) = param {
+                let value = self.dataint[at];
+                if value != 0 {
+                    let shown = match value < 0 {
+                        true => value.to_string(),
+                        false => word(param.kind, value as u32),
+                    };
+                    parts.push(format!("{} {shown}", param.name));
+                }
+            }
+        }
+        match parts.is_empty() {
+            true => command.name.to_string(),
+            false => format!("{}: {}", command.name, parts.join(", ")),
+        }
+    }
+
     /// The row as one line of text, for the undo stack: the 21 values
     /// separated by tabs, the comment last so that it may hold anything but
     /// a tab or a line break.
@@ -663,7 +875,8 @@ impl ScriptRow {
         out.join("\t")
     }
 
-    /// …and back. `None` for a line that does not read.
+    /// A row read from a line [`ScriptRow::to_line`] wrote. `None` for a line
+    /// that does not read.
     pub fn from_line(line: &str) -> Option<ScriptRow> {
         let fields: Vec<&str> = line.split('\t').collect();
         if fields.len() < 20 {
@@ -693,6 +906,28 @@ fn named(kind: Kind, value: u32) -> String {
     }
 }
 
+/// `MovementGeneratorType` in words, by value: what the Movement command's
+/// `movement_type` picks.
+const MOVEMENT_TYPES: [&str; 17] = [
+    "idle",
+    "random",
+    "waypoint",
+    "confused",
+    "chase",
+    "home",
+    "flight",
+    "point",
+    "fleeing",
+    "distract",
+    "assistance",
+    "timed flee",
+    "follow",
+    "effect",
+    "patrol",
+    "charge",
+    "distancing",
+];
+
 /// Every row under one id of one table, in the order the server runs them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Script {
@@ -719,13 +954,14 @@ impl Script {
         rows
     }
 
-    /// The rows as one line of text, for the undo stack: one row per `;`.
+    /// The rows as one line of text, for the undo stack: the rows'
+    /// [`ScriptRow::to_line`]s separated by U+001E.
     pub fn to_line(&self) -> String {
         self.rows.iter().map(ScriptRow::to_line).collect::<Vec<_>>().join("\u{1e}")
     }
 
-    /// …and back. A row that does not read is dropped rather than failing
-    /// the script.
+    /// A script read from a line [`Script::to_line`] wrote. A row that does
+    /// not read is dropped rather than failing the script.
     pub fn from_line(table: &'static str, id: u32, line: &str) -> Script {
         let rows = line
             .split('\u{1e}')
@@ -734,6 +970,134 @@ impl Script {
             .collect();
         Script { table, id, rows }
     }
+
+    // --- steps ---------------------------------------------------------
+    //
+    // A step is one row of [`Script::sorted`], and `at` is its index there.
+    // The server orders rows by `(delay, priority)` and nothing else, so an
+    // order is changed by changing those two columns. Each operation below
+    // keeps the delays non-decreasing in step order and then settles the
+    // priorities (see `settle`), so the server's order is the order shown.
+
+    /// How long the server waits before step `at`, after the step before it
+    /// or after the start for the first: its delay less the previous delay.
+    pub fn wait_before(&self, at: usize) -> u32 {
+        let rows = self.sorted();
+        let Some(row) = rows.get(at) else { return 0 };
+        match at {
+            0 => row.delay,
+            _ => row.delay.saturating_sub(rows[at - 1].delay),
+        }
+    }
+
+    /// The script with the wait before step `at` set to `wait` seconds.
+    /// Step `at` and every step after it move by the same amount, so the
+    /// waits between the later steps are unchanged.
+    pub fn with_wait(&self, at: usize, wait: u32) -> Script {
+        let mut rows = self.sorted();
+        if at >= rows.len() {
+            return self.clone();
+        }
+        let shift = i64::from(wait) - i64::from(self.wait_before(at));
+        for row in rows.iter_mut().skip(at) {
+            row.delay = (i64::from(row.delay) + shift).max(0) as u32;
+        }
+        self.with_rows(rows)
+    }
+
+    /// The script with step `at` swapped with the step before it (`up`) or
+    /// after it. The two steps exchange everything but their delays, so the
+    /// timeline keeps its waits and the two actions trade places on it.
+    pub fn with_step_moved(&self, at: usize, up: bool) -> Script {
+        let mut rows = self.sorted();
+        let other = match up {
+            true if at > 0 => at - 1,
+            false if at + 1 < rows.len() => at + 1,
+            _ => return self.clone(),
+        };
+        if at >= rows.len() {
+            return self.clone();
+        }
+        let (delay_at, delay_other) = (rows[at].delay, rows[other].delay);
+        rows.swap(at, other);
+        rows[at].delay = delay_at;
+        rows[other].delay = delay_other;
+        self.with_rows(rows)
+    }
+
+    /// The script with `row` inserted as step `at`, run straight after the
+    /// step before it: its delay is that step's, or 0 for the first step.
+    /// `at` past the end appends.
+    pub fn with_step_inserted(&self, at: usize, mut row: ScriptRow) -> Script {
+        let mut rows = self.sorted();
+        let at = at.min(rows.len());
+        row.delay = match at {
+            0 => 0,
+            _ => rows[at - 1].delay,
+        };
+        rows.insert(at, row);
+        self.with_rows(rows)
+    }
+
+    /// The script with a copy of step `at` straight after it.
+    pub fn with_step_copied(&self, at: usize) -> Script {
+        let mut rows = self.sorted();
+        let Some(row) = rows.get(at).cloned() else {
+            return self.clone();
+        };
+        rows.insert(at + 1, row);
+        self.with_rows(rows)
+    }
+
+    /// The script without step `at`.
+    pub fn with_step_removed(&self, at: usize) -> Script {
+        let mut rows = self.sorted();
+        if at < rows.len() {
+            rows.remove(at);
+        }
+        self.with_rows(rows)
+    }
+
+    /// The script with step `at` replaced by `row`, keeping the step's place.
+    pub fn with_step(&self, at: usize, row: ScriptRow) -> Script {
+        let mut rows = self.sorted();
+        if let Some(target) = rows.get_mut(at) {
+            *target = row;
+        }
+        Script { table: self.table, id: self.id, rows }
+    }
+
+    /// The same table and id over `rows`, which are in the order meant, with
+    /// the priorities settled.
+    fn with_rows(&self, rows: Vec<ScriptRow>) -> Script {
+        Script { table: self.table, id: self.id, rows: settle(rows) }
+    }
+}
+
+/// Make the server's `(delay, priority)` order the order `rows` are in.
+///
+/// `rows` are in the order meant, with delays that never decrease. Rows that
+/// share a delay are ordered by priority, so a run of them whose priorities do
+/// not already rise in the order meant is renumbered 0, 1, 2 and on. A run
+/// that already rises keeps its numbers, so an operation leaves the rows it
+/// does not reorder as the database has them.
+fn settle(mut rows: Vec<ScriptRow>) -> Vec<ScriptRow> {
+    let mut start = 0;
+    while start < rows.len() {
+        let delay = rows[start].delay;
+        let end = rows[start..]
+            .iter()
+            .position(|row| row.delay != delay)
+            .map_or(rows.len(), |len| start + len);
+        let rises = rows[start..end].windows(2).all(|pair| pair[0].priority < pair[1].priority);
+        if !rises {
+            for (n, row) in rows[start..end].iter_mut().enumerate() {
+                row.priority = n as u32;
+            }
+        }
+        start = end;
+    }
+    rows
 }
 
 /// The statements a script comes to: every row under the id deleted, then
@@ -782,6 +1146,46 @@ pub fn undo_from_rows(table: &str, id: u32, rows: &[Row]) -> Vec<String> {
         out.extend(crate::row::insert_from_row(table, row));
     }
     out
+}
+
+/// Every row of several scripts of one table, id by id in the server's order,
+/// or `None` for no ids. A script with no rows reads back as no rows.
+pub fn rows_of_query(table: &str, ids: &[u32]) -> Option<String> {
+    if ids.is_empty() {
+        return None;
+    }
+    let list: Vec<String> = ids.iter().map(u32::to_string).collect();
+    Some(format!(
+        "SELECT * FROM {} WHERE `id` IN ({}) ORDER BY `id`, `delay`, `priority`",
+        crate::sql::name(table),
+        list.join(", ")
+    ))
+}
+
+/// Every row of the scripts of one table whose comments hold `term`, or
+/// whose id is `term`, at most `limit` scripts: the search behind choosing
+/// an existing script.
+pub fn search_query(table: &str, term: &str, limit: usize) -> String {
+    let like = crate::sql::text(&format!("%{}%", term.trim()));
+    let by_id = match term.trim().parse::<u32>() {
+        Ok(id) => format!(" OR `id` = {id}"),
+        Err(_) => String::new(),
+    };
+    let table = crate::sql::name(table);
+    format!(
+        "SELECT s.* FROM {table} s JOIN (SELECT DISTINCT `id` FROM {table} \
+         WHERE `comments` LIKE {like}{by_id} ORDER BY `id` LIMIT {limit}) m ON m.`id` = s.`id` \
+         ORDER BY s.`id`, s.`delay`, s.`priority`"
+    )
+}
+
+/// The `broadcast_text` entries a row says, when it is a Talk row. See
+/// [`crate::broadcast`], which reads them.
+pub fn texts_of(row: &ScriptRow) -> Vec<u32> {
+    match row.command {
+        0 => row.dataint.iter().filter(|id| **id > 0).map(|id| *id as u32).collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// The highest id a table holds, for numbering a new script.
@@ -872,9 +1276,10 @@ impl Scripts {
         out
     }
 
-    /// …and read back. A damaged line costs itself, on
-    /// [`crate::row::Edits::from_text`]'s rule. A `row` line for a script
-    /// with no `script` line declares the script as well.
+    /// The store read from a file [`Scripts::to_text`] wrote. A damaged line
+    /// is skipped and the rest are read, on [`crate::row::Edits::from_text`]'s
+    /// rule. A `row` line for a script with no `script` line declares the
+    /// script as well.
     pub fn from_text(text: &str) -> Scripts {
         let mut out = Scripts::default();
         for line in text.lines() {
@@ -1007,6 +1412,98 @@ mod tests {
         assert_eq!(ScriptRow::new(200).summary(), "command 200");
     }
 
+    /// A row reads as a sentence, its references named where the lookup can
+    /// and numbered where it cannot, with the target after it.
+    #[test]
+    fn a_row_reads_as_a_sentence() {
+        let names = |table: &str, id: u32| match (table, id) {
+            ("Spell", 6660) => Some("Shoot".to_string()),
+            ("broadcast_text", 1234) => Some("Stand fast!".to_string()),
+            ("creature_template", 68) => Some("Stormwind City Guard".to_string()),
+            _ => None,
+        };
+        let mut cast = ScriptRow::new(15);
+        cast.datalong[0] = 6660;
+        cast.target_type = 1;
+        assert_eq!(cast.sentence(&names), "Cast Shoot on the current victim");
+        cast.datalong[1] = 0x002;
+        assert_eq!(cast.sentence(&crate::schema::no_names), "Cast spell 6660 (triggered) on the current victim");
+        let mut talk = ScriptRow::new(0);
+        talk.dataint[0] = 1234;
+        assert_eq!(talk.sentence(&names), "Say: \u{201c}Stand fast!\u{201d}");
+        talk.datalong[0] = 1;
+        talk.dataint[1] = 99;
+        assert_eq!(talk.sentence(&names), "Yell one of 2 texts: \u{201c}Stand fast!\u{201d}, \u{2026}");
+        assert_eq!(texts_of(&talk), vec![1234, 99]);
+        let mut summon = ScriptRow::new(10);
+        summon.datalong = [68, 30_000, 0, 0];
+        assert_eq!(summon.sentence(&names), "Summon Stormwind City Guard for 30 s");
+        let mut phase = ScriptRow::new(44);
+        phase.datalong[0] = 2;
+        assert_eq!(phase.sentence(&names), "Set phase to 2");
+        let mut near = ScriptRow::new(15);
+        near.datalong[0] = 6660;
+        near.target_type = 10;
+        near.target_param1 = 68;
+        near.target_param2 = 30;
+        assert_eq!(near.sentence(&names), "Cast Shoot on the nearest Stormwind City Guard within 30 yards");
+        assert_eq!(ScriptRow::new(47).sentence(&names), "Flee");
+        assert_eq!(ScriptRow::new(200).sentence(&names), "command 200");
+    }
+
+    /// The steps of a script: the wait before each, and the five operations,
+    /// each of which leaves the server's `(delay, priority)` order the order
+    /// meant.
+    #[test]
+    fn steps_are_moved_and_timed_in_the_servers_order() {
+        let step = |command: u32, delay: u32| ScriptRow { delay, ..ScriptRow::new(command) };
+        let script = Script { table: CREATURE_AI, id: 1, rows: vec![step(15, 0), step(0, 2000), step(1, 5000)] };
+        let commands = |script: &Script| script.sorted().iter().map(|row| (row.command, row.delay)).collect::<Vec<_>>();
+        assert_eq!((script.wait_before(0), script.wait_before(1), script.wait_before(2)), (0, 2000, 3000));
+
+        // A longer wait before the second step moves it and the third.
+        let waited = script.with_wait(1, 2500);
+        assert_eq!(commands(&waited), vec![(15, 0), (0, 2500), (1, 5500)]);
+        assert_eq!(waited.wait_before(2), 3000);
+
+        // Moving the third step up swaps the actions and keeps the times.
+        let moved = script.with_step_moved(2, true);
+        assert_eq!(commands(&moved), vec![(15, 0), (1, 2000), (0, 5000)]);
+        assert_eq!(script.with_step_moved(0, true), script);
+
+        // An inserted step runs straight after the one before it, and the
+        // two that share a delay are ordered by priority.
+        let inserted = script.with_step_inserted(1, ScriptRow::new(44));
+        assert_eq!(commands(&inserted), vec![(15, 0), (44, 0), (0, 2000), (1, 5000)]);
+        assert_eq!(inserted.sorted()[1].priority, 1);
+        let first = script.with_step_inserted(0, ScriptRow::new(44));
+        assert_eq!(commands(&first), vec![(44, 0), (15, 0), (0, 2000), (1, 5000)]);
+
+        // A copy follows its original; a removal drops the step.
+        let copied = script.with_step_copied(1);
+        assert_eq!(commands(&copied), vec![(15, 0), (0, 2000), (0, 2000), (1, 5000)]);
+        assert_eq!(commands(&script.with_step_removed(1)), vec![(15, 0), (1, 5000)]);
+
+        // Two steps at one delay swap by priority.
+        let swapped = inserted.with_step_moved(1, true);
+        assert_eq!(commands(&swapped), vec![(44, 0), (15, 0), (0, 2000), (1, 5000)]);
+
+        // A run whose priorities already rise keeps them.
+        let kept = settle(vec![ScriptRow { priority: 3, ..step(1, 0) }, ScriptRow { priority: 7, ..step(2, 0) }]);
+        assert_eq!((kept[0].priority, kept[1].priority), (3, 7));
+    }
+
+    /// The batch and search queries name what they read.
+    #[test]
+    fn the_reads_are_one_query_each() {
+        assert_eq!(rows_of_query(CREATURE_AI, &[]), None);
+        let rows = rows_of_query(CREATURE_AI, &[6801, 6802]).unwrap_or_default();
+        assert!(rows.contains("`id` IN (6801, 6802)") && rows.ends_with("ORDER BY `id`, `delay`, `priority`"), "{rows}");
+        let search = search_query(CREATURE_AI, "Shadow Bolt", 40);
+        assert!(search.contains("`comments` LIKE '%Shadow Bolt%'") && search.contains("LIMIT 40"), "{search}");
+        assert!(search_query(CREATURE_AI, "6801", 40).contains("OR `id` = 6801"));
+    }
+
     /// Every table is named once, and the reload each has is the server's.
     #[test]
     fn the_eleven_tables_are_named_once() {
@@ -1018,5 +1515,6 @@ mod tests {
         assert_eq!(table(CREATURE_AI).and_then(|t| t.reload), Some("creature_ai_events"));
         assert_eq!(table(QUEST_END).and_then(|t| t.reload), None);
         assert!(table_named("creature_template").is_none());
+        assert!(!waits(CREATURE_AI) && waits(GENERIC) && waits(QUEST_START));
     }
 }

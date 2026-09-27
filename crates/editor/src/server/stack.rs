@@ -135,6 +135,19 @@ impl Subject {
         }
     }
 
+    /// Whether a table read out of the project's row store is this subject's
+    /// to write.
+    pub fn owns(self, table: &str) -> bool {
+        match self {
+            Subject::Creatures => vale_mangos::creature::table_named(table).is_some(),
+            Subject::GameObjects => vale_mangos::gameobject::table_named(table).is_some(),
+            Subject::Items => vale_mangos::item::table_named(table).is_some(),
+            Subject::Quests => vale_mangos::quest::table_named(table).is_some(),
+            Subject::Loot => vale_mangos::loot::table_named(table).is_some(),
+            Subject::Behaviour => behaviour::owns(table),
+        }
+    }
+
     /// Whether the project has rows of this subject in the database.
     pub fn applied(self, session: &EditSession) -> bool {
         super::reconcile::has_applied(session, self.revert_vpath())

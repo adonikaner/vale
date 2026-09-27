@@ -9,12 +9,12 @@
 //! table with a documented reload, and because the edit is a diff of two files
 //! that always says the same thing.
 //!
-//! Creatures are not that. A change to `creature_template` is not visible in a
-//! running server in any reliable way: `.reload creature_template` replaces the
-//! templates but does not restat creatures that are already spawned, so a
-//! display id, a scale or a faction changes for nothing standing in the world.
-//! An automatic apply therefore wrote rows to a database and reported a success
-//! that the game did not show.
+//! Creature edits do not work that way. A change to `creature_template` is not
+//! visible in a running server in any reliable way: `.reload creature_template`
+//! replaces the templates but does not restat creatures that are already
+//! spawned, so a display id, a scale or a faction changes for nothing standing
+//! in the world. An automatic apply therefore wrote rows to a database and
+//! reported a success that the game did not show.
 //!
 //! So edits accumulate in the project, a save writes them as SQL, and nothing
 //! reaches the database until Apply is pressed. The person then restarts the
@@ -249,11 +249,10 @@ pub fn plan_from(edits: &vale_mangos::row::Edits, paths: &vale_mangos::path::Pat
             // changes, and each writer walks the whole of it. An item's row is
             // `super::items`' to write, and a refusal here would put an error
             // on the creature panel for an edit that the item panel applies.
-            if vale_mangos::item::table_named(table).is_some()
-                || vale_mangos::quest::table_named(table).is_some()
-                || vale_mangos::gameobject::table_named(table).is_some()
-                || vale_mangos::loot::table_named(table).is_some()
-            {
+            // Every subject in `super::stack::Subject::ORDER` is asked, so a
+            // subject added there is skipped here without a second list to
+            // keep; a hand-kept list here missed the behaviour tables.
+            if super::stack::Subject::ORDER.iter().any(|subject| subject.owns(table)) {
                 continue;
             }
             out.refused
@@ -454,7 +453,7 @@ pub fn save(session: &mut EditSession) {
     }
 }
 
-//// What an apply did.
+/// What an apply did.
 #[derive(Debug, Default)]
 pub struct Applied {
     pub rows: usize,
@@ -1318,6 +1317,32 @@ mod tests {
             sql[1]
         );
         assert!(sql[1].contains("10000001"), "{}", sql[1]);
+    }
+
+    /// A row of another subject's table is skipped without a refusal, and a
+    /// table no subject writes is refused by name. The behaviour tables are
+    /// the case that was refused: an event or a spell list made for a new
+    /// creature put "creature_ai_events is not a table this editor writes" on
+    /// the creature block of the Server panel.
+    #[test]
+    fn another_subjects_row_is_skipped_and_an_unknown_table_refused() {
+        let row = vale_mangos::row::RowEdit {
+            life: Life::Update,
+            columns: [("comment".to_string(), "'a note'".to_string())].into(),
+            ..vale_mangos::row::RowEdit::default()
+        };
+        let mut edits = vale_mangos::row::Edits::default();
+        for table in [
+            vale_mangos::eventai::TABLE,
+            vale_mangos::creaturespells::TABLE,
+            "no_such_table",
+        ] {
+            edits.set_row_line(table, &Key::one("entry", 680), Some(&row.to_line()));
+        }
+        let plan = plan_from(&edits, &Default::default());
+        assert_eq!(plan.refused.len(), 1, "{:?}", plan.refused);
+        assert!(plan.refused[0].contains("no_such_table"), "{:?}", plan.refused);
+        assert!(plan.rows.is_empty());
     }
 
     /// A creation that does not name every column is not written. A column an

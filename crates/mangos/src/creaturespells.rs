@@ -176,6 +176,27 @@ impl Slot {
     pub fn is_empty(&self) -> bool {
         self.spell == 0
     }
+
+    /// The slot as a sentence: `Cast Shoot on the current victim, after 2 s
+    /// to 5 s, then every 3 s to 6 s`. The chance is left to the caller,
+    /// which draws it apart. `names` resolves the spell.
+    pub fn sentence(&self, names: crate::schema::Names<'_>) -> String {
+        if self.is_empty() {
+            return "Empty".to_string();
+        }
+        let spell = names("Spell", self.spell).unwrap_or_else(|| format!("spell {}", self.spell));
+        let target = format!(" on {}", crate::scripts::target_phrase(self.cast_target));
+        let seconds = |value: u32| u64::from(value) * 1000;
+        let first = match self.initial {
+            (0, 0) => String::new(),
+            (least, most) => format!(", after {}", crate::schema::span_range(seconds(least), seconds(most))),
+        };
+        let every = match self.repeat {
+            (0, 0) => String::new(),
+            (least, most) => format!(", then every {}", crate::schema::span_range(seconds(least), seconds(most))),
+        };
+        format!("Cast {spell}{target}{first}{every}")
+    }
 }
 
 /// One list as the server reads it.
@@ -282,6 +303,12 @@ impl List {
     pub fn filled(&self) -> usize {
         self.slots.iter().filter(|slot| !slot.is_empty()).count()
     }
+
+    /// The same slots under another entry and name, for a list copied so it
+    /// can be edited without changing the creatures that share the original.
+    pub fn copied_as(&self, entry: u32, name: &str) -> List {
+        List { entry, name: name.to_string(), slots: self.slots }
+    }
 }
 
 /// A slot column's field index and 0-based slot, or `None` for any other
@@ -314,6 +341,29 @@ pub fn row_query(entry: u32) -> String {
 /// Whether a row is already there, which an apply asks before it creates one.
 pub fn exists_query(key: &Key) -> String {
     format!("SELECT 1 FROM {} WHERE {} LIMIT 1", crate::sql::name(TABLE), key.where_clause())
+}
+
+/// Every list whose name holds `term`, or whose entry is `term`: the search
+/// behind choosing an existing list.
+pub fn search_query(term: &str, limit: usize) -> String {
+    let like = crate::sql::text(&format!("%{}%", term.trim()));
+    let by_entry = match term.trim().parse::<u32>() {
+        Ok(entry) => format!(" OR `entry` = {entry}"),
+        Err(_) => String::new(),
+    };
+    format!(
+        "SELECT * FROM {} WHERE `name` LIKE {like}{by_entry} ORDER BY `name` LIMIT {limit}",
+        crate::sql::name(TABLE)
+    )
+}
+
+/// How many creature templates name a list, as `n`. A template has a row per
+/// patch, so the entries are counted rather than the rows.
+pub fn users_query(entry: u32) -> String {
+    format!(
+        "SELECT COUNT(DISTINCT `entry`) AS `n` FROM {} WHERE `spell_list_id` = {entry}",
+        crate::sql::name(crate::creature::TEMPLATE)
+    )
 }
 
 /// The highest entry the table holds, for numbering a new list.
@@ -364,5 +414,23 @@ mod tests {
         assert_eq!(created[0], "DELETE FROM `creature_spells` WHERE `entry` = 680;");
         assert!(created[1].contains("`spellId_1`") && created[1].contains("6660"), "{}", created[1]);
         assert!(created[1].contains("'Stormwind City Guard'"), "{}", created[1]);
+    }
+
+    /// A slot reads as a sentence with its delays in seconds; a copy keeps
+    /// the slots under its own entry.
+    #[test]
+    fn a_slot_reads_as_a_sentence() {
+        let names = |table: &str, id: u32| (table == "Spell" && id == 6660).then(|| "Shoot".to_string());
+        let slot = Slot { spell: 6660, probability: 100, cast_target: 1, initial: (2, 5), repeat: (3, 6), ..Slot::default() };
+        assert_eq!(slot.sentence(&names), "Cast Shoot on the current victim, after 2 s to 5 s, then every 3 s to 6 s");
+        let bare = Slot { spell: 99, cast_target: 0, ..Slot::default() };
+        assert_eq!(bare.sentence(&names), "Cast spell 99 on the provided target");
+        assert_eq!(Slot::default().sentence(&names), "Empty");
+        let mut list = List::new(680, "Guard");
+        list.slots[0] = slot;
+        let copy = list.copied_as(9000, "Guard copy");
+        assert_eq!((copy.entry, copy.name.as_str(), copy.slots[0]), (9000, "Guard copy", slot));
+        assert!(search_query("Guard", 40).contains("`name` LIKE '%Guard%'"));
+        assert!(users_query(680).contains("`spell_list_id` = 680"));
     }
 }

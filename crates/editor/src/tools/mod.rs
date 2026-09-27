@@ -472,8 +472,10 @@ impl Tool {
             Tool::Items => "Items",
             Tool::Quests => "Quests",
             Tool::Measure => "Measure",
-            // One word, so that `--tool flightpaths` needs no quoting.
-            Tool::Flightpaths => "Flightpaths",
+            // "Taxi" is the prefix of the three tables it edits: TaxiNodes,
+            // TaxiPath and TaxiPathNode. One word, so `--tool taxi` needs no
+            // quoting.
+            Tool::Flightpaths => "Taxi",
         }
     }
 }
@@ -509,10 +511,9 @@ fn close_tiles(
     if !focus.present || !state.editing() {
         return;
     }
-    // `VALE_KEEP_TILES=1` switches this off, so the growth it removes can
-    // be measured: two `--tour` runs, one with and one without. A saving
-    // has to be subtractable so that it can be checked. The
-    // variable is read once.
+    // `VALE_KEEP_TILES=1` switches this off, so the memory growth it removes
+    // can be measured by comparing two `--tour` runs, one with the variable
+    // set and one without. The variable is read once.
     static KEEP_EVERYTHING: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *KEEP_EVERYTHING.get_or_init(|| std::env::var_os("VALE_KEEP_TILES").is_some()) {
         return;

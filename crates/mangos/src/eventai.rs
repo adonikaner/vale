@@ -122,7 +122,7 @@ pub const EVENT_TYPES: [EventType; 37] = [
     e(19, "Quest accepted", [p("quest_id", Kind::Ref("quest_template"), ""), None, None, None], "a player accepts this quest from the creature"),
     e(20, "Quest completed", [p("quest_id", Kind::Ref("quest_template"), ""), None, None, None], "a player completes this quest at the creature"),
     e(21, "Reached home", NONE, "the creature arrives home after an evade"),
-    e(22, "Received emote", [p("emote_id", Kind::Ref("Emotes"), "the text emote a player made at it"), n("condition", "a condition type, or 0"), n("condition_value1", ""), n("condition_value2", "")], "a player emotes at the creature"),
+    e(22, "Received emote", [p("emote_id", Kind::Ref("EmotesText"), "the text emote a player made at it"), n("condition", "a condition type, or 0"), n("condition_value1", ""), n("condition_value2", "")], "a player emotes at the creature"),
     e(23, "Aura", repeats(p("spell_id", Kind::Ref("Spell"), ""), n("stacks", "at least this many")), "the creature carries this aura"),
     e(24, "Target aura", repeats(p("spell_id", Kind::Ref("Spell"), ""), n("stacks", "at least this many")), "the victim carries this aura"),
     e(25, "Summoned unit died", [p("creature_id", Kind::Ref("creature_template"), "or 0 for any"), REPEAT[0], REPEAT[1], None], "a unit the creature summoned dies"),
@@ -247,6 +247,22 @@ impl Event {
         }
     }
 
+    /// A new event of one trigger type, with no script yet. The two timers
+    /// start as [`Event::new`]'s five-to-ten-second repeating timer. A health
+    /// or mana band starts at 50% and fires once, since a repeating band with
+    /// no repeat delay fires on every update while the creature is in it.
+    /// Every other type starts with its parameters at 0, which each reads as
+    /// "any", and fires once, which is what the reference database's rows for
+    /// aggro, death and evade do.
+    pub fn of_type(id: u32, creature_id: u32, event_type: u32) -> Event {
+        let timer = Event::new(id, creature_id);
+        match event_type {
+            0 | 1 => Event { event_type, ..timer },
+            2 | 3 | 12 | 18 => Event { event_type, params: [50, 0, 0, 0], flags: 0, ..timer },
+            _ => Event { event_type, params: [0; 4], flags: 0, ..timer },
+        }
+    }
+
     pub fn key(&self) -> Key {
         key(self.id)
     }
@@ -361,6 +377,147 @@ impl Event {
             false => format!("{}: {}", kind.name, parts.join(", ")),
         }
     }
+
+    /// The trigger as a sentence: `In combat, after 5 s to 10 s, then every
+    /// 5 s to 10 s`, `Health at or below 15%`, `Hit by Frostbolt`. `names`
+    /// resolves the spells, creatures, quests and emotes a parameter names.
+    /// A type with no sentence of its own falls back to [`Event::summary`].
+    pub fn sentence(&self, names: crate::schema::Names<'_>) -> String {
+        let p = self.params;
+        let millis = |value: i32| value.max(0) as u64;
+        let range = |least: i32, most: i32| crate::schema::span_range(millis(least), millis(most));
+        let repeats = self.flags & 0x01 != 0;
+        let every = |least: i32, most: i32| match repeats && (least > 0 || most > 0) {
+            true => format!(", then every {}", range(least, most)),
+            false => String::new(),
+        };
+        let named = |table: &str, id: i32, any: &str| match id {
+            id if id <= 0 => any.to_string(),
+            id => names(table, id as u32).unwrap_or_else(|| format!("{} {id}", crate::schema::ref_word(table))),
+        };
+        let band = |what: &str, most: i32, least: i32| match least <= 0 {
+            true => format!("{what} at or below {most}%"),
+            false => format!("{what} between {least}% and {most}%"),
+        };
+        let stacks = |count: i32, word: &str| match count > 1 {
+            true => format!(" ({word} {count} stacks)"),
+            false => String::new(),
+        };
+        match self.event_type {
+            0 => format!("In combat, after {}{}", range(p[0], p[1]), every(p[2], p[3])),
+            1 => format!("Out of combat, after {}{}", range(p[0], p[1]), every(p[2], p[3])),
+            2 => format!("{}{}", band("Health", p[0], p[1]), every(p[2], p[3])),
+            3 => format!("{}{}", band("Mana", p[0], p[1]), every(p[2], p[3])),
+            4 => "Combat starts".to_string(),
+            5 => format!(
+                "Kills {}{}",
+                match p[2] {
+                    0 => "anything",
+                    _ => "a player",
+                },
+                every(p[0], p[1])
+            ),
+            6 => "Dies".to_string(),
+            7 => "Evades".to_string(),
+            8 => format!("Hit by {}{}", named("Spell", p[0], "any spell"), every(p[2], p[3])),
+            9 => format!("Victim {} to {} yards away{}", p[0], p[1], every(p[2], p[3])),
+            10 => format!(
+                "A {} unit comes within {} yards out of combat{}",
+                match p[0] {
+                    0 => "hostile",
+                    _ => "friendly",
+                },
+                p[1],
+                every(p[2], p[3])
+            ),
+            11 => "Spawns".to_string(),
+            12 => format!("{}{}", band("Victim's health", p[0], p[1]), every(p[2], p[3])),
+            13 => format!("Victim is casting{}", every(p[0], p[1])),
+            14 => format!("A friend within {} yards is missing {} health{}", p[1], p[0], every(p[2], p[3])),
+            15 => format!("A friend within {} yards is crowd controlled{}", p[1], every(p[2], p[3])),
+            16 => format!("A friend within {} yards lacks {}{}", p[1], named("Spell", p[0], "an aura"), every(p[2], p[3])),
+            17 => format!("Summons {}{}", named("creature_template", p[0], "a unit"), every(p[1], p[2])),
+            18 => format!("{}{}", band("Victim's mana", p[0], p[1]), every(p[2], p[3])),
+            19 => format!("A player accepts {}", named("quest_template", p[0], "a quest")),
+            20 => format!("A player completes {}", named("quest_template", p[0], "a quest")),
+            21 => "Reaches home after evading".to_string(),
+            22 => format!("A player emotes {} at it", named("EmotesText", p[0], "anything")),
+            23 => format!("Has {}{}{}", named("Spell", p[0], "an aura"), stacks(p[1], "at least"), every(p[2], p[3])),
+            24 => format!("Victim has {}{}{}", named("Spell", p[0], "an aura"), stacks(p[1], "at least"), every(p[2], p[3])),
+            25 => format!("{} it summoned dies{}", named("creature_template", p[0], "A unit"), every(p[1], p[2])),
+            26 => format!("{} it summoned despawns{}", named("creature_template", p[0], "A unit"), every(p[1], p[2])),
+            27 => format!("Lacks {}{}{}", named("Spell", p[0], "an aura"), stacks(p[1], "fewer than"), every(p[2], p[3])),
+            28 => format!("Victim lacks {}{}{}", named("Spell", p[0], "an aura"), stacks(p[1], "fewer than"), every(p[2], p[3])),
+            29 => format!("Reaches point {} (movement type {})", p[1], p[0]),
+            30 => "Leaves combat".to_string(),
+            31 => format!("A script sends event {}", p[0]),
+            32 => format!("{} in its group dies", named("creature_template", p[0], "A member")),
+            33 => format!("Victim is rooted{}", every(p[0], p[1])),
+            34 => format!("An aura of type {} lands on it{}", p[0], every(p[2], p[3])),
+            35 => format!("Notices a stealthed player{}", every(p[0], p[1])),
+            36 => format!("Its {} lands{}", named("Spell", p[0], "spell"), every(p[2], p[3])),
+            _ => self.summary(),
+        }
+    }
+
+    /// The conditions on the trigger that the sentence leaves out, each as a
+    /// short phrase: the chance when it is under 100, `once` when the event
+    /// does not repeat, and the other flags, phases and condition in words.
+    pub fn terms(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if self.chance != 100 {
+            out.push(format!("{}%", self.chance));
+        }
+        if self.flags & 0x01 == 0 {
+            out.push("once".to_string());
+        }
+        if self.flags & 0x04 != 0 {
+            out.push("not while casting".to_string());
+        }
+        if self.flags & 0x08 != 0 {
+            out.push("checks the result".to_string());
+        }
+        if self.phase_mask != 0 {
+            let phases: Vec<String> = (0..32)
+                .filter(|bit| self.phase_mask & (1 << bit) != 0)
+                .map(|bit: u32| bit.to_string())
+                .collect();
+            out.push(format!("not in phase {}", phases.join(", ")));
+        }
+        if self.condition_id != 0 {
+            out.push(format!("condition {}", self.condition_id));
+        }
+        out
+    }
+
+    /// Whether the event runs one of its scripts at random rather than each in
+    /// turn.
+    pub fn random_action(&self) -> bool {
+        self.flags & 0x02 != 0
+    }
+
+    /// The same trigger for another creature under another id, with the same
+    /// scripts. The comment's lead, the creature name the reference database
+    /// writes before ` - `, becomes `label`.
+    pub fn copied_for(&self, id: u32, creature_id: u32, label: &str) -> Event {
+        Event {
+            id,
+            creature_id,
+            comment: renamed(&self.comment, label),
+            ..self.clone()
+        }
+    }
+}
+
+/// A comment with its lead replaced: the reference database starts a comment
+/// with the creature's name and ` - `, so `Huklah - Flee at 15% HP` copied to
+/// a Stormwind City Guard reads `Stormwind City Guard - Flee at 15% HP`. A
+/// comment without that lead is returned unchanged.
+pub fn renamed(comment: &str, label: &str) -> String {
+    match comment.split_once(" - ") {
+        Some((_, rest)) if !label.is_empty() => format!("{label} - {rest}"),
+        _ => comment.to_string(),
+    }
 }
 
 /// The inside of a quoted SQL literal, or the text itself when it is not one.
@@ -405,6 +562,20 @@ pub fn statements(key: &Key, life: Life, changes: &[Assignment]) -> Vec<String> 
 pub fn events_query(creature_id: u32) -> String {
     format!(
         "SELECT * FROM {} WHERE `creature_id` = {creature_id} ORDER BY `id`",
+        crate::sql::name(TABLE)
+    )
+}
+
+/// Every creature's events whose comment holds `term`, or whose id or
+/// creature id is `term`: the search behind adding an existing event.
+pub fn search_query(term: &str, limit: usize) -> String {
+    let like = crate::sql::text(&format!("%{}%", term.trim()));
+    let by_id = match term.trim().parse::<u32>() {
+        Ok(id) => format!(" OR `id` = {id} OR `creature_id` = {id}"),
+        Err(_) => String::new(),
+    };
+    format!(
+        "SELECT * FROM {} WHERE `comment` LIKE {like}{by_id} ORDER BY `id` LIMIT {limit}",
         crate::sql::name(TABLE)
     )
 }
@@ -476,6 +647,52 @@ mod tests {
         let edited = statements(&key(6801), Life::Update, &[Assignment { column: "event_chance", value: "50".into() }]);
         assert_eq!(edited, vec!["UPDATE `creature_ai_events` SET `event_chance` = 50 WHERE `id` = 6801;"]);
         assert_eq!(statements(&key(6801), Life::Delete, &[]), vec!["DELETE FROM `creature_ai_events` WHERE `id` = 6801;"]);
+    }
+
+    /// A trigger reads as a sentence with its references named, and the
+    /// conditions it leaves out are listed apart.
+    #[test]
+    fn a_trigger_reads_as_a_sentence() {
+        let names = |table: &str, id: u32| match (table, id) {
+            ("Spell", 116) => Some("Frostbolt".to_string()),
+            _ => None,
+        };
+        let timer = Event::new(6801, 68);
+        assert_eq!(timer.sentence(&names), "In combat, after 5 s to 10 s, then every 5 s to 10 s");
+        let once = Event { flags: 0, ..timer.clone() };
+        assert_eq!(once.sentence(&names), "In combat, after 5 s to 10 s");
+        assert_eq!(once.terms(), vec!["once".to_string()]);
+        let flee = Event { event_type: 2, params: [15, 0, 0, 0], flags: 0x04, chance: 50, ..timer.clone() };
+        assert_eq!(flee.sentence(&names), "Health at or below 15%");
+        assert_eq!(flee.terms(), vec!["50%", "once", "not while casting"]);
+        let hit = Event { event_type: 8, params: [116, 0, 0, 0], ..timer.clone() };
+        assert_eq!(hit.sentence(&names), "Hit by Frostbolt");
+        let any = Event { event_type: 8, params: [0, 0, 0, 0], ..timer.clone() };
+        assert_eq!(any.sentence(&crate::schema::no_names), "Hit by any spell");
+        let unnamed = Event { event_type: 23, params: [999, 3, 0, 0], ..timer.clone() };
+        assert_eq!(unnamed.sentence(&crate::schema::no_names), "Has spell 999 (at least 3 stacks)");
+        let phased = Event { phase_mask: 0b110, ..timer };
+        assert_eq!(phased.terms(), vec!["not in phase 1, 2"]);
+        assert_eq!(Event::of_type(6801, 68, 2).sentence(&names), "Health at or below 50%");
+        assert_eq!(Event::of_type(6801, 68, 4).sentence(&names), "Combat starts");
+        assert_eq!(Event::of_type(6801, 68, 4).terms(), vec!["once"]);
+        assert_eq!(Event::of_type(6801, 68, 0), Event::new(6801, 68));
+    }
+
+    /// A copied event keeps its trigger and scripts, takes the new id and
+    /// creature, and its comment's lead names the new creature.
+    #[test]
+    fn a_copied_event_belongs_to_the_new_creature() {
+        let mut flee = Event::new(316001, 3160);
+        flee.scripts = [316001, 0, 0];
+        flee.comment = "Huklah - Flee at 15% HP".to_string();
+        let copy = flee.copied_for(6805, 68, "Stormwind City Guard");
+        assert_eq!((copy.id, copy.creature_id, copy.scripts), (6805, 68, [316001, 0, 0]));
+        assert_eq!(copy.comment, "Stormwind City Guard - Flee at 15% HP");
+        assert_eq!(renamed("no lead here", "Guard"), "no lead here");
+        let sql = search_query("Flee", 40);
+        assert!(sql.contains("`comment` LIKE '%Flee%'") && sql.ends_with("LIMIT 40"), "{sql}");
+        assert!(search_query("3160", 40).contains("`creature_id` = 3160"));
     }
 
     /// Ids follow the reference database's convention and skip the taken.

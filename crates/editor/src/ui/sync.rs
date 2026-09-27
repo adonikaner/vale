@@ -6,22 +6,25 @@
 //!
 //! Several subjects store their edits as rows in vmangos' database rather than
 //! as bytes in a file: the client tables (spells and flight nodes), creatures,
-//! objects, items, quests and loot. Each subject used to keep these operations
-//! in its own panel. The result was three names for one operation (*Apply to
-//! the server*, *Apply*, and a checkbox in a third window for spells), three
-//! names for its inverse (*Put the rows back*, *Revert*, *Put the server
-//! back*), and one panel that applied on every save while the other two
-//! waited for a button that was not visible where the edit was made.
+//! objects, items, quests, loot and behaviour. Each subject used to keep these
+//! operations in its own panel. The result was three names for one operation
+//! (*Apply to the server*, *Apply*, and a checkbox in a third window for
+//! spells), three names for its inverse (*Put the rows back*, *Revert*, *Put
+//! the server back*), and one panel that applied on every save while the other
+//! two waited for a button that was not visible where the edit was made.
 //!
 //! The operations now live here, opened from the bar's *Server…* button. Every
 //! subject gets the same block, in the same order, with the same words:
 //!
 //! ```text
-//! <subject>   <tables it writes>
-//!   N row(s) changed  ·  M applied            <the file the statements are in>
-//!   [Apply]  [Put back]  [Discard]
-//!   <what it takes for the change to be live>
+//! ┌ <subject>  N row(s) changed · M applied      [Discard] [Put back] [Apply] ┐
+//! │ <a refusal, a trouble, or an unsaved table, when there is one>            │
+//! └───────────────────────────────────────────────────────────────────────────┘
 //! ```
+//!
+//! The subject's name carries the rest in its hover text: the tables it
+//! writes, the file the statements are in, and what it takes for an applied
+//! change to be live. A block with changes not yet applied is outlined amber.
 //!
 //! The subject panels show which rows this project changes and what state
 //! they are in, and direct a person to this panel for the operations. See
@@ -43,7 +46,7 @@
 //! the server.
 //!
 //! Apply and Put back on a row subject also act on the blocks below it. The
-//! five row subjects stand in the database in the panel's order, and an item
+//! six row subjects stand in the database in the panel's order, and an item
 //! renumber moves loot rows and quest columns, so every applied subject below
 //! the one pressed is put back first and applied again after. See
 //! `crate::server::stack`. The client-table block is outside that order.
@@ -69,9 +72,16 @@
 //!                   holds a pointer to
 //! *_loot_template   live on one .reload per loot table written, removals
 //!                   included; loot already rolled in the world keeps its list
+//! creature_ai_events live on .reload creature_ai_events, which re-reads
+//! creature_spells   creature_ai_scripts first, and .reload creature_spells;
+//! *_scripts         five script tables reload under their own names and six
+//!                   are read at startup; a creature in the world keeps its
+//!                   events and list until it respawns
+//! broadcast_text    the server has to be restarted: it is read at startup and
+//!                   has no reload
 //! ```
 //!
-//! Each block states its own requirement under its buttons.
+//! Each block states its own requirement in the hover text of its name.
 
 use bevy::prelude::Resource;
 use bevy_egui::egui;
@@ -265,7 +275,7 @@ impl Half {
             Half::Items => "item_template",
             Half::Quests => "quest_template, and the four quest relation tables",
             Half::Loot => "the nine *_loot_template tables",
-            Half::Behaviour => "creature_ai_events, creature_spells, and the eleven *_scripts tables",
+            Half::Behaviour => "creature_ai_events, creature_spells, broadcast_text, and the eleven *_scripts tables",
         }
     }
 
@@ -343,8 +353,8 @@ impl Half {
                  first, and `.reload creature_spells`, which an apply sends to a running \
                  playtest; a creature already in the world keeps the events and the list it \
                  spawned with until it respawns. Five of the script tables reload under \
-                 their own names; the other six are read at start, so a change to one of \
-                 those needs a restart."
+                 their own names; the other six and broadcast_text are read at start, so a \
+                 change to one of those needs a restart."
             }
         }
     }
@@ -718,7 +728,7 @@ pub fn apply(half: Half, work: &mut Work<'_>) -> Result<String, String> {
             };
             Some((label, rows::apply_work(work.session, plan, work.server)?))
         }
-        // The five row subjects go through the stack, which puts back and
+        // The six row subjects go through the stack, which puts back and
         // applies again every applied subject after this one. See
         // `crate::server::stack`.
         _ => match half.subject() {
@@ -827,8 +837,8 @@ pub fn project(ui: &mut egui::Ui, work: &mut Work<'_>) {
     theme::heading(ui, "This project on the server");
     let have_a_database = work.server.resolve().is_some();
 
-    // One switch covers every subject. Its label always said so, but it used
-    // to apply to only one of them. See `ServerSettings::apply_on_save`.
+    // One switch covers every subject, as its label says. See
+    // `ServerSettings::apply_on_save`.
     if ui
         .add_enabled(
             have_a_database,
@@ -850,9 +860,10 @@ pub fn project(ui: &mut egui::Ui, work: &mut Work<'_>) {
          it also runs them.",
     );
 
+    ui.add_space(4.0);
     for half in Half::ALL {
-        ui.add_space(8.0);
         block(ui, work, half, have_a_database);
+        ui.add_space(4.0);
     }
 }
 
@@ -862,48 +873,48 @@ fn block(ui: &mut egui::Ui, work: &mut Work<'_>, half: Half, have_a_database: bo
         .standings
         .of(half, work.session, work.assets, work.now)
         .clone();
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(half.name())
-                .strong()
-                .size(13.0)
-                .color(theme::INK),
-        );
-        ui.label(
-            egui::RichText::new(half.tables())
-                .small()
-                .color(theme::INK_FAINT),
-        );
-    });
-
-    if let Some(trouble) = &standing.trouble {
-        ui.label(egui::RichText::new(trouble).small().color(theme::BAD));
-    }
     // The line is amber while changed rows are not applied, and plain once the
     // database holds them all. A warning colour that is always shown stops
     // being read as a warning.
-    let colour = match (standing.changed, standing.outstanding) {
-        (0, _) | (_, 0) => theme::INK_DIM,
-        _ => theme::WARN,
+    let outstanding = standing.changed > 0 && standing.outstanding > 0;
+    let colour = match outstanding {
+        false => theme::INK_DIM,
+        true => theme::WARN,
     };
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(standing.line()).small().color(colour));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(
-                egui::RichText::new(half.file())
-                    .small()
-                    .color(theme::INK_FAINT),
-            )
-            .on_hover_text(format!(
-                "Where a save writes this subject's statements. {} holds the ones that put \
-                 every applied row back.",
-                half.revert_file()
-            ));
+    let stroke = match outstanding {
+        false => theme::LINE,
+        true => theme::WARN,
+    };
+    egui::Frame::default()
+        .fill(theme::SUNK)
+        .stroke(egui::Stroke::new(1.0, stroke))
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::symmetric(8, 5))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            block_body(ui, work, half, have_a_database, &standing, colour);
         });
-    });
-    for refused in &standing.refused {
-        ui.label(egui::RichText::new(refused).small().color(theme::BAD));
-    }
+}
+
+/// The inside of one subject's block: the name, the state and the buttons on
+/// one line, and under them, when there is one, the plan's error, each
+/// refusal, the server DBC files' line and the unsaved-table note.
+fn block_body(
+    ui: &mut egui::Ui,
+    work: &mut Work<'_>,
+    half: Half,
+    have_a_database: bool,
+    standing: &Standing,
+    colour: egui::Color32,
+) {
+    let about = format!(
+        "{}\n\nA save writes the statements to {}; {} holds the ones that put every \
+         applied row back.\n\n{}",
+        half.tables(),
+        half.file(),
+        half.revert_file(),
+        half.going_live()
+    );
     // The client-table block also stands for the DBC files the server reads
     // from DataDir\5875\dbc, which Apply copies and Put back restores.
     let files = match half {
@@ -911,6 +922,44 @@ fn block(ui: &mut egui::Ui, work: &mut Work<'_>, half: Half, have_a_database: bo
         _ => None,
     };
     let (files_outstanding, files_saved) = match &files {
+        Some(Ok(files)) => (files.outstanding(), files.saved),
+        _ => (false, 0),
+    };
+    // Apply and Put back are disabled while a write is running, rather than
+    // queueing behind it. A second press while the first is still running is
+    // almost always a repeat of the same press.
+    let busy = work.queue.busy();
+    let mut said: Option<Result<String, String>> = None;
+    egui::Sides::new().shrink_left().wrap().show(
+        ui,
+        |ui| {
+            ui.label(egui::RichText::new(half.name()).strong().size(13.0).color(theme::INK))
+                .on_hover_text(&about);
+            ui.label(egui::RichText::new(standing.line()).small().color(colour));
+        },
+        |ui| {
+            buttons(
+                ui,
+                work,
+                half,
+                have_a_database && (standing.appliable() || files_outstanding) && !busy,
+                have_a_database && (standing.applied > 0 || files_saved > 0) && !busy,
+                have_a_database,
+                busy,
+                standing.changed > 0,
+                &mut said,
+            );
+        },
+    );
+    if let Some(trouble) = &standing.trouble {
+        ui.label(egui::RichText::new(trouble).small().color(theme::BAD));
+    }
+    for refused in &standing.refused {
+        ui.label(egui::RichText::new(refused).small().color(theme::BAD));
+    }
+    // The client-table block also stands for the DBC files the server reads
+    // from DataDir\5875\dbc, which Apply copies and Put back restores.
+    match &files {
         Some(Ok(files)) => {
             let colour = match files.outstanding() {
                 true => theme::WARN,
@@ -927,7 +976,6 @@ fn block(ui: &mut egui::Ui, work: &mut Work<'_>, half: Half, have_a_database: bo
                     },
                     dbcs::BEFORE_DIR
                 ));
-            (files.outstanding(), files.saved)
         }
         Some(Err(e)) if !dbcs::carried(&work.session.project).is_empty() => {
             ui.label(
@@ -935,10 +983,9 @@ fn block(ui: &mut egui::Ui, work: &mut Work<'_>, half: Half, have_a_database: bo
                     .small()
                     .color(theme::BAD),
             );
-            (false, 0)
         }
-        _ => (false, 0),
-    };
+        _ => {}
+    }
     if standing.unsaved {
         ui.label(
             egui::RichText::new(
@@ -949,81 +996,6 @@ fn block(ui: &mut egui::Ui, work: &mut Work<'_>, half: Half, have_a_database: bo
             .color(theme::WARN),
         );
     }
-
-    // Apply and Put back are disabled while a write is running, rather than
-    // queueing behind it. A second press while the first is still running is
-    // almost always a repeat of the same press.
-    let busy = work.queue.busy();
-    let mut said: Option<Result<String, String>> = None;
-    ui.horizontal(|ui| {
-        if ui
-            .add_enabled(
-                have_a_database && (standing.appliable() || files_outstanding) && !busy,
-                egui::Button::new("Apply"),
-            )
-            .on_hover_text(format!(
-                "Write {} and run it against the world database, after writing the \
-                 statements that put every row back into {}.{}",
-                half.file(),
-                half.revert_file(),
-                half.order_note()
-            ))
-            .on_disabled_hover_text(match (have_a_database, busy) {
-                (false, _) => "There is no world database to reach.",
-                (true, true) => "A server sync is in progress.",
-                (true, false) => "This project changes no row of these tables.",
-            })
-            .clicked()
-        {
-            said = Some(apply(half, work));
-        }
-        if ui
-            .add_enabled(
-                have_a_database && (standing.applied > 0 || files_saved > 0) && !busy,
-                egui::Button::new("Put back"),
-            )
-            .on_hover_text(format!(
-                "Run {}, which returns every row this project has applied to what it held \
-                 before the project first touched it, and then forgets it.{}",
-                half.revert_file(),
-                half.order_note()
-            ))
-            .on_disabled_hover_text(match (have_a_database, busy) {
-                (false, _) => "There is no world database to talk to.",
-                (true, true) => "A server sync is in progress.",
-                (true, false) => "This project has applied nothing.",
-            })
-            .clicked()
-        {
-            said = Some(put_back(half, work));
-        }
-        if half.discardable() {
-            if ui
-                .add_enabled(standing.changed > 0, egui::Button::new("Discard"))
-                .on_hover_text(
-                    "Give up every edit this project carries for these tables. The rows in \
-                     the database are not touched, and the record of them is kept: Put back \
-                     still works afterwards, and the next Apply puts them back first.",
-                )
-                .on_disabled_hover_text("This project changes no row of these tables.")
-                .clicked()
-            {
-                said = Some(Ok(discard(half, work.session)));
-            }
-        } else {
-            ui.label(
-                egui::RichText::new("edited as a file")
-                    .small()
-                    .color(theme::INK_FAINT),
-            )
-            .on_hover_text(
-                "A spell edit is this project's own Spell.dbc against the archives', so \
-                 there is no claim to give up: the spell workspace's Undo and Discard are \
-                 what take one back.",
-            );
-        }
-    });
-    theme::note(ui, half.going_live());
 
     if let Some(said) = said {
         // Any of these presses makes the numbers above stale. See
@@ -1040,6 +1012,85 @@ fn block(ui: &mut egui::Ui, work: &mut Work<'_>, half: Half, have_a_database: bo
                 format!("{}: {e}", half.name().to_lowercase())
             }
         };
+    }
+}
+
+/// A block's three buttons, laid out from the right: Apply, Put back, then
+/// Discard or the note that the subject is edited as a file. A press is
+/// answered into `said`.
+#[allow(clippy::too_many_arguments)]
+fn buttons(
+    ui: &mut egui::Ui,
+    work: &mut Work<'_>,
+    half: Half,
+    can_apply: bool,
+    can_put_back: bool,
+    have_a_database: bool,
+    busy: bool,
+    changed: bool,
+    said: &mut Option<Result<String, String>>,
+) {
+    {
+        if ui
+            .add_enabled(can_apply, egui::Button::new("Apply"))
+            .on_hover_text(format!(
+                "Write {} and run it against the world database, after writing the \
+                 statements that put every row back into {}.{}",
+                half.file(),
+                half.revert_file(),
+                half.order_note()
+            ))
+            .on_disabled_hover_text(match (have_a_database, busy) {
+                (false, _) => "There is no world database to reach.",
+                (true, true) => "A server sync is in progress.",
+                (true, false) => "This project changes no row of these tables.",
+            })
+            .clicked()
+        {
+            *said = Some(apply(half, work));
+        }
+        if ui
+            .add_enabled(can_put_back, egui::Button::new("Put back"))
+            .on_hover_text(format!(
+                "Run {}, which returns every row this project has applied to what it held \
+                 before the project first touched it, and then forgets it.{}",
+                half.revert_file(),
+                half.order_note()
+            ))
+            .on_disabled_hover_text(match (have_a_database, busy) {
+                (false, _) => "There is no world database to talk to.",
+                (true, true) => "A server sync is in progress.",
+                (true, false) => "This project has applied nothing.",
+            })
+            .clicked()
+        {
+            *said = Some(put_back(half, work));
+        }
+        if half.discardable() {
+            if ui
+                .add_enabled(changed, egui::Button::new("Discard"))
+                .on_hover_text(
+                    "Give up every edit this project carries for these tables. The rows in \
+                     the database are not touched, and the record of them is kept: Put back \
+                     still works afterwards, and the next Apply puts them back first.",
+                )
+                .on_disabled_hover_text("This project changes no row of these tables.")
+                .clicked()
+            {
+                *said = Some(Ok(discard(half, work.session)));
+            }
+        } else {
+            ui.label(
+                egui::RichText::new("edited as a file")
+                    .small()
+                    .color(theme::INK_FAINT),
+            )
+            .on_hover_text(
+                "A spell edit is this project's own Spell.dbc against the archives', so \
+                 there is no claim to give up: the spell workspace's Undo and Discard are \
+                 what take one back.",
+            );
+        }
     }
 }
 
@@ -1077,7 +1128,7 @@ mod tests {
             .chain(vale_mangos::quest::TABLES.iter())
             .chain(vale_mangos::loot::TABLES.iter())
             .chain(vale_mangos::scripts::TABLES.iter())
-            .chain([vale_mangos::eventai::TABLE, vale_mangos::creaturespells::TABLE].iter())
+            .chain([vale_mangos::eventai::TABLE, vale_mangos::creaturespells::TABLE, vale_mangos::broadcast::TABLE].iter())
             .copied()
             .collect();
         for table in tables {
@@ -1148,8 +1199,9 @@ mod tests {
             untouched.line()
         );
 
-        // A project that changes nothing in the subject draws no block. `quiet`
-        // is checked before any line is composed.
+        // A project that changes nothing in the subject is quiet. The item and
+        // quest panels check `quiet` before they compose a line, and draw no
+        // block when it holds.
         assert!(Standing::default().quiet());
         assert!(!untouched.quiet());
     }
