@@ -13,7 +13,7 @@
 //! ```
 //!
 //! The split every panel keeps: the wire is [`vale_protocol::play::trade`],
-//! the window is [`crate::game::session::trade`], and this file is
+//! the window is [`crate::interface::trade`], and this file is
 //! registration and arguments.
 //!
 //! ## Both `*ItemInfo` reads are off the server's own statement
@@ -59,7 +59,7 @@ pub struct TradeLine {
     /// The spell aimed at the non-traded square, in words, or `None`.
     pub enchant: Option<String>,
     /// **Whether the character may hold this**, which is what decides the red
-    /// square — see [`crate::game::character::proficiency`], which is the only
+    /// square — see [`crate::world::proficiency`], which is the only
     /// thing that can answer it and is one packet per item class.
     ///
     /// `true` for everything the server has said nothing about, which is every
@@ -199,10 +199,10 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     Ok(())
 }
 
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::game::session::trade::TradePress>>>;
+pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::trade::TradePress>>>;
 
 pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
-    use crate::game::session::trade::TradePress as P;
+    use crate::interface::trade::TradePress as P;
     let globals = lua.globals();
 
     macro_rules! push {
@@ -253,7 +253,7 @@ mod tests {
     /// that does nothing puts nothing on it.
     #[test]
     fn the_verbs_record_what_the_panel_pressed() {
-        use crate::game::session::trade::TradePress as P;
+        use crate::interface::trade::TradePress as P;
         let lua = mlua::Lua::new();
         let queue: super::Queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         super::register(&lua, &queue).expect("registers");

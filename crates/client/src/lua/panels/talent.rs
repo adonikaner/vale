@@ -99,7 +99,7 @@ pub trait TalentAnswers {
     /// Composed from the *held* rank's spell rather than rank 1's, which is what
     /// makes the numbers in it move as points go in; see
     /// [`vale_assets::tables::talent::TalentRow::face_spell`].
-    fn talent_tooltip(&self, tab: usize, index: usize) -> Option<crate::game::api::SpellTip>;
+    fn talent_tooltip(&self, tab: usize, index: usize) -> Option<crate::interface::api::SpellTip>;
 }
 
 impl TalentAnswers for super::super::api::Live<'_, '_, '_> {
@@ -153,14 +153,14 @@ impl TalentAnswers for super::super::api::Live<'_, '_, '_> {
             .unwrap_or_default()
     }
 
-    fn talent_tooltip(&self, tab: usize, index: usize) -> Option<crate::game::api::SpellTip> {
+    fn talent_tooltip(&self, tab: usize, index: usize) -> Option<crate::interface::api::SpellTip> {
         let talent = self.talents.tree.talent(tab, index)?;
         let spell = talent.face_spell;
         let catalog = self.tables.as_ref().and_then(|t| t.spellbook())?;
         let names = |entry| self.reagent_name(entry);
-        let mut tip = crate::game::api::spell_tip(
+        let mut tip = crate::interface::api::spell_tip(
             &catalog.info(spell)?,
-            &crate::game::api::TipContext {
+            &crate::interface::api::TipContext {
                 level: self.tip_level(),
                 // A spell plate carries no requirement lines — see
                 // [`super::spellbook`], which says the same about its own.
@@ -173,7 +173,7 @@ impl TalentAnswers for super::super::api::Live<'_, '_, '_> {
         );
         // **…and the one line a talent's plate has that a spell's does not**,
         // which is the whole of "the talent tooltip shows 5 rather than 5/5".
-        // See [`crate::game::api::SpellTip::talent_rank`].
+        // See [`crate::interface::api::SpellTip::talent_rank`].
         tip.talent_rank = Some((talent.rank, talent.max_rank));
         Some(tip)
     }
@@ -292,7 +292,7 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
 /// **The tree the reads answer from**, and the counters beside it.
 ///
 /// Held by the ECS rather than by the interpreter — see
-/// [`crate::game::character::talents`], which rebuilds it — because unlike the
+/// [`crate::interface::talents`], which rebuilds it — because unlike the
 /// skills and reputation boards nothing the *panel* does changes it. Every write
 /// goes to the server and comes back as a spell.
 #[derive(Debug, Clone, Default)]

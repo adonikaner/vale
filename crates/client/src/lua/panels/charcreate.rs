@@ -100,7 +100,7 @@ pub const MORE_GLOBALS: [&str; 3] = [
 ///
 /// One value rather than a resource because the reads have to answer *during* a
 /// handler — see the module comment — and because it is small, plain data that
-/// `crate::game::session::charcreate` copies out once a frame to build the plinth.
+/// `crate::glue::charcreate` copies out once a frame to build the plinth.
 #[derive(Default)]
 pub struct Board {
     /// `ChrRaces` + `CharBaseInfo` + the rest, loaded when the glue loads.
@@ -262,7 +262,7 @@ impl Board {
 pub type Held = Rc<RefCell<Board>>;
 
 /// **The one thing here that needs a socket** — drained by
-/// `crate::game::session::charcreate`, on the same terms as [`super::glue::GlueRequest`].
+/// `crate::glue::charcreate`, on the same terms as [`super::glue::GlueRequest`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CreateRequest {
     /// `CreateCharacter(name)` — the Accept button. Carries only the name,
@@ -507,7 +507,7 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> 
 
     // **`UpdateCustomizationScene()` is "redraw the character"**, which this
     // renderer does every frame off [`Board`] itself — see
-    // `crate::game::session::charcreate`. Registered rather than absent because
+    // `crate::glue::charcreate`. Registered rather than absent because
     // `CharacterCreate_UpdateModel` calls it before `AdvanceTime` on every one
     // of the model frame's ticks, and a nil there would stop the scene's clock.
     globals.set(

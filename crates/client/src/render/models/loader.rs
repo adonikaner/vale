@@ -1545,7 +1545,7 @@ pub(crate) fn anisotropy() -> u16 {
 
 /// Read the `anisotropic` CVar into [`ANISOTROPY`], once, before any texture
 /// is built. wgpu takes 1..=16, and `1` is "off".
-pub(crate) fn read_anisotropy(cvars: Option<Res<crate::game::cvars::CVars>>) {
+pub(crate) fn read_anisotropy(cvars: Option<Res<crate::settings::cvars::CVars>>) {
     let samples = cvars.map_or(1.0, |c| c.number("anisotropic")).round();
     ANISOTROPY.store(
         (samples as i64).clamp(1, 16) as u16,

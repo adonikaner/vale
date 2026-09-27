@@ -18,7 +18,7 @@ use bevy::prelude::*;
 use bevy::render::settings::{Backends, InstanceFlags, RenderCreation, WgpuSettings};
 use bevy::render::RenderPlugin;
 
-use crate::{assets, game, lua, render, sound, ui, world};
+use crate::{assets, glue, input, interface, lua, render, settings, sound, ui, world};
 use crate::world::session;
 
 /// What the window is called and how big it opens.
@@ -127,7 +127,7 @@ pub fn plugins(host: &Host) -> PluginGroupBuilder {
     let plugins = if std::env::var("VALE_RIDERS").is_err() {
         // The UI-related plugin families this client never uses. Its
         // interface is FrameXML painted through egui, its picking is
-        // `game::combat::target`'s own ray, and nothing draws a `Node`, a
+        // `interface::target`'s own ray, and nothing draws a `Node`, a
         // `Sprite` or a `Text`. bevy_egui's default features require the
         // first two; the workspace dependency turns those features off (see
         // Cargo.toml). The 2026-08 census: ~75 runs/frame across them, plus
@@ -182,14 +182,18 @@ pub fn core(app: &mut App, gamedata_dir: String, config: vale_config::Config) {
         .add_plugins((
             world::WorldPlugins,
             render::RenderPlugins,
-            // Before `game`, which calls into the interpreter on the first
-            // frame a key is pressed — and `GamePlugins` would otherwise be
-            // asking for a non-send resource that is inserted later in the
-            // same `build`.
+            // Before the state groups below, which call into the interpreter
+            // on the first frame a key is pressed and would otherwise ask for a
+            // non-send resource inserted later in the same `build`.
             lua::LuaPlugins,
-            game::GamePlugins,
-            // After `game`, whose area tracking and action state it listens
-            // to; see `sound/mod.rs` for the ordering it states on itself.
+            input::InputPlugins,
+            // Reads `ClientConfig`, inserted above, in `build`.
+            settings::SettingsPlugins,
+            interface::InterfacePlugins,
+            glue::GluePlugins,
+            world::StatePlugins,
+            // After the state groups, whose area tracking and action state it
+            // listens to; see `sound/mod.rs` for the ordering it states.
             sound::SoundPlugins,
             ui::UiPlugins,
         ));

@@ -316,14 +316,14 @@ impl super::panels::container::ContainerAnswers for Login {
     fn cursor_has_spell(&self) -> bool {
         false
     }
-    fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<crate::game::api::ItemTip> {
+    fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<crate::interface::api::ItemTip> {
         self.item_tip(Self::stack(bag, slot)?.0)
     }
-    fn inventory_item_tip(&self, token: &str, id: u32) -> Option<crate::game::api::ItemTip> {
+    fn inventory_item_tip(&self, token: &str, id: u32) -> Option<crate::interface::api::ItemTip> {
         self.item_tip(Self::equipped(token, id)?.0)
     }
-    fn item_tip(&self, entry: u32) -> Option<crate::game::api::ItemTip> {
-        Some(crate::game::api::ItemTip {
+    fn item_tip(&self, entry: u32) -> Option<crate::interface::api::ItemTip> {
+        Some(crate::interface::api::ItemTip {
             name: Self::item_name(entry)?.to_string(),
             quality: Self::quality(entry).max(0) as u32,
             bonding: 1,
@@ -477,7 +477,7 @@ impl super::panels::quest::QuestAnswers for Login {
             false => super::panels::quest::Which::Reward,
         })
     }
-    fn quest_reward_spell_tip(&self, _from_log: bool) -> Option<crate::game::api::SpellTip> {
+    fn quest_reward_spell_tip(&self, _from_log: bool) -> Option<crate::interface::api::SpellTip> {
         None
     }
     fn quest_log_money(&self, required: bool) -> u32 {
@@ -628,8 +628,8 @@ impl super::panels::merchant::MerchantAnswers for Login {
     /// skipped: a probe vendor that could not repair would take the
     /// `SetTooltipMoney` branch away and report a clean run over a body nothing
     /// entered.
-    fn repairs(&self) -> crate::game::npc::merchant::Repairs {
-        crate::game::npc::merchant::Repairs {
+    fn repairs(&self) -> crate::interface::merchant::Repairs {
+        crate::interface::merchant::Repairs {
             can_repair: true,
             cost: 1234,
             priced: true,
@@ -820,7 +820,7 @@ impl super::panels::craft::CraftAnswers for Login {
     fn craft_tip_item(&self, _index: usize, _reagent: usize) -> Option<u32> {
         None
     }
-    fn craft_spell_tip(&self, _index: usize) -> Option<crate::game::api::SpellTip> {
+    fn craft_spell_tip(&self, _index: usize) -> Option<crate::interface::api::SpellTip> {
         None
     }
 }
@@ -1061,7 +1061,7 @@ impl super::panels::trainer::TrainerAnswers for Login {
         2
     }
     fn trainer_select(&self, _row: usize) {}
-    fn trainer_tooltip(&self, _row: usize) -> Option<crate::game::api::SpellTip> {
+    fn trainer_tooltip(&self, _row: usize) -> Option<crate::interface::api::SpellTip> {
         None
     }
     fn trainer_is_tradeskill(&self) -> bool {
@@ -1197,8 +1197,8 @@ impl super::panels::pet::PetAnswers for Login {
     ///
     /// A double answering nothing would take the `if ( name )` branch that
     /// hides every button and report the file clean without a single one drawn.
-    fn pet_action_info(&self, slot: usize) -> Option<crate::game::combat::pet::PetSlot> {
-        use crate::game::combat::pet::PetSlot;
+    fn pet_action_info(&self, slot: usize) -> Option<crate::interface::pet::PetSlot> {
+        use crate::interface::pet::PetSlot;
         if !Login::has("pet") {
             return None;
         }
@@ -1244,9 +1244,9 @@ impl super::panels::pet::PetAnswers for Login {
     /// A plate for the two spell slots and nothing for the four tokens, which
     /// is the live fork: `PetActionButton_OnEnter` only reaches
     /// `SetPetAction` for a slot whose `isToken` is nil.
-    fn pet_action_tooltip(&self, slot: usize) -> Option<crate::game::api::SpellTip> {
+    fn pet_action_tooltip(&self, slot: usize) -> Option<crate::interface::api::SpellTip> {
         let info = self.pet_action_info(slot)?;
-        (!info.is_token).then(|| crate::game::api::SpellTip {
+        (!info.is_token).then(|| crate::interface::api::SpellTip {
             name: info.name,
             rank: info.subtext,
             ..Default::default()
@@ -1287,8 +1287,8 @@ impl super::panels::pet::PetAnswers for Login {
             false => Vec::new(),
         }
     }
-    fn creature_family(&self, unit: crate::game::api::UnitId) -> Option<String> {
-        (unit == crate::game::api::UnitId::Pet && Login::has("pet"))
+    fn creature_family(&self, unit: crate::interface::api::UnitId) -> Option<String> {
+        (unit == crate::interface::api::UnitId::Pet && Login::has("pet"))
             .then(|| "Wolf".to_string())
     }
 
@@ -1425,7 +1425,7 @@ impl super::panels::raid::RaidAnswers for Login {
     }
 
     fn unit_in_raid(&self, token: &str, _or_pet: bool) -> bool {
-        raid_size() > 0 && crate::game::api::UnitId::parse(token).is_some()
+        raid_size() > 0 && crate::interface::api::UnitId::parse(token).is_some()
     }
 }
 
@@ -1696,16 +1696,16 @@ impl super::panels::talent::TalentAnswers for Login {
             })
             .unwrap_or_default()
     }
-    fn talent_tooltip(&self, tab: usize, index: usize) -> Option<crate::game::api::SpellTip> {
+    fn talent_tooltip(&self, tab: usize, index: usize) -> Option<crate::interface::api::SpellTip> {
         // The same shape [`Self::spell_tooltip`] answers — a plate with a name
         // and nothing else, which is what the hover needs to not raise.
         let (_, _, rank, max_rank, _, _) = Self::talent_row(tab, index)?;
-        Some(crate::game::api::SpellTip {
+        Some(crate::interface::api::SpellTip {
             // **Both halves, so the probe walks the talent line.** The pair is
             // what turns the plate's grey right-hand cell into a
             // `TOOLTIP_TALENT_RANK` line of its own; a double answering `None`
             // would report the hover clean while the line it exists for was
-            // never composed. See [`crate::game::api::SpellTip::talent_rank`].
+            // never composed. See [`crate::interface::api::SpellTip::talent_rank`].
             talent_rank: Some((rank, max_rank)),
             name: format!("Talent {tab}-{index}"),
             rank: "Rank 1".to_string(),
@@ -1752,9 +1752,9 @@ impl super::panels::spellbook::SpellbookAnswers for Login {
     fn spell_is_current_cast(&self, _: usize) -> bool {
         false
     }
-    fn spell_tooltip(&self, index: usize) -> Option<crate::game::api::SpellTip> {
+    fn spell_tooltip(&self, index: usize) -> Option<crate::interface::api::SpellTip> {
         let (name, rank) = Self::spell(index)?;
-        Some(crate::game::api::SpellTip {
+        Some(crate::interface::api::SpellTip {
             name: name.to_string(),
             rank: rank.to_string(),
             talent_rank: None,
@@ -1835,8 +1835,8 @@ impl super::api::ActionAnswers for Login {
     fn action_bar_toggles(&self) -> u8 {
         vale_protocol::play::spells::multi_bar::ALL
     }
-    fn action_tooltip(&self, slot: u8) -> Option<crate::game::api::SpellTip> {
-        self.has_action(slot).then(|| crate::game::api::SpellTip {
+    fn action_tooltip(&self, slot: u8) -> Option<crate::interface::api::SpellTip> {
+        self.has_action(slot).then(|| crate::interface::api::SpellTip {
             talent_rank: None,
             name: "Fireball".to_string(),
             rank: "Rank 1".to_string(),
@@ -1850,11 +1850,11 @@ impl super::api::ActionAnswers for Login {
         })
     }
     // The double's bar is all spells — see the three item reads below.
-    fn action_item_tooltip(&self, _: u8) -> Option<crate::game::api::ItemTip> {
+    fn action_item_tooltip(&self, _: u8) -> Option<crate::interface::api::ItemTip> {
         None
     }
     // `None`, as the real answer is for anything that is not a macro — see
-    // `game::api::get_action_text`; the harness has no macros either.
+    // `interface::api::get_action_text`; the harness has no macros either.
     fn action_text(&self, _: u8) -> Option<String> {
         None
     }
@@ -1896,7 +1896,7 @@ impl super::api::ActionAnswers for Login {
     }
     // **The double's bar is all spells**, which is what makes these three the
     // answers a spell slot gives: no stack count under the icon, no green
-    // border round it. An item slot is exercised by `game::items`' own tests,
+    // border round it. An item slot is exercised by `interface::items`' own tests,
     // where an inventory can be built without a Lua state.
     fn is_consumable_action(&self, _: u8) -> bool {
         false
@@ -1967,7 +1967,7 @@ impl super::api::UnitAnswers for Login {
     /// that answers a *representative* one; 42 against 60 is the shape a player
     /// actually looks at.
     /// **The double is male**, and a token naming nobody still answers 2 — see
-    /// [`crate::game::api::Units::sex`], where the client's fallback is.
+    /// [`crate::interface::api::Units::sex`], where the client's fallback is.
     fn unit_sex(&self, _token: &str) -> u32 {
         2
     }
@@ -2119,8 +2119,8 @@ impl super::api::UnitAnswers for Login {
     fn unit_is_pvp(&self, token: &str) -> bool {
         Self::has(token)
     }
-    fn unit_tooltip(&self, token: &str) -> Option<crate::game::api::UnitTip> {
-        Self::has(token).then(|| crate::game::api::UnitTip {
+    fn unit_tooltip(&self, token: &str) -> Option<crate::interface::api::UnitTip> {
+        Self::has(token).then(|| crate::interface::api::UnitTip {
             name: self.unit_name(token).unwrap_or_default(),
             sub_name: String::new(),
             level: self.unit_level(token),
@@ -2304,7 +2304,7 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
             .unwrap_or_default(),
     ));
 
-    // **The character-create tables, which `crate::game::session::charcreate` supplies in
+    // **The character-create tables, which `crate::glue::charcreate` supplies in
     // a real client.** Without them that screen's `OnShow` dies on its fourth
     // line — `FACTION_BACKDROP_COLOR_TABLE[nil]`, because `GetFactionForRace`
     // has no race to answer about — and every probe below reports a screen that
@@ -2394,7 +2394,7 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
     // that reports clean because nothing on it ran. What is put on it is what a
     // real login puts on it: `Bindings.xml` for the rows and the archives' own
     // `WTF\DefaultBindings.wtf` for the keys, with no player file over them,
-    // which is set 1. See `crate::game::session::keybindings`, which is the
+    // which is set 1. See `crate::settings::keybindings`, which is the
     // same three lines against the same two files.
     {
         let declarations = std::sync::Arc::new(
@@ -2418,7 +2418,7 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
         board.use_set(crate::lua::panels::keybindings::ACCOUNT_SET);
     }
 
-    // **The addon board, seeded the way `crate::game::session::addons` seeds
+    // **The addon board, seeded the way `crate::settings::addons` seeds
     // it**: the seven shipped addons out of the archives, then whatever the
     // folder this runs in carries under `Interface\AddOns\`, every one of them
     // on, since there is no character and so no `AddOns.txt`. A probe run from
@@ -2538,7 +2538,7 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
     // **Put a screen up, which the glue does not do for itself.** Every one of
     // `GlueScreenInfo`'s seven frames ships `hidden="true"`, and what shows one
     // is `SET_GLUE_SCREEN` — an event the *client* raises off the session it is
-    // holding (`crate::game::session::glue`), and there is no session here. So the probe
+    // holding (`crate::glue::glue`), and there is no session here. So the probe
     // makes the same call that event's handler ends in, and every instrument
     // below it then sees the login screen rather than an empty `GlueParent`.
     //
@@ -2616,7 +2616,7 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
     }
 }
 
-/// **Stand in for `crate::game::session::glue`**: answer the two questions the character
+/// **Stand in for `crate::glue::glue`**: answer the two questions the character
 /// screen asks and then waits on.
 ///
 /// `CharacterSelect_OnShow` ends in `GetCharacterListUpdate()` — a *request*,
@@ -2629,12 +2629,12 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
 /// So a probe that only shows the frame gets a character screen with its plate,
 /// its realm name and its four buttons and **no rows at all** — the third of the
 /// screen that is the point of it. This fires the two, with the same arguments
-/// [`crate::game::session::glue`] fires them with against [`Login`]'s two-character list.
+/// [`crate::glue::glue`] fires them with against [`Login`]'s two-character list.
 fn answer_the_glue(host: &mut LuaHost) {
     host.fire_event("CHARACTER_LIST_UPDATE", &[], &Login);
     host.fire_event(
         "UPDATE_SELECTED_CHARACTER",
-        &[crate::game::events::EventArg::Number(1.0)],
+        &[crate::interface::events::EventArg::Number(1.0)],
         &Login,
     );
 }
@@ -3616,7 +3616,7 @@ fn first_line(e: &mlua::Error) -> String {
 /// one of them.
 ///
 /// What it does is the ordinary dispatch: for each name in
-/// [`crate::game::events::FIRED`], call [`LuaHost::fire_event`] with the
+/// [`crate::interface::events::FIRED`], call [`LuaHost::fire_event`] with the
 /// arguments that event really carries, and rank whatever broke by the name Lua
 /// blamed — the same treatment, and the same [`blamed`] grouping, the load
 /// report gets.
@@ -3627,12 +3627,12 @@ fn first_line(e: &mlua::Error) -> String {
 /// [`Login`]'s stub world, so a body that would fail only with a real party or
 /// a real bag passes here. A failure reported is real; a pass is a lower bound.
 fn fire_everything(host: &mut LuaHost) {
-    use crate::game::events::{
+    use crate::interface::events::{
         self, ActionbarSlotChanged, ChatMessageReceived, PlayerLevelUp, SpellcastChannelStart,
         SpellcastChannelUpdate, SpellcastDelayed, SpellcastStart, UiErrorMessage, UnitAuraChanged,
         UnitHealthChanged, UnitPowerChanged,
     };
-    use crate::game::api::UnitId;
+    use crate::interface::api::UnitId;
 
     // One representative instance per shape, keyed by the name it fires under.
     // Anything in `FIRED` that is not listed here fires with no arguments,
@@ -3663,15 +3663,15 @@ fn fire_everything(host: &mut LuaHost) {
     // `text_arg1` and `StaticPopup_Show` ends in `format(text, text_arg1)`. Bare
     // it dies with "bad argument #2 to 'format' (string expected, got nil)",
     // which is how this probe found the sample was missing.
-    push(&crate::game::events::ResurrectRequest("Bram".to_string()));
+    push(&crate::interface::events::ResurrectRequest("Bram".to_string()));
     // **…and the trade's three that carry one**: the request formats the
     // asker's name into `TRADE_WITH_QUESTION`, and the two square events
     // concatenate their id into a frame name. Bare, all three die the way the
     // resurrect box did, which is how this probe found the samples missing.
-    push(&crate::game::events::TradeRequest("Bram".to_string()));
-    push(&crate::game::events::TradePlayerItemChanged(1));
-    push(&crate::game::events::TradeTargetItemChanged(1));
-    push(&crate::game::events::TradeAcceptUpdate {
+    push(&crate::interface::events::TradeRequest("Bram".to_string()));
+    push(&crate::interface::events::TradePlayerItemChanged(1));
+    push(&crate::interface::events::TradeTargetItemChanged(1));
+    push(&crate::interface::events::TradeAcceptUpdate {
         player: true,
         target: false,
     });
@@ -3680,7 +3680,7 @@ fn fire_everything(host: &mut LuaHost) {
     // `INVITATION` is `"%s has invited you to join a group."`, so a bare raise
     // dies in `format` exactly as the resurrect box did — which is how this
     // probe found this sample was missing, on the round the event was added.
-    push(&crate::game::events::PartyInviteRequest {
+    push(&crate::interface::events::PartyInviteRequest {
         from: "Bram".to_string(),
     });
     // **…and the innkeeper's, which is the same trap a third time.**
@@ -3688,7 +3688,7 @@ fn fire_everything(host: &mut LuaHost) {
     // `CONFIRM_BINDER` is `"Do you want to make %s your new home?"`. This probe
     // found it bare on the round the event was added, with the same
     // `format` error the two above produced.
-    push(&crate::game::events::ConfirmBinder {
+    push(&crate::interface::events::ConfirmBinder {
         place: "Lion's Pride Inn".to_string(),
         guid: 0xF130_0000_0000_0007,
     });
@@ -3696,8 +3696,8 @@ fn fire_everything(host: &mut LuaHost) {
     // "DUEL_REQUESTED", arg1)` formats the name into `"%s has challenged you
     // to a duel."`. And `/played`'s two numbers, which
     // `ChatFrame_TimeBreakDown` divides.
-    push(&crate::game::events::DuelRequested("Bram".to_string()));
-    push(&crate::game::events::TimePlayedMsg { total: 90_061, level: 3_600 });
+    push(&crate::interface::events::DuelRequested("Bram".to_string()));
+    push(&crate::interface::events::TimePlayedMsg { total: 90_061, level: 3_600 });
     // **…and the pet trainer's, which is the same trap a fourth time and dies
     // one file further along.** `UIParent_OnEvent` follows its
     // `StaticPopup_Show("CONFIRM_PET_UNLEARN")` with
@@ -3708,11 +3708,11 @@ fn fire_everything(host: &mut LuaHost) {
     //
     // Ten silver is a plausible reset: enough to fill the gold, silver and
     // copper the money frame lays out.
-    push(&crate::game::events::ConfirmPetUnlearn { cost: 1000 });
+    push(&crate::interface::events::ConfirmPetUnlearn { cost: 1000 });
     // **The name and the quality**, and `UIParent_OnEvent` needs both: its body
     // is `if ( arg2 >= 3 )`, so a bare fire dies comparing a number with nil —
     // which is what this probe reported the round the event was added.
-    push(&crate::game::events::DeleteItemConfirm {
+    push(&crate::interface::events::DeleteItemConfirm {
         name: "Linen Cloth".to_string(),
         quality: 1,
     });
@@ -3722,7 +3722,7 @@ fn fire_everything(host: &mut LuaHost) {
     // was added. `"OKAY"` is the kind a failure ends on and the one that
     // exercises the most of that file: it hides the keypad, calls
     // `StatusDialogClick()` and sizes the plate off the text.
-    push(&crate::game::events::OpenStatusDialog {
+    push(&crate::interface::events::OpenStatusDialog {
         which: "OKAY",
         text: "Unable to connect".to_string(),
     });
@@ -3732,7 +3732,7 @@ fn fire_everything(host: &mut LuaHost) {
     // opens `if ( index > 0 )`, so a bare fire dies comparing a number with nil.
     // **Zero, not one**: the stub world holds no characters, and 0 is what the
     // client really sends for an empty account.
-    push(&crate::game::events::UpdateSelectedCharacter(0));
+    push(&crate::interface::events::UpdateSelectedCharacter(0));
     // **The breath bar's six**, and every one of them is arithmetic somewhere:
     // `MirrorTimer_Show` divides `arg2` and `arg3` by 1000, compares `arg5`
     // against zero, indexes `MirrorTimerColors` by `arg1` and puts `arg6` in a
@@ -3741,7 +3741,7 @@ fn fire_everything(host: &mut LuaHost) {
     // the same file one function down: the stop compares `arg1` against the
     // frame's stored *name*, and the pause reads the same `arg1` as a number —
     // see `vale_protocol::play::timers` for why both cannot be satisfied.
-    push(&crate::game::events::MirrorTimerStart {
+    push(&crate::interface::events::MirrorTimerStart {
         timer: "BREATH".to_string(),
         remaining_ms: 45_000,
         duration_ms: 60_000,
@@ -3749,26 +3749,26 @@ fn fire_everything(host: &mut LuaHost) {
         paused: false,
         label: "Breath".to_string(),
     });
-    push(&crate::game::events::MirrorTimerStop {
+    push(&crate::interface::events::MirrorTimerStop {
         timer: "BREATH".to_string(),
     });
-    push(&crate::game::events::MirrorTimerPause { paused: true });
+    push(&crate::interface::events::MirrorTimerPause { paused: true });
     // **The row, and it has to be a real one**: `LootFrame_OnEvent`'s arm does
     // arithmetic on `arg1` in its second line, so an event fired with no
     // argument at all fails there — which is exactly what this probe caught the
     // first time these three names were added to `FIRED`.
-    push(&crate::game::events::LootSlotCleared { row: 1 });
+    push(&crate::interface::events::LootSlotCleared { row: 1 });
     // **The roll frame's three, and the first of them needs both arguments.**
     // `UIParent_OnEvent` hands them straight to `GroupLootFrame_OpenNewFrame`,
     // whose third line is `SetMinMaxValues(0, rollTime)` — a bare fire dies
     // there. The id is 0 because that is a real roll id: the counter starts at
     // zero, and it is the one [`Login`] answers for.
-    push(&crate::game::events::StartLootRoll {
+    push(&crate::interface::events::StartLootRoll {
         id: 0,
         countdown_ms: 60_000,
     });
-    push(&crate::game::events::CancelLootRoll { id: 0 });
-    push(&crate::game::events::ConfirmLootRoll {
+    push(&crate::interface::events::CancelLootRoll { id: 0 });
+    push(&crate::interface::events::ConfirmLootRoll {
         id: 0,
         vote: vale_protocol::play::lootroll::RollVote::Need,
     });
@@ -3776,9 +3776,9 @@ fn fire_everything(host: &mut LuaHost) {
     // `ChatFrame_OnEvent` tests `arg2 > 0` and then prints how many new skill
     // points there are; fired bare it dies comparing a number with nil, which
     // is what this probe reported the first time this event was raised. See
-    // [`crate::game::events::CharacterPointsChanged`], where the push order
+    // [`crate::interface::events::CharacterPointsChanged`], where the push order
     // is.
-    push(&crate::game::events::CharacterPointsChanged {
+    push(&crate::interface::events::CharacterPointsChanged {
         talent: 1,
         profession: 1,
     });
@@ -3808,19 +3808,19 @@ fn fire_everything(host: &mut LuaHost) {
     // **`UNIT_PET`'s `arg1` is the owner's**, so these two reach different
     // files: `player` is `PetFrame_Update` and `party1` is
     // `PartyMemberFrame_UpdatePet`, which also *moves* the member's frame.
-    push(&crate::game::events::UnitPetChanged(UnitId::Player));
-    push(&crate::game::events::UnitPetChanged(UnitId::Party(1)));
+    push(&crate::interface::events::UnitPetChanged(UnitId::Player));
+    push(&crate::interface::events::UnitPetChanged(UnitId::Party(1)));
     // …and `UNIT_FACTION`'s two: the target plate's tint and the party frame's
     // PvP icon.
-    push(&crate::game::events::UnitFactionChanged(UnitId::Target));
-    push(&crate::game::events::UnitFactionChanged(UnitId::Party(1)));
+    push(&crate::interface::events::UnitFactionChanged(UnitId::Target));
+    push(&crate::interface::events::UnitFactionChanged(UnitId::Party(1)));
     // **`UNIT_LEVEL` had no sample at all and fired bare**, which nothing
     // noticed until `Blizzard_RaidUI` arrived: `RaidGroupFrame_OnEvent`'s arm
     // is `gsub(arg1, "raid([0-9]+)", "%1")` and a nil there is an error rather
     // than a miss. The raid token is the one that reaches that body; the
     // target's reaches `TargetFrame_CheckLevel`.
-    push(&crate::game::events::UnitLevelChanged(UnitId::Target));
-    push(&crate::game::events::UnitLevelChanged(UnitId::Raid(1)));
+    push(&crate::interface::events::UnitLevelChanged(UnitId::Target));
+    push(&crate::interface::events::UnitLevelChanged(UnitId::Raid(1)));
     // …and the raid's own health, which is the other half of the same body.
     push(&UnitHealthChanged(UnitId::Raid(1)));
     // **Nine arguments, and the sample has to carry all nine**: the level-up
@@ -3870,7 +3870,7 @@ fn fire_everything(host: &mut LuaHost) {
             _ => "hello there",
         };
         let mut line = ChatMessageReceived {
-            event: crate::game::session::chat::event_name(kind),
+            event: crate::interface::chat::event_name(kind),
             text: text.to_string(),
             author: "Bram".to_string(),
             flag: "",
@@ -3886,7 +3886,7 @@ fn fire_everything(host: &mut LuaHost) {
         push(&line);
     }
     // **…and the forty-five the combat log raises**, which are the same
-    // message type with a different producer: `game::combat::log` composes the
+    // message type with a different producer: `interface::log` composes the
     // sentence and there is no author, no flag and no channel.
     //
     // Without a sample here every one of them fires with **no arguments at
@@ -3904,7 +3904,7 @@ fn fire_everything(host: &mut LuaHost) {
         let Some(event) = vale_assets::interface::chattype::event_name(id) else {
             continue;
         };
-        if !crate::game::events::FIRED.contains(&event) {
+        if !crate::interface::events::FIRED.contains(&event) {
             continue;
         }
         push(&ChatMessageReceived {
@@ -3938,7 +3938,7 @@ fn fire_everything(host: &mut LuaHost) {
     // load's own remaining failure as a handler failure, because its name sorts
     // late.
     let before: std::collections::BTreeSet<String> = host.missing().clone();
-    for name in crate::game::events::FIRED {
+    for name in crate::interface::events::FIRED {
         let args = samples
             .iter()
             .find(|(sample, _)| *sample == name)
@@ -3953,7 +3953,7 @@ fn fire_everything(host: &mut LuaHost) {
         // `MSG_RAID_READY_CHECK` through the group. Restored afterwards so the
         // remaining names still see the harness's stated world.
         let raid_was = raid_size();
-        if name == <crate::game::events::ReadyCheck as events::GameEvent>::EVENT {
+        if name == <crate::interface::events::ReadyCheck as events::GameEvent>::EVENT {
             RAID.store(raid_was.max(2), std::sync::atomic::Ordering::Relaxed);
         }
         host.fire_event(name, &args, &Login);
@@ -3964,8 +3964,8 @@ fn fire_everything(host: &mut LuaHost) {
         // to type "DELETE" into — so the sample above reaches only half of what
         // this name does. Fired here rather than as a second sample because the
         // table is keyed by name and `fired` counts *names*, not raises.
-        if name == <crate::game::events::DeleteItemConfirm as events::GameEvent>::EVENT {
-            let good = crate::game::events::DeleteItemConfirm {
+        if name == <crate::interface::events::DeleteItemConfirm as events::GameEvent>::EVENT {
+            let good = crate::interface::events::DeleteItemConfirm {
                 name: "Thunderfury".to_string(),
                 quality: 5,
             };
@@ -3996,7 +3996,7 @@ fn fire_everything(host: &mut LuaHost) {
             return Ok((0, None));
         };
         let lines = super::widgets::messages::lines(&frame, 0.0);
-        // The **oldest**, which under [`crate::game::events::FIRED`]'s order is
+        // The **oldest**, which under [`crate::interface::events::FIRED`]'s order is
         // `CHAT_MSG_SAY` — the branch that composes a sentence, rather than one
         // of the several that pass `arg1` through untouched and would prove
         // nothing about the formatting.
@@ -4041,20 +4041,20 @@ fn fire_everything(host: &mut LuaHost) {
     }
 }
 
-/// A `dyn`-safe view of [`crate::game::events::GameEvent`], whose own methods
+/// A `dyn`-safe view of [`crate::interface::events::GameEvent`], whose own methods
 /// take `Self: Sized` through the associated const. Local to the audit because
 /// nothing else needs to hold one of these as a trait object.
 trait GameEvent2 {
     fn fire_name(&self) -> &'static str;
-    fn fire_args(&self) -> Vec<crate::game::events::EventArg>;
+    fn fire_args(&self) -> Vec<crate::interface::events::EventArg>;
 }
 
-impl<T: crate::game::events::GameEvent> GameEvent2 for T {
+impl<T: crate::interface::events::GameEvent> GameEvent2 for T {
     fn fire_name(&self) -> &'static str {
-        crate::game::events::GameEvent::name(self)
+        crate::interface::events::GameEvent::name(self)
     }
-    fn fire_args(&self) -> Vec<crate::game::events::EventArg> {
-        crate::game::events::GameEvent::args(self)
+    fn fire_args(&self) -> Vec<crate::interface::events::EventArg> {
+        crate::interface::events::GameEvent::args(self)
     }
 }
 
@@ -4106,13 +4106,13 @@ impl super::panels::container::ContainerAnswers for Ticking {
     fn cursor_has_spell(&self) -> bool {
         false
     }
-    fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<crate::game::api::ItemTip> {
+    fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<crate::interface::api::ItemTip> {
         Login.bag_item_tip(bag, slot)
     }
-    fn inventory_item_tip(&self, token: &str, id: u32) -> Option<crate::game::api::ItemTip> {
+    fn inventory_item_tip(&self, token: &str, id: u32) -> Option<crate::interface::api::ItemTip> {
         Login.inventory_item_tip(token, id)
     }
-    fn item_tip(&self, entry: u32) -> Option<crate::game::api::ItemTip> {
+    fn item_tip(&self, entry: u32) -> Option<crate::interface::api::ItemTip> {
         Login.item_tip(entry)
     }
 
@@ -4183,7 +4183,7 @@ impl super::panels::quest::QuestAnswers for Ticking {
     fn quest_log_items(&self, choices: bool) -> Vec<super::panels::quest::RewardLine> {
         Login.quest_log_items(choices)
     }
-    fn quest_reward_spell_tip(&self, from_log: bool) -> Option<crate::game::api::SpellTip> {
+    fn quest_reward_spell_tip(&self, from_log: bool) -> Option<crate::interface::api::SpellTip> {
         Login.quest_reward_spell_tip(from_log)
     }
     fn quest_log_money(&self, required: bool) -> u32 {
@@ -4252,7 +4252,7 @@ impl super::panels::merchant::MerchantAnswers for Ticking {
     fn merchant_max_stack(&self, row: usize) -> u32 {
         Login.merchant_max_stack(row)
     }
-    fn repairs(&self) -> crate::game::npc::merchant::Repairs {
+    fn repairs(&self) -> crate::interface::merchant::Repairs {
         Login.repairs()
     }
 }
@@ -4386,7 +4386,7 @@ impl super::panels::craft::CraftAnswers for Ticking {
     fn craft_tip_item(&self, index: usize, reagent: usize) -> Option<u32> {
         Login.craft_tip_item(index, reagent)
     }
-    fn craft_spell_tip(&self, index: usize) -> Option<crate::game::api::SpellTip> {
+    fn craft_spell_tip(&self, index: usize) -> Option<crate::interface::api::SpellTip> {
         Login.craft_spell_tip(index)
     }
 }
@@ -4494,7 +4494,7 @@ impl super::panels::trainer::TrainerAnswers for Ticking {
     fn trainer_select(&self, row: usize) {
         Login.trainer_select(row);
     }
-    fn trainer_tooltip(&self, row: usize) -> Option<crate::game::api::SpellTip> {
+    fn trainer_tooltip(&self, row: usize) -> Option<crate::interface::api::SpellTip> {
         Login.trainer_tooltip(row)
     }
     fn trainer_is_tradeskill(&self) -> bool {
@@ -4574,13 +4574,13 @@ impl super::panels::pet::PetAnswers for Ticking {
     fn pet_has_action_bar(&self) -> bool {
         Login.pet_has_action_bar()
     }
-    fn pet_action_info(&self, slot: usize) -> Option<crate::game::combat::pet::PetSlot> {
+    fn pet_action_info(&self, slot: usize) -> Option<crate::interface::pet::PetSlot> {
         Login.pet_action_info(slot)
     }
     fn pet_action_cooldown(&self, slot: usize) -> (f64, f64, u32) {
         Login.pet_action_cooldown(slot)
     }
-    fn pet_action_tooltip(&self, slot: usize) -> Option<crate::game::api::SpellTip> {
+    fn pet_action_tooltip(&self, slot: usize) -> Option<crate::interface::api::SpellTip> {
         Login.pet_action_tooltip(slot)
     }
     fn pet_actions_usable(&self) -> bool {
@@ -4607,7 +4607,7 @@ impl super::panels::pet::PetAnswers for Ticking {
     fn pet_food_types(&self) -> Vec<String> {
         Login.pet_food_types()
     }
-    fn creature_family(&self, unit: crate::game::api::UnitId) -> Option<String> {
+    fn creature_family(&self, unit: crate::interface::api::UnitId) -> Option<String> {
         Login.creature_family(unit)
     }
     fn has_pet_spells(&self) -> Option<(u32, &'static str)> {
@@ -4748,7 +4748,7 @@ impl super::panels::talent::TalentAnswers for Ticking {
     fn talent_prereqs(&self, tab: usize, index: usize) -> Vec<super::panels::talent::TalentPrereq> {
         Login.talent_prereqs(tab, index)
     }
-    fn talent_tooltip(&self, tab: usize, index: usize) -> Option<crate::game::api::SpellTip> {
+    fn talent_tooltip(&self, tab: usize, index: usize) -> Option<crate::interface::api::SpellTip> {
         Login.talent_tooltip(tab, index)
     }
 }
@@ -4775,7 +4775,7 @@ impl super::panels::spellbook::SpellbookAnswers for Ticking {
     fn spell_is_current_cast(&self, index: usize) -> bool {
         Login.spell_is_current_cast(index)
     }
-    fn spell_tooltip(&self, index: usize) -> Option<crate::game::api::SpellTip> {
+    fn spell_tooltip(&self, index: usize) -> Option<crate::interface::api::SpellTip> {
         Login.spell_tooltip(index)
     }
 }
@@ -4807,10 +4807,10 @@ impl super::api::ActionAnswers for Ticking {
     fn action_bar_toggles(&self) -> u8 {
         Login.action_bar_toggles()
     }
-    fn action_tooltip(&self, slot: u8) -> Option<crate::game::api::SpellTip> {
+    fn action_tooltip(&self, slot: u8) -> Option<crate::interface::api::SpellTip> {
         Login.action_tooltip(slot)
     }
-    fn action_item_tooltip(&self, slot: u8) -> Option<crate::game::api::ItemTip> {
+    fn action_item_tooltip(&self, slot: u8) -> Option<crate::interface::api::ItemTip> {
         Login.action_item_tooltip(slot)
     }
     fn action_text(&self, slot: u8) -> Option<String> {
@@ -4964,7 +4964,7 @@ impl super::api::UnitAnswers for Ticking {
     fn unit_is_pvp(&self, token: &str) -> bool {
         Login.unit_is_pvp(token)
     }
-    fn unit_tooltip(&self, token: &str) -> Option<crate::game::api::UnitTip> {
+    fn unit_tooltip(&self, token: &str) -> Option<crate::interface::api::UnitTip> {
         Login.unit_tooltip(token)
     }
     fn unit_rank(&self, a: &str, b: &str) -> Option<vale_assets::tables::faction::Rank> {
@@ -5009,7 +5009,7 @@ impl super::api::UnitAnswers for Ticking {
 /// with every earlier round's numbers. The tick count is printed beside them so
 /// the two cannot be confused.
 /// **The tokens a tick's worth of news is about** — the subset of
-/// [`crate::game::character::vitals`]' eleven that this double has somebody at.
+/// [`crate::interface::vitals`]' eleven that this double has somebody at.
 ///
 /// A party in a fight moves every one of them on the same tick, and each move is
 /// one `UNIT_HEALTH` whose `arg1` is the token — which is what
@@ -5086,17 +5086,17 @@ fn spin_frames(host: &mut LuaHost, frames: usize, gamedata_dir: &str) {
         // no earlier round measured.** `crate::lua::api::events::dispatch` is
         // what this stands in for, and the batch is a real one: a party in a
         // fight moves every watched unit's health on the same tick, so it is
-        // one `UNIT_HEALTH` per token in `game::character::vitals::WATCHED` that
+        // one `UNIT_HEALTH` per token in `interface::vitals::WATCHED` that
         // the double actually has somebody at. See [`NEWS`].
         if due {
             // **One call with the whole batch**, which is what
             // `crate::lua::api::events::dispatch` does — a probe that fired them
             // one at a time would measure a cost the client no longer pays.
-            let args: Vec<Vec<crate::game::events::EventArg>> = news_tokens()
+            let args: Vec<Vec<crate::interface::events::EventArg>> = news_tokens()
                 .into_iter()
-                .map(|token| vec![crate::game::events::EventArg::Text(token)])
+                .map(|token| vec![crate::interface::events::EventArg::Text(token)])
                 .collect();
-            let batch: Vec<(&str, &[crate::game::events::EventArg])> = args
+            let batch: Vec<(&str, &[crate::interface::events::EventArg])> = args
                 .iter()
                 .map(|args| ("UNIT_HEALTH", args.as_slice()))
                 .collect();

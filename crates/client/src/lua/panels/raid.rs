@@ -37,7 +37,7 @@
 //!   `SMSG_PARTY_MEMBER_STATS`' when they are not — the same two-places-to-look
 //!   the party frames have;
 //! * **class** is in *neither*, and comes from the name cache
-//!   (`CMSG_NAME_QUERY`) — see [`crate::game::session::raid::learn_member_classes`];
+//!   (`CMSG_NAME_QUERY`) — see [`crate::interface::raid::learn_member_classes`];
 //! * **zone** is a name rather than an id, and it has three cases:
 //!   [`Live::raid_zone`] has them.
 //!
@@ -54,7 +54,7 @@
 //! The same split as [`super::party`], and one of the nine writes never reaches
 //! a socket at all: `SetRaidRosterSelection` is client-side state, stored on the
 //! roster because that is where it is thrown away — see
-//! [`crate::game::session::party::Party::raid_selection`].
+//! [`crate::interface::party::Party::raid_selection`].
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -62,8 +62,8 @@ use std::rc::Rc;
 use vale_protocol::play::group::MAX_RAID_MEMBERS;
 
 use super::super::api::{Answers, Live};
-use crate::game::api::UnitId;
-use crate::game::session::raid::RaidSlot;
+use crate::interface::api::UnitId;
+use crate::interface::raid::RaidSlot;
 
 /// The **scoped reads** this file registers, sorted — see [`super::super::api::READS`].
 pub const READS: [&str; 7] = [
@@ -92,7 +92,7 @@ pub const WRITES: [&str; 9] = [
 /// What the interface asked of the raid.
 ///
 /// Indices rather than names or guids wherever the interface passes one, and
-/// the resolution happens in [`crate::game::session::raid`] — because only the
+/// the resolution happens in [`crate::interface::raid`] — because only the
 /// roster knows what `raid7` is, and because the row that is *us* is not in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RaidRequest {
@@ -413,7 +413,7 @@ impl Live<'_, '_, '_> {
     ///
     /// Our own row reads it off the local player's `UNIT_FIELD_BYTES_0` like
     /// `UnitClass` does; everybody else's is whatever `CMSG_NAME_QUERY` last
-    /// answered — see [`crate::game::session::raid::learn_member_classes`], and
+    /// answered — see [`crate::interface::raid::learn_member_classes`], and
     /// note that `None` here is *not yet*, not *never*.
     fn raid_class(&self, slot: RaidSlot) -> Option<(String, String)> {
         // **The second is upper case** — see [`RaidRow::class`], where the
@@ -498,7 +498,7 @@ impl Live<'_, '_, '_> {
 /// only at `party<n>` leaves every bar in the raid grid at its loaded width.
 ///
 /// A slot nobody occupies resolves to nothing and costs one branch — see
-/// [`crate::game::session::party::Party::raid_slot`], which answers `None` for
+/// [`crate::interface::party::Party::raid_slot`], which answers `None` for
 /// every index while the group is a party.
 pub const WATCHED: [UnitId; MAX_RAID_MEMBERS] = {
     let mut tokens = [UnitId::Raid(1); MAX_RAID_MEMBERS];

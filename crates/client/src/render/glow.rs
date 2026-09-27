@@ -189,7 +189,7 @@ fn attach(mut commands: Commands, camera: Query<Entity, With<crate::world::camer
 /// its uniform re-uploaded.
 fn switch(
     tuning: Res<WorldTuning>,
-    cvars: Res<crate::game::cvars::CVars>,
+    cvars: Res<crate::settings::cvars::CVars>,
     session: Res<crate::world::session::Session>,
     mut glow: Query<&mut Glow>,
 ) {

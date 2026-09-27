@@ -229,7 +229,7 @@ fn mark_for(
     world: &vale_protocol::state::objects::ObjectManager,
     unit: &WorldEntity,
 ) -> Option<&'static str> {
-    if crate::game::npc::taxi::is_flight_master(unit) && world.taxi_status(unit.guid) == Some(false) {
+    if crate::interface::taxi::is_flight_master(unit) && world.taxi_status(unit.guid) == Some(false) {
         return vale_assets::tables::questmark::slot_model(
             vale_assets::tables::questmark::TAXI_UNDISCOVERED,
         );
@@ -309,7 +309,7 @@ mod tests {
         let mut world = vale_protocol::state::objects::ObjectManager::default();
         let master = WorldEntity {
             guid: 7,
-            npc_flags: crate::game::npc::taxi::UNIT_NPC_FLAG_FLIGHTMASTER,
+            npc_flags: crate::interface::taxi::UNIT_NPC_FLAG_FLIGHTMASTER,
             ..WorldEntity::default()
         };
 
@@ -339,7 +339,7 @@ mod tests {
         let mut world = vale_protocol::state::objects::ObjectManager::default();
         let unit = WorldEntity {
             guid: 11,
-            npc_flags: crate::game::npc::taxi::UNIT_NPC_FLAG_FLIGHTMASTER | 0x0002,
+            npc_flags: crate::interface::taxi::UNIT_NPC_FLAG_FLIGHTMASTER | 0x0002,
             ..WorldEntity::default()
         };
         world.set_quest_status(11, DialogStatus::Available);

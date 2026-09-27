@@ -19,7 +19,7 @@
 //! handler that changed it* (`SetSelectedSkill(...)` then
 //! `SkillFrame_UpdateSkills()` two lines later), so a queued write applied next
 //! frame would draw the previous selection. The board is held here and
-//! [`crate::game::character::skills`] feeds it.
+//! [`crate::interface::skills`] feeds it.
 //!
 //! ## The rules are not here
 //!
@@ -81,7 +81,7 @@ pub struct Board {
     /// caught by comparing rather than by remembering to invalidate.
     built_for: Option<(u8, u8, u32, usize)>,
     /// Bumped by every change, whoever made it — what
-    /// [`crate::game::character::skills`] raises `SKILL_LINES_CHANGED` off.
+    /// [`crate::interface::skills`] raises `SKILL_LINES_CHANGED` off.
     pub version: u32,
     /// The block the list was last built from, kept so [`Board::refresh`] has
     /// something to compare a rank against.

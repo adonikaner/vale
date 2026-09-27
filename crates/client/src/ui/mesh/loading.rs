@@ -38,7 +38,7 @@ pub(super) struct LoadState {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn paint(
     mut commands: Commands,
-    screen: Res<crate::game::place::loading::LoadingScreen>,
+    screen: Res<crate::glue::loading::LoadingScreen>,
     assets: Res<crate::assets::GameAssets>,
     mut textures: ResMut<UiTextures>,
     mut images: ResMut<Assets<Image>>,

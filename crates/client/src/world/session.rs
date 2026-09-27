@@ -131,7 +131,7 @@ impl ActiveSession {
 
     /// …and which **area** the ground under a position belongs to — `MCNK`'s own
     /// `areaId`, which is the client's only source for where a character is
-    /// below the map. See [`crate::game::place::worldmap`], which polls it.
+    /// below the map. See [`crate::interface::worldmap`], which polls it.
     ///
     /// The same `MapTerrain` as above, so the tile is already resident for the
     /// mover and this is a cache hit rather than a parse.
@@ -181,7 +181,7 @@ pub struct Handshake {
     /// — `AccountLogin.lua` writes it only when *Remember account name* is
     /// ticked — so on an install where nobody ticked it there is no account
     /// name anywhere, and everything keyed by one (the key bindings' two files)
-    /// is silently skipped. See `game::session::keybindings`.
+    /// is silently skipped. See `settings::keybindings`.
     pub account: String,
     /// When the socket was last spoken to, so a screen left open does not have
     /// the connection quietly taken away — see [`keep_selection_alive`].
@@ -661,7 +661,7 @@ pub struct WorldEntity {
     /// update block**, so they are absent for the round trip
     /// `CMSG_CREATURE_QUERY` costs and empty/zero for every player. They are
     /// carried because the unit tooltip's middle and right cells are made of
-    /// them — see [`crate::game::api::UnitTip`].
+    /// them — see [`crate::interface::api::UnitTip`].
     pub sub_name: String,
     pub creature_type: u32,
     /// **`CreatureFamily.dbc`, off the template** — wolf, cat, boar; 0 for
@@ -711,7 +711,7 @@ pub struct WorldEntity {
     /// Beside the appearance rather than in it, because **class is not part of
     /// what a character looks like** and dressing one has no use for it. What
     /// does is the spellbook: the two masks on a `SkillLineAbility` row are what
-    /// decide which page a spell goes on. See [`crate::game::combat::spellbook`].
+    /// decide which page a spell goes on. See [`crate::interface::spellbook`].
     pub race_class: Option<(u8, u8)>,
     /// …and the third byte of the same field, which is what `UnitSex` answers —
     /// see [`vale_protocol::state::objects::Entity::gender`]. Beside
@@ -855,7 +855,7 @@ pub struct WorldEntity {
     ///
     /// Not derivable from [`Self::dead`], which is why it is carried: a released
     /// ghost has health 1 and reads as *alive*. See
-    /// [`vale_protocol::play::death`] and [`crate::game::character::death`].
+    /// [`vale_protocol::play::death`] and [`crate::interface::death`].
     pub is_ghost: bool,
     /// `PLAYER_FIELD_BYTES`' `RELEASE_TIMER` bit — whether the release box
     /// counts down at all. Clear inside an instance, which is what makes
@@ -868,7 +868,7 @@ pub struct WorldEntity {
     /// `PLAYER_CHARACTER_POINTS1` and `2` — unspent talent points and unspent
     /// profession points, the pair `UnitCharacterPoints("player")` answers.
     /// `PRIVATE`: `None` for everyone else. See
-    /// [`crate::game::character::talents`].
+    /// [`crate::interface::talents`].
     pub character_points: Option<(u32, u32)>,
     /// `PLAYER_REST_STATE_EXPERIENCE` — `GetXPExhaustion()`, `None` when there
     /// is none, which is the interface's own test. See
@@ -909,7 +909,7 @@ pub struct WorldEntity {
     /// derivable from anything else the snapshot carries: the template is a
     /// number whose meaning is 314 rows of `FactionTemplate.dbc`
     /// (`vale_assets::tables::faction`), and the flags carry the five bits that
-    /// disqualify a unit whatever its faction says. Read by [`crate::game`] for
+    /// disqualify a unit whatever its faction says. Read by [`crate::interface`] for
     /// Tab-targeting, for the target frame's colour, and for binding a cast.
     pub faction: Option<u32>,
     pub unit_flags: u32,
@@ -1017,7 +1017,7 @@ pub struct WorldEntity {
     ///
     /// So it is only ever true for the local player — nobody else's loot window
     /// is knowable from here — and it is set in [`poll_world`] from
-    /// [`crate::game::npc::loot::LootWindow`] rather than off the object
+    /// [`crate::interface::loot::LootWindow`] rather than off the object
     /// manager. See `crate::world::entities::pose::wanted_animation`, which is
     /// the consumer, and `vale_assets::world::m2::anim::LOOT`, which is the
     /// measurement of the clip.
@@ -1079,7 +1079,7 @@ pub struct WorldEntity {
     /// ([`vale_assets::look::object::Kind::page_words`]) and the consumer
     /// wants the answer. A page id of zero is the ordinary case — most goobers
     /// are braziers with nothing written on them. See
-    /// [`crate::game::npc::pagetext`].
+    /// [`crate::interface::pagetext`].
     pub object_page: (u32, u32),
     /// …and **what hovering it is worth**, which is not the same question as
     /// whether a click does anything: a street sign is a game object that can
@@ -1322,7 +1322,7 @@ pub struct WorldEntity {
     /// word either way — and here rather than in a resource because it is the
     /// server's acknowledgement of `CMSG_SET_WATCHED_FACTION`, which is
     /// acknowledged by nothing else at all. See
-    /// [`crate::game::character::reputation`].
+    /// [`crate::interface::reputation`].
     pub watched_faction: Option<i32>,
     /// **`(spell id, radius in yards)` for a `DynamicObject`, and `None` for
     /// everything else** — a Blizzard's ring, a Flamestrike's patch, a
@@ -1434,7 +1434,7 @@ impl vale_protocol::play::areatrigger::Triggers for Portals {
 /// which of the surfaces over a point is the one being stood on.
 ///
 /// **Public because a second caller outside this directory needs the same
-/// join.** [`crate::game::combat::target`] walks a ray down onto the floor to place a
+/// join.** [`crate::interface::target`] walks a ray down onto the floor to place a
 /// ground-targeted spell, and the floor a Blizzard lands on had better be the
 /// floor the character would walk on — a second implementation of the two-line
 /// join is exactly the shape `vale dress` was found in, reporting success
@@ -1448,7 +1448,7 @@ pub struct Standing {
 /// join share, and the one that used to send a character in Ironforge to the top
 /// of the mountain.
 ///
-/// A free function for the reason [`crate::game::place::loading::reckon`] is one:
+/// A free function for the reason [`crate::glue::loading::reckon`] is one:
 /// a [`Standing`] holds a `MapTerrain` and cannot be built without an archive, so
 /// the rule would otherwise be the one part of the join nothing checks — and it
 /// is the part with a visibly wrong answer on both sides.
@@ -1907,13 +1907,13 @@ impl Plugin for SessionPlugin {
                     crate::world::predict::rebase,
                     // **After the controls are assembled**, which is the edge
                     // that decides whether a movement key is felt this frame or
-                    // the next: `game::place::controls::apply` is what turns
+                    // the next: `input::controls::apply` is what turns
                     // this frame's `Binding::Control` into the eight flags read
                     // three lines below. It cannot be spelled as
                     // `.after(GameSet)` — a targeting system in that set is
                     // already ordered after `place_entities`, which is after
                     // this, and that way is a cycle.
-                    send_input.after(crate::game::place::controls::apply),
+                    send_input.after(crate::input::controls::apply),
                     crate::world::predict::advance,
                     // **The drawn heading before the thing that draws it.** A
                     // strafe turns the body off the aim and `place_entities`
@@ -2410,10 +2410,10 @@ fn poll_world(
     time: Res<Time>,
     mut session: ResMut<Session>,
     // **The one thing on the snapshot that is not the server's**, and it is
-    // here rather than in `game/` because this is the function that builds a
+    // here rather than in `interface/` because this is the function that builds a
     // `WorldEntity` and there is exactly one of those. See
     // [`WorldEntity::looting`].
-    loot: Res<crate::game::npc::loot::LootWindow>,
+    loot: Res<crate::interface::loot::LootWindow>,
     // …and the one table that decides where a thing *is* rather than what it
     // looks like: see [`crate::world::entities::transport`]. Read once per
     // step, outside the walk.
@@ -2450,7 +2450,7 @@ fn poll_world(
     // character and the loop runs over everything in view.
     //
     // **Not `is_holding()`'s half-open state** — a window whose rows are still
-    // being named has not been drawn yet (see [`crate::game::npc::loot::hold`]),
+    // being named has not been drawn yet (see [`crate::interface::loot::hold`]),
     // and the body is already being reached into either way. What matters here
     // is that there is a body under the cursor, which `get` is.
     let looting = loot.get().is_some();
@@ -3047,8 +3047,8 @@ fn poll_world(
 pub fn send_input(
     time: Res<Time>,
     buttons: Res<ButtonInput<MouseButton>>,
-    controls: Res<crate::game::place::controls::ControlState>,
-    mut pressed: MessageReader<crate::game::bindings::BindingPressed>,
+    controls: Res<crate::input::controls::ControlState>,
+    mut pressed: MessageReader<crate::input::bindings::BindingPressed>,
     session: Res<Session>,
     rig: Res<crate::world::camera::CameraRig>,
     // The last heading handed to the session, so a held button that is not
@@ -3064,7 +3064,7 @@ pub fn send_input(
     };
 
     // **A key being typed into the chat line is not a movement key**, and that
-    // is [`crate::game::bindings`]'s to refuse rather than this function's: it
+    // is [`crate::input::bindings`]'s to refuse rather than this function's: it
     // returns before the dispatch while a text field has focus or a frame
     // declaring `enableKeyboard` is up, so no edge reaches `ControlState` and
     // typing "we ran away" cannot hold W, E, A and D.
@@ -3075,7 +3075,7 @@ pub fn send_input(
     // both-buttons autorun that was already running. `ControlState` is simply
     // frozen while something else has the keyboard: what was held stays held,
     // the character keeps moving, and the mouse goes on steering. See
-    // [`crate::game::place::controls::apply`], where the reference's own rule
+    // [`crate::input::controls::apply`], where the reference's own rule
     // is written down against `WorldMapFrame.xml`.
     let steering = buttons.pressed(MouseButton::Right);
     let autorun = steering && buttons.pressed(MouseButton::Left);
@@ -3084,7 +3084,7 @@ pub fn send_input(
     // until the key-bindings panel landed, which meant a rebound key did two
     // things at once: `A` is `TURNLEFT` in the shipped defaults, so binding it
     // to `ACTIONBUTTON3` cast a spell *and* turned the character. See
-    // [`crate::game::place::controls`], which is where the eight now live and
+    // [`crate::input::controls`], which is where the eight now live and
     // which reaches them through the game's own `<Binding>` bodies.
     //
     // The two facts still read off the *mouse* are the two a keyboard binding
@@ -3192,8 +3192,8 @@ pub fn send_input(
     // whatever is bound to `PITCHUP`, which is a *held* control and arrives
     // through `ControlState` above. The gate between them is
     // `MOVEFLAG_SWIMMING` in both directions — see `Mover::pitch_flags`.
-    for crate::game::bindings::BindingPressed(binding) in pressed.read() {
-        if matches!(binding, crate::game::bindings::Binding::Jump) {
+    for crate::input::bindings::BindingPressed(binding) in pressed.read() {
+        if matches!(binding, crate::input::bindings::Binding::Jump) {
             active.live.jump();
         }
     }

@@ -44,7 +44,7 @@
 //! The same split every other file here keeps. The reads borrow the world for
 //! the length of one call ([`super::super::api::Answers`]); the three writes cannot,
 //! because they happen inside a handler and the world is borrowed — so they push
-//! a [`MapRequest`] that [`crate::game::place::worldmap`] applies, exactly as
+//! a [`MapRequest`] that [`crate::interface::worldmap`] applies, exactly as
 //! [`super::super::api::verbs`]'s bindings and chat lines are.
 
 use vale_assets::tables::worldmap::MapView;
@@ -54,7 +54,7 @@ use std::rc::Rc;
 use super::super::api::Answers;
 // The unit-token surface these answers read the world through — imported
 // here now that the subject's own answers live beside its registration.
-use crate::game::api::UnitId;
+use crate::interface::api::UnitId;
 
 /// The globals this file registers, sorted. Counted by `vale framexml`
 /// against what the directory calls: `GetMapInfo` 2, `GetCurrentMapContinent` 2,
@@ -513,7 +513,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 
 /// **What a [`MapRequest`] does to a view**, with no Bevy and no world.
 ///
-/// Here rather than in `game/` for the reason `assets::dress` gives one level
+/// Here rather than in `interface/` for the reason `assets::dress` gives one level
 /// down: it could be decided with nothing running, so it is a rule and it gets a
 /// test. `zone_count` is how many zones the *target* continent has, which is the
 /// only thing outside the view that `Zoom` needs to bound itself.
@@ -993,7 +993,7 @@ impl MapAnswers for super::super::api::Live<'_, '_, '_> {
     fn sub_zone_text(&self) -> String {
         // **The building's own name first.** "The Great Forge" and "Lion's Pride
         // Inn" are `WMOAreaTable` rows and are in no other table, so there is no
-        // area id to reach them by — see `game::worldmap`, which is where the
+        // area id to reach them by — see `interface::worldmap`, which is where the
         // decision is made and this is only the read.
         if !self.place.sub_name.is_empty() {
             return self.place.sub_name.clone();

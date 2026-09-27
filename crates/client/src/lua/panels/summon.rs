@@ -1,7 +1,7 @@
 //! **The summon popup's three reads.** `CONFIRM_SUMMON` formats all three
 //! into `"%s wants to summon you to %s.  The spell will be cancelled in %d
 //! %s."` on every frame it is up; its Accept is `ConfirmSummon()`, a binding.
-//! The state is [`crate::game::session::summon`].
+//! The state is [`crate::interface::summon`].
 
 use super::super::api::Answers;
 

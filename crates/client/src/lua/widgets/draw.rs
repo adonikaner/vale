@@ -153,7 +153,7 @@ pub enum Content {
     /// ground the character is standing on: `<Minimap>`. What is carried is the
     /// widget's own state and nothing else — where it is centred is the world's
     /// answer and reaches the painter through
-    /// [`crate::game::place::minimap::MinimapView`], because this walk holds no borrow
+    /// [`crate::interface::minimap::MinimapView`], because this walk holds no borrow
     /// of the world. See [`super::minimap`].
     Minimap(super::minimap::MinimapWidget),
 }

@@ -75,7 +75,7 @@
 //! every other word here, but the item *names* behind it come from the server's
 //! templates and the sentence's `$s1`/`$d` variables are substituted in
 //! [`vale_assets::tables::spelltext`], both on the far side of
-//! [`crate::game::api::spell_tip`]. So this module still only composes: the
+//! [`crate::interface::api::spell_tip`]. So this module still only composes: the
 //! order is the game's own — name, cost/range, cast/cooldown, reagents, then
 //! the sentence in **green**, which is the one colour on the plate that is not
 //! gold or white.
@@ -102,7 +102,7 @@ use super::super::host::LuaHost;
 use super::frames;
 use super::regions;
 use super::widget;
-use crate::game::api::SpellTip;
+use crate::interface::api::SpellTip;
 
 /// **The world mouseover's own plate**, which is the one population no
 /// `<OnEnter>` in the directory reaches. See the module comment.
@@ -112,7 +112,7 @@ impl Plugin for TooltipPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            // **After the whole of `game/` and before the event dispatch.** The
+            // **After the whole of `GameSet` and before the event dispatch.** The
             // plate has to hold this unit's name by the time
             // `UPDATE_MOUSEOVER_UNIT` reaches `GameTooltip.xml`'s handler, whose
             // entire body recolours `GameTooltipTextLeft1` — a recolour that
@@ -120,7 +120,7 @@ impl Plugin for TooltipPlugin {
             // overwrites it, which is a plate that is permanently one hover
             // behind on colour alone.
             show_world_tooltip
-                .after(crate::game::GameSet)
+                .after(crate::interface::GameSet)
                 .before(super::super::api::events::dispatch),
         );
     }
@@ -129,7 +129,7 @@ impl Plugin for TooltipPlugin {
 /// Fill the `GameTooltip` for whatever the pointer is over, and take it down
 /// again when it leaves.
 ///
-/// **On the change and not per frame**, which is [`crate::game::combat::target`]'s rule
+/// **On the change and not per frame**, which is [`crate::interface::target`]'s rule
 /// for the same reason: `SetUnit` clears and re-appends every line, and doing
 /// that sixty times a second would throw away the interface's solved rectangles
 /// as fast as it computes them — the exact fault the container frames' own
@@ -141,11 +141,11 @@ impl Plugin for TooltipPlugin {
 fn show_world_tooltip(
     host: Option<NonSendMut<LuaHost>>,
     world: LuaWorld,
-    hovered: Res<crate::game::combat::target::Hovered>,
+    hovered: Res<crate::interface::target::Hovered>,
     // …and the other half of the same pick — see
-    // [`crate::game::npc::object::HoveredObject`]. Exactly one of the two is
+    // [`crate::interface::object::HoveredObject`]. Exactly one of the two is
     // ever filled, which is what lets the three branches below be a plain `if`.
-    object: Res<crate::game::npc::object::HoveredObject>,
+    object: Res<crate::interface::object::HoveredObject>,
     // **The window, only to know when the pointer has moved** — see [`Latch`].
     // Where a floating plate actually *lands* is `GetCursorPosition()`'s answer
     // inside the chunk, not this; this is the same conversion through the same
@@ -245,7 +245,7 @@ fn show_world_tooltip(
 type LockArguments = (String, bool, f32, f32, f32, Option<&'static str>, String, f32, f32, f32);
 
 /// [`LockArguments`], out of the judged plate.
-fn lock_arguments(plate: &crate::game::npc::object::LockPlate, name: &str) -> LockArguments {
+fn lock_arguments(plate: &crate::interface::object::LockPlate, name: &str) -> LockArguments {
     let [lr, lg, lb] = plate.locked_colour;
     let [rr, rg, rb] = plate.requires_colour;
     // **A key with no argument draws nothing**, which is the reference's own
@@ -281,7 +281,7 @@ struct Latch {
     /// because both of them move without the guid or the name moving. A
     /// strongbox that has just been picked loses its "Locked" line, and a vein
     /// changes colour the moment a skill point lands.
-    lock: crate::game::npc::object::LockPlate,
+    lock: crate::interface::object::LockPlate,
     /// Where the pointer is, in whole interface units, and **only for a plate
     /// that follows it**. See the field's own note in the function above.
     at: Option<(i32, i32)>,
@@ -314,7 +314,7 @@ impl Plate {
     ///
     /// **Which of that file's three lock strings this is, and what colour it
     /// takes, is decided in Rust** — see
-    /// [`crate::game::npc::object::LockPlate`], which follows the client. The
+    /// [`crate::interface::object::LockPlate`], which follows the client. The
     /// chunk is handed a key and looks it up with `getglobal`, so the *wording*
     /// is still the archive's and the *choice* is still the client's; nothing
     /// here invents either.
@@ -490,7 +490,7 @@ const WHITE: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
 const GRAY: [f64; 4] = [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0];
 /// **The red a requirement the character does not meet is drawn in**, stated
 /// here only for the test that pins it: the plate draws
-/// [`crate::game::plate::Ink::Red`]. Written out independently so a change to that colour fails a test.
+/// [`crate::interface::plate::Ink::Red`]. Written out independently so a change to that colour fails a test.
 #[cfg(test)]
 const RED: [f64; 4] = [1.0, 32.0 / 255.0, 32.0 / 255.0, 1.0];
 
@@ -1567,7 +1567,7 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
     };
     let spell_plate = |lua: &mlua::Lua,
                        this: &mlua::Table,
-                       tip: Option<crate::game::api::SpellTip>|
+                       tip: Option<crate::interface::api::SpellTip>|
      -> mlua::Result<mlua::Value> {
         match tip {
             Some(tip) => {
@@ -1803,7 +1803,7 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
 /// `PLAYER_OFFLINE`, and the faction/reaction lines under them. Each is an absent
 /// subsystem, so the honest plate is one that omits the line — see
 /// [`super::super::api::stubs`]' first paragraph, which is the same argument.
-fn unit_lines(lua: &mlua::Lua, this: &mlua::Table, tip: &crate::game::api::UnitTip) -> mlua::Result<()> {
+fn unit_lines(lua: &mlua::Lua, this: &mlua::Table, tip: &crate::interface::api::UnitTip) -> mlua::Result<()> {
     // The name takes the plate's own default colour rather than a stated one:
     // `GameTooltip.xml`'s `UPDATE_MOUSEOVER_UNIT` handler overwrites it with
     // `GameTooltip_UnitColor("mouseover")` a moment later, and a colour written
@@ -1843,7 +1843,7 @@ fn unit_lines(lua: &mlua::Lua, this: &mlua::Table, tip: &crate::game::api::UnitT
 
     // **The zone, bare, under the level line** — a party member somewhere else,
     // and nothing at all for anybody else. See
-    // [`crate::game::api::UnitTip::zone`], which is where the decision is made.
+    // [`crate::interface::api::UnitTip::zone`], which is where the decision is made.
     //
     // **The position in the ladder is a reconstruction**, stated as one: the
     // screenshot this was built against shows it as the third line, directly
@@ -1975,7 +1975,7 @@ fn spell_lines(lua: &mlua::Lua, this: &mlua::Table, tip: &SpellTip) -> mlua::Res
     Ok(())
 }
 
-/// **An item's plate**, drawn from [`crate::game::plate::item_plate`].
+/// **An item's plate**, drawn from [`crate::interface::plate::item_plate`].
 ///
 /// The line order, the keys and the colours are that function's, which is the
 /// one copy: it reads the words through a lookup rather than out of this
@@ -1985,7 +1985,7 @@ fn spell_lines(lua: &mlua::Lua, this: &mlua::Table, tip: &SpellTip) -> mlua::Res
 fn item_lines(
     lua: &mlua::Lua,
     this: &mlua::Table,
-    tip: &crate::game::api::ItemTip,
+    tip: &crate::interface::api::ItemTip,
 ) -> mlua::Result<()> {
     let word = |key: &str| {
         lua.globals()
@@ -1993,7 +1993,7 @@ fn item_lines(
             .ok()
             .flatten()
     };
-    for line in crate::game::plate::item_plate(tip, &word) {
+    for line in crate::interface::plate::item_plate(tip, &word) {
         let [r, g, b] = line.ink.rgb();
         let right = match line.right {
             Some(right) => Some((text(lua, &right)?, WHITE)),
@@ -2068,7 +2068,7 @@ fn global_format_all(lua: &mlua::Lua, key: &str, values: &[&str]) -> Option<Stri
 ///
 /// **The rule is [`vale_assets::interface::strings::substitute`]'s**, not a copy of it:
 /// the same fill is made against the live globals table here and against the
-/// shipped table in `game::messages`, and while there were two of them one
+/// shipped table in `interface::messages`, and while there were two of them one
 /// handled `%d` and the other did not.
 fn substitute(format: &str, value: &str) -> String {
     vale_assets::interface::strings::substitute(format, value)
@@ -2757,7 +2757,7 @@ mod tests {
     /// **A group mate somewhere else gets a bare zone line**, third, under the
     /// level line — which is what the screenshot that asked for it shows.
     ///
-    /// The *decision* is not here: [`crate::game::api::UnitTip::zone`] is empty
+    /// The *decision* is not here: [`crate::interface::api::UnitTip::zone`] is empty
     /// for everybody but a party member in another zone, so this is only the
     /// composition. Its position in the ladder is a reconstruction and the
     /// comment in [`unit_lines`] says so.

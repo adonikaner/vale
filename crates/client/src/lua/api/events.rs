@@ -1,6 +1,6 @@
 //! **The world's news, delivered to the interface.**
 //!
-//! One system. It takes everything [`crate::game::events`] wrote, and for each
+//! One system. It takes everything [`crate::interface::events`] wrote, and for each
 //! one calls every frame that said `RegisterEvent` for it — which is the other
 //! half of the loop the binding dispatch is the first half of:
 //!
@@ -9,16 +9,16 @@
 //! the client learns  ->  an event name     ->  OnEvent  ->  the interface redraws
 //! ```
 //!
-//! Until this existed, `game::events` was nine well-named message types that
+//! Until this existed, `interface::events` was nine well-named message types that
 //! nothing in Lua could hear. That was the one joint the widget tree genuinely
 //! needs, and it is this file.
 //!
-//! ## Ordering: after the whole of `game/`, and what that costs
+//! ## Ordering: after the whole of `GameSet`, and what that costs
 //!
-//! The dispatch runs **after** [`crate::game::GameSet`], so an event written
+//! The dispatch runs **after** [`crate::interface::GameSet`], so an event written
 //! anywhere in that directory is delivered in the same frame it was written. The
 //! price is at the other end: a verb an `OnEvent` handler calls is announced as a
-//! [`crate::game::bindings::BindingPressed`] *after* the systems that read those
+//! [`crate::input::bindings::BindingPressed`] *after* the systems that read those
 //! have run, so it takes effect on the next frame.
 //!
 //! That is a stated one-frame lag and not a bug waiting to be found. It is also
@@ -32,14 +32,14 @@ use bevy::prelude::*;
 
 use super::super::api::LuaWorld;
 use super::super::host::LuaHost;
-use crate::game::bindings::BindingPressed;
-use crate::game::events::GameEventReaders;
+use crate::input::bindings::BindingPressed;
+use crate::interface::events::GameEventReaders;
 
 pub struct EventsPlugin;
 
 impl Plugin for EventsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, dispatch.after(crate::game::GameSet));
+        app.add_systems(Update, dispatch.after(crate::interface::GameSet));
     }
 }
 
@@ -67,7 +67,7 @@ pub(in crate::lua) fn dispatch(
     // where the arithmetic is. This loop used to open one per event, which made
     // the interface's per-frame cost scale with how much the world had to say
     // and is the whole of why a party of four cost what it did.
-    let batch: Vec<(&str, &[crate::game::events::EventArg])> =
+    let batch: Vec<(&str, &[crate::interface::events::EventArg])> =
         news.iter().map(|(event, args)| (*event, args.as_slice())).collect();
     for binding in host.fire_events(&batch, &live) {
         pressed.write(BindingPressed(binding));
@@ -77,13 +77,13 @@ pub(in crate::lua) fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::events::{PlayerTargetChanged, SpellcastStart, UiErrorMessage};
+    use crate::interface::events::{PlayerTargetChanged, SpellcastStart, UiErrorMessage};
     use crate::lua::api::tests::Stub;
 
     /// A world with just enough in it to run this one system.
     fn app() -> App {
         let mut app = App::new();
-        crate::game::events::register(&mut app);
+        crate::interface::events::register(&mut app);
         crate::lua::api::LuaWorld::init(&mut app);
         app.insert_non_send(LuaHost::new().expect("the interpreter starts"))
             .add_message::<BindingPressed>()
@@ -109,7 +109,7 @@ mod tests {
         .expect("the expression runs")
     }
 
-    /// **The whole loop, in one system**: an event written by `game/` reaches a
+    /// **The whole loop, in one system**: an event written in `GameSet` reaches a
     /// frame that registered for it, in the same frame, with the game's own
     /// arguments in `arg1`.
     ///

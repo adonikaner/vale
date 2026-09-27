@@ -189,7 +189,7 @@ use crate::tools::terrain::Terrain;
 use crate::tools::textures::Textures;
 use crate::tools::Tool;
 use vale_client::assets::GameAssets;
-use vale_client::game::session::autologin::AutoLogin;
+use vale_client::glue::autologin::AutoLogin;
 use vale_client::render::focus::WorldFocus;
 
 /// The part of the window the chrome leaves for the world, in window points.
@@ -269,7 +269,7 @@ pub fn over_the_world(
 /// parameter.
 ///
 /// Bevy's system parameter limit is sixteen and the shell had seventeen.
-/// Bundling is the same fix the client's own `game/mod.rs` uses when
+/// Bundling is the same fix the client's own `interface/mod.rs` uses when
 /// `add_plugins` hits the same limit. These four also belong together: they
 /// are everything `crate::playtest::start` and `stop` take.
 #[derive(bevy::ecs::system::SystemParam)]
@@ -1470,7 +1470,7 @@ fn playtest_bar(
     ctx: &egui::Context,
     state: &mut Playtest,
     client: &mut vale_client::world::session::Session,
-    auto: &mut vale_client::game::session::autologin::AutoLogin,
+    auto: &mut vale_client::glue::autologin::AutoLogin,
     open: &mut crate::playtest::ShellOpen,
     tool: &mut Tool,
     session: &mut EditSession,

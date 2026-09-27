@@ -21,7 +21,7 @@
 //!
 //! The split every panel keeps: the list, the order, the difficulty colours
 //! and the thresholds are [`vale_assets::tables::tradeskill`], the window
-//! is [`crate::game::character::tradeskill`], and this file is registration
+//! is [`crate::interface::tradeskill`], and this file is registration
 //! and arguments.
 //!
 //! ## Writes that answer during the call
@@ -366,7 +366,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
                 let count = wanted.min(available).max(1);
                 press
                     .borrow_mut()
-                    .push(crate::game::bindings::Binding::CastRecipe { spell, count });
+                    .push(crate::input::bindings::Binding::CastRecipe { spell, count });
             }
             Ok(())
         })?,
@@ -469,13 +469,13 @@ impl TradeSkillAnswers for super::super::api::Live<'_, '_, '_> {
         let Some(row) = self.tradeskill.list.row(index).filter(|r| !r.is_header()) else {
             return (1, 1);
         };
-        let level = self.units.level(crate::game::api::UnitId::Player).max(1) as u32;
+        let level = self.units.level(crate::interface::api::UnitId::Player).max(1) as u32;
         self.tables
             .as_deref()
             .and_then(|t| t.spellbook())
             .and_then(|catalog| catalog.info(row.spell))
             .map_or((1, 1), |info| {
-                crate::game::character::tradeskill::num_made(&info, level)
+                crate::interface::tradeskill::num_made(&info, level)
             })
     }
 

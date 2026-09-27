@@ -5,7 +5,7 @@
 //! Six reads and three verbs, and every one of them was missing: the panel drew
 //! nothing at all and clicking a sign in the world did nothing, which is what
 //! made this a dead frame rather than a partial one. The state behind it is
-//! [`crate::game::npc::pagetext`] and the packets are
+//! [`crate::interface::pagetext`] and the packets are
 //! [`vale_protocol::play::pagetext`].
 //!
 //! ```text
@@ -138,11 +138,11 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 }
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::game::npc::pagetext::PagePress>>>;
+pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::pagetext::PagePress>>>;
 
 /// Register the three writes. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
-    use crate::game::npc::pagetext::PagePress as P;
+    use crate::interface::pagetext::PagePress as P;
     let globals = lua.globals();
     for (name, press) in [
         ("ItemTextNextPage", P::Next),

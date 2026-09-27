@@ -9,7 +9,7 @@
 //! ```
 //!
 //! The split every panel keeps: the wire is [`vale_protocol::play::bank`],
-//! the window is [`crate::game::npc::bank`], the price and the six-is-full
+//! the window is [`crate::interface::bank`], the price and the six-is-full
 //! rule are [`vale_assets::tables::bank`], and this file is registration
 //! and arguments.
 //!
@@ -145,11 +145,11 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 }
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::game::npc::bank::BankPress>>>;
+pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::bank::BankPress>>>;
 
 /// Register the two writes. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
-    use crate::game::npc::bank::BankPress as P;
+    use crate::interface::bank::BankPress as P;
     let globals = lua.globals();
     for (name, press) in [("PurchaseSlot", P::PurchaseSlot), ("CloseBankFrame", P::Close)] {
         let queue = std::rc::Rc::clone(queue);

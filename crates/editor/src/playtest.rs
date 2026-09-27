@@ -97,7 +97,7 @@
 
 use crate::session::EditSession;
 use vale_client::assets::GameAssets;
-use vale_client::game::session::autologin::AutoLogin;
+use vale_client::glue::autologin::AutoLogin;
 use vale_client::lua::host::InterfaceAwake;
 use vale_client::render::focus::WorldFocus;
 use vale_client::render::glue::GlueScenes;
@@ -399,7 +399,7 @@ fn arrange(
     // the client's own 3x3 while playing. A playtest is the client: the
     // character is in the middle of the block with the fog closing at 500
     // yards, so the extra tiles cost load time and are fogged out. That cost
-    // lands on the loading screen, because `game::place::loading` holds it
+    // lands on the loading screen, because `glue::loading` holds it
     // until every wanted tile has arrived. See [`crate::REACH`].
     let wanted = match editing {
         true => crate::reach(&args),
@@ -671,7 +671,7 @@ pub fn start(
         // carried on the instruction rather than written to a resource:
         // nothing in the client inserts `Credentials` as a resource, and code
         // that assumed it did has broken twice. See
-        // `vale_client::game::session::autologin`.
+        // `vale_client::glue::autologin`.
         Some(credentials) => {
             *auto = AutoLogin::log_in_as(login.character.trim()).on_the_account(credentials);
             session.status = match login.character.trim() {

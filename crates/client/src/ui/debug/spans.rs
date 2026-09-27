@@ -513,7 +513,7 @@ impl Default for Spans {
     fn default() -> Spans {
         Spans {
             // Past Rust's 32-element `Default` bound, which is why this is
-            // written out — the same wall `game::events`' vitals watch hit.
+            // written out — the same wall `interface::events`' vitals watch hit.
             per_frame_ms: [0.0; Slot::COUNT],
             calls_per_frame: [0.0; Slot::COUNT],
             taken: false,

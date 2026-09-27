@@ -36,7 +36,7 @@ use crate::playtest::{Login, Playtest};
 use crate::session::EditSession;
 use crate::ui::popover::Popovers;
 use vale_client::assets::GameAssets;
-use vale_client::game::session::autologin::AutoLogin;
+use vale_client::glue::autologin::AutoLogin;
 use bevy::prelude::*;
 
 /// The text typed into the "go to" boxes.

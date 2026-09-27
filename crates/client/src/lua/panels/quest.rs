@@ -30,7 +30,7 @@
 //! `for i=1, GetNumAvailableQuests()`, `GetQuestLogTitle(i)`,
 //! `GetQuestItemInfo("choice", i)`. The wire is zero-based in exactly one place
 //! — `CMSG_QUESTGIVER_CHOOSE_REWARD`'s index — and that subtraction happens in
-//! [`crate::game::npc::quest`], once, beside the send.
+//! [`crate::interface::quest`], once, beside the send.
 //!
 //! ## `GetQuestItemInfo` takes a *word* rather than a list
 //!
@@ -51,7 +51,7 @@
 use super::super::api::{one_or_nil, Answers};
 // The unit-token surface these answers read the world through — imported
 // here now that the subject's own answers live beside its registration.
-use crate::game::api;
+use crate::interface::api;
 
 /// One line of a quest's rewards, as `GetQuestItemInfo` answers it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -133,7 +133,7 @@ pub struct LogRow {
     /// grouping is the *client's*: nothing on the wire says a quest belongs
     /// under "Elwynn Forest", and `ZoneOrSort`'s sign decides which of two
     /// tables answers. See [`vale_assets::tables::questsort`] and
-    /// [`crate::game::npc::quest::Quests::rebuild_rows`].
+    /// [`crate::interface::quest::Quests::rebuild_rows`].
     pub is_header: bool,
     /// …and whether that header is folded up — `GetQuestLogTitle`'s fifth
     /// answer, which decides between the plus and minus button art.
@@ -294,7 +294,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     // with `GetQuestLogSelection()`. Recorded like every other write, the pane
     // filled with the row selected *before* the click — a one-click lag on
     // every selection in the log. See
-    // [`crate::game::npc::quest::Quests::selected`], which carries the reason the
+    // [`crate::interface::quest::Quests::selected`], which carries the reason the
     // field can be written through a shared reference at all.
     globals.set(
         "SelectQuestLogEntry",
@@ -313,7 +313,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     // `for i=1, GetNumQuestWatches()`. Recorded and drained a system later, the
     // tracker is one click behind for ever — the same fault
     // `SelectQuestLogEntry` had and for the same reason. See
-    // [`crate::game::npc::quest::Quests::watches`].
+    // [`crate::interface::quest::Quests::watches`].
     read!("GetNumQuestWatches", |a| a.quest_watch_count());
     read!("IsQuestWatched", Option<i64>, |a, n| one_or_nil(
         index(n).is_some_and(|row| a.quest_is_watched(row + 1))
@@ -355,13 +355,13 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     // `QuestLog_Update()` in the very next statement. Recorded and drained a
     // system later, the panel redraws the list as it was before the click and
     // stays one click behind for the rest of the session — see [`Display`] in
-    // `game::npc::quest`, which has the four-click sequence that was reported.
+    // `interface::quest`, which has the four-click sequence that was reported.
     //
     // `0` is *all* the headings, which is what `QuestLogCollapseAllButton_OnClick`
     // passes outright — so the argument is not an index that has to be
     // one-based, it is an index **or** the sentinel, and `index()` would turn
     // the sentinel into nothing. See
-    // [`crate::game::npc::quest::Quests::set_collapsed`].
+    // [`crate::interface::quest::Quests::set_collapsed`].
     for (name, collapsed) in [("CollapseQuestHeader", true), ("ExpandQuestHeader", false)] {
         globals.set(
             name,
@@ -532,11 +532,11 @@ impl Which {
 }
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::game::npc::quest::QuestPress>>>;
+pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::quest::QuestPress>>>;
 
 /// Register the eight writes. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
-    use crate::game::npc::quest::QuestPress as P;
+    use crate::interface::quest::QuestPress as P;
     let globals = lua.globals();
 
     macro_rules! push {
@@ -669,7 +669,7 @@ mod tests {
     /// The eight writes record in call order and answer nothing.
     #[test]
     fn the_writes_record_in_call_order() {
-        use crate::game::npc::quest::QuestPress as P;
+        use crate::interface::quest::QuestPress as P;
         let lua = mlua::Lua::new();
         let queue: Queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         register(&lua, &queue).expect("registers");
@@ -737,7 +737,7 @@ pub trait QuestAnswers {
     /// `GetAvailableTitle(n)` / `GetActiveTitle(n)` — the title, plus a level
     /// the questgiver panel ignores and the gossip pair uses.
     ///
-    /// **Which half a quest is in is [`crate::game::npc::quest::is_active_offer`]'s**,
+    /// **Which half a quest is in is [`crate::interface::quest::is_active_offer`]'s**,
     /// and it is exactly icons 3 and 4 — not the `>= 4` the `DIALOG_STATUS`
     /// enum invites.
     fn quest_offer_title(&self, active: bool, index: Option<usize>) -> (String, u32);
@@ -759,7 +759,7 @@ pub trait QuestAnswers {
     /// …and its second, which is quests alone.
     fn quest_log_quest_rows(&self) -> usize;
     /// `SelectQuestLogEntry(n)` — **a write, and it takes effect at once**;
-    /// see [`crate::game::npc::quest::Quests::selected`].
+    /// see [`crate::interface::quest::Quests::selected`].
     fn select_log_row(&self, row: usize);
     /// `GetQuestLogSelection()` — one-based, 0 for nothing.
     fn quest_log_selection(&self) -> usize;
@@ -789,13 +789,13 @@ pub trait QuestAnswers {
     // --- the tracker ---
     //
     // Every index here is a **log row**, one-based, and the storage behind it
-    // holds quest ids — see [`crate::game::npc::quest::Quests::watches`], which
+    // holds quest ids — see [`crate::interface::quest::Quests::watches`], which
     // is where the conversion and the reason for it are. All five take effect
     // inside their own call.
 
     /// `SetAbandonQuest()` — **a write, and it takes effect at once**; latch
     /// the selected quest as the one the confirmation popup is about. See
-    /// [`crate::game::npc::quest::Quests::abandon`].
+    /// [`crate::interface::quest::Quests::abandon`].
     fn quest_set_abandon(&self);
     /// `GetAbandonQuestName()` — the latched quest's title.
     fn quest_abandon_name(&self) -> Option<String>;
@@ -806,7 +806,7 @@ pub trait QuestAnswers {
 
     /// `CollapseQuestHeader(row)` / `ExpandQuestHeader(row)` — **a write, and
     /// it takes effect at once**; `0` is every heading. See
-    /// [`crate::game::npc::quest::Display`], which is where the one-click lag
+    /// [`crate::interface::quest::Display`], which is where the one-click lag
     /// this shape avoids is written out.
     fn quest_set_collapsed(&self, row: usize, collapsed: bool);
 
@@ -830,31 +830,31 @@ impl QuestAnswers for super::super::api::Live<'_, '_, '_> {
 
     fn quest_greeting_text(&self) -> String {
         match self.quests.page() {
-            crate::game::npc::quest::Page::Greeting(page) => page.text.clone(),
+            crate::interface::quest::Page::Greeting(page) => page.text.clone(),
             _ => String::new(),
         }
     }
 
     fn quest_offers(&self, active: bool) -> usize {
         match self.quests.page() {
-            crate::game::npc::quest::Page::Greeting(page) => page
+            crate::interface::quest::Page::Greeting(page) => page
                 .offers
                 .iter()
-                .filter(|o| crate::game::npc::quest::is_active_offer(o.icon) == active)
+                .filter(|o| crate::interface::quest::is_active_offer(o.icon) == active)
                 .count(),
             _ => 0,
         }
     }
 
     fn quest_offer_title(&self, active: bool, index: Option<usize>) -> (String, u32) {
-        let crate::game::npc::quest::Page::Greeting(page) = self.quests.page() else {
+        let crate::interface::quest::Page::Greeting(page) = self.quests.page() else {
             return (String::new(), 0);
         };
         index
             .and_then(|i| {
                 page.offers
                     .iter()
-                    .filter(|o| crate::game::npc::quest::is_active_offer(o.icon) == active)
+                    .filter(|o| crate::interface::quest::is_active_offer(o.icon) == active)
                     .nth(i)
             })
             .map(|o| (o.title.clone(), o.level))
@@ -862,13 +862,13 @@ impl QuestAnswers for super::super::api::Live<'_, '_, '_> {
     }
 
     /// **The five page texts, with their `$` variables substituted** — see
-    /// [`crate::game::messages::substitute`]. The database stores `$B$B` and
+    /// [`crate::interface::messages::substitute`]. The database stores `$B$B` and
     /// `$N` verbatim and vmangos writes the column out unchanged, so this is
     /// the only place they can be resolved; untouched they reach the parchment
     /// as literals, which is what a screenshot of "Hello there, $c." is.
     fn quest_page_text(&self, page: super::quest::Page) -> String {
         use super::quest::Page as Which;
-        use crate::game::npc::quest::Page as P;
+        use crate::interface::quest::Page as P;
         let raw = match (self.quests.page(), page) {
             // **The title is on four of the five pages**, which is why it is
             // asked for by a name of its own rather than falling out of
@@ -882,12 +882,12 @@ impl QuestAnswers for super::super::api::Live<'_, '_, '_> {
             (P::Reward(d), Which::Reward) => &d.text,
             _ => return String::new(),
         };
-        crate::game::messages::substitute(raw, self.speaker())
+        crate::interface::messages::substitute(raw, self.speaker())
     }
 
     fn quest_items(&self, which: super::quest::Which) -> Vec<super::quest::RewardLine> {
         use super::quest::Which as W;
-        use crate::game::npc::quest::Page as P;
+        use crate::interface::quest::Page as P;
         let items = match (self.quests.page(), which) {
             (P::Details(d), W::Choice) => &d.choices,
             (P::Details(d), W::Reward) => &d.rewards,
@@ -903,7 +903,7 @@ impl QuestAnswers for super::super::api::Live<'_, '_, '_> {
     }
 
     fn quest_money(&self, required: bool) -> u32 {
-        use crate::game::npc::quest::Page as P;
+        use crate::interface::quest::Page as P;
         match (self.quests.page(), required) {
             // The progress page's field is already the absolute amount —
             // vmangos writes `RewOrReqMoney < 0 ? -RewOrReqMoney : 0` there
@@ -917,7 +917,7 @@ impl QuestAnswers for super::super::api::Live<'_, '_, '_> {
     }
 
     fn quest_reward_spell(&self) -> Option<super::quest::RewardSpell> {
-        use crate::game::npc::quest::Page as P;
+        use crate::interface::quest::Page as P;
         self.reward_spell(match self.quests.page() {
             P::Details(d) => d.reward_spell,
             P::Reward(d) => d.reward_spell,
@@ -931,10 +931,10 @@ impl QuestAnswers for super::super::api::Live<'_, '_, '_> {
 
     fn quest_completable(&self) -> bool {
         match self.quests.page() {
-            crate::game::npc::quest::Page::Progress(d) => d.completable,
+            crate::interface::quest::Page::Progress(d) => d.completable,
             // **A reward page is completable by definition** - it is only shown
             // for a quest the server has already accepted the hand-in of.
-            crate::game::npc::quest::Page::Reward(_) => true,
+            crate::interface::quest::Page::Reward(_) => true,
             _ => false,
         }
     }
@@ -961,7 +961,7 @@ impl QuestAnswers for super::super::api::Live<'_, '_, '_> {
 
     fn quest_abandon_name(&self) -> Option<String> {
         let quest_id = self.quests.abandon_quest()?;
-        Some(crate::game::messages::substitute(
+        Some(crate::interface::messages::substitute(
             &self.quests.template(quest_id)?.title,
             self.speaker(),
         ))
@@ -1026,8 +1026,8 @@ impl QuestAnswers for super::super::api::Live<'_, '_, '_> {
         self.selected_template()
             .map(|t| {
                 (
-                    crate::game::messages::substitute(&t.details, who),
-                    crate::game::messages::substitute(&t.objectives, who),
+                    crate::interface::messages::substitute(&t.details, who),
+                    crate::interface::messages::substitute(&t.objectives, who),
                 )
             })
             .unwrap_or_default()
@@ -1053,7 +1053,7 @@ impl QuestAnswers for super::super::api::Live<'_, '_, '_> {
         // 0. Empty on every quest with a real objective, so it costs those
         // nothing.
         let explored = (!template.end_text.is_empty()).then(|| super::quest::ObjectiveLine {
-            text: crate::game::messages::substitute(&template.end_text, self.speaker()),
+            text: crate::interface::messages::substitute(&template.end_text, self.speaker()),
             kind: "event",
             finished: slot.complete(),
         });
@@ -1092,7 +1092,7 @@ impl QuestAnswers for super::super::api::Live<'_, '_, '_> {
                     // numbers.
                     _ if !line.text.is_empty() => {
                         return Some(super::quest::ObjectiveLine {
-                            text: crate::game::messages::substitute(&line.text, self.speaker()),
+                            text: crate::interface::messages::substitute(&line.text, self.speaker()),
                             kind: "event",
                             finished: slot.complete(),
                         })
@@ -1111,7 +1111,7 @@ impl QuestAnswers for super::super::api::Live<'_, '_, '_> {
                     // A name still in flight leaves the sentence blank rather
                     // than showing an id — the same one-round-trip nothing a
                     // log row's title shows, and it fills in when
-                    // `game::templates` wakes the panel.
+                    // `world::templates` wakes the panel.
                     true => name.unwrap_or_default(),
                 };
                 Some(super::quest::ObjectiveLine {
@@ -1138,7 +1138,7 @@ impl QuestAnswers for super::super::api::Live<'_, '_, '_> {
     }
 
     fn quest_reward_spell_tip(&self, from_log: bool) -> Option<api::SpellTip> {
-        use crate::game::npc::quest::Page as P;
+        use crate::interface::quest::Page as P;
         let spell = match from_log {
             true => self.selected_template()?.reward_spell,
             false => match self.quests.page() {
@@ -1215,7 +1215,7 @@ impl QuestAnswers for super::super::api::Live<'_, '_, '_> {
         // `QuestLog_Update` branches on the fourth answer before it touches any
         // of the others, and a heading's title is the zone name rather than a
         // quest's.
-        if let Some(crate::game::npc::quest::Row::Header(zone)) = self.quests.row(row) {
+        if let Some(crate::interface::quest::Row::Header(zone)) = self.quests.row(row) {
             return Some(super::quest::LogRow {
                 title: self.quests.heading_name(zone).to_string(),
                 level: 0,

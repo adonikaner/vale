@@ -9,7 +9,7 @@
 //! ```text
 //! a box has the focus   KeyboardInput -> Stroke   -> lua::widgets::editbox
 //! a frame takes keys    KeyboardInput -> arg1     -> its OnKeyDown/OnKeyUp
-//! neither               KeyboardInput -> ignored  -> game::bindings' key table
+//! neither               KeyboardInput -> ignored  -> input::bindings' key table
 //! ```
 //!
 //! **The middle branch is new and it is what a key-bindings panel is.** A frame
@@ -39,7 +39,7 @@
 //! read by both consumers in one frame if the switch is sampled at the wrong
 //! moment:
 //!
-//! * **Opening**: this system runs *before* [`crate::game::GameSet`], sees no
+//! * **Opening**: this system runs *before* [`crate::interface::GameSet`], sees no
 //!   focus, and passes the key to the binding table, which shows the box and
 //!   focuses it. The keystroke is already spent, so it is not also typed.
 //! * **Sending**: the box has the focus when this system runs, takes the Enter,
@@ -54,10 +54,10 @@ use bevy::prelude::*;
 use super::super::api::LuaWorld;
 use super::super::widgets::editbox::{Mods, Stroke};
 use super::super::host::LuaHost;
-use crate::game::bindings::BindingPressed;
+use crate::input::bindings::BindingPressed;
 
 /// **Is the keyboard the interface's this frame?** Read by
-/// [`crate::game::bindings`], [`crate::game::combat::target`], [`crate::game::combat::action`]
+/// [`crate::input::bindings`], [`crate::interface::target`], [`crate::interface::action`]
 /// and [`crate::world::session::send_input`], each of which must do nothing at
 /// all while someone is typing.
 ///
@@ -102,10 +102,10 @@ impl Plugin for KeyboardPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<KeyboardFocus>()
             .init_resource::<ExternalKeyboard>()
-            // **Before `game/`**, so a key the interface takes is a key the
+            // **Before `GameSet`**, so a key the interface takes is a key the
             // binding table declines in the *same* frame — see the module
             // comment, where the Enter edge is written out.
-            .add_systems(Update, poll.before(crate::game::GameSet));
+            .add_systems(Update, poll.before(crate::interface::GameSet));
     }
 }
 
@@ -148,7 +148,7 @@ pub(crate) fn poll(
         // arming a binding would bind it sixty times over.
         if !event.repeat {
             edges.push((
-                crate::game::bindings::key_event_name(event.key_code).to_string(),
+                crate::input::bindings::key_event_name(event.key_code).to_string(),
                 event.state.is_pressed(),
             ));
         }
@@ -457,7 +457,7 @@ mod tests {
     /// system's parameters at init rather than at compile time, so a conflicting
     /// one is a panic on the first frame after login — which costs a whole run
     /// of the client to find, where this costs a millisecond. The same test
-    /// `game::bindings` keeps for its own dispatch.
+    /// `input::bindings` keeps for its own dispatch.
     #[test]
     fn the_poll_can_be_scheduled_with_the_world_it_borrows() {
         let mut app = App::new();

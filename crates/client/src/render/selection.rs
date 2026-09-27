@@ -88,7 +88,7 @@
 
 use bevy::prelude::*;
 
-use crate::game::combat::target::Selection;
+use crate::interface::target::Selection;
 use crate::render::decals::spawn_ground_decal;
 use crate::render::models::{DrawParams, ModelCache, Materials};
 use crate::world::entities::EntityModel;
@@ -137,10 +137,10 @@ impl Plugin for SelectionPlugin {
             Update,
             (
                 // **After the selection is settled and before the projection
-                // reads it.** `game::target` may retarget in this frame, and a
+                // reads it.** `interface::target` may retarget in this frame, and a
                 // ring spawned after `decals::project_decals` has run is a frame
                 // of a ring at the origin — which is under the map.
-                follow_selection.after(crate::game::combat::target::TargetSet),
+                follow_selection.after(crate::interface::target::TargetSet),
                 // …and the colour every frame, which is cheap and has to be:
                 // the ring turns red the instant a flagged player attacks, with
                 // nothing to notice but the reaction itself changing.
@@ -179,14 +179,14 @@ const HIGHLIGHT_LIFT: f32 = 64.0 / 255.0;
 /// repo inventing a mechanism, which is exactly what that module's note is
 /// about.
 fn apply_highlight(
-    hovered: Res<crate::game::combat::target::Hovered>,
+    hovered: Res<crate::interface::target::Hovered>,
     // …and the game object under the same pointer, which is the same reason
     // reached by the other half of one ray — see
-    // [`crate::game::npc::object::HoveredObject`]. **The template decides**, not
+    // [`crate::interface::object::HoveredObject`]. **The template decides**, not
     // usability: a street sign lights up and cannot be clicked at all, which is
     // `GAMEOBJECT_TYPE_GENERIC`'s own `highlight` word — see
     // `vale_assets::look::object::hover_of`.
-    object: Res<crate::game::npc::object::HoveredObject>,
+    object: Res<crate::interface::object::HoveredObject>,
     selection: Res<Selection>,
     children: Query<&Children>,
     // **The blob used to need excluding here and no longer does**: it was a
@@ -392,16 +392,16 @@ fn tint_ring(
     player: Query<&WorldEntity, With<LocalPlayer>>,
     units: Query<&WorldEntity>,
     // **The two halves of friend-or-foe that are not in a file** — see
-    // [`crate::game::api::Friendship`]. The ring is drawn by the renderer and
+    // [`crate::interface::api::Friendship`]. The ring is drawn by the renderer and
     // the name plate by `render::labels`, and both were asking
     // `FactionTemplate.dbc` on its own long after the interface had stopped:
     // that is a green ring and a green name under a unit the same client will
     // let you attack, which is exactly how it was reported.
-    group: Res<crate::game::session::party::Party>,
-    reputation: Res<crate::game::character::reputation::PlayerStanding>,
+    group: Res<crate::interface::party::Party>,
+    reputation: Res<crate::interface::reputation::PlayerStanding>,
     mut rings: Query<(&SelectionRing, &mut bevy::mesh::MeshTag)>,
 ) {
-    let friendship = crate::game::api::Friendship { party: &group, standing: &reputation };
+    let friendship = crate::interface::api::Friendship { party: &group, standing: &reputation };
     for (ring, mut tag) in &mut rings {
         let Ok(unit) = units.get(ring.unit) else { continue };
         let colour = ring_rgba(&selected(&assets, friendship, player.single().ok(), unit));
@@ -412,7 +412,7 @@ fn tint_ring(
 /// The selector's five questions, asked of the live world.
 fn selected(
     assets: &crate::assets::GameAssets,
-    friendship: crate::game::api::Friendship<'_>,
+    friendship: crate::interface::api::Friendship<'_>,
     me: Option<&WorldEntity>,
     unit: &WorldEntity,
 ) -> Selected {
@@ -425,10 +425,10 @@ fn selected(
     let (reaction, i_attack_it, attacks_me) = match (tables.as_deref(), me) {
         (Some(tables), Some(me)) => (
             friendship.reaction(tables, unit, me),
-            crate::game::api::can_attack_between(
+            crate::interface::api::can_attack_between(
                 tables, friendship.party, friendship.standing, me, unit,
             ),
-            crate::game::api::can_attack_between(
+            crate::interface::api::can_attack_between(
                 tables, friendship.party, friendship.standing, unit, me,
             ),
         ),
@@ -441,7 +441,7 @@ fn selected(
         // than folding a reaction and a flags word by hand.
         attacks_me,
         i_attack_it,
-        pvp: unit.unit_flags & crate::game::api::UNIT_FLAG_PVP != 0,
+        pvp: unit.unit_flags & crate::interface::api::UNIT_FLAG_PVP != 0,
         dead: unit.dead,
         reaction,
     }

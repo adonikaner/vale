@@ -84,8 +84,8 @@ use bevy::prelude::*;
 
 use super::super::api::LuaWorld;
 use super::super::host::LuaHost;
-use crate::game::bindings::BindingPressed;
-use crate::game::events::EventArg;
+use crate::input::bindings::BindingPressed;
+use crate::interface::events::EventArg;
 
 /// The handler this module is about. Named because three files check for it.
 pub(super) const ON_UPDATE: &str = "OnUpdate";
@@ -390,7 +390,7 @@ impl Plugin for UpdatePlugin {
     fn build(&self, app: &mut App) {
         // **After the event dispatch**, so that a frame told about the world this
         // frame animates from the state that news left it in rather than from the
-        // state before it. Both are after the whole of `game/`; see
+        // state before it. Both are after the whole of `GameSet`; see
         // [`super::events`], where the ordering argument is.
         //
         // …and the clock before both, stated rather than inherited: `advance`

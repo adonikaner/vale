@@ -62,7 +62,7 @@
 
 use bevy::prelude::*;
 
-use crate::game::combat::action::SpellTargeting;
+use crate::interface::action::SpellTargeting;
 use crate::render::decals::spawn_ground_decal;
 use crate::render::models::{DrawParams, Materials, ModelCache};
 
@@ -106,11 +106,11 @@ impl Plugin for ReticlePlugin {
             Update,
             follow_pointer
                 // **After the pick and the range test**, which are one system in
-                // `game::target` and write both halves this reads. Unordered, the
+                // `interface::target` and write both halves this reads. Unordered, the
                 // circle is a frame behind the cursor it is under — which on a
                 // pointer being swept across a hillside is the difference between
                 // the art and the answer.
-                .after(crate::game::combat::target::TargetSet)
+                .after(crate::interface::target::TargetSet)
                 // …and in front of the projection, the rule
                 // `render::decals::DecalSet` exists for: a decal spawned after it
                 // has run is one frame of an unprojected mesh at the world origin.

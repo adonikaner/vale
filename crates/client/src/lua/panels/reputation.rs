@@ -28,7 +28,7 @@
 //!
 //! What still queues is the half the *server* needs: three of the six writes owe
 //! a packet, and those go on a [`Queue`] that
-//! [`crate::game::character::reputation`] drains. None of the three is
+//! [`crate::interface::reputation`] drains. None of the three is
 //! acknowledged, which is why the local copy is the one that draws.
 //!
 //! ## The rules are not here
@@ -86,7 +86,7 @@ pub struct Standing {
     pub strings: Option<Arc<vale_assets::interface::strings::Strings>>,
     /// **Bumped by every change**, whoever made it — the client's own recount
     /// raises `UPDATE_FACTION` at its end, and this is
-    /// what lets [`crate::game::character::reputation`] do the same without
+    /// what lets [`crate::interface::reputation`] do the same without
     /// diffing the list.
     pub version: u32,
     /// **The server's own 64 slots, held whether or not a list has been built

@@ -1207,7 +1207,7 @@ const PLATE_WIDTH: f32 = 270.0;
 /// The open item's tooltip, as the game would draw it, composed from the
 /// form's values on every frame, so an edit shows on the frame it is made.
 ///
-/// The lines are `vale_client::game::plate::item_plate`'s, which is the
+/// The lines are `vale_client::interface::plate::item_plate`'s, which is the
 /// function the client's own `GameTooltip` draws an item through: the same
 /// order, the same `GlobalStrings.lua` keys and the same colours. What is the
 /// editor's is the frame and the font. The game draws the plate in
@@ -1226,7 +1226,7 @@ fn plate(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
         return;
     };
     let tables = work.assets.display_tables().ok();
-    let context = vale_client::game::api::TipContext {
+    let context = vale_client::interface::api::TipContext {
         // The level an item's spell sentences are worked out at. A `$s1` that
         // scales with level reads as it would on a character at the cap.
         level: 60,
@@ -1240,19 +1240,19 @@ fn plate(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
         },
         home: None,
     };
-    let mut tip = vale_client::game::api::item_tip(&info, None, tables.as_deref(), &context);
+    let mut tip = vale_client::interface::api::item_tip(&info, None, tables.as_deref(), &context);
     tip.level_met = true;
     tip.race_allowed = true;
     tip.class_allowed = true;
     let strings = work.assets.strings();
     let lines =
-        vale_client::game::plate::item_plate(&tip, &|key| strings.get(key).map(str::to_string));
+        vale_client::interface::plate::item_plate(&tip, &|key| strings.get(key).map(str::to_string));
     draw_plate(ui, &lines);
 }
 
 /// One plate: a dark frame with a light edge, the name larger than the
 /// lines under it, and a right-hand cell pushed to the far side.
-fn draw_plate(ui: &mut egui::Ui, lines: &[vale_client::game::plate::PlateLine]) {
+fn draw_plate(ui: &mut egui::Ui, lines: &[vale_client::interface::plate::PlateLine]) {
     let width = ui.available_width().min(PLATE_WIDTH);
     egui::Frame::new()
         // `TOOLTIP_DEFAULT_BACKGROUND_COLOR` is `0.09, 0.09, 0.19`.

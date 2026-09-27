@@ -649,7 +649,7 @@ pub(super) fn spell_effects(
 pub(super) fn level_up(
     mut commands: Commands,
     time: Res<Time>,
-    mut levelled: MessageReader<crate::game::events::PlayerLevelUp>,
+    mut levelled: MessageReader<crate::interface::events::PlayerLevelUp>,
     mut player: Query<&mut EntityModel, With<crate::world::session::LocalPlayer>>,
 ) {
     // Read whatever arrived even with no player to put it on, or the glow lands
@@ -1085,7 +1085,7 @@ pub(super) fn retire_impacts(
 /// and the decals have, and the same answer.
 pub(super) fn forget_impacts(
     mut commands: Commands,
-    mut leaving: MessageReader<crate::game::events::PlayerLeavingWorld>,
+    mut leaving: MessageReader<crate::interface::events::PlayerLeavingWorld>,
     impacts: Query<Entity, With<AreaImpact>>,
 ) {
     if leaving.read().next().is_none() {

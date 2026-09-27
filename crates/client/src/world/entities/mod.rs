@@ -314,7 +314,7 @@ pub struct EntityModel {
     /// two, in model space, shared per model path.
     ///
     /// See [`vale_assets::look::pick::hit_mesh`], which is the walk, and
-    /// [`crate::game::combat::target`], which skins it with [`Self::joints`] so that the
+    /// [`crate::interface::target`], which skins it with [`Self::joints`] so that the
     /// silhouette a click tests is the one on the screen rather than a second
     /// pose computed beside it.
     pub pick: Arc<vale_assets::look::pick::PickMesh>,
@@ -1461,9 +1461,9 @@ impl Plugin for EntityPlugin {
                     // appears on whichever frame Bevy happened to schedule — the
                     // press's own or the one after it.
                     //
-                    // **One thing in `game/` does read what this chain writes,
+                    // **One thing in `interface/` does read what this chain writes,
                     // and it reads it a frame late on purpose.** The mouse pick
-                    // tests a unit's *posed* triangles (`game::target::mesh_hit`)
+                    // tests a unit's *posed* triangles (`interface::target::mesh_hit`)
                     // through the joints `animate` writes here, so under this
                     // ordering it sees last frame's pose against this frame's
                     // ray. That is 0.07 yards on a running mob at 100 fps —
@@ -1471,7 +1471,7 @@ impl Plugin for EntityPlugin {
                     // alternative is a cycle: the pick is chained behind
                     // `arm_look` and the click, and this chain is behind the
                     // press those read.
-                    .after(crate::game::GameSet)
+                    .after(crate::interface::GameSet)
                     .in_set(EntitySet),
             )
             // …and the impacts' own sweep, which is deliberately *not* in that

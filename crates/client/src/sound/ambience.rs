@@ -32,7 +32,7 @@
 //!
 //! ## …and where the id comes from
 //!
-//! [`crate::game::place::worldmap::WorldMapState::sounds`] — already resolved through
+//! [`crate::interface::worldmap::WorldMapState::sounds`] — already resolved through
 //! the building, the area and the zone, a column at a time. This module used to
 //! do that join itself and did it a *row* at a time, which is why a tavern
 //! played the forest outside it and 306 of the game's subzones had no bed at
@@ -66,7 +66,7 @@ fn run_ambience(
     mut state: ResMut<AmbienceState>,
     mut voices: Voices,
     session: Res<crate::world::session::Session>,
-    worldmap: Res<crate::game::place::worldmap::WorldMapState>,
+    worldmap: Res<crate::interface::worldmap::WorldMapState>,
     clock: Res<crate::render::sky::WorldClock>,
     game: Res<crate::assets::GameAssets>,
     // …and the sky, whose loop outranks the place's. See below.

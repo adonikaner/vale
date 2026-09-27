@@ -63,7 +63,7 @@ impl Channel {
     /// greys out the ambience and error-speech boxes when it is unticked and
     /// leaves music alone, so a player can turn every sound effect off and keep
     /// the score.
-    pub fn gain(self, cvars: &crate::game::cvars::CVars) -> f32 {
+    pub fn gain(self, cvars: &crate::settings::cvars::CVars) -> f32 {
         let master = cvars.number("MasterVolume");
         let (enabled, volume) = match self {
             Channel::Effects => (cvars.flag("MasterSoundEffects"), "SoundVolume"),
@@ -193,7 +193,7 @@ pub struct Voices<'w, 's> {
     /// here rather than at each call site so that the four modules that play
     /// something do not each have to remember which channel they are on and
     /// what the master is.
-    cvars: Res<'w, crate::game::cvars::CVars>,
+    cvars: Res<'w, crate::settings::cvars::CVars>,
 }
 
 impl Voices<'_, '_> {
@@ -378,7 +378,7 @@ impl Plugin for MixerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Mixer>()
             .insert_resource(DefaultSpatialScale(SpatialScale::new(SPATIAL_SCALE)))
-            // **`apply_gains` and `attach_listener` after `game/`**, which is
+            // **`apply_gains` and `attach_listener` after `GameSet`**, which is
             // where a `SetCVar` becomes a change to `CVars`: without the
             // ordering a slider moved this frame is heard next frame, which is
             // a lag nobody would ever find and Bevy would never mention.
@@ -386,7 +386,7 @@ impl Plugin for MixerPlugin {
                 Update,
                 (
                     run_fades,
-                    (attach_listener, apply_gains).after(crate::game::GameSet),
+                    (attach_listener, apply_gains).after(crate::interface::GameSet),
                 ),
             );
         #[cfg(feature = "diagnostics")]
@@ -405,7 +405,7 @@ impl Plugin for MixerPlugin {
 /// portrait studio at the origin rather than from the player.
 fn attach_listener(
     mut commands: Commands,
-    cvars: Res<crate::game::cvars::CVars>,
+    cvars: Res<crate::settings::cvars::CVars>,
     // `WorldCamera` alone: the marker only ever sits on the one `Camera3d`, so
     // the third filter the first draft carried said nothing.
     camera: Query<Entity, With<crate::world::camera::WorldCamera>>,
@@ -477,7 +477,7 @@ fn run_fades(
 /// **Re-apply the channel gains when a slider moves**, which is what makes the
 /// sound options panel do something while a sound is playing.
 ///
-/// Only when [`crate::game::cvars::CVars`] actually changed — a walk of every
+/// Only when [`crate::settings::cvars::CVars`] actually changed — a walk of every
 /// live voice sixty times a second to write the same number would be the
 /// second-largest per-frame cost in this directory, and settings move perhaps
 /// twice a session.
@@ -488,7 +488,7 @@ fn run_fades(
 /// ramps at the old rate; [`Fade::step`] clamps at the target either way, so
 /// what it costs is a fade a fraction long or short and never a wrong volume.
 fn apply_gains(
-    cvars: Res<crate::game::cvars::CVars>,
+    cvars: Res<crate::settings::cvars::CVars>,
     mut voices: Query<(&Channel, &BaseVolume, &mut AudioSink), Without<Fade>>,
 ) {
     use bevy::audio::AudioSinkPlayback;
@@ -509,7 +509,7 @@ fn report(
 ) {
     hud.set(
         crate::ui::report::Section::Scene,
-        // 45 rather than 40: `game::combat::desync` had 40 already, and two
+        // 45 rather than 40: `world::desync` had 40 already, and two
         // passes on one slot is two lines in an arbitrary order.
         crate::ui::report::Slot(45),
         "sound",
@@ -524,7 +524,7 @@ fn report(
 
 #[cfg(test)]
 mod tests {
-    use crate::game::cvars::CVars;
+    use crate::settings::cvars::CVars;
 
     /// **The three channels, and what each is multiplied by** — the values the
     /// sound panel writes and the mixer reads back.

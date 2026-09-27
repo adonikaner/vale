@@ -8,7 +8,7 @@
 //!
 //! `ShapeshiftBar_Update` reads the first and `ShapeshiftBar_UpdateState` the
 //! other two, once per button, every time the character's auras move. The rules
-//! are all in [`crate::game::combat::shapeshift`]; this file is only the surface.
+//! are all in [`crate::interface::shapeshift`]; this file is only the surface.
 //!
 //! **`GetNumShapeshiftForms` was a stub answering 0**, which is worth a sentence
 //! because it is the shape of failure this directory keeps producing: zero is a
@@ -54,7 +54,7 @@ pub struct ShapeshiftInfo {
     pub texture: String,
     pub name: String,
     /// Whether this is the form the character is in — see
-    /// [`crate::game::combat::shapeshift::is_active`], where the two different
+    /// [`crate::interface::shapeshift::is_active`], where the two different
     /// questions behind it are.
     pub is_active: bool,
     /// Whether it could be cast right now. `ShapeshiftBar_UpdateState` greys the
@@ -65,12 +65,12 @@ pub struct ShapeshiftInfo {
 impl super::super::api::Live<'_, '_, '_> {
     /// Whether a form that is *off* could be put on — the same test every other
     /// button in the game is tinted from, asked about a spell that is on no
-    /// action-bar slot. See [`crate::game::api::spell_is_usable`].
+    /// action-bar slot. See [`crate::interface::api::spell_is_usable`].
     fn form_is_castable(&self, spell_id: u32) -> bool {
         self.tables
             .as_ref()
             .and_then(|tables| tables.spellbook()?.info(spell_id))
-            .is_some_and(|info| crate::game::api::spell_is_usable(&info, self.units).0)
+            .is_some_and(|info| crate::interface::api::spell_is_usable(&info, self.units).0)
     }
 }
 
@@ -83,10 +83,10 @@ impl ShapeshiftAnswers for super::super::api::Live<'_, '_, '_> {
         let form = self.shapeshift.form(index)?;
         let current = self
             .units
-            .get(crate::game::api::UnitId::Player)
+            .get(crate::interface::api::UnitId::Player)
             .map_or(0, |me| me.shapeshift_form);
         let is_active =
-            crate::game::combat::shapeshift::is_active(form, current, &self.auras.player);
+            crate::interface::shapeshift::is_active(form, current, &self.auras.player);
         // **The active icon while the form is on, the ordinary one otherwise**
         // — the client falls back to the ordinary one for a form that
         // states no active icon at all.
@@ -119,7 +119,7 @@ impl ShapeshiftAnswers for super::super::api::Live<'_, '_, '_> {
         // The same composition the spellbook's own rows take, so a stance's
         // swirl and the same spell's swirl in the book cannot disagree.
         let (start, duration, enable) =
-            crate::game::api::cooldown_of(self.cooldowns, &info, self.now);
+            crate::interface::api::cooldown_of(self.cooldowns, &info, self.now);
         (start, duration, u32::from(enable))
     }
 }

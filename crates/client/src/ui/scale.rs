@@ -32,7 +32,7 @@
 
 use bevy::prelude::*;
 
-use crate::game::cvars::CVars;
+use crate::settings::cvars::CVars;
 use crate::lua::widgets::layout;
 
 /// **The `uiScale` in force**, as [`layout::scale_in_force`] answers it.

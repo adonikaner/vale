@@ -13,7 +13,12 @@
 //! ```text
 //! render/      file -> picture; nothing in it needs the network
 //! world/       what the server's answers mean, keyed by GUID or by position
-//! game/        what the player can do: target, attack, cast
+//! interface/   the client's side of each FrameXML panel, and the interface
+//!              code the panels share
+//! input/       what a key means: the key table, and movement from bindings
+//! glue/        the screens that are not the world: login, character select,
+//!              character creation, loading
+//! settings/    the files under WTF\ the client reads and writes
 //! lua/         the interface's own language, running the interface's own code
 //! ui/          drawn over the world: the FrameXML interface and the
 //!              diagnostics; see ui/mod.rs
@@ -41,10 +46,13 @@ pub mod assets;
 // The test that each directory's own header still describes what is in it.
 // All six headers once went stale together. See `doctree.rs`.
 mod doctree;
-pub mod game;
+pub mod glue;
+pub mod input;
+pub mod interface;
 pub mod lua;
 pub mod render;
 mod scripted;
+pub mod settings;
 pub mod sound;
 pub mod ui;
 mod window;
@@ -140,12 +148,12 @@ pub fn run() {
     app::core(&mut app, gamedata_dir, config);
     // `--character`, or `VALE_CHARACTER`, which gives the same instruction
     // from the environment and is opt-in in the same way as `VALE_ACCOUNT`.
-    // See [`game::session::autologin`], which handles both halves of logging in
+    // See [`glue::autologin`], which handles both halves of logging in
     // without a screen, and [`vale_config::CHARACTER_ENV`]. A run that names
     // no character leaves the resource at its idle default and starts at the
     // login screen, which is the ordinary start.
     if let Some(character) = args.character.clone().or(character_env) {
-        app.insert_resource(game::session::autologin::AutoLogin::log_in_as(character));
+        app.insert_resource(glue::autologin::AutoLogin::log_in_as(character));
     }
     app
         .insert_resource(args.shot)
@@ -186,7 +194,7 @@ pub fn run() {
                 // so the order only decides whether the second login starts on
                 // this frame or the next. It is stated because an ordering that
                 // matters is stated rather than inherited.
-                scripted::relogin_probe.before(game::session::autologin::pick_the_character),
+                scripted::relogin_probe.before(glue::autologin::pick_the_character),
                 // Ordered explicitly. Both systems take the window mutably, so
                 // Bevy sequences them anyway, but only through that shared
                 // access, which holds only while both keep it. The order

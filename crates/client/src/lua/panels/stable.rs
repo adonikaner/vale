@@ -14,7 +14,7 @@
 //!
 //! The split every panel keeps: the wire is
 //! [`vale_protocol::play::stable`], the window is
-//! [`crate::game::npc::stable`], the family and diet and slot price are
+//! [`crate::interface::stable`], the family and diet and slot price are
 //! [`vale_assets::tables::pet`], and this file is registration and
 //! arguments.
 //!
@@ -43,7 +43,7 @@
 //!
 //! The icon and the family come from `CreatureFamily.dbc` by way of the pet's
 //! creature entry, which is a `CMSG_CREATURE_QUERY` round trip —
-//! [`crate::game::npc::stable::resolve`] is what raises `PET_STABLE_UPDATE`
+//! [`crate::interface::stable::resolve`] is what raises `PET_STABLE_UPDATE`
 //! again when it lands. Until then both are **empty strings rather than nil**,
 //! because `PetStable_Update` concatenates them into a label
 //! (`name.." "..format(UNIT_LEVEL_TEMPLATE, level).." "..family`) and a nil
@@ -187,7 +187,7 @@ impl StableAnswers for super::super::api::Live<'_, '_, '_> {
             // Stall 0 is the pet that is *out*, and it is a unit like any other.
             return self
                 .units
-                .exists(crate::game::api::UnitId::Pet)
+                .exists(crate::interface::api::UnitId::Pet)
                 .then(|| "pet".to_string());
         }
         // …and every other stall is a creature that is not in the world, which
@@ -205,7 +205,7 @@ impl super::super::api::Live<'_, '_, '_> {
     /// The pet family id behind a creature entry, out of the template cache the
     /// stable window filled — `None` while the query is in flight.
     ///
-    /// **Read-only**: the *asking* is [`crate::game::npc::stable`]'s, which is
+    /// **Read-only**: the *asking* is [`crate::interface::stable`]'s, which is
     /// the one place that knows the window opened. A read that queued its own
     /// query would re-queue it from inside a Lua call every time the panel
     /// redrew.
@@ -312,11 +312,11 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 }
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::game::npc::stable::StablePress>>>;
+pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::stable::StablePress>>>;
 
 /// Register the four writes. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
-    use crate::game::npc::stable::StablePress as P;
+    use crate::interface::stable::StablePress as P;
     let globals = lua.globals();
     let slot = |n: Option<i64>| -> Option<u8> { u8::try_from(n?).ok() };
 

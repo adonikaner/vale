@@ -466,8 +466,8 @@ pub fn leave_world(
 /// **Is this the frame the world went away on?** — the edge [`leave_world`] is
 /// keyed on, as a function of two signals and last frame's answer.
 ///
-/// A free function for the reason `game::left_world` is one and
-/// `game::place::loading::reckon` is one: an
+/// A free function for the reason `interface::left_world` is one and
+/// `glue::loading::reckon` is one: an
 /// [`crate::world::session::ActiveSession`] owns a socket and cannot be forged in
 /// a test, so the *rule* would otherwise be the one part of the teardown that
 /// nothing checks — and it is the part with a wrong answer on either side of it.

@@ -55,8 +55,8 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::egui;
 
-use crate::game::combat::target::Hovered;
-use crate::game::npc::object::HoveredObject;
+use crate::interface::target::Hovered;
+use crate::interface::object::HoveredObject;
 use crate::world::camera::WorldCamera;
 use crate::world::entities::fallback::FallbackReason;
 use crate::world::entities::{DisplayCache, EntityModel, Indoors, NoModel, Playback};
@@ -112,7 +112,7 @@ impl Plugin for InspectPlugin {
             // `Hovered` at different mutabilities and are therefore ordered by
             // an implementation detail rather than by a rule. An ordering
             // that matters is stated, never inherited.
-            hold.after(crate::game::combat::target::hover),
+            hold.after(crate::interface::target::hover),
         );
     }
 }

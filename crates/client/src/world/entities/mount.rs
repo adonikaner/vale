@@ -122,7 +122,7 @@ pub struct Mount {
     pub seat: f32,
     /// **The animal's own drawn triangles and its own header sphere**, for the
     /// mouse pick — see [`vale_assets::look::pick`] and
-    /// [`crate::game::combat::target::hover`].
+    /// [`crate::interface::target::hover`].
     ///
     /// Held here because the mount is not a `WorldEntity` of its own: it is a
     /// second rig on the rider's entity, so nothing in the pick's query would

@@ -194,9 +194,9 @@ pub struct GlueScene {
 /// point rather than an empty plinth.
 struct Standing {
     /// **What this was built from**, and the whole change detector: the
-    /// appearance and wardrobe `game::glue` derived from the highlighted row.
+    /// appearance and wardrobe `glue::glue` derived from the highlighted row.
     /// `None` while nothing is standing there.
-    built: Option<crate::game::session::glue::Plinth>,
+    built: Option<crate::glue::glue::Plinth>,
     /// The root the batches and joints hang off. Its `Transform` is written
     /// every frame by [`pose_scene`] — a **root** entity rather than a child of
     /// the scene's own root, because its skinned parts are posed through
@@ -574,13 +574,13 @@ fn follow_scene(
 /// **Put the highlighted character on the plinth**, and take the last one off.
 ///
 /// The whole of the decision — which row, what it looks like, what it is wearing
-/// — is `crate::game::session::glue::stand_on_plinth`'s and arrives here as a
-/// [`crate::game::session::glue::Plinth`]. What is left is the half that needs a
+/// — is `crate::glue::glue::stand_on_plinth`'s and arrives here as a
+/// [`crate::glue::glue::Plinth`]. What is left is the half that needs a
 /// renderer: a display id, a dressing, a mesh per batch and a joint per bone.
 fn follow_character(
     mut commands: Commands,
     mut scene: ResMut<GlueScene>,
-    state: Res<crate::game::session::glue::GlueState>,
+    state: Res<crate::glue::glue::GlueState>,
     mut cache: ResMut<ModelCache>,
     mut displays: ResMut<crate::world::entities::DisplayCache>,
     assets: Res<crate::assets::GameAssets>,
@@ -650,7 +650,7 @@ fn follow_character(
     // **The hands are full and the state is melee-drawn**, which is the whole of
     // the character-select rule: the reference hands its weapon attacher a
     // sheath type of 0 and a clear "put away" flag, so the point is the hand.
-    // `game::glue::Plinth::weapons` is where the packet's two slots become the
+    // `glue::glue::Plinth::weapons` is where the packet's two slots become the
     // pair, and `Weapon::from_char_enum` carries the rule.
     let dressed = vale_assets::look::dress::dress(
         tables,
@@ -811,7 +811,7 @@ fn dress_the_character(
 /// Whether the scene on screen is the **character-create** one.
 ///
 /// By the `<Model>` frame's own name rather than by
-/// `crate::game::session::glue::GlueState::screen`, because it is the frame that decides
+/// `crate::glue::glue::GlueState::screen`, because it is the frame that decides
 /// both halves of this question — which attachment point a body stands on, and
 /// which body — and the frame is what the renderer already holds. The two agree,
 /// and taking the one already in hand means they cannot come apart on the frame

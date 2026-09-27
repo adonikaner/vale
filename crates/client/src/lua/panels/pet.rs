@@ -73,11 +73,11 @@ pub trait PetAnswers {
     fn pet_has_action_bar(&self) -> bool;
 
     /// **`GetPetActionInfo(i)`** — seven values, and two shapes. See
-    /// [`crate::game::combat::pet`], which is where the whole rule is.
+    /// [`crate::interface::pet`], which is where the whole rule is.
     ///
     /// `None` for a slot with nothing in it, which the panel reads as a hidden
     /// button.
-    fn pet_action_info(&self, slot: usize) -> Option<crate::game::combat::pet::PetSlot>;
+    fn pet_action_info(&self, slot: usize) -> Option<crate::interface::pet::PetSlot>;
 
     /// `GetPetActionCooldown(i)` -> `(start, duration, enable)`.
     fn pet_action_cooldown(&self, slot: usize) -> (f64, f64, u32);
@@ -90,7 +90,7 @@ pub trait PetAnswers {
     /// differs only in a size computed from the spell's own text; the
     /// *content* is identical either way.
     ///
-    /// So this answers the same [`crate::game::api::SpellTip`] the book's
+    /// So this answers the same [`crate::interface::api::SpellTip`] the book's
     /// hover does, and a pet spell hovered on the bar and the same spell
     /// listed in the pet's book cannot print different plates.
     ///
@@ -99,7 +99,7 @@ pub trait PetAnswers {
     /// that plate out of `tooltipName` and the binding text itself; the
     /// reference would hand a token's action id (0..3) to the same spell
     /// lookup and draw nothing, which is what `None` here is.
-    fn pet_action_tooltip(&self, slot: usize) -> Option<crate::game::api::SpellTip>;
+    fn pet_action_tooltip(&self, slot: usize) -> Option<crate::interface::api::SpellTip>;
 
     /// **`GetPetActionsUsable()`** — whether the bar may be pressed at all.
     ///
@@ -149,7 +149,7 @@ pub trait PetAnswers {
     /// **`UnitCreatureFamily(unit)`** — and it is about *any* unit rather than
     /// about the pet, which is why it is here rather than beside `UnitName`:
     /// the table it reads is the pet family table and nothing else uses it.
-    fn creature_family(&self, unit: crate::game::api::UnitId) -> Option<String>;
+    fn creature_family(&self, unit: crate::interface::api::UnitId) -> Option<String>;
 
     /// **`HasPetSpells()`** -> `(numSpells, petToken)`.
     ///
@@ -172,7 +172,7 @@ impl PetAnswers for super::super::api::Live<'_, '_, '_> {
     /// Hunter is the only class with a happiness bar and a loyalty rate, and
     /// `PetFrame_SetHappiness` returns early without this.
     fn has_pet_ui(&self) -> (bool, bool) {
-        let Some(pet) = self.units.get(crate::game::api::UnitId::Pet) else {
+        let Some(pet) = self.units.get(crate::interface::api::UnitId::Pet) else {
             return (false, false);
         };
         let is_player = pet.kind == vale_protocol::state::update::ObjectType::Player;
@@ -181,7 +181,7 @@ impl PetAnswers for super::super::api::Live<'_, '_, '_> {
         }
         let hunter = self
             .units
-            .race_class_ids(crate::game::api::UnitId::Player)
+            .race_class_ids(crate::interface::api::UnitId::Player)
             .is_some_and(|(_, class)| class == HUNTER);
         (true, hunter)
     }
@@ -190,7 +190,7 @@ impl PetAnswers for super::super::api::Live<'_, '_, '_> {
     /// guid, and it carries `UNIT_FLAG_PET_ABANDON`.
     ///
     /// The middle test is the one that is easy to leave out and is the whole
-    /// point of the function: [`crate::game::api::Units::pet_guid_for`] takes
+    /// point of the function: [`crate::interface::api::Units::pet_guid_for`] takes
     /// charm *before* summon, so a mind-controlled creature answers the `pet`
     /// token — and it was summoned by nobody, so this refuses it. Without the
     /// test the menu offers to abandon a mob somebody else owns.
@@ -214,7 +214,7 @@ impl PetAnswers for super::super::api::Live<'_, '_, '_> {
         self.pet_bar.pet != 0
     }
 
-    fn pet_action_info(&self, slot: usize) -> Option<crate::game::combat::pet::PetSlot> {
+    fn pet_action_info(&self, slot: usize) -> Option<crate::interface::pet::PetSlot> {
         self.pet_bar.slot(slot).filter(|s| !s.is_empty()).cloned()
     }
 
@@ -222,7 +222,7 @@ impl PetAnswers for super::super::api::Live<'_, '_, '_> {
         self.pet_bar.cooldown(slot)
     }
 
-    fn pet_action_tooltip(&self, slot: usize) -> Option<crate::game::api::SpellTip> {
+    fn pet_action_tooltip(&self, slot: usize) -> Option<crate::interface::api::SpellTip> {
         // **A token slot answers nothing**, which is the reference's own
         // outcome rather than a shortcut: its `spell_id` is zero and no row of
         // `Spell.dbc` is numbered zero.
@@ -230,9 +230,9 @@ impl PetAnswers for super::super::api::Live<'_, '_, '_> {
         let tables = self.tables.as_deref();
         let info = tables?.spellbook()?.info(spell_id)?;
         let names = |entry| self.reagent_name(entry);
-        Some(crate::game::api::spell_tip(
+        Some(crate::interface::api::spell_tip(
             &info,
-            &crate::game::api::TipContext {
+            &crate::interface::api::TipContext {
                 // **The *player's* level, not the pet's.** `describe`
                 // substitutes a spell's scaling terms at a level, and the pet
                 // book's own plate is drawn by the same call in
@@ -259,7 +259,7 @@ impl PetAnswers for super::super::api::Live<'_, '_, '_> {
         if !self.has_pet_ui().1 {
             return None;
         }
-        let stats = self.units.get(crate::game::api::UnitId::Pet)?.pet_stats?;
+        let stats = self.units.get(crate::interface::api::UnitId::Pet)?.pet_stats?;
         self.tables
             .as_deref()?
             .pet()
@@ -270,7 +270,7 @@ impl PetAnswers for super::super::api::Live<'_, '_, '_> {
         if !self.has_pet_ui().1 {
             return None;
         }
-        let stats = self.units.get(crate::game::api::UnitId::Pet)?.pet_stats?;
+        let stats = self.units.get(crate::interface::api::UnitId::Pet)?.pet_stats?;
         self.tables
             .as_deref()?
             .pet()
@@ -280,7 +280,7 @@ impl PetAnswers for super::super::api::Live<'_, '_, '_> {
 
     fn pet_experience(&self) -> (u32, u32) {
         self.units
-            .get(crate::game::api::UnitId::Pet)
+            .get(crate::interface::api::UnitId::Pet)
             .and_then(|pet| pet.pet_stats)
             .map_or((0, 0), |stats| {
                 (stats.experience, stats.next_level_experience)
@@ -289,7 +289,7 @@ impl PetAnswers for super::super::api::Live<'_, '_, '_> {
 
     fn pet_training_points(&self) -> (u32, u32) {
         self.units
-            .get(crate::game::api::UnitId::Pet)
+            .get(crate::interface::api::UnitId::Pet)
             .and_then(|pet| pet.pet_stats)
             .map_or((0, 0), |stats| {
                 (u32::from(stats.training_total), u32::from(stats.training_spent))
@@ -297,13 +297,13 @@ impl PetAnswers for super::super::api::Live<'_, '_, '_> {
     }
 
     fn pet_icon(&self) -> Option<String> {
-        let family = self.units.get(crate::game::api::UnitId::Pet)?.pet_family;
+        let family = self.units.get(crate::interface::api::UnitId::Pet)?.pet_family;
         let icon = self.tables.as_deref()?.pet().family(family)?.icon.clone();
         (!icon.is_empty()).then_some(icon)
     }
 
     fn pet_food_types(&self) -> Vec<String> {
-        let Some(family) = self.units.get(crate::game::api::UnitId::Pet).map(|p| p.pet_family)
+        let Some(family) = self.units.get(crate::interface::api::UnitId::Pet).map(|p| p.pet_family)
         else {
             return Vec::new();
         };
@@ -317,14 +317,14 @@ impl PetAnswers for super::super::api::Live<'_, '_, '_> {
         })
     }
 
-    fn creature_family(&self, unit: crate::game::api::UnitId) -> Option<String> {
+    fn creature_family(&self, unit: crate::interface::api::UnitId) -> Option<String> {
         let family = self.units.get(unit)?.pet_family;
         let name = self.tables.as_deref()?.pet().family(family)?.name.clone();
         (!name.is_empty()).then_some(name)
     }
 
     /// The attack slot, while the flag `CastPetAction` sets is
-    /// up — see [`crate::game::combat::pet::PetBar::attacking`]. The server's
+    /// up — see [`crate::interface::pet::PetBar::attacking`]. The server's
     /// `command` byte is not consulted: vmangos leaves it at follow or stay
     /// through an attack, so a read of `is_active` here would never be true.
     fn is_pet_attack_active(&self, slot: usize) -> bool {
@@ -342,7 +342,7 @@ impl PetAnswers for super::super::api::Live<'_, '_, '_> {
 }
 
 /// The global name a command slot holding `COMMAND_ATTACK` answers with — see
-/// [`crate::game::combat::pet`], which builds it out of `PET_ACTION_%s` and the
+/// [`crate::interface::pet`], which builds it out of `PET_ACTION_%s` and the
 /// client's four-word command table.
 const ATTACK_TOKEN: &str = "PET_ACTION_ATTACK";
 
@@ -360,8 +360,8 @@ impl super::super::api::Live<'_, '_, '_> {
     /// predicates above. `None` for a charmed unit, which the `pet` token names
     /// but which neither flag applies to.
     fn own_pet(&self) -> Option<&crate::world::session::WorldEntity> {
-        let me = self.units.guid(crate::game::api::UnitId::Player)?;
-        let pet = self.units.get(crate::game::api::UnitId::Pet)?;
+        let me = self.units.guid(crate::interface::api::UnitId::Player)?;
+        let pet = self.units.get(crate::interface::api::UnitId::Pet)?;
         (pet.summoned_by == Some(me)).then_some(pet)
     }
 }
@@ -507,7 +507,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         scope.create_function(move |lua, unit: Option<String>| {
             let family = unit
                 .as_deref()
-                .and_then(crate::game::api::UnitId::parse)
+                .and_then(crate::interface::api::UnitId::parse)
                 .and_then(|unit| answers.creature_family(unit));
             Ok(match family {
                 Some(name) => mlua::Value::String(lua.create_string(&name)?),

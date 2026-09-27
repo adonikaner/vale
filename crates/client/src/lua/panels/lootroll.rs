@@ -13,9 +13,9 @@
 //!
 //! The same split every other panel keeps: the frame is the game's own
 //! `LootFrame.xml`, the *rule* is in [`vale_protocol::play::lootroll`] and
-//! [`crate::game::npc::lootroll`], and this file is the registration and the
+//! [`crate::interface::lootroll`], and this file is the registration and the
 //! argument handling. Every id that crosses it is the **client's own roll id**,
-//! never anything on the wire — see [`crate::game::npc::lootroll`], which is
+//! never anything on the wire — see [`crate::interface::lootroll`], which is
 //! where the two namings cross.
 //!
 //! ## `count` is 1 and it is not a placeholder
@@ -147,7 +147,7 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
             };
             queue
                 .borrow_mut()
-                .push(crate::game::npc::lootroll::RollPress {
+                .push(crate::interface::lootroll::RollPress {
                     id,
                     vote,
                     confirmed,
@@ -160,7 +160,7 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
 }
 
 /// The queue the two writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::game::npc::lootroll::RollPress>>>;
+pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::lootroll::RollPress>>>;
 
 /// **What the interface may ask about a group roll.**
 ///
@@ -276,7 +276,7 @@ mod tests {
         lua.load("RollOnLoot(0, 1)").exec().expect("the chunk runs");
         assert_eq!(
             *queue.borrow(),
-            vec![crate::game::npc::lootroll::RollPress {
+            vec![crate::interface::lootroll::RollPress {
                 id: 0,
                 vote: RollVote::Need,
                 confirmed: false,

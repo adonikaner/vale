@@ -34,7 +34,7 @@
 //! The writes are the ordinary queue shape ([`super::worldmap`],
 //! [`super::super::api::sound`]): a handler cannot log in, because logging in owns a socket
 //! and the world is borrowed for the length of the call. So
-//! `AccountLogin_Login()` pushes a [`GlueRequest`] and `crate::game::session::glue`
+//! `AccountLogin_Login()` pushes a [`GlueRequest`] and `crate::glue::glue`
 //! drives the session with it.
 //!
 //! ## The agreements are accepted and that is a measurement, not a policy
@@ -153,7 +153,7 @@ pub const WRITES: [&str; 52] = [
     "UpdateSelectionCustomizationScene",
 ];
 
-/// **What the glue asked the client to do**, drained by [`crate::game::session::glue`].
+/// **What the glue asked the client to do**, drained by [`crate::glue::glue`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum GlueRequest {
     /// `DefaultServerLogin(account, password)` — the Login button, and the only
@@ -191,7 +191,7 @@ pub enum GlueRequest {
     /// character is created or deleted.
     RefreshCharacters,
     /// `SetSavedAccountName(name)` — the Remember Account Name box. Kept for the
-    /// session and not written to disk; see [`crate::game::session::glue::GlueState`].
+    /// session and not written to disk; see [`crate::glue::glue::GlueState`].
     SaveAccountName(String),
     /// `SetCharacterSelectFacing(degrees)` — the drag that spins the character.
     Facing(f32),

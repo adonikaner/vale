@@ -18,10 +18,10 @@
 //! click on a unit greets — a guard clicked only to read its name, and
 //! clicked again while it is still the target, says hello each time, which is
 //! the reference's behaviour and is why the trigger is
-//! [`crate::game::combat::target::UnitClicked`] rather than the selection:
+//! [`crate::interface::target::UnitClicked`] rather than the selection:
 //! the selection does not move on the second click and the greeting has to.
 //! A window opening on somebody nothing clicked (a scripted opener) greets
-//! too; [`crate::game::npc::gossip::NpcUnit`] points at whoever the character
+//! too; [`crate::interface::gossip::NpcUnit`] points at whoever the character
 //! is talking to across the six conversation windows and the trade, and its
 //! edge off a unit is the farewell. A trade partner is a player, has no
 //! display row here, and says nothing — which is the reference's behaviour
@@ -31,8 +31,8 @@
 use bevy::prelude::*;
 
 use super::mixer::{Place, Voices};
-use crate::game::combat::target::UnitClicked;
-use crate::game::npc::gossip::NpcUnit;
+use crate::interface::target::UnitClicked;
+use crate::interface::gossip::NpcUnit;
 use crate::world::session::{EntityIndex, WorldEntity};
 
 pub struct NpcSoundPlugin;
@@ -40,9 +40,9 @@ pub struct NpcSoundPlugin;
 impl Plugin for NpcSoundPlugin {
     fn build(&self, app: &mut App) {
         // After the token has been pointed this frame — see
-        // `game::npc::gossip::point_the_token`, which runs inside `GameSet` —
+        // `interface::gossip::point_the_token`, which runs inside `GameSet` —
         // and after the two click systems, which are in the same set.
-        app.add_systems(Update, greetings.after(crate::game::GameSet));
+        app.add_systems(Update, greetings.after(crate::interface::GameSet));
     }
 }
 

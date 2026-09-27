@@ -45,7 +45,7 @@
 //! `TargetFrame`, `CastingBarFrame`, `ActionButton` and `UIErrorsFrame` are
 //! FrameXML, and they are what draws them now. What it was standing in for is
 //! the same four things it read — the selection, the resolved bar, the cooldown
-//! clocks and the messages — all of which live in [`crate::game`] and are not
+//! clocks and the messages — all of which live in [`crate::interface`] and are not
 //! throwaway at all. See that directory's own note on the split.
 //!
 //! **`chat.rs` is gone too** (this round), and it is the same story one round
@@ -73,7 +73,7 @@
 //! What was not throwaway underneath it survives unchanged, which is what the
 //! old note got right: a held `Handshake` and a `Screen` derived from what
 //! exists rather than stored beside it. The client half of the two screens is
-//! [`crate::game::session::glue`], beside every other piece of state the interface reads.
+//! [`crate::glue::glue`], beside every other piece of state the interface reads.
 //!
 //! `debug/` itself stays under any interface: it is the *diagnostic* surface,
 //! which the game has no equivalent of and which every measurement in this

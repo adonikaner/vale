@@ -222,7 +222,7 @@ fn loot_row(answers: &dyn Answers, row: Option<i64>) -> Option<LootRow> {
 /// [`super::super::api::verbs`], which is where the argument is.
 ///
 /// `queue` is the same one every other loot press goes on;
-/// [`crate::game::npc::loot::TakeLoot`] is what it carries.
+/// [`crate::interface::loot::TakeLoot`] is what it carries.
 pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
     let globals = lua.globals();
 
@@ -235,7 +235,7 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
             if let Some(row) = row.filter(|row| *row > 0) {
                 queue
                     .borrow_mut()
-                    .push(crate::game::npc::loot::TakeLoot::Row(row as usize));
+                    .push(crate::interface::loot::TakeLoot::Row(row as usize));
             }
             Ok(())
         })?
@@ -251,11 +251,11 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
     // **And this is a release rather than a hide.** The window stays up until
     // `SMSG_LOOT_RELEASE_RESPONSE` comes back — `LootFrame_OnHide` calls this,
     // so hiding the frame is what starts the release rather than what finishes
-    // it. See [`crate::game::npc::loot`].
+    // it. See [`crate::interface::loot`].
     let close = {
         let queue = std::rc::Rc::clone(queue);
         lua.create_function(move |_, _: mlua::MultiValue| {
-            queue.borrow_mut().push(crate::game::npc::loot::TakeLoot::Close);
+            queue.borrow_mut().push(crate::interface::loot::TakeLoot::Close);
             Ok(())
         })?
     };
@@ -264,7 +264,7 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
 }
 
 /// The queue the two writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::game::npc::loot::TakeLoot>>>;
+pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::loot::TakeLoot>>>;
 
 /// The key a `LootButton` keeps its row under — written by `SetSlot`.
 pub(super) const SLOT_KEY: &str = "__lootSlot";
@@ -387,9 +387,9 @@ mod tests {
         assert_eq!(
             *queue.borrow(),
             vec![
-                crate::game::npc::loot::TakeLoot::Row(2),
-                crate::game::npc::loot::TakeLoot::Close,
-                crate::game::npc::loot::TakeLoot::Close,
+                crate::interface::loot::TakeLoot::Row(2),
+                crate::interface::loot::TakeLoot::Close,
+                crate::interface::loot::TakeLoot::Close,
             ],
             "a row of zero or nil records nothing"
         );
@@ -422,7 +422,7 @@ mod tests {
         .expect("the chunk runs");
         assert_eq!(
             *queue.borrow(),
-            vec![crate::game::npc::loot::TakeLoot::Row(3)],
+            vec![crate::interface::loot::TakeLoot::Row(3)],
             "a plain button and a slotless loot button take nothing"
         );
     }

@@ -131,7 +131,7 @@ impl Plugin for CursorPlugin {
                 .chain()
                 // …and after the pick it reads, so the sword appears on the
                 // frame the pointer crosses the unit rather than the one after.
-                .after(crate::game::combat::target::TargetSet)
+                .after(crate::interface::target::TargetSet)
                 // **After the gesture has been decided**, since `hide_while_
                 // steering` now reads it rather than the buttons. Unordered, the
                 // pointer would vanish a frame late and — worse — stay hidden a
@@ -281,7 +281,7 @@ fn keep_the_game_pointer(
 ///
 /// **The middle two are not a precedence.** They are one ray's answer split into
 /// two resources, and exactly one of them is filled on any frame — see
-/// [`crate::game::npc::object::HoveredObject`]. Which it is comes out of the
+/// [`crate::interface::object::HoveredObject`]. Which it is comes out of the
 /// depth test in the pick, so a mob standing in front of an ore vein draws a
 /// sword and the vein behind it draws nothing.
 ///
@@ -298,7 +298,7 @@ fn keep_the_game_pointer(
 /// **Which cursor a *unit* deserves is not decided here**, and that is the
 /// division this module is about: `vale_assets::look::cursor` owns the rule —
 /// `UNIT_NPC_FLAGS` first, then attackability, which is the client's own order —
-/// and `game::target::judge_the_hover` runs it once a frame. All that is left in
+/// and `interface::target::judge_the_hover` runs it once a frame. All that is left in
 /// this function is the mode, the fallbacks and the write.
 ///
 /// Written only on a change, for the reason [`hide_while_steering`] gives: the
@@ -309,17 +309,17 @@ fn keep_the_game_pointer(
 fn choose_the_pointer(
     mut commands: Commands,
     pointer: Option<Res<GamePointer>>,
-    targeting: Option<Res<crate::game::combat::action::SpellTargeting>>,
-    hovered: Option<Res<crate::game::combat::target::Hovered>>,
+    targeting: Option<Res<crate::interface::action::SpellTargeting>>,
+    hovered: Option<Res<crate::interface::target::Hovered>>,
     // …and the other population the same pick answers for — see
-    // [`crate::game::npc::object::HoveredObject`]. Only one of the two is ever
+    // [`crate::interface::object::HoveredObject`]. Only one of the two is ever
     // filled, so the `or` below is a choice between an answer and nothing
     // rather than a precedence.
-    object: Option<Res<crate::game::npc::object::HoveredObject>>,
+    object: Option<Res<crate::interface::object::HoveredObject>>,
     // **…and what the interface asked for**, which is the fourth input and the
     // only one that is not derived from the world — see
-    // [`crate::game::combat::cursor::Cursor::asked`].
-    carried: Option<Res<crate::game::combat::cursor::Cursor>>,
+    // [`crate::interface::cursor::Cursor::asked`].
+    carried: Option<Res<crate::interface::cursor::Cursor>>,
     window: Query<(Entity, &CursorIcon), With<PrimaryWindow>>,
 ) {
     let (Some(pointer), Some(targeting)) = (pointer, targeting) else {

@@ -348,7 +348,7 @@ pub struct Painter<'w> {
     pub portraits: &'w crate::render::portraits::Portraits,
     /// …and the bodies — see [`crate::render::paperdoll`].
     pub dolls: &'w crate::render::paperdoll::Dolls,
-    pub place: &'w crate::game::place::minimap::MinimapView,
+    pub place: &'w crate::interface::minimap::MinimapView,
     pub view: Viewport,
     /// **Device pixels per interface pixel** — the window's own scale factor,
     /// and the only place in this painter that knows the two are different.
@@ -1106,7 +1106,7 @@ fn minimap(
 /// marker inside the disc is its `POIIcons` cell there, and beyond the rim it
 /// is an arrow at the rim turned to point the way. The rule for which unit is
 /// which dot is `vale_assets::look::blips`, and the list itself is
-/// [`crate::game::place::minimap::MinimapView::blips`].
+/// [`crate::interface::minimap::MinimapView::blips`].
 fn blips(
     emit: &mut Emitter,
     painter: &mut Painter,
@@ -1116,7 +1116,7 @@ fn blips(
     clip: Option<[f32; 4]>,
 ) {
     use vale_assets::look::blips as rule;
-    use crate::game::place::minimap::MarkerKind;
+    use crate::interface::minimap::MarkerKind;
     let view = painter.place;
     if view.blips.is_empty() && view.markers.is_empty() {
         return;

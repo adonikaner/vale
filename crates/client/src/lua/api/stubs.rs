@@ -354,7 +354,7 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // inventory knows the rest, so all three had an honest answer available for
     // as long as the bags have been read — see [`super::super::api`].
     // **`IsAutoRepeatAction` was the fourth and is a real read now too**: the
-    // state it wanted is `game::action::AutoRepeat`, which exists because
+    // state it wanted is `interface::action::AutoRepeat`, which exists because
     // `CMSG_CANCEL_AUTO_REPEAT_SPELL` and `SMSG_CANCEL_AUTO_REPEAT` are read.
     // **And `IsActionInRange` with `ActionHasRange` were the fifth and sixth**,
     // which is worth a line here because the note that stood in their place was
@@ -362,7 +362,7 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // tint" rather than "out of range", which is exactly true, and a stub that
     // answers the safe one of three answers is indistinguishable from a working
     // one. What they wanted was a distance, and the distance wanted a
-    // `Transform` in `game::api::Units` — see [`super::super::api`].
+    // `Transform` in `interface::api::Units` — see [`super::super::api`].
 
     // --- the group: party, raid, loot ---
     //
@@ -446,7 +446,7 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // no state for ---
     //
     // The rest of the death family is real and lives in [`super::super::api`] and
-    // [`super::verbs`] — see [`crate::game::character::death`]. These five are the two
+    // [`super::verbs`] — see [`crate::interface::death`]. These five are the two
     // corners of it that are genuinely absent, and both stub to a **constant
     // that is the honest answer**: there is no soulstone, and there is no
     // battleground spirit healer.
@@ -604,7 +604,7 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // --- the zone and the clock ---
     // **The four zone names were here and are not any more.** They answer the
     // ground under the character now — see [`super::super::panels::worldmap`], and
-    // [`crate::game::place::worldmap`] for the poll that keeps them current.
+    // [`crate::interface::worldmap`] for the poll that keeps them current.
     // **`GetGameTime` is not here any more.** It answers the world's clock — see
     // [`super::UnitAnswers::game_time`]. As a constant it did not merely report
     // the wrong hour: `GameTime.lua` re-cuts its texture only when the minute
@@ -906,7 +906,7 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // windows was a deliberate stand-in because `chat-cache.txt` is unread and
     // guessing at Blizzard's default would be "wrong in a way nothing could
     // check". That was true while nothing produced a combat line; the moment
-    // `game::combat::log` did, every swing landed in General on top of the
+    // `interface::log` did, every swing landed in General on top of the
     // conversation. The split is not a guess now — it is the client's own
     // default, see `vale_assets::interface::chattype::DEFAULT_WINDOWS`.
     //
@@ -984,7 +984,7 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // the real client reads it from `WTF\…\chat-cache.txt`, which is unread,
     // and that guessing at Blizzard's default "would be wrong in a way nothing
     // could check". The first half is still true and the second stopped being
-    // true twice over: the moment `game::combat::log` started producing lines
+    // true twice over: the moment `interface::log` started producing lines
     // every swing landed in General on top of the conversation, and the
     // *default* is not in `chat-cache.txt` at all — that file is what a player
     // has since changed. The client builds the default itself: every group on
@@ -1107,7 +1107,7 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // have their own door. An addon's call does nothing.
     nothing!("ConsoleExec");
     // **`SendAddonMessage(prefix, text, type)` goes nowhere.** It is a chat
-    // send of kind `ADDON`, which `crate::game::session::chat` does not route;
+    // send of kind `ADDON`, which `crate::interface::chat` does not route;
     // two addons call it on `PARTY_MEMBERS_CHANGED` to announce their version.
     nothing!("SendAddonMessage");
     // **`GetFramerate()` answers 0**: the interpreter has no frame clock to

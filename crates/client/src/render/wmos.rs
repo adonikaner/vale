@@ -367,7 +367,7 @@ impl WmoCache {
     /// How many buildings this pass is still working on — asked for and not
     /// back, back and not staged, and the one part-way through staging.
     ///
-    /// Read by [`crate::game::place::loading`] for the same reason
+    /// Read by [`crate::glue::loading`] for the same reason
     /// [`crate::render::terrain::LoadedTiles::settling`] is: the ground being
     /// there is not the same as the city on it being there, and a client that
     /// took the loading screen down between the two would show Stormwind
@@ -952,7 +952,7 @@ pub fn spawn_wmos(
                 // placement's own question rather than the model's: the same
                 // inn stands in Goldshire and in Menethil, and only the `MODF`
                 // name set says which of them this one is. See
-                // `game::worldmap`, which asks.
+                // `interface::worldmap`, which asks.
                 areas: ready.areas.clone(),
                 wmo_id: ready.wmo_id,
                 name_set: placement.name_set,

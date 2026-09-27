@@ -47,9 +47,9 @@
 use bevy::prelude::*;
 
 use super::mixer::{Place, Voices};
-use crate::game::character::items::Inventory;
-use crate::game::combat::cursor::Cursor;
-use crate::game::events::PlayerMoney;
+use crate::interface::items::Inventory;
+use crate::interface::cursor::Cursor;
+use crate::interface::events::PlayerMoney;
 use crate::world::session::Session;
 use vale_assets::tables::itemsound::ItemSound;
 

@@ -32,7 +32,7 @@
 //! draw the previous selection and the click would look like it did nothing. So
 //! this keeps a [`Held`] board that every read and every write goes through, and
 //! what queues is only the half the *server* needs — a [`Queue`] of
-//! [`SocialVerb`]s that [`crate::game::session::social`] drains.
+//! [`SocialVerb`]s that [`crate::interface::social`] drains.
 //!
 //! ## The two lists are guids and the names arrive separately
 //!
@@ -135,7 +135,7 @@ pub struct Social {
     /// **Where the next `SMSG_WHO` goes**, which the interface decides —
     /// `SetWhoToUI(1)` before opening the panel, `SetWhoToUI(nil)` for a `/who`
     /// that should print into the chat frame instead. Nothing here reads it;
-    /// [`crate::game::session::social`] does, and it is held rather than queued
+    /// [`crate::interface::social`] does, and it is held rather than queued
     /// so that the flag set *before* the search is the one in force when the
     /// answer lands.
     pub who_to_ui: bool,

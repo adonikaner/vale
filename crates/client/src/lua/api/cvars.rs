@@ -11,7 +11,7 @@
 //! ```text
 //! a slider moves  ->  SetCVar("MusicVolume", 0.4)  ->  the store, and a write
 //!                                                       recorded on the queue
-//! the queue drains ->  game::cvars::CVars           ->  sound::music reads it
+//! the queue drains ->  settings::cvars::CVars           ->  sound::music reads it
 //! ```
 //!
 //! ## The three, as the 1.12.1 client has them
@@ -63,7 +63,7 @@
 //! then overwritten by whatever `WTF\Config.wtf` carried — [`seed`], called
 //! once before the interface loads, which is where the client does it too.
 //! Writing the file back is the client's half and is
-//! in [`crate::game::cvars`]; the format is
+//! in [`crate::settings::cvars`]; the format is
 //! [`vale_assets::interface::wtf`].
 
 use std::cell::RefCell;
@@ -192,7 +192,7 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &CVarQueue) -> mlua::Resu
 /// A case-sensitive store answers all of that with the *default*, silently: the
 /// slider read 1.0 whatever had been set, and `OptionsFrame_Save`'s
 /// `SetCVar("uiscale", …)` wrote a second, invisible row that nothing ever read.
-/// Both halves looked like they worked. [`crate::game::cvars::CVars`] on the
+/// Both halves looked like they worked. [`crate::settings::cvars::CVars`] on the
 /// other side of the queue had this rule from the start and carries the
 /// canonical spelling beside the value for the file; this is the same rule on
 /// the interface's side of it.
@@ -239,13 +239,13 @@ fn format_number(value: f64) -> String {
 /// **Put a saved setting back**, before anything reads one.
 ///
 /// The other direction of [`snapshot`], and the one exception to the one-way
-/// flow [`crate::game::cvars`] describes — which is the exception 5875 makes
+/// flow [`crate::settings::cvars`] describes — which is the exception 5875 makes
 /// too: the client ends its config-file setup by *loading* `WTF\Config.wtf`
 /// straight into the store, before a single options panel exists.
 ///
 /// It writes the store and **not** the queue on purpose. A queued write is a
 /// change, and the client's own mirror is seeded from the same file in the
-/// same breath (see [`crate::game::cvars::CVarsPlugin`]), so putting these on
+/// same breath (see [`crate::settings::cvars::CVarsPlugin`]), so putting these on
 /// the queue would announce a `CVAR_UPDATE` for every line of the file to
 /// panels that have not loaded yet — and would mark the settings dirty, which
 /// would rewrite the file on a session where nothing was touched.
@@ -258,7 +258,7 @@ pub(in crate::lua) fn seed(lua: &mlua::Lua, values: &[(String, String)]) -> mlua
 }
 
 /// **The store as plain data**, for the mirror on the other side of the queue —
-/// see [`crate::game::cvars`], which is the only caller.
+/// see [`crate::settings::cvars`], which is the only caller.
 ///
 /// Read once when the settings resource is built rather than per frame: after
 /// that the queue carries every change, which is the same bargain every other

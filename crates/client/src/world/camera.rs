@@ -125,7 +125,7 @@ impl CameraRig {
 ///   swung the view with it. 1.12 does not have this problem because the world
 ///   is a frame (`WorldFrame`) and the pointer lands on exactly one thing. This
 ///   client keeps its own pick and has to decline explicitly, in the same way
-///   [`crate::game::combat::target::hover`] does for the pick and
+///   [`crate::interface::target::hover`] does for the pick and
 ///   `select_on_click` for the click.
 /// * [`crate::ui::cursor`] hid the pointer for the right button only, so a
 ///   left-drag round the character left the arrow in the middle of the screen.
@@ -186,7 +186,7 @@ pub const LOOK_SLOP: f32 = 4.0;
 
 /// Decide what the current mouse gesture is, once, before anything acts on it.
 ///
-/// Runs before [`orbit`], before [`crate::game::combat::target::select_on_click`] and
+/// Runs before [`orbit`], before [`crate::interface::target::select_on_click`] and
 /// before [`crate::ui::cursor`]'s hide — all three stated with `.after`, because
 /// each of them reads a resource this writes and Bevy will not otherwise
 /// sequence them.
@@ -277,7 +277,7 @@ impl Plugin for CameraPlugin {
                     // `Binding::CameraZoom`. Running first would move the eye
                     // on the next frame, and on a key-repeat the zoom would lag
                     // the key.
-                    .after(crate::game::bindings::BindingSet)
+                    .after(crate::input::bindings::BindingSet)
                     // After the interface has hit-tested this frame's pointer.
                     // `arm_look` asks `MouseFocus` once, on the frame the button
                     // goes down, and that answer decides the whole gesture.
@@ -655,8 +655,8 @@ pub fn orbit(
     // [`look_rate`] and [`inversion`]. Read per frame, because a CVar can be
     // written by any script between two frames; this is two hash lookups and
     // two parses on a frame where the button is held.
-    cvars: Res<crate::game::cvars::CVars>,
-    mut pressed: MessageReader<crate::game::bindings::BindingPressed>,
+    cvars: Res<crate::settings::cvars::CVars>,
+    mut pressed: MessageReader<crate::input::bindings::BindingPressed>,
     mut rig: ResMut<CameraRig>,
 ) {
     // `CAMERAZOOMIN` / `CAMERAZOOMOUT`, which can be keys as well as the
@@ -669,8 +669,8 @@ pub fn orbit(
     // without the direct read the wheel would not zoom. The consequence is that
     // the wheel cannot be re-bound; joining the mouse to the key table is
     // an item this shares with steering.
-    for crate::game::bindings::BindingPressed(binding) in pressed.read() {
-        if let crate::game::bindings::Binding::CameraZoom(hundredths) = binding {
+    for crate::input::bindings::BindingPressed(binding) in pressed.read() {
+        if let crate::input::bindings::Binding::CameraZoom(hundredths) = binding {
             let notches = *hundredths as f32 / 100.0;
             rig.distance =
                 (rig.distance * (1.0 - notches * 0.1)).clamp(CLOSEST, furthest(&cvars));
@@ -767,7 +767,7 @@ const PITCH_MOVE_SPEED: f32 = 90.0;
 /// start. Clamping the rig itself would fix that and break
 /// `--view <distance>,…`, which frames every scripted shot in this repository
 /// and may ask for a hundred yards.
-fn furthest(cvars: &crate::game::cvars::CVars) -> f32 {
+fn furthest(cvars: &crate::settings::cvars::CVars) -> f32 {
     let max = cvars.number("cameraDistanceMax") * cvars.number("cameraDistanceMaxFactor");
     max.max(CLOSEST)
 }
@@ -789,7 +789,7 @@ pub(crate) const CLOSEST: f32 = 2.0;
 /// box: `mouseInvertYaw` can be set from `/console` and from `Config.wtf`.
 /// Reading only one of the pair would leave a setting that is written and
 /// ignored, which looks like a bug in the setting.
-fn inversion(cvars: &crate::game::cvars::CVars) -> Vec2 {
+fn inversion(cvars: &crate::settings::cvars::CVars) -> Vec2 {
     let sign = |on: bool| if on { -1.0 } else { 1.0 };
     Vec2::new(
         sign(cvars.flag("mouseInvertYaw")),
@@ -800,12 +800,12 @@ fn inversion(cvars: &crate::game::cvars::CVars) -> Vec2 {
 /// One of the two turn rates, in degrees per second, or the client's registered
 /// default if the string is not a number.
 ///
-/// [`crate::game::cvars::CVars::number`] answers `0.0` for anything it cannot
+/// [`crate::settings::cvars::CVars::number`] answers `0.0` for anything it cannot
 /// parse, and a zero rate disables mouse-look, so a typo in the folder's
 /// `Config.wtf` would disable the control without any message. Zero is treated
 /// as absent for the same reason. The deviation is small: 1.12's own slider
 /// stops well above zero.
-fn turn_rate(cvars: &crate::game::cvars::CVars, name: &str, registered: f32) -> f32 {
+fn turn_rate(cvars: &crate::settings::cvars::CVars, name: &str, registered: f32) -> f32 {
     let value = cvars.number(name);
     if value.is_finite() && value != 0.0 {
         value
@@ -862,7 +862,7 @@ pub fn mouse_look_heading(rig: &CameraRig) -> f32 {
 /// `SystemParametersInfo(SPI_SETMOUSESPEED)`: it moves the Windows pointer
 /// speed slider and never touches a delta. This client therefore has no
 /// sensitivity setting either; the operating system's setting is the game's.
-fn look_rate(aspect: f32, cvars: &crate::game::cvars::CVars) -> Vec2 {
+fn look_rate(aspect: f32, cvars: &crate::settings::cvars::CVars) -> Vec2 {
     let sy = 1.0 / (aspect * aspect + 1.0).sqrt();
     let sx = aspect * sy;
     let yaw = turn_rate(cvars, "cameraYawMoveSpeed", YAW_MOVE_SPEED);
@@ -1166,8 +1166,8 @@ mod tests {
             .init_resource::<AccumulatedMouseScroll>()
             // The four settings the drag reads, at their registered values,
             // which these tests are written against.
-            .init_resource::<crate::game::cvars::CVars>()
-            .add_message::<crate::game::bindings::BindingPressed>()
+            .init_resource::<crate::settings::cvars::CVars>()
+            .add_message::<crate::input::bindings::BindingPressed>()
             .add_systems(Update, (arm_look, orbit).chain());
         app
     }
@@ -1249,7 +1249,7 @@ mod tests {
     }
 
     /// A click is not a drag until it has travelled past the slop. This is the
-    /// part of the gesture `game::target` reads.
+    /// part of the gesture `interface::target` reads.
     ///
     /// The previous rule was `motion.delta != Vec2::ZERO`, and a mouse moves a
     /// pixel or two during an ordinary click, so a large fraction of clicks on
@@ -1485,7 +1485,7 @@ mod tests {
     fn the_look_rate_follows_the_settings() {
         let registered = look_rate(4.0 / 3.0, &Default::default());
 
-        let halved = crate::game::cvars::CVars::with_saved(&[(
+        let halved = crate::settings::cvars::CVars::with_saved(&[(
             "cameraYawMoveSpeed".into(),
             "90.0".into(),
         )]);
@@ -1494,7 +1494,7 @@ mod tests {
         // The other axis is untouched: they are two settings.
         assert!((slower.y - registered.y).abs() < 1e-7, "{slower:?}");
 
-        let broken = crate::game::cvars::CVars::with_saved(&[(
+        let broken = crate::settings::cvars::CVars::with_saved(&[(
             "cameraPitchMoveSpeed".into(),
             "fast".into(),
         )]);
@@ -1508,13 +1508,13 @@ mod tests {
     #[test]
     fn the_zoom_reaches_as_far_as_the_two_distance_settings_say() {
         assert!((furthest(&Default::default()) - 15.0).abs() < 1e-4);
-        let doubled = crate::game::cvars::CVars::with_saved(&[(
+        let doubled = crate::settings::cvars::CVars::with_saved(&[(
             "cameraDistanceMaxFactor".into(),
             "2".into(),
         )]);
         assert!((furthest(&doubled) - 30.0).abs() < 1e-4);
         let broken =
-            crate::game::cvars::CVars::with_saved(&[("cameraDistanceMax".into(), "".into())]);
+            crate::settings::cvars::CVars::with_saved(&[("cameraDistanceMax".into(), "".into())]);
         assert!(furthest(&broken) >= CLOSEST);
     }
 
@@ -1525,9 +1525,9 @@ mod tests {
     fn the_two_invert_settings_flip_one_axis_each() {
         assert_eq!(inversion(&Default::default()), Vec2::ONE);
         let pitch =
-            crate::game::cvars::CVars::with_saved(&[("mouseInvertPitch".into(), "1".into())]);
+            crate::settings::cvars::CVars::with_saved(&[("mouseInvertPitch".into(), "1".into())]);
         assert_eq!(inversion(&pitch), Vec2::new(1.0, -1.0));
-        let yaw = crate::game::cvars::CVars::with_saved(&[("mouseInvertYaw".into(), "1".into())]);
+        let yaw = crate::settings::cvars::CVars::with_saved(&[("mouseInvertYaw".into(), "1".into())]);
         assert_eq!(inversion(&yaw), Vec2::new(-1.0, 1.0));
     }
 

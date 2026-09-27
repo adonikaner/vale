@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! vale_assets::tables::loading   which picture, and where the bar goes  <- measured
-//! crate::game::place::loading      whether it is up, and how full         <- this client's
+//! crate::glue::loading      whether it is up, and how full         <- this client's
 //! this file                 three quads                            <- egui
 //! ```
 //!
@@ -21,7 +21,7 @@
 //! because that is what a loading screen is — the reference draws it instead of
 //! the frame rather than on top of one, and a HUD readable through a loading
 //! screen would be a HUD reporting a world the player cannot see. What the
-//! numbers were doing is in the log instead: [`crate::game::place::loading`] says what
+//! numbers were doing is in the log instead: [`crate::glue::loading`] says what
 //! it was waiting for when it gives up.
 //!
 //! ## The picture is a centred 4:3 box, and the bar's fill is squashed
@@ -46,7 +46,7 @@
 //! wrong everywhere else.
 
 use crate::assets::GameAssets;
-use crate::game::place::loading::LoadingScreen;
+use crate::glue::loading::LoadingScreen;
 use vale_assets::tables::loading::{fit, BAR};
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};

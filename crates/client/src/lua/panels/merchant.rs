@@ -22,7 +22,7 @@
 //! builder; what is here is the six answers and the index.
 //!
 //! The split every panel keeps: the frame is the game's own 400 lines of Lua,
-//! the window state is [`crate::game::npc::merchant`], and this file is registration
+//! the window state is [`crate::interface::merchant`], and this file is registration
 //! and arguments. Two numbers here are sentinels rather than values:
 //! **`numAvailable` is `-1` for unlimited stock** (the wire's `0xFFFFFFFF`,
 //! compared against by `MerchantFrame_UpdateMerchantInfo` directly), and a row
@@ -96,7 +96,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
             let short = row
                 .and_then(|row| answers.buyback_item(row))
                 .is_some_and(|line| answers.money() < line.price);
-            sell_queue.borrow_mut().push(crate::game::bindings::Binding::AskCursor(Some((
+            sell_queue.borrow_mut().push(crate::input::bindings::Binding::AskCursor(Some((
                 vale_assets::look::cursor::SELL,
                 short,
             ))));
@@ -215,7 +215,7 @@ pub fn max_stack(buy_count: u32, stackable: Option<u32>) -> u32 {
 }
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::game::npc::merchant::MerchantPress>>>;
+pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::merchant::MerchantPress>>>;
 
 /// Register the three writes. Unscoped — they record.
 ///
@@ -224,7 +224,7 @@ pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::game::npc::merchant::
 /// and a no-op would swallow the drag and report success. The cost is one
 /// named `--audit --clicks` failure.
 pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
-    use crate::game::npc::merchant::MerchantPress as P;
+    use crate::interface::merchant::MerchantPress as P;
     let globals = lua.globals();
     macro_rules! push {
         ($name:expr, $args:ty, |$arg:ident| $body:expr) => {{
@@ -341,7 +341,7 @@ mod tests {
     /// The writes record, one-based, quantity optional.
     #[test]
     fn the_writes_record_in_call_order() {
-        use crate::game::npc::merchant::MerchantPress as P;
+        use crate::interface::merchant::MerchantPress as P;
         let lua = mlua::Lua::new();
         let queue: Queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         register(&lua, &queue).expect("registers");
@@ -393,8 +393,8 @@ pub trait MerchantAnswers {
     fn buyback_entry(&self, row: usize) -> Option<u32>;
     /// **The armourer's three**: `CanMerchantRepair`, `GetRepairAllCost` and
     /// `InRepairMode`, which are one struct because they are one question asked
-    /// three ways — see [`crate::game::npc::merchant::Repairs`].
-    fn repairs(&self) -> crate::game::npc::merchant::Repairs;
+    /// three ways — see [`crate::interface::merchant::Repairs`].
+    fn repairs(&self) -> crate::interface::merchant::Repairs;
 }
 
 impl MerchantAnswers for super::super::api::Live<'_, '_, '_> {
@@ -403,7 +403,7 @@ impl MerchantAnswers for super::super::api::Live<'_, '_, '_> {
         self.merchant.rows()
     }
 
-    fn repairs(&self) -> crate::game::npc::merchant::Repairs {
+    fn repairs(&self) -> crate::interface::merchant::Repairs {
         self.merchant.repairs()
     }
 

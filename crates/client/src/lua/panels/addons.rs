@@ -39,7 +39,7 @@
 //! The reference keeps a state per character and the glue's dropdown picks
 //! which one the checkboxes show; `nil` means every character. The board holds
 //! one map per character name, seeded from that character's `AddOns.txt` by
-//! `crate::game::session::addons`, and answers the tri-state across the
+//! `crate::settings::addons`, and answers the tri-state across the
 //! characters it has been told about. An addon with no line takes its
 //! `## DefaultState`.
 //!
@@ -62,7 +62,7 @@ use vale_assets::interface::addons::{self, Addon, Reason};
 
 use super::super::widgets::frames;
 use super::super::xml;
-use crate::game::events::EventArg;
+use crate::interface::events::EventArg;
 
 /// A reader over the archive chain and the loose folder, kept for
 /// `LoadAddOn`. See `crate::assets::GameAssets::reader`.

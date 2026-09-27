@@ -197,7 +197,7 @@ fn raise(
 /// The one kind here that is not reconciled off a counter, and it could not be:
 /// experience is an event with no field behind it — `SMSG_LOG_XPGAIN` says how
 /// much and nothing on the player moves that this could difference. So it reads
-/// [`ExperienceGained`], which `game::combat::log` raises from the same packet
+/// [`ExperienceGained`], which `interface::log` raises from the same packet
 /// the chat line is composed from.
 ///
 /// **Every part of how it looks is row 4 of the style table**, the client's
@@ -213,7 +213,7 @@ fn experience(
     time: Res<Time>,
     tuning: Res<crate::render::tuning::WorldTuning>,
     assets: Res<GameAssets>,
-    mut gained: MessageReader<crate::game::combat::log::ExperienceGained>,
+    mut gained: MessageReader<crate::interface::log::ExperienceGained>,
     player: Query<(&WorldEntity, &Transform), With<LocalPlayer>>,
     mut text: ResMut<WorldText>,
 ) {

@@ -14,7 +14,7 @@
 //!
 //! The split every panel keeps: the frame is `Interface\FrameXML\TaxiFrame.xml`,
 //! the layout and the routing are [`vale_assets::tables::taxi`], the window is
-//! [`crate::game::npc::taxi`], and this file is registration and arguments.
+//! [`crate::interface::taxi`], and this file is registration and arguments.
 //!
 //! ## Every index is one-based and the *hop* index is too
 //!
@@ -175,11 +175,11 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 }
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::game::npc::taxi::TaxiPress>>>;
+pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::taxi::TaxiPress>>>;
 
 /// Register the three writes. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
-    use crate::game::npc::taxi::TaxiPress as P;
+    use crate::interface::taxi::TaxiPress as P;
     let globals = lua.globals();
     macro_rules! push {
         ($name:expr, $args:ty, |$arg:ident| $body:expr) => {{
@@ -297,7 +297,7 @@ mod tests {
     /// The writes record one-based and drop nonsense.
     #[test]
     fn the_writes_record_in_call_order() {
-        use crate::game::npc::taxi::TaxiPress as P;
+        use crate::interface::taxi::TaxiPress as P;
         let lua = mlua::Lua::new();
         let queue: Queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         register(&lua, &queue).expect("registers");
@@ -358,9 +358,9 @@ impl TaxiAnswers for super::super::api::Live<'_, '_, '_> {
         // **Off the unit's own flags and not off the open window**, which is
         // the difference that matters: a character who logged out mid-flight
         // and back in is on a taxi and has never seen a taxi map. See
-        // [`crate::game::npc::taxi::on_taxi`].
+        // [`crate::interface::taxi::on_taxi`].
         super::super::api::Live::id(token)
             .and_then(|id| self.units.get(id))
-            .is_some_and(crate::game::npc::taxi::on_taxi)
+            .is_some_and(crate::interface::taxi::on_taxi)
     }
 }

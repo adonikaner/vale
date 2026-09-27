@@ -26,15 +26,15 @@
 //! ## The flow in both directions
 //!
 //! ```text
-//! a key goes down                     game::bindings::dispatch
+//! a key goes down                     input::bindings::dispatch
 //!   -> a binding NAME                 Keybindings, the player's half
 //!   -> that <Binding>'s Lua body      vale_assets::interface::bindings, the game's half
 //!   -> the body calls ToggleSheath()  lua::verbs, a registered Rust closure
 //!   -> a Verb on the queue            because a closure cannot hold the World
-//!   -> BindingPressed                 drained the same frame, back in game/
+//!   -> BindingPressed                 drained the same frame, in interface/
 //!
-//! the client learns something         game::events, named as the game names them
-//!   -> lua::events drains it          after the whole of game/
+//! the client learns something         interface::events, named as the game names them
+//!   -> lua::events drains it          after the whole of GameSet
 //!   -> every frame that registered     lua::frames, in registration order
 //!   -> `this`/`event`/`arg1` set       1.12's convention: the handler takes none
 //!   -> the handler asks questions      lua::api, answered from the live world
@@ -98,7 +98,7 @@ use bevy::prelude::*;
 
 /// The interpreter, its verb queue and its event dispatch, as one plugin.
 ///
-/// Registered before [`crate::game::GamePlugins`] reads anything, because the
+/// Registered before [`crate::interface::InterfacePlugins`] reads anything, because the
 /// binding dispatch calls into the interpreter, and an interpreter that does
 /// not exist yet means a frame at login in which keys do nothing.
 pub struct LuaPlugins;

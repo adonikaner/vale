@@ -7,16 +7,16 @@
 //! CancelDuel()          its Decline, and /forfeit    StaticPopup.lua, ChatFrame.lua
 //! ```
 //!
-//! A queue rather than a [`crate::game::bindings::Binding`], because the first
+//! A queue rather than a [`crate::input::bindings::Binding`], because the first
 //! two carry a string and a binding is `Copy`. Drained by
-//! [`crate::game::session::duel`], which is where each is explained.
+//! [`crate::interface::duel`], which is where each is explained.
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::game::session::duel::DuelPress>>>;
+pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::duel::DuelPress>>>;
 
 /// Register the four writes. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
-    use crate::game::session::duel::DuelPress as P;
+    use crate::interface::duel::DuelPress as P;
     let globals = lua.globals();
 
     macro_rules! push {

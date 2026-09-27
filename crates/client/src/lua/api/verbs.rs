@@ -47,7 +47,7 @@ use std::rc::Rc;
 
 use vale_protocol::play::chat::ChatType;
 
-use crate::game::bindings::Binding;
+use crate::input::bindings::Binding;
 
 /// `CameraZoomIn(1.0)` in the file's own units, as hundredths of a step.
 ///
@@ -60,7 +60,7 @@ fn zoom_steps(by: Option<f64>) -> i32 {
     (by * 100.0).round().clamp(0.0, 10_000.0) as i32
 }
 
-/// What a verb call becomes: the same [`Binding`] the rest of `game/` already
+/// What a verb call becomes: the same [`Binding`] the rest of `interface/` and `input/` already
 /// reads, so nothing downstream had to change when the interpreter arrived.
 pub(in crate::lua) type Queue = Rc<RefCell<Vec<Binding>>>;
 
@@ -69,7 +69,7 @@ pub(in crate::lua) type Queue = Rc<RefCell<Vec<Binding>>>;
 /// [`Binding`] is `Copy` and carries no arguments, which is right for the fifteen
 /// key verbs and wrong for the one whose whole content is a sentence. A second
 /// queue rather than a wider `Binding`: the two are drained by different systems
-/// (this one by [`crate::game::session::chat::send`], which is the only thing in the
+/// (this one by [`crate::interface::chat::send`], which is the only thing in the
 /// client holding a socket to say it down) and making the enum non-`Copy` would
 /// have rippled through every reader of `BindingPressed` for one variant's sake.
 #[derive(Debug, Clone, PartialEq)]
@@ -85,7 +85,7 @@ pub(in crate::lua) type SaidQueue = Rc<RefCell<Vec<Said>>>;
 /// **A text emote the interface asked for** — `DoEmote("DANCE", rest)`,
 /// which `ChatFrame.lua` calls for `/dance` and the emote menu. The token
 /// is `EmotesText.dbc`'s; the name after the command, when there is one,
-/// is who it is aimed at. See `game::session::emotetext`.
+/// is who it is aimed at. See `interface::emotetext`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Emoted {
     pub token: String,
@@ -219,7 +219,7 @@ pub(in crate::lua) fn register(
 
     // `DoEmote(token, rest)` — the one C function under every `/dance`,
     // `/wave Bob` and the emote menu. Recorded, like a said line, and sent
-    // by `game::session::emotetext` once the token is resolved.
+    // by `interface::emotetext` once the token is resolved.
     let queue_emoted = Rc::clone(emoted);
     globals.set(
         "DoEmote",
@@ -301,8 +301,8 @@ pub(in crate::lua) fn register(
         // **…and a party member, which is the party frame's whole left
         // click.** `PartyMemberFrame_OnClick` ends in `TargetUnit("party"..id)`
         // and nothing else in the file targets by token.
-        other => match crate::game::api::UnitId::parse(other) {
-            Some(id @ crate::game::api::UnitId::Party(_)) => Some(Binding::TargetToken(id)),
+        other => match crate::interface::api::UnitId::parse(other) {
+            Some(id @ crate::interface::api::UnitId::Party(_)) => Some(Binding::TargetToken(id)),
             // A pet is not modelled, and targeting one that does not exist must
             // do **nothing** rather than fall through to clearing the target —
             // which is the branch `TARGETSELF` takes when you are already on
@@ -314,7 +314,7 @@ pub(in crate::lua) fn register(
     // **`CancelPlayerBuff(buffIndex)` — the right-click on a buff icon**, and
     // the one write the buff bar has. What it carries is the *handle*
     // `GetPlayerBuff` answered rather than a spell, because that is what
-    // `BuffButton_OnClick` has in `this.buffIndex`; `crate::game::combat::auras` is
+    // `BuffButton_OnClick` has in `this.buffIndex`; `crate::interface::auras` is
     // what turns one into the spell id `CMSG_CANCEL_AURA` wants, and it is also
     // what refuses an uncancelable one.
     verb!("CancelPlayerBuff", Option<i64>, |handle| handle
@@ -335,7 +335,7 @@ pub(in crate::lua) fn register(
     // written out, so the enum and the registration cannot drift — which is the
     // failure mode a list of eighteen near-identical names invites. A test
     // walks the same array.
-    for control in crate::game::bindings::Control::ALL {
+    for control in crate::input::bindings::Control::ALL {
         let [start, stop] = control.verbs();
         for (name, down) in [(start, true), (stop, false)] {
             let queue = Rc::clone(queue);
@@ -353,11 +353,11 @@ pub(in crate::lua) fn register(
     // calls both pairs in one body, so they have to be the same state or a key
     // that started the steer would be released by only half of its own body.
     verb!("TurnOrActionStart", (), |_ignored| Some(Binding::Control(
-        crate::game::bindings::Control::Steer,
+        crate::input::bindings::Control::Steer,
         true
     )));
     verb!("TurnOrActionStop", (), |_ignored| Some(Binding::Control(
-        crate::game::bindings::Control::Steer,
+        crate::input::bindings::Control::Steer,
         false
     )));
 
@@ -372,7 +372,7 @@ pub(in crate::lua) fn register(
     verb!("ToggleRun", (), |_ignored| Some(Binding::ToggleRun));
     // `FOLLOWTARGET` is `FollowUnit("target")`, and a token this client has no
     // state for is dropped rather than guessed at — as `TargetUnit` above.
-    verb!("FollowUnit", String, |token| crate::game::api::UnitId::parse(&token)
+    verb!("FollowUnit", String, |token| crate::interface::api::UnitId::parse(&token)
         .map(Binding::FollowUnit));
 
     // **The camera's four.** `CameraZoomIn(1.0)` and `CameraZoomOut(1.0)` are
@@ -410,7 +410,7 @@ pub(in crate::lua) fn register(
     // about. `SpellTargetUnit(unit)` takes a *unit token*, exactly as
     // `TargetUnit` above does, and one this client has no state for is dropped
     // rather than guessed at.
-    verb!("SpellTargetUnit", String, |token| crate::game::api::UnitId::parse(&token)
+    verb!("SpellTargetUnit", String, |token| crate::interface::api::UnitId::parse(&token)
         .map(Binding::SpellTargetUnit));
     // **`SpellStopTargeting` is not here any more.** It was a verb answering
     // nothing, and nothing noticed because its only call site outside
@@ -433,7 +433,7 @@ pub(in crate::lua) fn register(
     // directory can reach it and registering one would be a name this client
     // owes nobody.
     // **`ResetInstances()`** — the self menu's own, through the popup that
-    // confirms it. See [`crate::game::bindings::Binding::ResetInstances`].
+    // confirms it. See [`crate::input::bindings::Binding::ResetInstances`].
     verb!("ResetInstances", (), |_ignored| Some(Binding::ResetInstances));
     verb!("Logout", (), |_ignored| Some(Binding::Logout));
     verb!("Quit", (), |_ignored| Some(Binding::Quit));
@@ -446,7 +446,7 @@ pub(in crate::lua) fn register(
     //
     // Nothing in `Interface\FrameXML\` calls it — 5875 binds no key to it and
     // ships no button — and every addon does. See
-    // [`crate::game::bindings::Binding::ReloadUI`] for what its absence cost.
+    // [`crate::input::bindings::Binding::ReloadUI`] for what its absence cost.
     verb!("ReloadUI", (), |_ignored| Some(Binding::ReloadUI));
 
     // **The way *out* of being dead, and it is five more C functions.** Every
@@ -464,16 +464,16 @@ pub(in crate::lua) fn register(
     verb!("RetrieveCorpse", (), |_ignored| Some(Binding::RetrieveCorpse));
     // **The innkeeper's own Accept** — `StaticPopupDialogs["CONFIRM_BINDER"]`'s
     // `OnAccept`, and the only thing that sends `CMSG_BINDER_ACTIVATE`. See
-    // [`crate::game::npc::binder`].
+    // [`crate::interface::binder`].
     verb!("ConfirmBinder", (), |_ignored| Some(Binding::ConfirmBinder));
     // **The summon's Accept** — `StaticPopupDialogs["CONFIRM_SUMMON"]`'s
-    // `OnAccept`. See [`crate::game::session::summon`].
+    // `OnAccept`. See [`crate::interface::summon`].
     verb!("ConfirmSummon", (), |_ignored| Some(Binding::ConfirmSummon));
-    // **`/played`** — `SlashCmdList["PLAYED"]`. See [`crate::game::session::played`].
+    // **`/played`** — `SlashCmdList["PLAYED"]`. See [`crate::interface::played`].
     verb!("RequestTimePlayed", (), |_ignored| Some(Binding::RequestTimePlayed));
     // **The pet trainer's own Accept** — `StaticPopupDialogs["CONFIRM_PET_UNLEARN"]`'s
     // `OnAccept`, and the only thing that sends `CMSG_PET_UNLEARN`. See
-    // [`crate::game::npc::untrainer`].
+    // [`crate::interface::untrainer`].
     verb!("ConfirmPetUnlearn", (), |_ignored| Some(
         Binding::ConfirmPetUnlearn
     ));
@@ -490,7 +490,7 @@ pub(in crate::lua) fn register(
     // then calls this; every button then works its own slot out of that global
     // through `ActionButton_GetPagedID`. So what the C side owes is not a page
     // number — it is telling the twelve buttons to look again, which is
-    // [`crate::game::events::ActionbarPageChanged`].
+    // [`crate::interface::events::ActionbarPageChanged`].
     verb!("ChangeActionBarPage", (), |_ignored| Some(
         Binding::ChangeActionBarPage
     ));
@@ -577,7 +577,7 @@ pub(in crate::lua) fn register(
     // **One verb for three different things**, because the server made it so: a
     // command button, a mode button and a pet spell are all slots on the same
     // bar and all pressed with `CMSG_PET_ACTION`. See
-    // [`crate::game::combat::pet`], where the slot's packed word is looked up.
+    // [`crate::interface::pet`], where the slot's packed word is looked up.
     verb!("CastPetAction", Option<u8>, |slot| slot
         .filter(|slot| *slot > 0)
         .map(Binding::CastPetAction));
@@ -593,7 +593,7 @@ pub(in crate::lua) fn register(
     // **…and the stance bar beside it**, which shares the unbound-command block
     // and none of the packets: `ShapeshiftBar_ChangeForm` is the only caller and
     // its argument is the button, one-based. See
-    // [`crate::game::combat::shapeshift`].
+    // [`crate::interface::shapeshift`].
     verb!("CastShapeshiftForm", Option<u8>, |slot| slot
         .filter(|slot| *slot > 0)
         .map(Binding::CastShapeshiftForm));
@@ -621,7 +621,7 @@ pub(in crate::lua) fn register(
     // Three writes and no reads, so they are here rather than in
     // [`super::super::panels::container`] beside the bags' six: what a `PickupAction` *means*
     // needs the cursor and the bar, and both are resources — see
-    // [`crate::game::combat::cursor`], which is the one place that two-state machine
+    // [`crate::interface::cursor`], which is the one place that two-state machine
     // lives.
 
     // `PickupSpell(id, bookType)` — `SpellButton_OnClick`'s drag branch and its
@@ -648,7 +648,7 @@ pub(in crate::lua) fn register(
     // because a write records: nothing about the click needs the world at the
     // moment it happens, and everything about what it *becomes* — use it or
     // wear it, and which of the prototype's five spell blocks fires — needs the
-    // item templates, which are [`crate::game::character::items`]'.
+    // item templates, which are [`crate::interface::items`]'.
     //
     // That is the same split [`Binding::CancelPlayerBuff`] is under, and it is
     // why `container.rs`' own note about writes staying absent named these two
@@ -706,7 +706,7 @@ pub(in crate::lua) fn register(
             }
             // A kind this client cannot spell is dropped rather than said as a
             // SAY: `/g` with no guild would otherwise be broadcast to the zone.
-            let Some(kind) = crate::game::session::chat::kind_of_word(kind.as_deref().unwrap_or("SAY"))
+            let Some(kind) = crate::interface::chat::kind_of_word(kind.as_deref().unwrap_or("SAY"))
             else {
                 return Ok(());
             };
@@ -758,7 +758,7 @@ pub(in crate::lua) fn register(
 /// the range is dropped rather than clamped: clamping would fire button 120 for
 /// a nonsense press.
 fn slot_binding(slot: u8, on_self: bool) -> Option<Binding> {
-    if !(1..=crate::game::combat::action::BAR_SLOTS as u8).contains(&slot) {
+    if !(1..=crate::interface::action::BAR_SLOTS as u8).contains(&slot) {
         return None;
     }
     Some(if on_self {
@@ -849,7 +849,7 @@ mod tests {
         );
         // **Slot 37 is page 4's first button and it resolves**, which it did
         // not until the bar became the server's whole 120 — see
-        // [`crate::game::combat::action::BAR_SLOTS`]. A slot outside *that* is still
+        // [`crate::interface::action::BAR_SLOTS`]. A slot outside *that* is still
         // dropped rather than clamped onto the last one.
         assert_eq!(called("UseAction(37);"), vec![Binding::ActionButton(37)]);
         assert!(called("UseAction(200);").is_empty());
@@ -1089,7 +1089,7 @@ mod tests {
         // own left click.
         assert_eq!(
             called(r#"TargetUnit("party1");"#),
-            vec![Binding::TargetToken(crate::game::api::UnitId::Party(1))]
+            vec![Binding::TargetToken(crate::interface::api::UnitId::Party(1))]
         );
     }
 
@@ -1102,7 +1102,7 @@ mod tests {
     /// dropped on the same terms `TargetUnit`'s is.
     #[test]
     fn the_spell_cursor_takes_a_unit_token_and_a_bare_cancel() {
-        use crate::game::api::UnitId;
+        use crate::interface::api::UnitId;
         assert_eq!(
             called(r#"SpellTargetUnit("target");"#),
             vec![Binding::SpellTargetUnit(UnitId::Target)]

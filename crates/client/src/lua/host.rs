@@ -65,8 +65,8 @@ use super::api::{self, Answers};
 use super::widgets::frames;
 use super::api::verbs::{self, Queue};
 use super::xml;
-use crate::game::bindings::Binding;
-use crate::game::events::{EventArg, FIRED};
+use crate::input::bindings::Binding;
+use crate::interface::events::{EventArg, FIRED};
 #[cfg(feature = "diagnostics")]
 use crate::ui::report::{HudReport, Slot};
 
@@ -176,7 +176,7 @@ pub struct LuaHost {
     /// **The addon board** — every addon the folder and the archives carry,
     /// which of them each character has on, which have loaded, and their
     /// saved files until they do. See [`super::panels::addons`]. Seeded by
-    /// `crate::game::session::addons`; read by [`Self::load_interface`] for the
+    /// `crate::settings::addons`; read by [`Self::load_interface`] for the
     /// order to load in.
     addons: super::panels::addons::Held,
     /// **Whether `SavedVariables.lua` has been put onto *this* host yet.**
@@ -188,14 +188,14 @@ pub struct LuaHost {
     /// and never on the world's, which is every `uvar` in the options panel
     /// silently reverting at login. `false` by construction here, so a fresh host
     /// asks to be seeded and cannot be forgotten. See
-    /// [`crate::game::savedvars`], and [`super::super::game::session::keybindings`],
+    /// [`crate::settings::savedvars`], and [`super::super::game::session::keybindings`],
     /// which had the identical bug and fixed it the identical way.
     saved_applied: bool,
     /// …and the party's six — see [`super::panels::party`].
     party: super::panels::party::Queue,
     /// …and the raid's nine, which are a second queue rather than more of the
     /// first because the module that drains them is a second one — see
-    /// [`super::panels::raid`] and [`crate::game::session::raid`].
+    /// [`super::panels::raid`] and [`crate::interface::raid`].
     raid: super::panels::raid::Queue,
     /// …and the reputation panel's, which is **state rather than a queue** for
     /// the reason [`super::panels::charcreate`]'s board is: `ReputationBar_OnClick`
@@ -257,7 +257,7 @@ pub struct LuaHost {
     /// …and the duel's four — see [`super::panels::duel`].
     duel: super::panels::duel::Queue,
     /// …and the talent panel's one, drained by
-    /// [`crate::game::character::talents`].
+    /// [`crate::interface::talents`].
     talent: super::panels::talent::Queue,
     /// …and the twelfth, for the flight master's map — see [`super::panels::taxi`].
     taxi: super::panels::taxi::Queue,
@@ -348,12 +348,12 @@ impl LuaHost {
         verbs::register(&lua, &queue, &said, &renamed, &emoted)?;
         // **The map's three writes, on the same terms as the chat's**: a
         // handler cannot move the view directly, because the world is borrowed
-        // for the length of the call — so it records and `game::worldmap`
+        // for the length of the call — so it records and `interface::worldmap`
         // applies. See `super::panels::worldmap`.
         super::panels::worldmap::register(&lua, &map)?;
         // …and the sound's four, drained by `crate::sound::interface`.
         super::api::sound::register(&lua, &sound)?;
-        // …and the client's own settings, drained by `crate::game::cvars`.
+        // …and the client's own settings, drained by `crate::settings::cvars`.
         // **Early**, because it seeds the store as well as registering the three
         // globals, and an `OnLoad` that reads a CVar runs long after either.
         super::api::cvars::register(&lua, &cvars)?;
@@ -361,31 +361,31 @@ impl LuaHost {
         // subject seen from the interface's other habit — a `uvar` row rather
         // than a `cvar` one. See [`super::api::savedvars`].
         super::api::savedvars::register(&lua, &saved, &saved_values)?;
-        // …and the party's six, drained by `crate::game::session::party`.
+        // …and the party's six, drained by `crate::interface::party`.
         super::panels::party::register(&lua, &party)?;
-        // …and the raid's nine, drained by `crate::game::session::raid`.
+        // …and the raid's nine, drained by `crate::interface::raid`.
         super::panels::raid::register(&lua, &raid)?;
         // …and the reputation panel's eleven, whose state is held here and whose
-        // three packets `crate::game::character::reputation` drains.
+        // three packets `crate::interface::reputation` drains.
         super::panels::reputation::register(&lua, &reputation, &reputation_queue)?;
         // …and the social panel's sixteen, whose state is held here and whose
-        // six packets `crate::game::session::social` drains.
+        // six packets `crate::interface::social` drains.
         super::panels::social::register(&lua, &social, &social_queue)?;
         // …and the chat channels' twenty-five, whose board is here and whose
-        // two packets `crate::game::session::channels` drains.
+        // two packets `crate::interface::channels` drains.
         super::panels::channels::register(&lua, &channels, &channels_queue)?;
         // …and the skills panel's eleven, whose board the same module feeds.
         super::panels::skills::register(&lua, &skills)?;
         // …and the key bindings panel's eight, whose board is also what
         // [`Self::fire`] resolves a key press through. `RunBinding` is the
         // ninth and is not here — it runs a `<Binding>` body, which needs this
-        // type rather than the board; `crate::game::bindings` registers it.
+        // type rather than the board; `crate::input::bindings` registers it.
         super::panels::keybindings::register(&lua, &keybindings)?;
-        // …and the addon list's sixteen, over a board `crate::game::session::addons`
+        // …and the addon list's sixteen, over a board `crate::settings::addons`
         // seeds. Unscoped, because `LoadAddOn` runs the loader itself and the
         // loader cannot run inside a scoped read.
         super::panels::addons::register(&lua, &addons)?;
-        // …and the glue's, drained by `crate::game::session::glue`. Registered
+        // …and the glue's, drained by `crate::glue::glue`. Registered
         // unconditionally rather than only while the glue is up: the names cost
         // nothing when `Interface\FrameXML\` is the loaded directory (nothing in
         // it calls one), and a registration that came and went with the screen
@@ -403,33 +403,33 @@ impl LuaHost {
         // matters visible: [`super::api::stubs`] goes last, so a name it still
         // carries cannot shadow a real function.
         super::api::portrait::register(&lua, &portrait)?;
-        // …and the loot window's two, drained by `crate::game::npc::loot`.
+        // …and the loot window's two, drained by `crate::interface::loot`.
         super::panels::loot::register(&lua, &loot)?;
-        // …and the roll frame's two, drained by `crate::game::npc::lootroll`.
+        // …and the roll frame's two, drained by `crate::interface::lootroll`.
         super::panels::lootroll::register(&lua, &loot_roll)?;
-        // …and the quest panel's, drained by `crate::game::npc::quest`.
+        // …and the quest panel's, drained by `crate::interface::quest`.
         super::panels::quest::register(&lua, &quest)?;
         // …and the gossip and merchant windows', drained by their own modules.
         super::panels::gossip::register(&lua, &gossip)?;
         super::panels::merchant::register(&lua, &merchant)?;
-        // …and the mail window's ten, drained by `crate::game::npc::mail`.
+        // …and the mail window's ten, drained by `crate::interface::mail`.
         super::panels::mail::register(&lua, &mail)?;
-        // …and the trainer's seven, drained by `crate::game::npc::trainer`.
+        // …and the trainer's seven, drained by `crate::interface::trainer`.
         super::panels::trainer::register(&lua, &trainer)?;
-        // …and the stable's four, drained by `crate::game::npc::stable`.
+        // …and the stable's four, drained by `crate::interface::stable`.
         super::panels::stable::register(&lua, &stable)?;
-        // …and the bank's two, drained by `crate::game::npc::bank`.
+        // …and the bank's two, drained by `crate::interface::bank`.
         super::panels::bank::register(&lua, &bank)?;
-        // …and the page window's three, drained by `crate::game::npc::pagetext`.
+        // …and the page window's three, drained by `crate::interface::pagetext`.
         super::panels::pagetext::register(&lua, &pagetext)?;
-        // …and the trade window's ten, drained by `crate::game::session::trade`.
+        // …and the trade window's ten, drained by `crate::interface::trade`.
         super::panels::trade::register(&lua, &trade)?;
-        // …and the duel's four, drained by `crate::game::session::duel`.
+        // …and the duel's four, drained by `crate::interface::duel`.
         super::panels::duel::register(&lua, &duel)?;
         // …and the talent panel's one — see [`super::panels::talent`], where
         // the five reads beside it are and why they are scoped instead.
         super::panels::talent::register(&lua, &talent)?;
-        // …and the flight map's three, drained by `crate::game::npc::taxi`.
+        // …and the flight map's three, drained by `crate::interface::taxi`.
         super::panels::taxi::register(&lua, &taxi)?;
         frames::install(&lua)?;
         // **After the object model**, because two of these take a frame — and
@@ -640,11 +640,11 @@ impl LuaHost {
     /// `LocalizeFrames()`, which is `GlueLocalization.lua`'s pass over the
     /// screens' captions and anchors — so a client that never raises it draws
     /// both screens un-localised. It is raised here rather than through
-    /// `game::events` for the same reason `UPDATE_CHAT_WINDOWS` is: it is about
+    /// `interface::events` for the same reason `UPDATE_CHAT_WINDOWS` is: it is about
     /// the *load* and there is no session to write a message from.
     ///
     /// `SET_GLUE_SCREEN` is deliberately **not** raised here. Nothing is shown
-    /// until `crate::game::session::glue`'s own watcher notices which screen the session
+    /// until `crate::glue::glue`'s own watcher notices which screen the session
     /// is on, which is the frame after — and that is one mechanism deciding what
     /// is on screen rather than two that can disagree.
     pub fn load_glue(
@@ -889,7 +889,7 @@ impl LuaHost {
     /// So one scope per *event* made the interface's cost scale with how much
     /// news the world had, which is exactly how a party is felt: a group of four
     /// moves seven watched units' health on the same tick
-    /// ([`crate::game::character::vitals`]' `WATCHED`), and seven scopes is
+    /// ([`crate::interface::vitals`]' `WATCHED`), and seven scopes is
     /// **0.9 ms and 190 KB of garbage** for about 0.2 ms of handler. Measured
     /// with `--audit --spin --party 4` before and after; the numbers are in the
     /// rendering facts.
@@ -1051,7 +1051,7 @@ impl LuaHost {
     /// **Hand the interface the pointer**, and say which frame it landed on.
     ///
     /// The second half of the answer is what [`super::api::mouse::MouseFocus`] carries
-    /// down to `game::target`: a click the interface took is a click the world
+    /// down to `interface::target`: a click the interface took is a click the world
     /// must not also act on.
     /// The **third** is whether a frame took the wheel — see
     /// [`super::api::mouse::wheel_was_taken`], which is what stops the camera zooming
@@ -1217,39 +1217,39 @@ impl LuaHost {
 
     /// **What the interface asked the client to say**, drained.
     ///
-    /// One caller, [`crate::game::session::chat::send`], for the same reason there is one
+    /// One caller, [`crate::interface::chat::send`], for the same reason there is one
     /// caller of `take_chat`: this empties itself.
     pub fn take_said(&mut self) -> Vec<verbs::Said> {
         std::mem::take(&mut *self.said.borrow_mut())
     }
 
     /// …and the text emotes asked for, taken and cleared. One caller,
-    /// [`crate::game::session::emotetext`].
+    /// [`crate::interface::emotetext`].
     pub fn take_emoted(&mut self) -> Vec<verbs::Emoted> {
         std::mem::take(&mut *self.emoted.borrow_mut())
     }
 
     /// **…and the names typed into the rename box**, on the same terms — see
     /// [`verbs::PetRenameQueue`]. One caller,
-    /// [`crate::game::combat::pet`].
+    /// [`crate::interface::pet`].
     pub fn take_pet_renames(&mut self) -> Vec<String> {
         std::mem::take(&mut *self.renamed.borrow_mut())
     }
 
     /// **…and what it asked the world map to show**, on the same terms — see
-    /// [`super::panels::worldmap`]. One caller, [`crate::game::place::worldmap`].
+    /// [`super::panels::worldmap`]. One caller, [`crate::interface::worldmap`].
     pub fn take_map_requests(&mut self) -> Vec<super::panels::worldmap::MapRequest> {
         std::mem::take(&mut *self.map.borrow_mut())
     }
 
     /// **…and what it asked the party to do**, on the same terms — see
-    /// [`super::panels::party`]. One caller, [`crate::game::session::party`].
+    /// [`super::panels::party`]. One caller, [`crate::interface::party`].
     pub fn take_party_verbs(&mut self) -> Vec<super::panels::party::PartyRequest> {
         std::mem::take(&mut *self.party.borrow_mut())
     }
 
     /// **…and the raid**, likewise — see [`super::panels::raid`]. One caller,
-    /// [`crate::game::session::raid`].
+    /// [`crate::interface::raid`].
     pub fn take_raid_verbs(&mut self) -> Vec<super::panels::raid::RaidRequest> {
         std::mem::take(&mut *self.raid.borrow_mut())
     }
@@ -1261,7 +1261,7 @@ impl LuaHost {
     }
 
     /// **…and every `SetCVar` since the last frame**, on the same terms — see
-    /// [`super::api::cvars`]. One caller, [`crate::game::cvars`].
+    /// [`super::api::cvars`]. One caller, [`crate::settings::cvars`].
     /// **Run a chunk and read a global back**, for a test in another module
     /// that needs a real interpreter rather than a bare `mlua::Lua` — the
     /// registry `RegisterForSave` writes into is this type's, so a test of the
@@ -1331,7 +1331,7 @@ impl LuaHost {
     }
 
     /// **The addon board**, borrowed — see [`super::panels::addons`]. Seeded by
-    /// `crate::game::session::addons` and read by [`Self::load_interface`].
+    /// `crate::settings::addons` and read by [`Self::load_interface`].
     pub fn addons(&self) -> &super::panels::addons::Held {
         &self.addons
     }
@@ -1376,7 +1376,7 @@ impl LuaHost {
     /// …and the other direction, once: **what `WTF\Config.wtf` carried**, put
     /// back before the interface loads.
     ///
-    /// One caller, [`crate::game::cvars`], from a `Startup` system — which is
+    /// One caller, [`crate::settings::cvars`], from a `Startup` system — which is
     /// early enough because the whole of `Interface\` loads in `Update`. See
     /// [`super::api::cvars::seed`] for why this does not go on the queue.
     pub fn seed_cvars(&mut self, values: &[(String, String)]) {
@@ -1386,13 +1386,13 @@ impl LuaHost {
     }
 
     /// **…and what the login and character screens asked for**, on the same
-    /// terms — see [`super::panels::glue`]. One caller, [`crate::game::session::glue`].
+    /// terms — see [`super::panels::glue`]. One caller, [`crate::glue::glue`].
     pub fn take_glue_requests(&mut self) -> Vec<super::panels::glue::GlueRequest> {
         std::mem::take(&mut *self.glue.borrow_mut())
     }
 
     /// **…and whether the third glue screen pressed Accept**, on the same terms
-    /// — see [`super::panels::charcreate`]. One caller, [`crate::game::session::charcreate`].
+    /// — see [`super::panels::charcreate`]. One caller, [`crate::glue::charcreate`].
     pub fn take_create_requests(&mut self) -> Vec<super::panels::charcreate::CreateRequest> {
         std::mem::take(&mut *self.char_create_queue.borrow_mut())
     }
@@ -1443,7 +1443,7 @@ impl LuaHost {
 
     /// **The reputation panel's board**, borrowed — see
     /// [`super::panels::reputation`]. One caller,
-    /// [`crate::game::character::reputation`], which both writes the server's
+    /// [`crate::interface::reputation`], which both writes the server's
     /// news into it and reads the version back out.
     pub fn reputation(&self) -> &super::panels::reputation::Held {
         &self.reputation
@@ -1451,9 +1451,9 @@ impl LuaHost {
 
     /// **The key table**, borrowed — see [`super::panels::keybindings`].
     ///
-    /// Two callers and they are the two ends of it: `crate::game::bindings`,
+    /// Two callers and they are the two ends of it: `crate::input::bindings`,
     /// which reads the live set to turn a keystroke into a binding name, and
-    /// `crate::game::session::keybindings`, which fills the saved sets from the
+    /// `crate::settings::keybindings`, which fills the saved sets from the
     /// two files at login and writes them back on the way out.
     pub fn keybindings(&self) -> &super::panels::keybindings::Held {
         &self.keybindings
@@ -1461,14 +1461,14 @@ impl LuaHost {
 
     /// **…and the skills panel's board**, on the same terms — see
     /// [`super::panels::skills`]. One caller,
-    /// [`crate::game::character::skills`].
+    /// [`crate::interface::skills`].
     pub fn skills(&self) -> &super::panels::skills::Held {
         &self.skills
     }
 
     /// …and the three packets it owes, drained.
     /// **The social panel's board**, borrowed — see [`super::panels::social`].
-    /// One caller, [`crate::game::session::social`], which both writes the
+    /// One caller, [`crate::interface::social`], which both writes the
     /// server's answers into it and reads what the panel asked for.
     pub fn social(&self) -> &super::panels::social::Held {
         &self.social
@@ -1480,8 +1480,8 @@ impl LuaHost {
     }
 
     /// **The chat channels' board**, borrowed — see [`super::panels::channels`].
-    /// Two callers: [`crate::game::session::channels`], which fills it, and
-    /// [`crate::game::session::chat`], which numbers a channel line from it.
+    /// Two callers: [`crate::interface::channels`], which fills it, and
+    /// [`crate::interface::chat`], which numbers a channel line from it.
     pub fn channels(&self) -> &super::panels::channels::Held {
         &self.channels
     }
@@ -1498,77 +1498,77 @@ impl LuaHost {
     }
 
     /// **…and what it took off a body**, on the same terms — see
-    /// [`super::panels::loot`]. One caller, [`crate::game::npc::loot`].
-    pub fn take_loot_presses(&mut self) -> Vec<crate::game::npc::loot::TakeLoot> {
+    /// [`super::panels::loot`]. One caller, [`crate::interface::loot`].
+    pub fn take_loot_presses(&mut self) -> Vec<crate::interface::loot::TakeLoot> {
         std::mem::take(&mut *self.loot.borrow_mut())
     }
 
     /// **…and which way it rolled**, on the same terms — see
     /// [`super::panels::lootroll`]. One caller,
-    /// [`crate::game::npc::lootroll`].
-    pub fn take_roll_presses(&mut self) -> Vec<crate::game::npc::lootroll::RollPress> {
+    /// [`crate::interface::lootroll`].
+    pub fn take_roll_presses(&mut self) -> Vec<crate::interface::lootroll::RollPress> {
         std::mem::take(&mut *self.loot_roll.borrow_mut())
     }
 
     /// **…and what the quest panel pressed**, on the same terms — see
-    /// [`super::panels::quest`]. One caller, [`crate::game::npc::quest`].
-    pub fn take_quest_presses(&mut self) -> Vec<crate::game::npc::quest::QuestPress> {
+    /// [`super::panels::quest`]. One caller, [`crate::interface::quest`].
+    pub fn take_quest_presses(&mut self) -> Vec<crate::interface::quest::QuestPress> {
         std::mem::take(&mut *self.quest.borrow_mut())
     }
 
     /// **…and what the gossip and merchant windows pressed**, on the same
     /// terms. One caller apiece.
-    pub fn take_gossip_presses(&mut self) -> Vec<crate::game::npc::gossip::GossipPress> {
+    pub fn take_gossip_presses(&mut self) -> Vec<crate::interface::gossip::GossipPress> {
         std::mem::take(&mut *self.gossip.borrow_mut())
     }
 
-    pub fn take_merchant_presses(&mut self) -> Vec<crate::game::npc::merchant::MerchantPress> {
+    pub fn take_merchant_presses(&mut self) -> Vec<crate::interface::merchant::MerchantPress> {
         std::mem::take(&mut *self.merchant.borrow_mut())
     }
 
-    /// …and the mail window's — see [`crate::game::npc::mail`].
-    pub fn take_mail_presses(&mut self) -> Vec<crate::game::npc::mail::MailPress> {
+    /// …and the mail window's — see [`crate::interface::mail`].
+    pub fn take_mail_presses(&mut self) -> Vec<crate::interface::mail::MailPress> {
         std::mem::take(&mut *self.mail.borrow_mut())
     }
 
-    /// …and the trainer's — see [`crate::game::npc::trainer`].
-    pub fn take_trainer_presses(&mut self) -> Vec<crate::game::npc::trainer::TrainerPress> {
+    /// …and the trainer's — see [`crate::interface::trainer`].
+    pub fn take_trainer_presses(&mut self) -> Vec<crate::interface::trainer::TrainerPress> {
         std::mem::take(&mut *self.trainer.borrow_mut())
     }
 
-    /// …and the stable's — see [`crate::game::npc::stable`].
-    pub fn take_stable_presses(&mut self) -> Vec<crate::game::npc::stable::StablePress> {
+    /// …and the stable's — see [`crate::interface::stable`].
+    pub fn take_stable_presses(&mut self) -> Vec<crate::interface::stable::StablePress> {
         std::mem::take(&mut *self.stable.borrow_mut())
     }
 
-    /// …and the bank's — see [`crate::game::npc::bank`].
-    pub fn take_bank_presses(&mut self) -> Vec<crate::game::npc::bank::BankPress> {
+    /// …and the bank's — see [`crate::interface::bank`].
+    pub fn take_bank_presses(&mut self) -> Vec<crate::interface::bank::BankPress> {
         std::mem::take(&mut *self.bank.borrow_mut())
     }
 
-    /// …and the page window's — see [`crate::game::npc::pagetext`].
-    pub fn take_page_presses(&mut self) -> Vec<crate::game::npc::pagetext::PagePress> {
+    /// …and the page window's — see [`crate::interface::pagetext`].
+    pub fn take_page_presses(&mut self) -> Vec<crate::interface::pagetext::PagePress> {
         std::mem::take(&mut *self.pagetext.borrow_mut())
     }
 
-    /// …and the trade window's — see [`crate::game::session::trade`].
-    pub fn take_trade_presses(&mut self) -> Vec<crate::game::session::trade::TradePress> {
+    /// …and the trade window's — see [`crate::interface::trade`].
+    pub fn take_trade_presses(&mut self) -> Vec<crate::interface::trade::TradePress> {
         std::mem::take(&mut *self.trade.borrow_mut())
     }
 
-    /// …and the duel's — see [`crate::game::session::duel`].
-    pub fn take_duel_presses(&mut self) -> Vec<crate::game::session::duel::DuelPress> {
+    /// …and the duel's — see [`crate::interface::duel`].
+    pub fn take_duel_presses(&mut self) -> Vec<crate::interface::duel::DuelPress> {
         std::mem::take(&mut *self.duel.borrow_mut())
     }
 
     /// …and the talent panel's, which are `(tab, index)` pairs the ECS resolves
-    /// against the tree — see [`crate::game::character::talents`].
+    /// against the tree — see [`crate::interface::talents`].
     pub fn take_talent_presses(&mut self) -> Vec<(usize, usize)> {
         std::mem::take(&mut *self.talent.borrow_mut())
     }
 
-    /// …and the flight map's — see [`crate::game::npc::taxi`].
-    pub fn take_taxi_presses(&mut self) -> Vec<crate::game::npc::taxi::TaxiPress> {
+    /// …and the flight map's — see [`crate::interface::taxi`].
+    pub fn take_taxi_presses(&mut self) -> Vec<crate::interface::taxi::TaxiPress> {
         std::mem::take(&mut *self.taxi.borrow_mut())
     }
 
@@ -2133,7 +2133,7 @@ impl Plugin for HostPlugin {
         match LuaHost::new() {
             Ok(host) => {
                 app.insert_non_send(host);
-                // **Before `game/` reads anything.** `run_scripts` writes a
+                // **Before `GameSet` reads anything.** `run_scripts` writes a
                 // `BindingPressed`, and a verb typed at the chat line has to
                 // reach the same systems in the same frame a key's does — a
                 // message that lands after its reader is a `/script` that takes
@@ -2160,7 +2160,7 @@ impl Plugin for HostPlugin {
                         pace,
                     )
                         .chain()
-                        .before(crate::game::GameSet),
+                        .before(crate::interface::GameSet),
                 );
                 // …and this file's own HUD line, after the chain rather than
                 // inside it: `report` is an instrument and the three above it
@@ -2170,7 +2170,7 @@ impl Plugin for HostPlugin {
                     Update,
                     report
                         .after(run_scripts)
-                        .before(crate::game::GameSet)
+                        .before(crate::interface::GameSet)
                         .run_if(crate::ui::report::watched),
                 );
                 // **After the news has been delivered**, which is the one
@@ -2456,9 +2456,9 @@ fn load_bindings(
     time: Res<Time>,
     mut startup: ResMut<StartupScript>,
     mut focus: ResMut<super::api::keyboard::KeyboardFocus>,
-    cvars: Res<crate::game::cvars::CVars>,
-    mut variables: MessageWriter<crate::game::events::VariablesLoaded>,
-    mut entering: MessageWriter<crate::game::events::PlayerEnteringWorld>,
+    cvars: Res<crate::settings::cvars::CVars>,
+    mut variables: MessageWriter<crate::interface::events::VariablesLoaded>,
+    mut entering: MessageWriter<crate::interface::events::PlayerEnteringWorld>,
     windows: Windows,
     ui_scale: Res<crate::ui::scale::InterfaceScale>,
     mut wanted: ResMut<LoadWanted>,
@@ -2491,7 +2491,7 @@ fn load_bindings(
     // the same frame — before `world::session`'s sync has spawned the
     // `WorldEntity` every read here goes through. One frame of loading screen
     // is the whole cost.
-    if world.units.get(crate::game::api::UnitId::Player).is_none() {
+    if world.units.get(crate::interface::api::UnitId::Player).is_none() {
         return;
     }
     // **The glue comes down before the interface goes up**, and it is a fresh
@@ -2505,7 +2505,7 @@ fn load_bindings(
     // moment a loading screen is already up.
     // **…and the addon board has to know which character this is.** Which
     // addons load is the character's `AddOns.txt`, which
-    // `crate::game::session::addons` reads once the session names a character.
+    // `crate::settings::addons` reads once the session names a character.
     // That system runs after this chain in the same frame, so the first frame
     // with a player waits here and the next one loads. Without the wait every
     // addon would load under its default state whatever the file says.
@@ -2608,7 +2608,7 @@ fn load_bindings(
     //
     // This client logs in and *then* loads the interface — 175 files, about a
     // second — where 1.12 loads the interface at startup and enters the world
-    // afterwards. Every event `game/` raised in that second was written with
+    // afterwards. Every event `GameSet` raised in that second was written with
     // nothing registered to hear it, and a `bevy` message with no reader is a
     // message that expires: `PLAYER_ENTERING_WORLD`, the whole action bar's
     // `ACTIONBAR_SLOT_CHANGED`, the first `UNIT_*` of every frame.
@@ -2616,7 +2616,7 @@ fn load_bindings(
     // The cost was not subtle and it is what this round's "spells are not on
     // the bar" turned out to be. `ActionButton_OnLoad` calls
     // `ActionButton_Update` itself, so a button reads its slot once at load —
-    // and *that* read happens before `game::action` has resolved the server's
+    // and *that* read happens before `interface::action` has resolved the server's
     // 120 buttons against `Spell.dbc`, so every one of them answered "empty",
     // hid its icon and unregistered the six events that would have corrected
     // it. Measured: re-running `ActionButton_Update` by hand from `--script`
@@ -2632,10 +2632,10 @@ fn load_bindings(
     // client reads `SavedVariables` at startup and enters the world afterwards;
     // this one has no `WTF`, so the option globals are final the moment the last
     // `OnLoad` has run — which is here. See
-    // [`crate::game::events::VariablesLoaded`] for the two widgets that were
+    // [`crate::interface::events::VariablesLoaded`] for the two widgets that were
     // waiting on it.
-    variables.write(crate::game::events::VariablesLoaded);
-    entering.write(crate::game::events::PlayerEnteringWorld);
+    variables.write(crate::interface::events::VariablesLoaded);
+    entering.write(crate::interface::events::PlayerEnteringWorld);
 }
 
 /// Run whatever `/script` lines the chat pane queued, and put the result where
@@ -2655,8 +2655,8 @@ fn run_scripts(
     mut startup: ResMut<StartupScript>,
     world: api::LuaWorld,
     time: Res<Time>,
-    mut pressed: MessageWriter<crate::game::bindings::BindingPressed>,
-    mut notes: MessageWriter<crate::game::events::ChatMessageReceived>,
+    mut pressed: MessageWriter<crate::input::bindings::BindingPressed>,
+    mut notes: MessageWriter<crate::interface::events::ChatMessageReceived>,
     mut log: ResMut<ScriptLog>,
 ) {
     let Some(mut host) = host else { return };
@@ -2679,7 +2679,7 @@ fn run_scripts(
             Ok(verbs) => {
                 let count = verbs.len();
                 for verb in verbs {
-                    pressed.write(crate::game::bindings::BindingPressed(verb));
+                    pressed.write(crate::input::bindings::BindingPressed(verb));
                 }
                 Ok(match count {
                     0 => "ok".to_string(),
@@ -2693,7 +2693,7 @@ fn run_scripts(
                 // where a `/script` typo belongs. A console error is echoed in
                 // the console *as well*, because a person who just typed it is
                 // looking at the console and not at the chat frame.
-                crate::game::session::chat::system_note(&mut notes, format!("script error: {e}"));
+                crate::interface::chat::system_note(&mut notes, format!("script error: {e}"));
                 Err(e)
             }
         };
@@ -2717,7 +2717,7 @@ fn run_scripts(
 /// `LootFrame_OnEvent`'s only redraw is `ShowUIPanel`, which `UIParent.lua`
 /// returns from for a frame that is already visible, and `LootFrame_Update` is
 /// reachable from nothing but `OnShow` and the two page buttons. See
-/// [`crate::game::npc::loot`], which carries the reading and the reference
+/// [`crate::interface::loot`], which carries the reading and the reference
 /// addresses.
 ///
 /// It is **almost never reached**. The window is held shut until its rows can be
@@ -2730,7 +2730,7 @@ fn run_scripts(
 /// invented here.
 fn refresh_loot(
     host: Option<NonSendMut<LuaHost>>,
-    mut landed: MessageReader<crate::game::npc::loot::LootNamesLanded>,
+    mut landed: MessageReader<crate::interface::loot::LootNamesLanded>,
     world: api::LuaWorld,
 ) {
     let Some(mut host) = host else { return };
@@ -2772,14 +2772,14 @@ fn refresh_loot(
 /// handler and global in the interface is reachable only from that state, so
 /// there is nothing to walk and nothing to forget. It costs the ~1.1 s load
 /// again on the next login, which is the moment a loading screen is already up.
-/// `pub(crate)` for one reason: `game::session::keybindings` has to write its
+/// `pub(crate)` for one reason: `settings::keybindings` has to write its
 /// two files **before** this runs, and that ordering is stated rather than
 /// inherited — see there.
 pub(crate) fn unload_interface(
     host: Option<NonSendMut<LuaHost>>,
-    mut leaving: MessageReader<crate::game::events::PlayerLeavingWorld>,
+    mut leaving: MessageReader<crate::interface::events::PlayerLeavingWorld>,
     mut focus: ResMut<super::api::keyboard::KeyboardFocus>,
-    cvars: Res<crate::game::cvars::CVars>,
+    cvars: Res<crate::settings::cvars::CVars>,
     mut wanted: ResMut<LoadWanted>,
 ) {
     let Some(mut host) = host else { return };
@@ -2802,7 +2802,7 @@ pub(crate) fn unload_interface(
 fn restart(
     host: &mut LuaHost,
     focus: &mut super::api::keyboard::KeyboardFocus,
-    cvars: &crate::game::cvars::CVars,
+    cvars: &crate::settings::cvars::CVars,
     wanted: &mut LoadWanted,
 ) {
     // The addon list outlives the state; what it had loaded and which
@@ -2846,7 +2846,7 @@ pub(crate) fn sleep_the_interface(
     host: Option<NonSendMut<LuaHost>>,
     awake: Res<InterfaceAwake>,
     mut focus: ResMut<super::api::keyboard::KeyboardFocus>,
-    cvars: Res<crate::game::cvars::CVars>,
+    cvars: Res<crate::settings::cvars::CVars>,
     mut wanted: ResMut<LoadWanted>,
 ) {
     if awake.0 {
@@ -2879,8 +2879,8 @@ pub(crate) fn sleep_the_interface(
 /// **What has to happen before this and cannot happen inside it.** An addon
 /// reloads to make a setting take effect, so the setting has to survive the
 /// state that holds it: `pfUI:LoadConfig(); ReloadUI()` writes `pfUI_config`
-/// into a Lua global and nothing else. `crate::game::savedvars::save_on_reload`
-/// and `crate::game::session::keybindings::save_on_reload` write both files
+/// into a Lua global and nothing else. `crate::settings::savedvars::save_on_reload`
+/// and `crate::settings::keybindings::save_on_reload` write both files
 /// first and are ordered `.before` this for that reason — and `savedvars::apply`
 /// reads them straight back, because a fresh host answers
 /// `needs_saved_variables`. Without that half the reload is a way of *undoing*
@@ -2895,15 +2895,15 @@ pub(crate) fn sleep_the_interface(
 /// difference: nothing the body does afterwards outlives the frame.
 pub(crate) fn reload_interface(
     host: Option<NonSendMut<LuaHost>>,
-    mut pressed: MessageReader<crate::game::bindings::BindingPressed>,
+    mut pressed: MessageReader<crate::input::bindings::BindingPressed>,
     mut focus: ResMut<super::api::keyboard::KeyboardFocus>,
-    cvars: Res<crate::game::cvars::CVars>,
+    cvars: Res<crate::settings::cvars::CVars>,
     mut wanted: ResMut<LoadWanted>,
 ) {
     let asked = pressed
         .read()
-        .any(|crate::game::bindings::BindingPressed(binding)| {
-            matches!(binding, crate::game::bindings::Binding::ReloadUI)
+        .any(|crate::input::bindings::BindingPressed(binding)| {
+            matches!(binding, crate::input::bindings::Binding::ReloadUI)
         });
     let Some(mut host) = host else { return };
     if !asked || !host.loaded() {
@@ -3065,7 +3065,7 @@ mod tests {
     /// parameters at *init* rather than at compile time, so a conflicting or
     /// missing one is a panic on the first frame after login. That costs a run of
     /// the client to find; this costs a millisecond. The same trap
-    /// `game::bindings::the_dispatch_can_be_scheduled_with_the_world_it_now_borrows`
+    /// `input::bindings::the_dispatch_can_be_scheduled_with_the_world_it_now_borrows`
     /// exists for, one directory over, and this is the second system to fall into
     /// its blast radius.
     ///
@@ -3088,9 +3088,9 @@ mod tests {
             .init_resource::<StartupScript>()
             .init_resource::<ScriptLog>()
             .init_resource::<crate::lua::api::keyboard::KeyboardFocus>()
-            .init_resource::<crate::game::cvars::CVars>()
-            .add_message::<crate::game::bindings::BindingPressed>()
-            .add_message::<crate::game::events::ChatMessageReceived>()
+            .init_resource::<crate::settings::cvars::CVars>()
+            .add_message::<crate::input::bindings::BindingPressed>()
+            .add_message::<crate::interface::events::ChatMessageReceived>()
             .add_systems(Update, run_scripts);
 
         // Nothing queued: the log stays empty and the system does no work at
@@ -3133,18 +3133,18 @@ mod tests {
             // interface, exactly as the logout teardown does — and re-seeds the
             // settings into the fresh state for the same reason.
             .init_resource::<crate::lua::api::keyboard::KeyboardFocus>()
-            .init_resource::<crate::game::cvars::CVars>()
+            .init_resource::<crate::settings::cvars::CVars>()
             // …and it tells the fresh state how big the screen is, which is the
             // space at whatever `uiScale` is in force — see [`crate::ui::scale`].
             .init_resource::<crate::ui::scale::InterfaceScale>()
-            .add_message::<crate::game::bindings::BindingPressed>()
+            .add_message::<crate::input::bindings::BindingPressed>()
             // `run_scripts` reports a failed chunk as a system chat line now —
-            // see `game::chat::system_note`.
-            .add_message::<crate::game::events::ChatMessageReceived>()
+            // see `interface::chat::system_note`.
+            .add_message::<crate::interface::events::ChatMessageReceived>()
             // …and the loader announces `PLAYER_ENTERING_WORLD` when it
             // finishes, because the interface missed the first one.
-            .add_message::<crate::game::events::VariablesLoaded>()
-            .add_message::<crate::game::events::PlayerEnteringWorld>()
+            .add_message::<crate::interface::events::VariablesLoaded>()
+            .add_message::<crate::interface::events::PlayerEnteringWorld>()
             .init_resource::<LoadWanted>()
             .add_systems(Update, (load_bindings, run_scripts, report).chain());
 
@@ -3187,10 +3187,10 @@ mod tests {
     #[test]
     fn leaving_the_world_unloads_the_interface() {
         let mut app = App::new();
-        crate::game::events::register(&mut app);
+        crate::interface::events::register(&mut app);
         app.insert_non_send(LuaHost::new().expect("the interpreter starts"))
             .init_resource::<crate::lua::api::keyboard::KeyboardFocus>()
-            .init_resource::<crate::game::cvars::CVars>()
+            .init_resource::<crate::settings::cvars::CVars>()
             .init_resource::<LoadWanted>()
             .add_systems(Update, unload_interface);
         {
@@ -3211,7 +3211,7 @@ mod tests {
         assert!(app.world().get_non_send::<LuaHost>().unwrap().loaded());
 
         app.world_mut()
-            .write_message(crate::game::events::PlayerLeavingWorld);
+            .write_message(crate::interface::events::PlayerLeavingWorld);
         app.update();
         let host = app.world().get_non_send::<LuaHost>().unwrap();
         assert!(!host.loaded(), "the next login reloads the directory");

@@ -236,15 +236,15 @@ fn reconcile(
     mut materials: Materials,
     tuning: Res<crate::render::tuning::WorldTuning>,
     assets: Res<crate::assets::GameAssets>,
-    cvars: Res<crate::game::cvars::CVars>,
+    cvars: Res<crate::settings::cvars::CVars>,
     rig: Res<crate::world::camera::CameraRig>,
     player: Query<&WorldEntity, With<crate::session::LocalPlayer>>,
-    selection: Res<crate::game::combat::target::Selection>,
+    selection: Res<crate::interface::target::Selection>,
     // …and the two halves of friend-or-foe that are in no file — see
-    // [`crate::game::api::Friendship`]. A name over a head is coloured by the
+    // [`crate::interface::api::Friendship`]. A name over a head is coloured by the
     // same selector the ring is, so it needs the same inputs.
-    group: Res<crate::game::session::party::Party>,
-    reputation: Res<crate::game::character::reputation::PlayerStanding>,
+    group: Res<crate::interface::party::Party>,
+    reputation: Res<crate::interface::reputation::PlayerStanding>,
     units: Query<(
         &WorldEntity,
         &Transform,
@@ -263,7 +263,7 @@ fn reconcile(
         return;
     }
     let me = player.single().ok();
-    let friendship = crate::game::api::Friendship { party: &group, standing: &reputation };
+    let friendship = crate::interface::api::Friendship { party: &group, standing: &reputation };
     let tables = assets.display_tables().ok();
     // **The five CVars, not a default.** A build dropped into a real WoW folder
     // reads that folder's `Config.wtf`.
@@ -747,7 +747,7 @@ fn face_the_camera(eye: Vec3, focus: Vec3) -> Quat {
 /// three-valued here and an unfriendly creature reads hostile.
 fn colour(
     tables: Option<&vale_assets::tables::dbc::DisplayTables>,
-    friendship: crate::game::api::Friendship<'_>,
+    friendship: crate::interface::api::Friendship<'_>,
     me: Option<&WorldEntity>,
     unit: &WorldEntity,
 ) -> [f32; 4] {
@@ -766,10 +766,10 @@ fn colour(
     let (reaction, i_attack_it, attacks_me) = match (tables, me) {
         (Some(tables), Some(me)) => (
             friendship.reaction(tables, unit, me),
-            crate::game::api::can_attack_between(
+            crate::interface::api::can_attack_between(
                 tables, friendship.party, friendship.standing, me, unit,
             ),
-            crate::game::api::can_attack_between(
+            crate::interface::api::can_attack_between(
                 tables, friendship.party, friendship.standing, unit, me,
             ),
         ),
@@ -779,7 +779,7 @@ fn colour(
         player_controlled: unit.kind == vale_protocol::state::update::ObjectType::Player,
         attacks_me,
         i_attack_it,
-        pvp: unit.unit_flags & crate::game::api::UNIT_FLAG_PVP != 0,
+        pvp: unit.unit_flags & crate::interface::api::UNIT_FLAG_PVP != 0,
         dead: unit.dead,
         reaction,
     });

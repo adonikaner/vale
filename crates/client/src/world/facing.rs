@@ -464,10 +464,10 @@ pub(super) fn drive_bodies(
     time: Res<Time>,
     motion: Res<super::motion::Motion>,
     predicted: Res<super::predict::Predicted>,
-    npc: Res<crate::game::npc::gossip::NpcUnit>,
+    npc: Res<crate::interface::gossip::NpcUnit>,
     // **The mover's held turn** — the two inputs the turn-held bit stands for. See
     // the module comment's third term.
-    controls: Res<crate::game::place::controls::ControlState>,
+    controls: Res<crate::input::controls::ControlState>,
     look: Res<super::camera::MouseLook>,
     buttons: Res<ButtonInput<MouseButton>>,
     mut facing: ResMut<BodyFacing>,

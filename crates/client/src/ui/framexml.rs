@@ -665,7 +665,7 @@ pub(super) fn paint(
     tuning: Res<crate::render::tuning::WorldTuning>,
     // …and what the pointer is carrying, which is the one thing this pass draws
     // that is not in the widget tree at all — see [`carried`].
-    cursor: Res<crate::game::combat::cursor::Cursor>,
+    cursor: Res<crate::interface::cursor::Cursor>,
     // …and the unit frames' faces, which this pass draws and does not take —
     // see [`crate::render::portraits`].
     portraits: Res<crate::render::portraits::Portraits>,
@@ -674,7 +674,7 @@ pub(super) fn paint(
     dolls: Res<crate::render::paperdoll::Dolls>,
     // …and where the little round map is looking, which is the only widget in
     // the interface whose contents are the world — see [`minimap`].
-    place: Res<crate::game::place::minimap::MinimapView>,
+    place: Res<crate::interface::minimap::MinimapView>,
     // …and how big all of it is drawn — see [`crate::ui::scale`], which is one
     // value so that this pass and the pointer cannot disagree about it.
     ui_scale: Res<crate::ui::scale::InterfaceScale>,
@@ -750,7 +750,7 @@ pub(super) fn paint(
     if clock.due() || drawn.solved_for != Some(solved_for) {
         // **`GetTime()`'s own base**, so that a line the interface stamped from
         // Lua and the expiry this pass applies are on one clock rather than two.
-        drawn.items = host.drawn(solved_for, crate::game::api::get_time(&time));
+        drawn.items = host.drawn(solved_for, crate::interface::api::get_time(&time));
         drawn.solved_for = Some(solved_for);
     }
     let items = &drawn.items;
@@ -815,7 +815,7 @@ fn carried(
     ctx: &egui::Context,
     assets: &GameAssets,
     art: &mut Art,
-    cursor: &crate::game::combat::cursor::Cursor,
+    cursor: &crate::interface::cursor::Cursor,
     scale: f32,
 ) {
     // No zone: [`paint`]'s covers this scope — see the note there.
@@ -872,7 +872,7 @@ fn one(
     // …and where the little map is looking, which is the one widget whose
     // contents are the world — see [`minimap`]. Default (and so blank) at a
     // character screen and in the headless [`PaintProbe`].
-    place: &crate::game::place::minimap::MinimapView,
+    place: &crate::interface::minimap::MinimapView,
     item: &Item,
     view: Viewport,
 ) {
@@ -1135,7 +1135,7 @@ fn minimap(
     ctx: &egui::Context,
     assets: &GameAssets,
     art: &mut Art,
-    view: &crate::game::place::minimap::MinimapView,
+    view: &crate::interface::minimap::MinimapView,
     widget: crate::lua::widgets::minimap::MinimapWidget,
     rect: egui::Rect,
     alpha: f32,
@@ -1213,13 +1213,13 @@ fn blips(
     ctx: &egui::Context,
     assets: &GameAssets,
     art: &mut Art,
-    view: &crate::game::place::minimap::MinimapView,
+    view: &crate::interface::minimap::MinimapView,
     rect: egui::Rect,
     radius: f32,
     tint: egui::Color32,
 ) {
     use vale_assets::look::blips as rule;
-    use crate::game::place::minimap::MarkerKind;
+    use crate::interface::minimap::MarkerKind;
     if view.blips.is_empty() && view.markers.is_empty() {
         return;
     }
@@ -2032,7 +2032,7 @@ impl PaintProbe {
                 &crate::render::paperdoll::Dolls::default(),
                 // **No world**, which is what the headless probe is: the
                 // minimap draws nothing, exactly as it does at a glue screen.
-                &crate::game::place::minimap::MinimapView::default(),
+                &crate::interface::minimap::MinimapView::default(),
                 item,
                 view,
             );

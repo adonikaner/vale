@@ -1068,7 +1068,7 @@ pub(super) fn drawn_weapon(world: &WorldEntity, sheath: u8) -> WeaponAnim {
 /// hands", and a ranged spell is fired from the ranged slot whether or not the
 /// sheath state has caught up with it yet — a shot pressed on the frame the bow
 /// is still being drawn must not throw a sword swing. The slot is the question
-/// and the sheath is a consequence of it (see `game::action`, which asks for
+/// and the sheath is a consequence of it (see `interface::action`, which asks for
 /// `SHEATH_RANGED` on the same press).
 ///
 /// `None` for an empty slot and for a **wand**, which is the honest answer

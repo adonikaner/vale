@@ -80,7 +80,7 @@ use std::collections::BTreeSet;
 
 use super::super::api::one_or_nil;
 use super::widget;
-use crate::game::events::EventArg;
+use crate::interface::events::EventArg;
 
 /// The C function that makes a frame. Named as a constant because the XML loader
 /// calls it too, and because the check counts it.
@@ -822,7 +822,7 @@ fn remove(list: &mlua::Table, frame: &mlua::Table) -> mlua::Result<()> {
 /// Every event name any frame has asked to be told about, sorted.
 ///
 /// The measurement this module exists to make possible: against
-/// [`crate::game::events::FIRED`], it is the list of news the interface wants and
+/// [`crate::interface::events::FIRED`], it is the list of news the interface wants and
 /// this client cannot yet give it.
 pub(in crate::lua) fn registered_events(lua: &mlua::Lua) -> mlua::Result<BTreeSet<String>> {
     let frames = lua.named_registry_value::<mlua::Table>(REG_EVENT_FRAMES)?;

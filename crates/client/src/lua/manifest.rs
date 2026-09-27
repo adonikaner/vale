@@ -270,7 +270,7 @@ fn answered_and_stubbed_are_disjoint() {
 /// report says a frame is waiting on news that this client does raise.
 #[test]
 fn the_published_events_are_the_fired_ones() {
-    let mut fired: Vec<String> = crate::game::events::FIRED
+    let mut fired: Vec<String> = crate::interface::events::FIRED
         .iter()
         .map(|n| (*n).to_string())
         .collect();

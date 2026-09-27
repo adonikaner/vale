@@ -62,7 +62,7 @@ impl Plugin for PlayerPlugin {
 /// Read off the same message the interface's `PLAYER_LEVEL_UP` is raised from,
 /// so a level gained while the interface is still loading is still heard.
 fn level_up(
-    mut gained: MessageReader<crate::game::events::PlayerLevelUp>,
+    mut gained: MessageReader<crate::interface::events::PlayerLevelUp>,
     mut voices: Voices,
     game: Res<crate::assets::GameAssets>,
 ) {
@@ -83,14 +83,14 @@ fn level_up(
 
 /// One chime per quest that entered the log.
 ///
-/// Read off [`crate::game::npc::quest::QuestAccepted`], which is the client's own
+/// Read off [`crate::interface::quest::QuestAccepted`], which is the client's own
 /// edge on `PLAYER_QUEST_LOG_*` — nothing on the wire announces an accept. Once
 /// per frame however many arrived, for the same reason the level-up is: a
 /// quest chain that hands you two at once is one sound in the reference too,
 /// and two copies of a 1.3-second wav started on the same frame is a phase
 /// artefact rather than emphasis.
 fn quest_accepted(
-    mut accepted: MessageReader<crate::game::npc::quest::QuestAccepted>,
+    mut accepted: MessageReader<crate::interface::quest::QuestAccepted>,
     mut voices: Voices,
     game: Res<crate::assets::GameAssets>,
 ) {

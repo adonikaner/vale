@@ -50,7 +50,7 @@
 //! `ContainerFrame_Update` tests `quality and quality ~= -1`, so the
 //! two are the same branch there; they are not the same branch in an addon, and
 //! this client has a cold cache far more often than the real one does — every
-//! item's template is a round trip away (see [`crate::game::character::items`]). So it is
+//! item's template is a round trip away (see [`crate::interface::items`]). So it is
 //! the number the client pushes.
 //!
 //! ## The drag is here, and it is the one place a read and a write are the same
@@ -59,7 +59,7 @@
 //! `PickupContainerItem` and its five neighbours were absent for two rounds
 //! under `stubs.rs`' rule — a write into a subsystem this client does not have
 //! stays absent, because a no-op would swallow a click on a bag slot and report
-//! success. [`crate::game::combat::cursor`] is that subsystem now, so they are
+//! success. [`crate::interface::cursor`] is that subsystem now, so they are
 //! registered; `UseContainerItem` and `UseInventoryItem` stay in
 //! [`super::super::api::verbs`], because a *right* click needs no answer.
 //!
@@ -76,10 +76,10 @@
 
 use super::super::api::{one_or_nil, Answers, IDLE_COOLDOWN};
 // The unit-token surface the answers below read the world through — the same
-// `crate::game::api` every other `Live` impl in this directory uses, imported
+// `crate::interface::api` every other `Live` impl in this directory uses, imported
 // here now that the container's own answers live beside its registration.
-use crate::game::api;
-use crate::game::bindings::Binding;
+use crate::interface::api;
+use crate::input::bindings::Binding;
 
 /// **The reads this module registers**, for the count that measures the gap —
 /// the same list [`super::super::api::READS`] is, and checked the same way.
@@ -137,7 +137,7 @@ pub struct SlotContents {
     /// **Is the cursor holding this square's item?** `GetContainerItemInfo`'s
     /// third answer, straight into `SetItemButtonDesaturated` — which is what
     /// makes a drag legible: the item looks *out* of the bag rather than in two
-    /// places at once. See [`crate::game::combat::cursor::Cursor::locks`].
+    /// places at once. See [`crate::interface::cursor::Cursor::locks`].
     pub locked: bool,
 }
 
@@ -271,7 +271,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 
     // **`(start, duration, enable)`, in exactly `GetActionCooldown`'s base and
     // through exactly its arithmetic** — see
-    // [`crate::game::api::cooldown_of`], which both go through so that the
+    // [`crate::interface::api::cooldown_of`], which both go through so that the
     // swirl on a bag square and the swirl on an action button cannot run at
     // different rates. `ContainerFrame_Update` hands the three straight to
     // `CooldownFrame_SetTimer`, so the shape is not this client's choice.
@@ -481,7 +481,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 
     // --- the drag ---
     //
-    // Six writes and one read, all of them about [`crate::game::combat::cursor`]. What
+    // Six writes and one read, all of them about [`crate::interface::cursor`]. What
     // a left click *means* is decided there and not here: this side records the
     // square that was clicked and the module that holds the cursor turns it
     // into a pick-up, a put-down or a swap. See the module comment.
@@ -579,7 +579,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         scope.create_function(move |_, ()| Ok(one_or_nil(answers.cursor_has_item())))?,
     )?;
     // …and its other half, which is a different question and not a broader one:
-    // see [`crate::game::combat::cursor::Cursor::has_item`], where the reason a spell
+    // see [`crate::interface::cursor::Cursor::has_item`], where the reason a spell
     // must **not** answer `CursorHasItem` is.
     globals.set(
         "CursorHasSpell",
@@ -918,7 +918,7 @@ pub trait ContainerAnswers {
     /// Four call sites in the directory, all of them deciding whether a click on
     /// a bag button puts an item down or opens the bag — which is why a *spell*
     /// on the cursor answers nil here rather than 1; see
-    /// [`crate::game::combat::cursor::Cursor::has_item`].
+    /// [`crate::interface::cursor::Cursor::has_item`].
     fn cursor_has_item(&self) -> bool;
     /// …and `CursorHasSpell()`, its other half.
     fn cursor_has_spell(&self) -> bool;
@@ -943,7 +943,7 @@ impl ContainerAnswers for super::super::api::Live<'_, '_, '_> {
         let item = self.inventory.carried.container_item(bag, slot)?;
         Some(self.slot_contents(
             item,
-            crate::game::combat::cursor::Place::Container {
+            crate::interface::cursor::Place::Container {
                 bag,
                 slot: u8::try_from(slot).unwrap_or(u8::MAX),
             },
@@ -978,7 +978,7 @@ impl ContainerAnswers for super::super::api::Live<'_, '_, '_> {
             return self.ammo_contents();
         }
         let item = self.inventory.carried.inventory_slot(id)?;
-        Some(self.slot_contents(item, crate::game::combat::cursor::Place::Inventory(id)))
+        Some(self.slot_contents(item, crate::interface::cursor::Place::Inventory(id)))
     }
 
     fn inventory_item_link(&self, token: &str, id: u32) -> Option<String> {

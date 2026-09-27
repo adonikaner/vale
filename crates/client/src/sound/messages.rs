@@ -26,7 +26,7 @@
 //! `EnableErrorSpeech` CVar, and neither is read yet.
 
 use super::mixer::{Place, Voices};
-use crate::game::messages::MessageSound;
+use crate::interface::messages::MessageSound;
 use bevy::prelude::*;
 
 pub struct MessagesPlugin;

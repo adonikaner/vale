@@ -72,11 +72,11 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 }
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::game::npc::gossip::GossipPress>>>;
+pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::gossip::GossipPress>>>;
 
 /// Register the four writes. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
-    use crate::game::npc::gossip::GossipPress as P;
+    use crate::interface::gossip::GossipPress as P;
     let globals = lua.globals();
     macro_rules! push {
         ($name:expr, $args:ty, |$arg:ident| $body:expr) => {{
@@ -133,7 +133,7 @@ mod tests {
     /// The writes record one-based and drop nonsense.
     #[test]
     fn the_writes_record_in_call_order() {
-        use crate::game::npc::gossip::GossipPress as P;
+        use crate::interface::gossip::GossipPress as P;
         let lua = mlua::Lua::new();
         let queue: Queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         register(&lua, &queue).expect("registers");
@@ -172,7 +172,7 @@ pub trait GossipAnswers {
     // `-1` stock and an empty name for a template still in flight.
 
     /// `GetGossipText()` — resolved through the text cache; see
-    /// [`crate::game::npc::gossip::GossipWindow::text`].
+    /// [`crate::interface::gossip::GossipWindow::text`].
     fn gossip_text(&self) -> String;
     /// `GetGossipOptions()` — `(text, icon word)` per line.
     fn gossip_options(&self) -> Vec<(String, &'static str)>;
@@ -188,10 +188,10 @@ impl GossipAnswers for super::super::api::Live<'_, '_, '_> {
 
     fn gossip_text(&self) -> String {
         // The same five variables an `npc_text` row carries — see
-        // [`crate::game::messages::substitute`]. Done here rather than in
-        // `game::gossip` because that module has no world borrow and `$N` is
+        // [`crate::interface::messages::substitute`]. Done here rather than in
+        // `interface::gossip` because that module has no world borrow and `$N` is
         // the character's own name.
-        crate::game::messages::substitute(&self.gossip.text(), self.speaker())
+        crate::interface::messages::substitute(&self.gossip.text(), self.speaker())
     }
 
     fn gossip_options(&self) -> Vec<(String, &'static str)> {
@@ -207,7 +207,7 @@ impl GossipAnswers for super::super::api::Live<'_, '_, '_> {
         self.gossip.menu().map_or_else(Vec::new, |menu| {
             menu.quests
                 .iter()
-                .filter(|q| crate::game::npc::quest::is_active_offer(q.icon) == active)
+                .filter(|q| crate::interface::quest::is_active_offer(q.icon) == active)
                 .map(|q| (q.title.clone(), q.level))
                 .collect()
         })

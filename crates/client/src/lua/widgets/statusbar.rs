@@ -349,7 +349,7 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
             lua,
             &this,
             "OnValueChanged",
-            &[crate::game::events::EventArg::Number(value)],
+            &[crate::interface::events::EventArg::Number(value)],
         );
         Ok(())
     })?;

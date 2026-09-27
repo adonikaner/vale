@@ -207,7 +207,7 @@ impl Plugin for CombatPlugin {
 /// retail and by nothing here — so against this server it is the order column
 /// that will be heard and the attack one that will not.
 fn pet_talk(
-    mut heard: MessageReader<crate::game::events::PetTalkHeard>,
+    mut heard: MessageReader<crate::interface::events::PetTalkHeard>,
     mut voices: Voices,
     mut commands: Commands,
     game: Res<crate::assets::GameAssets>,
@@ -265,12 +265,12 @@ fn pet_talk(
 ///
 /// **vmangos never sends it**, so nothing on this server will ever reach here.
 fn pet_dismissed(
-    mut heard: MessageReader<crate::game::events::PetDismissHeard>,
+    mut heard: MessageReader<crate::interface::events::PetDismissHeard>,
     mut voices: Voices,
     game: Res<crate::assets::GameAssets>,
 ) {
     let bank = game.sounds();
-    for crate::game::events::PetDismissHeard(sound) in heard.read() {
+    for crate::interface::events::PetDismissHeard(sound) in heard.read() {
         let Some(entry) = bank
             .model_data_sounds(sound.model_id)
             .map(|sounds| sounds.pet_dismiss)

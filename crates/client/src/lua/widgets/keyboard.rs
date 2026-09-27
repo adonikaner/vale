@@ -10,7 +10,7 @@
 //! ```text
 //! an edit box has the focus   -> a Stroke, into that box       editbox.rs
 //! a keyboard frame is up      -> OnKeyDown/OnKeyUp, arg1 = key  THIS FILE
-//! neither                     -> the key table                  game::bindings
+//! neither                     -> the key table                  input::bindings
 //! ```
 //!
 //! ## Why this had to exist at all
@@ -54,7 +54,7 @@
 //! arrive under their own names — `"SHIFT"`, `"CTRL"`, `"ALT"` — because the
 //! panel tests for exactly those three and returns, and a key with no name at
 //! all is `"UNKNOWN"`, which it also tests for. See
-//! [`crate::game::bindings::key_event_name`], which is the one place those five
+//! [`crate::input::bindings::key_event_name`], which is the one place those five
 //! spellings are decided.
 
 use super::widget;
@@ -328,7 +328,7 @@ pub(in crate::lua) fn deliver(
     let Ok(Some(handler)) = handler else {
         return true;
     };
-    let args = [crate::game::events::EventArg::Text(key.to_string())];
+    let args = [crate::interface::events::EventArg::Text(key.to_string())];
     if let Err(e) = super::frames::call_handler(lua, &frame, None, &args, &handler) {
         errors.push(format!("{script}: {}", super::super::host::first_line(&e)));
     }
@@ -480,7 +480,7 @@ mod tests {
         .expect("the chunk runs");
         assert_eq!(host.keyboard_frame(), None);
         let (_, taken) = host.keys_to_frame(&[("W".to_string(), true)], &world);
-        assert_eq!(taken, None, "nothing took it, so game::bindings will");
+        assert_eq!(taken, None, "nothing took it, so input::bindings will");
     }
 
     /// **`enableKeyboard="false"` really turns it off**, which is the tri-state

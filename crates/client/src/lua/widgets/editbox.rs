@@ -96,7 +96,7 @@
 //!   is the label for.
 
 use super::widget;
-use crate::game::events::EventArg;
+use crate::interface::events::EventArg;
 
 /// The methods an edit box carries beyond the ones every frame has. Sorted, and
 /// every one of them a name the shipped directory calls.

@@ -56,7 +56,7 @@
 //! predict — the wire carries no way to ask what level the session has.
 
 use crate::session::EditSession;
-use vale_client::game::events::ChatMessageReceived;
+use vale_client::interface::events::ChatMessageReceived;
 use vale_client::world::session::{Session, WorldStatus};
 use vale_protocol::play::chat::ChatType;
 use bevy::prelude::*;
@@ -72,7 +72,7 @@ use std::collections::VecDeque;
 ///
 /// **Do not shorten it to the round trip.** Measured at 1.9 s end to end for
 /// `.reload spell_template` on a local server, and the larger half of that is
-/// this end: `game::session::chat::poll` holds every line until the Lua host
+/// this end: `interface::chat::poll` holds every line until the Lua host
 /// has `Interface\FrameXML\` loaded, which on a debug first login lands about
 /// 3.4 s after the session exists. Nothing is lost — the backlog holds 256
 /// lines — but a command sent before the interface is up is answered after it,

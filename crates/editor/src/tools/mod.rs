@@ -667,7 +667,7 @@ pub(crate) fn shortcuts(
     mut shell: ResMut<crate::playtest::ShellOpen>,
     mut client: ResMut<vale_client::world::session::Session>,
     login: Res<crate::playtest::Login>,
-    mut auto: ResMut<vale_client::game::session::autologin::AutoLogin>,
+    mut auto: ResMut<vale_client::glue::autologin::AutoLogin>,
     keys: Res<ButtonInput<KeyCode>>,
     typing: Res<vale_client::lua::api::keyboard::KeyboardFocus>,
     wants: Res<bevy_egui::input::EguiWantsInput>,

@@ -307,7 +307,7 @@ fn collect(host: Option<NonSendMut<crate::lua::host::LuaHost>>, mut portraits: R
 fn follow(
     mut commands: Commands,
     mut portraits: ResMut<Portraits>,
-    units: crate::game::api::Units,
+    units: crate::interface::api::Units,
     mut cache: ResMut<ModelCache>,
     mut displays: ResMut<DisplayCache>,
     assets: Res<crate::assets::GameAssets>,
@@ -447,14 +447,14 @@ fn follow(
 /// `false` when the token names nobody or has no picture: both mean the caller
 /// has work to do and must go and find out which.
 fn unchanged(
-    units: &crate::game::api::Units,
+    units: &crate::interface::api::Units,
     portraits: &Portraits,
     token: &str,
 ) -> bool {
     let Some(taken) = portraits.taken.get(token) else {
         return false;
     };
-    let Some(unit) = crate::game::api::UnitId::parse(token).and_then(|id| units.get(id)) else {
+    let Some(unit) = crate::interface::api::UnitId::parse(token).and_then(|id| units.get(id)) else {
         return false;
     };
     taken.built.guid == unit.guid
@@ -463,8 +463,8 @@ fn unchanged(
         && taken.built.equipment == unit.equipment
 }
 
-fn subject(units: &crate::game::api::Units, token: &str) -> Option<Built> {
-    let id = crate::game::api::UnitId::parse(token)?;
+fn subject(units: &crate::interface::api::Units, token: &str) -> Option<Built> {
+    let id = crate::interface::api::UnitId::parse(token)?;
     let unit = units.get(id)?;
     Some(Built {
         guid: unit.guid,
@@ -476,10 +476,10 @@ fn subject(units: &crate::game::api::Units, token: &str) -> Option<Built> {
 
 /// …and which display table to resolve it through.
 fn unit_kind(
-    units: &crate::game::api::Units,
+    units: &crate::interface::api::Units,
     token: &str,
 ) -> vale_protocol::state::update::ObjectType {
-    crate::game::api::UnitId::parse(token)
+    crate::interface::api::UnitId::parse(token)
         .and_then(|id| units.get(id))
         .map(|unit| unit.kind)
         .unwrap_or(vale_protocol::state::update::ObjectType::Unit)

@@ -42,7 +42,7 @@
 //! thumb drag; the arrow buttons work, because they go through the slider's
 //! `SetValue` → `OnValueChanged` → here.
 
-use crate::game::events::EventArg;
+use crate::interface::events::EventArg;
 
 use super::widget;
 

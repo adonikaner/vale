@@ -111,8 +111,8 @@ pub trait CraftAnswers {
     /// The reagent entry `GameTooltip:SetCraftItem` plates.
     fn craft_tip_item(&self, index: usize, reagent: usize) -> Option<u32>;
     /// …and the spell plate `GameTooltip:SetCraftSpell` shows for the recipe
-    /// itself, on the book's own [`crate::game::api::SpellTip`] shape.
-    fn craft_spell_tip(&self, index: usize) -> Option<crate::game::api::SpellTip>;
+    /// itself, on the book's own [`crate::interface::api::SpellTip`] shape.
+    fn craft_spell_tip(&self, index: usize) -> Option<crate::interface::api::SpellTip>;
 }
 
 /// Register all seventeen into the scope.
@@ -286,7 +286,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
             if let Some(spell) = index(n).and_then(|i| answers.craft_recipe(i)) {
                 press
                     .borrow_mut()
-                    .push(crate::game::bindings::Binding::CastRecipe { spell, count: 1 });
+                    .push(crate::input::bindings::Binding::CastRecipe { spell, count: 1 });
             }
             Ok(())
         })?,
@@ -336,7 +336,7 @@ impl CraftAnswers for super::super::api::Live<'_, '_, '_> {
         let (train_points, required_level) = match (self.craft.open_kind(), info.as_ref()) {
             (Some(TRAINING_KIND), Some(info)) if !row.is_header() => {
                 let tradeskills = tables.and_then(|t| t.tradeskills());
-                let race_class = self.units.race_class_ids(crate::game::api::UnitId::Player);
+                let race_class = self.units.race_class_ids(crate::interface::api::UnitId::Player);
                 let race_class_level = |line: u32| -> Option<u32> {
                     let (race, class) = race_class?;
                     tables
@@ -406,7 +406,7 @@ impl CraftAnswers for super::super::api::Live<'_, '_, '_> {
         let spell = self.craft.list.row(index).filter(|r| !r.is_header())?.spell;
         let catalog = self.tables.as_deref().and_then(|t| t.spellbook())?;
         let info = catalog.info(spell)?;
-        let level = self.units.level(crate::game::api::UnitId::Player).max(1) as u32;
+        let level = self.units.level(crate::interface::api::UnitId::Player).max(1) as u32;
         let text =
             vale_assets::tables::spelltext::describe(&info, level, Some(catalog), Some(&self.home));
         (!text.is_empty()).then_some(text)
@@ -485,14 +485,14 @@ impl CraftAnswers for super::super::api::Live<'_, '_, '_> {
             .map(|(entry, _)| *entry)
     }
 
-    fn craft_spell_tip(&self, index: usize) -> Option<crate::game::api::SpellTip> {
+    fn craft_spell_tip(&self, index: usize) -> Option<crate::interface::api::SpellTip> {
         let spell = self.craft.list.row(index).filter(|r| !r.is_header())?.spell;
         let catalog = self.tables.as_deref().and_then(|t| t.spellbook());
         let info = catalog.and_then(|c| c.info(spell))?;
         let names = |entry| self.reagent_name(entry);
-        Some(crate::game::api::spell_tip(
+        Some(crate::interface::api::spell_tip(
             &info,
-            &crate::game::api::TipContext {
+            &crate::interface::api::TipContext {
                 level: self.tip_level(),
                 // A spell plate has no requirement lines — the same zeroes
                 // [`super::spellbook`]'s own tooltip passes.

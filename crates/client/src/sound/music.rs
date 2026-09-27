@@ -32,7 +32,7 @@
 //! reported exactly that way.
 //!
 //! [`MusicState::interface_changed`] is the rule that fixes it, and it is the
-//! same one `game::glue::Told` already carries one directory over: **a record of
+//! same one `glue::glue::Told` already carries one directory over: **a record of
 //! what the interface has been told is only about the interface it was told
 //! to.** When the loaded directory changes, the override goes with the state
 //! that asked for it.
@@ -173,11 +173,11 @@ fn run_music(
     mut state: ResMut<MusicState>,
     mut voices: Voices,
     session: Res<crate::world::session::Session>,
-    worldmap: Res<crate::game::place::worldmap::WorldMapState>,
+    worldmap: Res<crate::interface::worldmap::WorldMapState>,
     clock: Res<crate::render::sky::WorldClock>,
     time: Res<Time>,
     game: Res<crate::assets::GameAssets>,
-    cvars: Res<crate::game::cvars::CVars>,
+    cvars: Res<crate::settings::cvars::CVars>,
     alive: Query<(), With<AudioPlayer>>,
 ) {
     let now = time.elapsed_secs();
@@ -254,7 +254,7 @@ fn run_music(
     }
 
     // --- what this place sounds like: the building, the area, then the zone ---
-    // Resolved once, in `game::worldmap`, which is where the building is known.
+    // Resolved once, in `interface::worldmap`, which is where the building is known.
     let bank = game.sounds();
 
     // --- claim 2b: the server said so ---

@@ -20,7 +20,7 @@
 //! The split every panel keeps: the frame is the game's own `MailFrame.xml`,
 //! the wire is [`vale_protocol::play::mail`], the paper table's own rule is
 //! [`vale_assets::tables::stationery`], the window is
-//! [`crate::game::npc::mail`], and this file is registration and arguments.
+//! [`crate::interface::mail`], and this file is registration and arguments.
 //!
 //! ## `GetInboxHeaderInfo` returns thirteen and the last two are not
 //! independent
@@ -45,7 +45,7 @@
 //! ## Three of the writes answer inside their own call
 //!
 //! `SetSendMailMoney`, `SetSendMailCOD` and `SelectStationery` — see
-//! [`crate::game::npc::mail`]'s module note, which carries the two Lua bodies
+//! [`crate::interface::mail`]'s module note, which carries the two Lua bodies
 //! that read them back on the next line. They are registered here among the
 //! reads for the same reason `SelectQuestLogEntry` and `SelectTrainerService`
 //! are.
@@ -389,11 +389,11 @@ fn copper_of(n: Option<i64>) -> u32 {
 }
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::game::npc::mail::MailPress>>>;
+pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::mail::MailPress>>>;
 
 /// Register the ten writes. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
-    use crate::game::npc::mail::MailPress as P;
+    use crate::interface::mail::MailPress as P;
     let globals = lua.globals();
 
     macro_rules! push {
@@ -414,7 +414,7 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
     push!("ClearSendMail", (), |_a| Some(P::ClearSend));
     push!("ClickSendMailItemButton", (), |_a| Some(P::ClickItem));
     // **Three strings, and every one of them may be empty.** The window's own
-    // gate is in [`crate::game::npc::mail`] rather than here: this file does not
+    // gate is in [`crate::interface::mail`] rather than here: this file does not
     // know whether a stationery is selected.
     push!(
         "SendMail",
@@ -447,7 +447,7 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
 /// and it is a position in the inbox rather than a mail id. The two are
 /// deliberately never mixed: the wire names a letter by id and the panel names
 /// it by row, and the conversion happens once, in
-/// [`crate::game::npc::mail::Mailbox::letter`].
+/// [`crate::interface::mail::Mailbox::letter`].
 pub trait MailAnswers {
     /// `GetInboxNumItems()`.
     fn mail_count(&self) -> usize;
@@ -644,7 +644,7 @@ impl MailAnswers for super::super::api::Live<'_, '_, '_> {
             }
             Some(self.mail.template(row.item)?.buy_price)
         })();
-        crate::game::npc::mail::postage(price)
+        crate::interface::mail::postage(price)
     }
 
     fn mail_send_money(&self) -> u32 {

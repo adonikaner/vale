@@ -27,7 +27,7 @@
 //! (`this.buffIndex`) and handed back.
 //!
 //! So it is free to be an index into the client's own display cache, which is
-//! what [`crate::game::combat::auras::Auras::player`] is and what the reference's is
+//! what [`crate::interface::auras::Auras::player`] is and what the reference's is
 //! too. **`-1` for "there is none"**, never nil: `BuffButton_Update`'s first act
 //! after the call is `if ( buffIndex < 0 )`.
 //!
@@ -52,7 +52,7 @@
 //!
 //! `UnitBuff`'s and `UnitDebuff`'s **third arguments** (`SHOW_CASTABLE_BUFFS`,
 //! `SHOW_DISPELLABLE_DEBUFFS`) are read and ignored — see
-//! [`crate::game::combat::auras`], where the deviation is stated. And a token this
+//! [`crate::interface::auras`], where the deviation is stated. And a token this
 //! client keeps no aura list for answers nothing at all rather than the
 //! player's, which is the class of plausible wrong answer this project keeps
 //! paying for.
@@ -90,7 +90,7 @@ pub struct AuraInfo {
     /// "Magic" / "Curse" / "Disease" / "Poison", or empty.
     pub dispel_type: String,
     /// Seconds left, `0.0` when there is no clock — see
-    /// [`crate::game::combat::auras::Aura::time_left`] for why not nil.
+    /// [`crate::interface::auras::Aura::time_left`] for why not nil.
     pub time_left: f64,
     /// Whether it runs until it is cancelled, which is `GetPlayerBuff`'s
     /// **second** return and what hides the duration text.
@@ -347,7 +347,7 @@ impl AuraAnswers for super::super::api::Live<'_, '_, '_> {
     ) -> Option<super::auras::AuraInfo> {
         let list = self.auras.of(Self::id(token)?)?;
         Some(aura_info(
-            crate::game::combat::auras::nth_of_half(list, index, helpful)?,
+            crate::interface::auras::nth_of_half(list, index, helpful)?,
             self.now,
         ))
     }

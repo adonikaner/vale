@@ -105,7 +105,7 @@ impl GlobalBuilding {
     /// **How much of this map's own geometry has not arrived yet**, in the same
     /// currency [`crate::render::terrain::LoadedTiles::settling`] reports.
     ///
-    /// Read by [`crate::game::place::loading`]. Without it the loading screen
+    /// Read by [`crate::glue::loading`]. Without it the loading screen
     /// comes down on a WMO-only map the instant the nine absent ADTs have
     /// failed to read — which is immediately, and several seconds before there
     /// is anything to look at.

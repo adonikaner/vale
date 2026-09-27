@@ -8,7 +8,7 @@ use bevy::camera::visibility::ViewVisibility;
 #[cfg(feature = "diagnostics")]
 use bevy::diagnostic::DiagnosticsStore;
 
-use crate::game;
+use crate::{glue, input};
 #[cfg(feature = "diagnostics")]
 use crate::render::{draws, models, particles};
 #[cfg(feature = "diagnostics")]
@@ -52,7 +52,7 @@ pub struct HoverProbe(pub Option<Vec2>);
 impl HoverProbe {
     /// The planted position, or the real one.
     ///
-    /// `crate::game::combat::target::hover` reads the pointer through this, and
+    /// `crate::interface::target::hover` reads the pointer through this, and
     /// nothing else does. In a real session the option is `None` (`--hover` was
     /// not passed), so this returns the real position. It exists, rather than
     /// the probe only moving the mouse, because of focus: `set_cursor_position`
@@ -102,8 +102,8 @@ pub(crate) fn hover_probe(
 /// line: one as `usable=false` on everything except a chest, the other as a
 /// unit hover cleared by a signpost.
 pub(crate) fn report_the_hover(
-    hovered: Res<crate::game::combat::target::Hovered>,
-    object: Res<crate::game::npc::object::HoveredObject>,
+    hovered: Res<crate::interface::target::Hovered>,
+    object: Res<crate::interface::object::HoveredObject>,
     mut last: Local<Option<(Option<u64>, Option<u64>)>>,
 ) {
     let now = (hovered.guid, object.guid);
@@ -142,7 +142,7 @@ pub(crate) fn screenshots(
     mut state: ResMut<Screenshots>,
     mut rig: ResMut<camera::CameraRig>,
     time: Res<Time>,
-    mut pressed: MessageReader<crate::game::bindings::BindingPressed>,
+    mut pressed: MessageReader<crate::input::bindings::BindingPressed>,
     mut quit: MessageWriter<AppExit>,
     // The measurement half, behind the `diagnostics` feature: `DrawCalls` is
     // registered by `DrawCallPlugin` and `frame_verdict` lives in
@@ -191,8 +191,8 @@ pub(crate) fn screenshots(
     // `TOGGLEBACKPACK`, so the key opened the bag as well as saving a PNG.
     if pressed
         .read()
-        .any(|crate::game::bindings::BindingPressed(b)| {
-            matches!(b, crate::game::bindings::Binding::Screenshot)
+        .any(|crate::input::bindings::BindingPressed(b)| {
+            matches!(b, crate::input::bindings::Binding::Screenshot)
         })
     {
         state.manual += 1;
@@ -427,16 +427,16 @@ impl Relogin {
 /// the one a player makes. `Binding::Logout` means `CMSG_LOGOUT_REQUEST`, the
 /// server's own delay, and `SMSG_LOGOUT_COMPLETE`.
 ///
-/// Coming back re-arms [`game::session::autologin::AutoLogin`]: it already
+/// Coming back re-arms [`glue::autologin::AutoLogin`]: it already
 /// waits for a character list and clicks the named row, which is the code path
 /// the first login took.
 pub(crate) fn relogin_probe(
     time: Res<Time>,
     mut probe: ResMut<Relogin>,
-    mut auto: ResMut<game::session::autologin::AutoLogin>,
+    mut auto: ResMut<glue::autologin::AutoLogin>,
     session: Res<session::Session>,
     status: Res<session::WorldStatus>,
-    mut pressed: MessageWriter<game::bindings::BindingPressed>,
+    mut pressed: MessageWriter<input::bindings::BindingPressed>,
     mut in_world_since: Local<Option<f32>>,
 ) {
     let Some((after, gap)) = probe.timings else {
@@ -454,7 +454,7 @@ pub(crate) fn relogin_probe(
                 return;
             }
             info!("--relogin: {:.0}s in the world — Logout()", now - since);
-            pressed.write(game::bindings::BindingPressed(game::bindings::Binding::Logout));
+            pressed.write(input::bindings::BindingPressed(input::bindings::Binding::Logout));
             probe.stage = ReloginStage::Camping;
             probe.left_at = Some(now);
         }

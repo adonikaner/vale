@@ -32,7 +32,7 @@
 //! has not left, the custom channels to rejoin, the guild-recruitment
 //! option — and the verbs the interface queued. The packets that fill it,
 //! the file it is seeded from, the auto-join on a zone change and the events
-//! it raises are `crate::game::session::channels`, exactly as `social`
+//! it raises are `crate::interface::channels`, exactly as `social`
 //! splits.
 
 use std::cell::RefCell;
@@ -90,7 +90,7 @@ pub struct Slot {
     pub instance: u32,
     /// The zone changed and this slot's channel is being replaced: the
     /// `YOU_LEFT` on the way is not an event, and the `YOU_JOINED` that
-    /// follows it is a `YOU_CHANGED`. See `game::session::channels`.
+    /// follows it is a `YOU_CHANGED`. See `interface::channels`.
     pub switching: bool,
 }
 

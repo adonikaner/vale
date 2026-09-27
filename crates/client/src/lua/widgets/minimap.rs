@@ -62,7 +62,7 @@ pub const METHODS: [&str; 7] = [
 /// needs from the widget and nothing that borrows Lua.
 ///
 /// It carries no position: where the map is centred is the *world's* answer and
-/// comes through [`crate::game::place::minimap::MinimapView`], because the draw walk
+/// comes through [`crate::interface::minimap::MinimapView`], because the draw walk
 /// runs with no borrow of the world at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MinimapWidget {

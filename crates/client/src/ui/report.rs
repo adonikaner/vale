@@ -59,7 +59,7 @@ use std::collections::BTreeMap;
 ///  32  render::portraits  …and the faces on it
 ///  33  render::labels     the names over the heads in the world
 ///  34  render::lightning  the bolts strung between them
-///  40  game::combat       the range disagreement watch (pinned)
+///  40  world::desync      the range disagreement watch (pinned)
 ///  45  sound::mixer       what is audible, and what could not be found
 ///  90  render::residency  what the client is still holding on to
 /// ```

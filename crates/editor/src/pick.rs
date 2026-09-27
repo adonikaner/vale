@@ -154,7 +154,7 @@ pub fn aim(
     // world camera draws into `render::present`'s frame image, which is created
     // at the window's *physical* size with `scale_factor: 1.0` — so its viewport
     // is measured in physical pixels. The client's own two picks
-    // (`game::combat::target::hover` and `ui::debug::inspect`) both make this
+    // (`interface::target::hover` and `ui::debug::inspect`) both make this
     // conversion and say so; this one did not, and on a 125% display the brush
     // landed up and left of the pointer by a quarter of the distance from the
     // screen's centre. That is an *angular* error, so what it comes to in yards

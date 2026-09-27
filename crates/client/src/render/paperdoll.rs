@@ -129,7 +129,7 @@ const MIN_TARGET: u32 = 32;
 /// A marker on the spawn, and deliberately *not* the filter of a
 /// `Query<&mut Transform>` in [`follow`]. That is what the first version was,
 /// and it panicked on the first frame of every real session with `B0001`:
-/// [`follow`] already takes [`crate::game::api::Units`], whose `all` query reads
+/// [`follow`] already takes [`crate::interface::api::Units`], whose `all` query reads
 /// `Option<&Transform>`, and a filter bevy cannot prove disjoint from an
 /// unfiltered read does not make the write disjoint. `With<DollRoot>` narrows
 /// *which* entities are yielded; it does not narrow the declared access.
@@ -279,7 +279,7 @@ fn follow(
     mut commands: Commands,
     mut dolls: ResMut<Dolls>,
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
-    units: crate::game::api::Units,
+    units: crate::interface::api::Units,
     mut cache: ResMut<ModelCache>,
     mut displays: ResMut<DisplayCache>,
     assets: Res<crate::assets::GameAssets>,
@@ -508,7 +508,7 @@ pub const DISPLAY_ID_PREFIX: &str = "displayid:";
 /// A display-id subject carries no guid, no appearance and no equipment,
 /// because there is nothing to carry them: it is a creature model and nothing
 /// else, which is exactly what a stabled pet is.
-fn subject(units: &crate::game::api::Units, token: &str) -> Option<Built> {
+fn subject(units: &crate::interface::api::Units, token: &str) -> Option<Built> {
     if let Some(display_id) = token.strip_prefix(DISPLAY_ID_PREFIX) {
         return Some(Built {
             guid: 0,
@@ -517,7 +517,7 @@ fn subject(units: &crate::game::api::Units, token: &str) -> Option<Built> {
             equipment: Default::default(),
         });
     }
-    let id = crate::game::api::UnitId::parse(token)?;
+    let id = crate::interface::api::UnitId::parse(token)?;
     let unit = units.get(id)?;
     Some(Built {
         guid: unit.guid,
@@ -534,13 +534,13 @@ fn subject(units: &crate::game::api::Units, token: &str) -> Option<Built> {
 /// indexes, and reading it in `CharacterDisplayInfo` would resolve a wolf to a
 /// human's skin or to nothing.
 fn unit_kind(
-    units: &crate::game::api::Units,
+    units: &crate::interface::api::Units,
     token: &str,
 ) -> vale_protocol::state::update::ObjectType {
     if token.starts_with(DISPLAY_ID_PREFIX) {
         return vale_protocol::state::update::ObjectType::Unit;
     }
-    crate::game::api::UnitId::parse(token)
+    crate::interface::api::UnitId::parse(token)
         .and_then(|id| units.get(id))
         .map(|unit| unit.kind)
         .unwrap_or(vale_protocol::state::update::ObjectType::Unit)

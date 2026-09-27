@@ -89,7 +89,7 @@ impl Sheath {
 /// **Ask** a unit to draw or stow — the client's one setter.
 ///
 /// A message rather than a direct write for the reason the whole of
-/// [`crate::game::events`] is: more than one thing asks (a binding, the attack
+/// [`crate::interface::events`] is: more than one thing asks (a binding, the attack
 /// verb) and exactly one thing executes, so the idempotency refusal, the mounted
 /// block and the `CMSG_SETSHEATHED` volunteer are written once. A second request
 /// for the same unit in one frame replaces the first, which is the client's
@@ -168,7 +168,7 @@ pub(super) fn reconcile(
         // anywhere in the rule.
         //
         // It also buys less than it looks like it does, which is worth knowing
-        // before someone "fixes" the attack-start request out of `game::action`
+        // before someone "fixes" the attack-start request out of `interface::action`
         // as redundant. `ReadyUnarmed` (25) carries the **empty-hands** flag,
         // and a stowed character in combat is playing exactly that — so the
         // stow at priority 3 answers before the engaged draw at 4 ever runs,

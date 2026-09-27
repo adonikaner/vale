@@ -96,7 +96,7 @@
 //!   interface frame to `WorldFrame`, which is a real widget in `WorldFrame.xml`
 //!   with the world drawn behind it. This client keeps the world pick where it
 //!   was and simply *declines* it when a mouse-enabled frame is under the
-//!   pointer — see [`MouseFocus`], which is what `game::target` reads.
+//!   pointer — see [`MouseFocus`], which is what `interface::target` reads.
 //! * **a wheel nobody answers falls through to the camera**, which is 5875's
 //!   own arrangement rather than a divergence: `WorldFrame.xml` declares no
 //!   `<OnMouseWheel>` at all, so an unclaimed wheel is left to the
@@ -112,8 +112,8 @@ use super::super::host::LuaHost;
 use super::super::widgets::button;
 use super::super::widgets::layout;
 use super::super::widgets::widget;
-use crate::game::bindings::BindingPressed;
-use crate::game::events::EventArg;
+use crate::input::bindings::BindingPressed;
+use crate::interface::events::EventArg;
 
 /// The methods this module installs, sorted.
 ///
@@ -228,7 +228,7 @@ const LEFT: &str = "LeftButton";
 const RIGHT: &str = "RightButton";
 const MIDDLE: &str = "MiddleButton";
 
-/// **Is the pointer on the interface?** Read by [`crate::game::combat::target`], which
+/// **Is the pointer on the interface?** Read by [`crate::interface::target`], which
 /// declines the world pick when it is.
 ///
 /// A resource written from here and read one directory down, which is the same
@@ -1351,10 +1351,10 @@ impl Plugin for MousePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MouseFocus>()
             .init_resource::<ExternalPointer>()
-            // **Before `game/`**, so that a click the interface takes is declined
+            // **Before `GameSet`**, so that a click the interface takes is declined
             // by the world pick in the *same* frame rather than the next one —
             // otherwise pressing an action button also drops the target.
-            .add_systems(Update, poll.before(crate::game::GameSet));
+            .add_systems(Update, poll.before(crate::interface::GameSet));
     }
 }
 

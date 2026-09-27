@@ -53,7 +53,7 @@
 //! So this takes [`super::reputation`]'s shape — one board, borrowed by the
 //! interpreter and by the ECS — rather than the queue-and-apply shape.
 //!
-//! The ECS half is [`crate::game::bindings`], which turns the live table into
+//! The ECS half is [`crate::input::bindings`], which turns the live table into
 //! key presses, and it watches [`Keys::version`] rather than re-deriving every
 //! frame.
 
@@ -129,7 +129,7 @@ pub struct Keys {
     /// something says otherwise**, which is the reference's own state for an
     /// account with no character-specific file.
     current: u32,
-    /// Bumped on every change, so [`crate::game::bindings`] can rebuild its
+    /// Bumped on every change, so [`crate::input::bindings`] can rebuild its
     /// `KeyCode` join when — and only when — something moved.
     pub version: u64,
     /// **Has anything filled the three saved sets yet?**
@@ -216,7 +216,7 @@ impl Keys {
     }
 
     /// The live table — what the keyboard reads. See
-    /// [`crate::game::bindings`].
+    /// [`crate::input::bindings`].
     pub fn live(&self) -> &Table {
         &self.live
     }

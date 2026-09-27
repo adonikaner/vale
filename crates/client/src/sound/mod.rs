@@ -23,7 +23,7 @@
 //!
 //! Nothing in here decides a volume any more. The three channels
 //! ([`mixer::Channel`]) are the three the game's own sound options panel has,
-//! and each reads its pair of CVars out of [`crate::game::cvars::CVars`] —
+//! and each reads its pair of CVars out of [`crate::settings::cvars::CVars`] —
 //! which is the *interface's* store, written by the panel itself through
 //! `SetCVar`. So "turn the music down" is `SoundOptionsFrameSlider3` moving,
 //! and this directory finds out the same way an addon would.
@@ -87,7 +87,7 @@ pub mod spells;
 
 use bevy::prelude::*;
 
-/// Every sound system, in one set: they all read what `game/` and the session
+/// Every sound system, in one set: they all read what `GameSet` and the session
 /// wrote this frame, so they run after both.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SoundSet;
@@ -112,7 +112,7 @@ impl Plugin for SoundPlugins {
             items::ItemSoundPlugin,
             npc::NpcSoundPlugin,
         ));
-        // After the session has placed this frame's entities and after game/
+        // After the session has placed this frame's entities and after `GameSet`
         // has tracked the area — a footstep at last frame's position is a
         // footstep behind the character, and music for last frame's zone
         // arrives a frame late for no reason.
@@ -120,7 +120,7 @@ impl Plugin for SoundPlugins {
             Update,
             SoundSet
                 .after(crate::world::session::place_entities)
-                .after(crate::game::GameSet),
+                .after(crate::interface::GameSet),
         );
     }
 }

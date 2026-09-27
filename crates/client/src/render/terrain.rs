@@ -512,7 +512,7 @@ impl LoadedTiles {
     /// screen: loads still in flight, finished loads waiting their turn, and
     /// the one part-way through being handed over.
     ///
-    /// Read by [`crate::game::place::loading`], which is the one thing that has to
+    /// Read by [`crate::glue::loading`], which is the one thing that has to
     /// know whether the ground is there yet. It counts what is outstanding
     /// rather than what has spawned, which is what makes a tile whose ADT will
     /// not parse harmless: that tile leaves `loading` without ever arriving, so

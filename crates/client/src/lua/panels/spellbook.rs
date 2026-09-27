@@ -52,7 +52,7 @@
 //!
 //! In the real client it is the build: it sorts the tab array, sorts the
 //! flat spell array, and **raises `SPELLS_CHANGED`** in the same function. This
-//! client does the first two in [`crate::game::combat::spellbook::rebuild`], on a latch,
+//! client does the first two in [`crate::interface::spellbook::rebuild`], on a latch,
 //! whenever the server's set or the character's identity moves — so the obvious
 //! reading is that the C function has nothing left to do.
 //!
@@ -73,7 +73,7 @@
 use super::super::api::{one_or_nil, Answers, SpellTab};
 // The unit-token surface these answers read the world through — imported
 // here now that the subject's own answers live beside its registration.
-use crate::game::api;
+use crate::interface::api;
 
 /// **The reads this module registers into the scope**, for the count that
 /// measures the gap — the same kind of list [`super::super::api::READS`] is, and

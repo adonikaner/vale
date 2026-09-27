@@ -73,9 +73,9 @@
 //! ```
 
 
-use crate::game::combat::action::{ActionBar, Casting, Cooldowns};
-use crate::game::api::{self, UnitId, Units};
-use crate::game::combat::spellbook::Spellbook;
+use crate::interface::action::{ActionBar, Casting, Cooldowns};
+use crate::interface::api::{self, UnitId, Units};
+use crate::interface::spellbook::Spellbook;
 use vale_assets::interface::strings::Strings;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -183,7 +183,7 @@ impl<T> Answers for T where
 /// knows which of the four it is holding.
 ///
 /// A token this client has no state for answers the *absent* value rather than
-/// a guess, all the way down: see [`crate::game::api::UnitId::parse`], which is
+/// a guess, all the way down: see [`crate::interface::api::UnitId::parse`], which is
 /// what every `&str` token here goes through.
 ///
 /// The death reads sit at the bottom rather than in a `DeathAnswers` of their
@@ -195,7 +195,7 @@ pub trait UnitAnswers {
     // --- the clock ---
 
     /// `GetTime()` — seconds since the client started. See
-    /// [`crate::game::api::get_time`], which is the one place the base is set.
+    /// [`crate::interface::api::get_time`], which is the one place the base is set.
     fn now(&self) -> f64;
 
     /// `GetGameTime()` — the **world's** hour and minute, not the machine's.
@@ -235,7 +235,7 @@ pub trait UnitAnswers {
     ///
     /// The `CONFIRM_PET_UNLEARN` box's `OnUpdate` hides it when this answers
     /// false, exactly as the binder's does. See
-    /// [`crate::game::npc::untrainer`].
+    /// [`crate::interface::untrainer`].
     fn untrainer_in_range(&self) -> bool;
 
     // --- units ---
@@ -262,18 +262,18 @@ pub trait UnitAnswers {
     /// the interface draws as a skull.
     fn unit_level(&self, token: &str) -> i32;
     /// `UnitSex(unit)` — 2 male, 3 female, 1 neuter, and **2 for a unit that is
-    /// not there**. See [`crate::game::api::Units::sex`], where the table and
+    /// not there**. See [`crate::interface::api::Units::sex`], where the table and
     /// the fallback are.
     fn unit_sex(&self, token: &str) -> u32;
     fn unit_health(&self, token: &str) -> u32;
     fn unit_health_max(&self, token: &str) -> u32;
     /// `UnitXP` and `UnitXPMax`, together — see
-    /// [`crate::game::api::Units::experience`] for why the pair is one answer.
+    /// [`crate::interface::api::Units::experience`] for why the pair is one answer.
     fn unit_experience(&self, token: &str) -> (u32, u32);
     /// `UnitCharacterPoints(unit)` — **unspent talent points, then unspent
     /// profession points**, together for the same reason the XP pair is: they
     /// are one field pair, read in one call, by two different panels. See
-    /// [`crate::game::api::Units::character_points`].
+    /// [`crate::interface::api::Units::character_points`].
     fn unit_character_points(&self, token: &str) -> (u32, u32);
     /// `GetXPExhaustion()` — the rested pool, `nil` when there is none.
     fn rested_experience(&self) -> Option<u32>;
@@ -287,14 +287,14 @@ pub trait UnitAnswers {
     fn unit_is_connected(&self, token: &str) -> bool;
     fn unit_is_dead(&self, token: &str) -> bool;
     /// `UnitIsGhost` — **released, not merely dead**, which are two different
-    /// states with two different boxes on screen. See [`crate::game::character::death`].
+    /// states with two different boxes on screen. See [`crate::interface::death`].
     fn unit_is_ghost(&self, token: &str) -> bool;
     fn unit_affecting_combat(&self, token: &str) -> bool;
 
     // --- being dead ---
     //
     // Five reads, all about the local player, all answering off
-    // [`crate::game::character::death::Dying`]. They are here rather than in
+    // [`crate::interface::death::Dying`]. They are here rather than in
     // [`self::stubs`] because each one **decides what a box says**: the
     // release box's own sentence, whether the Retrieve button counts down, and
     // which of three resurrect popups opens.
@@ -332,7 +332,7 @@ pub trait UnitAnswers {
         false
     }
     /// Two tokens that both resolve to nothing are **not** the same unit — see
-    /// [`crate::game::api::Units::is_unit`].
+    /// [`crate::interface::api::Units::is_unit`].
     fn unit_is_unit(&self, a: &str, b: &str) -> bool;
     /// **The character sheet's whole population, as one answer** — eleven of
     /// the game's C functions read off it, and every one of them is a method
@@ -368,7 +368,7 @@ pub trait UnitAnswers {
     /// **`GameTooltip:SetUnit`'s whole population, as one answer** — the same
     /// argument [`Answers::unit_stats`] makes one line up: the plate is about
     /// one unit and its composition is testable with no `Answers` at all.
-    fn unit_tooltip(&self, token: &str) -> Option<crate::game::api::UnitTip>;
+    fn unit_tooltip(&self, token: &str) -> Option<crate::interface::api::UnitTip>;
 
     // --- friend or foe ---
     //
@@ -389,7 +389,7 @@ pub trait UnitAnswers {
     /// reach at all until it read that reputation.
     fn unit_rank(&self, a: &str, b: &str) -> Option<vale_assets::tables::faction::Rank>;
     /// `UnitCanAttack(a, b)` — the reaction **and** the victim's own flags; see
-    /// [`crate::game::api::Units::can_attack`].
+    /// [`crate::interface::api::Units::can_attack`].
     fn unit_can_attack(&self, a: &str, b: &str) -> bool;
     /// `UnitPlayerControlled` — is a person driving this unit?
     fn unit_player_controlled(&self, token: &str) -> bool;
@@ -420,75 +420,75 @@ pub struct Live<'a, 'w, 's> {
     pub cooldowns: &'a Cooldowns,
     pub book: &'a Spellbook,
     /// **…and the *other* bar**, which the server states outright where the
-    /// player's own is the client's — see [`crate::game::combat::pet`].
-    pub pet_bar: &'a crate::game::combat::pet::PetBar,
+    /// player's own is the client's — see [`crate::interface::pet`].
+    pub pet_bar: &'a crate::interface::pet::PetBar,
     /// **The talent trees**, which the panel reads twenty buttons at a time —
-    /// see [`crate::game::character::talents`] and [`super::panels::talent`].
-    pub talents: &'a crate::game::character::talents::Talents,
+    /// see [`crate::interface::talents`] and [`super::panels::talent`].
+    pub talents: &'a crate::interface::talents::Talents,
     pub casting: &'a Casting,
     /// **Which ranged attack is repeating**, for `IsAutoRepeatAction` — a spell
     /// id rather than a borrow, because that is the whole of the state and
     /// copying a `u32` is cheaper than the reference to it. See
-    /// [`crate::game::combat::action::AutoRepeat`].
+    /// [`crate::interface::action::AutoRepeat`].
     pub auto_repeat: Option<u32>,
     /// The spell cursor's own state — see
-    /// [`crate::game::combat::action::SpellTargeting`]. Beside `casting` because they
+    /// [`crate::interface::action::SpellTargeting`]. Beside `casting` because they
     /// are the two halves of "is a cast happening": one is running and the other
     /// is waiting to be aimed, and the interface asks about them separately.
-    pub targeting: &'a crate::game::combat::action::SpellTargeting,
+    pub targeting: &'a crate::interface::action::SpellTargeting,
     /// What is on the units the interface can ask about — see
-    /// [`crate::game::combat::auras`].
-    pub auras: &'a crate::game::combat::auras::Auras,
+    /// [`crate::interface::auras`].
+    pub auras: &'a crate::interface::auras::Auras,
     /// Being dead: the two clocks and the offer on the table — see
-    /// [`crate::game::character::death`].
-    pub dying: &'a crate::game::character::death::Dying,
-    /// …and what is being read, if anything — see [`crate::game::npc::pagetext`].
-    pub page: &'a crate::game::npc::pagetext::OpenBook,
+    /// [`crate::interface::death`].
+    pub dying: &'a crate::interface::death::Dying,
+    /// …and what is being read, if anything — see [`crate::interface::pagetext`].
+    pub page: &'a crate::interface::pagetext::OpenBook,
     /// …and the summon on the table, if any — see
-    /// [`crate::game::session::summon`].
-    pub summon: &'a crate::game::session::summon::Summon,
+    /// [`crate::interface::summon`].
+    pub summon: &'a crate::interface::summon::Summon,
     /// `GlobalStrings.lua`, for the one tab whose name is a key rather than a
     /// word — see [`vale_assets::tables::book::GENERAL_NAME_KEY`]. `None` before the
     /// table has loaded, which draws the key.
     pub strings: Option<&'a Strings>,
     /// **What is on the body**, while a loot window is open — see
-    /// [`crate::game::npc::loot`]. `None` for the whole of a session in which
+    /// [`crate::interface::loot`]. `None` for the whole of a session in which
     /// nothing has been right-clicked.
-    pub loot: &'a crate::game::npc::loot::LootWindow,
+    pub loot: &'a crate::interface::loot::LootWindow,
     /// …and, in a group, the rolls open on what is on it — see
-    /// [`crate::game::npc::lootroll`]. Empty for every session that never
+    /// [`crate::interface::lootroll`]. Empty for every session that never
     /// groups, which is what the systems behind it check first.
-    pub rolls: &'a crate::game::npc::lootroll::LootRolls,
+    pub rolls: &'a crate::interface::lootroll::LootRolls,
     /// …and the quest log and the page in front of the character — see
-    /// [`crate::game::npc::quest`].
-    pub quests: &'a crate::game::npc::quest::Quests,
-    /// …and the two NPC windows — see [`crate::game::npc::gossip`] and
-    /// [`crate::game::npc::merchant`].
-    pub gossip: &'a crate::game::npc::gossip::GossipWindow,
-    pub merchant: &'a crate::game::npc::merchant::MerchantWindow,
+    /// [`crate::interface::quest`].
+    pub quests: &'a crate::interface::quest::Quests,
+    /// …and the two NPC windows — see [`crate::interface::gossip`] and
+    /// [`crate::interface::merchant`].
+    pub gossip: &'a crate::interface::gossip::GossipWindow,
+    pub merchant: &'a crate::interface::merchant::MerchantWindow,
     /// …and the box on the corner, which is a window no NPC owns — see
-    /// [`crate::game::npc::mail`].
-    pub mail: &'a crate::game::npc::mail::Mailbox,
+    /// [`crate::interface::mail`].
+    pub mail: &'a crate::interface::mail::Mailbox,
     /// …and the third, whose panel is the game's own load-on-demand addon — see
-    /// [`crate::game::npc::trainer`].
-    pub trainer: &'a crate::game::npc::trainer::TrainerWindow,
+    /// [`crate::interface::trainer`].
+    pub trainer: &'a crate::interface::trainer::TrainerWindow,
     /// …and the two profession windows, which are the character's own rather
-    /// than an NPC's — see [`crate::game::character::tradeskill`].
-    pub tradeskill: &'a crate::game::character::tradeskill::TradeSkillWindow,
-    pub craft: &'a crate::game::character::tradeskill::CraftWindow,
+    /// than an NPC's — see [`crate::interface::tradeskill`].
+    pub tradeskill: &'a crate::interface::tradeskill::TradeSkillWindow,
+    pub craft: &'a crate::interface::tradeskill::CraftWindow,
     /// …and the fourth, whose whole content the client works out for itself —
-    /// see [`crate::game::npc::taxi`].
-    pub taxi: &'a crate::game::npc::taxi::TaxiWindow,
+    /// see [`crate::interface::taxi`].
+    pub taxi: &'a crate::interface::taxi::TaxiWindow,
     /// …and the fifth, one gossip option deeper than the rest — see
-    /// [`crate::game::npc::stable`].
-    pub stable: &'a crate::game::npc::stable::StableWindow,
+    /// [`crate::interface::stable`].
+    pub stable: &'a crate::interface::stable::StableWindow,
     /// …and the sixth, whose contents are the inventory's and whose window is
-    /// a guid — see [`crate::game::npc::bank`].
-    pub bank: &'a crate::game::npc::bank::BankWindow,
+    /// a guid — see [`crate::interface::bank`].
+    pub bank: &'a crate::interface::bank::BankWindow,
     /// …and the trade window, which is another player's rather than an
-    /// NPC's — see [`crate::game::session::trade`].
-    pub trade: &'a crate::game::session::trade::TradeWindow,
-    /// [`crate::game::api::get_time`]'s value for this frame.
+    /// NPC's — see [`crate::interface::trade`].
+    pub trade: &'a crate::interface::trade::TradeWindow,
+    /// [`crate::interface::api::get_time`]'s value for this frame.
     pub now: f64,
     /// The **world's** hour and minute, for `GetGameTime` — see
     /// [`UnitAnswers::game_time`]. Read off [`crate::render::sky::WorldClock`]
@@ -505,36 +505,36 @@ pub struct Live<'a, 'w, 's> {
     /// inn", the reference's own answer for a bind point it does not have.
     pub home: String,
     /// …and the innkeeper waiting on an answer, for `CheckBinderDist` — see
-    /// [`crate::game::npc::binder::HomeBind`].
-    pub binder: &'a crate::game::npc::binder::HomeBind,
+    /// [`crate::interface::binder::HomeBind`].
+    pub binder: &'a crate::interface::binder::HomeBind,
     /// …and the pet trainer, for `CheckPetUntrainerDist` — see
-    /// [`crate::game::npc::untrainer::Untrainer`].
-    pub untrainer: &'a crate::game::npc::untrainer::Untrainer,
+    /// [`crate::interface::untrainer::Untrainer`].
+    pub untrainer: &'a crate::interface::untrainer::Untrainer,
     /// …and the stance bar, which is a client read of `Spell.dbc` with no
-    /// packet behind it — see [`crate::game::combat::shapeshift`].
-    pub shapeshift: &'a crate::game::combat::shapeshift::ShapeshiftBar,
+    /// packet behind it — see [`crate::interface::shapeshift`].
+    pub shapeshift: &'a crate::interface::shapeshift::ShapeshiftBar,
     /// Whether a swing is in progress, for `IsCurrentAction` — the one piece of
     /// state that lives on the session rather than in a resource.
     pub attacking: bool,
     /// Where the character is and which parchment is showing — see
-    /// [`crate::game::place::worldmap`].
-    pub place: &'a crate::game::place::worldmap::WorldMapState,
+    /// [`crate::interface::worldmap`].
+    pub place: &'a crate::interface::worldmap::WorldMapState,
     /// …and the one mark the server can put on that parchment — see
-    /// [`crate::game::place::worldmap::MapLandmarks`].
-    pub landmarks: &'a crate::game::place::worldmap::MapLandmarks,
-    /// …and who is with them — see [`crate::game::session::party`]. The one unit subject
+    /// [`crate::interface::worldmap::MapLandmarks`].
+    pub landmarks: &'a crate::interface::worldmap::MapLandmarks,
+    /// …and who is with them — see [`crate::interface::party`]. The one unit subject
     /// whose members may not be in the world at all.
-    pub party: &'a crate::game::session::party::Party,
+    pub party: &'a crate::interface::party::Party,
     /// …and what the character may hold — see
-    /// [`crate::game::character::proficiency`].
-    pub proficiency: &'a crate::game::character::proficiency::Proficiencies,
+    /// [`crate::world::proficiency`].
+    pub proficiency: &'a crate::world::proficiency::Proficiencies,
     /// **What the character is carrying** — the bags, the worn slots, the
     /// money, and the item templates for all of it. See
-    /// [`crate::game::character::items`].
-    pub inventory: &'a crate::game::character::items::Inventory,
+    /// [`crate::interface::items`].
+    pub inventory: &'a crate::interface::items::Inventory,
     /// …and what is on the **pointer**, which is what makes a left click on a
-    /// bag square a pick-up or a put-down. See [`crate::game::combat::cursor`].
-    pub cursor: &'a crate::game::combat::cursor::Cursor,
+    /// bag square a pick-up or a put-down. See [`crate::interface::cursor`].
+    pub cursor: &'a crate::interface::cursor::Cursor,
     /// …and **the archives' own tables**, which by now answer four different
     /// questions here: the two that turn a place into words and rectangles, the
     /// spell catalogue behind every tooltip, and `FactionTemplate.dbc` behind
@@ -555,8 +555,8 @@ pub struct Live<'a, 'w, 's> {
     /// glue read answers its own "nothing" for that. See [`super::panels::glue`].
     pub selection: Option<&'a crate::world::session::Handshake>,
     /// …and the client-side half beside it: the remembered account name and
-    /// whether the socket is still up. See [`crate::game::session::glue::GlueState`].
-    pub glue: &'a crate::game::session::glue::GlueState,
+    /// whether the socket is still up. See [`crate::glue::glue::GlueState`].
+    pub glue: &'a crate::glue::glue::GlueState,
     /// **The object manager, for the one read that needs a name the server owns
     /// and the ECS does not mirror**: a spell's reagents are item *entries* and
     /// `Item.dbc` is not in the archives, so "Rune of Teleportation" lives in
@@ -583,73 +583,73 @@ pub struct LuaWorld<'w, 's> {
     pub cooldowns: Res<'w, Cooldowns>,
     pub casting: Res<'w, Casting>,
     /// Which ranged attack is repeating, for `IsAutoRepeatAction` — see
-    /// [`crate::game::combat::action::AutoRepeat`].
-    pub auto_repeat: Res<'w, crate::game::combat::action::AutoRepeat>,
-    pub targeting: Res<'w, crate::game::combat::action::SpellTargeting>,
+    /// [`crate::interface::action::AutoRepeat`].
+    pub auto_repeat: Res<'w, crate::interface::action::AutoRepeat>,
+    pub targeting: Res<'w, crate::interface::action::SpellTargeting>,
     pub book: Res<'w, Spellbook>,
-    pub pet_bar: Res<'w, crate::game::combat::pet::PetBar>,
-    pub talents: Res<'w, crate::game::character::talents::Talents>,
-    pub auras: Res<'w, crate::game::combat::auras::Auras>,
-    /// Being dead — see [`crate::game::character::death`].
-    pub dying: Res<'w, crate::game::character::death::Dying>,
-    pub page: Res<'w, crate::game::npc::pagetext::OpenBook>,
-    pub summon: Res<'w, crate::game::session::summon::Summon>,
+    pub pet_bar: Res<'w, crate::interface::pet::PetBar>,
+    pub talents: Res<'w, crate::interface::talents::Talents>,
+    pub auras: Res<'w, crate::interface::auras::Auras>,
+    /// Being dead — see [`crate::interface::death`].
+    pub dying: Res<'w, crate::interface::death::Dying>,
+    pub page: Res<'w, crate::interface::pagetext::OpenBook>,
+    pub summon: Res<'w, crate::interface::summon::Summon>,
     pub session: Res<'w, crate::world::session::Session>,
-    pub strings: Res<'w, crate::game::messages::UiStrings>,
+    pub strings: Res<'w, crate::interface::messages::UiStrings>,
     pub time: Res<'w, Time>,
     /// Where the character is and which parchment the map panel is on — see
-    /// [`crate::game::place::worldmap`].
-    pub place: Res<'w, crate::game::place::worldmap::WorldMapState>,
+    /// [`crate::interface::worldmap`].
+    pub place: Res<'w, crate::interface::worldmap::WorldMapState>,
     /// …and the flag a guard's directions put on it.
-    pub landmarks: Res<'w, crate::game::place::worldmap::MapLandmarks>,
-    /// …and who is with them — see [`crate::game::session::party`].
-    pub party: Res<'w, crate::game::session::party::Party>,
+    pub landmarks: Res<'w, crate::interface::worldmap::MapLandmarks>,
+    /// …and who is with them — see [`crate::interface::party`].
+    pub party: Res<'w, crate::interface::party::Party>,
     /// …and what they may *hold*, which is the only thing that can colour a
-    /// square red — see [`crate::game::character::proficiency`].
-    pub proficiency: Res<'w, crate::game::character::proficiency::Proficiencies>,
-    /// …and what they are carrying — see [`crate::game::character::items`].
-    pub inventory: Res<'w, crate::game::character::items::Inventory>,
-    /// …and what is on the pointer — see [`crate::game::combat::cursor`].
-    pub cursor: Res<'w, crate::game::combat::cursor::Cursor>,
-    /// …and what is on the *body* — see [`crate::game::npc::loot`].
-    pub loot: Res<'w, crate::game::npc::loot::LootWindow>,
-    /// …and the rolls open on it — see [`crate::game::npc::lootroll`].
-    pub rolls: Res<'w, crate::game::npc::lootroll::LootRolls>,
-    /// …and the log and the conversation — see [`crate::game::npc::quest`].
-    pub quests: Res<'w, crate::game::npc::quest::Quests>,
+    /// square red — see [`crate::world::proficiency`].
+    pub proficiency: Res<'w, crate::world::proficiency::Proficiencies>,
+    /// …and what they are carrying — see [`crate::interface::items`].
+    pub inventory: Res<'w, crate::interface::items::Inventory>,
+    /// …and what is on the pointer — see [`crate::interface::cursor`].
+    pub cursor: Res<'w, crate::interface::cursor::Cursor>,
+    /// …and what is on the *body* — see [`crate::interface::loot`].
+    pub loot: Res<'w, crate::interface::loot::LootWindow>,
+    /// …and the rolls open on it — see [`crate::interface::lootroll`].
+    pub rolls: Res<'w, crate::interface::lootroll::LootRolls>,
+    /// …and the log and the conversation — see [`crate::interface::quest`].
+    pub quests: Res<'w, crate::interface::quest::Quests>,
     /// …and the two windows a right-click on an NPC opens — see
-    /// [`crate::game::npc::gossip`] and [`crate::game::npc::merchant`].
-    pub gossip: Res<'w, crate::game::npc::gossip::GossipWindow>,
-    pub merchant: Res<'w, crate::game::npc::merchant::MerchantWindow>,
-    /// …and the mailbox — see [`crate::game::npc::mail`].
-    pub mail: Res<'w, crate::game::npc::mail::Mailbox>,
-    /// …and the trainer — see [`crate::game::npc::trainer`].
-    pub trainer: Res<'w, crate::game::npc::trainer::TrainerWindow>,
+    /// [`crate::interface::gossip`] and [`crate::interface::merchant`].
+    pub gossip: Res<'w, crate::interface::gossip::GossipWindow>,
+    pub merchant: Res<'w, crate::interface::merchant::MerchantWindow>,
+    /// …and the mailbox — see [`crate::interface::mail`].
+    pub mail: Res<'w, crate::interface::mail::Mailbox>,
+    /// …and the trainer — see [`crate::interface::trainer`].
+    pub trainer: Res<'w, crate::interface::trainer::TrainerWindow>,
     /// …and the two profession windows — see
-    /// [`crate::game::character::tradeskill`].
-    pub tradeskill: Res<'w, crate::game::character::tradeskill::TradeSkillWindow>,
-    pub craft: Res<'w, crate::game::character::tradeskill::CraftWindow>,
-    /// …and the flight map — see [`crate::game::npc::taxi`].
-    pub taxi: Res<'w, crate::game::npc::taxi::TaxiWindow>,
-    /// …and the stable — see [`crate::game::npc::stable`].
-    pub stable: Res<'w, crate::game::npc::stable::StableWindow>,
-    /// …and the bank — see [`crate::game::npc::bank`].
-    pub bank: Res<'w, crate::game::npc::bank::BankWindow>,
-    pub trade: Res<'w, crate::game::session::trade::TradeWindow>,
+    /// [`crate::interface::tradeskill`].
+    pub tradeskill: Res<'w, crate::interface::tradeskill::TradeSkillWindow>,
+    pub craft: Res<'w, crate::interface::tradeskill::CraftWindow>,
+    /// …and the flight map — see [`crate::interface::taxi`].
+    pub taxi: Res<'w, crate::interface::taxi::TaxiWindow>,
+    /// …and the stable — see [`crate::interface::stable`].
+    pub stable: Res<'w, crate::interface::stable::StableWindow>,
+    /// …and the bank — see [`crate::interface::bank`].
+    pub bank: Res<'w, crate::interface::bank::BankWindow>,
+    pub trade: Res<'w, crate::interface::trade::TradeWindow>,
     /// …and the archives, for the two tables that turn a place into words.
     pub assets: Res<'w, crate::assets::GameAssets>,
     /// The local player's position, for `GetPlayerMapPosition` — the one map
     /// read that wants a world position rather than an id.
     pub status: Res<'w, crate::world::session::WorldStatus>,
-    /// The glue's own client-side half — see [`crate::game::session::glue`].
-    pub glue: Res<'w, crate::game::session::glue::GlueState>,
-    /// **Where the hearthstone points** — see [`crate::game::npc::binder`].
-    pub home: Res<'w, crate::game::npc::binder::HomeBind>,
+    /// The glue's own client-side half — see [`crate::glue::glue`].
+    pub glue: Res<'w, crate::glue::glue::GlueState>,
+    /// **Where the hearthstone points** — see [`crate::interface::binder`].
+    pub home: Res<'w, crate::interface::binder::HomeBind>,
     /// …and the pet trainer's pending question — see
-    /// [`crate::game::npc::untrainer`].
-    pub untrainer: Res<'w, crate::game::npc::untrainer::Untrainer>,
-    /// …and the stance bar — see [`crate::game::combat::shapeshift`].
-    pub shapeshift: Res<'w, crate::game::combat::shapeshift::ShapeshiftBar>,
+    /// [`crate::interface::untrainer`].
+    pub untrainer: Res<'w, crate::interface::untrainer::Untrainer>,
+    /// …and the stance bar — see [`crate::interface::shapeshift`].
+    pub shapeshift: Res<'w, crate::interface::shapeshift::ShapeshiftBar>,
     /// **The world's hour**, for `GetGameTime` — see
     /// [`crate::render::sky::WorldClock`]. Taken from the sky's clock rather
     /// than from the session so that the minimap's clock and the light on the
@@ -672,56 +672,56 @@ impl LuaWorld<'_, '_> {
             .init_resource::<ActionBar>()
             .init_resource::<Cooldowns>()
             .init_resource::<Casting>()
-            .init_resource::<crate::game::combat::action::AutoRepeat>()
-            .init_resource::<crate::game::combat::action::SpellTargeting>()
+            .init_resource::<crate::interface::action::AutoRepeat>()
+            .init_resource::<crate::interface::action::SpellTargeting>()
             .init_resource::<Spellbook>()
-            .init_resource::<crate::game::combat::pet::PetBar>()
-            .init_resource::<crate::game::character::talents::Talents>()
-            .init_resource::<crate::game::combat::auras::Auras>()
-            .init_resource::<crate::game::character::death::Dying>()
+            .init_resource::<crate::interface::pet::PetBar>()
+            .init_resource::<crate::interface::talents::Talents>()
+            .init_resource::<crate::interface::auras::Auras>()
+            .init_resource::<crate::interface::death::Dying>()
             .init_resource::<crate::world::session::Session>()
-            .init_resource::<crate::game::messages::UiStrings>()
-            .init_resource::<crate::game::place::worldmap::WorldMapState>()
-            .init_resource::<crate::game::place::worldmap::MapLandmarks>()
-            .init_resource::<crate::game::session::party::Party>()
-            .init_resource::<crate::game::character::items::Inventory>()
-            .init_resource::<crate::game::combat::cursor::Cursor>()
-            .init_resource::<crate::game::npc::loot::LootWindow>()
-            .init_resource::<crate::game::npc::pagetext::OpenBook>()
-            .init_resource::<crate::game::session::summon::Summon>()
-            .init_resource::<crate::game::npc::lootroll::LootRolls>()
-            .init_resource::<crate::game::npc::quest::Quests>()
-            .init_resource::<crate::game::npc::gossip::GossipWindow>()
-            .init_resource::<crate::game::npc::gossip::NpcUnit>()
-            .init_resource::<crate::game::character::reputation::PlayerStanding>()
-            .init_resource::<crate::game::npc::merchant::MerchantWindow>()
-            .init_resource::<crate::game::npc::mail::Mailbox>()
-            .init_resource::<crate::game::npc::trainer::TrainerWindow>()
-            .init_resource::<crate::game::character::tradeskill::TradeSkillWindow>()
-            .init_resource::<crate::game::character::tradeskill::CraftWindow>()
-            .init_resource::<crate::game::npc::taxi::TaxiWindow>()
-            .init_resource::<crate::game::npc::stable::StableWindow>()
-            .init_resource::<crate::game::npc::bank::BankWindow>()
-            .init_resource::<crate::game::session::trade::TradeWindow>()
+            .init_resource::<crate::interface::messages::UiStrings>()
+            .init_resource::<crate::interface::worldmap::WorldMapState>()
+            .init_resource::<crate::interface::worldmap::MapLandmarks>()
+            .init_resource::<crate::interface::party::Party>()
+            .init_resource::<crate::interface::items::Inventory>()
+            .init_resource::<crate::interface::cursor::Cursor>()
+            .init_resource::<crate::interface::loot::LootWindow>()
+            .init_resource::<crate::interface::pagetext::OpenBook>()
+            .init_resource::<crate::interface::summon::Summon>()
+            .init_resource::<crate::interface::lootroll::LootRolls>()
+            .init_resource::<crate::interface::quest::Quests>()
+            .init_resource::<crate::interface::gossip::GossipWindow>()
+            .init_resource::<crate::interface::gossip::NpcUnit>()
+            .init_resource::<crate::interface::reputation::PlayerStanding>()
+            .init_resource::<crate::interface::merchant::MerchantWindow>()
+            .init_resource::<crate::interface::mail::Mailbox>()
+            .init_resource::<crate::interface::trainer::TrainerWindow>()
+            .init_resource::<crate::interface::tradeskill::TradeSkillWindow>()
+            .init_resource::<crate::interface::tradeskill::CraftWindow>()
+            .init_resource::<crate::interface::taxi::TaxiWindow>()
+            .init_resource::<crate::interface::stable::StableWindow>()
+            .init_resource::<crate::interface::bank::BankWindow>()
+            .init_resource::<crate::interface::trade::TradeWindow>()
             .init_resource::<crate::world::session::WorldStatus>()
-            .init_resource::<crate::game::session::glue::GlueState>()
+            .init_resource::<crate::glue::glue::GlueState>()
             .init_resource::<crate::render::sky::WorldClock>()
-            .init_resource::<crate::game::npc::binder::HomeBind>()
-            .init_resource::<crate::game::npc::untrainer::Untrainer>()
-            .init_resource::<crate::game::combat::shapeshift::ShapeshiftBar>()
+            .init_resource::<crate::interface::binder::HomeBind>()
+            .init_resource::<crate::interface::untrainer::Untrainer>()
+            .init_resource::<crate::interface::shapeshift::ShapeshiftBar>()
             // …and what the character may hold, which the trade squares
-            // read — see [`crate::game::character::proficiency`]. Named
+            // read — see [`crate::world::proficiency`]. Named
             // here for the same reason the two below are: the headless
-            // probes build this app without `GamePlugins`.
-            .init_resource::<crate::game::character::proficiency::Proficiencies>()
+            // probes build this app without the state plugin groups.
+            .init_resource::<crate::world::proficiency::Proficiencies>()
             .insert_resource(crate::assets::GameAssets::new(String::new()))
-            .init_resource::<crate::game::combat::target::Selection>()
-            .init_resource::<crate::game::combat::target::Hovered>()
+            .init_resource::<crate::interface::target::Selection>()
+            .init_resource::<crate::interface::target::Hovered>()
             // …and its twin, which the world tooltip reads beside it — see
-            // `crate::game::npc::object::HoveredObject`. Both are named here
-            // rather than left to `GamePlugins` because the headless probes
+            // `crate::interface::object::HoveredObject`. Both are named here
+            // rather than left to `InterfacePlugins` because the headless probes
             // build this app without it.
-            .init_resource::<crate::game::npc::object::HoveredObject>()
+            .init_resource::<crate::interface::object::HoveredObject>()
     }
 
     /// The borrow to lend Lua for the length of one call.
@@ -962,7 +962,7 @@ impl Live<'_, '_, '_> {
     }
 
     /// The context every spell plate is composed against — see
-    /// [`crate::game::api::TipContext`].
+    /// [`crate::interface::api::TipContext`].
     ///
     /// The level is the *player's*, because that is what an effect's value
     /// scales on and the tooltip is always answering "what would this do if I
@@ -993,7 +993,7 @@ impl Live<'_, '_, '_> {
     pub(super) fn slot_contents(
         &self,
         item: &vale_protocol::play::items::ItemSlot,
-        place: crate::game::combat::cursor::Place,
+        place: crate::interface::cursor::Place,
     ) -> super::panels::container::SlotContents {
         let template = self.inventory.template(item.entry);
         super::panels::container::SlotContents {
@@ -1075,11 +1075,11 @@ impl Live<'_, '_, '_> {
     }
 
     /// **Who the `$` variables in a quest's or an NPC's text are about** — see
-    /// [`crate::game::messages::substitute`]. Always the local player: the
+    /// [`crate::interface::messages::substitute`]. Always the local player: the
     /// server writes the column for whoever is reading it.
-    pub(super) fn speaker(&self) -> crate::game::messages::Speaker<'_> {
+    pub(super) fn speaker(&self) -> crate::interface::messages::Speaker<'_> {
         let unit = self.units.get(UnitId::Player);
-        crate::game::messages::Speaker {
+        crate::interface::messages::Speaker {
             name: unit.map(|u| u.name.as_str()).unwrap_or_default(),
             class: self.units.class(UnitId::Player).map(|(n, _)| n).unwrap_or_default(),
             race: self.units.race(UnitId::Player).map(|(n, _)| n).unwrap_or_default(),
@@ -1123,21 +1123,21 @@ impl Live<'_, '_, '_> {
                 .map(|spell| spell.spell_id)
                 .filter(|id| *id != 0)?;
             let info = self.tables.as_ref()?.spellbook()?.info(spell)?;
-            Some(crate::game::api::cooldown_of(self.cooldowns, &info, self.now))
+            Some(crate::interface::api::cooldown_of(self.cooldowns, &info, self.now))
         };
         resolved().unwrap_or(IDLE_COOLDOWN)
     }
 
     /// The context an item plate is composed against — the same one a spell's
     /// is, since an item's "Use:" line is a spell's own sentence.
-    pub(super) fn item_context(&self) -> crate::game::api::TipContext<'_> {
+    pub(super) fn item_context(&self) -> crate::interface::api::TipContext<'_> {
         // **The race and class are the item plate's alone.** A spell plate has
         // no requirement lines, which is why the two other `TipContext`s below
         // leave them at zero rather than paying for the lookup.
         let (race, class) = Self::id("player")
             .and_then(|id| self.units.race_class_ids(id))
             .unwrap_or((0, 0));
-        crate::game::api::TipContext {
+        crate::interface::api::TipContext {
             level: self.tip_level(),
             race,
             class,
@@ -1154,7 +1154,7 @@ impl Live<'_, '_, '_> {
     /// …and the plate itself, from a template and the stack that is in hand.
     ///
     /// **Two caches, in that order, and the second one is the whole of why a
-    /// vendor's shelf had no tooltip.** [`crate::game::character::items::Inventory`]'s map
+    /// vendor's shelf had no tooltip.** [`crate::interface::items::Inventory`]'s map
     /// is the *carried* subset — built from `carried.entries()` and nothing else
     /// — so an entry the character does not own misses it by construction:
     /// every item on a merchant's shelf, in a corpse, on a quest page and in a
@@ -1175,7 +1175,7 @@ impl Live<'_, '_, '_> {
         &self,
         entry: u32,
         carried: Option<&vale_protocol::play::items::ItemSlot>,
-    ) -> Option<crate::game::api::ItemTip> {
+    ) -> Option<crate::interface::api::ItemTip> {
         // Held across the call so the borrowed and the owned template can share
         // one code path; `session_template` answers by value.
         let queried;
@@ -1186,7 +1186,7 @@ impl Live<'_, '_, '_> {
                 &queried
             }
         };
-        Some(crate::game::api::item_tip(
+        Some(crate::interface::api::item_tip(
             template,
             carried,
             self.tables.as_deref(),
@@ -1209,11 +1209,11 @@ impl UnitAnswers for Live<'_, '_, '_> {
     }
 
     fn binder_in_range(&self) -> bool {
-        crate::game::npc::binder::binder_in_range(self.binder, self.units)
+        crate::interface::binder::binder_in_range(self.binder, self.units)
     }
 
     fn untrainer_in_range(&self) -> bool {
-        crate::game::npc::untrainer::untrainer_in_range(self.untrainer, self.units)
+        crate::interface::untrainer::untrainer_in_range(self.untrainer, self.units)
     }
 
     fn unit_exists(&self, token: &str) -> bool {
@@ -1231,7 +1231,7 @@ impl UnitAnswers for Live<'_, '_, '_> {
             3 => 9.9,
             _ => return false,
         };
-        let Some((_, here)) = self.units.placed(crate::game::api::UnitId::Player) else {
+        let Some((_, here)) = self.units.placed(crate::interface::api::UnitId::Player) else {
             return false;
         };
         let Some((_, there)) = Self::id(token).and_then(|id| self.units.placed(id)) else {
@@ -1249,7 +1249,7 @@ impl UnitAnswers for Live<'_, '_, '_> {
         // hostile player, and any worldboss, report `-1`, which is what
         // `TargetFrame_CheckLevel`'s `targetLevel > 0` draws as the skull. The
         // rule is on
-        // [`crate::game::api::Units::level_shown`].
+        // [`crate::interface::api::Units::level_shown`].
         Self::id(token).map_or(-1, |id| self.units.level_shown(self.tables.as_deref(), id))
     }
 
@@ -1402,13 +1402,13 @@ impl UnitAnswers for Live<'_, '_, '_> {
         Some((internal.to_string(), localised.to_string()))
     }
 
-    fn unit_tooltip(&self, token: &str) -> Option<crate::game::api::UnitTip> {
+    fn unit_tooltip(&self, token: &str) -> Option<crate::interface::api::UnitTip> {
         let id = Self::id(token)?;
         let mut tip = self.units.unit_tip(self.tables.as_deref(), id)?;
         // **The zone line, resolved and filtered here** — this is the only side
         // holding `AreaTable` and the only side that knows what zone the
         // character is standing in. A member in the same zone gets no line; see
-        // [`crate::game::api::UnitTip::zone`].
+        // [`crate::interface::api::UnitTip::zone`].
         if let Some(zone) = self.units.party_zone(id) {
             if zone != self.place.zone {
                 tip.zone = self
@@ -1447,7 +1447,7 @@ impl UnitAnswers for Live<'_, '_, '_> {
 
 /// One held aura, flattened for the interface — the clock resolved against this
 /// frame's `now`, so a caller never has to know which base it was recorded in.
-pub(super) fn aura_info(aura: &crate::game::combat::auras::Aura, now: f64) -> super::panels::auras::AuraInfo {
+pub(super) fn aura_info(aura: &crate::interface::auras::Aura, now: f64) -> super::panels::auras::AuraInfo {
     super::panels::auras::AuraInfo {
         spell: aura.spell,
         icon: aura.icon.clone(),
@@ -1777,7 +1777,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 
     // **The hearthstone's two**, which have no panel of their own: one is read
     // by three `StaticPopupDialogs` entries and the other by one `OnUpdate`.
-    // See [`crate::game::npc::binder`].
+    // See [`crate::interface::binder`].
     globals.set(
         "GetBindLocation",
         scope.create_function(move |_, ()| Ok(answers.bind_location()))?,
@@ -2082,7 +2082,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     // `if SpellIsTargeting() then SetCursor(SpellCanTargetUnit(this.unit) and
     // "CAST_CURSOR" or "CAST_ERROR_CURSOR") end` — the interface asking which
     // pointer to show over a *unit frame*, where this client's own world pick
-    // (`game::target::spell_cursor_validity`) answers the same question about the
+    // (`interface::target::spell_cursor_validity`) answers the same question about the
     // 3D scene. `SetCursor` itself is still a stub, so what changes on screen
     // today is the world half; the frames' answers are correct and unused.
     let f = scope.create_function(|_, ()| Ok(one_or_nil(answers.spell_is_targeting())))?;
@@ -2106,14 +2106,14 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     // This client read `just_pressed(KeyCode::Escape)` in two other files for
     // all three of these until the key-bindings panel landed, which meant
     // Escape did three things at once and could be rebound away from none of
-    // them. See `game::combat::action::stop_casting` and
-    // `game::combat::target`'s `ClearTarget` arm.
+    // them. See `interface::action::stop_casting` and
+    // `interface::target`'s `ClearTarget` arm.
     {
         let queue = std::rc::Rc::clone(queue);
         let f = scope.create_function(move |_, ()| {
             let casting = answers.spell_is_casting();
             if casting {
-                queue.borrow_mut().push(crate::game::bindings::Binding::SpellStopCasting);
+                queue.borrow_mut().push(crate::input::bindings::Binding::SpellStopCasting);
             }
             Ok(one_or_nil(casting))
         })?;
@@ -2126,7 +2126,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
             if targeting {
                 queue
                     .borrow_mut()
-                    .push(crate::game::bindings::Binding::SpellStopTargeting);
+                    .push(crate::input::bindings::Binding::SpellStopTargeting);
             }
             Ok(one_or_nil(targeting))
         })?;
@@ -2144,7 +2144,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
             // its own.
             let had = answers.unit_exists("target");
             if had {
-                queue.borrow_mut().push(crate::game::bindings::Binding::ClearTarget);
+                queue.borrow_mut().push(crate::input::bindings::Binding::ClearTarget);
             }
             Ok(one_or_nil(had))
         })?;
@@ -2254,7 +2254,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 
 /// The stub world every test in this directory answers from.
 ///
-/// `pub(crate)` rather than `pub(super)`: [`crate::game::cvars`]'s own test
+/// `pub(crate)` rather than `pub(super)`: [`crate::settings::cvars`]'s own test
 /// drives a real [`super::host::LuaHost`] to check that a `SetCVar` reaches the
 /// resource, and a chunk cannot run without an `Answers`. `#[cfg(test)]`, so
 /// this widens nothing a shipped build can see.
@@ -2267,7 +2267,7 @@ pub(crate) mod tests {
         pub token: String,
         pub name: String,
         /// **The zone line a party member's plate gets**, empty for every other
-        /// unit — see [`crate::game::api::UnitTip::zone`].
+        /// unit — see [`crate::interface::api::UnitTip::zone`].
         pub zone: String,
         pub level: i32,
         pub health: u32,
@@ -2344,7 +2344,7 @@ pub(crate) mod tests {
         /// check the agreement has to be able to state both.
         pub tabs: Vec<(String, usize, usize)>,
         /// `(token, aura)` pairs in the order they were added, which is the
-        /// order the player's own bar keeps — see [`crate::game::combat::auras`].
+        /// order the player's own bar keeps — see [`crate::interface::auras`].
         pub auras: Vec<(String, crate::lua::panels::auras::AuraInfo)>,
         /// The character sheet's block, for whoever answers `"player"` — built
         /// by [`Stub::stats`] out of real update fields, so the tests over
@@ -2386,7 +2386,7 @@ pub(crate) mod tests {
         party: Vec<(String, bool)>,
         /// **The raid**: `(name, subgroup byte)` for the members the server
         /// names, *without* the local player — who is appended as the last slot
-        /// by [`crate::game::session::raid`]'s rule, and by this stub's own
+        /// by [`crate::interface::raid`]'s rule, and by this stub's own
         /// answer for the same reason. Empty is a party.
         raid: Vec<(String, u8)>,
         /// **Being dead**, as five plain fields — the two clocks and the three
@@ -2436,7 +2436,7 @@ pub(crate) mod tests {
         /// The third is deliberately template-less: it is what makes the
         /// `-1` quality and the missing icon checkable, and it is the state
         /// every bag is in for the first second of a login. See
-        /// [`crate::game::character::items`], where the two-phase fill is written up.
+        /// [`crate::interface::items`], where the two-phase fill is written up.
         pub fn bags(mut self) -> Stub {
             self.containers = vec![(0, vec![(2589, 20), (858, 5)]), (1, vec![])];
             self.worn = vec![(16, 19019, 1)];
@@ -2634,7 +2634,7 @@ pub(crate) mod tests {
         /// **A raid**, as the server's own list plus one: the members named
         /// here are `raid1..N` and the *local player* is `raid<N+1>`, which is
         /// the join the wire does not make — see
-        /// [`crate::game::session::raid`]. `own_flags` is our own subgroup byte,
+        /// [`crate::interface::raid`]. `own_flags` is our own subgroup byte,
         /// which is the only place the reader's column is stated.
         pub fn raid(mut self, members: &[(&str, u8)], own_flags: u8) -> Stub {
             self.raid = members
@@ -2704,7 +2704,7 @@ pub(crate) mod tests {
         /// …and the same slot with a range on it. `in_range` is the whole point
         /// of the pair: `Some(false)` is the red hotkey and `None` is a range
         /// the client cannot measure right now, which the interface draws
-        /// differently — see [`crate::game::api::is_action_in_range`].
+        /// differently — see [`crate::interface::api::is_action_in_range`].
         pub fn ranged_action(mut self, slot: u8, text: &str, in_range: Option<bool>) -> Stub {
             self = self.action(slot, text);
             if let Some(action) = self.actions.last_mut() {
@@ -2907,19 +2907,19 @@ pub(crate) mod tests {
         fn cursor_has_spell(&self) -> bool {
             false
         }
-        fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<crate::game::api::ItemTip> {
+        fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<crate::interface::api::ItemTip> {
             let (entry, _) = self.stub_slot(bag, slot)?;
             self.item_tip(entry)
         }
-        fn inventory_item_tip(&self, token: &str, id: u32) -> Option<crate::game::api::ItemTip> {
+        fn inventory_item_tip(&self, token: &str, id: u32) -> Option<crate::interface::api::ItemTip> {
             if token != "player" {
                 return None;
             }
             self.item_tip(self.stub_worn(id)?.0)
         }
-        fn item_tip(&self, entry: u32) -> Option<crate::game::api::ItemTip> {
+        fn item_tip(&self, entry: u32) -> Option<crate::interface::api::ItemTip> {
             let template = self.template(entry)?;
-            Some(crate::game::api::ItemTip {
+            Some(crate::interface::api::ItemTip {
                 name: template.name.clone(),
                 quality: template.quality,
                 inventory_type: template.inventory_type,
@@ -2995,7 +2995,7 @@ pub(crate) mod tests {
         fn quest_log_items(&self, _choices: bool) -> Vec<crate::lua::panels::quest::RewardLine> {
             Vec::new()
         }
-        fn quest_reward_spell_tip(&self, _from_log: bool) -> Option<crate::game::api::SpellTip> {
+        fn quest_reward_spell_tip(&self, _from_log: bool) -> Option<crate::interface::api::SpellTip> {
             None
         }
         fn quest_log_money(&self, _required: bool) -> u32 {
@@ -3094,8 +3094,8 @@ pub(crate) mod tests {
         fn buyback_entry(&self, row: usize) -> Option<u32> {
             (1..=2).contains(&row).then(|| 2589 + row as u32)
         }
-        fn repairs(&self) -> crate::game::npc::merchant::Repairs {
-            crate::game::npc::merchant::Repairs {
+        fn repairs(&self) -> crate::interface::merchant::Repairs {
+            crate::interface::merchant::Repairs {
                 can_repair: true,
                 cost: 1234,
                 priced: true,
@@ -3299,7 +3299,7 @@ pub(crate) mod tests {
         fn craft_tip_item(&self, _index: usize, _reagent: usize) -> Option<u32> {
             None
         }
-        fn craft_spell_tip(&self, _index: usize) -> Option<crate::game::api::SpellTip> {
+        fn craft_spell_tip(&self, _index: usize) -> Option<crate::interface::api::SpellTip> {
             None
         }
     }
@@ -3445,7 +3445,7 @@ pub(crate) mod tests {
             2
         }
         fn trainer_select(&self, _row: usize) {}
-        fn trainer_tooltip(&self, _row: usize) -> Option<crate::game::api::SpellTip> {
+        fn trainer_tooltip(&self, _row: usize) -> Option<crate::interface::api::SpellTip> {
             None
         }
         fn trainer_is_tradeskill(&self) -> bool {
@@ -3551,13 +3551,13 @@ pub(crate) mod tests {
         fn pet_has_action_bar(&self) -> bool {
             false
         }
-        fn pet_action_info(&self, _slot: usize) -> Option<crate::game::combat::pet::PetSlot> {
+        fn pet_action_info(&self, _slot: usize) -> Option<crate::interface::pet::PetSlot> {
             None
         }
         fn pet_action_cooldown(&self, _slot: usize) -> (f64, f64, u32) {
             (0.0, 0.0, 0)
         }
-        fn pet_action_tooltip(&self, _slot: usize) -> Option<crate::game::api::SpellTip> {
+        fn pet_action_tooltip(&self, _slot: usize) -> Option<crate::interface::api::SpellTip> {
             None
         }
         fn pet_actions_usable(&self) -> bool {
@@ -3584,7 +3584,7 @@ pub(crate) mod tests {
         fn pet_food_types(&self) -> Vec<String> {
             Vec::new()
         }
-        fn creature_family(&self, _unit: crate::game::api::UnitId) -> Option<String> {
+        fn creature_family(&self, _unit: crate::interface::api::UnitId) -> Option<String> {
             None
         }
         fn has_pet_spells(&self) -> Option<(u32, &'static str)> {
@@ -3647,7 +3647,7 @@ pub(crate) mod tests {
             false
         }
         fn unit_in_raid(&self, token: &str, _or_pet: bool) -> bool {
-            !self.raid.is_empty() && crate::game::api::UnitId::parse(token).is_some()
+            !self.raid.is_empty() && crate::interface::api::UnitId::parse(token).is_some()
         }
     }
 
@@ -3724,7 +3724,7 @@ pub(crate) mod tests {
         fn talent_prereqs(&self, _: usize, _: usize) -> Vec<crate::lua::panels::talent::TalentPrereq> {
             Vec::new()
         }
-        fn talent_tooltip(&self, _: usize, _: usize) -> Option<crate::game::api::SpellTip> {
+        fn talent_tooltip(&self, _: usize, _: usize) -> Option<crate::interface::api::SpellTip> {
             None
         }
     }
@@ -3763,9 +3763,9 @@ pub(crate) mod tests {
         fn spell_is_current_cast(&self, _: usize) -> bool {
             false
         }
-        fn spell_tooltip(&self, index: usize) -> Option<crate::game::api::SpellTip> {
+        fn spell_tooltip(&self, index: usize) -> Option<crate::interface::api::SpellTip> {
             let (name, rank) = self.spell_name(index)?;
-            Some(crate::game::api::SpellTip {
+            Some(crate::interface::api::SpellTip {
                 name,
                 rank,
                 ..Default::default()
@@ -3823,8 +3823,8 @@ pub(crate) mod tests {
         }
         /// A fixed, fully-populated tip for any filled slot, so the tooltip
         /// tests can assert on every line the law composes.
-        fn action_tooltip(&self, slot: u8) -> Option<crate::game::api::SpellTip> {
-            self.slot(slot).map(|action| crate::game::api::SpellTip {
+        fn action_tooltip(&self, slot: u8) -> Option<crate::interface::api::SpellTip> {
+            self.slot(slot).map(|action| crate::interface::api::SpellTip {
                 talent_rank: None,
                 name: action.text.clone(),
                 rank: "Rank 1".to_string(),
@@ -3840,7 +3840,7 @@ pub(crate) mod tests {
         /// **No stub slot is an item**, so a bar plate here is always the
         /// spell's — which is what keeps the tooltip tests below asserting on
         /// the composition they are about.
-        fn action_item_tooltip(&self, _: u8) -> Option<crate::game::api::ItemTip> {
+        fn action_item_tooltip(&self, _: u8) -> Option<crate::interface::api::ItemTip> {
             None
         }
         fn action_text(&self, slot: u8) -> Option<String> {
@@ -3882,7 +3882,7 @@ pub(crate) mod tests {
         }
         /// The stub has no spell cursor: the mode lives in a resource this
         /// harness does not build, and the two reads are checked where it does
-        /// (`game::action`).
+        /// (`interface::action`).
         fn spell_is_targeting(&self) -> bool {
             false
         }
@@ -4010,9 +4010,9 @@ pub(crate) mod tests {
         fn unit_is_pvp(&self, token: &str) -> bool {
             self.find(token).is_some_and(|unit| unit.pvp)
         }
-        fn unit_tooltip(&self, token: &str) -> Option<crate::game::api::UnitTip> {
+        fn unit_tooltip(&self, token: &str) -> Option<crate::interface::api::UnitTip> {
             let unit = self.find(token)?;
-            Some(crate::game::api::UnitTip {
+            Some(crate::interface::api::UnitTip {
                 name: unit.name.clone(),
                 sub_name: unit.sub_name.clone(),
                 level: unit.level,
@@ -4323,7 +4323,7 @@ pub(crate) mod tests {
     }
 
     /// **`GetTime` is the base every timer is in.** Not a wall clock and not a
-    /// second origin — see [`crate::game::api::get_time`].
+    /// second origin — see [`crate::interface::api::get_time`].
     #[test]
     fn get_time_is_the_clock_the_bars_scrub_against() {
         let world = Stub {
@@ -4566,7 +4566,7 @@ pub(crate) mod tests {
 /// Split from [`UnitAnswers`] rather than left beside it because they are two
 /// subjects that happened to share a file: one is about a creature in the
 /// world, the other about twelve slots and a cursor. Both stay in this module
-/// because their `Live` bodies read `crate::game::combat::action` and there is no
+/// because their `Live` bodies read `crate::interface::action` and there is no
 /// `lua::action` for them to move to — the bar's own registration is here.
 pub trait ActionAnswers {
 
@@ -4574,7 +4574,7 @@ pub trait ActionAnswers {
 
     fn has_action(&self, slot: u8) -> bool;
     /// `GetBonusBarOffset` — 0 for the ordinary bar, 1..4 for a form's own.
-    /// See [`crate::game::combat::action::ActionBar::bonus_bar`].
+    /// See [`crate::interface::action::ActionBar::bonus_bar`].
     fn bonus_bar_offset(&self) -> u8;
     /// `GetActionBarToggles` — which of the four **extra** bars are switched on,
     /// as a mask of [`vale_protocol::play::spells::multi_bar`] bits.
@@ -4582,11 +4582,11 @@ pub trait ActionAnswers {
     /// A mask rather than the four values the Lua call returns, because the four
     /// are a *presentation* of one byte the server keeps: splitting them here
     /// would put the bit order in three implementations instead of one. See
-    /// [`crate::game::combat::action::ActionBar::toggles`].
+    /// [`crate::interface::action::ActionBar::toggles`].
     fn action_bar_toggles(&self) -> u8;
     /// `GameTooltip:SetAction` — the data the spell tooltip is composed from,
     /// or `None` for a slot with nothing to say. See
-    /// [`crate::game::api::action_tooltip`].
+    /// [`crate::interface::api::action_tooltip`].
     fn action_tooltip(&self, slot: u8) -> Option<api::SpellTip>;
     /// …and the same call for a slot holding an **item**, which is a different
     /// plate entirely. `None` for a spell slot, so the two cannot both answer.
@@ -4602,15 +4602,15 @@ pub trait ActionAnswers {
     fn is_current_action(&self, slot: u8) -> bool;
     /// `IsAutoRepeatAction` — is this the ranged attack currently repeating?
     /// Beside [`Self::is_current_action`] because `ActionButton.lua` asks the
-    /// two together; see [`crate::game::api::is_auto_repeat_action`].
+    /// two together; see [`crate::interface::api::is_auto_repeat_action`].
     fn is_auto_repeat_action(&self, slot: u8) -> bool;
     /// `ActionHasRange` — is range a question about this button at all? See
-    /// [`crate::game::api::action_has_range`].
+    /// [`crate::interface::api::action_has_range`].
     fn action_has_range(&self, slot: u8) -> bool;
     /// `IsActionInRange` — **three answers, not two**: `Some(true)`,
     /// `Some(false)` and `None`, which the interface reads as `1`, `0` and
     /// `nil` and treats as three different things. See
-    /// [`crate::game::api::is_action_in_range`].
+    /// [`crate::interface::api::is_action_in_range`].
     fn is_action_in_range(&self, slot: u8) -> Option<bool>;
     /// `IsConsumableAction` — does `ActionButton_UpdateCount` write a stack
     /// count under this button? The rule is the item's, not the bar's; see
@@ -4631,7 +4631,7 @@ pub trait ActionAnswers {
     // reads plus two writes. `UnitFrame_OnEnter` asks both to choose between
     // `SetCursor("CAST_CURSOR")` and `SetCursor("CAST_ERROR_CURSOR")`, and
     // `TargetFrame_OnClick` asks the first to decide whether a click casts or
-    // retargets. See [`crate::game::combat::action::SpellTargeting`].
+    // retargets. See [`crate::interface::action::SpellTargeting`].
 
     /// `SpellIsTargeting()` — is a cast waiting to be pointed at something?
     fn spell_is_targeting(&self) -> bool;
@@ -4644,7 +4644,7 @@ pub trait ActionAnswers {
     /// channel, and an *ask* the server has not answered yet — the third
     /// matters because the bar waits for `SMSG_SPELL_START`, so there is a
     /// round trip in which a player who presses Escape means it and nothing is
-    /// yet "casting". See [`crate::game::combat::action::Casting`].
+    /// yet "casting". See [`crate::interface::action::Casting`].
     fn spell_is_casting(&self) -> bool;
     /// `SpellCanTargetUnit(unit)` — would the waiting cast take *this* one?
     ///
@@ -4666,7 +4666,7 @@ impl Live<'_, '_, '_> {
     /// `None` for three real states, and all three draw no swirl, which is right:
     /// the slot is not an item, the template has not arrived yet (every item's
     /// prototype is a round trip away — see
-    /// [`crate::game::character::items`]), or the item has no on-use spell at
+    /// [`crate::interface::items`]), or the item has no on-use spell at
     /// all, which is a garment sitting on the bar.
     fn item_action_spell(&self, slot: u8) -> Option<vale_assets::tables::spellbook::SpellInfo> {
         let entry = api::action_item(self.bar, slot)?;
@@ -4828,14 +4828,14 @@ impl ActionAnswers for Live<'_, '_, '_> {
     fn spell_can_target_unit(&self, token: &str) -> bool {
         // Re-asked through the same [`resolve_aim`] the click will run, rather
         // than off a cached answer — see
-        // [`crate::game::combat::target::spell_cursor_validity`], which asks the same
+        // [`crate::interface::target::spell_cursor_validity`], which asks the same
         // question about the *world* pick and for the same reason. `Unit(_)` is
         // the only yes: a spell that would bind implicitly is not one this frame
         // can be the target of.
         let answer = || {
             let tables = self.tables.as_ref()?;
             let info = tables.spellbook()?.info(self.targeting.spell()?)?;
-            let me = self.units.get(crate::game::api::UnitId::Player)?;
+            let me = self.units.get(crate::interface::api::UnitId::Player)?;
             let unit = self.units.get(Self::id(token)?)?;
             let who = vale_assets::tables::spellbook::Candidate {
                 guid: unit.guid,

@@ -366,7 +366,7 @@ fn click(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
         let Some(handler) = handler else {
             return Ok(());
         };
-        let arg = crate::game::events::EventArg::Text(
+        let arg = crate::interface::events::EventArg::Text(
             button.unwrap_or_else(|| "LeftButton".to_string()),
         );
         super::frames::call_handler(lua, &this, None, &[arg], &handler)

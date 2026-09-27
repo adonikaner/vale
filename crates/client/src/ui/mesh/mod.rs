@@ -191,8 +191,8 @@ struct Reads<'w> {
     models: Res<'w, crate::lua::widgets::model::UiModels>,
     portraits: Res<'w, crate::render::portraits::Portraits>,
     dolls: Res<'w, crate::render::paperdoll::Dolls>,
-    place: Res<'w, crate::game::place::minimap::MinimapView>,
-    cursor: Res<'w, crate::game::combat::cursor::Cursor>,
+    place: Res<'w, crate::interface::minimap::MinimapView>,
+    cursor: Res<'w, crate::interface::cursor::Cursor>,
     ui_scale: Res<'w, crate::ui::scale::InterfaceScale>,
     time: Res<'w, Time>,
 }

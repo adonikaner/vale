@@ -34,7 +34,7 @@
 //!
 //! The same split every other file here keeps, and the reason is the same: a
 //! write happens inside a handler with the world borrowed, so it records a
-//! [`PartyRequest`] and [`crate::game::session::party`] applies it. Two of the six carry
+//! [`PartyRequest`] and [`crate::interface::party`] applies it. Two of the six carry
 //! a *name* where the wire wants a guid, and resolving that needs the roster —
 //! which is why the queue holds requests rather than
 //! [`vale_protocol::socket::session::PartyVerb`]s.
@@ -51,11 +51,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::super::api::Answers;
-use crate::game::api::UnitId;
+use crate::interface::api::UnitId;
 
 /// **The guid behind a `party<n>` token**, out of the roster rather than out of
 /// the world — the one lookup that works for a member nobody can see.
-fn party_token_guid(party: &crate::game::session::party::Party, token: &str) -> Option<u64> {
+fn party_token_guid(party: &crate::interface::party::Party, token: &str) -> Option<u64> {
     let index: usize = token.to_ascii_lowercase().strip_prefix("party")?.parse().ok()?;
     Some(party.member(index)?.guid)
 }
