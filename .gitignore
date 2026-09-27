@@ -10,6 +10,8 @@
 # Edit folder of Vale IDE
 /Edit
 
+/Data
+
 # Python bytecode.
 __pycache__/
 *.pyc

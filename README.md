@@ -110,54 +110,67 @@ functions implemented and stubbed.
 
 ## Setup
 
-Requires [Rust](https://rustup.rs/). Lua is built from source by `mlua`, so
-nothing else needs to be installed.
+Requirements:
 
-The repository root can be used as a client install folder:
+- [Rust](https://rustup.rs/)
+- the 1.12.1 client data
+- a [vmangos](https://github.com/vmangos/core) server (realmd and mangosd)
 
-1. Put the 1.12.1 client data archives in `Data/`. To use another location,
-   set `VALE_GAMEDATA` to either the archive directory or the install folder.
-2. Name the server in `realmlist.wtf` in the repository root or in `WTF/`:
+The repository root works as a client install folder:
+
+1. Put the client data archives in `Data/`, or set `VALE_GAMEDATA` to another
+   location.
+2. Name the server in `realmlist.wtf`, in the repository root or in `WTF/`:
 
    ```
    set realmlist 127.0.0.1
    ```
 
-   A bare host uses realmd's default port, 3724. `set realmlist host:port`
-   names another.
-3. Type the account name at the login screen. It is remembered in
-   `WTF/Config.wtf`. The password is not stored. For a headless run
-   (`vale login`, `vale live`, or the client started with a character name)
-   set `VALE_PASSWORD`, and optionally `VALE_ACCOUNT`.
+### Editor server settings
 
-The editor's server features need the server's configuration. Set
-`VALE_MANGOSD` to the path of `mangosd.conf`, or `VALE_WORLDDB` to
-`host;port;user;password;database`.
+In the editor's **Server** panel, set:
+
+- **mangosd.conf**: your MaNGOS folder.
+- **vmangos tools**: the folder holding `mapextractor`, `vmapextractor`,
+  `VMapAssembler` and `MoveMapGenerator`, built in Release from the
+  `extractors` branch of
+  [adonikaner/core](https://github.com/adonikaner/core/tree/extractors).
 
 ## Running
 
+Build the client and the editor in debug, and the command-line tool with
+`--release`.
+
+### Client
+
 ```powershell
-cargo run -p vale-client                    # the client, at the login screen
-cargo run -p vale-client -- <character>     # the client, logged straight in
-cargo run -p vale-ide                       # Vale IDE
-cargo run -p vale-ide -- Kalimdor --at 1600,-4400   # a map and a position on it
-cargo run --release                         # `vale connect`: is the server up?
-cargo run --release -- live <character>     # a live session at a prompt
-cargo test --workspace                      # --workspace is required
+cargo run -p vale-client                  # login screen
+cargo run -p vale-client -- <character>   # log straight in (needs VALE_PASSWORD)
 ```
 
-Build the client and the editor in debug. Dependencies are optimised in the
-dev profile, and a debug build runs at interactive frame rates. Use
-`--release` for the command-line tool.
+The keys are the game's defaults. F4 opens the debug window, F12 saves a
+screenshot.
 
-`--workspace` is required for tests because `default-members` is the
-command-line tool, so a bare `cargo test` runs no tests.
+### Editor
 
-In the client the keys are the game's default bindings: WASD to move, Space to
-jump, Tab to target, Enter to chat. F4 opens the debug window, F5 toggles MSAA,
-F9 vsync, F10 sun shadows, and F12 saves a screenshot.
+```powershell
+cargo run -p vale-ide                               # Azeroth, last project
+cargo run -p vale-ide -- Kalimdor --at 1600,-4400   # a map and a position
+cargo run -p vale-ide -- --project <name>           # open or create a project
+```
 
-Scripted runs check a change without a person at the window:
+Projects are saved under `Edit/<name>/`. Ctrl+P playtests with the client.
+[EDITOR.md](EDITOR.md) describes the editor's tools and how to use them.
+
+### Command-line tool and tests
+
+```powershell
+cargo run --release                         # vale connect: is the server up?
+cargo run --release -- live <character>     # a live session at a prompt
+cargo test --workspace
+```
+
+### Scripted runs
 
 ```powershell
 cargo run -p vale-client -- <character> --shot look.png --view 15,10,0
@@ -167,9 +180,8 @@ cargo run -p vale-client -- --audit --panels    # open every panel
 cargo run -p vale-client -- --audit --clicks    # press every button
 ```
 
-`--view` is `distance,pitch°,yaw°`. `--without` removes named world layers,
-which is how the cost of a render pass is measured. `--hour hh:mm` sets the
-world clock. The `--audit` family opens no window and needs no server.
+`--view` is `distance,pitch,yaw` in degrees, `--without` hides named world
+layers, and `--hour hh:mm` sets the world clock.
 
 ## Layout
 
@@ -190,9 +202,6 @@ crates/mangos/     the server's world database tables, and the SQL an edit
                    produces
 crates/editor/     `vale-ide`, Vale IDE
 ```
-
-Each directory's `mod.rs` describes what it contains, and a test fails the
-build when one stops listing its modules.
 
 Protocol constants and packet layouts follow the vmangos source, including the
 opcode and update-field enums. The archive container format is handled by an external crate named in
