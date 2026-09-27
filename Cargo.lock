@@ -6464,7 +6464,6 @@ name = "vale-mangos"
 version = "0.1.0"
 dependencies = [
  "mysql",
- "vale-config",
  "vale-edit",
 ]
 

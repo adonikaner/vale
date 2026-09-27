@@ -1,5 +1,5 @@
-//! **`camera-settings.txt` — the two numbers a character keeps about the
-//! camera**: how far back it sits and how steep it looks.
+//! `camera-settings.txt`: the two numbers a character keeps about the camera,
+//! its distance behind the character and its pitch.
 //!
 //! ```text
 //! WTF\Account\<A>\<realm>\<character>\camera-settings.txt
@@ -7,18 +7,17 @@
 //!   cameraPitch 9.049930
 //! ```
 //!
-//! A real 5875 folder has one beside every character's `layout-cache.txt`,
-//! and the two numbers are the ones a player sets with the wheel and the
-//! right button and expects to find where they left them. Read once when the
-//! character lands in the world, written on the way out of it — the same two
-//! ends every per-character file here has. See
-//! [`vale_assets::interface::wtf::CAMERA_SETTINGS_NAME`] for the format
-//! and what about it is a reading.
+//! A real 1.12 folder has one beside every character's `layout-cache.txt`.
+//! The player sets both numbers with the mouse wheel and the right button and
+//! expects them to be kept. The file is read when the character enters the
+//! world and written when the character leaves it, like every per-character
+//! file here. See [`vale_assets::interface::wtf::CAMERA_SETTINGS_NAME`] for the
+//! format and which part of it is inferred.
 //!
-//! The distance is yards and clamped the way the wheel clamps it; the pitch
-//! is degrees in the file and radians on [`crate::world::camera::CameraRig`],
-//! clamped to the rig's own limit. A file that is missing or says nothing
-//! leaves the rig where the login put it.
+//! The distance is in yards and is clamped as the mouse wheel clamps it. The
+//! pitch is in degrees in the file and in radians on
+//! [`crate::world::camera::CameraRig`], clamped to the rig's limit. A missing
+//! or empty file leaves the rig where the login placed it.
 
 use bevy::prelude::*;
 use std::path::PathBuf;
@@ -26,14 +25,15 @@ use std::path::PathBuf;
 use vale_assets::interface::wtf;
 
 use crate::world::camera::{CameraRig, CLOSEST, PITCH_LIMIT};
-use crate::world::session::{Session, WorldStatus};
+use crate::world::session::{ClientConfig, Session, WorldStatus};
 
-/// Where this character's file is, and which character it was read for.
+/// The path of this character's file, and which character it was read for.
 #[derive(Resource, Default)]
 pub struct CameraCache {
     path: Option<PathBuf>,
-    /// `(account, realm, character)` the file was read for — re-read when any
-    /// of the three changes, which is a second character in one session.
+    /// `(account, realm, character)` the file was read for. The file is read
+    /// again when any of the three changes, as for a second character in one
+    /// session.
     read_for: Option<(String, String, String)>,
 }
 
@@ -48,12 +48,17 @@ impl Plugin for CameraCachePlugin {
     }
 }
 
-/// **Read the file when the character lands**, and put the two numbers on the
-/// rig. Once per character: a second character of the same session reads its
-/// own.
+/// Read the file when the character enters the world, and set the two numbers
+/// on the rig. Once per character: a second character in the same session
+/// reads its own file.
+///
+/// The account falls back to `Config.wtf`'s `accountName` when the session
+/// has none, as for every other file under `WTF\Account\`; see
+/// [`vale_config::account_of`].
 fn load(
     session: Res<Session>,
     status: Res<WorldStatus>,
+    config: Res<ClientConfig>,
     mut cache: ResMut<CameraCache>,
     mut rig: ResMut<CameraRig>,
 ) {
@@ -64,7 +69,7 @@ fn load(
         return;
     }
     let key = (
-        active.account.clone(),
+        config.0.account_for([Some(active.account.as_str())]),
         active.realm.clone(),
         status.character.clone(),
     );
@@ -72,7 +77,7 @@ fn load(
         return;
     }
     cache.path = wtf::character_file_path(&key.0, &key.1, &key.2, wtf::CAMERA_SETTINGS_NAME)
-        .map(PathBuf::from);
+        .map(|path| config.0.path(path));
     cache.read_for = Some(key);
     let Some(path) = cache.path.as_ref() else {
         return;
@@ -96,8 +101,8 @@ fn load(
     );
 }
 
-/// **Write it on the way out of the world**, while the rig is still the
-/// character's.
+/// Write the file when leaving the world, while the rig still belongs to the
+/// character.
 fn save_on_logout(
     mut leaving: MessageReader<super::super::events::PlayerLeavingWorld>,
     cache: Res<CameraCache>,
@@ -109,7 +114,7 @@ fn save_on_logout(
     write(&cache, &rig);
 }
 
-/// …and at exit, for the reason [`super::super::cvars::save`] gives.
+/// Write the file at exit, for the reason [`super::super::cvars::save`] gives.
 fn save(mut exits: MessageReader<AppExit>, cache: Res<CameraCache>, rig: Res<CameraRig>) {
     if exits.read().next().is_none() {
         return;
@@ -121,14 +126,8 @@ fn write(cache: &CameraCache, rig: &CameraRig) {
     let Some(path) = cache.path.as_ref() else {
         return;
     };
-    if let Some(dir) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(dir) {
-            warn!("camera settings not written: {} ({e})", dir.display());
-            return;
-        }
-    }
     let text = wtf::render_camera_settings(rig.distance, rig.pitch.to_degrees());
-    match std::fs::write(path, text) {
+    match vale_config::write_file(path, text) {
         Ok(()) => info!("camera settings to {}", path.display()),
         Err(e) => warn!("camera settings not written: {} ({e})", path.display()),
     }

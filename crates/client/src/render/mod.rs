@@ -1,77 +1,81 @@
-//! Turning parsed game data into what is on screen.
+//! The passes that turn parsed game data into what is on screen.
 //!
 //! ```text
 //! terrain.rs    the 3x3 of tiles, one mesh per TerrainDraw group
-//! models.rs     M2 -> meshes + M2Material; the loader thread
+//! models/       M2 -> meshes + M2Material; the loader thread
 //! doodads.rs    MDDF placements as entities
-//! foliage.rs    …and the *ground's* own: the grass, merged per chunk
+//! foliage.rs    the ground's own foliage: the grass, merged per chunk
 //! wmos.rs       MODF buildings, through the M2 material
-//! ships.rs      …and the ones nothing places: the boats and the zeppelins,
+//! ships.rs      the buildings no file places: the boats and the zeppelins,
 //!               which the server spawns and which move
-//! globalwmo.rs  …and the twenty maps that are *only* one of those: an
-//!               instance's WDT names a building where an outdoor map names
-//!               tiles, and nothing above this line would ever ask for it
-//! water.rs      …and the one surface either of them draws that *moves*: the
-//!               liquid flipbook, and the colour every drop of it takes
-//! particles.rs  the emitters those models carry: the sim and the quads
-//! ribbons.rs    the *trails* they carry: a weapon's streak, a missile's tail
-//! missiles.rs   the thing a cast throws — a model with a velocity, no owner
-//! lightning.rs  …and the one it *strings*: a bolt between two units, whose
-//!               geometry is a DBC row rather than a file
-//! decals.rs     …and where it lands: the floor art, painted *onto* the ground
-//! selection.rs  which unit is which: the ring under the target, the hover brighten
-//! reticle.rs    …and the third caller of that idea: the circle under an aimed cast
-//! shadows.rs    the blob every unit stands on — all of them, as one mesh
-//! questmarks.rs the ! and the ? over a giver's head
-//! labels.rs     …and the *name* over every head that gets one — text as a
-//!               billboarded quad in the world, so it is occluded like anything
-//!               else there rather than painted over the frame
-//! portraits.rs  the faces on the unit frames — SetPortraitTexture's other half
-//! paperdoll.rs  …and the *bodies*: a unit drawn into a <PlayerModel> frame's
-//!               own rectangle, which is SetUnit's other half. The character
-//!               sheet, the pet panel, the dress-up frame, the tabard designer
-//! present.rs    what a framebuffer number *means*, and the quad that ships it
-//! glow.rs       …and the one thing 1.12 does to that frame before it ships:
-//!               the full-screen glow, three passes in the client's own order
+//! globalwmo.rs  the twenty maps that are one building: an instance's WDT names
+//!               a building where an outdoor map names tiles, and no other
+//!               pass in this directory would load it
+//! water.rs      the moving surface drawn by the terrain and building passes:
+//!               the liquid flipbook, and the colour of every liquid surface
+//! particles.rs  the emitters those models carry: the simulation and the quads
+//! ribbons.rs    the trails they carry: a weapon's streak, a missile's tail
+//! missiles.rs   the object a cast throws: a model with a velocity and no owner
+//! lightning.rs  the bolt a spell draws between two units, whose geometry is a
+//!               DBC row rather than a file
+//! decals.rs     the floor art where a spell lands, projected onto the ground
+//! selection.rs  which unit is which: the ring under the target, the hover highlight
+//! reticle.rs    the circle under a cast being aimed at the ground, the third
+//!               user of the decal projector
+//! shadows.rs    the blob shadow every unit stands on, all of them as one mesh
+//! questmarks.rs the ! and the ? over a quest giver's head
+//! labels.rs     the name over every head that has one: text as a billboarded
+//!               quad in the world, so it is hidden behind what is in front of
+//!               it rather than painted over the frame
+//! portraits.rs  the faces on the unit frames, the rendering side of
+//!               SetPortraitTexture
+//! paperdoll.rs  a whole unit drawn into a <PlayerModel> frame's rectangle, the
+//!               rendering side of SetUnit: the character sheet, the pet panel,
+//!               the dress-up frame, the tabard designer
+//! present.rs    what a framebuffer value means, and the quad that presents it
+//! glow.rs       the one post-process 1.12 applies to the frame: the full-screen
+//!               glow, three passes in the client's own order
 //! sky.rs        Light.dbc -> the frame: sun, fill, fog, dome
-//! night.rs      …and the one grade over that which is *not* a reading of
-//!               anything: a deep volumetric night this game does not have.
-//!               Its shader is `shaders/night.wgsl`, apart from the rest for
-//!               the same reason: everything else there describes the game
-//! lamps.rs      …and the other half of it: an additive emitter — a torch, a
-//!               brazier, a spell landing — lighting the world around it
-//! stars.rs      the star field hanging in that sky, which does not move
-//! weather.rs    …and what falls out of it: the rain, the snow and the sand
-//!               the server states, drawn as the reference's three emitters
-//! celestial.rs  …and the three things in it that do: the sun, the two moons
-//! focus.rs      where all of the above is centred, and which map it is: the
-//!               four facts the streaming passes need, so that none of them
-//!               takes a socket to answer
-//! residency.rs  what all of the above is still holding on to, and when it lets go
-//! tuning.rs     …and which of them is drawn at all: one switch per layer
-//! overlay.rs    …and the opposite instrument: what is drawn *about* the world
-//!               rather than in it — the wireframe, the boxes, the frusta, the
-//!               solid triangles underfoot, the spike up each unit's heading
-//! glue.rs       …and the one scene that is not the world: the login screen
-//! draws.rs      what the frame actually cost, per phase
-//! nothing.rs    …and what a per-frame mesh holds on a frame with no geometry
-//! axes.rs       the one place WoW's frame becomes Bevy's
-//! lens.rs       …and the one place its field of view does: the reference's
-//!               single perspective build, whose fov argument is a diagonal
-//! shaders/      the WGSL, embedded — see the note below
+//! night.rs      a deep volumetric night the game does not have, applied as a
+//!               grade over the sky's result. Its shader, `shaders/night.wgsl`,
+//!               is kept apart from the others, which all describe the game
+//! lamps.rs      light from additive emitters (a torch, a brazier, a spell
+//!               landing) on the world around them
+//! stars.rs      the star field, which does not move
+//! weather.rs    the rain, the snow and the sand the server states, drawn as
+//!               the 1.12.1 client's three emitters
+//! celestial.rs  the sun and the two moons, which move across the sky
+//! focus.rs      where the drawn world is centred and which map it is: the
+//!               four facts the streaming passes need, so none of them needs a
+//!               socket to answer
+//! residency.rs  what the passes above still hold, and when they release it
+//! tuning.rs     which world layers are drawn: one switch per layer
+//! overlay.rs    what is drawn about the world rather than in it: the wireframe,
+//!               the boxes, the frusta, the solid triangles underfoot, the
+//!               heading line over each unit; `diagnostics` only
+//! glue.rs       the one scene that is not the world: the login screen
+//! draws.rs      draw calls per phase, counted in the render world;
+//!               `diagnostics` only
+//! nothing.rs    the mesh a per-frame pass holds on a frame with no geometry
+//! axes.rs       the one place WoW's coordinate frame becomes Bevy's
+//! lens.rs       the one place its field of view does: the 1.12.1 client's single
+//!               perspective build, whose field-of-view argument is a diagonal
+//! shaders/      the WGSL, embedded; see the note below
 //! ```
 //!
-//! Everything here receives geometry and pixels and never file bytes: the
-//! formats are parsed in `vale-assets` and the *rules* about what to draw are
-//! decided there too (see `assets::dress`). What is left for this module is the
-//! half that genuinely needs a renderer running.
+//! Every pass here receives geometry and pixels, never file bytes. The formats
+//! are parsed in `vale-assets`, and the rules about what to draw are decided
+//! there too (see `assets::dress`). This directory holds the part that needs a
+//! renderer running.
 //!
-//! **The shaders live here because `embedded_asset!` resolves against the
-//! calling file's own directory.** Their asset URIs are therefore
-//! `embedded://vale_client/render/shaders/*.wgsl`, and moving either the
-//! `shaders/` directory or the three files that embed them (`models`, `sky`,
-//! `terrain`) breaks the path in a way that fails at *runtime* rather than at
-//! compile time — an unresolved shader handle, not a missing file.
+//! ## Why the shaders are in this directory
+//!
+//! `embedded_asset!` resolves a path against the directory of the file that
+//! calls it. The shaders' asset URIs are therefore
+//! `embedded://vale_client/render/shaders/*.wgsl`. Moving the `shaders/`
+//! directory, or one of the three modules that embed them (`models`, `sky`,
+//! `terrain`), breaks the path at run time, as a shader handle that never
+//! resolves, and not at compile time as a missing file.
 
 pub mod axes;
 pub mod celestial;
@@ -79,6 +83,9 @@ pub mod decals;
 pub mod doodads;
 pub mod focus;
 pub mod foliage;
+// Used only by `ui::debug` and the `--shot` numbers, which are both behind the
+// `diagnostics` feature.
+#[cfg(feature = "diagnostics")]
 pub mod draws;
 pub mod globalwmo;
 pub mod glue;
@@ -114,183 +121,166 @@ pub mod wmos;
 
 /// Every pass in this directory, as one plugin.
 ///
-/// **This is what a new pass registers itself in, instead of `lib.rs`.** Adding
-/// a rendering subsystem used to mean editing the crate root — which is why so
-/// many rounds that changed one pass touched the top of the crate as well, and
-/// why the list up there had already been nested once to get under
-/// `add_plugins`' sixteen. The ordering notes that used to live beside it live
-/// here, next to the passes they are about.
+/// A new pass registers itself here, not in `lib.rs`. The ordering notes for
+/// the passes are here too, beside the passes they describe.
 ///
-/// The three directories each own one of these ([`crate::world::WorldPlugins`],
-/// [`crate::ui::UiPlugins`]), so `lib.rs` names three plugins and the shape of
-/// the crate is the shape of the app.
+/// Each of the three directories that draw owns one of these
+/// ([`crate::world::WorldPlugins`], [`crate::ui::UiPlugins`] and this one), so
+/// `lib.rs` names three plugins.
 pub struct RenderPlugins;
 
 impl bevy::app::Plugin for RenderPlugins {
     fn build(&self, app: &mut bevy::app::App) {
-        // **What of the world is drawn**, read by a system in each pass's own
-        // file rather than applied from here — see [`tuning`], which says why a
-        // central switchboard would fight the three passes that decide their
-        // own visibility. Registered unconditionally: the resource is a dozen
-        // bools and the systems that read it are already there for other
-        // reasons; what compiles out with `diagnostics` is the window.
+        // Which world layers are drawn. Each pass reads it in a system in its
+        // own file; see [`tuning`] for why one central switch would conflict
+        // with the three passes that decide their own visibility. Registered
+        // in every build: the resource is a dozen bools and the systems that
+        // read it exist for other reasons. What `diagnostics` removes is the
+        // window that sets it.
         app.init_resource::<tuning::WorldTuning>();
-        // **Where the world being drawn is** — see [`focus`]. Written by the
-        // session while there is one and by whatever is driving the view while
-        // there is not, which is what lets a host with no server stream a map.
+        // Where the drawn world is; see [`focus`]. The session writes it while
+        // there is one, and whatever drives the view writes it otherwise, so a
+        // host with no server can stream a map.
         app.init_resource::<focus::WorldFocus>();
         app.add_plugins((
-            // **First, because it decides what a framebuffer number means.**
-            // It inserts the `WorldFrame` the world camera aims at — a
-            // `Plugin::build` insert, so `world::camera::spawn` finds it
-            // whatever order the startup systems run in — and it puts the UI on
-            // a camera of its own. See its module doc: everything else in this
-            // directory writes bytes now, and this is why.
-            // …and, grouped with it because `add_plugins` takes sixteen, the
-            // reference's one post-process over the frame: a pass in the world
-            // camera's own post-process set, on the byte-space main texture
-            // the present pass's argument is about.
+            // First, because it decides what a framebuffer value means. It
+            // inserts the `WorldFrame` the world camera renders to, in
+            // `Plugin::build`, so `world::camera::spawn` finds it whatever order
+            // the startup systems run in, and it gives the interface a camera of
+            // its own. See its module doc for why every other pass here writes
+            // byte-space values.
+            // Grouped with it, because `add_plugins` takes at most sixteen: the
+            // 1.12.1 client's one post-process, a pass in the world camera's
+            // post-process set on the byte-space main texture.
             (present::PresentPlugin, glow::GlowPlugin),
-            // The sky before the passes that are lit by it, because it
-            // registers the shader library both of their fragment shaders
-            // import — and with it the star field and the sun and moons, both
-            // of which read its `WorldClock`.
-            // …and, grouped with them because it is a grade over what they
-            // resolve, the one deviation from the table in this directory. See
-            // [`night`]: it is off in daylight by construction, so it changes
-            // nothing about the three above until the light itself is dark.
+            // The sky before the passes it lights, because it registers the
+            // shader library both of their fragment shaders import. The star
+            // field, the sun and the moons are grouped with it and read its
+            // `WorldClock`.
+            // Also grouped here, as a grade over what these produce: the one
+            // deliberate deviation from the 1.12.1 client in this directory.
+            // See [`night`]: it is the identity in daylight, so it changes
+            // nothing about the three above until the light is dark.
             (
                 sky::SkyPlugin,
                 stars::StarPlugin,
                 celestial::CelestialPlugin,
                 night::NightPlugin,
-                // …and the lights the night is what makes visible. After the
-                // particle pass in *system* order rather than in registration
-                // order, which it states on itself — see its own module doc.
+                // The lights that the night makes visible. They run after the
+                // particle pass by a system ordering that the lamp module
+                // states, not by registration order; see its module doc.
                 lamps::LampPlugin,
                 weather::WeatherPlugin,
             ),
             models::ModelPlugin,
             terrain::TerrainPlugin,
-            // …and the maps that have no terrain at all: one building, named
-            // by the WDT itself. It hosts it on a tile of its own so that the
-            // pass below takes it without a second spawner — see its module
-            // doc, and note that its ordering against that pass is stated
-            // there rather than here.
+            // The maps with no terrain: one building, named by the WDT. It is
+            // placed on a tile of its own so the building pass below spawns it
+            // without a second spawner. Its ordering against that pass is
+            // stated in its module doc.
             globalwmo::GlobalWmoPlugin,
-            // A building hands its interior furniture to the doodad pass
-            // through the tile's `PendingDoodads`. That ordering is stated by
-            // `DoodadPlugin` as an `.after(wmos::spawn_wmos)` rather than left
-            // to the two systems' conflicting access to the component — plugin
-            // *registration* order says nothing about system order in Bevy, so
-            // the sequence these are listed in is documentation and not a
-            // constraint.
+            // A building passes its interior furniture to the doodad pass
+            // through the tile's `PendingDoodads`. `DoodadPlugin` states that
+            // ordering as `.after(wmos::spawn_wmos)` rather than relying on the
+            // two systems' conflicting access to the component. The order in
+            // which plugins are registered does not order their systems in
+            // Bevy, so the order of this list documents but does not
+            // constrain.
             (
                 wmos::WmoPlugin,
-                // …and the buildings no file places: a boat and a zeppelin are
-                // game objects the server spawns, so they cannot go through the
-                // tile's own `PendingWmos`. They share the cache above and
-                // nothing else — see `ships`, whose ordering against it is only
-                // that the cache is asked, which is a resource and not a
-                // component.
+                // The buildings no file places. A boat or a zeppelin is a game
+                // object the server spawns, so it does not go through the
+                // tile's `PendingWmos`. It shares the building cache and
+                // nothing else; its only ordering against the building pass is
+                // that it asks the cache, which is a resource, not a component.
+                // See `ships`.
                 ships::ShipPlugin,
                 doodads::DoodadPlugin,
-                // …and the population that is *not* a placement: the ground's
-                // own grass, merged per chunk rather than spawned per tuft.
-                // Unordered against either of the two above — it reads the
-                // tile's own plans and the model cache, and hands nothing to
-                // anybody.
+                // The ground's own grass, merged per chunk rather than spawned
+                // per tuft. Not ordered against the two passes above: it reads
+                // the tile's plans and the model cache and passes nothing on.
                 foliage::FoliagePlugin,
-                // …and the half of what those two spawn that neither can keep:
-                // every liquid surface's flipbook frame and its colour, both of
-                // which change while nothing is being loaded. Grouped with the
-                // two passes that spawn the surfaces it dresses, and because
-                // `add_plugins` takes sixteen. See its module doc, where the
-                // tile seam it removes is.
+                // The liquid surfaces' flipbook frame and colour, which change
+                // while nothing is loading. Grouped with the two passes that
+                // spawn the surfaces, and because `add_plugins` takes at most
+                // sixteen. See its module doc for the tile seam it removes.
                 water::WaterPlugin,
             ),
-            // The projectile a spell throws hangs off neither end of it, so it
-            // is not part of the entity pass — but it builds its model through
-            // the same cache and poses it with the same code.
+            // A spell's projectile is attached to neither the caster nor the
+            // target, so it is not part of the entity pass, but it builds its
+            // model through the same cache and poses it with the same code.
             missiles::MissilePlugin,
-            // …and so do particles: an emitter's quads draw through the same
-            // material, and the doodad stream and the entity pass are what
-            // spawn them.
-            // **Nested, because `add_plugins` takes sixteen** — and nested
-            // with each other rather than arbitrarily: these three are the
-            // spell effects that hang off nothing, drawn through one material
-            // pool with three different kernels.
+            // Particles draw their quads through the same material, and the
+            // doodad stream and the entity pass spawn them.
+            // Nested because `add_plugins` takes at most sixteen. These three
+            // are the spell effects attached to no model, drawn through one
+            // material pool with three different kernels.
             (
                 particles::ParticlePlugin,
-                // …and the trails beside them: the same owner-liveness rules
-                // and the same material, a different kernel.
+                // Trails, with the same owner-liveness rules and the same
+                // material, and a different kernel.
                 ribbons::RibbonPlugin,
-                // …and the one draw in the world whose *geometry* comes out of
-                // a DBC rather than out of a file: the bolt a spell strings
-                // between two units. Same material pool, no model at all. See
-                // its module doc, which says which half of the shape is
-                // measured and which half is a reading.
+                // The one draw in the world whose geometry comes from a DBC
+                // row and not from a file: the bolt a spell draws between two
+                // units. Same material pool, no model. Its module doc says
+                // which parts of the shape are measured and which are inferred.
                 lightning::LightningPlugin,
             ),
-            // …and the floor art, on the same owner-liveness rule again: a
-            // batch that would have been a flat plane at the caster's feet,
-            // drawn instead as a mesh that follows the ground. See its module
-            // doc for which half of that is the game's own behaviour.
+            // The floor art, under the same owner-liveness rule: a batch that
+            // would be a flat plane at the caster's feet, drawn instead as a
+            // mesh that follows the ground. Its module doc says which part of
+            // that is the 1.12.1 client's behaviour.
             decals::DecalPlugin,
-            // …and the first caller that is not a spell effect: the ring under
-            // the target, which the reference draws through this same projector
-            // and which is why `decals` names it as its obvious next caller.
-            // After it, because it spawns decals the projection then reads.
+            // The first user of the decal projector that is not a spell
+            // effect: the ring under the target, which the 1.12.1 client draws
+            // through the same projector. After the decal pass, because it
+            // spawns decals the projection then reads.
             selection::SelectionPlugin,
-            // …and the third caller of the same projector, which is the one the
-            // reference itself puts through it from the world frame rather
-            // than from an object: the green-or-red circle under a cast being
-            // aimed at a patch of floor.
+            // The third user of the projector, which the 1.12.1 client drives
+            // from the world rather than from an object: the green or red
+            // circle under a cast being aimed at the ground.
             reticle::ReticlePlugin,
-            // …and the blob every unit stands on, which is a pass rather than a
-            // child entity for one measured reason: the sorted transparent
-            // phase merges only adjacent runs, so a hundred blobs were a
-            // hundred draw calls. See its module doc.
+            // The blob shadow under every unit. It is one pass rather than a
+            // child entity per unit because the sorted transparent phase merges
+            // only adjacent runs, so a hundred blobs were a hundred draw calls.
+            // See its module doc.
             shadows::ShadowPlugin,
-            // **The one scene in this directory that is not the world**: the
-            // M2 behind the login and character screens, drawn through the
-            // camera the file itself carries. It goes through the same
-            // `ModelCache` as everything above and aims the same world camera,
-            // which is why it is a pass here rather than in `ui/` — the
-            // interface is what is drawn *over* it.
-            // **Grouped, because `add_plugins` takes sixteen** — and grouped
-            // with each other rather than arbitrarily, since they are the two
-            // passes in this directory that draw something which is not the
-            // world: the screens before it, and the faces on top of it.
+            // The one scene in this directory that is not the world: the M2
+            // behind the login and character screens, drawn through the camera
+            // the file carries. It uses the same `ModelCache` and the same world
+            // camera as the passes above, so it is a pass here and not in
+            // `ui/`; the interface is drawn over it.
+            // Grouped because `add_plugins` takes at most sixteen. The five
+            // passes in this group draw models that are not part of the world:
+            // the screens before it, and the models drawn on the interface.
             (
                 glue::GluePlugin,
-                // …each a camera of its own aimed at a model of its own on a
-                // render layer of its own. Same `ModelCache`, same dressing
-                // rule, its own light rig — see its module doc for the three
-                // deviations that costs.
+                // Each portrait is a camera of its own, aimed at a model of its
+                // own, on a render layer of its own. Same `ModelCache`, same
+                // dressing rule, its own lights. Its module doc lists the three
+                // deviations that causes.
                 portraits::PortraitPlugin,
-                // …and the same machinery at the other framing: a whole body
-                // into a `<PlayerModel>`'s rectangle rather than a head into a
-                // 64-unit square. Its layers start where the portraits' nine
-                // end and it says so in terms of them.
+                // The same method at a different framing: a whole body in a
+                // `<PlayerModel>`'s rectangle rather than a head in a 64-unit
+                // square. Its render layers start where the portraits' nine
+                // end.
                 paperdoll::PaperDollPlugin,
-                // …and the third: the `!` and the `?` over a quest giver's
-                // head, which are models rather than quads — see
-                // [`vale_assets::tables::questmark`], where the table is.
+                // The `!` and the `?` over a quest giver's head, which are
+                // models rather than quads; see
+                // [`vale_assets::tables::questmark`] for the table.
                 questmarks::QuestMarkPlugin,
-                // …and the names, which are the same shape one subject over:
-                // something reconciled over a head every frame. See
-                // [`labels`] for why it is here and not in `ui/`.
+                // The names over heads, which are also reconciled over each
+                // head every frame. See [`labels`] for why the pass is here and
+                // not in `ui/`.
                 labels::LabelPlugin,
             ),
-            // Last, because it is about all of the above: what they are still
-            // holding, and the teardown when the session ends.
+            // Last, because it concerns all the passes above: what they still
+            // hold, and the teardown when the session ends.
             residency::ResidencyPlugin,
-            // …and after even that, because it draws *over* all of it: the
-            // wireframe, the boxes and the two overlays this project wrote
-            // itself. Behind `diagnostics` with the window that drives it —
-            // see [`overlay`], which says why this one is gated where
-            // [`tuning`] is not.
+            // After that, because it draws over everything: the wireframe, the
+            // boxes and the two overlays this project added. Behind
+            // `diagnostics`, with the window that controls it; see [`overlay`]
+            // for why it is gated and [`tuning`] is not.
             #[cfg(feature = "diagnostics")]
             overlay::OverlayPlugin,
         ));
@@ -299,25 +289,24 @@ impl bevy::app::Plugin for RenderPlugins {
 
 /// The URIs the embedded shaders resolve under.
 ///
-/// **Named here because they are the one thing in this crate that a move breaks
-/// silently.** `embedded_asset!` computes its key from `file!()`, and the
-/// `ShaderRef` a material returns is a hand-written string that has to predict
-/// it; the two are only related by someone getting the path right twice. A
-/// mismatch compiles, links, and fails at *runtime* as a shader handle that
-/// never resolves — which reads as a black or missing surface rather than as an
-/// error naming the file.
+/// Named here because they are the one thing in this crate that moving a file
+/// breaks with no compile error. `embedded_asset!` computes its key from
+/// `file!()`, and the `ShaderRef` a material returns is a hand-written string
+/// that must match it. A mismatch compiles and links, and at run time the
+/// shader handle never resolves, which shows as a black or missing surface and
+/// not as an error naming the file.
 ///
-/// **A `.wgsl` therefore lives in the directory of the module that embeds it**,
-/// which is why `m2.wgsl` and `m2_prepass.wgsl` sit under `models/` and the
-/// other three here. Each is asserted against the macro itself — these two in
-/// [`tests`], the m2 pair in `models`'s own tests, because the assertion has to
-/// be made from a file with the same `file!()` parent as the embedder.
+/// Each `.wgsl` is therefore in the directory of the module that embeds it:
+/// `m2.wgsl` and `m2_prepass.wgsl` under `models/`, and the others here. Each
+/// URI is checked against the macro, from a file with the same `file!()`
+/// parent as the embedding module: this directory's in [`tests`], the M2
+/// shaders in `models`'s own tests.
 pub mod shader {
     pub const M2: &str = "embedded://vale_client/render/models/shaders/m2.wgsl";
     pub const M2_PREPASS: &str =
         "embedded://vale_client/render/models/shaders/m2_prepass.wgsl";
-    /// The vertex stage, which this crate owns only so that the ground foliage
-    /// can sway — see `m2_vertex.wgsl`, and `wind.wgsl` beside it.
+    /// The vertex stage. This crate has its own so that ground foliage can
+    /// sway; see `m2_vertex.wgsl` and `wind.wgsl` beside it.
     pub const M2_VERTEX: &str = "embedded://vale_client/render/models/shaders/m2_vertex.wgsl";
     pub const M2_PREPASS_VERTEX: &str =
         "embedded://vale_client/render/models/shaders/m2_prepass_vertex.wgsl";
@@ -332,10 +321,11 @@ pub mod shader {
     pub const WEATHER: &str = "embedded://vale_client/render/shaders/weather.wgsl";
 }
 
-/// The `embedded://` URI a shader beside `file` resolves to.
+/// The `embedded://` URI of a shader in the calling file's `shaders/`
+/// directory.
 ///
-/// Takes the calling file's own `embedded_path!` so the answer is computed the
-/// way the macro computes it rather than spelled out a second time.
+/// It takes the calling file's `embedded_path!`, so the answer is computed as
+/// the macro computes it rather than written out a second time.
 #[cfg(test)]
 #[macro_export]
 macro_rules! embedded_shader_uri {
@@ -354,13 +344,13 @@ macro_rules! embedded_shader_uri {
 mod tests {
     use super::shader;
 
-    /// The two shader URIs embedded from *this* directory are what
-    /// `embedded_asset!` will actually key them under.
+    /// The URIs of the shaders embedded from this directory are the keys
+    /// `embedded_asset!` registers them under.
     ///
-    /// `sky.rs`, `stars.rs`, `celestial.rs` and `terrain.rs` live beside this
-    /// module, so their `file!()` parent is the same as this one's and the macro
-    /// agrees. Moving any of them out of `render/`, or moving `shaders/`, fails
-    /// here rather than at a login.
+    /// `sky.rs`, `stars.rs`, `celestial.rs` and `terrain.rs` are in this
+    /// directory, so their `file!()` parent is this module's and the macro
+    /// gives the same answer. Moving one of them out of `render/`, or moving
+    /// `shaders/`, fails this test rather than failing at a login.
     #[test]
     fn the_shader_uris_are_the_paths_the_macro_registers() {
         assert_eq!(shader::CELESTIAL, crate::embedded_shader_uri!("celestial.wgsl"));

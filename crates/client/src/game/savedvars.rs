@@ -1,9 +1,9 @@
-//! **`WTF\Account\<A>\SavedVariables.lua` — the settings that are not CVars**,
-//! read once an account is known and written on the way out.
+//! `WTF\Account\<A>\SavedVariables.lua`: the interface settings that are not
+//! CVars, read once the account is known and written when the session ends.
 //!
-//! The same two ends [`super::cvars`] has for `WTF\Config.wtf`, over a
-//! different store and a different file, because the interface has two habits
-//! and this client had only noticed one:
+//! This is the same read-at-start, write-at-exit pair [`super::cvars`] has for
+//! `WTF\Config.wtf`, over a different store and a different file. The
+//! interface saves settings in two ways:
 //!
 //! ```text
 //! cvar row   SetCVar(name, value)          ->  WTF\Config.wtf                    (install-wide)
@@ -11,100 +11,97 @@
 //!            + RegisterForSave(name)
 //! ```
 //!
-//! **Forty-four of `UIOptionsFrameCheckButtons`' rows are `uvar`s** — buff
-//! durations, the action-bar lock, target-of-target, party pets, both chat
-//! settings, all thirteen combat-text ones — and with `RegisterForSave` stubbed
-//! to nothing every one of them worked for the session and was gone on the next
-//! launch. See [`crate::lua::api::savedvars`] for the mechanism and
+//! Forty-four of `UIOptionsFrameCheckButtons`' rows are `uvar`s: buff
+//! durations, the action bar lock, target of target, party pets, both chat
+//! settings and all thirteen combat text settings. With `RegisterForSave` a
+//! stub, each of them worked for the session and was lost at the next start.
+//! See [`crate::lua::api::savedvars`] for the mechanism and
 //! [`vale_assets::interface::wtf::SAVED_VARIABLES_NAME`] for the file.
 //!
-//! ## Why the account is the session's, and why that took three rounds
+//! ## Which account the file belongs to
 //!
-//! This module has been reported broken three times, and the third fault was
-//! the plainest: **the account was fixed at start-up, off `Config.wtf`'s
-//! `accountName`**, which `AccountLogin.lua` writes only when *Remember account
-//! name* is ticked. On an install where nobody ticked it there was no account,
-//! so [`SavedVariables::path`] was `None` for the life of the process, nothing
-//! was read, and nothing was written — and the only evidence was a file whose
-//! date stopped moving while the key bindings' file beside it, which asks the
-//! *session* for its account, kept saving every day. So the account here is
-//! the one that logged in: [`crate::world::session::ActiveSession::account`]
-//! once in the world, [`crate::world::session::Handshake::account`] at the
-//! character screen, and `Config.wtf`'s only when neither exists. The file is
-//! re-read whenever that changes, so two accounts in one process each get
-//! their own.
+//! The account is the one that logged in:
+//! [`crate::world::session::ActiveSession::account`] in the world,
+//! [`crate::world::session::Handshake::account`] at the character screen, and
+//! `Config.wtf`'s `accountName` only when neither exists; see
+//! [`vale_config::account_of`]. `AccountLogin.lua` writes `accountName` only
+//! when the Remember account name box is ticked. When this module took the
+//! account from `accountName` at start, an install where nobody ticked the box
+//! had no account, so [`SavedVariables::path`] stayed `None` and the file was
+//! never read or written. The file is read again whenever the account
+//! changes, so two accounts in one process each use their own file.
 //!
-//! ## Three things this owes the ordering, and each is a different failure
+//! ## Ordering
 //!
-//! * **The apply is before `VARIABLES_LOADED`**, which is
-//!   [`crate::lua::host`]'s own note: `UIOptionsFrame_Init` reads each `uvar`'s
-//!   global to draw its checkbox, so a value applied afterwards draws the panel
-//!   at the default and then disagrees with it. [`crate::lua::api::savedvars`]
-//!   applies a name's value *at its registration* as well, so either order of
-//!   file and directory comes out the same.
-//! * **…and it happens once per *host*, not once per session.**
-//!   `lua::host::unload_interface` throws the entire `LuaHost` away at both
-//!   edges of a session, so a latch kept beside the file fired on the login
-//!   screen's host and never on the world's. The gate is
-//!   [`crate::lua::host::LuaHost::needs_saved_variables`]: it lives on the
-//!   host, so a fresh one asks to be seeded by construction. **And a host is
-//!   not marked seeded while there is no account** — marking it would be a
-//!   host seeded with nothing that never asks again, which is the third fault
-//!   restated one layer down.
-//! * **The write is in `Last`**, for the reason [`super::cvars::save`] is: Bevy
-//!   tests `AppExit` after the whole schedule, so a system at the end of it
-//!   sees the message in the only frame there is going to be — **and on the
-//!   way out of the *world* as well**, before the teardown that takes the
-//!   registry with it. See [`save_on_logout`], which is ordered before
-//!   `unload_interface` for the reason `keybindings::save_on_logout` is.
+//! * The values are applied before `VARIABLES_LOADED`; see
+//!   [`crate::lua::host`]. `UIOptionsFrame_Init` reads each `uvar`'s global to
+//!   draw its checkbox, so a value applied later draws the panel at the
+//!   default and then disagrees with it. [`crate::lua::api::savedvars`] also
+//!   applies a name's value when the name is registered, so the result is the
+//!   same whichever of the file and the directory comes first.
+//! * The values are applied once per interpreter, not once per session.
+//!   `lua::host::unload_interface` replaces the whole `LuaHost` at both ends
+//!   of a session. A flag kept in this module was set by the login screen's
+//!   interpreter and never cleared for the world's, so the world's interpreter
+//!   was never given the file. The flag is
+//!   [`crate::lua::host::LuaHost::needs_saved_variables`], which is on the
+//!   interpreter, so a new one asks by construction. An interpreter is not
+//!   marked as given the file while there is no account, because it would
+//!   then never ask again.
+//! * The write runs in `Last`, for the reason [`super::cvars::save`] does: Bevy
+//!   checks `AppExit` after the whole schedule, so a system at the end sees
+//!   the message in the last frame. It also runs when leaving the world,
+//!   before the interpreter that holds the registered globals is replaced.
+//!   See [`save_on_logout`], which is ordered before `unload_interface` for
+//!   the same reason `keybindings::save_on_logout` is.
 //!
-//! ## …and one thing it deliberately does not do
+//! ## No dirty flag
 //!
-//! **There is no dirty flag.** `Config.wtf` has one because it is 5875's own
-//! and because a user who never opened the options panel must not acquire a
-//! settings file. This file cannot be acquired
-//! by accident in the same way: it is written only when something *registered*,
-//! which is `UIOptionsFrame`'s load, and its contents are the panel's own
-//! defaults until they are not.
+//! `Config.wtf` has a dirty flag, because the 1.12.1 client has one and a
+//! player who never opens the options panel must not get a settings file. This
+//! file cannot be created that way: it is written only when a name was
+//! registered, which is `UIOptionsFrame`'s load, and until the player changes
+//! something its contents are the panel's defaults.
 //!
-//! ## The earlier file is still read
+//! ## The earlier file
 //!
-//! For two rounds this client wrote the same pairs to
-//! `WTF\Account\<A>\config-cache.wtf` in `SET` lines, on a mistaken reading
-//! that stopped at the file's extension. A folder that has one of those
-//! and no `SavedVariables.lua` yet is read from it once, so nothing a player
-//! saved under the old name is lost; the next write goes to the right file.
+//! This client used to write the same pairs to
+//! `WTF\Account\<A>\config-cache.wtf` as `SET` lines. A folder that has that
+//! file and no `SavedVariables.lua` is read from it once, so no saved setting
+//! is lost, and the next write goes to `SavedVariables.lua`.
 
 use bevy::prelude::*;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use vale_assets::interface::wtf::{self, SavedValue};
+use vale_config::Config;
 
-/// **What the file carried**, held for the one system that applies it — and
-/// where to write it back.
+use crate::world::session::ClientConfig;
+
+/// The file's contents, held for the system that applies them, and where to
+/// write them back.
 ///
-/// `path` is `None` until an account is known, which is a client sitting at the
-/// login screen of a fresh install: nothing to read, and nowhere to save to.
+/// `path` is `None` until an account is known, as on the login screen of a
+/// fresh install: there is nothing to read and nowhere to save to.
 #[derive(Resource, Default)]
 pub struct SavedVariables {
     /// The account the file was read for, as the session spelled it. `None`
     /// until a session names one.
     account: Option<String>,
-    /// `Config.wtf`'s `accountName`, read once at start — the fallback for a
-    /// process that has not logged in yet.
-    config_account: String,
+    /// The install folder and `Config.wtf`'s `accountName`, which is the
+    /// account for a process that has not logged in yet.
+    config: Config,
     pub path: Option<PathBuf>,
-    /// The pairs read off the file, in the order it held them.
+    /// The pairs read from the file, in file order.
     pub values: Vec<(String, SavedValue)>,
-    /// **Which addons' account files have been handed to this host**, so the
-    /// per-frame pass reads each once. Cleared when the host is fresh, so a
-    /// rebuilt interpreter reads the files again — which are the ones the
-    /// last session wrote at its exit.
+    /// The addons whose account files have been given to the current
+    /// interpreter, so each is read once. Cleared when the interpreter is
+    /// new, so a rebuilt interpreter reads the files the last session wrote.
     addons_read: std::collections::BTreeSet<String>,
-    /// …and the per-character ones, for [`Self::character`].
+    /// The same, for the per-character files; see [`Self::character`].
     character_addons_read: std::collections::BTreeSet<String>,
-    /// `(realm, character)` the world session is for, which is where
-    /// `## SavedVariablesPerCharacter` files are. `None` at the glue.
+    /// `(realm, character)` of the world session, which locates
+    /// `## SavedVariablesPerCharacter` files. `None` at the login screens.
     pub character: Option<(String, String)>,
 }
 
@@ -112,68 +109,54 @@ pub struct SavedVariablesPlugin;
 
 impl Plugin for SavedVariablesPlugin {
     fn build(&self, app: &mut App) {
-        let config = vale_config::Config::load();
+        let config = app
+            .world()
+            .get_resource::<ClientConfig>()
+            .map(|config| config.0.clone())
+            .unwrap_or_default();
         app.insert_resource(SavedVariables {
-            config_account: config.account,
+            config,
             ..SavedVariables::default()
         })
-        // **In `GameSet`, like the CVar mirror**, and gated on the
-        // interface being up rather than on a schedule position: the
-        // directory is loaded by an `Update` system of its own and the
-        // globals do not exist before it has run.
-        // **After the addon board is seeded**, since the addons whose files
-        // this reads are the board's list.
+        // In `GameSet`, like the CVar mirror. It waits for the interface to
+        // exist rather than for a point in the schedule, because the directory
+        // is loaded by an `Update` system of its own and the globals do not
+        // exist before that runs. After the addon list is filled, because the
+        // addons whose files this reads are the ones on that list.
         .add_systems(Update, apply.in_set(super::GameSet).after(super::session::addons::seed))
-        // **Before the interpreter is thrown away**, which is where the
-        // registered globals live — see [`save_on_logout`], and
-        // `keybindings::save_on_logout`, which is the same ordering against
-        // the same teardown for the same reason.
+        // Before the interpreter holding the registered globals is replaced;
+        // see [`save_on_logout`], and `keybindings::save_on_logout`, which is
+        // ordered against the same teardown for the same reason.
         .add_systems(
             Update,
             save_on_logout.before(crate::lua::host::unload_interface),
         )
-        // …and the same write against the same teardown at the other door,
-        // which is `ReloadUI()`. See [`save_on_reload`].
+        // The same write before `ReloadUI()` replaces the interpreter; see
+        // [`save_on_reload`].
         .add_systems(
             Update,
             save_on_reload.before(crate::lua::host::reload_interface),
         )
-        // …and the same `Last` the settings file is written from, for the
-        // same reason. See [`super::cvars::save`].
+        // In `Last`, like the settings file. See [`super::cvars::save`].
         .add_systems(Last, save);
     }
 }
 
-/// **Which account this process is for right now**, in the order the module
-/// note gives: the world's, the character screen's, `Config.wtf`'s. Empty when
-/// none of the three knows.
-fn account_of(active: Option<&str>, selection: Option<&str>, config_account: &str) -> String {
-    fn named(account: Option<&str>) -> Option<&str> {
-        account.map(str::trim).filter(|a| !a.is_empty())
-    }
-    named(active)
-        .or_else(|| named(selection))
-        .unwrap_or(config_account.trim())
-        .to_string()
-}
-
-/// **Read `WTF\Account\<ACCOUNT>\SavedVariables.lua`.**
+/// Read `WTF\Account\<ACCOUNT>\SavedVariables.lua` under the install folder.
 ///
-/// A missing file is the ordinary case — it is what a first run looks like —
-/// so it answers an empty list rather than saying anything, and then looks for
-/// this client's own earlier `config-cache.wtf` once. An empty account answers
-/// no path at all; see [`SavedVariables::path`].
+/// A missing file is normal on a first run, so it answers an empty list and
+/// then tries this client's earlier `config-cache.wtf` once. A blank account
+/// answers no path; see [`SavedVariables::path`].
 ///
-/// **Says where the file is, every time it is read.** Three reports of this
-/// module have each been a *missing* line rather than a wrong one — no
-/// account, no path, no write, no complaint — and one line naming the path
-/// turns "it still does not work" into a five-second answer.
-fn read(account: &str, config_account: &str) -> SavedVariables {
-    let Some(path) = wtf::saved_variables_path(account).map(PathBuf::from) else {
+/// It logs the file's path every time it reads. When this module failed
+/// before, the symptom was a missing file and no message, and a log line
+/// naming the path makes that visible.
+fn read(account: &str, config: &Config) -> SavedVariables {
+    let Some(path) = wtf::saved_variables_path(account).map(|path| config.path(path)) else {
         warn!("saved variables: no account name — nothing will be loaded or saved");
         return SavedVariables {
             account: None,
-            config_account: config_account.to_string(),
+            config: config.clone(),
             path: None,
             values: Vec::new(),
             addons_read: Default::default(),
@@ -191,7 +174,7 @@ fn read(account: &str, config_account: &str) -> SavedVariables {
             );
             values
         }
-        Err(_) => read_earlier_file(account).unwrap_or_else(|| {
+        Err(_) => read_earlier_file(account, config).unwrap_or_else(|| {
             info!(
                 "saved variables: account {account} -> {} (no file yet)",
                 path.display()
@@ -201,7 +184,7 @@ fn read(account: &str, config_account: &str) -> SavedVariables {
     };
     SavedVariables {
         account: Some(account.to_string()),
-        config_account: config_account.to_string(),
+        config: config.clone(),
         path: Some(path),
         values,
         addons_read: Default::default(),
@@ -210,10 +193,10 @@ fn read(account: &str, config_account: &str) -> SavedVariables {
     }
 }
 
-/// The module note's last section: a `config-cache.wtf` this client wrote
-/// under its earlier reading, read once so nothing saved there is lost.
-fn read_earlier_file(account: &str) -> Option<Vec<(String, SavedValue)>> {
-    let path = wtf::config_cache_path(account).map(PathBuf::from)?;
+/// Read a `config-cache.wtf` this client wrote in an earlier version, so
+/// nothing saved there is lost. See the module doc's last section.
+fn read_earlier_file(account: &str, config: &Config) -> Option<Vec<(String, SavedValue)>> {
+    let path = wtf::config_cache_path(account).map(|path| config.path(path))?;
     let text = std::fs::read_to_string(&path).ok()?;
     let values: Vec<(String, SavedValue)> = wtf::parse(&text)
         .into_iter()
@@ -227,21 +210,20 @@ fn read_earlier_file(account: &str) -> Option<Vec<(String, SavedValue)>> {
     Some(values)
 }
 
-/// Put them onto the globals as soon as there is an interpreter and an
-/// account to put them on — **once for each interpreter there is**, which is
-/// at least two a session, and again whenever the account changes.
+/// Set the file's values on the globals once there is an interpreter and an
+/// account. This happens once per interpreter, which is at least twice a
+/// session, and again whenever the account changes.
 ///
-/// **Before `VARIABLES_LOADED` is a property of the schedule rather than of
-/// this system**, and it is worth saying which: `GameSet` runs before
-/// `lua::host`'s load pass raises it in the same frame the directory finishes
-/// loading, and this runs on every frame before that one — so by the time the
-/// last `OnLoad` has run, the globals are already the file's. That holds for
-/// the world's host exactly as it did for the glue's, which is the point: a
-/// fresh host is seeded on the frames before it loads a directory, not after.
+/// The values are applied before `VARIABLES_LOADED` because of the schedule,
+/// not because of anything in this system. `GameSet` runs before `lua::host`'s
+/// load system, which raises `VARIABLES_LOADED` in the frame the directory
+/// finishes loading, and this system runs on every frame before that one. So
+/// the globals hold the file's values before the last `OnLoad` runs, for the
+/// world's interpreter as for the login screen's.
 ///
-/// **A host with no account is left unmarked.** See the module note: marking
-/// it would be a host seeded with nothing that never asks again, and the
-/// account arrives a few frames later when the login lands.
+/// An interpreter with no account is not marked as given the file; see the
+/// module doc. The account arrives a few frames later, when the login
+/// completes.
 fn apply(
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
     session: Res<crate::world::session::Session>,
@@ -249,29 +231,28 @@ fn apply(
     mut saved: ResMut<SavedVariables>,
 ) {
     let Some(mut host) = host else { return };
-    let account = account_of(
+    let account = saved.config.account_for([
         session.active.as_ref().map(|active| active.account.as_str()),
         session.selection.as_ref().map(|handshake| handshake.account.as_str()),
-        &saved.config_account,
-    );
+    ]);
     if account.is_empty() {
         return;
     }
     let changed = saved.account.as_deref() != Some(account.as_str());
     if changed {
-        *saved = read(&account, &saved.config_account.clone());
+        *saved = read(&account, &saved.config.clone());
     }
     if changed || host.needs_saved_variables() {
         host.apply_saved_variables(&saved.values);
-        // A fresh host has none of the addons' files either.
+        // A new interpreter has none of the addons' files either.
         saved.addons_read.clear();
         saved.character_addons_read.clear();
     }
 
-    // **…and each addon's own files, once each per host**, handed over as
-    // text: the board runs them when the addon loads, or the host runs them
-    // now if it already has. The list is the board's, which
-    // `session::addons::seed` fills before this runs.
+    // Each addon's own files, once per interpreter, passed as text. The addon
+    // list runs them when the addon loads, or the interpreter runs them now if
+    // the addon has already loaded. The list is filled by
+    // `session::addons::seed`, which runs before this system.
     let character = session
         .active
         .as_ref()
@@ -290,9 +271,10 @@ fn apply(
         .collect();
     for (addon, per_account, per_character) in wanted {
         if per_account && saved.addons_read.insert(addon.clone()) {
-            let path = wtf::addon_saved_variables_path(&account, &addon);
-            if let Some(text) = path.as_deref().and_then(|p| std::fs::read_to_string(p).ok()) {
-                info!("saved variables: {addon} -> {}", path.unwrap_or_default());
+            let path = wtf::addon_saved_variables_path(&account, &addon)
+                .map(|path| saved.config.path(path));
+            if let Some(text) = path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()) {
+                info!("saved variables: {addon} -> {}", path.unwrap_or_default().display());
                 host.apply_addon_saved_variables(&addon, crate::lua::panels::addons::Scope::Account, &text);
             }
         }
@@ -300,9 +282,10 @@ fn apply(
             if saved.character_addons_read.insert(addon.clone()) {
                 let path = vale_assets::interface::addons::character_addon_saved_variables_path(
                     &account, &realm, &character, &addon,
-                );
-                if let Some(text) = path.as_deref().and_then(|p| std::fs::read_to_string(p).ok()) {
-                    info!("saved variables: {addon} -> {}", path.unwrap_or_default());
+                )
+                .map(|path| saved.config.path(path));
+                if let Some(text) = path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()) {
+                    info!("saved variables: {addon} -> {}", path.unwrap_or_default().display());
                     host.apply_addon_saved_variables(&addon, crate::lua::panels::addons::Scope::Character, &text);
                 }
             }
@@ -310,11 +293,12 @@ fn apply(
     }
 }
 
-/// **Write it back on the way out**, from whatever the registered globals hold.
+/// Write the file at exit, from the values the registered globals hold.
 ///
-/// Silent when nothing registered — a session that never loaded the options
-/// panel has nothing to say — and `warn!`s a failed write, because a settings
-/// file that silently does not save is exactly the bug this module is for.
+/// Nothing is logged when nothing was registered, because a session that
+/// never loaded the options panel has nothing to save. A failed write is
+/// logged with `warn!`, because a settings file that fails to save with no
+/// message is the bug this module exists to prevent.
 fn save(
     mut exits: MessageReader<AppExit>,
     saved: Res<SavedVariables>,
@@ -323,26 +307,24 @@ fn save(
     if exits.read().next().is_none() {
         return;
     }
-    let (Some(path), Some(host)) = (saved.path.as_ref(), host) else {
-        return;
-    };
-    write(path, &host, saved.character.as_ref());
+    let Some(host) = host else { return };
+    write(&saved, &host);
 }
 
-/// **Write it while the registry is still there** — logging out, not only
-/// quitting.
+/// Write the file when leaving the world, while the registered globals still
+/// exist.
 ///
-/// `lua::host::unload_interface` throws the whole `LuaHost` away on
-/// `PLAYER_LEAVING_WORLD`, and every `RegisterForSave`d name is on it. So a
-/// client that wrote only at `AppExit` wrote nothing at all for the ordinary way
-/// a session ends — log out, look at the character list, close the window — and
-/// [`write`]'s own empty guard was the only thing between the player and a
-/// truncated file. `keybindings::save_on_logout` is the same system against the
-/// same teardown.
+/// `lua::host::unload_interface` replaces the whole `LuaHost` on
+/// `PLAYER_LEAVING_WORLD`, and every `RegisterForSave`d name is on it. A
+/// client that wrote only at `AppExit` wrote nothing for the usual way a
+/// session ends (log out, go to the character list, close the window), and
+/// only [`write`]'s check for an empty list kept the file from being
+/// truncated. `keybindings::save_on_logout` does the same against the same
+/// teardown.
 ///
-/// **The ordering is stated because it is the whole point.** Both are `Update`
-/// systems reading the same message; unordered, this would as often as not read
-/// a host that had already been replaced.
+/// Both this system and the teardown are `Update` systems reading the same
+/// message. Without the stated ordering this would sometimes read an
+/// interpreter that had already been replaced.
 fn save_on_logout(
     mut leaving: MessageReader<super::events::PlayerLeavingWorld>,
     saved: Res<SavedVariables>,
@@ -351,18 +333,15 @@ fn save_on_logout(
     if leaving.read().next().is_none() {
         return;
     }
-    let (Some(path), Some(host)) = (saved.path.as_ref(), host) else {
-        return;
-    };
-    write(path, &host, saved.character.as_ref());
+    let Some(host) = host else { return };
+    write(&saved, &host);
 }
 
-/// **…and before a `ReloadUI()`**, which is the same teardown with the world
-/// left standing — see [`crate::lua::host::reload_interface`].
+/// Write the file before a `ReloadUI()`, which replaces the interpreter and
+/// leaves the world running; see [`crate::lua::host::reload_interface`].
 ///
-/// This one is not a nicety and it is the whole reason an addon reloads. A
-/// setting an addon changes lives in a Lua global until something writes it
-/// down: pfUI's first-run wizard is
+/// An addon's changed setting is held in a Lua global until something writes
+/// it. pfUI's first-run wizard ends with
 ///
 /// ```lua
 /// _G["pfUI_config"] = CopyTable(pfUI_profiles["Modern"])
@@ -370,15 +349,13 @@ fn save_on_logout(
 /// ReloadUI()
 /// ```
 ///
-/// — so a reload that did not write first would rebuild the interface off the
-/// *previous* file and the wizard would open again, every time, having appeared
-/// to do nothing. [`apply`] reads both files straight back on the next frame,
-/// because a fresh host answers `needs_saved_variables`.
+/// so a reload that did not write first would rebuild the interface from the
+/// previous file, and the wizard would open again every time. [`apply`] reads
+/// both files back on the next frame, because a new interpreter answers
+/// `needs_saved_variables`.
 ///
-/// **The ordering is stated because it is the whole point**, exactly as in
-/// [`save_on_logout`]: both are `Update` systems reading the same message, and
-/// unordered this would as often as not read a host that had already been
-/// replaced.
+/// Ordered before the reload for the reason [`save_on_logout`] is: both are
+/// `Update` systems reading the same message.
 fn save_on_reload(
     mut pressed: MessageReader<super::bindings::BindingPressed>,
     saved: Res<SavedVariables>,
@@ -392,64 +369,46 @@ fn save_on_reload(
     if !asked {
         return;
     }
-    let (Some(path), Some(host)) = (saved.path.as_ref(), host) else {
-        return;
-    };
-    write(path, &host, saved.character.as_ref());
+    let Some(host) = host else { return };
+    write(&saved, &host);
 }
 
-/// The write both exits make, in one place so they cannot drift.
+/// The write all three systems make, in one function.
 ///
-/// **Silent when nothing registered.** A host that never loaded the options
-/// panel — the glue screen's, or a session that quit at the login box — has
-/// nothing to say, and saying it would truncate whatever the last real session
-/// wrote.
-fn write(path: &Path, host: &crate::lua::host::LuaHost, character: Option<&(String, String)>) {
+/// It does nothing when nothing was registered. An interpreter that never
+/// loaded the options panel, such as the login screen's or one from a session
+/// that quit at the login box, has nothing to save, and writing an empty file
+/// would erase what the last session saved.
+fn write(saved: &SavedVariables, host: &crate::lua::host::LuaHost) {
+    let (Some(path), Some(account)) = (saved.path.as_ref(), saved.account.as_deref()) else {
+        return;
+    };
     let values = host.saved_variables();
     if values.is_empty() {
         return;
     }
-    if let Some(dir) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(dir) {
-            warn!("saved variables not written: {} ({e})", dir.display());
-            return;
-        }
-    }
     let text = wtf::render_lua_assignments(values.iter().map(|(n, v)| (n.as_str(), v)));
-    match std::fs::write(path, text) {
+    match vale_config::write_file(path, text) {
         Ok(()) => info!("{} saved variable(s) to {}", values.len(), path.display()),
         Err(e) => warn!("saved variables not written: {} ({e})", path.display()),
     }
-    // **…and each loaded addon's own files**: the account-scoped one in the
-    // `SavedVariables\` folder beside this file, the character-scoped one
-    // three directories down. The previous file is kept as `.bak` first,
-    // which is what a real folder holds beside every one of them.
-    let Some(account) = path
-        .parent()
-        .and_then(Path::file_name)
-        .and_then(|name| name.to_str())
-    else {
-        return;
-    };
+    // Each loaded addon's own files: the account copy in the `SavedVariables\`
+    // folder beside this file, and the character copy three directories
+    // deeper. The previous file is first copied to `.bak`, as a real 1.12
+    // folder has beside each of them.
     for (addon, scope, text) in host.addon_saved_variables() {
         let file = match scope {
             crate::lua::panels::addons::Scope::Account => wtf::addon_saved_variables_path(account, &addon),
-            crate::lua::panels::addons::Scope::Character => character.and_then(|(realm, name)| {
+            crate::lua::panels::addons::Scope::Character => saved.character.as_ref().and_then(|(realm, name)| {
                 vale_assets::interface::addons::character_addon_saved_variables_path(account, realm, name, &addon)
             }),
         };
         let Some(file) = file else { continue };
-        let file = PathBuf::from(file);
-        if let Some(dir) = file.parent() {
-            if let Err(e) = std::fs::create_dir_all(dir) {
-                warn!("saved variables not written: {} ({e})", dir.display());
-                continue;
-            }
-        }
+        let file = saved.config.path(file);
         if file.is_file() {
             let _ = std::fs::copy(&file, file.with_extension("lua.bak"));
         }
-        match std::fs::write(&file, text) {
+        match vale_config::write_file(&file, text) {
             Ok(()) => info!("{addon}'s saved variables to {}", file.display()),
             Err(e) => warn!("saved variables not written: {} ({e})", file.display()),
         }
@@ -459,39 +418,25 @@ fn write(path: &Path, host: &crate::lua::host::LuaHost, character: Option<&(Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
-    /// **No account, no file** — and that is not a degradation, it is the only
-    /// honest answer: a saved variable belongs to an account and a client that
-    /// has never logged in has none.
+    /// No account means no file. A saved variable belongs to an account, and a
+    /// client that has never logged in has none.
     #[test]
     fn a_client_with_no_account_has_nowhere_to_save() {
-        let saved = read("", "");
+        let saved = read("", &Config::default());
         assert!(saved.path.is_none());
         assert!(saved.values.is_empty());
     }
 
-    /// **The account is the session's before it is the file's.** This is the
-    /// third fault in the module note: an install whose `Config.wtf` names no
-    /// account still logs in as somebody, and that somebody owns the file.
-    #[test]
-    fn the_account_is_the_sessions_and_the_file_is_only_a_fallback() {
-        assert_eq!(account_of(None, None, "CONFIG"), "CONFIG");
-        assert_eq!(account_of(None, None, ""), "", "no session, no file: nobody");
-        assert_eq!(account_of(None, Some("Typed"), "CONFIG"), "Typed", "the login box wins");
-        assert_eq!(account_of(Some("InWorld"), Some("Typed"), "CONFIG"), "InWorld");
-        assert_eq!(account_of(Some("  "), Some("Typed"), "CONFIG"), "Typed", "blank is absent");
-    }
-
-    /// **The whole round trip, through a real interpreter** — which is the one
-    /// part of this that is wiring rather than format, and the part that was
-    /// missing: `RegisterForSave` was a stub, so every step below produced
-    /// nothing at all.
+    /// The whole round trip through a real interpreter: register, set, take
+    /// the values, render, parse, apply, read back.
     ///
-    /// Register, set, snapshot, render, parse, apply, read back. The file's own
-    /// two halves are `vale_assets::interface::wtf`'s tests; what this adds
-    /// is that [`crate::lua::host::LuaHost`] really carries the registry and
-    /// that the values come off the *globals* rather than off whatever was held
-    /// at registration.
+    /// The file format's own tests are in `vale_assets::interface::wtf`. This
+    /// test checks that [`crate::lua::host::LuaHost`] keeps the list of
+    /// registered names, and that the saved values are the globals' current
+    /// values and not the values held when each name was registered. With
+    /// `RegisterForSave` a stub, every step below produced nothing.
     #[test]
     fn a_uvar_survives_a_round_trip_through_the_interpreter() {
         let mut host = crate::lua::host::LuaHost::new().expect("the interpreter starts");
@@ -501,7 +446,7 @@ mod tests {
                LOCK_ACTIONBAR = "0"
                RegisterForSave("LOCK_ACTIONBAR")"#,
         );
-        // …and then the options panel is opened and a box is ticked.
+        // The player opens the options panel and ticks a box.
         host.run_for_test(r#"SHOW_BUFF_DURATIONS = "1""#);
 
         let text = wtf::render_lua_assignments(
@@ -516,11 +461,11 @@ mod tests {
             "the file carries what the globals hold now, in registration order"
         );
 
-        // **The next launch, in the order a real one happens**: the file is put
-        // on the host, and *then* the directory loads — assigning its own
-        // default on the line before each registration. The value that survives
-        // has to be the file's, which is the whole of the persistence report;
-        // see `crate::lua::api::savedvars`, where the ordering is argued.
+        // The next start, in the order a real start happens: the file is
+        // applied to the interpreter, then the directory loads and assigns its
+        // own default on the line before each registration. The file's value
+        // must be the one that remains; see `crate::lua::api::savedvars` for
+        // how the ordering works.
         let mut next = crate::lua::host::LuaHost::new().expect("the interpreter starts");
         next.apply_saved_variables(&wtf::parse_lua_assignments(&text));
         next.run_for_test(
@@ -532,19 +477,19 @@ mod tests {
         assert_eq!(next.eval_for_test("SHOW_BUFF_DURATIONS"), "1");
         assert_eq!(next.eval_for_test("LOCK_ACTIONBAR"), "0");
 
-        // …and the other order, which is the one a host built after the account
-        // is known takes: registered first, applied second.
+        // The other order, which an interpreter built after the account is
+        // known takes: registered first, applied second.
         let mut other = crate::lua::host::LuaHost::new().expect("the interpreter starts");
         other.run_for_test(r#"SHOW_BUFF_DURATIONS = "0"; RegisterForSave("SHOW_BUFF_DURATIONS")"#);
         other.apply_saved_variables(&wtf::parse_lua_assignments(&text));
         assert_eq!(other.eval_for_test("SHOW_BUFF_DURATIONS"), "1");
     }
 
-    /// …and a named account with no file yet is a path and nothing in it, which
-    /// is what a first run looks like.
+    /// A named account with no file yet has a path and no values, as on a
+    /// first run.
     #[test]
     fn a_first_run_reads_nothing_and_knows_where_to_write() {
-        let saved = read("definitely-no-such-account", "");
+        let saved = read("definitely-no-such-account", &Config::default());
         assert_eq!(
             saved.path.as_deref().and_then(|p| p.to_str()),
             Some("WTF/Account/DEFINITELY-NO-SUCH-ACCOUNT/SavedVariables.lua")
@@ -553,20 +498,30 @@ mod tests {
         assert_eq!(saved.account.as_deref(), Some("definitely-no-such-account"));
     }
 
-    /// **A second interpreter is seeded too**, which is the whole of the
-    /// "Buff Durations does not persist" report.
+    /// The path is under the install folder the config names, not under the
+    /// working directory.
+    #[test]
+    fn the_file_is_under_the_install_folder() {
+        let config = Config { root: "install".into(), ..Config::default() };
+        let saved = read("test", &config);
+        assert_eq!(
+            saved.path.as_deref(),
+            Some(Path::new("install").join("WTF/Account/TEST/SavedVariables.lua").as_path())
+        );
+    }
+
+    /// Every interpreter a session builds is given the file.
     ///
-    /// A session builds at least two hosts — the login screen's, then the
-    /// world's, then the login screen's again on the way out — and the latch
-    /// that decides whether to seed one used to live beside the *file*. So it
-    /// fired on the glue host, which registers nothing and reads nothing, and
-    /// the world's host came up at the panel's defaults with the file sitting
-    /// on disk holding the right answers.
+    /// A session builds at least three: the login screen's, the world's, and
+    /// the login screen's again after logging out. When the flag deciding
+    /// whether to give an interpreter the file was kept in this module, it was
+    /// set by the login screen's interpreter, which registers and reads
+    /// nothing. The world's interpreter then started at the panel's defaults
+    /// while the file on disk held the saved values.
     ///
-    /// The two assertions are the two halves of the fix: a fresh host asks, and
-    /// a seeded one stops asking. The second matters as much as the first — the
-    /// gate is what stops the file being re-applied over a box the player has
-    /// just ticked, once a frame, for the rest of the session.
+    /// The first assertion checks that a new interpreter asks. The second
+    /// checks that one given the file stops asking, which is what stops the
+    /// file being applied every frame over a box the player has just ticked.
     #[test]
     fn every_interpreter_a_session_builds_is_seeded_from_the_file() {
         let values = wtf::parse_lua_assignments("SHOW_BUFF_DURATIONS = \"1\"\n");
@@ -576,25 +531,23 @@ mod tests {
         glue.apply_saved_variables(&values);
         assert!(!glue.needs_saved_variables(), "…and a seeded one stops");
 
-        // The world's host: a different object, and it must ask again.
+        // The world's interpreter: a different object, which must ask again.
         let mut world = crate::lua::host::LuaHost::new().expect("the interpreter starts");
         assert!(
             world.needs_saved_variables(),
             "the second host of the session was never seeded"
         );
         world.apply_saved_variables(&values);
-        // …and the value reaches the global the moment the directory declares
-        // it saved, which is where the *other* half of this report was — see
-        // `crate::lua::api::savedvars`.
+        // The value reaches the global when the directory registers the name;
+        // see `crate::lua::api::savedvars`.
         world.run_for_test(r#"SHOW_BUFF_DURATIONS = "0"; RegisterForSave("SHOW_BUFF_DURATIONS")"#);
         assert_eq!(world.eval_for_test("SHOW_BUFF_DURATIONS"), "1");
     }
 
-    /// **A host is not marked while there is no account**, and is seeded the
-    /// frame one arrives. The third fault, as a schedule: the login screen's
-    /// host sits unmarked, an account becomes known, and the same host takes
-    /// the file — here the fallback account, since a `Handshake` holds a
-    /// socket and cannot be built in a test.
+    /// An interpreter is not marked while there is no account, and is given
+    /// the file in the frame an account arrives. Here the account is the
+    /// `Config.wtf` fallback, because a `Handshake` holds a socket and cannot
+    /// be built in a test.
     #[test]
     fn a_host_waits_for_an_account_and_is_seeded_when_one_arrives() {
         let mut app = App::new();
@@ -613,7 +566,7 @@ mod tests {
         );
         assert!(app.world().resource::<SavedVariables>().path.is_none());
 
-        app.world_mut().resource_mut::<SavedVariables>().config_account =
+        app.world_mut().resource_mut::<SavedVariables>().config.account =
             "definitely-no-such-account".to_string();
         app.update();
         let host = app
@@ -627,10 +580,9 @@ mod tests {
         );
     }
 
-    /// **A host with nothing to apply still stops asking.** A fresh install has
-    /// no file, and a gate that only closed on a non-empty list would run the
-    /// check every frame for the life of the session — a lookup that can never
-    /// succeed, once per frame, for ever.
+    /// An interpreter given an empty file stops asking too. A fresh install has
+    /// no file, and a flag that only cleared on a non-empty list would repeat a
+    /// lookup that cannot succeed every frame for the rest of the session.
     #[test]
     fn a_host_with_an_empty_file_is_not_asked_again() {
         let mut host = crate::lua::host::LuaHost::new().expect("the interpreter starts");

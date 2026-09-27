@@ -1,6 +1,6 @@
-//! **Chat channels, the session's half**: the file the board is seeded from,
-//! the packets that fill it, the zone channels joined on a zone change, and
-//! the lines the chat frame is told.
+//! Chat channels, the session's side: the file the channel list is filled
+//! from, the packets that update it, the zone channels joined on a zone
+//! change, and the lines sent to the chat frame.
 //!
 //! The board — the ten slots and the mask — is
 //! [`crate::lua::panels::channels`], held by the Lua host so the twenty-five
@@ -27,7 +27,7 @@
 //! character has no guild (`PLAYER_GUILDID` zero) and the file's option is
 //! `AUTO`, which is every file measured.
 //!
-//! **A zone change is not a leave and a join to the interface.** The server
+//! To the interface, a zone change is not a leave followed by a join. The server
 //! answers the pair with `YOU_LEFT` then `YOU_JOINED`, and the reference
 //! shows one line, `Changed Channel: [1. General - Dun Morogh]` — the same
 //! notice code as `YOU_JOINED`, so the client decides. The slot is marked
@@ -74,7 +74,7 @@ use bevy::prelude::*;
 
 use super::super::events::{ChatMessageReceived, PlayerLeavingWorld};
 use crate::lua::panels::channels::Channels;
-use crate::world::session::{Session, WorldStatus};
+use crate::world::session::{ClientConfig, Session, WorldStatus};
 use vale_assets::interface::chatcache;
 use vale_protocol::play::channels::{mode_change_word, ChannelList, ChannelNotify, Notice, NoticeTail};
 use vale_protocol::play::chat::ChatType;
@@ -92,8 +92,8 @@ pub enum ChannelAnswer {
 /// the name blank. A name query is one round trip.
 const NAME_PATIENCE: f32 = 3.0;
 
-/// **The character's `chat-cache.txt`**, located at login — see the module
-/// note. `text` is the file as read, which the write-back edits in place.
+/// The character's `chat-cache.txt`, located at login; see the module doc.
+/// `text` is the file as read, which the write-back edits in place.
 #[derive(Resource, Default)]
 pub struct ChatCacheFile {
     pub path: Option<PathBuf>,
@@ -125,13 +125,14 @@ impl Plugin for ChannelsPlugin {
     }
 }
 
-/// **Read the character's file once per login** and seed the board from
-/// it. The path wants the account, the realm and the character, which the
-/// session has once it is in the world; the host is rebuilt at logout, so
-/// the board starts empty each time and the file is read again.
+/// Read the character's file once per login and fill the channel list from
+/// it. The path needs the account, the realm and the character, which the
+/// session has once it is in the world. The interpreter is rebuilt at logout,
+/// so the list starts empty each time and the file is read again.
 fn load_cache(
     session: Res<Session>,
     world: Res<WorldStatus>,
+    config: Res<ClientConfig>,
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
     mut leaving: MessageReader<PlayerLeavingWorld>,
     mut files: ResMut<ChatCacheFile>,
@@ -148,8 +149,8 @@ fn load_cache(
     let Some(active) = session.active.as_ref() else {
         return;
     };
-    let account = account_of(&active.account);
-    files.path = chatcache::path(&account, &active.realm, &world.character).map(PathBuf::from);
+    let account = config.0.account_for([Some(active.account.as_str())]);
+    files.path = chatcache::path(&account, &active.realm, &world.character).map(|path| config.0.path(path));
     files.text = files.path.as_ref().and_then(|path| std::fs::read_to_string(path).ok());
     let mut board = host.channels().borrow_mut();
     match &files.text {
@@ -170,16 +171,6 @@ fn load_cache(
         ),
     }
     files.loaded = true;
-}
-
-/// The account the file is under: the one logged in, else the folder's
-/// `Config.wtf` answer — the same rule the key bindings use.
-fn account_of(logged_in: &str) -> String {
-    let logged_in = logged_in.trim();
-    if !logged_in.is_empty() {
-        return logged_in.to_string();
-    }
-    vale_config::Config::load().account
 }
 
 /// What the file says, onto the board. A zero mask is unset — see the
@@ -211,8 +202,8 @@ fn supply_tables(
     board.areas = tables.areas().cloned().map(std::sync::Arc::new);
 }
 
-/// **Keep the zone channels current, and rejoin the custom ones once** —
-/// see the module note.
+/// Keep the zone channels current, and rejoin the custom channels once; see
+/// the module doc.
 fn auto_join(
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
     session: Res<Session>,
@@ -416,8 +407,8 @@ fn name_or_wait(names: &mut Names, guid: u64, patient: bool) -> Option<String> {
     }
 }
 
-/// **A notice becomes zero or one line**, and `None` while it waits for a
-/// name — see the module note for each rule.
+/// The lines one notice becomes: none or one, or `None` while it waits for a
+/// name. See the module doc for each rule.
 fn notice_lines(
     board: &mut Channels,
     notify: &ChannelNotify,
@@ -573,7 +564,8 @@ fn send_verbs(host: Option<NonSendMut<crate::lua::host::LuaHost>>, session: Res<
     }
 }
 
-/// **Write the two lines back on the way out** — see the module note.
+/// Write the file's two channel lines back when leaving the world; see the
+/// module doc.
 fn save_on_logout(
     mut leaving: MessageReader<PlayerLeavingWorld>,
     files: Res<ChatCacheFile>,
@@ -610,7 +602,7 @@ fn write_back(files: &ChatCacheFile, host: &crate::lua::host::LuaHost) {
     if rewritten == *text {
         return;
     }
-    match std::fs::write(path, rewritten) {
+    match vale_config::write_file(path, rewritten) {
         Ok(()) => info!(
             "chat channels: {} rewritten — mask {mask}, {} custom",
             path.display(),

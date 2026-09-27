@@ -1,140 +1,136 @@
-//! **What of the world is drawn** — one switch per layer, and nothing else.
+//! Which world layers are drawn: one switch per layer, and nothing else.
 //!
-//! [`crate::world::camera::RenderTuning`] is the other half of this and they are
-//! deliberately two things: that one is *how* the frame is produced (MSAA, the
-//! prepass, occlusion culling, the tonemapper, vsync), and every entry in it is
-//! a trade between CPU, GPU and image quality on this machine. This one is
-//! *what is in the frame at all* — the fog, the dome, the star field, the
-//! doodads, the buildings, the particles — and every entry is a **subtraction**.
+//! [`crate::world::camera::RenderTuning`] is the related resource, and the two
+//! are kept separate. `RenderTuning` is how the frame is produced (MSAA, the
+//! prepass, occlusion culling, the tonemapper, vsync), and each entry trades
+//! CPU, GPU and image quality on this machine. `WorldTuning` is what is in the
+//! frame (the fog, the dome, the star field, the doodads, the buildings, the
+//! particles), and each entry removes one layer.
 //!
-//! ## Why a subtraction is the instrument
+//! ## Why each switch removes a layer
 //!
-//! This project's own history is the argument. The interface's draw was priced
-//! by two runs differing in `VALE_NO_INTERFACE`; the particle pass by two
-//! differing in `VALE_NO_PARTICLES`; the alpha-map seam grid was attributed
-//! by two shots differing in one line. Every one of those cost a rebuild or a
-//! relaunch, which is exactly the tax [`crate::ui::debug`] exists to retire:
-//! **a setting that needs its own login is a setting that never gets A/B'd.**
+//! Removing one layer and comparing two runs is how this project measures a
+//! pass. The interface's draw was measured with two runs differing in
+//! `VALE_NO_INTERFACE`, the particle pass with two differing in
+//! `VALE_NO_PARTICLES`, and the alpha-map seam grid was traced with two shots
+//! differing in one line. Each of those needed a rebuild or a restart, which
+//! [`crate::ui::debug`] exists to avoid: a setting that needs its own login is
+//! rarely compared.
 //!
-//! And a subtraction answers a second question the numbers cannot: *is that
-//! thing on screen the thing I think it is?* Turning the doodads off says
-//! whether the dark shape on the hill is a tree or a building, in one keystroke
-//! and no measurement at all.
+//! Removing a layer also identifies what is on screen without measuring
+//! anything. Turning the doodads off shows whether a dark shape on a hill is a
+//! tree or a building, in one keystroke.
 //!
 //! ## What a switch is not
 //!
-//! **It is not a graphics option**, and it must not become one. 1.12's own
-//! settings are CVars driven from `Interface\FrameXML\` — see
-//! [`crate::lua::api::stubs`] — and wiring these to those would be this client
-//! inventing a mapping between 2004's options and Bevy's. Every field here is
-//! an instrument, and the whole module compiles out with the `diagnostics`
-//! feature along with the window that drives it.
+//! A switch is not a graphics option. The 1.12.1 client's settings are CVars
+//! driven from `Interface\FrameXML\` (see [`crate::lua::api::stubs`]), and
+//! connecting these switches to them would invent a mapping between the
+//! game's options and Bevy's. Every field here is a diagnostic instrument.
 //!
-//! **And two of them are not the full subtraction their env-var twins are.**
-//! `VALE_NO_PARTICLES` spawns no emitters and `VALE_NO_INTERFACE` skips
-//! the walk from the first frame; the checkboxes here turn the same passes off
-//! *after* the entities exist, so they subtract the per-frame cost and not the
-//! spawn. For pricing a pass the env vars are still the honest measurement —
-//! these are for looking.
+//! This module is compiled in every build, because about 25 passes and other
+//! hosts of the app read `WorldTuning`. What the `diagnostics` feature removes
+//! is the window that sets it; see `overlay` in the directory's module doc.
+//!
+//! Two switches do less than the environment variables of the same purpose.
+//! `VALE_NO_PARTICLES` spawns no emitters and `VALE_NO_INTERFACE` skips the
+//! interface walk from the first frame. The checkboxes here turn the same
+//! passes off after the entities exist, so they remove the per-frame cost and
+//! not the spawning cost. To measure the whole cost of a pass, use the
+//! environment variables; the checkboxes are for looking.
 //!
 //! ## How a pass reads it
 //!
-//! By holding `Res<WorldTuning>` in a system of its own, in its own file, and
-//! folding the flag into whatever visibility decision it already makes. That
-//! matters more than it looks: the star dome, the emitters and the ribbons all
-//! decide their own `Visibility` every frame — a switchboard that wrote
-//! `Visibility::Hidden` over the top of them from outside would fight the pass
-//! it was turning off and win only half the time.
+//! Each pass holds `Res<WorldTuning>` in a system in its own file and combines
+//! the flag with the visibility decision it already makes. The star dome, the
+//! emitters and the ribbons set their own `Visibility` every frame. A central
+//! system that wrote `Visibility::Hidden` over them from outside would conflict
+//! with the pass it was turning off and take effect only on some frames.
 
 use bevy::prelude::*;
 
-/// Which layers of the world are drawn. Every field defaults to **on**, so an
-/// untouched client draws everything.
+/// Which world layers are drawn. Every field defaults to on, so an unchanged
+/// client draws everything.
 ///
-/// `Clone` and `PartialEq` are for the panel, and they are load-bearing rather
-/// than a convenience: `ResMut`'s `DerefMut` marks the resource changed whether
-/// or not the value moved, so a panel that wrote the checkboxes straight into
-/// it would trip [`switch`]'s change guard on every frame it was open — a
-/// sweep over every doodad batch in the world, sixty times a second, from the
-/// instrument that exists to say what such sweeps cost. It edits a copy and
-/// compares.
+/// `Clone` and `PartialEq` are required by the panel. `ResMut`'s `DerefMut`
+/// marks the resource changed whether or not the value changed, so a panel
+/// that wrote its checkboxes directly into the resource would trigger
+/// [`switch`]'s change test on every frame it was open: a pass over every
+/// doodad batch in the world, sixty times a second, from the instrument that
+/// measures such costs. The panel edits a copy and compares.
 #[derive(Resource, Clone, PartialEq, Eq)]
 pub struct WorldTuning {
     /// `Light.dbc`'s distance fog, on the world camera. Off shows the streaming
-    /// radius as a hard edge, which is the point: it is the only way to see
-    /// where the tiles actually stop.
+    /// radius as a hard edge, which is the only way to see where the loaded
+    /// tiles end.
     pub fog: bool,
-    /// The six-stop sky dome. Off leaves `ClearColor`, which is the fog band —
-    /// so the horizon stays the right colour and the gradient goes.
+    /// The six-stop sky dome. Off leaves `ClearColor`, which is the fog band,
+    /// so the horizon keeps its colour and the gradient is removed.
     pub sky_dome: bool,
-    /// `Stars.m2`, on the client's own four-key fade.
+    /// `Stars.m2`, on the 1.12.1 client's four-key fade.
     pub stars: bool,
-    /// The sun and the two moons on their own arcs.
+    /// The sun and the two moons on their arcs.
     pub celestial: bool,
-    /// The nine tiles of ground. Its own switch and not the tile *root*: a
-    /// doodad and a building are children of the tile they stand on, so hiding
-    /// the root would take the whole world with it and say nothing about which
-    /// layer the shape on the hill came from.
+    /// The nine tiles of ground. A switch of its own rather than the tile's
+    /// root entity: doodads and buildings are children of the tile they stand
+    /// on, so hiding the root would hide the whole world and not identify
+    /// which layer a shape belongs to.
     pub terrain: bool,
-    /// The liquid standing on and inside it — `MCLQ` outside, `MLIQ` in a
-    /// building. Split from the ground because it is a different surface with a
-    /// different open question against it: it is the
-    /// one thing on screen still lit for noon at every hour.
+    /// The liquid on the ground and inside buildings: `MCLQ` outside, `MLIQ`
+    /// in a building. Separate from the ground because it is a different
+    /// surface with its own open problem: it is the one thing on screen still
+    /// lit as at noon at every hour.
     pub water: bool,
-    /// **The sheen on that ground** — the sun's specular highlight, added on
-    /// top of the lit texel where the tileset's own gloss mask says the
-    /// surface is shiny. See `atmosphere.wgsl`'s `sun_sheen`.
+    /// The sun's specular highlight on the ground, added to the lit texel
+    /// where the tileset's gloss mask marks the surface as shiny. See
+    /// `atmosphere.wgsl`'s `sun_sheen`.
     ///
-    /// The one switch here that coincides with a setting the game itself
-    /// ships: `specular`, which 1.12 registers as a CVar defaulting to **"0"**.
-    /// It defaults to *on* here because it is what the report
-    /// asks for and what the reference screenshot beside it was taken with —
-    /// but it stays a subtraction rather than becoming an option, and its
-    /// first job is to answer "is that bright band on the road the sheen?".
+    /// The one switch here that matches a setting the 1.12.1 client has:
+    /// `specular`, a CVar that defaults to "0". It defaults to on here,
+    /// because the report asked for it and the reference screenshot was taken
+    /// with it. It remains a switch rather than an option, and its first use is
+    /// to check whether a bright band on a road is the highlight.
     pub specular: bool,
     /// Every M2 a tile places, and the `MODD` furniture inside a building.
     pub doodads: bool,
-    /// **…and whether the ones that move do**, which is a subtraction of its
-    /// own rather than a corner of `doodads`: a posed doodad is a *skinned*
-    /// draw and batches with nothing, so what this takes away is a per-draw-call
-    /// cost that the still ones do not pay. Off, the bellows and the gryphon
-    /// roosts stand in their bind pose, which is what this client drew before
-    /// `render::doodads::pose_scenery` existed. See
-    /// [`vale_assets::look::scenery`].
+    /// Whether animated doodads animate. A switch of its own rather than part
+    /// of `doodads`, because an animated doodad is a skinned draw and is batched
+    /// with nothing, so this removes a per-draw-call cost that still doodads do
+    /// not have. Off, the bellows and the gryphon roosts stand in their bind
+    /// pose, as this client drew them before `render::doodads::pose_scenery`
+    /// existed. See [`vale_assets::look::scenery`].
     pub doodad_animation: bool,
-    /// **The grass**, which is a different population from the doodads and gets
-    /// its own switch for the same reason the water is not the terrain: it is
-    /// merged rather than instanced, so what turning it off subtracts is a
-    /// couple of dozen large meshes rather than thousands of small ones — and
-    /// that is the number this switch exists to price. See
-    /// [`crate::render::foliage`].
+    /// The grass. A different population from the doodads, with its own
+    /// switch for the same reason the water is separate from the terrain: it
+    /// is merged rather than instanced, so turning it off removes a few dozen
+    /// large meshes rather than thousands of small ones, and that is the cost
+    /// this switch measures. See [`crate::render::foliage`].
     pub foliage: bool,
-    /// The `MODF` buildings themselves.
+    /// The `MODF` buildings.
     pub buildings: bool,
-    /// Everything the server describes — creatures, players, game objects, and
-    /// whatever they are wearing.
+    /// Everything the server describes: creatures, players, game objects, and
+    /// what they wear.
     pub entities: bool,
-    /// The blob each of those stands on.
+    /// The blob shadow under each of those.
     pub blob_shadows: bool,
     /// Emitters and the ribbon trails beside them, simulated and drawn.
     pub particles: bool,
-    /// **The bolts strung between units** - Chain Lightning, Drain Life, a
-    /// Rallying Cry's arc. Its own switch rather than folded under the
-    /// particles because it is neither an emitter nor a trail: it is the one
-    /// layer in the world whose geometry is built from a DBC row, so what
-    /// subtracting it prices is a strip build per bolt per frame and nothing
+    /// The bolts drawn between units: Chain Lightning, Drain Life, Rallying
+    /// Cry's arc. Separate from the particles because it is neither an emitter
+    /// nor a trail: it is the one layer whose geometry is built from a DBC row,
+    /// so turning it off removes one strip build per bolt per frame and nothing
     /// else. See [`crate::render::lightning`].
     pub lightning: bool,
-    /// The game's own interface: the walk and the paint, never the load. The
-    /// tree still exists, the events still fire, the scripts still run — this
-    /// is the same subtraction `VALE_NO_INTERFACE` makes.
+    /// The game's interface: the walk and the paint, not the load. The frame
+    /// tree still exists, events still fire and scripts still run. This removes
+    /// the same work `VALE_NO_INTERFACE` does.
     pub interface: bool,
-    /// The rain, the snow and the sand — see `render::weather`.
+    /// The rain, the snow and the sand; see `render::weather`.
     pub weather: bool,
-    /// The reference's full-screen glow over the finished frame — see
-    /// `render::glow`. The one switch here that is also a CVar (`ffxGlow`),
-    /// and this is the instrument while that is the setting: off here prices
-    /// the pass, off there is what the options panel does.
+    /// The 1.12.1 client's full-screen glow over the finished frame; see
+    /// `render::glow`. Also a CVar (`ffxGlow`). This switch is the instrument
+    /// and the CVar is the setting: turning it off here measures the pass, and
+    /// turning it off there is what the options panel does.
     pub glow: bool,
 }
 
@@ -165,11 +161,10 @@ impl Default for WorldTuning {
 
 /// Every switch, as `(label, accessor)`, for the panel that draws them.
 ///
-/// A list rather than a dozen hand-written checkbox lines, because the two
-/// would otherwise drift the moment a fifteenth is added — and a switch that
-/// is not on the panel is a switch nobody can reach. The order is the order the frame is
+/// A list rather than one hand-written checkbox line per switch, so adding a
+/// switch cannot leave it off the panel. The order is the order the frame is
 /// built in: the sky, then the ground, then what stands on it, then the
-/// interface over the lot.
+/// interface over everything.
 pub const SWITCHES: [(&str, fn(&mut WorldTuning) -> &mut bool); 18] = [
     ("fog", |t| &mut t.fog),
     ("sky dome", |t| &mut t.sky_dome),
@@ -192,27 +187,22 @@ pub const SWITCHES: [(&str, fn(&mut WorldTuning) -> &mut bool); 18] = [
 ];
 
 impl WorldTuning {
-    /// Everything on except the layers `list` names — `--without doodads,water`.
+    /// Every layer on except those `list` names: `--without doodads,water`.
     ///
-    /// **The scripted form of the fifteen checkboxes, and it exists because the
-    /// module doc above was true of everything here except this file.** Every
-    /// attribution this project has ever made was a pair of runs differing in
-    /// one layer, and until now the only two layers a *script* could subtract
-    /// were the two with env vars. Pricing the doodads, the buildings, the
-    /// entities or the water needed a person at the keyboard pressing F4 and
-    /// reading a number off a window — which is the same "a setting that cannot
-    /// be scripted never gets A/B'd" that [`crate::tune`] is written under, one
-    /// panel over.
+    /// The scripted form of the panel's checkboxes. Before this flag, a script
+    /// could remove only the two layers that have environment variables, and
+    /// measuring the doodads, the buildings, the entities or the water needed a
+    /// person to press F4 and read the window. [`crate::args::tune`] exists for
+    /// the same reason, for render settings.
     ///
-    /// Spelled as the **off** list rather than the on list, which is the
-    /// opposite of `--tune` and for the reason `novsync` is spelled backwards
-    /// inside it: these all default to *on*, so `--without stars` must not
-    /// silently take the other eleven with it.
+    /// The list names the layers to turn off, the opposite of `--tune`, for
+    /// the reason `novsync` is spelled as an off switch there: every layer
+    /// defaults to on, so `--without stars` must not also turn off the others.
     ///
-    /// A name that matches nothing is warned about and ignored, because a
-    /// misspelled subtraction that quietly measures the unsubtracted world is
-    /// the one failure this is not allowed to have. Spaces are optional, so
-    /// `blob shadows` and `blobshadows` both reach the same switch.
+    /// A name that matches no layer is logged as a warning and ignored, because
+    /// a misspelled layer would otherwise measure the whole world while
+    /// appearing to measure it without one layer. Spaces are optional, so
+    /// `blob shadows` and `blobshadows` name the same switch.
     pub fn without(list: &str) -> WorldTuning {
         let mut tuning = WorldTuning::default();
         let key = |s: &str| s.trim().to_ascii_lowercase().replace(' ', "");
@@ -229,29 +219,27 @@ impl WorldTuning {
     }
 }
 
-/// **The one shape a "hide this whole population" system takes.**
+/// The system that hides or shows a whole population for one switch.
 ///
-/// A pass whose entities carry `M` and whose visibility nothing else writes
-/// registers `Update, switch::<M>(|t| t.doodads)` and is done.
+/// A pass whose entities carry `M`, and whose visibility nothing else writes,
+/// registers `Update, switch::<M>(|t| t.doodads)`.
 ///
-/// **`Visibility::Inherited` and not `Visible` on the way back**, because these
-/// are children of something — a tile, a placement, a wearer — and forcing
-/// `Visible` would resurrect a batch its own parent had put away.
+/// Showing sets `Visibility::Inherited`, not `Visible`, because these entities
+/// are children of a tile, a placement or a wearer, and `Visible` would show a
+/// batch that its parent had hidden.
 ///
-/// ## Two passes, and the second one is the one that is easy to forget
+/// ## The two queries
 ///
-/// The sweep over the whole population is guarded by change detection: the
-/// doodad batches alone are thousands of entities and writing `Visibility` over
-/// all of them sixty times a second for a checkbox nobody clicked is exactly
-/// the kind of cost this module exists to *measure* rather than add.
+/// The pass over the whole population runs only when the resource changed.
+/// The doodad batches alone are thousands of entities, and writing
+/// `Visibility` on all of them every frame for a checkbox nobody clicked is
+/// the kind of cost this module measures rather than adds.
 ///
-/// But a guard that strict is wrong on its own, and wrong in the way that
-/// reads as the switch being broken: the world **streams**. Turn the doodads
-/// off, walk two hundred yards, and every placement that came into range after
-/// the click was spawned visible — so the switch appears to work and then
-/// quietly undoes itself as you move. So `Added<M>` gets its own pass, which
-/// costs an archetype scan with nothing in it on nearly every frame, and it is
-/// the only reason this is a [`ParamSet`] rather than one query.
+/// That test alone is not enough, because the world streams. With the doodads
+/// turned off, every placement that loads after the click spawns visible, so
+/// the switch stops working as the player moves. The second query, over
+/// `Added<M>`, hides those. It costs an archetype scan that finds nothing on
+/// most frames, and it is why this uses a [`ParamSet`] rather than one query.
 pub fn switch<M: Component>(
     on: fn(&WorldTuning) -> bool,
 ) -> impl FnMut(
@@ -281,8 +269,8 @@ pub fn switch<M: Component>(
             }
             return;
         }
-        // Nothing to catch up while the layer is on: a fresh entity is already
-        // `Inherited`, which is what it would be written to.
+        // Nothing to update while the layer is on: a new entity is already
+        // `Inherited`, which is the value it would be given.
         if wanted == Visibility::Inherited {
             return;
         }
@@ -301,10 +289,9 @@ mod tests {
     #[derive(Component)]
     struct Thing;
 
-    /// The switch hides and un-hides, and — the part that matters — it does
-    /// **nothing at all** on a frame where the resource did not change. Without
-    /// that guard this is a write over every doodad in the world, sixty times a
-    /// second, for a checkbox nobody clicked.
+    /// The switch hides and shows, and writes nothing on a frame where the
+    /// resource did not change. Without that test the system would write every
+    /// doodad in the world sixty times a second for a checkbox nobody clicked.
     #[test]
     fn a_switch_only_writes_when_it_moved() {
         let mut app = App::new();
@@ -312,17 +299,18 @@ mod tests {
             .add_systems(Update, switch::<Thing>(|t| t.doodads));
         let thing = app.world_mut().spawn((Thing, Visibility::Inherited)).id();
 
-        // The insert counts as a change, so the first run writes the default.
+        // Inserting the resource counts as a change, so the first run writes
+        // the default.
         app.update();
         assert_eq!(*app.world().entity(thing).get::<Visibility>().unwrap(), Visibility::Inherited);
 
-        // A hand-set visibility survives a frame the resource did not move —
-        // which is how a pass that manages its own stays in charge of it.
+        // A visibility set by hand survives a frame in which the resource did
+        // not change, so a pass that manages its own visibility keeps control.
         *app.world_mut().entity_mut(thing).get_mut::<Visibility>().unwrap() = Visibility::Hidden;
         app.update();
         assert_eq!(*app.world().entity(thing).get::<Visibility>().unwrap(), Visibility::Hidden);
 
-        // …and turning the switch off writes it for real.
+        // Turning the switch off writes it.
         app.world_mut().resource_mut::<WorldTuning>().doodads = false;
         app.update();
         assert_eq!(*app.world().entity(thing).get::<Visibility>().unwrap(), Visibility::Hidden);
@@ -331,16 +319,16 @@ mod tests {
         assert_eq!(*app.world().entity(thing).get::<Visibility>().unwrap(), Visibility::Inherited);
     }
 
-    /// Every switch is reachable from the panel, and every one starts on.
+    /// Every switch is on the panel, and every one defaults to on.
     #[test]
     fn every_switch_is_on_the_panel_and_defaults_on() {
         let mut tuning = WorldTuning::default();
         for (label, field) in SWITCHES {
             assert!(*field(&mut tuning), "{label} must default on");
         }
-        // Eleven distinct fields rather than one read eleven times: a copied
-        // line in `SWITCHES` gives two labels one flag, and the panel would
-        // look right while one of the two did nothing.
+        // Each entry reaches a distinct field. A copied line in `SWITCHES`
+        // would give two labels one flag, and the panel would look correct
+        // while one checkbox did nothing.
         for (i, (_, field)) in SWITCHES.iter().enumerate() {
             *field(&mut tuning) = false;
             let off = SWITCHES.iter().filter(|(_, f)| !*f(&mut tuning)).count();

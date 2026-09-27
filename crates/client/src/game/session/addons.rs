@@ -1,6 +1,6 @@
-//! **The addon board's two ends**: `Interface\AddOns\` read into it once per
-//! interpreter, `AddOns.txt` read into it per character, and `AddOns.txt`
-//! written back on the way out.
+//! The addon list's two sources and its one output: `Interface\AddOns\` read
+//! into it once per interpreter, `AddOns.txt` read into it per character, and
+//! `AddOns.txt` written back when the session ends.
 //!
 //! ```text
 //! Interface\AddOns\<Name>\<Name>.toc              -> the list, once per LuaHost
@@ -9,40 +9,43 @@
 //!                                                     and on the glue's SaveAddOns
 //! ```
 //!
-//! The board itself is [`crate::lua::panels::addons::Board`], held by the
+//! The list itself is [`crate::lua::panels::addons::Board`], held by the
 //! interpreter because `LoadAddOn` runs the loader from inside a Lua call.
-//! This module is what knows where the files are, which needs an account, a
-//! realm and a character name — the same three
-//! [`super::keybindings`] needs, found the same way.
+//! This module locates the files, which needs an account, a realm and a
+//! character name: the same three [`super::keybindings`] needs, found the same
+//! way.
 //!
 //! ## Ordering
 //!
-//! `lua::host::load_bindings` will not load `Interface\FrameXML\` until the
-//! board names an active character, because which addons load is that
-//! character's file. [`seed`] runs in `GameSet`, after that chain in the same
-//! frame, so a login's first frame with a player seeds and its second loads.
-//! [`crate::game::savedvars`] runs after [`seed`] so that the addons whose
-//! saved files it reads are on the board.
+//! `lua::host::load_bindings` does not load `Interface\FrameXML\` until the
+//! list names an active character, because that character's file decides
+//! which addons load. [`seed`] runs in `GameSet`, after that chain in the same
+//! frame, so the first frame of a login with a player fills the list and the
+//! second loads the directory. [`crate::game::savedvars`] runs after [`seed`],
+//! so the addons whose saved files it reads are on the list.
 //!
 //! ## What is written, and when
 //!
-//! The reference writes a character's `AddOns.txt` at logout whether or not
-//! anything changed (27 real files, most of them every addon at its default).
-//! So [`save_on_logout`] and [`save`] write the active character's file
-//! whenever the folder holds an addon, and the glue's `SaveAddOns` writes
-//! every character whose checkboxes moved. A folder with no addons writes
-//! nothing, so a repository with no `Interface\AddOns\` acquires no file.
+//! The 1.12.1 client writes a character's `AddOns.txt` at logout whether or
+//! not anything changed (27 real files were checked, most listing every addon
+//! at its default). So [`save_on_logout`] and [`save`] write the active
+//! character's file whenever the folder holds an addon, and the glue's
+//! `SaveAddOns` writes every character whose checkboxes changed. A folder with
+//! no addons writes nothing, so a repository with no `Interface\AddOns\` gets
+//! no file.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use bevy::prelude::*;
 
 use vale_assets::interface::addons::{self, Addon};
+use vale_config::Config;
 
 use crate::lua::host::LuaHost;
 use crate::lua::panels::addons::Board;
+use crate::world::session::ClientConfig;
 
-/// Which handshake the glue's per-character states were seeded for.
+/// Which handshake the character screen's per-character states were read for.
 #[derive(Resource, Default)]
 pub struct AddonFiles {
     glue_seeded: Option<(String, String, Vec<String>)>,
@@ -54,8 +57,8 @@ impl Plugin for AddonsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AddonFiles>()
             .add_systems(Update, (seed, save_requested).chain().in_set(super::super::GameSet))
-            // **Before the interpreter is thrown away**, where the board lives —
-            // the same ordering `keybindings::save_on_logout` states.
+            // Before the interpreter holding the list is replaced, as
+            // `keybindings::save_on_logout` is ordered.
             .add_systems(
                 Update,
                 save_on_logout.before(crate::lua::host::unload_interface),
@@ -64,12 +67,14 @@ impl Plugin for AddonsPlugin {
     }
 }
 
-/// **Seed the board**: the list once per interpreter, the glue's characters
-/// once per handshake, the active character once per world session.
+/// Fill the list: the addons once per interpreter, the character screen's
+/// characters once per handshake, and the active character once per world
+/// session.
 pub fn seed(
     assets: Res<crate::assets::GameAssets>,
     session: Res<crate::world::session::Session>,
     world: Res<crate::world::session::WorldStatus>,
+    config: Res<ClientConfig>,
     host: Option<NonSendMut<LuaHost>>,
     mut files: ResMut<AddonFiles>,
     mut list_update: MessageWriter<super::super::events::AddonListUpdate>,
@@ -100,15 +105,15 @@ pub fn seed(
         board.seed(shipped, folder);
         board.set_reader(assets.reader());
         drop(board);
-        // A fresh board knows no character; the two seeds below run again.
+        // A new list knows no character, so the two steps below run again.
         files.glue_seeded = None;
         list_update.write(super::super::events::AddonListUpdate);
     }
 
-    // **The glue's characters**, so `GetAddOnEnableState(nil, i)` answers
-    // across them and the dropdown's per-character states are the files'.
+    // The character screen's characters, so `GetAddOnEnableState(nil, i)`
+    // answers for each of them and the dropdown shows each file's states.
     if let Some(handshake) = &session.selection {
-        let account = super::keybindings::account_of(&handshake.account);
+        let account = config.0.account_for([Some(handshake.account.as_str())]);
         let realm = handshake.realm.clone();
         let names: Vec<String> = handshake.characters.iter().map(|c| c.name.clone()).collect();
         let key = (account.clone(), realm.clone(), names.clone());
@@ -116,7 +121,7 @@ pub fn seed(
             let mut board = held.borrow_mut();
             for name in &names {
                 if !board.has_states_for(name) {
-                    board.seed_states(name, read_states(&account, &realm, name));
+                    board.seed_states(name, read_states(&config.0, &account, &realm, name));
                 }
             }
             board.set_characters(names);
@@ -124,95 +129,107 @@ pub fn seed(
         }
     }
 
-    // **The character the world is for**, which is what the load waits on.
+    // The character in the world, which the directory load waits for.
     if let Some(active) = &session.active {
         if !world.character.is_empty() && held.borrow().active() != Some(world.character.as_str()) {
-            let account = super::keybindings::account_of(&active.account);
+            let account = config.0.account_for([Some(active.account.as_str())]);
             let mut board = held.borrow_mut();
             if !board.has_states_for(&world.character) {
-                board.seed_states(&world.character, read_states(&account, &active.realm, &world.character));
+                board.seed_states(
+                    &world.character,
+                    read_states(&config.0, &account, &active.realm, &world.character),
+                );
             }
             board.set_active(Some(world.character.clone()));
             let states = board.states_for(&world.character);
             let on = states.iter().filter(|(_, e)| *e).count();
             match addons::addons_txt_path(&account, &active.realm, &world.character) {
-                Some(path) => info!("addons: {on} of {} on for {} ({path})", states.len(), world.character),
+                Some(path) => info!(
+                    "addons: {on} of {} on for {} ({})",
+                    states.len(),
+                    world.character,
+                    config.0.path(path).display()
+                ),
                 None => warn!("addons: no account, realm or character name — every addon at its default"),
             }
         }
     }
 }
 
-/// One character's `AddOns.txt`, or nothing: a character never played has no
-/// folder, and takes every addon's default.
-fn read_states(account: &str, realm: &str, character: &str) -> Vec<(String, bool)> {
+/// One character's `AddOns.txt`, or an empty list. A character never played
+/// has no folder and takes every addon's default.
+fn read_states(config: &Config, account: &str, realm: &str, character: &str) -> Vec<(String, bool)> {
     addons::addons_txt_path(account, realm, character)
-        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|path| std::fs::read_to_string(config.path(path)).ok())
         .map(|text| addons::parse_addons_txt(&text))
         .unwrap_or_default()
 }
 
-/// Write `character`'s file from the board's live states.
-fn write_states(board: &Board, account: &str, realm: &str, character: &str) {
+/// Write `character`'s file from the list's current states.
+fn write_states(board: &Board, config: &Config, account: &str, realm: &str, character: &str) {
     if board.listed().is_empty() {
         return;
     }
-    let Some(path) = addons::addons_txt_path(account, realm, character).map(PathBuf::from) else {
+    let Some(path) = addons::addons_txt_path(account, realm, character).map(|path| config.path(path)) else {
         warn!("AddOns.txt not written: no account, realm or character name");
         return;
     };
-    if let Some(dir) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(dir) {
-            warn!("AddOns.txt not written: {} ({e})", dir.display());
-            return;
-        }
-    }
     let states = board.states_for(character);
     let text = addons::render_addons_txt(states.iter().map(|(n, e)| (n.as_str(), *e)));
-    match std::fs::write(&path, text) {
+    match vale_config::write_file(&path, text) {
         Ok(()) => info!("{} addon state(s) to {}", states.len(), path.display()),
         Err(e) => warn!("AddOns.txt not written: {} ({e})", path.display()),
     }
 }
 
-/// The account and realm the session is on, in the world or at the glue.
-fn account_and_realm(session: &crate::world::session::Session) -> Option<(String, String)> {
+/// The account and realm of the session, in the world or at the character
+/// screen.
+fn account_and_realm(session: &crate::world::session::Session, config: &Config) -> Option<(String, String)> {
     if let Some(active) = &session.active {
-        return Some((super::keybindings::account_of(&active.account), active.realm.clone()));
+        return Some((config.account_for([Some(active.account.as_str())]), active.realm.clone()));
     }
     session
         .selection
         .as_ref()
-        .map(|handshake| (super::keybindings::account_of(&handshake.account), handshake.realm.clone()))
+        .map(|handshake| (config.account_for([Some(handshake.account.as_str())]), handshake.realm.clone()))
 }
 
-/// **The glue's OK button.** Every character whose checkboxes moved gets its
-/// file, and the board remembers the written state as the point the next
-/// Cancel returns to.
-fn save_requested(session: Res<crate::world::session::Session>, host: Option<NonSend<LuaHost>>) {
+/// The character screen's Okay button. Every character whose checkboxes
+/// changed gets its file written, and the list records the written states as
+/// the point the next Cancel returns to.
+fn save_requested(
+    session: Res<crate::world::session::Session>,
+    config: Res<ClientConfig>,
+    host: Option<NonSend<LuaHost>>,
+) {
     let Some(host) = host else { return };
     let mut board = host.addons().borrow_mut();
     if !board.take_save_request() {
         return;
     }
-    let Some((account, realm)) = account_and_realm(&session) else {
+    let Some((account, realm)) = account_and_realm(&session, &config.0) else {
         return;
     };
     for character in board.changed_characters() {
-        write_states(&board, &account, &realm, &character);
+        write_states(&board, &config.0, &account, &realm, &character);
         board.mark_saved(&character);
     }
 }
 
-/// The active character's file, from either exit.
-fn write_active(session: &crate::world::session::Session, world: &crate::world::session::WorldStatus, host: &LuaHost) {
+/// Write the active character's file, for both exits.
+fn write_active(
+    session: &crate::world::session::Session,
+    world: &crate::world::session::WorldStatus,
+    config: &Config,
+    host: &LuaHost,
+) {
     let Some(active) = &session.active else { return };
     if world.character.is_empty() {
         return;
     }
-    let account = super::keybindings::account_of(&active.account);
+    let account = config.account_for([Some(active.account.as_str())]);
     let mut board = host.addons().borrow_mut();
-    write_states(&board, &account, &active.realm, &world.character);
+    write_states(&board, config, &account, &active.realm, &world.character);
     board.mark_saved(&world.character);
 }
 
@@ -220,13 +237,14 @@ fn save_on_logout(
     mut leaving: MessageReader<super::super::events::PlayerLeavingWorld>,
     session: Res<crate::world::session::Session>,
     world: Res<crate::world::session::WorldStatus>,
+    config: Res<ClientConfig>,
     host: Option<NonSend<LuaHost>>,
 ) {
     if leaving.read().next().is_none() {
         return;
     }
     if let Some(host) = host {
-        write_active(&session, &world, &host);
+        write_active(&session, &world, &config.0, &host);
     }
 }
 
@@ -234,13 +252,14 @@ fn save(
     mut exits: MessageReader<AppExit>,
     session: Res<crate::world::session::Session>,
     world: Res<crate::world::session::WorldStatus>,
+    config: Res<ClientConfig>,
     host: Option<NonSend<LuaHost>>,
 ) {
     if exits.read().next().is_none() {
         return;
     }
     if let Some(host) = host {
-        write_active(&session, &world, &host);
+        write_active(&session, &world, &config.0, &host);
     }
 }
 
@@ -248,12 +267,13 @@ fn save(
 mod tests {
     use super::*;
 
-    /// A character with no file, or no name, takes the defaults — and the
-    /// board's file for a character is the folder's addons in list order.
+    /// A character with no file, or with no name, takes the defaults, and the
+    /// list's states for a character are the folder's addons in list order.
     #[test]
     fn a_character_with_no_file_takes_the_defaults() {
-        assert!(read_states("DEFINITELY-NO-SUCH-ACCOUNT", "Testrealm", "Ann").is_empty());
-        assert!(read_states("", "Testrealm", "Ann").is_empty());
+        let config = Config::default();
+        assert!(read_states(&config, "DEFINITELY-NO-SUCH-ACCOUNT", "Testrealm", "Ann").is_empty());
+        assert!(read_states(&config, "", "Testrealm", "Ann").is_empty());
         let mut board = Board::default();
         board.seed(
             vec![],
@@ -262,11 +282,11 @@ mod tests {
                 Addon { name: "pfQuest".into(), enabled_by_default: false, ..Addon::default() },
             ],
         );
-        board.seed_states("Ann", read_states("DEFINITELY-NO-SUCH-ACCOUNT", "Testrealm", "Ann"));
+        board.seed_states("Ann", read_states(&config, "DEFINITELY-NO-SUCH-ACCOUNT", "Testrealm", "Ann"));
         assert_eq!(
             board.states_for("Ann"),
             [("pfUI".to_string(), true), ("pfQuest".to_string(), false)]
         );
-        assert!(account_and_realm(&crate::world::session::Session::default()).is_none());
+        assert!(account_and_realm(&crate::world::session::Session::default(), &config).is_none());
     }
 }
