@@ -48,10 +48,10 @@
 //! and the arrows on a cathedral are a few yards long in the middle of a
 //! building a hundred yards across. With the depth test on, the handles were
 //! hidden behind their own model until the camera was far enough away for the
-//! constant-pixel length to exceed the building. The reported symptom was:
-//! "you cannot see the control arrows until you move the camera very far away,
-//! and they seem to scale up as you go". The scaling was correct; the handles
-//! only appeared once they outgrew the geometry.
+//! constant-pixel length to exceed the building. At that distance the handles
+//! appeared already at full size, which read as the handles scaling up rather
+//! than becoming visible. The scaling was correct; the handles only appeared
+//! once they outgrew the geometry.
 //!
 //! [`EditorHandles`] is a gizmo config group with `depth_bias: -1.0`, which
 //! draws in front of everything. Every instrument in this crate that a person
@@ -104,7 +104,7 @@ impl Handles {
 
 /// The gizmo group for everything the pointer aims at, at `depth_bias: -1.0`,
 /// so it draws in front of the world rather than inside it. The module comment
-/// gives the reason and the bug report.
+/// gives the reason.
 ///
 /// It is a group rather than a flag on each call because `depth_bias` is a
 /// property of the config, and because one group for all aimable instruments
@@ -363,6 +363,8 @@ struct Grab {
     /// The rest of the selection as it stood when the press landed, so each
     /// member is moved and turned from where it began — see [`Members`].
     members: Members,
+    /// Whether this grab's history entry has been opened. See [`drag`].
+    opened: bool,
 }
 
 /// The members of a group beside the primary, as the handles were taken.
@@ -676,6 +678,7 @@ fn aim(
                 &objects,
                 session.as_deref(),
             ),
+            opened: false,
         });
     }
 }
@@ -705,6 +708,7 @@ fn drag(
     if buttons.just_released(MouseButton::Left) {
         if gizmo.grab.is_some() {
             session.history.end();
+            session.history.release();
             gizmo.grab = None;
         }
         return;
@@ -764,14 +768,22 @@ fn drag(
         1 => format!("{verb} {}", what(*tool)),
         more => format!("{verb} {more} {}s", what(*tool)),
     };
-    // A tile placement's drag is one open history entry from the first
-    // frame to the release. A spawn's writes each open and close an entry
-    // of their own under a gesture subject, which folds a drag into one; an
-    // entry held open here would be closed by the first of them.
-    if !session.history.is_open() && !was.upright {
-        session.history.begin(label.clone());
-    }
+    // A tile placement's drag is one history entry from the first frame that
+    // moves to the release, opened here on that frame. It is opened by this
+    // grab and not taken over from whatever is open: `spin` leaves its gesture
+    // open, and a drag that wrote into it was folded into the turn before it.
+    //
+    // A spawn's writes each open and close an entry of their own under a
+    // gesture subject, which folds a drag into one; an entry held open here
+    // would be closed by the first of them. The hold keeps a pause in the drag
+    // from ending that entry — see `vale_edit::undo::History::hold`.
     let secs = time.elapsed_secs_f64();
+    let opened = grab.opened;
+    match was.upright {
+        false if !opened => session.history.begin(label.clone()),
+        false => {}
+        true => session.history.hold(secs),
+    }
     let mut write = |session: &mut EditSession| {
         put(
             *tool,
@@ -803,6 +815,9 @@ fn drag(
             session.as_one(&label, &subject, write);
         }
         _ => write(&mut **session),
+    }
+    if let Some(grab) = gizmo.grab.as_mut() {
+        grab.opened = true;
     }
 }
 
@@ -947,6 +962,12 @@ fn spin(
             session.as_one(&format!("Turn {what}s"), &subject, write);
         }
         _ => write(&mut **session),
+    }
+    // Closed on every frame, as the arrow keys close theirs: the next frame's
+    // `begin_gesture` continues it, and an entry left open would take in
+    // whatever is written next, a gizmo drag included.
+    if !was.upright {
+        session.history.end();
     }
 }
 

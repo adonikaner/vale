@@ -26,11 +26,10 @@
 //! entry — twenty notches of the wheel was twenty presses of undo.
 //!
 //! [`History::begin_gesture`] is the answer for those. A change carries what it
-//! was *about* (`doodad 7 scale`, not just the label) and when it was last added
+//! was about (`doodad 7 scale`, not just the label) and when it was last added
 //! to; a change with the same subject arriving within [`History::gap`] of the
 //! last one takes the entry back off the stack and continues it. So a run of
-//! events is one entry, and stopping for half a second starts a new one — which
-//! is what a person means by "that was one thing I did".
+//! events is one entry, and stopping for half a second starts a new one.
 //!
 //! ## The history does not touch a tile
 //!
@@ -48,8 +47,8 @@ use crate::TileKey;
 ///
 /// The fourth kind of thing a [`Change`] carries, and the only one whose
 /// subject this crate cannot reach: a tile is a file it holds, a DBC cell is a
-/// record in a file it holds, and this is a row in a MySQL database it has no
-/// connection to and no business having one.
+/// record in a file it holds, and this is a row in a MySQL database this
+/// crate has no connection to and does not need one.
 ///
 /// So it is addressed by text: a table name, a key written as its own
 /// `column=value;column=value` form, and a column name. What the key means is
@@ -99,13 +98,13 @@ impl ServerCell {
 /// A whole waypoint path this project claims, before and after.
 ///
 /// [`ServerCell`]'s sibling for the one server subject whose edit is a set of
-/// *rows* rather than a column. A path is written by replacing every row under
+/// rows rather than a column. A path is written by replacing every row under
 /// its key — vmangos renumbers the points at each start, so a per-row edit
 /// would address rows that move — and the undo therefore has to carry the whole
 /// path rather than one value. See `vale_mangos::path`.
 ///
 /// The path is carried as text for [`ServerCell`]'s reason: this crate is
-/// what an edit to a *file* is and knows nothing about a database, so what it
+/// what an edit to a file is and knows nothing about a database, so what it
 /// stores is what the caller's own store writes, opaque to everything here.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServerPath {
@@ -150,7 +149,7 @@ impl ServerPath {
 /// the project's whole claim on the row, so that is what the entry carries.
 ///
 /// The claim is carried as text, as [`ServerPath`]'s path is and for its
-/// reason: this crate is what an edit to a *file* is and knows nothing about a
+/// reason: this crate is what an edit to a file is and knows nothing about a
 /// database, so what it stores is what the caller's own store writes, opaque to
 /// everything here. `vale_mangos::row::Edits::row_line` is the writer.
 ///
@@ -191,18 +190,14 @@ impl ServerRow {
 /// One entry on the stack: everything one action did, across every tile it did
 /// it to.
 ///
-/// ## …and across every *table*, which is a second list rather than a second
-/// stack
+/// ## Table edits are a second list, not a second stack
 ///
-/// A change carries tile edits and table edits side by side. **One stack, two
-/// lists**, and the reason for that shape rather than one list of
-/// `(target, edit)` pairs is that the two apply to different objects: a tile
-/// edit is `apply(&mut AdtFile)` and a table edit is `apply(&mut DbcFile)`, and
-/// merging them into one enum would give every existing arm a target it cannot
-/// use. What matters to a person is that there is one stack — `Ctrl+Z` is the
-/// last thing you did, whether that was a wall or a spell's name — and that is
-
-/// what this gives.
+/// A change carries tile edits and table edits side by side, in two lists
+/// rather than one. The two apply to different objects — a tile edit is
+/// `apply(&mut AdtFile)` and a table edit is `apply(&mut DbcFile)` — so
+/// merging them into one enum would give every existing arm a target it
+/// cannot use. There is still one stack: pressing `Ctrl+Z` undoes the last
+/// thing done, whether that was a wall or a spell's name.
 #[derive(Debug, Clone)]
 pub struct Change {
     /// What to call it in an interface. "Raise terrain", "Move doodad".
@@ -409,13 +404,26 @@ impl Change {
 
     /// Add an edit, folding it into one already here when the two are about the
     /// same thing on the same tile.
+    ///
+    /// The search runs from the newest edit back and stops at the last edit on
+    /// the tile that renumbers its placements. A `Doodad` or `Building` edit
+    /// names a row by index, and an [`Edit::Placements`] edit between two of
+    /// them can give that index to a different placement. Folding across it
+    /// would join two placements' records into one edit, and a `Placements` edit
+    /// folded back past an index edit would be applied before that edit on a
+    /// redo. The case is a group move followed by its members being put in the
+    /// tiles their origins are in, all in one entry.
     pub fn absorb(&mut self, tile: &TileKey, edit: Edit) {
-        for (had, existing) in self.edits.iter_mut() {
-            if had == tile {
-                if let Some(merged) = merge(existing, &edit) {
-                    *existing = merged;
-                    return;
-                }
+        for (had, existing) in self.edits.iter_mut().rev() {
+            if had != tile {
+                continue;
+            }
+            if let Some(merged) = merge(existing, &edit) {
+                *existing = merged;
+                return;
+            }
+            if existing.renumbers_placements() || edit.renumbers_placements() {
+                break;
             }
         }
         self.edits.push((tile.clone(), edit));
@@ -658,6 +666,9 @@ pub struct History {
     /// nudge is a second entry. It is a field rather than a constant so a test
     /// can set it to zero and check that the window is what does the folding.
     pub gap: f64,
+    /// When the button holding the current gesture went down, or `None` when
+    /// no button holds one. See [`History::hold`].
+    held_since: Option<f64>,
 }
 
 impl History {
@@ -700,9 +711,11 @@ impl History {
     ) {
         self.end();
         let subject = subject.into();
+        let held = self.held_since;
         let continues = self.undone.is_empty()
             && self.done.last().is_some_and(|last| {
-                last.gesture.as_deref() == Some(subject.as_str()) && now - last.at <= self.gap
+                last.gesture.as_deref() == Some(subject.as_str())
+                    && (now - last.at <= self.gap || held.is_some_and(|since| last.at >= since))
             });
         let mut change = match continues {
             true => self.done.pop().expect("just tested"),
@@ -713,8 +726,32 @@ impl History {
         self.open = Some(change);
     }
 
-    /// Re-open the change that was just pushed, so a write which is a
-    /// *consequence* of it folds into it instead of becoming a second entry.
+    /// Say that a button is holding the gesture being made, so a pause in it
+    /// does not end it.
+    ///
+    /// A pointer drag of a spawn writes through [`History::begin_gesture`] on
+    /// every frame the pointer moves, and nothing on a frame it does not. Held
+    /// still for longer than [`History::gap`] and then moved again, the drag
+    /// became two entries. While a hold is on, a gesture continues the last
+    /// entry of the same subject when that entry was added to after the hold
+    /// began, however long ago that was. An entry from before the hold is
+    /// continued only under the ordinary window, so a second drag of the same
+    /// thing is a second entry.
+    ///
+    /// `now` is the clock [`History::begin_gesture`] is given. Calling this on
+    /// every frame of a drag keeps the first time. [`History::release`] ends
+    /// it.
+    pub fn hold(&mut self, now: f64) {
+        self.held_since.get_or_insert(now);
+    }
+
+    /// The button holding a gesture has come up. See [`History::hold`].
+    pub fn release(&mut self) {
+        self.held_since = None;
+    }
+
+    /// Re-open the change that was just pushed, so a write that is a
+    /// consequence of it folds into it instead of becoming a second entry.
     ///
     /// The case it exists for: the WMO tool re-fits a placement's `MODF` box
     /// once a drag has settled, and the settle happens after the drag's own
@@ -791,9 +828,9 @@ impl History {
     /// [`History::record_cell`]'s counterpart one container along, and it
     /// follows the same two rules: inside a gesture it folds, outside one it is
     /// its own entry, and a cell that moved nothing is dropped here rather than
-    /// making an undo step that does nothing. That last is load-bearing for the
-    /// same reason it is there — a form writes its value back on every frame it
-    /// is drawn.
+    /// making an undo step that does nothing. That check matters here for the
+    /// same reason it does there: a form writes its value back on every frame
+    /// it is drawn.
     pub fn record_server_cell(&mut self, cell: ServerCell) {
         if cell.before == cell.after {
             return;
@@ -991,17 +1028,17 @@ impl History {
         Some(change)
     }
 
-    /// **Whether any entry on the stack — done, undone, or the one being
-    /// held — names this tile.**
+    /// Whether any entry on the stack — done, undone, or the one being held —
+    /// names this tile.
     ///
     /// It used to be the gate on closing a tile, because undo wrote into the
     /// open tile and skipped one that was not there. `EditSession::undo` opens
-    /// what it names now, which is the same guarantee from the other end and
-    /// the only one a map-wide edit can live with: an entry naming 687 tiles
-    /// would have pinned every one of them for the rest of the session.
+    /// what it names now, which gives the same guarantee from the other end
+    /// and is the only one a map-wide edit can live with: an entry naming 687
+    /// tiles would have pinned every one of them for the rest of the session.
     ///
-    /// Kept because it is the answer to "is this tile spoken for", which is a
-    /// question a report can ask.
+    /// Kept because it answers "is this tile spoken for", which is a question
+    /// a report can ask.
     pub fn touches(&self, tile: &TileKey) -> bool {
         self.done
             .iter()
@@ -1066,12 +1103,12 @@ mod tests {
 
     /// A change that carries only a path is not an empty change.
     ///
-    /// This is the regression the waypoint round shipped and had reported: a
-    /// path edit makes a `Change` with no `server_cells` at all, and the
-    /// session stepped its paths *after* an `is_empty` return on that other
-    /// list. The entry was on the stack and the Undo button was lit, and
-    /// pressing it did nothing at all. Anything that walks a change by asking
-    /// one list whether it is empty is wrong for the same reason.
+    /// This guards a regression from the waypoint feature: a path edit makes
+    /// a `Change` with no `server_cells` at all, and the session stepped its
+    /// paths after an `is_empty` return on that other list. The entry was on
+    /// the stack and the Undo button was lit, but pressing it did nothing at
+    /// all. Anything that walks a change by asking one list whether it is
+    /// empty is wrong for the same reason.
     #[test]
     fn a_change_carrying_only_a_path_is_not_empty() {
         let mut change = Change::new("Add waypoint");
@@ -1234,13 +1271,13 @@ mod tests {
 
     /// An edit is undoable the moment it is made.
     ///
-    /// `begin_gesture` leaves the change *open*, and an open change is not on
-    /// the stack — `next_undo` reads `done`, and a panel greys its Undo button
-    /// off that. So a caller that opened a gesture and did not close it left the
-    /// last edit made unreachable: pressing Undo either did nothing or took back
-    /// the edit *before* it, which was reported as a field that would not go
-    /// back to what it had been. `EditSession::set_server_edit` ends its gesture
-    /// for exactly this reason, as `tables::set_fields` already did.
+    /// `begin_gesture` leaves the change open, and an open change is not on
+    /// the stack: `next_undo` reads `done`, and a panel greys its Undo button
+    /// off that. A caller that opened a gesture and did not close it left the
+    /// last edit made unreachable: pressing Undo either did nothing or took
+    /// back the edit before it, which was reported as a field that would not
+    /// go back to what it had been. `EditSession::set_server_edit` ends its
+    /// gesture for exactly this reason, as `tables::set_fields` already did.
     #[test]
     fn one_edit_is_undoable_without_waiting_for_a_second() {
         let mut history = History::new();
@@ -1254,7 +1291,7 @@ mod tests {
         assert_eq!(change.server_cells[0].after.as_deref(), Some("'A'"));
     }
 
-    /// …and two edits to *different* columns of the same row are two cells on
+    /// …and two edits to different columns of the same row are two cells on
     /// one entry, not one cell. A move writes three columns and comes back in
     /// one press; it must put all three back.
     #[test]
@@ -1441,9 +1478,9 @@ mod tests {
         assert_eq!(history.depth_done(), 0);
     }
 
-    /// Twenty notches of the wheel are one entry. The gesture that started
-    /// this: scaling a doodad with control and the wheel pushed one change per
-    /// event, so undoing a resize was twenty presses.
+    /// Twenty notches of the wheel are one entry. Before `begin_gesture`,
+    /// scaling a doodad with control and the wheel pushed one change per
+    /// event, so undoing a resize took twenty presses.
     #[test]
     fn a_run_of_one_gesture_is_one_entry() {
         let mut history = History::new();
@@ -1474,8 +1511,7 @@ mod tests {
         }
     }
 
-    /// …and stopping for longer than the gap starts a new one, which is how a
-    /// person says "that was two things".
+    /// …and stopping for longer than the gap starts a new one.
     #[test]
     fn a_pause_ends_a_gesture() {
         let mut history = History::new();
@@ -1487,8 +1523,8 @@ mod tests {
         assert_eq!(history.depth_done(), 2);
     }
 
-    /// **A different subject is a different entry however close together they
-    /// are.** Turning a placement and then scaling it within the same tenth of a
+    /// A different subject is a different entry however close together they
+    /// are. Turning a placement and then scaling it within the same tenth of a
     /// second are two actions, and folding them would make one undo do both.
     #[test]
     fn two_subjects_never_fold_into_each_other() {
@@ -1609,5 +1645,85 @@ mod tests {
             regions,
             index_extra: [0, 0],
         }
+    }
+
+    /// A drag held still for longer than the gap and then moved again is one
+    /// entry while the hold is on, and a second drag of the same thing after the
+    /// release is a second entry.
+    #[test]
+    fn a_held_gesture_survives_a_pause_and_a_second_drag_does_not_join_it() {
+        let mut history = History::new();
+        let subject = "creature group 7 position";
+        history.hold(10.0);
+        history.begin_gesture("Move 3 creatures", subject, 10.0);
+        history.record_server_cell(server_cell("position_x", Some("1"), Some("2")));
+        history.end();
+        // Three seconds without a write, and the drag goes on.
+        history.begin_gesture("Move 3 creatures", subject, 13.0);
+        history.record_server_cell(server_cell("position_x", Some("2"), Some("3")));
+        history.end();
+        assert_eq!(history.depth_done(), 1, "one drag with a pause in it");
+        history.release();
+
+        // The next drag, with its own hold, starts an entry of its own.
+        history.hold(20.0);
+        history.begin_gesture("Move 3 creatures", subject, 20.0);
+        history.record_server_cell(server_cell("position_x", Some("3"), Some("4")));
+        history.end();
+        history.release();
+        assert_eq!(history.depth_done(), 2, "two drags");
+    }
+
+    /// Two moves of one index on either side of a renumbering stay two edits,
+    /// and the entry undoes and redoes exactly.
+    ///
+    /// The group case: a member is moved, the rows of the tile are renumbered
+    /// when another member is put in the tile its origin is in, and a later
+    /// write names the same index, which now holds a different placement.
+    #[test]
+    fn an_index_edit_does_not_fold_across_a_renumbering() {
+        use crate::adt::place::Doodad;
+        use crate::ops::Placements;
+        let mut tile = crate::adt::blank::blank_tile(32, 48, "a.blp", 0.0, 0);
+        let placed = |unique_id: u32, x: f32| Doodad {
+            name_id: 0,
+            unique_id,
+            position: [x, 0.0, 0.0],
+            rotation: [0.0; 3],
+            scale: 1024,
+            flags: 0,
+        };
+        tile.name_model("tree.m2");
+        tile.add_doodad(placed(1, 100.0), 5.0);
+        tile.add_doodad(placed(2, 200.0), 5.0);
+        let start = Placements::capture(&tile);
+
+        let mut history = History::new();
+        history.begin("Move 2 doodads");
+        let first = Edit::move_doodad(&tile, 0, placed(1, 110.0)).unwrap();
+        first.apply(&mut tile);
+        history.record(&key(32, 48), [first]);
+        let before = Placements::capture(&tile);
+        tile.remove_doodad(0);
+        history.record(
+            &key(32, 48),
+            [Edit::Placements {
+                before: Box::new(before),
+                after: Box::new(Placements::capture(&tile)),
+            }],
+        );
+        // Index 0 is the second placement now.
+        let second = Edit::move_doodad(&tile, 0, placed(2, 210.0)).unwrap();
+        second.apply(&mut tile);
+        history.record(&key(32, 48), [second]);
+        history.end();
+        let end = Placements::capture(&tile);
+
+        let change = history.undo().expect("one entry");
+        assert_eq!(change.edits.len(), 3, "nothing folded across the renumbering");
+        change.revert(&key(32, 48), &mut tile);
+        assert!(Placements::capture(&tile) == start, "undo puts both back");
+        change.apply(&key(32, 48), &mut tile);
+        assert!(Placements::capture(&tile) == end, "redo puts both in");
     }
 }

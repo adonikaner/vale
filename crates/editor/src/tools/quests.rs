@@ -298,6 +298,10 @@ pub enum Target {
     /// A client table, by its bare name. Searched by the panel, which has the
     /// session the table is opened through.
     Dbc(&'static str),
+    /// A server table a column names by id and that has no name column of its
+    /// own (a gossip menu, an equipment set, a loot list), by its name. Listed
+    /// by what is in it and who uses it; see `vale_mangos::lists`.
+    List(&'static str),
 }
 
 /// One row a picker offers.
@@ -454,9 +458,14 @@ pub struct Quests {
     /// The name, quality and display id of every item named by a quest opened
     /// so far — `None` for an entry the database does not hold.
     items: Fresh<HashMap<u32, Option<ItemName>>>,
-    /// What has been asked for and is in neither cache yet.
+    /// What each id of a [`Target::List`] table a form names holds, as the
+    /// picker lists it, by table and id — `None` for an id the database does
+    /// not hold.
+    lists: Fresh<HashMap<(&'static str, u32), Option<Hit>>>,
+    /// What has been asked for and is in none of the caches yet.
     wanted_items: HashSet<u32>,
     wanted_holders: HashSet<(Holder, u32)>,
+    wanted_lists: HashSet<(&'static str, u32)>,
     /// The name read in progress, and the `EditSession::database_writes` it
     /// was started at: an answer that lands after the counter has moved
     /// describes a database that is gone, and is dropped.
@@ -540,6 +549,7 @@ pub struct TableRead {
 pub struct NamesRead {
     items: Vec<(u32, Option<ItemName>)>,
     holders: Vec<((Holder, u32), Option<String>)>,
+    lists: Vec<((&'static str, u32), Option<Hit>)>,
 }
 
 impl Quests {
@@ -1089,10 +1099,33 @@ impl Quests {
         self.holders.contains_key(&(holder, id)) || claimed(edits, holder.template(), id, "name").is_some()
     }
 
+    /// What one id of a [`Target::List`] table holds, as the picker lists it:
+    /// the database's answer, or a line saying the project creates rows under
+    /// it when the database has none. Asked for when it is not known yet.
+    pub fn listed(&mut self, table: &'static str, id: u32, edits: &Edits) -> Option<Hit> {
+        match self.lists.get(&(table, id)) {
+            Some(Some(found)) => Some(found.clone()),
+            Some(None) => created_list(table, id, edits),
+            None => {
+                self.wanted_lists.insert((table, id));
+                None
+            }
+        }
+    }
+
+    /// Whether an id of a [`Target::List`] table has been answered, with rows or
+    /// without.
+    pub fn listed_known(&self, table: &'static str, id: u32) -> bool {
+        self.lists.contains_key(&(table, id))
+    }
+
     /// Remember a name a picker's own search answered, so the row that was just
     /// chosen is drawn with its name on the frame it is written.
     pub fn learn(&mut self, target: Target, hit: &Hit) {
         match target {
+            Target::List(table) => {
+                self.lists.insert((table, hit.id), Some(hit.clone()));
+            }
             Target::Creature => {
                 self.holders
                     .insert((Holder::Creature, hit.id), Some(hit.title.clone()));
@@ -1410,11 +1443,13 @@ fn fetch_the_names(
 ) {
     let writes = session.as_ref().map_or(0, |session| session.database_writes);
     let quests = &mut *quests;
-    let emptied = quests.holders.renew(writes) | quests.items.renew(writes);
+    let emptied =
+        quests.holders.renew(writes) | quests.items.renew(writes) | quests.lists.renew(writes);
     if emptied {
         // What was asked for before is asked for again by whoever draws it.
         quests.wanted_items.clear();
         quests.wanted_holders.clear();
+        quests.wanted_lists.clear();
     }
     if let Some((started, task)) = quests.names_task.as_mut() {
         let started = *started;
@@ -1429,13 +1464,19 @@ fn fetch_the_names(
                     for (key, found) in read.holders {
                         quests.holders.insert(key, found);
                     }
+                    for (key, found) in read.lists {
+                        quests.lists.insert(key, found);
+                    }
                 }
                 Err(e) => warn!("quest names: {e}"),
             }
         }
         return;
     }
-    if quests.wanted_items.is_empty() && quests.wanted_holders.is_empty() {
+    if quests.wanted_items.is_empty()
+        && quests.wanted_holders.is_empty()
+        && quests.wanted_lists.is_empty()
+    {
         return;
     }
     let Some((at, _)) = settings.resolve() else {
@@ -1448,11 +1489,16 @@ fn fetch_the_names(
         for key in holders {
             quests.holders.insert(key, None);
         }
+        let lists: Vec<(&'static str, u32)> = quests.wanted_lists.drain().collect();
+        for key in lists {
+            quests.lists.insert(key, None);
+        }
         return;
     };
     let patch = super::creatures::server_patch(&settings);
     let items: Vec<u32> = quests.wanted_items.drain().collect();
     let holders: Vec<(Holder, u32)> = quests.wanted_holders.drain().collect();
+    let lists: Vec<(&'static str, u32)> = quests.wanted_lists.drain().collect();
     quests.names_task = Some((writes, crate::server::queue::read(async move {
         let mut db = vale_mangos::conn::Db::open(&at)?;
         let mut out = NamesRead {
@@ -1460,7 +1506,35 @@ fn fetch_the_names(
             // replaces it — so an id the database does not hold is cached too.
             items: items.iter().map(|entry| (*entry, None)).collect(),
             holders: holders.iter().map(|key| (*key, None)).collect(),
+            lists: lists.iter().map(|key| (*key, None)).collect(),
         };
+        // One query a table, for the ids of it that were asked for.
+        let mut tables: Vec<&'static str> = lists.iter().map(|(table, _)| *table).collect();
+        tables.sort_unstable();
+        tables.dedup();
+        for table in tables {
+            let Some(list) = vale_mangos::lists::list(table) else {
+                continue;
+            };
+            let ids: Vec<u32> = lists
+                .iter()
+                .filter(|(had, _)| *had == table)
+                .map(|(_, id)| *id)
+                .collect();
+            let filter = vale_mangos::lists::Filter::Ids(&ids);
+            for row in db.rows(&vale_mangos::lists::query(list, filter, patch, ids.len()))? {
+                let Some(found) = vale_mangos::lists::Listed::read(list, &row) else {
+                    continue;
+                };
+                if let Some(slot) = out.lists.iter_mut().find(|(key, _)| *key == (table, found.id)) {
+                    slot.1 = Some(Hit {
+                        id: found.id,
+                        title: found.title,
+                        sub: found.sub,
+                    });
+                }
+            }
+        }
         if let Some(sql) = quest::item_names_query(&items, patch) {
             for row in db.rows(&sql)? {
                 let Some(entry) = row.integer("entry") else {
@@ -1502,9 +1576,49 @@ fn fetch_the_names(
     })));
 }
 
-/// Run the picker's search, for the three targets whose rows are in the
-/// database: one `LIKE` per change to the box, on a task. A quest is searched
-/// in memory and a client table by the panel.
+/// …and the same for a [`Target::List`] table: an id under which the project
+/// creates rows and the database holds none is listed first, when the box is
+/// empty or names it.
+fn fold_the_projects_lists(hits: &mut Vec<Hit>, table: &'static str, query: &str, edits: &Edits) {
+    let by_id: Option<u32> = query.parse().ok();
+    let mut created: Vec<Hit> = Vec::new();
+    for (claimed_table, key, row) in edits.rows() {
+        if claimed_table != table || row.life != Life::Insert {
+            continue;
+        }
+        let Some(id) = key.first().map(|id| id as u32) else {
+            continue;
+        };
+        if hits.iter().chain(created.iter()).any(|hit| hit.id == id) {
+            continue;
+        }
+        if query.is_empty() || by_id == Some(id) {
+            if let Some(hit) = created_list(table, id, edits) {
+                created.push(hit);
+            }
+        }
+    }
+    created.sort_by_key(|hit| hit.id);
+    hits.splice(0..0, created);
+    hits.truncate(PICK_LIMIT);
+}
+
+/// An id of a [`Target::List`] table the project creates rows under, as a
+/// picker row, or `None` when it creates none.
+fn created_list(table: &'static str, id: u32, edits: &Edits) -> Option<Hit> {
+    let rows = edits
+        .rows()
+        .filter(|(had, key, row)| {
+            *had == table && key.first() == Some(u64::from(id)) && row.life == Life::Insert
+        })
+        .count();
+    (rows > 0).then(|| Hit {
+        id,
+        title: "created by this project".to_string(),
+        sub: format!("{rows} row(s) not yet applied"),
+    })
+}
+
 /// Put the project's own rows into a search the database answered: a
 /// creature, game object or item the project names is listed under that name,
 /// and one it creates that matches the search is listed first. The database
@@ -1514,6 +1628,7 @@ fn fold_the_projects_rows(hits: &mut Vec<Hit>, target: Target, query: &str, edit
         Target::Item => vale_mangos::item::TEMPLATE,
         Target::Creature => vale_mangos::creature::TEMPLATE,
         Target::Object => vale_mangos::gameobject::TEMPLATE,
+        Target::List(table) => return fold_the_projects_lists(hits, table, query, edits),
         _ => return,
     };
     for hit in hits.iter_mut() {
@@ -1547,6 +1662,9 @@ fn fold_the_projects_rows(hits: &mut Vec<Hit>, target: Target, query: &str, edit
     hits.truncate(PICK_LIMIT);
 }
 
+/// Run the picker's search, for the targets whose rows are in the database:
+/// one query per change to the box, on a task. A quest is searched in memory
+/// and a client table by the panel.
 fn search_the_picker(
     mut quests: ResMut<Quests>,
     session: Option<Res<EditSession>>,
@@ -1586,6 +1704,35 @@ fn search_the_picker(
     match picker.target {
         // The panel's — see `crate::ui::quests::search_a_table`.
         Target::Dbc(_) => {}
+        // Every id when the box is empty, unlike the templates: these tables
+        // are hundreds or a few thousand ids, listed in order, and the one
+        // wanted is often the creature's own entry or near it.
+        Target::List(table) => {
+            picker.built = Some(asked);
+            let Some(list) = vale_mangos::lists::list(table) else {
+                picker.hits.clear();
+                return;
+            };
+            let Some((at, _)) = settings.resolve() else {
+                return;
+            };
+            let patch = super::creatures::server_patch(&settings);
+            picker.task = Some(crate::server::queue::read(async move {
+                let mut db = vale_mangos::conn::Db::open(&at)?;
+                let filter = vale_mangos::lists::Filter::Search(&query);
+                let sql = vale_mangos::lists::query(list, filter, patch, PICK_LIMIT);
+                Ok(db
+                    .rows(&sql)?
+                    .iter()
+                    .filter_map(|row| vale_mangos::lists::Listed::read(list, row))
+                    .map(|found| Hit {
+                        id: found.id,
+                        title: found.title,
+                        sub: found.sub,
+                    })
+                    .collect())
+            }));
+        }
         Target::Quest => {
             picker.built = Some(asked);
             let by_entry: Option<u32> = query.parse().ok();

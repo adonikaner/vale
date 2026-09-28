@@ -16,6 +16,8 @@
 //! creature_template      the same cache, by holder
 //! gameobject_template    the same cache, by holder
 //! quest_template         the quest list, which is in memory
+//! a list table           what the id holds and who uses it, read from the
+//!                        database into a third cache; see `vale_mangos::lists`
 //! FactionTemplate        Faction.dbc, through the row's faction field
 //! any other DBC          the table, opened through the session, and its name
 //!                        field from `super::quests::name_field`
@@ -100,7 +102,32 @@ pub fn name(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, table: &'static str,
         Some(Target::Object) => holder_name(ui, resolver, Holder::Object, id),
         Some(Target::Quest) => quest_link(ui, resolver, id),
         Some(Target::Dbc(dbc)) => dbc_link(ui, resolver, dbc, id),
+        Some(Target::List(list)) => list_line(ui, resolver, list, id),
         None => meaning(ui, format!("{table} {id}")),
+    }
+}
+
+/// What one id of a server list holds, as the picker lists it: the title,
+/// with the count and who uses it on the hover. See `vale_mangos::lists`.
+fn list_line(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, table: &'static str, id: u32) {
+    match resolver.quests.listed(table, id, &resolver.session.server_edits) {
+        Some(found) => {
+            ui.add(
+                egui::Label::new(egui::RichText::new(&found.title).color(theme::INK)).truncate(),
+            )
+            .on_hover_text(format!("{}\n{}", found.title, found.sub));
+        }
+        None => match resolver.quests.listed_known(table, id) {
+            true => {
+                let noun = vale_mangos::lists::list(table).map_or(table, |list| list.noun);
+                ui.label(
+                    egui::RichText::new(format!("no such {noun}"))
+                        .small()
+                        .color(theme::BAD),
+                );
+            }
+            false => meaning(ui, "\u{2026}"),
+        },
     }
 }
 

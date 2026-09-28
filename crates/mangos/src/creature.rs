@@ -107,7 +107,9 @@ pub fn table_named(name: &str) -> Option<&'static str> {
 /// [`crate::schema`]. They are re-exported rather than renamed:
 /// `creature::Kind::Text` is what every caller here says, and a column of
 /// `creature_template` is still described in this file.
-pub use crate::schema::{mask_words, value_word, Bit, Column, Group, Kind, Row, RowValue, Value};
+pub use crate::schema::{
+    mask_words, value_word, Bit, Column, Group, Kind, Row, RowValue, Value, NO_YES,
+};
 
 /// `UNIT_NPC_FLAGS`, from `UnitDefines.h:656`. What the client draws over a
 /// head and what a right-click offers.
@@ -179,8 +181,8 @@ pub const INHABIT_TYPES: [Bit; 3] = [
     Bit { bit: 4, name: "AIR", about: "flies" },
 ];
 
-/// `CreatureStaticFlags`, from `CreatureDefines.h:98`: the first word.
-pub const STATIC_FLAGS1: [Bit; 24] = [
+/// `CreatureStaticFlags`, from `CreatureDefines.h:96`: the first word.
+pub const STATIC_FLAGS1: [Bit; 32] = [
     Bit { bit: 0x00000001, name: "MOUNTABLE", about: "not used by the core" },
     Bit { bit: 0x00000002, name: "NO_XP", about: "killing it gives no experience" },
     Bit { bit: 0x00000004, name: "NO_LOOT", about: "not used by the core" },
@@ -205,6 +207,164 @@ pub const STATIC_FLAGS1: [Bit; 24] = [
     Bit { bit: 0x00200000, name: "VISIBLE_TO_GHOSTS", about: "spirit healers" },
     Bit { bit: 0x00400000, name: "PVP_ENABLING", about: "flags attackers for pvp" },
     Bit { bit: 0x00800000, name: "DO_NOT_PLAY_WOUND_ANIM", about: "no wound animation" },
+    Bit { bit: 0x01000000, name: "NO_FACTION_TOOLTIP", about: "not used by the core" },
+    Bit { bit: 0x02000000, name: "IGNORE_COMBAT", about: "react state passive" },
+    Bit { bit: 0x04000000, name: "ONLY_ATTACK_PVP_ENABLING", about: "no proximity aggro on players not flagged for pvp" },
+    Bit { bit: 0x08000000, name: "CALLS_GUARDS", about: "summons a guard when an enemy player comes near or attacks" },
+    Bit { bit: 0x10000000, name: "CAN_SWIM", about: "UNIT_FLAG_USE_SWIM_ANIMATION on spawn" },
+    Bit { bit: 0x20000000, name: "FLOATING", about: "MOVEFLAG_FIXED_Z on spawn" },
+    Bit { bit: 0x40000000, name: "MORE_AUDIBLE", about: "heard from further away" },
+    Bit { bit: 0x80000000, name: "LARGE_AOI", about: "seen from 200 yards" },
+];
+
+/// `CreatureStaticFlags2`, from `CreatureDefines.h:132`: the second word.
+pub const STATIC_FLAGS2: [Bit; 7] = [
+    Bit { bit: 0x01, name: "NO_PET_SCALING", about: "not used by the core" },
+    Bit { bit: 0x02, name: "FORCE_RAID_COMBAT", about: "puts the whole zone in combat on aggro" },
+    Bit { bit: 0x04, name: "LOCK_TAPPERS_TO_RAID_ON_DEATH", about: "killing it binds the players to the raid" },
+    Bit { bit: 0x08, name: "NO_HARMFUL_VERTEX_COLORING", about: "not used by the core" },
+    Bit { bit: 0x10, name: "NO_CRUSHING_BLOWS", about: "never lands a crushing blow" },
+    Bit { bit: 0x20, name: "NO_OWNER_THREAT", about: "does not put its owner in combat" },
+    Bit { bit: 0x40, name: "NO_WOUNDED_SLOWDOWN", about: "does not slow down at low health" },
+];
+
+/// `CreatureFlagsExtra`, from `CreatureDefines.h:155`: vmangos' own flags.
+pub const FLAGS_EXTRA: [Bit; 20] = [
+    Bit { bit: 0x00000001, name: "NO_LEASH_EVADE", about: "does not evade when its target runs away" },
+    Bit { bit: 0x00000002, name: "NO_AGGRO", about: "defensive: does not attack hostiles that come near" },
+    Bit { bit: 0x00000004, name: "NO_PARRY", about: "cannot parry" },
+    Bit { bit: 0x00000008, name: "NO_UNREACHABLE_EVADE", about: "does not evade when its target cannot be reached" },
+    Bit { bit: 0x00000010, name: "NO_BLOCK", about: "cannot block" },
+    Bit { bit: 0x00000020, name: "NO_MOVEMENT_PAUSE", about: "does not stop when a player talks to it" },
+    Bit { bit: 0x00000040, name: "ALWAYS_RUN", about: "runs out of combat" },
+    Bit { bit: 0x00000080, name: "INVISIBLE", about: "never seen by players; a trigger" },
+    Bit { bit: 0x00000100, name: "GIGANTIC_AOI", about: "seen from 400 yards" },
+    Bit { bit: 0x00000200, name: "INFINITE_AOI", about: "seen from anywhere on the map" },
+    Bit { bit: 0x00000400, name: "GUARD", about: "a guard" },
+    Bit { bit: 0x00000800, name: "NO_THREAT_LIST", about: "no threat list; a five-second combat timer, as a player has" },
+    Bit { bit: 0x00001000, name: "KEEP_POSITIVE_AURAS_ON_EVADE", about: "keeps its buffs when it resets" },
+    Bit { bit: 0x00002000, name: "ALWAYS_CRUSH", about: "every hit that lands is a crushing blow" },
+    Bit { bit: 0x00004000, name: "APPEAR_DEAD", about: "UNIT_DYNFLAG_DEAD applied" },
+    Bit { bit: 0x00008000, name: "CHASE_GEN_NO_BACKING", about: "does not back away from a target inside its reach" },
+    Bit { bit: 0x00010000, name: "NO_ASSIST", about: "does not join when creatures nearby aggro" },
+    Bit { bit: 0x00020000, name: "NO_TARGET", about: "passive: acquires no targets" },
+    Bit { bit: 0x00040000, name: "ONLY_VISIBLE_TO_FRIENDLY", about: "seen only by friendly units" },
+    Bit { bit: 0x00080000, name: "CAN_ASSIST", about: "CREATURE_TYPEFLAGS_CAN_ASSIST from TBC" },
+];
+
+/// `CreatureImmunityFlags`, from `CreatureDefines.h:179`.
+pub const IMMUNITY_FLAGS: [Bit; 7] = [
+    Bit { bit: 0x01, name: "AOE", about: "area spells" },
+    Bit { bit: 0x02, name: "TAUNT", about: "taunts" },
+    Bit { bit: 0x04, name: "MOD_STAT", about: "stat changes" },
+    Bit { bit: 0x08, name: "MOD_CAST_SPEED", about: "casting speed changes" },
+    Bit { bit: 0x10, name: "DISEASE", about: "diseases" },
+    Bit { bit: 0x20, name: "POISON", about: "poisons" },
+    Bit { bit: 0x40, name: "CURSE", about: "curses" },
+];
+
+/// `Mechanics`, from `SpellDefines.h:659`, as the mask
+/// `mechanic_immune_mask` is: mechanic `m` is bit `1 << (m - 1)`
+/// (`Creature::IsImmuneToSpell`, `Creature.cpp:2445`).
+pub const MECHANIC_MASK: [Bit; 31] = [
+    Bit { bit: 1 << 0, name: "CHARM", about: "mechanic 1" },
+    Bit { bit: 1 << 1, name: "DISORIENTED", about: "mechanic 2" },
+    Bit { bit: 1 << 2, name: "DISARM", about: "mechanic 3" },
+    Bit { bit: 1 << 3, name: "DISTRACT", about: "mechanic 4" },
+    Bit { bit: 1 << 4, name: "FEAR", about: "mechanic 5" },
+    Bit { bit: 1 << 5, name: "FUMBLE", about: "mechanic 6" },
+    Bit { bit: 1 << 6, name: "ROOT", about: "mechanic 7" },
+    Bit { bit: 1 << 7, name: "PACIFY", about: "mechanic 8; no spell uses it" },
+    Bit { bit: 1 << 8, name: "SILENCE", about: "mechanic 9" },
+    Bit { bit: 1 << 9, name: "SLEEP", about: "mechanic 10" },
+    Bit { bit: 1 << 10, name: "SNARE", about: "mechanic 11" },
+    Bit { bit: 1 << 11, name: "STUN", about: "mechanic 12" },
+    Bit { bit: 1 << 12, name: "FREEZE", about: "mechanic 13" },
+    Bit { bit: 1 << 13, name: "KNOCKOUT", about: "mechanic 14" },
+    Bit { bit: 1 << 14, name: "BLEED", about: "mechanic 15" },
+    Bit { bit: 1 << 15, name: "BANDAGE", about: "mechanic 16" },
+    Bit { bit: 1 << 16, name: "POLYMORPH", about: "mechanic 17" },
+    Bit { bit: 1 << 17, name: "BANISH", about: "mechanic 18" },
+    Bit { bit: 1 << 18, name: "SHIELD", about: "mechanic 19" },
+    Bit { bit: 1 << 19, name: "SHACKLE", about: "mechanic 20" },
+    Bit { bit: 1 << 20, name: "MOUNT", about: "mechanic 21" },
+    Bit { bit: 1 << 21, name: "PERSUADE", about: "mechanic 22; no spell uses it" },
+    Bit { bit: 1 << 22, name: "TURN", about: "mechanic 23" },
+    Bit { bit: 1 << 23, name: "HORROR", about: "mechanic 24" },
+    Bit { bit: 1 << 24, name: "INVULNERABILITY", about: "mechanic 25" },
+    Bit { bit: 1 << 25, name: "INTERRUPT", about: "mechanic 26" },
+    Bit { bit: 1 << 26, name: "DAZE", about: "mechanic 27" },
+    Bit { bit: 1 << 27, name: "DISCOVERY", about: "mechanic 28" },
+    Bit { bit: 1 << 28, name: "IMMUNE_SHIELD", about: "mechanic 29: Divine Shield, Blessing of Protection, Ice Block" },
+    Bit { bit: 1 << 29, name: "SAPPED", about: "mechanic 30" },
+    Bit { bit: 1 << 30, name: "SLOW_CAST_SPEED", about: "mechanic 31, vmangos' own: Curse of Tongues" },
+];
+
+/// `SpellSchools`, from `SpellDefines.h:758`, as the mask
+/// `school_immune_mask` is: school `s` is bit `1 << s`
+/// (`Creature.cpp:2448`).
+pub const SCHOOL_MASK: [Bit; 7] = [
+    Bit { bit: 0x01, name: "PHYSICAL", about: "school 0: melee and physical spells" },
+    Bit { bit: 0x02, name: "HOLY", about: "school 1" },
+    Bit { bit: 0x04, name: "FIRE", about: "school 2" },
+    Bit { bit: 0x08, name: "NATURE", about: "school 3" },
+    Bit { bit: 0x10, name: "FROST", about: "school 4" },
+    Bit { bit: 0x20, name: "SHADOW", about: "school 5" },
+    Bit { bit: 0x40, name: "ARCANE", about: "school 6" },
+];
+
+/// `TrainerType`, from `CreatureDefines.h:29`.
+pub const TRAINER_TYPES: [Value; 4] = [
+    Value { value: 0, name: "Class" },
+    Value { value: 1, name: "Mounts" },
+    Value { value: 2, name: "Tradeskills" },
+    Value { value: 3, name: "Pets" },
+];
+
+/// `Classes`, from `SharedDefines.h:87`, with 0 for none: what
+/// `trainer_class` holds.
+pub const TRAINER_CLASSES: [Value; 10] = [
+    Value { value: 0, name: "None" },
+    Value { value: 1, name: "Warrior" },
+    Value { value: 2, name: "Paladin" },
+    Value { value: 3, name: "Hunter" },
+    Value { value: 4, name: "Rogue" },
+    Value { value: 5, name: "Priest" },
+    Value { value: 7, name: "Shaman" },
+    Value { value: 8, name: "Mage" },
+    Value { value: 9, name: "Warlock" },
+    Value { value: 11, name: "Druid" },
+];
+
+/// `Races`, from `SharedDefines.h:56`, with 0 for any: what `trainer_race`
+/// holds. A mount trainer with a race trains only that race
+/// (`Creature.cpp:1429`).
+pub const TRAINER_RACES: [Value; 9] = [
+    Value { value: 0, name: "Any" },
+    Value { value: 1, name: "Human" },
+    Value { value: 2, name: "Orc" },
+    Value { value: 3, name: "Dwarf" },
+    Value { value: 4, name: "Night Elf" },
+    Value { value: 5, name: "Undead" },
+    Value { value: 6, name: "Tauren" },
+    Value { value: 7, name: "Gnome" },
+    Value { value: 8, name: "Troll" },
+];
+
+/// `WowPatch`, from `Progression.h:64`: the content patches a spawn's
+/// `patch_min` and `patch_max` count in.
+pub const PATCHES: [Value; 11] = [
+    Value { value: 0, name: "1.2" },
+    Value { value: 1, name: "1.3" },
+    Value { value: 2, name: "1.4" },
+    Value { value: 3, name: "1.5" },
+    Value { value: 4, name: "1.6" },
+    Value { value: 5, name: "1.7" },
+    Value { value: 6, name: "1.8" },
+    Value { value: 7, name: "1.9" },
+    Value { value: 8, name: "1.10" },
+    Value { value: 9, name: "1.11" },
+    Value { value: 10, name: "1.12" },
 ];
 
 /// `SpawnFlags`, from `ObjectDefines.h:127`. A spawn's own, not the template's.
@@ -234,7 +394,7 @@ pub const TEMPLATE_COLUMNS: [Column; 75] = [
     Column { name: "level_max", kind: Kind::Unsigned, group: Group::Identity, about: "highest level it spawns at" },
     Column { name: "faction", kind: Kind::Ref("FactionTemplate"), group: Group::Identity, about: "FactionTemplate.dbc id: who it fights" },
     Column { name: "npc_flags", kind: Kind::Flags(&NPC_FLAGS), group: Group::Services, about: "what a right-click offers" },
-    Column { name: "gossip_menu_id", kind: Kind::Unsigned, group: Group::Services, about: "gossip_menu id: what it says" },
+    Column { name: "gossip_menu_id", kind: Kind::Ref("gossip_menu"), group: Group::Services, about: "gossip_menu id: what it says" },
     Column { name: "display_id1", kind: Kind::Ref("CreatureDisplayInfo"), group: Group::Appearance, about: "the model it is drawn as" },
     Column { name: "display_id2", kind: Kind::Ref("CreatureDisplayInfo"), group: Group::Appearance, about: "a second model it may pick" },
     Column { name: "display_id3", kind: Kind::Ref("CreatureDisplayInfo"), group: Group::Appearance, about: "a third" },
@@ -264,43 +424,43 @@ pub const TEMPLATE_COLUMNS: [Column; 75] = [
     Column { name: "armor_multiplier", kind: Kind::Float, group: Group::Stats, about: "armour against the same table" },
     Column { name: "damage_multiplier", kind: Kind::Float, group: Group::Combat, about: "melee damage against the same table" },
     Column { name: "damage_variance", kind: Kind::Float, group: Group::Combat, about: "spread between the low and high hit" },
-    Column { name: "damage_school", kind: Kind::Unsigned, group: Group::Combat, about: "0 physical, 1 holy, 2 fire…" },
-    Column { name: "base_attack_time", kind: Kind::Unsigned, group: Group::Combat, about: "milliseconds between melee swings" },
-    Column { name: "ranged_attack_time", kind: Kind::Unsigned, group: Group::Combat, about: "milliseconds between ranged shots" },
+    Column { name: "damage_school", kind: Kind::Choice(&crate::item::DAMAGE_SCHOOLS), group: Group::Combat, about: "the school its melee damage is" },
+    Column { name: "base_attack_time", kind: Kind::Millis, group: Group::Combat, about: "milliseconds between melee swings" },
+    Column { name: "ranged_attack_time", kind: Kind::Millis, group: Group::Combat, about: "milliseconds between ranged shots" },
     Column { name: "holy_res", kind: Kind::Signed, group: Group::Combat, about: "holy resistance" },
     Column { name: "fire_res", kind: Kind::Signed, group: Group::Combat, about: "fire resistance" },
     Column { name: "nature_res", kind: Kind::Signed, group: Group::Combat, about: "nature resistance" },
     Column { name: "frost_res", kind: Kind::Signed, group: Group::Combat, about: "frost resistance" },
     Column { name: "shadow_res", kind: Kind::Signed, group: Group::Combat, about: "shadow resistance" },
     Column { name: "arcane_res", kind: Kind::Signed, group: Group::Combat, about: "arcane resistance" },
-    Column { name: "trainer_type", kind: Kind::Unsigned, group: Group::Services, about: "0 class, 1 mounts, 2 tradeskills, 3 pets" },
+    Column { name: "trainer_type", kind: Kind::Choice(&TRAINER_TYPES), group: Group::Services, about: "what kind of trainer it is" },
     Column { name: "trainer_spell", kind: Kind::Ref("Spell"), group: Group::Services, about: "the spell a pet or mount trainer requires" },
-    Column { name: "trainer_class", kind: Kind::Unsigned, group: Group::Services, about: "the class it will train, or 0" },
-    Column { name: "trainer_race", kind: Kind::Unsigned, group: Group::Services, about: "the race it will train, or 0" },
-    Column { name: "loot_id", kind: Kind::Unsigned, group: Group::Loot, about: "creature_loot_template entry" },
-    Column { name: "pickpocket_loot_id", kind: Kind::Unsigned, group: Group::Loot, about: "pickpocketing_loot_template entry" },
-    Column { name: "skinning_loot_id", kind: Kind::Unsigned, group: Group::Loot, about: "skinning_loot_template entry" },
-    Column { name: "gold_min", kind: Kind::Unsigned, group: Group::Loot, about: "least copper on the corpse" },
-    Column { name: "gold_max", kind: Kind::Unsigned, group: Group::Loot, about: "most copper on the corpse" },
-    Column { name: "spell_list_id", kind: Kind::Unsigned, group: Group::Combat, about: "creature_spells entry: what it casts, and when" },
-    Column { name: "pet_spell_list_id", kind: Kind::Unsigned, group: Group::Combat, about: "what it knows when tamed" },
+    Column { name: "trainer_class", kind: Kind::Choice(&TRAINER_CLASSES), group: Group::Services, about: "the class it will train, or none" },
+    Column { name: "trainer_race", kind: Kind::Choice(&TRAINER_RACES), group: Group::Services, about: "the race it will train, or any" },
+    Column { name: "loot_id", kind: Kind::Ref(crate::loot::CREATURE), group: Group::Loot, about: "creature_loot_template entry" },
+    Column { name: "pickpocket_loot_id", kind: Kind::Ref(crate::loot::PICKPOCKETING), group: Group::Loot, about: "pickpocketing_loot_template entry" },
+    Column { name: "skinning_loot_id", kind: Kind::Ref(crate::loot::SKINNING), group: Group::Loot, about: "skinning_loot_template entry" },
+    Column { name: "gold_min", kind: Kind::Money, group: Group::Loot, about: "least copper on the corpse" },
+    Column { name: "gold_max", kind: Kind::Money, group: Group::Loot, about: "most copper on the corpse" },
+    Column { name: "spell_list_id", kind: Kind::Ref(crate::creaturespells::TABLE), group: Group::Combat, about: "creature_spells entry: what it casts, and when" },
+    Column { name: "pet_spell_list_id", kind: Kind::Ref(crate::creaturespells::TABLE), group: Group::Combat, about: "what it knows when tamed" },
     Column { name: "spawn_spell_id", kind: Kind::Ref("Spell"), group: Group::Behaviour, about: "cast on spawn; unattackable until it finishes" },
     Column { name: "totem_spell_id", kind: Kind::Ref("Spell"), group: Group::Combat, about: "what a totem casts, which is the whole of what a totem does" },
     Column { name: "auras", kind: Kind::Text, group: Group::Behaviour, about: "spell ids it spawns with, space separated" },
     Column { name: "ai_name", kind: Kind::Text, group: Group::Behaviour, about: "which AI runs it, or empty" },
     Column { name: "movement_type", kind: Kind::Choice(&MOVEMENT_TYPES), group: Group::Behaviour, about: "the default a spawn inherits" },
     Column { name: "inhabit_type", kind: Kind::Flags(&INHABIT_TYPES), group: Group::Behaviour, about: "ground, water, air" },
-    Column { name: "civilian", kind: Kind::Unsigned, group: Group::Behaviour, about: "killing it costs honour" },
-    Column { name: "racial_leader", kind: Kind::Unsigned, group: Group::Behaviour, about: "a city leader, worth a bounty" },
-    Column { name: "equipment_id", kind: Kind::Unsigned, group: Group::Appearance, about: "creature_equip_template entry: what it holds" },
-    Column { name: "trainer_id", kind: Kind::Unsigned, group: Group::Services, about: "npc_trainer_template entry" },
-    Column { name: "vendor_id", kind: Kind::Unsigned, group: Group::Services, about: "npc_vendor_template entry" },
-    Column { name: "mechanic_immune_mask", kind: Kind::Unsigned, group: Group::Advanced, about: "spell mechanics it ignores" },
-    Column { name: "school_immune_mask", kind: Kind::Unsigned, group: Group::Advanced, about: "spell schools it ignores" },
-    Column { name: "immunity_flags", kind: Kind::Unsigned, group: Group::Advanced, about: "further immunities" },
+    Column { name: "civilian", kind: Kind::Choice(&NO_YES), group: Group::Behaviour, about: "killing it costs honour" },
+    Column { name: "racial_leader", kind: Kind::Choice(&NO_YES), group: Group::Behaviour, about: "a city leader, worth a bounty" },
+    Column { name: "equipment_id", kind: Kind::Ref("creature_equip_template"), group: Group::Appearance, about: "creature_equip_template entry: what it holds" },
+    Column { name: "trainer_id", kind: Kind::Ref(crate::trainer::TEMPLATE), group: Group::Services, about: "npc_trainer_template entry" },
+    Column { name: "vendor_id", kind: Kind::Ref(crate::vendor::TEMPLATE), group: Group::Services, about: "npc_vendor_template entry" },
+    Column { name: "mechanic_immune_mask", kind: Kind::Flags(&MECHANIC_MASK), group: Group::Advanced, about: "spell mechanics it ignores" },
+    Column { name: "school_immune_mask", kind: Kind::Flags(&SCHOOL_MASK), group: Group::Advanced, about: "spell schools it ignores" },
+    Column { name: "immunity_flags", kind: Kind::Flags(&IMMUNITY_FLAGS), group: Group::Advanced, about: "further immunities" },
     Column { name: "static_flags1", kind: Kind::Flags(&STATIC_FLAGS1), group: Group::Advanced, about: "what it is, as bits" },
-    Column { name: "static_flags2", kind: Kind::Unsigned, group: Group::Advanced, about: "the second word of the same" },
-    Column { name: "flags_extra", kind: Kind::Unsigned, group: Group::Advanced, about: "vmangos' own extra flags" },
+    Column { name: "static_flags2", kind: Kind::Flags(&STATIC_FLAGS2), group: Group::Advanced, about: "the second word of the same" },
+    Column { name: "flags_extra", kind: Kind::Flags(&FLAGS_EXTRA), group: Group::Advanced, about: "vmangos' own extra flags" },
     Column { name: "script_name", kind: Kind::Text, group: Group::Advanced, about: "a compiled script, or empty" },
 ];
 
@@ -322,16 +482,16 @@ pub const SPAWN_COLUMNS: [Column; 21] = [
     Column { name: "position_y", kind: Kind::Float, group: Group::Place, about: "west" },
     Column { name: "position_z", kind: Kind::Float, group: Group::Place, about: "up" },
     Column { name: "orientation", kind: Kind::Float, group: Group::Place, about: "radians it faces, anticlockwise from north" },
-    Column { name: "spawntimesecsmin", kind: Kind::Unsigned, group: Group::Respawn, about: "least seconds before it comes back" },
-    Column { name: "spawntimesecsmax", kind: Kind::Unsigned, group: Group::Respawn, about: "most seconds before it comes back" },
+    Column { name: "spawntimesecsmin", kind: Kind::Seconds, group: Group::Respawn, about: "least seconds before it comes back" },
+    Column { name: "spawntimesecsmax", kind: Kind::Seconds, group: Group::Respawn, about: "most seconds before it comes back" },
     Column { name: "wander_distance", kind: Kind::Float, group: Group::Respawn, about: "yards it strays from here" },
     Column { name: "health_percent", kind: Kind::Float, group: Group::Respawn, about: "health it spawns with" },
     Column { name: "mana_percent", kind: Kind::Float, group: Group::Respawn, about: "mana it spawns with" },
     Column { name: "movement_type", kind: Kind::Choice(&MOVEMENT_TYPES), group: Group::Respawn, about: "idle, random, waypoint" },
     Column { name: "spawn_flags", kind: Kind::Flags(&SPAWN_FLAGS), group: Group::Respawn, about: "how this one spawn behaves" },
     Column { name: "visibility_mod", kind: Kind::Float, group: Group::Respawn, about: "yards added to how far it is seen" },
-    Column { name: "patch_min", kind: Kind::Unsigned, group: Group::Respawn, about: "lowest content patch this spawn exists in" },
-    Column { name: "patch_max", kind: Kind::Unsigned, group: Group::Respawn, about: "highest" },
+    Column { name: "patch_min", kind: Kind::Choice(&PATCHES), group: Group::Respawn, about: "lowest content patch this spawn exists in" },
+    Column { name: "patch_max", kind: Kind::Choice(&PATCHES), group: Group::Respawn, about: "highest content patch this spawn exists in" },
 ];
 
 /// Every creature spawn on one map, with the name and the first display id of

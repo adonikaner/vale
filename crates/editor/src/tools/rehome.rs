@@ -1,8 +1,8 @@
-//! **One row per placement, in the tile its origin is in.**
+//! One row per placement, in the tile its origin is in.
 //!
-//! ## The rule, and why writing has to enforce it
+//! ## The claim rule in `render::terrain`
 //!
-//! `render::terrain`'s claim rule is one line and it is a *reading* rule:
+//! `render::terrain`'s claim rule is one line, and it is a rule for reading:
 //!
 //! ```text
 //! let claimed = |p| tile_for_position(p.position[0], p.position[1]) == coord;
@@ -12,68 +12,69 @@
 //! `unique_id`, so exactly one of them has to claim it or every tree along every
 //! seam is drawn twice. The tile containing the origin is the one that does.
 //!
-//! That is fine for reading and a trap for writing, twice over.
+//! The rule works for reading. Writing can break it in two ways.
 //!
-//! * **Drag a placement past a tile border and nobody draws it.** The tile whose
-//!   file still holds the record no longer claims it, and the tile that would
-//!   claim it has no record to claim. It does not vanish as it crosses — the
-//!   entity is still there with its transform written — it vanishes when
-//!   something next *reads* the tile. And an undo did not bring it back, because
-//!   an undo of a plain move marks nothing stale: it does not need to, since the
-//!   entity is on screen and gets its transform written. Only a playtest, which
-//!   reads everything, put it on screen.
-//! * **…and a big one is listed in a dozen tiles.** Stormwind's `MODF` row is in
-//!   every tile its box touches. Move it, and *each* of those rows is a copy in
-//!   the wrong place waiting to be found — by the next pass of the tool, by the
-//!   reference client, by anything. Written naively, one drag produced **fifteen**
-//!   entries on the undo stack and as many copies of the city.
+//! * Dragging a placement past a tile border can leave it undrawn. The tile
+//!   whose file still holds the record no longer claims it, and the tile that
+//!   would claim it has no record to claim. It does not vanish as it crosses
+//!   the border — the entity is still there with its transform written — it
+//!   vanishes when something next reads the tile. An undo does not bring it
+//!   back either: undo of a plain move marks nothing stale, because the
+//!   entity is already on screen and gets its transform written directly.
+//!   Only a playtest, which reads everything, puts it back on screen.
+//! * A large placement is listed in many tiles at once. Stormwind's `MODF`
+//!   row is in every tile its box touches. Moving it leaves a stale copy in
+//!   each of those tiles, waiting to be found — by the next run of this
+//!   tool, by the reference client, by anything else that reads the tile.
+//!   Written naively, one drag produced fifteen entries on the undo stack and
+//!   as many copies of the city.
 //!
-//! ## So the invariant is enforced rather than the move performed
+//! ## Settling enforces the invariant instead of moving one record
 //!
-//! [`settle_doodad`] and [`settle_building`] do not "move a record". They make
-//! the files agree with one statement:
+//! [`settle_doodad`] and [`settle_building`] do not move a single record.
+//! They make the files agree with one statement: every row with a
+//! `unique_id` states the same position, and one of them is in the tile that
+//! position is in.
 //!
-//! > every row with a `unique_id` states the **same position**, and one of them
-//! > is in the tile that position is in.
+//! When that does not hold, every row is taken out of every open tile and one
+//! is put back into the tile the origin is now over. The operation is
+//! idempotent — running it twice changes nothing the second time — so it
+//! cannot accumulate stale rows, and it repairs a file that has already
+//! accumulated them rather than only declining to add to it.
 //!
-//! When that does not hold, every row is taken out of every open tile and one is
-//! put back into the tile the origin is now over. It is idempotent — running it
-//! twice changes nothing the second time — so it cannot accumulate, and it
-//! **repairs** a file that has already accumulated rather than only declining to
-//! add to it.
+//! ## Why the invariant is agreement, not "one row"
 //!
-//! ## Why the invariant is not simply "one row"
+//! Blizzard's data is not one row per placement, and an editor must not
+//! quietly rewrite what it was given. A placement that straddles a seam is
+//! listed in every tile its box touches, all stating the same position, and
+//! that is correct data which this client reads correctly. Collapsing it
+//! would be an edit nobody asked for, on a file nobody touched, the moment a
+//! tree on a border is selected.
 //!
-//! Because Blizzard's data is not one row, and an editor may not quietly rewrite
-//! what it was given. A placement that straddles a seam is listed in **every**
-//! tile its box touches — all of them stating the same position — and that is
-//! correct data which this client reads correctly. Collapsing it would be an edit
-//! nobody asked for, on a file nobody touched, the moment a tree on a border was
-//! *selected*.
-//!
-//! What is not correct is two rows that **disagree** about where the thing is.
+//! What is not correct is two rows that disagree about where the thing is.
 //! That cannot come out of the game's own files and can only come out of a
-//! half-finished move, so it is the thing worth acting on — and it is the
-//! discriminator, because a stale copy is stale precisely in its position.
+//! half-finished move, so it is the condition worth acting on — and it is
+//! the discriminator, because a stale copy is stale precisely in its
+//! position.
 //!
-//! It is also what the *output* needs. A stale row left behind is a row the
+//! It is also what the output needs. A stale row left behind is a row the
 //! reference client draws the building from, at its old position.
 //!
-//! ## What it costs when nothing is wrong, which is nearly always
+//! ## Cost when nothing needs to move, which is nearly always the case
 //!
-//! A scan of four bytes per placement per open tile — `doodads_with_id` reads the
-//! id and nothing else — and then a comparison. Nine tiles of a thousand
+//! A scan of four bytes per placement per open tile — `doodads_with_id` reads
+//! the id and nothing else — and then a comparison. Nine tiles of a thousand
 //! placements is nine thousand `u32` reads, and no allocation and no history
 //! entry unless something actually has to move.
 //!
-//! ## What it will not do
+//! ## What settling does not do
 //!
-//! **Write a tile this session has not parsed.** The 3x3 around the camera is
-//! what is open, so this only comes up for a drag that ends more than a tile away
-//! from where the camera is looking, and the honest answer is to say so rather
-//! than to write a file that has not been read. A row in a tile that is not open
-//! is also a row this cannot clean up, which is the one way a duplicate can
-//! survive.
+//! It does not write a tile this session has not parsed. The 3x3 area around
+//! the camera is what is open, so this only comes up for a drag that ends
+//! more than a tile away from where the camera is looking; the operation
+//! reports that rather than writing a file that has not been read. A row in
+//! a tile that is not open is also a row this cannot clean up, which is the
+//! one way a duplicate can survive.
 
 use crate::session::EditSession;
 use vale_edit::ops::{Edit, Placements};
@@ -122,11 +123,11 @@ fn rows(session: &EditSession, unique_id: u32, buildings: bool) -> Vec<Row> {
 
 /// Whether the files already say what they should, so nothing has to be done.
 ///
-/// **The common case, and it has to stay the common case**: this is asked every
-/// frame, and answering "no" writes to files. See the module comment for why the
-/// test is *agreement* rather than *uniqueness* — a placement legitimately
-/// listed in six tiles that all state the same position is correct data, and
-/// rewriting it because a person clicked on it would be the worst kind of edit.
+/// This is asked every frame, and answering "no" writes to files, so it must
+/// stay cheap. See the module comment for why the test is agreement rather
+/// than uniqueness: a placement legitimately listed in six tiles that all
+/// state the same position is correct data, and rewriting it because a
+/// person clicked on it would be an edit nobody asked for.
 fn settled(rows: &[Row], home: (u32, u32)) -> bool {
     !rows.is_empty()
         && rows.iter().all(|row| row.position == rows[0].position)
@@ -159,10 +160,10 @@ fn settle(
     radius: f32,
 ) -> Option<((u32, u32), usize)> {
     let rows = rows(session, unique_id, buildings);
-    // **The row the claim rule would draw**, or the newest-looking one when none
-    // of them is claimed — which is the state a half-finished move leaves. A
-    // stale copy is stale in its position, so the row whose own position puts it
-    // in its own tile is the one that was moved.
+    // The row the claim rule would draw, or the newest-looking one when none
+    // of them is claimed, which is the state a half-finished move leaves. A
+    // stale copy is stale in its position, so the row whose own position puts
+    // it in its own tile is the one that was moved.
     let live = *rows
         .iter()
         .find(|row| home_of(row.position) == row.coord)
@@ -194,20 +195,27 @@ fn settle(
         return None;
     }
 
-    // **The record is taken before anything is removed**, and the history is not
-    // opened until every step is known to be possible. An earlier draft did the
-    // work as it went and could return half way through with a change left open,
-    // which folds the next edit into it.
+    // The record is taken before anything is removed, and the history entry
+    // is not opened until every step is known to be possible. An earlier
+    // version did the work as it went and could return partway through with
+    // a change left open, which folded the next edit into it.
     let moving = match buildings {
         true => Moving::Building(session.tiles.get(&coord)?.building_at(index)?),
         false => Moving::Doodad(session.tiles.get(&coord)?.doodad_at(index)?),
     };
 
+    // Into the entry of the move that took the origin across the border, and
+    // not an entry of its own. A group of fifty moved over a border is fifty
+    // settles, and as entries of their own they were fifty presses of undo
+    // before the move itself was reached. `amend` declines on an empty stack
+    // and on a redo branch; only then is an entry opened here.
     let label = match buildings {
         true => format!("Move WMO to tile {},{}", home.0, home.1),
         false => format!("Move doodad to tile {},{}", home.0, home.1),
     };
-    session.history.begin(label);
+    if !session.history.amend() {
+        session.history.begin(label);
+    }
 
     // Out of every open tile, highest index first so the ones below stay valid.
     let mut touched: Vec<(u32, u32)> = Vec::new();
@@ -244,9 +252,9 @@ fn settle(
         }
     }
 
-    // …and one back into the tile it belongs in, under **that** tile's own
-    // numbering: a `name_id` is an index into the file it is in and means nothing
-    // outside it.
+    // …and one back into the tile it belongs in, under that tile's own
+    // numbering: a `name_id` is an index into the file it is in and means
+    // nothing outside it.
     let key = session.key(home);
     let tile = session.tiles.get_mut(&home)?;
     let before = Placements::capture(tile);
@@ -291,9 +299,9 @@ enum Moving {
 mod tests {
     use super::*;
 
-    /// **A placement is in the wrong tile the moment its origin crosses.** The
-    /// rule `render::terrain` claims by, asked of a position rather than of a
-    /// file.
+    /// A placement is in the wrong tile the moment its origin crosses. This is
+    /// the rule `render::terrain` claims by, asked of a position rather than
+    /// of a file.
     #[test]
     fn a_placement_belongs_to_the_tile_its_origin_is_in() {
         let origin = vale_assets::world::adt::MAP_ORIGIN;
@@ -325,6 +333,103 @@ mod tests {
         );
     }
 
+    /// A group moved over a tile border is one entry on the history: the drag
+    /// and every member's move into the tile its origin is now in. One undo
+    /// puts every row back where it was, and a redo puts them all across.
+    ///
+    /// Each member's settle opened an entry of its own before, so a group of
+    /// twenty dragged over a border took twenty-one presses of undo.
+    #[test]
+    fn a_group_moved_over_a_border_is_one_entry() {
+        use crate::tools::doodads::{write_record, Selected};
+        use vale_edit::adt::place::Doodad;
+
+        let install = std::env::temp_dir().join(format!("vale-rehome-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let project = vale_edit::project::Project::open(&install, "default").unwrap();
+        let mut session = EditSession::for_tests(project);
+
+        let origin = vale_assets::world::adt::MAP_ORIGIN;
+        let side = vale_assets::world::adt::TILE_SIZE;
+        let middle = [
+            origin - 32.0 * side - side * 0.5,
+            origin - 32.0 * side - side * 0.5,
+            0.0,
+        ];
+        let here = vale_assets::tile_for_position(middle[0], middle[1]);
+        let there = vale_assets::tile_for_position(middle[0] + side, middle[1]);
+        for coord in [here, there] {
+            session.tiles.insert(
+                coord,
+                vale_edit::adt::blank::blank_tile(coord.0, coord.1, "a.blp", 0.0, 0),
+            );
+        }
+        let tile = session.tiles.get_mut(&here).unwrap();
+        let name_id = tile.name_model("tree.m2");
+        let mut group = Vec::new();
+        for n in 0..20u32 {
+            let record = Doodad {
+                name_id,
+                unique_id: 1000 + n,
+                position: vale_assets::world::adt::placement_from_world([
+                    middle[0] + n as f32,
+                    middle[1],
+                    0.0,
+                ]),
+                rotation: [0.0; 3],
+                scale: 1024,
+                flags: 0,
+            };
+            let index = tile.add_doodad(record, 5.0);
+            group.push(Selected {
+                tile: here,
+                index,
+                unique_id: record.unique_id,
+                path: "tree.m2".to_string(),
+                record,
+            });
+        }
+        let start = |session: &EditSession| {
+            [here, there].map(|coord| vale_edit::ops::Placements::capture(&session.tiles[&coord]))
+        };
+        let before = start(&session);
+
+        // The drag: one entry around every member's write.
+        session.history.begin("Move 20 doodads");
+        for member in &mut group {
+            let world = vale_assets::world::adt::placement_to_world(member.record.position);
+            member.record.position = vale_assets::world::adt::placement_from_world([
+                world[0] + side,
+                world[1],
+                world[2],
+            ]);
+            write_record(&mut session, member);
+        }
+        session.history.end();
+        // …and the settle that follows the release, member by member.
+        for member in &group {
+            assert!(settle_doodad(&mut session, member.unique_id, 5.0).is_some());
+        }
+        let after = start(&session);
+
+        assert_eq!(session.history.depth_done(), 1, "the drag and every settle are one entry");
+        assert_eq!(session.tiles[&here].doodad_list().len(), 0);
+        assert_eq!(session.tiles[&there].doodad_list().len(), 20);
+
+        let change = session.history.undo().unwrap();
+        for coord in [there, here] {
+            let key = session.key(coord);
+            change.revert(&key, session.tiles.get_mut(&coord).unwrap());
+        }
+        assert!(start(&session) == before, "one undo puts every row back");
+        for coord in [here, there] {
+            let key = session.key(coord);
+            change.apply(&key, session.tiles.get_mut(&coord).unwrap());
+        }
+        assert!(start(&session) == after, "one redo moves them all again");
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
     fn row(coord: (u32, u32), index: usize, position: [f32; 3]) -> Row {
         Row {
             coord,
@@ -333,18 +438,19 @@ mod tests {
         }
     }
 
-    /// **Rows that agree are settled however many there are; rows that disagree
-    /// are not.**
+    /// Rows that agree are settled however many there are; rows that disagree
+    /// are not.
     ///
     /// The first half is what keeps this from rewriting the game's own files: a
     /// placement straddling a seam is listed in every tile its box touches, all
     /// stating one position, and that is correct data. Collapsing it because
     /// somebody clicked on a tree would be an edit nobody asked for.
     ///
-    /// The second half is the fault it exists for. Two rows that *disagree* about
-    /// where a thing is cannot come out of the game's own files — only out of a
-    /// half-finished move — and left alone they are what fifteen copies of
-    /// Stormwind are made of.
+    /// The second half is the fault this exists for. Two rows that disagree
+    /// about where a thing is cannot come out of the game's own files, only
+    /// out of a half-finished move, and left alone they accumulate into
+    /// duplicate copies of a placement, such as the fifteen copies of
+    /// Stormwind described in the module comment.
     #[test]
     fn rows_that_agree_are_settled_and_rows_that_disagree_are_not() {
         let home = (31, 50);

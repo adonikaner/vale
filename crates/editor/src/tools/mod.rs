@@ -553,7 +553,8 @@ pub struct ToolPlugin;
 impl Plugin for ToolPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Tool>()
-            .add_systems(Update, (open_tiles, close_tiles, modes).chain());
+            .add_systems(Update, (open_tiles, close_tiles, modes).chain())
+            .add_systems(Update, release_held);
         app.add_plugins((
             terrain::TerrainToolPlugin,
             shading::ShadingToolPlugin,
@@ -587,6 +588,21 @@ impl Plugin for ToolPlugin {
             measure::MeasureToolPlugin,
             flightpaths::FlightpathToolPlugin,
         ));
+    }
+}
+
+/// End the history's hold on a gesture once the left button is up.
+///
+/// A pointer drag that holds a gesture releases it on its own release frame.
+/// This covers the drags that end another way: the tool switched, a playtest
+/// begun, the selection dropped. A hold left on would fold the next edit of the
+/// same subject into the drag's entry. See `vale_edit::undo::History::hold`.
+fn release_held(mut session: Option<ResMut<EditSession>>, buttons: Res<ButtonInput<MouseButton>>) {
+    if buttons.pressed(MouseButton::Left) {
+        return;
+    }
+    if let Some(session) = session.as_mut() {
+        session.bypass_change_detection().history.release();
     }
 }
 

@@ -373,6 +373,58 @@ pub struct Gesture<'a> {
 }
 
 impl EditSession {
+    /// A session over `project` on Azeroth with nothing open, for a test that
+    /// puts its own tiles in [`Self::tiles`]. Nothing here reads the archives.
+    #[cfg(test)]
+    pub(crate) fn for_tests(project: Project) -> EditSession {
+        EditSession {
+            status: String::new(),
+            project,
+            map: "Azeroth".to_string(),
+            map_id: 0,
+            maps: Vec::new(),
+            tiles: HashMap::default(),
+            tables: std::collections::HashMap::default(),
+            history: History::new(),
+            dirty: HashMap::default(),
+            regrow: HashMap::default(),
+            moved: HashMap::default(),
+            moved_buildings: HashMap::default(),
+            revision: HashMap::default(),
+            repaint: HashMap::default(),
+            stale: HashSet::default(),
+            unsaved: HashSet::default(),
+            unsaved_tables: HashSet::default(),
+            table_revision: 0,
+            restream: HashSet::default(),
+            republished: Vec::new(),
+            republished_all: false,
+            tables_republished: false,
+            republished_revision: 0,
+            claimed: HashSet::default(),
+            reread_everything: false,
+            claims_for: "Azeroth".to_string(),
+            edited: Edited::default(),
+            server_edits: Default::default(),
+            server_paths: Default::default(),
+            server_scripts: Default::default(),
+            server_edit_revision: 0,
+            server_edits_unsaved: false,
+            server_paths_unsaved: false,
+            server_scripts_unsaved: false,
+            applied_signature: None,
+            applied_creatures: None,
+            applied_items: None,
+            applied_quests: None,
+            applied_gameobjects: None,
+            applied_loot: None,
+            applied_behaviour: None,
+            applied_services: None,
+            database_writes: 0,
+            one_gesture: None,
+        }
+    }
+
     /// The key a tile is edited under.
     pub fn key(&self, coord: (u32, u32)) -> TileKey {
         TileKey::new(self.map.clone(), coord.0, coord.1)

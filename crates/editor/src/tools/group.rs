@@ -586,13 +586,25 @@ pub fn orbit(pivot: Vec3, point: Vec3, turn: Quat) -> Vec3 {
 /// because it is about a world axis, and the product is taken apart again the
 /// same way.
 pub fn turn_record(rotation: [f32; 3], turn: Quat) -> [f32; 3] {
-    let [x, y, z] =
-        vale_assets::world::adt::placement_euler_to_world(rotation).map(f32::to_radians);
-    let was = Quat::from_euler(EulerRot::ZYX, z, y, x);
-    let (z, y, x) = (turn * was).normalize().to_euler(EulerRot::ZYX);
+    let (z, y, x) = (turn * world_turn(rotation)).normalize().to_euler(EulerRot::ZYX);
     vale_assets::world::adt::placement_euler_from_world(
         [x, y, z].map(|radians| radians.to_degrees().rem_euclid(360.0)),
     )
+}
+
+/// A placement's three angles (the file's, in degrees) as the turn they
+/// make in the world. [`turn_record`]'s first step.
+pub fn world_turn(rotation: [f32; 3]) -> Quat {
+    let [x, y, z] =
+        vale_assets::world::adt::placement_euler_to_world(rotation).map(f32::to_radians);
+    Quat::from_euler(EulerRot::ZYX, z, y, x)
+}
+
+/// The turn that takes a placement from the angles `was` to the angles `now`,
+/// about the world's axes. What the inspector's rotation fields did to the
+/// primary, for the members to be carried by.
+pub fn turn_between(was: [f32; 3], now: [f32; 3]) -> Quat {
+    (world_turn(now) * world_turn(was).inverse()).normalize()
 }
 
 /// What `Ctrl+C` took: the placements, each relative to the primary's origin.
@@ -752,17 +764,42 @@ fn record_placements(
 ///
 /// `rows` is `(tile, index)`. Within a tile they are removed from the highest
 /// index down, because removing a row renumbers every row above it.
+///
+/// Every open tile's row with the same `unique_id` goes too. A placement whose
+/// model crosses a tile border is listed in each tile it touches, and the
+/// selection holds only the row the renderer draws. The other rows are not
+/// drawn by this client, but the reference client draws a placement from any
+/// tile that lists it, so leaving them would leave the placement in the game.
+/// The count answered is of placements, not of rows.
 pub fn remove_rows(
     session: &mut EditSession,
     rows: &[((u32, u32), usize)],
     buildings: bool,
     label: &str,
 ) -> usize {
+    let ids: Vec<u32> = rows
+        .iter()
+        .filter_map(|&(coord, index)| {
+            let tile = session.tiles.get(&coord)?;
+            match buildings {
+                true => tile.building_at(index).map(|row| row.unique_id),
+                false => tile.doodad_at(index).map(|row| row.unique_id),
+            }
+        })
+        .collect();
+    let mut ids = sorted(ids.into_iter());
+    ids.dedup();
     let mut by_tile: std::collections::BTreeMap<(u32, u32), Vec<usize>> = Default::default();
-    for &(coord, index) in rows {
-        by_tile.entry(coord).or_default().push(index);
+    for (coord, tile) in &session.tiles {
+        for &unique_id in &ids {
+            let at = match buildings {
+                true => tile.buildings_with_id(unique_id),
+                false => tile.doodads_with_id(unique_id),
+            };
+            by_tile.entry(*coord).or_default().extend(at);
+        }
     }
-    let mut removed = 0;
+    by_tile.retain(|_, indices| !indices.is_empty());
     let mut before: std::collections::HashMap<(u32, u32), Placements> = Default::default();
     for (coord, mut indices) in by_tile {
         let Some(tile) = session.tiles.get_mut(&coord) else {
@@ -772,15 +809,14 @@ pub fn remove_rows(
         indices.sort_unstable();
         indices.dedup();
         for index in indices.into_iter().rev() {
-            let gone = match buildings {
-                true => tile.remove_building(index).is_some(),
-                false => tile.remove_doodad(index).is_some(),
-            };
-            removed += usize::from(gone);
+            match buildings {
+                true => drop(tile.remove_building(index)),
+                false => drop(tile.remove_doodad(index)),
+            }
         }
     }
     record_placements(session, before, label);
-    removed
+    ids.len()
 }
 
 #[cfg(test)]
@@ -825,6 +861,16 @@ mod tests {
         for (a, b) in want.to_cols_array().iter().zip(got.to_cols_array()) {
             assert!((a - b).abs() < 1e-4, "{want:?}\n{got:?}");
         }
+    }
+
+    /// The turn between two records, applied to the first, gives the second.
+    #[test]
+    fn the_turn_between_two_records_takes_one_to_the_other() {
+        let was = vale_assets::world::adt::placement_euler_from_world([5.0, -10.0, 30.0]);
+        let now = vale_assets::world::adt::placement_euler_from_world([5.0, -10.0, 75.0]);
+        let turned = turn_record(was, turn_between(was, now));
+        let (a, b) = (world_turn(turned), world_turn(now));
+        assert!(a.dot(b).abs() > 1.0 - 1e-5, "{turned:?} against {now:?}");
     }
 
     /// A member carried round the pivot by a quarter turn about up ends a

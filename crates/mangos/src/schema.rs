@@ -50,9 +50,9 @@ pub enum Kind {
     Ref(&'static str),
     /// An enumeration whose options depend on another column of the same row.
     ///
-    /// `item_template.subclass` is the only one: 0 is *Axe* on a weapon,
-    /// *Cloth* on a piece of armour and *Bandage* on a consumable, and which
-    /// list applies is whatever `class` holds. A form draws it by asking
+    /// `item_template.subclass` is the only one: 0 is Axe on a weapon, Cloth
+    /// on a piece of armour and Bandage on a consumable, and which list
+    /// applies is whatever `class` holds. A form draws it by asking
     /// [`crate::item::subclasses`] for the row's class; anything that cannot
     /// (a dump, a check with no row in hand) draws the number, which is what
     /// the column is.
@@ -413,6 +413,9 @@ impl Column {
 /// A row as it came back from the database: column name to value, with `None`
 /// for a SQL `NULL`.
 pub type Row = std::collections::HashMap<String, Option<String>>;
+
+/// No and yes, for a column that is a switch stored as 0 or 1.
+pub const NO_YES: [Value; 2] = [Value { value: 0, name: "No" }, Value { value: 1, name: "Yes" }];
 
 /// One column of a row, or `None` for a column it does not carry and for `NULL`.
 ///

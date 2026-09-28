@@ -162,7 +162,7 @@ pub const STATES: [Value; 3] = [
 pub use crate::creature::SPAWN_FLAGS;
 
 /// No and yes, for the `data` columns that are switches.
-pub const NO_YES: [Value; 2] = [Value { value: 0, name: "No" }, Value { value: 1, name: "Yes" }];
+pub use crate::schema::NO_YES;
 
 /// `gameobject_template`'s 34 columns, in the order
 /// `ObjectMgr::LoadGameObjectTemplates` selects them (`ObjectMgr.cpp:7852`).

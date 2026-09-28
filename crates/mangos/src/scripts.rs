@@ -128,7 +128,7 @@ pub fn table(name: &str) -> Option<Table> {
 }
 
 /// A yes-or-no column.
-pub const NO_YES: [Value; 2] = [Value { value: 0, name: "No" }, Value { value: 1, name: "Yes" }];
+pub use crate::schema::NO_YES;
 
 /// `ChatType`, from `CreatureDefines.h:471`: what `SCRIPT_COMMAND_TALK`'s
 /// `datalong` picks.

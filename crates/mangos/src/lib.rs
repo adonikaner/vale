@@ -37,6 +37,9 @@
 //!              on a reload, removals included
 //! trainer.rs   `npc_trainer` and `npc_trainer_template`: what a creature
 //!              teaches, as teaching spells, on the same terms
+//! lists.rs     the server tables a template column names by id (gossip
+//!              menus, equipment, spell lists, vendor, trainer and loot lists),
+//!              and how a picker lists each by what is in it and who uses it
 //! schema.rs    the vocabulary the row subjects (creature, gameobject, item,
 //!              quest, loot, event, script, spell list, vendor, trainer) are
 //!              described in: what a column is, how it is read, and which part
@@ -99,6 +102,7 @@ pub mod datadir;
 pub mod eventai;
 pub mod gameobject;
 pub mod item;
+pub mod lists;
 pub mod loot;
 pub mod migration;
 pub mod navmesh;

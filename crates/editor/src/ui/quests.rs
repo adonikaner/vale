@@ -117,7 +117,7 @@ pub struct Shell<'a> {
     /// Which content patch the server is configured for — half the key a new
     /// row is written under.
     pub patch: u32,
-    /// A tool to switch to, which the list's *back to Creatures* asks for.
+    /// A tool to switch to, which the list's "back to Creatures" asks for.
     /// Answered rather than written, because the shell holds the tool while it
     /// draws this.
     pub switch_to: &'a mut Option<Tool>,
@@ -343,7 +343,10 @@ pub(super) fn target_of(table: &'static str) -> Option<Target> {
         "gameobject_template" => Some(Target::Object),
         quest::TEMPLATE => Some(Target::Quest),
         FACTION_TEMPLATE => Some(Target::Dbc(FACTION_TEMPLATE)),
-        other => name_field(other).map(|_| Target::Dbc(other)),
+        other => match vale_mangos::lists::list(other) {
+            Some(list) => Some(Target::List(list.table)),
+            None => name_field(other).map(|_| Target::Dbc(other)),
+        },
     }
 }
 
@@ -1034,7 +1037,7 @@ fn resolved(ui: &mut egui::Ui, work: &mut Workspace<'_>, column: &'static Column
                 }
             }
         }
-        None => meaning(ui, format!("{table} {id}")),
+        Some(Target::List(_)) | None => meaning(ui, format!("{table} {id}")),
     }
 }
 
@@ -2063,6 +2066,7 @@ pub(super) fn picker(
 
         let hint = match picker.target {
             Target::Item | Target::Creature | Target::Object => "part of a name, or an entry",
+            Target::List(_) => "a creature that uses it, what it holds, or an id",
             _ => "name, or an id",
         };
         let search = ui.add(

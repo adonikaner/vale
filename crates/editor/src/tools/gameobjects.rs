@@ -1871,6 +1871,7 @@ fn drag(
     if !buttons.pressed(MouseButton::Left) {
         objects.drag = None;
         objects.group_from.clear();
+        session.history.release();
         if held.moving {
             let now = objects
                 .chosen_edited(Some(&session.server_edits))
@@ -1919,6 +1920,9 @@ fn drag(
     // would bury it; `grab.z` is that offset.
     let want = Vec3::new(ground.x + grab.x, ground.y + grab.y, ground.z + grab.z);
     let now = time.elapsed_secs_f64();
+    // One entry from the first write to the release, whatever pauses the
+    // pointer makes on the way. See `vale_edit::undo::History::hold`.
+    session.history.hold(now);
     if objects.group_from.is_empty() {
         move_one(session, held.guid, want, now);
         return;

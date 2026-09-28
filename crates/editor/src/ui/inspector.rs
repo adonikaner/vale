@@ -134,6 +134,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
             ui,
             session,
             &mut editing.selection,
+            &mut editing.doodad_held,
             &mut editing.gizmo,
             &mut editing.placing,
             &mut editing.portraits,
@@ -144,6 +145,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
             ui,
             session,
             &mut editing.wmos,
+            &mut editing.wmo_held,
             &mut editing.gizmo,
             &mut editing.placing,
             &mut editing.portraits,
@@ -1433,6 +1435,7 @@ fn wmo(
     ui: &mut egui::Ui,
     session: &mut EditSession,
     selection: &mut wmos::Selection,
+    held: &mut wmos::Held,
     gizmo: &mut Gizmo,
     placer: &mut Placing,
     portraits: &mut crate::portraits::Portraits,
@@ -1595,11 +1598,23 @@ fn wmo(
     };
     let (label, kind) = wmos::what_changed(&was, &record);
     let (tile, unique_id) = (at.tile, at.unique_id);
-    session
-        .history
-        .begin_gesture(label, format!("wmo {unique_id} {kind}"), now);
+    // Over a group, a move or a turn carries the members on the same entry,
+    // under the subject `wmos::nudge` uses for the group. The two sets are the
+    // primary's own and are not carried.
+    let (label, subject) = match grouped {
+        false => (label.to_string(), format!("wmo {unique_id} {kind}")),
+        true => (
+            format!("{label}s ({})", selection.count()),
+            format!("wmo group {unique_id} {kind}"),
+        ),
+    };
+    session.history.begin_gesture(label, subject, now);
     wmos::write_record(session, at);
     session.publish(tile);
+    if grouped && (record.position != was.position || record.rotation != was.rotation) {
+        wmos::carry_members(session, selection, &was);
+        held.members_moved();
+    }
     session.history.end();
 }
 
@@ -2924,6 +2939,7 @@ fn doodad(
     ui: &mut egui::Ui,
     session: &mut EditSession,
     selection: &mut Selection,
+    held: &mut crate::tools::doodads::Held,
     gizmo: &mut Gizmo,
     placer: &mut Placing,
     portraits: &mut crate::portraits::Portraits,
@@ -3037,25 +3053,30 @@ fn doodad(
     theme::note(ui, "right-handed, about the world's own axes");
     // Slope alignment: the two leans are rewritten from the ground's normal
     // under the origin and the turn is kept; see `doodads::lean_onto_ground`.
-    // A button applies it to the selection, and a switch applies it to every
-    // later ctrl-drag.
+    // A button applies it to every selected placement, each to the ground
+    // under its own origin, and a switch applies it to every later ctrl-drag.
+    let mut each: Option<Lean> = None;
     ui.horizontal(|ui| {
         if ui
             .small_button("Lean to ground")
             .on_hover_text(
                 "Rewrite the two leans so the model stands square to the slope \
-                 under its origin. The turn about z is kept.",
+                 under its origin. The turn about z is kept. Over a group, each \
+                 member is leaned to the slope under its own origin.",
             )
             .clicked()
-            && !crate::tools::doodads::lean_onto_ground(session, at)
         {
-            session.status = "the origin is over no open ground".to_string();
+            each = Some(Lean::Ground);
+            if !crate::tools::doodads::lean_onto_ground(session, at) {
+                session.status = "the origin is over no open ground".to_string();
+            }
         }
         if ui
             .small_button("Stand upright")
-            .on_hover_text("Clear both leans, keeping the turn.")
+            .on_hover_text("Clear both leans, keeping the turn. Over a group, every member's.")
             .clicked()
         {
+            each = Some(Lean::Upright);
             crate::tools::doodads::stand_upright(at);
         }
     });
@@ -3125,24 +3146,63 @@ fn doodad(
     // a second produces sixty changes, and without `begin_gesture` each would
     // need its own undo. `vale_edit::undo::History::begin_gesture` continues the
     // last entry while the change is to the same thing.
-    let Some((_, record)) = selection.edited(&was) else {
+    //
+    // Over a group the members go on the same entry: a field carries them by
+    // the primary's change, as the keys and the gizmo do, and the two slope
+    // buttons lean or straighten each member on its own. The subject is the
+    // group's, the one `doodads::nudge` uses.
+    let edited = selection.edited(&was).map(|(_, record)| record);
+    if edited.is_none() && !(grouped && each.is_some()) {
         return;
-    };
+    }
+    let record = edited.unwrap_or(was);
     let Some(at) = selection.at.as_ref() else {
         return;
     };
     let (tile, unique_id) = (at.tile, at.unique_id);
-    let (label, kind) = crate::tools::doodads::what_changed(&was, &record);
-    session
-        .history
-        .begin_gesture(label, format!("doodad {unique_id} {kind}"), now);
+    let (label, kind) = match each {
+        Some(_) => ("Lean doodad", "rotation"),
+        None => crate::tools::doodads::what_changed(&was, &record),
+    };
+    let (label, subject) = match grouped {
+        false => (label.to_string(), format!("doodad {unique_id} {kind}")),
+        true => (
+            format!("{label}s ({})", selection.count()),
+            format!("doodad group {unique_id} {kind}"),
+        ),
+    };
+    session.history.begin_gesture(label, subject, now);
     // Written through the tool's own writer, which reads the change's `before`
     // from the tile rather than taking this panel's `was`. This panel holds a
     // cached copy of the record, which is a frame behind the file whenever an
     // undo lands; see `vale_edit::ops::Edit::move_doodad` for the invariant.
     crate::tools::doodads::write_record(session, at);
     session.publish(tile);
+    if grouped {
+        match each {
+            Some(lean) => {
+                for member in selection.also.iter_mut() {
+                    match lean {
+                        Lean::Ground => {
+                            crate::tools::doodads::lean_onto_ground(session, member);
+                        }
+                        Lean::Upright => crate::tools::doodads::stand_upright(member),
+                    }
+                    crate::tools::doodads::write_record(session, member);
+                }
+            }
+            None => crate::tools::doodads::carry_members(session, selection, &was),
+        }
+        held.members_moved();
+    }
     session.history.end();
+}
+
+/// Which of the doodad panel's two slope buttons was pressed.
+#[derive(Debug, Clone, Copy)]
+enum Lean {
+    Ground,
+    Upright,
 }
 
 #[cfg(test)]

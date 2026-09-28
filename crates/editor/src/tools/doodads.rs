@@ -17,14 +17,14 @@
 //! batches, which is a few thousand entities on a click and nothing at all on
 //! the frames between.
 //!
-//! ## …and the box is only the first half of it
+//! ## Why a box alone cannot decide which placement was hit
 //!
 //! A box is a broad phase and a bad answer on its own, because a batch's box is
 //! the box of that mesh and some meshes are mostly air. A tree canopy is a few
-//! crossed quads eighty yards across; its box swallows the trunk, the rock, the
-//! fence and the cart, and standing anywhere near one meant every click selected
-//! the canopy — including when it was behind the camera's shoulder and not
-//! visible at all. Reported as exactly that.
+//! crossed quads eighty yards across; its box encloses the trunk, the rock, the
+//! fence and the cart. Testing the box alone made every click near one of these
+//! select the canopy, including a click on something behind the camera's
+//! shoulder that was not visible at all.
 //!
 //! So the box decides which placements to consider and the model's own drawn
 //! triangles decide which of them was hit. `vale_assets::look::pick` is that
@@ -34,10 +34,10 @@
 //!
 //! Two things about the narrow phase are deliberate:
 //!
-//! * A triangle hit anywhere beats every box. The nearest box is not the
-//!   nearest model — that is the whole fault — so every candidate is tested and
-//!   the nearest triangle wins. Only when nothing is hit does the nearest box
-//!   answer, which keeps a model whose mesh has not arrived selectable.
+//! * A triangle hit anywhere beats every box. The nearest box is not always
+//!   the nearest model, so every candidate is tested and the nearest triangle
+//!   wins. Only when nothing is hit does the nearest box answer, which keeps a
+//!   model whose mesh has not arrived selectable.
 //! * A posed placement is tested in its bind pose. The batches of one carry
 //!   the identity and the placement lives in the joints, so the transform is
 //!   right; what is not is the sway. Six of a tile's seventy-five models have a
@@ -58,10 +58,10 @@
 //! the entities   the batch transforms, so the frame shows it
 //! ```
 //!
-//! The middle one is the one that is easy to miss and impossible to see: a
-//! placement walked out of range and back comes back where the resident says,
-//! not where the entities were last written, so an editor that wrote only the
-//! entities would have doodads that snap back after a walk. See
+//! The middle one is easy to overlook: a placement walked out of range and
+//! back returns to where the resident says it stands, not to where the
+//! entities were last written. An editor that wrote only the entities would
+//! show doodads snapping back into place after a walk. See
 //! `vale_client::render::doodads::ResidentDoodads::reposition`.
 //!
 //! ## Removing one is a different kind of edit
@@ -217,8 +217,8 @@ const TURN: f32 = 5.0;
 ///
 /// It used to be `128..=8192`, an eighth to eight times, taken from what the
 /// shipped tiles happen to use (measured over `Azeroth_32_48`: 512 to 2048).
-/// That is a description of Blizzard's art, not a property of the format, and an
-/// editor has no business refusing to write a number the file can hold.
+/// That range described the art in the shipped tiles, not a property of the
+/// format, so the editor now accepts any value the field can hold.
 const SCALE: std::ops::RangeInclusive<u16> = 1..=u16::MAX;
 
 /// …and the same as a multiplier, which is what a person means and what the
@@ -259,17 +259,16 @@ impl Plugin for DoodadToolPlugin {
 pub(crate) struct Held {
     /// Whether the press that began this belonged to the world.
     ///
-    /// A drag belongs to wherever it started, which is the rule every program
-    /// that drags anything follows and the one this tool did not: the gate here
-    /// used to be asked on every frame, so a press that landed on the
-    /// inspector's own number fields was read as a drag in the viewport and
-    /// teleported the selected placement to wherever the pointer's ray met the
-    /// ground. Set by [`select`] on a press it accepted and cleared by one it
-    /// declined, so it is exactly "the press that opened this was mine".
+    /// A drag belongs to wherever it started. The gate here used to be asked on
+    /// every frame, so a press on the inspector's own number fields was read as
+    /// a drag in the viewport and teleported the selected placement to wherever
+    /// the pointer's ray met the ground. Set by [`select`] on a press it
+    /// accepted and cleared by one it declined, so it tracks only whether the
+    /// press that opened this drag was in the world.
     ///
-    /// It also buys the other half of the rule for free: a drag that begins in
-    /// the world and wanders over a panel keeps going, which is what a person
-    /// dragging something to the edge of the screen expects.
+    /// This also gives the other half of the rule without extra code: a drag
+    /// that begins in the world and wanders over a panel keeps going, which is
+    /// what a person dragging something to the edge of the screen expects.
     armed: bool,
     dragging: bool,
     /// The ground under the pointer when the button went down, so a drag moves
@@ -289,6 +288,14 @@ pub(crate) struct Held {
     /// Whether a member other than the primary has been moved since it was
     /// last put in the tile its origin is in. See [`settle`].
     pub(crate) unsettled: bool,
+}
+
+impl Held {
+    /// Say that the group's members have been moved from outside this tool's
+    /// own systems, so [`settle`] puts each in the tile its origin is in.
+    pub(crate) fn members_moved(&mut self) {
+        self.unsettled = true;
+    }
 }
 
 /// Pick a placement, or drop the one held.
@@ -335,9 +342,9 @@ pub(crate) fn select(
         return;
     }
     // A press on the chrome is the chrome's, and it disarms the drag as well
-    // as declining the pick — see [`Held::armed`]. Returning without clearing it
-    // would leave the previous press's arming standing, which is the whole of
-    // the fault this guard is about.
+    // as declining the pick — see [`Held::armed`]. Without clearing it, the
+    // previous press's arming would stay set, and the next press in the world
+    // would be read as a continued drag.
     if !crate::ui::over_the_world(&viewport, &wants, &windows) {
         held.armed = false;
         return;
@@ -986,6 +993,39 @@ fn nudge(
     session.history.end();
 }
 
+/// Carry the rest of the group by the change the primary has just had from
+/// `was`: the same step, the same turn about the primary's old origin, and the
+/// same factor of scale. Written into whatever history entry is open.
+///
+/// For the inspector's fields, which edit the primary's own numbers. The keys
+/// and the gizmo carry the group by the step they made; this works the step out
+/// from the two records, so a typed position moves the group as a drag would.
+pub(crate) fn carry_members(session: &mut EditSession, selection: &mut Selection, was: &Placement) {
+    let Some(now) = selection.at.as_ref().map(|at| at.record) else {
+        return;
+    };
+    let pivot = Vec3::from(vale_assets::world::adt::placement_to_world(was.position));
+    let step = Vec3::from(vale_assets::world::adt::placement_to_world(now.position)) - pivot;
+    let turned = now.rotation != was.rotation;
+    let turn = match turned {
+        true => super::group::turn_between(was.rotation, now.rotation),
+        false => Quat::IDENTITY,
+    };
+    let grow = f32::from(now.scale) / f32::from(was.scale.max(1));
+    for member in selection.also.iter_mut() {
+        let world = Vec3::from(vale_assets::world::adt::placement_to_world(member.record.position));
+        let moved = super::group::orbit(pivot, world, turn) + step;
+        member.record.position = vale_assets::world::adt::placement_from_world(moved.to_array());
+        if turned {
+            member.record.rotation = super::group::turn_record(member.record.rotation, turn);
+        }
+        if now.scale != was.scale {
+            member.record.scale = scaled(member.record.scale, grow);
+        }
+        write_record(session, member);
+    }
+}
+
 /// A scale in `MDDF`'s own units, multiplied and kept inside what the field
 /// can hold.
 fn scaled(scale: u16, by: f32) -> u16 {
@@ -1083,12 +1123,12 @@ fn leaf(path: &str) -> &str {
 /// [`super::gizmo`] and [`crate::ui::inspector`] move the same records by the
 /// same three steps and must not grow copies of them.
 ///
-/// It takes no `before`. That is the whole point of it: the change's `before` is
-/// read off the tile here, so it is the state the file was actually in and not a
-/// caller's idea of that state — see [`Edit::move_doodad`], which is where the
-/// argument is. Four things in this crate hold a cached copy of a record and
-/// every one of them can be a frame behind the file; a stack built from those
-/// copies stops chaining, which is what "the history gets out of sync" is.
+/// It deliberately takes no `before`: the change's `before` is read off the
+/// tile here, so it is the state the file was actually in, not a caller's idea
+/// of that state — see [`Edit::move_doodad`], which is where the argument is.
+/// Four things in this crate hold a cached copy of a record, and each can be a
+/// frame behind the file; a stack built from those copies would drift out of
+/// step with the file.
 pub(crate) fn write_record(session: &mut EditSession, at: &Selected) {
     let key = session.key(at.tile);
     let Some(tile) = session.tiles.get_mut(&at.tile) else {
@@ -1191,7 +1231,7 @@ pub(crate) fn footprint(drawn: &Query<(&Doodad, &GlobalTransform, &Aabb)>, uniqu
 
 /// Put the selection back in step with the file.
 ///
-/// ## What goes stale, and why it is not enough to be careful
+/// ## What goes stale, and why no single writer can fix it
 ///
 /// [`Selected::record`] is a copy of an `MDDF` row, and three things change that
 /// row without going through the panel holding it: an undo, a redo, and a tile
@@ -1451,8 +1491,8 @@ mod tests {
         assert_eq!(slab(Vec3::new(9.0, 0.0, 0.0), Vec3::Z, centre, half), None);
     }
 
-    /// The nearer of two boxes on one ray is the one picked, which is the whole
-    /// of what "click the thing in front" means.
+    /// The nearer of two boxes on one ray is the one picked: clicking selects
+    /// whatever is in front.
     #[test]
     fn the_nearer_box_is_the_one_the_ray_finds() {
         let near = slab(Vec3::new(0.0, 0.0, -10.0), Vec3::Z, Vec3::ZERO, Vec3::ONE);
@@ -1465,14 +1505,14 @@ mod tests {
         assert!(near < far);
     }
 
-    /// The broad phase answers every box the ray enters, nearest first, and
-    /// that is the property the narrow phase rests on.
+    /// The broad phase answers every box the ray enters, nearest first; the
+    /// narrow phase depends on that order.
     ///
-    /// A pick that stopped at the nearest box would be the fault this whole
-    /// two-phase arrangement exists for: a tree canopy's box is eighty yards of
-    /// mostly air, so it is nearest to everything standing under it and the
-    /// triangles that would have said otherwise are never asked for. Answering
-    /// the list is what lets the model behind the empty box win.
+    /// A pick that stopped at the nearest box is the failure this two-phase
+    /// arrangement exists to avoid: a tree canopy's box is eighty yards of
+    /// mostly air, so it is nearest to everything standing under it, and the
+    /// triangles that would say otherwise are never tested. Answering the whole
+    /// list is what lets the model behind the empty box win.
     #[test]
     fn the_broad_phase_keeps_every_candidate_in_order() {
         let near = GlobalTransform::from_translation(Vec3::new(0.0, 0.0, 0.0));

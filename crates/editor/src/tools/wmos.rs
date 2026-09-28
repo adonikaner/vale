@@ -1,42 +1,44 @@
 //! `MODF`: the buildings standing on a tile. Select one, move it, turn it, take
 //! it away.
 //!
-//! ## It is called WMO because that is what it is
+//! ## Why the tool is named WMO rather than Buildings
 //!
-//! The rail says WMO and not Buildings, and the difference is not
-//! decoration. `MWMO` names them, `MODF` places them, `vale wmos` checks
-//! them, and half of what a `.wmo` holds is not a building at all — a bridge, a
-//! gate, an elevator's shaft, the canals under Stormwind. A tool that renamed
-//! the thing would be a tool whose panel could not be grepped for.
+//! `MWMO` names these placements, `MODF` places them, and `vale wmos` checks
+//! them. Half of what a `.wmo` file holds is not a building — a bridge, a
+//! gate, an elevator shaft, the canals under Stormwind — so naming the tool
+//! after the file format keeps the rail's label searchable against those
+//! names.
 //!
-//! ## It is the doodad tool one list along, and three things are different
+//! ## Differences from the doodad tool
 //!
-//! Picking, dragging, nudging, turning and removing all work the way
-//! [`super::doodads`] does — the same rule that a drag belongs to where it
-//! began, the same `unique_id` crossing the boundary rather than a list index,
-//! the same `before` read off the file. What is not the same:
+//! Picking, dragging, nudging, turning and removing work the way
+//! [`super::doodads`] does: a drag belongs to where it began, `unique_id`
+//! crosses the boundary rather than a list index, and `before` is read off
+//! the file. Three things differ:
 //!
-//! * There is no scale. `MODF` in 1.12 is a position, three angles, a
-//!   world-space box, a doodad set and a name set; the two bytes later versions
-//!   put a scale in are padding here. Offering one would be offering to write a
-//!   number the reference client does not read.
-//! * The placement carries its own bounding box, and it is load-bearing.
-//!   See [`refit`], which is the part of this file worth reading.
+//! * There is no scale. `MODF` in 1.12 holds a position, three angles, a
+//!   world-space box, a doodad set and a name set; the two bytes that later
+//!   versions use for a scale are padding here. The reference client does not
+//!   read a scale on a `MODF` record, so this tool offers none.
+//! * The placement carries its own bounding box, and other code depends on
+//!   it holding the right value. See [`refit`].
 //! * There is no resident list to keep in step. A doodad's transform is
-//!   cached by `ResidentDoodads` so that a re-spawn keeps it; a building is
-//!   spawned once from `PendingWmos` and read from the file again whenever its
-//!   tile is, so moving the entity and the file is the whole of it.
+//!   cached by `ResidentDoodads` so a re-spawn keeps it; a building is spawned
+//!   once from `PendingWmos` and read from the file again whenever its tile
+//!   is, so moving the entity and the file is the whole of it.
 //!
-//! ## What a move does not carry with it, and why that is now cheap
+//! ## What a move does not update, and why re-reading the tile is cheap
 //!
-//! A building's collision is a hull placed by a task at spawn and keyed on the
-//! placement's id, its interior lighting is `Interior`'s inverse matrix, and its
-//! `MOLT` lamps are resolved into world space once. The middle one is written
-//! here — it is one matrix and the playtest's indoor test reads it — and the
-//! other two come back when the tile is read again, which this asks for when the
-//! button comes up. That used to be a third of a second with a hole in the
-//! world; since `super::terrain::swap` it is invisible, which is what makes
-//! re-reading an acceptable answer rather than a last resort.
+//! A building's collision is a hull placed by a task at spawn and keyed on
+//! the placement's id, its interior lighting is `Interior`'s inverse matrix,
+//! and its `MOLT` lamps are resolved into world space once. This module
+//! updates the second directly, since it is one matrix and the playtest's
+//! indoor test reads it; the other two come back only when the tile is read
+//! again, which this module requests once the mouse button comes up.
+//! Re-reading a tile used to blank it for about a third of a second; since
+//! `super::terrain::swap` keeps the old tile drawn until the new one is
+//! ready, the re-read is invisible, which is why waiting for it is
+//! acceptable rather than a fallback of last resort.
 
 use crate::pick::Cursor;
 use crate::session::EditSession;
@@ -50,8 +52,9 @@ use vale_edit::ops::Edit;
 use bevy::camera::primitives::Aabb;
 use bevy::prelude::*;
 
-/// Which building the tool is holding: the primary, and the rest of the group
-/// beside it — [`super::doodads::Selection`]'s shape, for its reasons.
+/// Which building the tool is holding: the primary, and the rest of the
+/// selected group. Same shape as [`super::doodads::Selection`], for the same
+/// reasons.
 #[derive(Resource, Debug, Default, Clone)]
 pub struct Selection {
     pub at: Option<Selected>,
@@ -127,7 +130,8 @@ impl Selection {
 
 /// Yards a nudge moves a building, and degrees a turn turns it.
 ///
-/// Ten times the doodad tool's, because a building is. Shift is ten times again.
+/// Ten times the doodad tool's step, because buildings are larger than
+/// doodads and need a coarser default. Shift multiplies it by ten again.
 const STEP: f32 = 5.0;
 const TURN: f32 = 5.0;
 
@@ -153,8 +157,8 @@ impl Plugin for WmoToolPlugin {
     }
 }
 
-/// Whether a drag is being held — [`super::doodads::Held`]'s counterpart, and
-/// the same three fields for the same three reasons.
+/// Whether a drag is being held. Counterpart of [`super::doodads::Held`],
+/// with the same fields for the same reasons.
 #[derive(Resource, Default)]
 pub(crate) struct Held {
     armed: bool,
@@ -164,20 +168,19 @@ pub(crate) struct Held {
     /// The record as it stood when this building was last put where it is.
     ///
     /// [`publish`] re-fits the `MODF` box from the drawn geometry, and it must
-    /// do that only when the placement has actually moved. Re-fitting
-    /// unconditionally makes selecting a building an edit: this tool's box is
-    /// the union of what is drawn and Blizzard's is the whole model, so the two
-    /// differ on nearly every placement and the first click marks the tile
-    /// unsaved. That is what the first picture of this tool showed —
-    /// `Save 1 tile` after touching nothing.
+    /// do that only when the placement has actually moved. This tool's box is
+    /// the union of what is drawn, while Blizzard's is the whole model, so
+    /// the two differ on nearly every placement; re-fitting unconditionally
+    /// would make selecting a building register as an edit and mark the tile
+    /// unsaved on the first click.
     picked: Option<Building>,
-    /// The two sets as of the last time the tile was asked for again.
+    /// The two sets as of the last time the tile was read again.
     ///
-    /// Which dressing a placement wears is decided when the building is spawned —
-    /// the `MODD` furniture of the chosen set is folded into world space and
-    /// handed to the doodad pass, once — so changing the field changes the record
-    /// and nothing on screen. It was reported as exactly that: *"the model does
-    /// not update when you change doodad set."* See [`settle`].
+    /// Which dressing a placement wears is decided when the building is
+    /// spawned: the `MODD` furniture of the chosen set is folded into world
+    /// space and handed to the doodad pass once. Changing this field changes
+    /// the record but nothing on screen until the tile is read again. See
+    /// [`settle`].
     dressed: Option<(u16, u16)>,
     /// The other members as they stood when the button went down — see
     /// [`super::doodads::Held`], which has the same field.
@@ -193,9 +196,25 @@ pub(crate) struct Held {
     /// a box taken then is the old one. Two frames is one for the transform to
     /// be written and one for it to propagate.
     pub(crate) refit_members: u8,
+    /// Frames to wait before the primary's box is re-fitted ([`publish`]);
+    /// zero when nothing is waiting. One, for [`Self::refit_members`]' reason:
+    /// on the frame a key or the panel changes the record, the parts'
+    /// `GlobalTransform` still holds the old transform, and a box taken then
+    /// is the box from before the move.
+    refit_primary: u8,
     /// Whether the group has moved since its members were last put in the
     /// tiles their origins are in ([`settle`]).
     pub(crate) unsettled: bool,
+}
+
+impl Held {
+    /// Say that the group's members have been moved from outside this tool's
+    /// own systems, so [`publish`] re-fits their boxes and [`settle`] puts each
+    /// in the tile its origin is in.
+    pub(crate) fn members_moved(&mut self) {
+        self.refit_members = 2;
+        self.unsettled = true;
+    }
 }
 
 /// Pick a building, or drop the one held.
@@ -248,10 +267,10 @@ pub(crate) fn select(
     };
 
     // Against the drawn batches, exactly as the doodad pick is, and up to
-    // the placement through the parent. A building's own `MODF` box would be the
-    // obvious thing to ray against and is the wrong one: it is the axis-aligned
-    // hull of a cathedral, so clicking the empty air beside a spire would select
-    // it and clicking through an archway would too.
+    // the placement through the parent. A building's own `MODF` box is the
+    // axis-aligned hull of the whole building, so ray-casting against it
+    // directly would select on empty air beside a spire, or through an open
+    // archway.
     let boxed = super::doodads::boxes_hit(
         parts.iter().filter_map(|(parent, at, aabb)| {
             let id = placements.get(parent.parent()).ok()?.unique_id;
@@ -379,18 +398,19 @@ fn enclose(
 /// The narrow phase: the nearest of the candidate buildings whose own solid
 /// triangles the ray crosses, or `None` when it crosses none.
 ///
-/// The same two-phase pick the doodads have and for the same reason — see
-/// [`super::doodads::nearest`], where the fault a box alone has is written up.
-/// A building's batches are per group, so the boxes are tighter than a doodad's
-/// to begin with; what they are still wrong about is the large flat ones, where
-/// a city wall's box is a slab of empty air in front of it.
+/// The same two-phase pick the doodads use, for the reason given in
+/// [`super::doodads::nearest`] about the fault in using a box alone. A
+/// building's batches are per group, so their boxes are already tighter than
+/// a doodad's; they are still wrong for large flat shapes, where a city
+/// wall's box is a slab of empty air in front of it.
 ///
-/// It is the collision hull and not the drawn triangles, which is the one
-/// thing here that is a compromise rather than a choice: the WMO cache keeps a
-/// `CollisionMesh` on the CPU and does not keep the drawn geometry, so a batch
-/// the file marks as not solid — a banner, a window frame, a rail — has nothing
-/// here to hit. Those fall back to their box, which is what they had before, so
-/// nothing is made worse and the buildings people actually click are made right.
+/// This tests against the collision hull rather than the drawn triangles,
+/// which is a compromise: the WMO cache keeps a `CollisionMesh` on the CPU
+/// and not the drawn geometry, so a batch the file marks as not solid — a
+/// banner, a window frame, a rail — has nothing here to hit. Those batches
+/// fall back to their box, which is what they had before this function
+/// existed, so the fallback does not make anything worse while it fixes the
+/// pick for the buildings people actually click.
 fn solid_hit(
     boxed: &[(f32, u32, &GlobalTransform)],
     session: &EditSession,
@@ -450,17 +470,17 @@ fn solid_hit(
 
 /// Find the open tile and list position a unique id belongs to.
 ///
-/// The copy the renderer is drawing, not the first one found. A model
-/// touching two tiles is listed in both with one `unique_id` — a city is listed
-/// in many — and `render::terrain` draws the copy whose origin is in the tile
-/// that holds it. Taking the first match instead means editing a row nobody
-/// draws: the thing on screen does not move, and the row that does move is one
-/// the claim rule will never look at.
+/// Returns the copy the renderer is drawing, not the first one found. A
+/// model touching two tiles is listed in both with one `unique_id` — a city
+/// is listed in many — and `render::terrain` draws the copy whose origin is
+/// in the tile that holds it. Taking the first match instead would edit a
+/// row nobody draws: the thing on screen would not move, and the row that
+/// does move would never be selected.
 ///
-/// So the claim rule is asked here too, and it is the renderer's own line. A
-/// placement that no tile claims — which is what a half-finished edit leaves —
-/// falls back to the first match, because refusing to select it would leave no
-/// way to put it right.
+/// This applies the renderer's own claim rule for that reason. A placement
+/// that no tile claims — which is what a half-finished edit leaves — falls
+/// back to the first match, because refusing to select it would leave no way
+/// to put it right.
 fn find(session: &EditSession, unique_id: u32) -> Option<Selected> {
     let mut fallback: Option<Selected> = None;
     for (coord, tile) in &session.tiles {
@@ -603,6 +623,37 @@ fn drag(
         held.unsettled = true;
     }
     held.group_was = group;
+}
+
+/// Carry the rest of the group by the change the primary has just had from
+/// `was`: the same step and the same turn about the primary's old origin.
+/// Written into whatever history entry is open. See
+/// [`super::doodads::carry_members`], which this is the counterpart of; a
+/// building has no scale, and its doodad and name sets are its own.
+pub(crate) fn carry_members(session: &mut EditSession, selection: &mut Selection, was: &Building) {
+    let Some(now) = selection.at.as_ref().map(|at| at.record) else {
+        return;
+    };
+    if now.position == was.position && now.rotation == was.rotation {
+        return;
+    }
+    let pivot = Vec3::from(vale_assets::world::adt::placement_to_world(was.position));
+    let step = Vec3::from(vale_assets::world::adt::placement_to_world(now.position)) - pivot;
+    let turned = now.rotation != was.rotation;
+    let turn = match turned {
+        true => super::group::turn_between(was.rotation, now.rotation),
+        false => Quat::IDENTITY,
+    };
+    for member in selection.also.iter_mut() {
+        let before = member.record;
+        let world = Vec3::from(vale_assets::world::adt::placement_to_world(before.position));
+        let moved = super::group::orbit(pivot, world, turn) + step;
+        set_world_position(&mut member.record, &before, moved.to_array());
+        if turned {
+            member.record.rotation = super::group::turn_record(before.rotation, turn);
+        }
+        write_record(session, member);
+    }
 }
 
 /// Move a building to a world position, taking its box with it.
@@ -787,9 +838,9 @@ fn remove(
 
 /// Write one building's new record into the tile and onto the history.
 ///
-/// `before` is read off the file by `Edit::move_building`, which is the whole of
-/// why this takes no `was` — see `vale_edit::ops::Edit::move_doodad`, where
-/// the invariant is.
+/// `before` is read off the file by `Edit::move_building`, which is why this
+/// function takes no `was` parameter — see `vale_edit::ops::Edit::move_doodad`
+/// for the invariant.
 pub(crate) fn write_record(session: &mut EditSession, at: &Selected) {
     let key = session.key(at.tile);
     let Some(tile) = session.tiles.get_mut(&at.tile) else {
@@ -805,33 +856,33 @@ pub(crate) fn write_record(session: &mut EditSession, at: &Selected) {
 
 /// Put the drawn buildings where the file now says they are.
 ///
-/// ## Three things, and the one that was missed is the one you can see
+/// ## What this function updates: transform, interior lighting, and furniture
 ///
-/// The transform is obvious. [`Interior::inverse`] is invisible when it is
-/// forgotten — the playtest's indoor test brings a character into the building's
-/// own frame with it, so a stale one lights whoever walks in as though they were
-/// outdoors and lights the empty ground where it stood as though they were in
-/// the cathedral.
+/// The entity's `Transform` is updated directly. [`Interior::inverse`] must
+/// also be updated: the playtest's indoor test uses it to bring a character
+/// into the building's own frame, so a stale inverse lights whoever walks in
+/// as though they were outdoors, and lights the empty ground where the
+/// building stood as though someone were still inside.
 ///
-/// And the furniture, which was missed. A building's `MODD` spawns are folded
-/// into world space when it is spawned — `mul4(&placement.matrix, &d.matrix)`
-/// — and handed to the doodad pass as placements of their own, so they are not
-/// children of the building and do not move with it. Moving the shell and leaving
-/// the beds, barrels and bookshelves standing in a field is exactly what that
-/// looks like, and it is what was reported.
+/// The building's furniture must move too. A building's `MODD` spawns are
+/// folded into world space when it is spawned (`mul4(&placement.matrix,
+/// &d.matrix)`) and handed to the doodad pass as placements of their own, so
+/// they are not children of the building and do not move with it on their
+/// own. Without this update, moving a building's shell leaves its beds,
+/// barrels and bookshelves standing where the building used to be.
 ///
-/// They are movable because a `MODD` spawn carries its building's
-/// `unique_id` (`wmos::interior_placement`), so the delta between where the
-/// placement was and where it is going applies to every one of them. Taking the
-/// delta from the entity's current transform rather than from a remembered
-/// matrix is what makes it idempotent: a building that has just been spawned from
-/// the file is already where it is going, the delta is the identity, and the
-/// furniture is left alone.
+/// The furniture can be moved here because each `MODD` spawn carries its
+/// building's `unique_id` (`wmos::interior_placement`), so the delta between
+/// where the placement was and where it is going applies to every one of
+/// them. The delta is taken from the entity's current transform rather than
+/// from a remembered matrix, which makes this idempotent: a building just
+/// spawned from the file is already where it is going, so the delta is the
+/// identity and the furniture is left alone.
 ///
 /// The collision hulls move by the same delta, through
-/// `CollisionWorld::move_placement`: the building's own and its furniture's
-/// carry the building's `unique_id`. What still cannot move live is the `MOLT`
-/// lamps, which come back when the tile is read again.
+/// `CollisionWorld::move_placement`: the building's own hull and its
+/// furniture's both carry the building's `unique_id`. The `MOLT` lamps still
+/// cannot move live; they come back only when the tile is read again.
 fn reconcile(
     mut session: Option<ResMut<EditSession>>,
     mut placements: Query<(&WmoPlacement, &mut Transform, Option<&mut Interior>)>,
@@ -892,13 +943,13 @@ fn reconcile(
         *transform = Transform::from_matrix(*delta * transform.to_matrix());
     }
 
-    // A placement with no entity is not a request to drop, which is what
-    // taking the set above used to be. It happens while a tile is part-way
-    // through being replaced — the outgoing copy is gone and the incoming one has
-    // not spawned — and the write that would have corrected it is lost, so the
-    // building stays wherever the in-flight read put it. Asking for the tile
-    // again is the answer that converges: the file is already right, and
-    // `remesh` starts a replacement once the one in flight has landed.
+    // A placement with no matching entity is marked stale rather than
+    // dropped. This happens while a tile is being replaced: the outgoing
+    // copy is gone and the incoming one has not spawned yet, so a write that
+    // would have corrected the placement's position is lost, and the
+    // building stays wherever the in-flight read left it. Re-reading the
+    // tile converges on the correct state, since the file is already right
+    // and `remesh` starts a new replacement once the in-flight one lands.
     for (coord, unique_id, _) in wanted {
         if !placements.iter().any(|(p, _, _)| p.unique_id == unique_id) {
             session.stale.insert(coord);
@@ -918,30 +969,31 @@ fn matrix_of(record: &Building) -> Mat4 {
 
 /// Take the selected building's `MODF` box from what is actually drawn.
 ///
-/// ## The box is not decoration and a stale one is not a cosmetic fault
+/// ## Why the `MODF` box must track the building's position
 ///
-/// `MODF` states each placement's own world-space box, and the mover reads it
-/// twice before the `.wmo` has been loaded at all: `awaiting_building` decides
-/// whether to wait rather than take the terrain — the ground under a city is
-/// far below its streets, so taking it is falling through the world — and
-/// `inside_building` decides whether terrain above the character's head may be
-/// stood on, which is what stops Ironforge snapping somebody to the top of the
-/// mountain.
+/// `MODF` states each placement's own world-space box, and the character
+/// mover reads it twice before the `.wmo` file has been loaded at all:
+/// `awaiting_building` decides whether to wait rather than use the terrain
+/// height (the ground under a city is far below its streets, so using it
+/// drops the character through the world), and `inside_building` decides
+/// whether terrain above the character's head may be stood on, which is what
+/// keeps a character from being placed on top of Ironforge's mountain.
 ///
-/// So a building whose box stayed behind breaks both rules in both places: the
-/// old spot still says "wait", and the new one says nothing.
+/// A building whose box has not been updated breaks both checks: the old
+/// position still says to wait, and the new position says nothing.
 ///
-/// A translation moves the box exactly and [`set_position`] does that as it goes.
-/// A turn does not, and there is no arithmetic on the stored box that
-/// recovers it — rotating a box and re-fitting it inflates, and inflates again
-/// on the next turn. What does recover it is the thing already on screen: the
-/// union of the placement's own drawn batches, each an `Aabb` the renderer
-/// computed from the real geometry. That is what this takes, once, when the
-/// button comes up.
+/// A translation moves the box exactly, and [`set_position`] does that as
+/// part of the move. A rotation does not: there is no arithmetic on the
+/// stored box that recovers its correct extents after a turn, since rotating
+/// a box and re-fitting it inflates the box, and inflates it again on the
+/// next turn. What recovers it is the union of the placement's own drawn
+/// batches, each an `Aabb` the renderer computed from the real geometry.
+/// This function takes that union once, when the mouse button comes up.
 ///
-/// It is not identical to Blizzard's: theirs is the whole model and this is what
-/// is drawn, so a group that draws nothing is not in it. It is the right shape
-/// and the right place, which is what both readers of it need.
+/// The result is not identical to Blizzard's box: theirs covers the whole
+/// model, while this covers only what is drawn, so a part that draws nothing
+/// is excluded. It has the right shape and the right position, which is what
+/// both readers of the box need.
 fn refit(
     unique_id: u32,
     parts: &Query<(&ChildOf, &GlobalTransform, &Aabb), With<WmoPart>>,
@@ -986,35 +1038,37 @@ fn refit(
 
 /// Whether two corners of a box are far enough apart to be worth writing.
 ///
-/// A tolerance and not `!=`. This tool's box is the union of what is drawn
-/// and Blizzard's is the whole model, and `vale wmos` measures the two as
-/// agreeing to 0.00 yards — but "agreeing" there is a physical claim and `!=` on
-/// an `f32` is not, so an exact comparison writes a change for a difference
-/// nothing can see. Two centimetres is far below anything either reader of this
-/// box cares about: both of them ask whether a point is inside it.
+/// Uses a tolerance rather than `!=`. This tool's box is the union of what
+/// is drawn; Blizzard's is the whole model. `vale wmos` measures the two as
+/// agreeing to 0.00 yards, but that agreement is a physical claim, and `!=`
+/// on an `f32` is not one — an exact comparison would write a change for a
+/// difference nothing can see. Two centimetres is far below what either
+/// reader of this box cares about, since both only ask whether a point is
+/// inside it.
 fn moved_by(was: [f32; 3], now: [f32; 3]) -> bool {
     (0..3).any(|axis| (was[axis] - now[axis]).abs() > 0.02)
 }
 
 /// Publish the edited bytes, re-fit the box, and ask for the tile again.
 ///
-/// All three when the placement has settled and none of them while it is
-/// being moved: laying out a tile is two megabytes, the box wants a transform
-/// that has stopped, and the tile re-read is what brings the collision hull and
-/// the `MOLT` lamps to where the building now is.
+/// All three run once the placement has settled, and none of them run while
+/// it is still being moved: writing a tile out is two megabytes, the box
+/// needs a transform that has stopped changing, and re-reading the tile is
+/// what brings the collision hull and the `MOLT` lamps to the building's new
+/// position.
 ///
-/// Settled and not "the left button came up", which is what this used to
-/// be. A drag is one of four ways to turn a building and the only one with a
-/// release in it: `,` and `.` step it, `Alt` and the mouse sweep it, and the
-/// panel's own field drags it. Each of those changed `MODF`'s three angles and
-/// left the box behind — and a stale box is the one thing here that nothing
-/// on screen reports, because both of its readers are the character's mover
-/// asking about a building it has not loaded yet. See [`refit`].
+/// This checks settled state rather than a release event, because a drag is
+/// only one of four ways to change a building's rotation, and the only one
+/// with a release to trigger on: `,` and `.` step it, `Alt` plus the mouse
+/// sweeps it, and the panel's own field drags it. Each of these changes
+/// `MODF`'s three angles and leaves the box behind, and a stale box is not
+/// visible on screen — both of its readers are the character mover, asking
+/// about a building it has not loaded yet. See [`refit`].
 ///
-/// So the trigger is the state rather than an edge: no mouse button down, no
-/// `Alt` held, and the record different from the one the selection was picked
-/// with. That fires exactly once per settle, because the last thing it does is
-/// take a fresh copy.
+/// The trigger is therefore a state rather than an edge: no mouse button
+/// down, no `Alt` held, and the record different from the one the selection
+/// was picked with. This fires exactly once per settle, because the last
+/// thing it does is take a fresh copy of the record.
 #[allow(clippy::too_many_arguments)]
 fn publish(
     mut session: Option<ResMut<EditSession>>,
@@ -1041,14 +1095,29 @@ fn publish(
     {
         return;
     }
-    // Only when the placement actually moved. A click that selected and
-    // nothing else must not be an edit — see [`Held::picked`], which is the whole
-    // of this guard and which the first picture of this tool paid for.
-    let moved = match (selection.at.as_ref(), held.picked) {
+    // Only when the placement actually moved. A click that only selects must
+    // not register as an edit — see [`Held::picked`].
+    let changed = match (selection.at.as_ref(), held.picked) {
         (Some(at), Some(picked)) => {
             at.record.position != picked.position || at.record.rotation != picked.rotation
         }
         _ => false,
+    };
+    // The primary is re-fitted one frame after the change is seen, when the
+    // parts' transforms have caught up — see [`Held::refit_primary`].
+    let moved = match (changed, held.refit_primary) {
+        (false, _) => {
+            held.refit_primary = 0;
+            false
+        }
+        (true, 0) => {
+            held.refit_primary = 1;
+            false
+        }
+        (true, _) => {
+            held.refit_primary = 0;
+            true
+        }
     };
     // …and the rest of a group, which is re-fitted whenever the group has
     // moved: a group change moves every member, so there is no member that
@@ -1070,12 +1139,12 @@ fn publish(
         return;
     }
 
-    // Into the move's own entry and not beside it. The re-fit is a
-    // consequence of the move rather than something anybody asked for, and as
-    // an entry of its own it is what the first `Ctrl+Z` after a drag lands on —
-    // so the building stays where it was put and it takes a second press to
-    // bring it back. See `vale_edit::undo::History::amend`, including the
-    // case where there is nothing to fold into.
+    // The re-fit is folded into the move's own undo entry rather than added
+    // as a separate one, since it is a consequence of the move rather than an
+    // edit anyone asked for. As its own entry, the first `Ctrl+Z` after a
+    // drag would undo only the re-fit, leaving the building at its new
+    // position until a second undo. See `vale_edit::undo::History::amend`,
+    // including the case where there is nothing to fold into.
     let mut opened = false;
     let mut fit = |session: &mut EditSession, at: &mut Selected| {
         let Some((lower, upper)) = refit(at.unique_id, &parts, &placements) else {
@@ -1113,8 +1182,9 @@ fn publish(
     for coord in unsaved {
         session.publish(coord);
     }
-    // The hull and the lamps, which only a re-read moves. Invisible now that a
-    // replacement keeps the old tile up — see `super::terrain::swap`.
+    // The hull and the lamps only move on a re-read. The re-read is invisible
+    // because `super::terrain::swap` keeps the old tile drawn until the new
+    // one replaces it.
     let tiles: Vec<(u32, u32)> = match members {
         true => selection.members().map(|at| at.tile).collect(),
         false => selection.at.iter().map(|at| at.tile).collect(),
@@ -1122,14 +1192,16 @@ fn publish(
     session.stale.extend(tiles);
 }
 
-/// The two things that are only true once a change has settled: a record that
-/// has left its tile, and a dressing nothing has re-read.
+/// Handles two things that are true only once a change has settled: a record
+/// that has moved to a different tile, and a dressing (doodad or name set)
+/// that nothing has re-read.
 ///
-/// Only while no button is down, which is what debounces it. A `DragValue`
-/// held for a second writes the record sixty times, and asking for a tile back on
-/// each of those would be sixty rebuilds; waiting for the button lets one change
-/// be one re-read. A value typed and entered has no button down at all, so it
-/// fires on the next frame.
+/// Runs only while no mouse button is down, which debounces it: a
+/// `DragValue` held for a second writes the record sixty times, and
+/// re-reading the tile on each of those would mean sixty rebuilds. Waiting
+/// for the button to come up turns one change into one re-read. A value
+/// typed and entered has no button down at all, so this fires on the next
+/// frame.
 fn settle(
     mut session: Option<ResMut<EditSession>>,
     mut selection: ResMut<Selection>,
@@ -1160,13 +1232,18 @@ fn settle(
         session.status = format!("doodad set {} · name set {}", sets.0, sets.1);
     }
 
-    // …and the files' own agreement about where this placement is: one row, in
-    // the tile its origin is in. See [`super::rehome`], which is where that whole
-    // argument is — including why it is stated as an invariant rather than as a
-    // move, and why a city listed in a dozen tiles made that the difference
-    // between one copy and fifteen.
+    // …and keeps the file's own invariant: one row, in the tile that contains
+    // this placement's origin. See [`super::rehome`] for why this is stated
+    // as an invariant rather than a move, and why a city listed in a dozen
+    // tiles makes the difference between one copy and fifteen.
     let _ = index;
-    if let Some((coord, index)) = super::rehome::settle_building(session, at.unique_id) {
+    // Not while the primary's box waits to be re-fitted: the settle takes a
+    // fresh copy of the record, which would end the wait with the old box.
+    let settled = match held.refit_primary {
+        0 => super::rehome::settle_building(session, at.unique_id),
+        _ => None,
+    };
+    if let Some((coord, index)) = settled {
         if let Some(at) = selection.at.as_mut() {
             at.tile = coord;
             at.index = index;

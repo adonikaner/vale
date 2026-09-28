@@ -335,7 +335,12 @@ pub struct Editing<'w> {
     pub(crate) shading: ResMut<'w, crate::tools::shading::Shading>,
     pub(crate) textures: ResMut<'w, Textures>,
     pub(crate) selection: ResMut<'w, Selection>,
+    /// The doodad and WMO tools' drag state, for the one thing each panel
+    /// tells it: that a group change made in the panel's fields needs its
+    /// members settled and, for buildings, their boxes re-fitted.
+    pub(crate) doodad_held: ResMut<'w, crate::tools::doodads::Held>,
     pub(crate) wmos: ResMut<'w, crate::tools::wmos::Selection>,
+    pub(crate) wmo_held: ResMut<'w, crate::tools::wmos::Held>,
     pub(crate) gizmo: ResMut<'w, Gizmo>,
     pub(crate) holes: Res<'w, crate::tools::holes::Holes>,
     pub(crate) areas: ResMut<'w, crate::tools::areas::Areas>,
