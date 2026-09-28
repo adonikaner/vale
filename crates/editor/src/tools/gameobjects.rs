@@ -37,6 +37,7 @@
 
 use super::creatures::TemplateSubject;
 use super::Tool;
+use crate::server::fresh::Fresh;
 use crate::session::EditSession;
 use vale_client::render::focus::WorldFocus;
 use vale_client::world::camera::WorldCamera;
@@ -410,6 +411,8 @@ pub struct NewSpawn {
     pub chosen: Option<Known>,
     /// Why the search found nothing, when it is not that nothing matched.
     pub trouble: Option<String>,
+    /// The `EditSession::database_writes` the matches were read at.
+    searched_at: Option<u64>,
 }
 
 impl NewSpawn {
@@ -483,7 +486,7 @@ pub struct GameObjects {
     /// The highest guid the `gameobject` table holds, read with the map.
     pub max_guid: Option<u64>,
     /// What an entry is, for the spawns of it this project creates.
-    pub known: HashMap<u32, Known>,
+    pub known: Fresh<HashMap<u32, Known>>,
     known_task: Option<Task<Result<Vec<Known>, String>>>,
     /// The model path a display id resolves to, worked out once per id,
     /// because the picker asks for every row on every frame it draws. `None` is
@@ -505,7 +508,7 @@ pub struct GameObjects {
     ghost_facing: Option<f32>,
     task: Option<Task<Result<MapRead, String>>>,
     /// What [`Self::spawns`] was read for: the map, and how many times this
-    /// session has written the tables. See `EditSession::gameobject_writes`.
+    /// session has written the tables. See `EditSession::database_writes`.
     loaded: Option<(u32, u64)>,
     /// Why there is nothing, when there is nothing.
     pub trouble: Option<String>,
@@ -523,9 +526,17 @@ pub struct GameObjects {
     /// The selected spawn's whole template row, read on demand.
     pub template: Option<TemplateRow>,
     template_task: Option<Task<Result<Option<TemplateRow>, String>>>,
+    /// What [`Self::template`] was made at: `EditSession::database_writes`,
+    /// and whether the project created the row, in which case it is an empty
+    /// row holding the key. Either changing makes it be made again: an apply
+    /// or a put back changes what the database holds, and a discard turns a
+    /// created row into one the database may hold.
+    template_at: Option<(u64, bool)>,
     /// The selected spawn's whole spawn row, read on demand.
     pub spawn_row: Option<SpawnRow>,
     spawn_task: Option<Task<Result<Option<SpawnRow>, String>>>,
+    /// …and the same for [`Self::spawn_row`].
+    spawn_at: Option<(u64, bool)>,
     pub show_models: bool,
     pub model_budget: usize,
     /// How far out a spawn is drawn at all, in yards.
@@ -550,7 +561,7 @@ impl Default for GameObjects {
             max_entry: None,
             scripted_template_done: false,
             max_guid: None,
-            known: HashMap::new(),
+            known: Fresh::default(),
             known_task: None,
             models: HashMap::new(),
             display_pick: None,
@@ -569,8 +580,10 @@ impl Default for GameObjects {
             group_from: Vec::new(),
             template: None,
             template_task: None,
+            template_at: None,
             spawn_row: None,
             spawn_task: None,
+            spawn_at: None,
             show_models: true,
             // A game object is a static model with no skeleton to pose and no
             // dressing to compose, so the budget is twice the creature tool's.
@@ -1351,7 +1364,7 @@ fn read_the_map(
         return;
     }
     let Some(session) = session else { return };
-    let key = (session.map_id, session.gameobject_writes);
+    let key = (session.map_id, session.database_writes);
     if objects.loaded == Some(key) {
         return;
     }
@@ -1454,7 +1467,16 @@ fn learn_the_created(
     settings: Res<crate::server::settings::ServerSettings>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
+    session: Option<Res<EditSession>>,
 ) {
+    // The templates held were read from the database as it stood at the
+    // counter; after an apply or a put back they are read again, and a read
+    // still running is dropped with them.
+    let writes = session.as_ref().map_or(0, |session| session.database_writes);
+    if objects.known.renew(writes) {
+        objects.known_task = None;
+        objects.created_for = None;
+    }
     if let Some(task) = objects.known_task.as_mut() {
         if let Some(done) = block_on(future::poll_once(task)) {
             objects.known_task = None;
@@ -1511,7 +1533,17 @@ fn search_objects(
     settings: Res<crate::server::settings::ServerSettings>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
+    session: Option<Res<EditSession>>,
 ) {
+    // The matches were read from the database as it stood at the counter; an
+    // apply or a put back empties them, drops a search still running, and
+    // sends the typed text again.
+    let writes = session.as_ref().map_or(0, |session| session.database_writes);
+    if objects.new_spawn.searched_at != Some(writes) {
+        objects.new_spawn.searched_at = Some(writes);
+        objects.new_spawn.task = None;
+        objects.new_spawn.forget();
+    }
     if let Some(task) = objects.new_spawn.task.as_mut() {
         if let Some(done) = block_on(future::poll_once(task)) {
             objects.new_spawn.task = None;
@@ -2234,6 +2266,10 @@ pub fn fetch_rows(
     if !state.editing() || *tool != Tool::GameObjects {
         return;
     }
+    // A row is made again when the database has been written since it was
+    // made, or when the project has started or stopped creating it; see
+    // `crate::server::fresh`.
+    let writes = session.as_ref().map_or(0, |session| session.database_writes);
     let Some((at, _)) = settings.resolve() else { return };
     // The template half follows the window's subject: the picker's object in
     // Place, the selected spawn's template in Select.
@@ -2242,8 +2278,10 @@ pub fn fetch_rows(
         .and_then(|session| objects.template_subject(&session.server_edits));
     if let Some(subject) = subject {
         let wants_template = objects.template_task.is_none()
-            && objects.template.as_ref().is_none_or(|had| had.entry != subject.entry);
+            && (objects.template.as_ref().is_none_or(|had| had.entry != subject.entry)
+                || objects.template_at != Some((writes, subject.is_new())));
         if wants_template {
+            objects.template_at = Some((writes, subject.is_new()));
             if subject.is_new() {
                 // A template this project creates has no row to read; its
                 // columns are the store's own, so the form is given an empty
@@ -2272,16 +2310,19 @@ pub fn fetch_rows(
     let Some(spawn) = objects.chosen().cloned() else { return };
     // A spawn this project creates has no row to read: the form is given an
     // empty one carrying the key, and every column draws the store's value.
-    if spawn.is_new() && objects.spawn_row.as_ref().is_none_or(|had| had.guid != spawn.guid) {
+    if spawn.is_new() && (objects.spawn_row.as_ref().is_none_or(|had| had.guid != spawn.guid) || objects.spawn_at != Some((writes, true))) {
         let mut row = gameobject::Row::new();
         row.insert("guid".to_string(), Some(spawn.guid.to_string()));
+        objects.spawn_at = Some((writes, true));
         objects.spawn_row = Some(SpawnRow { guid: spawn.guid, row });
     }
     let wants_spawn = !spawn.is_new()
         && objects.spawn_task.is_none()
-        && objects.spawn_row.as_ref().is_none_or(|had| had.guid != spawn.guid);
+        && (objects.spawn_row.as_ref().is_none_or(|had| had.guid != spawn.guid)
+            || objects.spawn_at != Some((writes, false)));
 
     if wants_spawn {
+        objects.spawn_at = Some((writes, false));
         let guid = spawn.guid;
         objects.spawn_task = Some(crate::server::queue::read(async move {
             let mut db = vale_mangos::conn::Db::open(&at)?;

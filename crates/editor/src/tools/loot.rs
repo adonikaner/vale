@@ -1,23 +1,23 @@
-//! **What a loot set holds**, and what an edit to it is.
+//! Loot sets: what one holds, and how the project records an edit to it.
 //!
-//! ## Not a tool of its own
+//! ## The loot window has no rail entry
 //!
 //! A loot set has no place in the world and no list of its own worth
 //! browsing: `creature_loot_template` has 4,074 entries and every one of them
 //! is named by a creature. So there is no rail entry. The **Loot** button on a
 //! selected creature, a selected game object and an open item opens one
 //! window, [`crate::ui::loot::window`], over whatever that thing's loot columns
-//! name — and the window follows the selection, as the quest window does.
+//! name. The window follows the selection, as the quest window does.
 //!
-//! ## One set at a time is read
+//! ## Sets are read one at a time, on demand
 //!
 //! A set is a few rows for most things and a few hundred for a raid boss, so
 //! it is read on demand, one `(table, entry)` per query
 //! (`vale_mangos::loot::rows_query`), and kept for the session. Every kept
-//! set is dropped when an apply lands (`EditSession::loot_writes`), because the
+//! set is dropped when an apply lands (`EditSession::database_writes`), because the
 //! apply may have written any of them.
 //!
-//! ## A loot row is a row of the project's store like any other
+//! ## Loot rows are ordinary rows of the project's store
 //!
 //! Its key is `vale_mangos::loot::key`'s five columns. Adding one is a
 //! [`Life::Insert`] row carrying every editable column, removing one in the
@@ -25,8 +25,8 @@
 //! the claim back, and a column edit is a value under the row's key.
 //! [`Loot::rows_of`] answers the database's rows with the project's over them.
 //!
-//! **A group is not a column edit.** It is part of the key, so moving a row
-//! between groups is a removal and a creation under one gesture — see
+//! The group is not a column edit. It is part of the key, so moving a row
+//! between groups is a removal and a creation under one gesture. See
 //! [`Loot::regroup`], and `vale_mangos::loot`'s module comment for why the
 //! key is shaped that way.
 
@@ -37,7 +37,7 @@ use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::future, Task};
 use std::collections::HashMap;
 
-/// **One loot set**: a table, and an entry of it.
+/// One loot set: a loot table and one entry in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Set {
     pub table: &'static str,
@@ -55,7 +55,7 @@ impl Set {
     }
 }
 
-/// **What the window is about**: a thing in the world and the sets its
+/// The subject of the loot window: a thing in the world, and the sets its
 /// columns name, one tab each.
 ///
 /// Rebuilt by the shell every frame from the selection while the window is
@@ -85,14 +85,14 @@ pub struct Shown {
     pub in_database: Option<Entry>,
 }
 
-/// **What one roll of a group comes to**, as `LootGroup::Roll`
-/// (`LootMgr.cpp:1094`) decides it.
+/// The odds of one roll of a loot group, as `LootGroup::Roll`
+/// (`LootMgr.cpp:1094`) decides them.
 ///
 /// A group drops at most one of its rows per roll. The rows with a chance are
-/// tried in turn against one roll of 0..100; if none is hit, one of the rows
-/// whose chance is 0 is taken with equal odds. So a 0 in a group means *an
-/// equal share of what the stated chances leave*, and a group of nothing but
-/// 0s always drops exactly one of them.
+/// tried in turn against one roll of 0..100. If none is hit, one of the rows
+/// whose chance is 0 is taken with equal odds. So a chance of 0 in a group
+/// means an equal share of what the stated chances leave, and a group whose
+/// rows all have chance 0 always drops exactly one of them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Odds {
     /// The stated chances summed, quest drops left out, as
@@ -100,7 +100,8 @@ pub struct Odds {
     pub stated: f32,
     /// How many rows have a chance of 0.
     pub equal: usize,
-    /// …and the chance each of those comes to, per roll of the group.
+    /// The chance that each row with a chance of 0 drops, per roll of the
+    /// group.
     pub share: f32,
     /// The chance a roll drops nothing: what the stated chances leave when
     /// there is no 0 row to take it.
@@ -145,18 +146,18 @@ pub struct Loot {
     pub window: Option<Window>,
     /// Which of the window's sets is shown.
     pub tab: usize,
-    /// **A reference set followed from a row**, drawn in place of the tab's set
-    /// until *back* is pressed. The rows of a boss's set are mostly references
-    /// and the references are where the items are.
+    /// A reference set followed from a row. It is drawn in place of the tab's
+    /// set until **Back** is pressed. The rows of a boss's set are mostly
+    /// references, and the items are in the referenced sets.
     pub reference: Option<u32>,
     /// Every set read so far, as the database has it.
     rows: HashMap<Set, Vec<Entry>>,
-    /// What those were read at: `EditSession::loot_writes`.
+    /// What those were read at: `EditSession::database_writes`.
     loaded_for: Option<u64>,
     reading: Option<(Set, Task<Result<Vec<Entry>, String>>)>,
     /// Why the last read answered nothing, when it answered nothing.
     pub trouble: Option<String>,
-    /// What is typed into the *add reference* box.
+    /// What is typed into the reference box beside **+ reference**.
     pub reference_box: String,
     /// Whether the scripted flags have been acted on — see
     /// `crate::server::loot::on_the_command_line`, which waits on this.
@@ -164,7 +165,7 @@ pub struct Loot {
 }
 
 impl Loot {
-    /// **The set the window shows now**: the followed reference, or the tab's.
+    /// The set the window shows now: the followed reference, or the tab's set.
     pub fn showing(&self) -> Option<Set> {
         if let Some(reference) = self.reference {
             return Some(Set::new(loot::REFERENCE, reference));
@@ -183,9 +184,9 @@ impl Loot {
         self.reading.as_ref().is_some_and(|(wanted, _)| *wanted == set)
     }
 
-    /// **Every row of one set**, the database's with the project's over them,
-    /// grouped as the server groups them: group 0 first, then each group in
-    /// order, and by item inside a group.
+    /// Every row of one set: the database's rows with the project's edits over
+    /// them. They are sorted as the server groups them: group 0 first, then
+    /// each group in order, and by item inside a group.
     pub fn rows_of(&self, set: Set, edits: &Edits) -> Vec<Shown> {
         let mut out: Vec<Shown> = self
             .rows
@@ -219,14 +220,15 @@ impl Loot {
         out
     }
 
-    /// **Add an item to a set**: one of it, at full chance, in no group. A row
-    /// that is in the database and marked for removal is kept instead; one
-    /// already there is left alone.
+    /// Adds an item to a set: a count of one, at full chance, in no group. If
+    /// the row is in the database and marked for removal, the mark is taken
+    /// back instead. If the row is already there, nothing changes.
     pub fn add_item(&mut self, session: &mut EditSession, set: Set, item: u32, now: f64) {
         self.add(session, set, Entry::item(set.entry, item), "Add loot item", now);
     }
 
-    /// …and a reference to another set, at full chance.
+    /// Adds a reference to another set, at full chance, by the same rules as
+    /// [`Self::add_item`].
     pub fn add_reference(&mut self, session: &mut EditSession, set: Set, reference: u32, now: f64) {
         self.add(session, set, Entry::reference(set.entry, reference), "Add loot reference", now);
     }
@@ -259,8 +261,8 @@ impl Loot {
         }
     }
 
-    /// **Remove a row**: a `Delete` claim for one in the database, and the
-    /// claim taken back for one this project added.
+    /// Removes a row. A row in the database gets a `Delete` claim; for a row
+    /// this project added, the claim is taken back.
     pub fn remove(&mut self, session: &mut EditSession, set: Set, shown: &Shown, now: f64) {
         let key = shown.entry.key();
         let subject = format!("{} {}", set.table, key.text());
@@ -281,8 +283,8 @@ impl Loot {
         }
     }
 
-    /// **Keep a row that was marked for removal**: the claim is taken back,
-    /// and with it any column edit made before the mark.
+    /// Keeps a row that was marked for removal. The claim is taken back, and
+    /// with it any column edit made before the mark.
     pub fn keep(&mut self, session: &mut EditSession, set: Set, shown: &Shown, now: f64) {
         let key = shown.entry.key();
         let subject = format!("{} {}", set.table, key.text());
@@ -298,9 +300,9 @@ impl Loot {
         );
     }
 
-    /// **Set one editable column of a row.** On a row the database holds the
-    /// edit is cleared when it is what the database holds, so typing a value
-    /// back leaves no claim; on a row this project creates the column is
+    /// Sets one editable column of a row. On a row the database holds, the
+    /// edit is cleared when its value equals the database's, so typing a value
+    /// back leaves no claim. On a row this project creates, the column is
     /// written into the creation.
     pub fn set_column(
         &mut self,
@@ -341,10 +343,10 @@ impl Loot {
         }
     }
 
-    /// **Move a row to another group**, which is part of its key: the row is
-    /// removed and created again under the new key with every column as it is
-    /// drawn, as one entry on the undo stack. A row this project created is
-    /// re-keyed and nothing else.
+    /// Moves a row to another group. The group is part of the key, so the row
+    /// is removed and created again under the new key, with every column as it
+    /// is drawn, as one entry on the undo stack. A row this project created is
+    /// only re-keyed.
     pub fn regroup(&mut self, session: &mut EditSession, set: Set, shown: &Shown, group: u32, now: f64) {
         if group == shown.entry.group || group > loot::MAX_GROUP {
             return;
@@ -383,18 +385,19 @@ impl Loot {
         session.set_server_row(set.table, &to, Some(&row), Some(gesture));
     }
 
-    /// **Follow a reference row** into the set it names.
+    /// Follows a reference row into the set it names.
     pub fn follow(&mut self, reference: u32) {
         self.reference = Some(reference);
     }
 
-    /// …and come back to the tab's own set.
+    /// Stops following a reference and shows the tab's own set again.
     pub fn back(&mut self) {
         self.reference = None;
     }
 
-    /// **Open the window**, or shut it. Opening starts on the first tab with
-    /// no reference followed, since what it is about is whatever is selected.
+    /// Opens the window, or closes it. Opening starts on the first tab with
+    /// no reference followed, because the window's subject is whatever is
+    /// selected.
     pub fn toggle(&mut self) {
         self.open = !self.open;
         self.tab = 0;
@@ -435,8 +438,8 @@ fn entry_of(key: &Key, row: &RowEdit) -> Option<Entry> {
     Entry::from_row(&whole)
 }
 
-/// **Read the set the window shows**, on a task, when it has not been read —
-/// and forget every set when an apply has moved the tables.
+/// Reads the set the window shows on a task, when it has not been read yet.
+/// Forgets every read set when an apply has changed the tables.
 fn read_the_rows(
     mut loot: ResMut<Loot>,
     session: Option<Res<EditSession>>,
@@ -461,9 +464,11 @@ fn read_the_rows(
         return;
     }
     let Some(session) = session else { return };
-    if loot.loaded_for != Some(session.loot_writes) {
-        loot.loaded_for = Some(session.loot_writes);
+    if loot.loaded_for != Some(session.database_writes) {
+        loot.loaded_for = Some(session.database_writes);
         loot.rows.clear();
+        // A read that failed against the database as it was is tried again.
+        loot.trouble = None;
     }
     if !loot.open {
         return;
@@ -487,12 +492,12 @@ fn read_the_rows(
     ));
 }
 
-/// **`--loot`, and `--loot-add <item>`**: the window opened, and a row added to
-/// the set it shows, with nobody at the keyboard. The second is the gesture a
-/// scripted run cannot make, and the one every check downstream of it needs.
-/// It waits for the window to be about something — `--spawn`, `--object` or
-/// `--item` fires when its own table has been read — and for the set to be
-/// read.
+/// Handles `--loot` and `--loot-add <item>`. `--loot` opens the window, and
+/// `--loot-add` adds a row for the item to the set the window shows. A scripted
+/// run cannot click, so this flag is how it adds the row that later checks in
+/// the run depend on. It waits until the window has a subject (`--spawn`,
+/// `--object` or `--item` fires when its own table has been read) and until
+/// the set has been read.
 fn on_the_command_line(
     args: Res<crate::Args>,
     mut loot: ResMut<Loot>,
@@ -581,10 +586,10 @@ mod tests {
         assert!(by_item(929).in_database.is_none());
     }
 
-    /// **A group's 0s share what the stated chances leave**, and a group with
-    /// no 0 drops nothing on the rest — `LootGroup::Roll`'s two branches. A
-    /// quest drop is left out of the sum, and a row marked for removal out of
-    /// both.
+    /// A group's rows with chance 0 share what the stated chances leave, and a
+    /// group with no such row drops nothing on the rest. These are the two
+    /// branches of `LootGroup::Roll`. A quest drop is left out of the sum, and
+    /// a row marked for removal is left out of both.
     #[test]
     fn a_groups_odds_are_the_servers_roll() {
         let in_group = |item: u32, chance: f32| Shown {

@@ -406,7 +406,7 @@ pub fn finish_apply(
     reloads: &mut super::reload::Reloads,
     done: &ApplyDone,
 ) {
-    session.behaviour_writes += 1;
+    session.wrote_the_database();
     session.applied_behaviour = done.result.as_ref().ok().map(|_| done.signature);
     for table in Plan::reloads() {
         reloads.when_there_is_a_session(table);
@@ -509,7 +509,7 @@ impl RevertJob {
 /// the revert file does not say which it touched.
 pub fn finish_revert(session: &mut EditSession, reloads: &mut super::reload::Reloads) {
     session.applied_behaviour = None;
-    session.behaviour_writes += 1;
+    session.wrote_the_database();
     for table in Plan::reloads() {
         reloads.when_there_is_a_session(table);
     }

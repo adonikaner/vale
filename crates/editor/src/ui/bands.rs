@@ -1,5 +1,5 @@
-//! **A light's colours over the day**, as a day of colour rather than as rows
-//! of numbers.
+//! A light's colours over the day, drawn as a strip of colour rather than as
+//! rows of numbers.
 //!
 //! `LightIntBand` is 7,668 rows of 34 columns and `LightFloatBand` is 2,556
 //! more. A row holds a count, sixteen times and sixteen values, and says
@@ -9,28 +9,27 @@
 //! reference column points into them; the only way to reach a band is to
 //! compute it from the params row, which is what this does.
 //!
-//! What it draws is the band itself: a strip of the colour at every minute of
-//! the day, with the light's keys marked on it. That is the thing being
-//! edited — a colour that moves from a cool night through a warm dawn — and a
-//! list of `(720, 0x00FF8800)` pairs is the same information in a form nobody
-//! can read.
+//! The panel draws the band itself: a strip of the colour at every minute of
+//! the day, with the light's keys marked on it. That colour, moving from a
+//! cool night through a warm dawn, is what is being edited. A list of
+//! `(720, 0x00FF8800)` pairs holds the same information and is hard to read.
 //!
-//! ## The interpolation is the renderer's, not a second one
+//! ## The strip uses the renderer's interpolation
 //!
-//! A strip drawn on its own curve would be a picture of something the game does
-//! not do. [`vale_assets::tables::light`]'s `straddle` is what the client
-//! samples a band with — linear between the two keys that straddle the time,
-//! **wrapping across midnight**, because a band is a cycle and a time past the
-//! last key belongs between it and the first. [`sample`] is that rule, and it
-//! is the only copy of it here.
+//! A strip drawn on its own curve would show something the game does not do.
+//! [`vale_assets::tables::light`]'s `straddle` is how the client samples a
+//! band: linear between the two keys that straddle the time, wrapping across
+//! midnight, because a band is a cycle and a time past the last key belongs
+//! between it and the first. [`sample`] is that rule, and it is the only copy
+//! of it here.
 //!
 //! ## What is edited and what is not
 //!
-//! A key's time and its value. The count is written with them, so adding and
-//! removing a key is the same edit as moving one, and the sixteen slots past
-//! the count keep whatever they held — `0xCCCCCCCC` in 101,116 of the shipped
-//! ones, which is the authoring tool's uninitialised memory and not something
-//! to tidy. Cleaning it would rewrite rows nobody edited.
+//! A key's time and its value are edited. The count is written with them, so
+//! adding or removing a key is the same edit as moving one. The sixteen slots
+//! past the count keep whatever they held: `0xCCCCCCCC` in 101,116 of the
+//! shipped ones, which is the authoring tool's uninitialised memory. Cleaning
+//! it would rewrite rows nobody edited.
 
 use super::data::Workspace;
 use super::theme;
@@ -64,14 +63,15 @@ impl Band {
     /// The value at a time, by the rule the renderer samples with.
     ///
     /// `None` for a band with no keys, which draws as nothing rather than as
-    /// black — a band the file does not state is not a band that is dark.
+    /// black: a band with no keys states no value, which is not the same as a
+    /// dark one.
     pub fn at(&self, time: u32) -> Option<u32> {
         let (i, j, t) = straddle(&self.times, time)?;
         Some(mix(self.values[i], self.values[j], t))
     }
 
-    /// …and as an `f32`, for the float table, whose sixteen values are bits of
-    /// one rather than a packed colour.
+    /// The value at a time as an `f32`, for the float table, whose sixteen
+    /// values are the bits of an `f32` rather than a packed colour.
     pub fn value_at(&self, time: u32) -> Option<f32> {
         let (i, j, t) = straddle(&self.times, time)?;
         let (a, b) = (
@@ -82,12 +82,13 @@ impl Band {
     }
 }
 
-/// **The two keys that straddle `time`, and how far between them it is.**
+/// The two keys that straddle `time`, and how far between them it is.
 ///
-/// `vale_assets::tables::light`'s `straddle`, which is private to that
-/// module and is the renderer's own. Kept to the letter, wrap included: a time
-/// before the first key belongs between the *last* key and the first, across
-/// midnight, which is the case every one of these bands is actually about.
+/// A copy of `vale_assets::tables::light`'s `straddle`, which is private to
+/// that module and is the renderer's own. It is kept identical, wrap included:
+/// a time before the first key belongs between the last key and the first,
+/// across midnight. Every one of these bands has a night that crosses
+/// midnight, so this case always applies.
 fn straddle(times: &[u32], time: u32) -> Option<(usize, usize, f32)> {
     if times.is_empty() {
         return None;
@@ -117,7 +118,7 @@ fn straddle(times: &[u32], time: u32) -> Option<(usize, usize, f32)> {
 
 /// Blend two packed `0x00RRGGBB` colours.
 ///
-/// **The top byte is taken from the nearer key rather than blended.** It is
+/// The top byte is taken from the nearer key rather than blended. It is
 /// zero on all but one shipped row and means nothing in between; blending it
 /// would invent values for a byte whose meaning is unknown.
 fn mix(a: u32, b: u32, t: f32) -> u32 {
@@ -143,16 +144,16 @@ pub fn clock(time: u32) -> String {
     format!("{:02}:{:02}", minutes / 60, minutes % 60)
 }
 
-/// **A typed time, as minutes past midnight** — the inverse of [`clock`].
+/// A typed time, as minutes past midnight: the inverse of [`clock`].
 ///
 /// `9:00`, `09:00` and `21:30` are hours and minutes. A bare number is minutes
 /// past midnight, which is what the value behind the box already is, so a
 /// person who drags the field and then types what they saw gets the same
 /// number back either way.
 ///
-/// `None` for anything else, which leaves the box on the value it had — egui's
-/// own behaviour for a parse it cannot make, and better than guessing at a
-/// time from a word.
+/// `None` for anything else, which leaves the box on the value it had. That is
+/// egui's own behaviour for a parse it cannot make, and it is safer than
+/// guessing a time from a word.
 pub fn minutes_of_day(text: &str) -> Option<u32> {
     let text = text.trim();
     let minutes = match text.split_once(':') {
@@ -210,10 +211,10 @@ fn write(work: &mut Workspace<'_>, table: &'static str, band: &Band, label: &str
     );
 }
 
-/// **Every band a `LightParams` row owns, as a day of colour each.**
+/// Draw every band a `LightParams` row owns, each as a day of colour.
 ///
-/// The one route into the two band tables: they are reached by arithmetic on
-/// this row's id, and nothing points at them.
+/// This is the only route into the two band tables: they are reached by
+/// arithmetic on this row's id, and nothing points at them.
 pub fn blocks(ui: &mut egui::Ui, work: &mut Workspace<'_>, params_id: u32, hour: u32) {
     for (table, count, names, notes) in [
         (
@@ -284,11 +285,11 @@ fn one(
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false);
 
     ui.horizontal(|ui| {
-        // **egui's own triangle, not a text arrow.** The interface's four
-        // typefaces are the game's — `Fonts\*.TTF` — and none of them carries
-        // `▸` or `▾`, so a button with one in it draws the missing-glyph box.
-        // The section headers beside this one look right because
-        // `CollapsingHeader` paints its marker rather than spelling it.
+        // egui's own painted triangle, not a text arrow. The interface's four
+        // typefaces are the game's (`Fonts\*.TTF`) and none of them has `▸`
+        // or `▾`, so a button with one in it draws the missing-glyph box. The
+        // section headers beside this one draw correctly because
+        // `CollapsingHeader` paints its marker rather than using a glyph.
         open.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
         let label = ui.add_sized(
             egui::vec2(120.0, 18.0),
@@ -306,9 +307,9 @@ fn one(
         }
     });
 
-    // **Indented by hand rather than through `show_body_indented`**, which
-    // wants the header's own `Response` and there is no header here — the
-    // heading row is a strip and a name, laid out above.
+    // Indented by hand rather than through `show_body_indented`, which needs
+    // the header's own `Response`. There is no header widget here: the heading
+    // row is a strip and a name, laid out above.
     if open.is_open() {
         ui.indent((table, band.row), |ui| {
             keys(ui, work, table, band, colours);
@@ -317,13 +318,13 @@ fn one(
     open.store(ui.ctx());
 }
 
-/// **The band across a whole day**, with its keys marked and the hour the world
-/// is at shown on it.
+/// Draw the band across a whole day, with its keys marked and the world's
+/// current hour shown on it.
 ///
-/// This is the control that makes the table legible: the colour at every time,
-/// in order, so a sunrise looks like a sunrise. The keys are the ticks under
-/// it; the hour is the line across it, and it is the world's own — so what is
-/// under that line is what is on screen behind the panel.
+/// The strip shows the colour at every time, in order, so a sunrise looks like
+/// a sunrise. The keys are the ticks under it. The hour is the line across it
+/// and comes from the world, so the colour under that line is the one on
+/// screen behind the panel.
 fn strip(ui: &mut egui::Ui, band: &Band, hour: u32) {
     let width = ui.available_width().max(60.0);
     let (rect, response) =
@@ -335,7 +336,7 @@ fn strip(ui: &mut egui::Ui, band: &Band, hour: u32) {
             rect.center(),
             egui::Align2::CENTER_CENTER,
             "no keys",
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(theme::SMALL),
             theme::INK_FAINT,
         );
         return;
@@ -374,7 +375,7 @@ fn strip(ui: &mut egui::Ui, band: &Band, hour: u32) {
     }
 }
 
-/// …and the float table's version: a line across the day rather than a wash.
+/// Draw a float band: a line across the day rather than a colour wash.
 fn numbers(ui: &mut egui::Ui, band: &Band, hour: u32) {
     let width = ui.available_width().max(60.0);
     let (rect, response) =
@@ -440,9 +441,9 @@ fn keys(
     let mut remove: Option<usize> = None;
     for n in 0..edited.times.len() {
         ui.horizontal(|ui| {
-            // **Minutes of the day rather than half-minutes.** The file counts
-            // in halves and nobody thinks in them; the clock beside the box is
-            // what the number means.
+            // Minutes of the day rather than half-minutes. The file counts in
+            // half-minutes; the clock beside the box shows what the number
+            // means.
             let mut minutes = (edited.times[n] % DAY) / 2;
             if ui
                 .add(
@@ -450,11 +451,11 @@ fn keys(
                         .range(0..=(DAY / 2 - 1))
                         .speed(5.0)
                         .custom_formatter(|v, _| clock((v as u32) * 2))
-                        // **Read back the way it is written.** Without this the
-                        // box formats `09:00` and parses it with egui's own
-                        // numeric reader, which takes the `09` and stops at the
-                        // colon — so typing a time stored nine minutes past
-                        // midnight, every time.
+                        // Parse the text the way the formatter writes it.
+                        // Without this the box formats `09:00` and parses it
+                        // with egui's own numeric reader, which reads the `09`
+                        // and stops at the colon, so a typed time was stored
+                        // as nine minutes past midnight.
                         .custom_parser(|text| minutes_of_day(text).map(f64::from)),
                 )
                 .changed()
@@ -526,11 +527,11 @@ fn keys(
     if edited == band {
         return;
     }
-    // **Sorted before it is written.** The renderer's `straddle` walks the
-    // times expecting them to ascend, and a key dragged past its neighbour
-    // would otherwise make the band read backwards from that point — 35 of the
-    // shipped rows are already out of order, which is why the reader tolerates
-    // it and why a writer should not add more.
+    // Sorted before it is written. The renderer's `straddle` walks the times
+    // expecting them to ascend, and a key dragged past its neighbour would
+    // otherwise make the band read backwards from that point. 35 of the
+    // shipped rows are already out of order, so the reader tolerates it, but
+    // the writer does not add more.
     let mut pairs: Vec<(u32, u32)> = edited
         .times
         .iter()
@@ -547,13 +548,13 @@ fn keys(
     write(work, table, &edited, what);
 }
 
-/// **Put a key in the middle of the longest gap.**
+/// Put a key in the middle of the longest gap.
 ///
-/// A new key has to go somewhere, and the end of the list is the wrong place: a
-/// band is a cycle, so the widest gap is the one a person is trying to say
-/// something about. Its value is what the band already reads there, so adding a
-/// key changes nothing until it is moved — which is the behaviour that makes it
-/// safe to add one to see what happens.
+/// The end of the list is the wrong place for a new key: a band is a cycle,
+/// so the widest gap is the one a person most likely wants to shape. The new
+/// key's value is what the band already reads there, so adding a key changes
+/// nothing until it is moved. That makes it safe to add one to see what
+/// happens.
 fn add(band: &mut Band) {
     let Some(at) = widest_gap(&band.times) else {
         // An empty band gets a key at midnight; a band of one gets its
@@ -603,8 +604,8 @@ mod tests {
         }
     }
 
-    /// **The strip is sampled the way the renderer samples a band**, wrap
-    /// included — otherwise it is a picture of something the game does not do.
+    /// The strip is sampled the way the renderer samples a band, wrap
+    /// included; otherwise it would show something the game does not do.
     #[test]
     fn a_band_is_read_the_way_the_renderer_reads_it() {
         // Two keys: black at 00:00, white at 12:00.
@@ -613,8 +614,8 @@ mod tests {
         assert_eq!(b.at(1440), Some(0xFFFFFF));
         // Halfway between them.
         assert_eq!(b.at(720), Some(0x808080));
-        // **Past the last key it wraps back to the first**, which is the case
-        // every one of these bands is about: the night runs across midnight.
+        // Past the last key it wraps back to the first. Every one of these
+        // bands needs this case, because the night runs across midnight.
         assert_eq!(b.at(2160), Some(0x808080));
         // A single key is a constant all day.
         let flat = band(&[600], &[0x123456]);
@@ -633,25 +634,25 @@ mod tests {
     fn a_blend_carries_the_top_byte_rather_than_mixing_it() {
         assert_eq!(mix(0xFF00_0000, 0x0000_0000, 0.5) >> 24, 0xFF);
         assert_eq!(mix(0x0000_0000, 0xFF00_0000, 0.5) >> 24, 0x00);
-        // …and the three channels do blend.
+        // The three colour channels are blended.
         assert_eq!(
             mix(0x00_00_00_00, 0x00_FF_FF_FF, 0.5) & 0xFF_FF_FF,
             0x808080
         );
     }
 
-    /// **A new key lands in the widest gap and leaves the band where it was**,
-    /// to within the one unit a byte can express.
+    /// A new key lands in the widest gap and leaves the band where it was, to
+    /// within the one unit a byte can express.
     ///
-    /// Adding one is how a person finds out what a band does, so it has to be
-    /// safe: its value is what the band already reads at that time, so the day
-    /// looks the same until the key is moved.
+    /// Adding a key is how a person finds out what a band does, so it has to
+    /// be safe: its value is what the band already reads at that time, so the
+    /// day looks the same until the key is moved.
     ///
-    /// **Not bit-identical, and it cannot be.** The sampled value is rounded to
-    /// a byte per channel before it is stored, so re-reading through the new
-    /// key differs from reading straight across by at most that rounding — one
-    /// unit in 255, which is below anything a screen shows. Asserting equality
-    /// would be asserting that a `u8` can hold the midpoint of two `u8`s.
+    /// The result is not bit-identical and cannot be. The sampled value is
+    /// rounded to a byte per channel before it is stored, so reading through
+    /// the new key differs from reading straight across by at most that
+    /// rounding: one unit in 255, which is below what a screen shows. Asserting
+    /// equality would assert that a `u8` can hold the midpoint of two `u8`s.
     #[test]
     fn a_new_key_lands_in_the_widest_gap_and_leaves_the_band_where_it_was() {
         let mut b = band(&[0, 1440], &[0x000000, 0xFFFFFF]);
@@ -724,8 +725,8 @@ mod tests {
         assert_eq!(clock(DAY), "00:00");
     }
 
-    /// **A time reads back the way it was written**, which is the whole of what
-    /// went wrong: the box wrote `09:00` and read it as nine.
+    /// A time reads back the way it was written. The box used to write `09:00`
+    /// and read it back as nine.
     #[test]
     fn a_typed_time_is_read_as_a_clock() {
         assert_eq!(minutes_of_day("09:00"), Some(540));
@@ -736,7 +737,7 @@ mod tests {
         // A bare number is minutes past midnight, which is the value behind
         // the box, so dragging and typing agree.
         assert_eq!(minutes_of_day("540"), Some(540));
-        // …and it round trips against the formatter, for every hour of the day.
+        // It also round trips against the formatter, for every hour of the day.
         for minutes in (0..DAY / 2).step_by(7) {
             let shown = clock(minutes * 2);
             assert_eq!(minutes_of_day(&shown), Some(minutes), "{shown}");

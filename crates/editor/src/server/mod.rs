@@ -29,6 +29,10 @@
 //!                eleven *_scripts tables as whole scripts under an id, since a
 //!                script row has no key; live on a reload of the events, the
 //!                lists and five of the script tables
+//! fresh.rs       keeping what was read from the database no longer than it
+//!                is true: one counter every apply and put back moves, a cache
+//!                that empties when it does, and the test that every read checks
+//!                it
 //! queue.rs       where applies run: off the main thread, one at a time, with a
 //!                count of every read and write in progress for the toast
 //! reconcile.rs   the order every apply runs in: what the project applied
@@ -134,6 +138,7 @@ pub mod creatures;
 pub mod dbcs;
 pub mod datadir;
 pub mod follow;
+pub mod fresh;
 pub mod gameobjects;
 pub mod held;
 pub mod items;
@@ -291,6 +296,7 @@ impl Plugin for ServerPlugin {
             .add_systems(
                 Update,
                 (
+                    fresh::watch_the_database,
                     rows::on_the_command_line,
                     creatures::on_the_command_line,
                     gameobjects::on_the_command_line,

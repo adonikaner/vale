@@ -1,46 +1,46 @@
-//! **What the server's items are**: which one is open, what an edit to a field
+//! The item workspace's state: which item is open, what an edit to a field
 //! is, and what the appearance a row names looks like.
 //!
-//! ## Not a pointer tool
+//! ## Why the workspace replaces the viewport
 //!
-//! [`super::tables`]' own first line, one crate along: an item has no place in
-//! the world, so the viewport is not the document and the workspace replaces
-//! it. See [`crate::ui::items`], which draws it.
+//! An item has no place in the world, so, as with [`super::tables`], the
+//! viewport is not the document and the workspace replaces it.
+//! [`crate::ui::items`] draws it.
 //!
-//! It is here rather than in `ui/` for [`super::tables`]' reason as well: what
-//! is open, what is selected and what an edit does are the editor's state, and
-//! the panel is a view of them. `--tool items --item 2589` has to be able to
-//! put this in a known state with nothing drawn yet.
+//! It is here rather than in `ui/` for the same reason as [`super::tables`]:
+//! what is open, what is selected and what an edit does are the editor's state,
+//! and the panel is a view of them. `--tool items --item 2589` must be able to
+//! put this in a known state before anything is drawn.
 //!
 //! ## The whole table is read once
 //!
 //! `item_template` is about 24,000 rows on a full world database and the
-//! browser wants to search all of it on every keystroke. So it is read **once**,
-//! on a task, as eleven columns a list row needs
-//! ([`vale_mangos::item::all_items_query`]) — about the same cost as the
-//! creature tool's map read, which is 24,610 rows in 0.6 s — and searching is
-//! then a walk of memory.
+//! browser wants to search all of it on every keystroke. So it is read once,
+//! on a task, as the eleven columns a list row needs
+//! ([`vale_mangos::item::all_items_query`]). That costs about the same as the
+//! creature tool's map read, which is 24,610 rows in 0.6 s, and a search is
+//! then a filter over memory.
 //!
-//! The alternative is the creature picker's `LIKE` per keystroke, and it is the
-//! wrong trade here: that picker is looking for one creature to place and this
-//! is the list you work in. Two letters into a name is a round trip in one and
-//! a filter of a `Vec` in the other.
+//! The creature picker instead runs a `LIKE` query per keystroke. That suits a
+//! picker that looks for one creature to place. This list is where the work is
+//! done, and with the table in memory two letters typed into a name filter a
+//! `Vec` instead of making a database round trip.
 //!
 //! It is read again when an apply lands and when **Reload** is pressed. It is
 //! not polled.
 //!
-//! ## An appearance is a join the archives answer, and it is memoised
+//! ## Appearances are resolved from the archives and memoised
 //!
-//! `display_id` is a row of `ItemDisplayInfo.dbc`, and what it *is* — the
-//! models a weapon hangs on the hand, the eight textures a garment paints, the
-//! icon in the bag — takes a DBC lookup, a gender-suffix chain and a path
-//! build. A picker asks for one on every frame it draws every cell.
+//! `display_id` is a row of `ItemDisplayInfo.dbc`. Resolving it into the
+//! models a weapon hangs on the hand, the eight textures a garment paints and
+//! the icon in the bag takes a DBC lookup, a gender-suffix chain and a path
+//! build. A picker asks for one per cell on every frame it draws.
 //!
-//! [`Items::look`] is that answer worked out once per `(display id, slot,
-//! race, gender)` and kept. `None` is a display id the table does not carry,
-//! kept so it is not asked again.
+//! [`Items::look`] resolves it once per `(display id, slot, race, gender)` and
+//! keeps the result. `None` is a display id the table does not carry, kept so
+//! it is not asked again.
 //!
-//! ## Which body a weapon hangs on is the picker's, not the item's
+//! ## The preview body is a panel setting, not part of the item
 //!
 //! A helm is cut per race and gender — the row names `Helm_Plate_D_04.mdx` and
 //! the archive holds sixteen files — so a preview of one has to choose a body
@@ -57,17 +57,17 @@ use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::future, Task};
 use std::collections::{HashMap, HashSet};
 
-/// **One row of the browse list**, as the eleven columns
+/// One row of the browse list, as the eleven columns
 /// [`vale_mangos::item::all_items_query`] reads.
 ///
 /// Read into numbers once, so drawing a list of twenty-four thousand does not
 /// parse text per frame.
 #[derive(Debug, Clone)]
 pub struct Known {
-    /// **The entry the project says the item has**, which is the one the list
+    /// The entry the project says the item has, which is the one the list
     /// shows, the panel opens by and the store keys its claim under.
     pub entry: u32,
-    /// **The entry the last read of the table found it at**, which differs
+    /// The entry the last read of the table found it at, which differs
     /// while the project changes the item's entry and has not applied it. It
     /// is where the whole row is read from. See [`fold_the_store_in`].
     pub read_entry: u32,
@@ -83,7 +83,7 @@ pub struct Known {
     pub item_level: u32,
     pub required_level: u32,
     pub flags: u32,
-    /// **What this project says is to become of the row.**
+    /// What this project does to the row.
     ///
     /// [`Life::Update`] for a row as the database has it, whether or not this
     /// project edits a column of it, [`Life::Insert`] for one the project
@@ -104,8 +104,8 @@ impl Known {
         format!("{} ({})", self.name, self.entry)
     }
 
-    /// …and the quieter second line: what kind of thing it is, and where it is
-    /// worn.
+    /// The dimmer second line of a list row: what kind of item it is, where it
+    /// is worn, and its item level.
     pub fn sub(&self) -> String {
         let class = item::value_word(&item::CLASSES, self.class);
         let subclass = item::value_word(item::subclasses(self.class), self.subclass);
@@ -122,7 +122,7 @@ impl Known {
         }
     }
 
-    /// **What the search box is matched against**: the name and the second
+    /// What the search box is matched against: the name and the second
     /// line, lowercased, with a separator no query can contain so that a match
     /// cannot run from the one into the other.
     fn haystack(&self) -> String {
@@ -133,16 +133,16 @@ impl Known {
         )
     }
 
-    /// **This row with the project's edits over it**, so the list shows what
+    /// This row with the project's edits over it, so the list shows what
     /// the project says rather than what was read.
     ///
     /// `None` when the project says nothing about it, which is the ordinary
     /// case and is why this answers an `Option` rather than always cloning.
     pub fn with_edits(&self, edits: &vale_mangos::row::Edits) -> Option<Known> {
-        // **One lookup of the row, and its columns read off that.** This asked
-        // the store about each of the 129 columns in turn, and every question
-        // built its own key: 2.3 million allocations for one pass over the
-        // list, which is 2.6 s of every keystroke in the search box.
+        // Look the row up once and read its columns from it. Asking the store
+        // for each of the 129 columns in turn built a key per question: 2.3
+        // million allocations for one pass over the list, which cost 2.6 s per
+        // keystroke in the search box.
         let key = self.key();
         let row = edits.row(item::TEMPLATE, &key);
         let life = row.map(|row| row.life).unwrap_or_default();
@@ -177,10 +177,10 @@ impl Known {
 
 /// The inside of a SQL string literal, for a list row to show.
 ///
-/// The same reading `crate::ui::creatures::unquote` does, and it is here rather
-/// than shared because that one is a panel's and this is the list's: a value
-/// the store holds is a literal, and a name drawn with its quotes on reads as a
-/// bug in the list.
+/// It reads a literal the same way as `crate::ui::creatures::unquote`, and is
+/// kept separate because that one belongs to a panel and this one to the list.
+/// The store holds every value as a literal, and a name drawn with its quotes
+/// looks like a bug in the list.
 pub fn unquote(literal: &str) -> String {
     let Some(inner) = literal
         .strip_prefix('\'')
@@ -234,12 +234,12 @@ pub struct ItemRow {
     pub row: item::Row,
 }
 
-/// **What one display id looks like**, resolved against the archives.
+/// What one display id looks like, resolved against the archives.
 ///
-/// The three things a panel can draw of an appearance, and they are not the
-/// same kind of thing: an icon is a texture, a model is geometry, and the
-/// component textures are neither — they are painted into the wearer's own
-/// skin and have no picture of their own outside a dressed character.
+/// The three things a panel can draw of an appearance. They are different
+/// kinds of data: an icon is a texture, a model is geometry, and the component
+/// textures are neither. The component textures are painted into the wearer's
+/// own skin and have no picture of their own outside a dressed character.
 #[derive(Debug, Clone, Default)]
 pub struct Look {
     /// The full path of the bag icon, composed through `ItemTables::icon_path`.
@@ -253,7 +253,7 @@ pub struct Look {
     pub textures: [String; 8],
     /// `geosetGroup[3]` — which geometry variants the wearer switches to.
     pub geoset_groups: [u32; 3],
-    /// …and which of the wearer's own geosets a helmet hides, as the row's ids.
+    /// Which of the wearer's own geosets a helmet hides, as the row's ids.
     pub helmet_hides: [u32; 2],
 }
 
@@ -269,13 +269,13 @@ impl Look {
     }
 }
 
-/// **What one row of `ItemDisplayInfo.dbc` is**, as the three facts a picker
-/// needs of all 29,604 of them.
+/// One row of `ItemDisplayInfo.dbc`, as the three facts a picker needs of all
+/// 29,604 of them.
 ///
-/// Built once per session and walked on every keystroke. The alternative —
-/// asking `ItemDisplays::appearance` per row per search — is a DBC lookup and
-/// eight string builds times twenty-nine thousand on the frame a letter is
-/// typed, which is the shape that makes a search box feel broken.
+/// Built once per session and walked on every keystroke. Asking
+/// `ItemDisplays::appearance` per row per search instead costs a DBC lookup and
+/// eight string builds for each of twenty-nine thousand rows on the frame a
+/// letter is typed, which is too slow for a search box.
 #[derive(Debug, Clone)]
 pub struct DisplayFacts {
     pub id: u32,
@@ -284,22 +284,22 @@ pub struct DisplayFacts {
     pub icon: String,
     /// Whether it hangs geometry on the wearer, as against painting its skin.
     pub has_model: bool,
-    /// **Which `Item\ObjectComponents\` directory that model is actually in**,
-    /// or `None` for a row that names none.
+    /// Which `Item\ObjectComponents\` directory that model is in, or `None`
+    /// for a row that names none.
     ///
     /// The row does not say. `modelName` is a bare file name and the directory
     /// comes from the slot the item is worn in, so the only way to know whether
     /// `Helm_Plate_D_04.mdx` is a helm is that `Item\ObjectComponents\Head\`
-    /// holds it — which the archives answer outright. See
+    /// holds it, which the archives' file listing answers. See
     /// [`build_display_facts`], where the listing is read once.
     pub directory: Option<&'static str>,
-    /// **Whether it names a skin for the wearer's own cape geoset**, which is
-    /// the one slot that is geometry the *character* already has and a texture
-    /// the item names.
+    /// Whether it names a skin for the wearer's own cape geoset. The back is
+    /// the one slot whose geometry the character already has and whose
+    /// texture the item names.
     ///
-    /// `Item\ObjectComponents\Cape\` holds no `.m2` at all — measured, 0 files
-    /// against Head's 1,801 — so a cloak carries `modelTexture[0]` and no
-    /// model, and a slot filter asking for geometry offered *nothing* for the
+    /// `Item\ObjectComponents\Cape\` holds no `.m2` at all (measured: 0 files,
+    /// against Head's 1,801), so a cloak carries `modelTexture[0]` and no
+    /// model, and a slot filter that asks for geometry offers nothing for the
     /// back. See `vale_assets::tables::item::Slot::is_cloak`.
     pub cloak_texture: bool,
     /// Which body components it paints, a bit per [`Component`] in that enum's
@@ -307,21 +307,20 @@ pub struct DisplayFacts {
     pub paints: u8,
 }
 
-/// **Which appearances the picker offers.**
+/// Which appearances the picker offers.
 ///
-/// The whole table is 29,604 rows, which at a page of ninety-six is three
-/// hundred pages — a list nobody scrolls to the end of, where typing another
-/// letter is the only thing that helps. These are the two narrowings that are
-/// about the *item* rather than about what was typed.
+/// The whole table is 29,604 rows, which at ninety-six a page is three hundred
+/// pages, too many to scroll through. These are the two narrowings that depend
+/// on the item rather than on what was typed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Filter {
     /// Everything the table holds.
     All,
-    /// **The ones that could be worn in this item's slot**, which is the
-    /// default and the useful one — see [`fits_slot`].
+    /// The ones that could be worn in this item's slot. This is the default
+    /// and the most useful narrowing; see [`fits_slot`].
     #[default]
     Slot,
-    /// …and the ones that carry a model of their own, whatever slot.
+    /// The ones that carry a model of their own, in any slot.
     Models,
 }
 
@@ -337,42 +336,41 @@ impl Filter {
     pub const ALL: [Filter; 3] = [Filter::Slot, Filter::Models, Filter::All];
 }
 
-/// **Whether an appearance could be worn in a slot.**
+/// Whether an appearance could be worn in a slot.
 ///
-/// Two rules, because a slot is geometry or it is paint:
+/// Two rules, because a slot is either geometry or paint:
 ///
-/// * a slot with **models** — head, shoulders, the hands, a shield, the back —
-///   wants a row that carries one. A helm row with no model is a row that draws
-///   nothing on a head.
-/// * a slot with **components** wants a row that paints *every* component that
-///   slot paints. `Slot::components` is where the lists are; a boot paints the
-///   lower leg and the foot, and a robe paints the lower leg and not the foot,
-///   so asking for all of them is what tells the two apart.
+/// * a slot with models (head, shoulders, the hands, a shield, the back) wants
+///   a row that carries one. A helm row with no model draws nothing on a head.
+/// * a slot with components wants a row that paints every component that slot
+///   paints. `Slot::components` holds the lists. A boot paints the lower leg
+///   and the foot, and a robe paints the lower leg and not the foot, so asking
+///   for all of them tells the two apart.
 ///
-/// **It is deliberately loose in one direction.** A row carries its whole
-/// armour *set*'s textures rather than one garment's — `vale_assets`'
-/// `Slot::components` is the note, and it is why a leggings row also names a
-/// chest — so a chest filter admits leggings of a set that has a chest. The
-/// error is over-inclusion, which costs a few extra cells; the other way round
+/// The test is loose in one direction on purpose. A row carries its whole
+/// armour set's textures rather than one garment's (`vale_assets`'
+/// `Slot::components` documents this, and it is why a leggings row also names
+/// a chest), so a chest filter admits leggings of a set that has a chest. The
+/// error is over-inclusion, which costs a few extra cells; the opposite error
 /// would hide the appearance somebody is looking for.
 ///
 /// A slot that is neither — a ring, a trinket, a bag, an ammo pouch — has no
-/// appearance of its own at all, so everything is offered and the search box is
-/// the whole of the narrowing.
+/// appearance of its own at all, so everything is offered and the search box
+/// does all the narrowing.
 pub fn fits_slot(facts: &DisplayFacts, slot: vale_assets::tables::item::Slot) -> bool {
-    // **A cloak is the exception to both rules**: it is the wearer's own
+    // A cloak is the exception to both rules: it is the wearer's own
     // group-15 geoset with a texture the item names, so it has no model and
     // paints no body component — see [`DisplayFacts::cloak_texture`].
     if slot.is_cloak() {
         return facts.cloak_texture;
     }
     if let Some(directory) = slot.object_directory() {
-        // **The directory and not merely "has a model".** Every one of the
-        // 9,263 rows that carries geometry passes "has a model", which for a
-        // helm picker means being offered every sword in the game — 97 pages of
-        // them. Which directory the file is *in* is the exact answer and the
-        // archives have it; a row whose model this editor cannot place in any
-        // directory falls back to the loose test rather than disappearing.
+        // Match the model's directory, not only "has a model". All 9,263 rows
+        // that carry geometry pass "has a model", so a helm picker would offer
+        // every sword in the game, 97 pages of them. The directory the file is
+        // in is the exact answer and the archives list it. A row whose model
+        // this editor cannot place in any directory falls back to the loose
+        // test rather than being hidden.
         return match facts.directory {
             Some(had) => had == directory,
             None => facts.has_model,
@@ -387,11 +385,11 @@ pub fn fits_slot(facts: &DisplayFacts, slot: vale_assets::tables::item::Slot) ->
         .all(|component| facts.paints & (1 << component.index()) != 0)
 }
 
-/// **Which slot an inventory type's appearance is chosen for.**
+/// Which slot an inventory type's appearance is chosen for.
 ///
-/// `Slot::from_inventory_type` with the weapons filled in, which it
-/// deliberately leaves out: which hand a weapon goes in is the equipment slot
-/// rather than the item's type, and a picker has to choose one to look at.
+/// `Slot::from_inventory_type` with the weapons filled in, which it leaves out
+/// on purpose: which hand a weapon goes in depends on the equipment slot rather
+/// than the item's type, and a picker has to choose one to show.
 pub fn slot_of(inventory_type: u32) -> vale_assets::tables::item::Slot {
     use vale_assets::tables::item::Slot;
     match inventory_type {
@@ -402,12 +400,11 @@ pub fn slot_of(inventory_type: u32) -> vale_assets::tables::item::Slot {
     }
 }
 
-/// **How many items the picker's grid offers per page.**
+/// How many items the picker's grid offers per page.
 ///
-/// `ItemDisplayInfo` is tens of thousands of rows and a grid of all of them is
-/// not a page; it is paged for [`crate::ui::data`]'s own reason, which is that
-/// every row stays reachable rather than being cut off at the first few
-/// hundred.
+/// `ItemDisplayInfo` is tens of thousands of rows, too many for one grid. It
+/// is paged for the same reason as [`crate::ui::data`]: paging keeps every row
+/// reachable instead of cutting the list off after the first few hundred.
 pub const DISPLAY_PAGE: usize = 96;
 
 /// What the item workspace is holding.
@@ -415,22 +412,23 @@ pub const DISPLAY_PAGE: usize = 96;
 pub struct Items {
     /// Every item the server would load, as the database has it.
     pub all: Vec<Known>,
-    /// …and the ones this project creates, which are in no database and are
+    /// The items this project creates, which are in no database and are
     /// rebuilt from the store whenever it moves.
     pub created: Vec<Known>,
     /// Which `EditSession::server_edit_revision` [`Self::created`] was built
     /// for.
     created_for: Option<u64>,
-    /// **The highest entry the table holds**, read with the list. Half of where
-    /// a new item's entry comes from — see [`Items::next_entry`].
+    /// The highest entry the table holds, read with the list. It is one of the
+    /// inputs to a new item's entry; see [`Items::next_entry`].
     pub max_entry: Option<u32>,
     /// The read, while it is running.
     task: Option<Task<Result<TableRead, String>>>,
-    /// What [`Self::all`] was read for: `EditSession::item_writes`, which
-    /// counts this session's applies and put-backs. Not the edit counter, which
-    /// moves on every keystroke, and not the applied signature, which is `None`
-    /// before an apply this session did not make and `None` after putting it
-    /// back — so the list went on showing a row the database no longer held.
+    /// What [`Self::all`] was read for: `EditSession::database_writes`, which
+    /// counts this session's applies and put-backs. It is not the edit counter,
+    /// which moves on every keystroke. It is not the applied signature either,
+    /// which is `None` before an apply this session did not make and `None`
+    /// again after that apply is put back; keyed on it, the list kept showing a
+    /// row the database no longer held.
     loaded: Option<u64>,
     /// Why there is nothing, when there is nothing.
     pub trouble: Option<String>,
@@ -438,42 +436,48 @@ pub struct Items {
     pub query: String,
     /// The rows that match it, as indices over [`Items::at`]'s numbering.
     matches: Vec<usize>,
-    /// …and what they were built for, so a query that has not changed is not
-    /// searched again on every frame the panel is drawn.
+    /// The query, revision and list lengths [`Self::matches`] was built for, so
+    /// a query that has not changed is not searched again on every frame the
+    /// panel is drawn.
     built: Option<(String, u64, usize, usize)>,
-    /// **What each row of [`Self::all`] is found by**, lowercased, built once
+    /// What each row of [`Self::all`] is found by, lowercased, built once
     /// per read — see [`Known::haystack`] and [`Items::matches`].
     haystacks: Vec<String>,
-    /// …which read they were built for,
+    /// Which read the haystacks were built for, as an `all_generation` value.
     haystacks_for: Option<u64>,
-    /// …and how many times a read has replaced [`Self::all`].
+    /// How many times a read has replaced [`Self::all`].
     all_generation: u64,
     /// The open item, by entry.
     pub open: Option<u32>,
-    /// …and its whole row, read on demand.
+    /// The open item's whole row, read on demand.
     pub row: Option<ItemRow>,
     row_task: Option<Task<Result<ItemRow, String>>>,
-    /// **What a display id looks like**, worked out once per body — see the
-    /// module comment.
+    /// What [`Self::row`] was made at: `EditSession::database_writes`, and
+    /// whether the project created the item, in which case it is an empty
+    /// row. Either changing makes it be read again; see
+    /// `crate::server::fresh`.
+    row_at: Option<(u64, bool)>,
+    /// What a display id looks like, resolved once per body; see the module
+    /// comment.
     looks: HashMap<(u32, u32, u8, u8), Option<Look>>,
-    /// …and the *body wearing it*, for the appearance that has no model of
-    /// its own — see [`Items::body`]. Its own memo beside [`Self::looks`]
-    /// because it is a different question with the same key: what the row
-    /// paints, against what the row is.
+    /// The body wearing a display id, for an appearance that has no model of
+    /// its own; see [`Items::body`]. It is a separate memo beside
+    /// [`Self::looks`] because it answers a different question with the same
+    /// key: what the row paints, as against what the row is.
     bodies: HashMap<(u32, u32, u8, u8), Option<crate::portraits::Worn>>,
     /// Which body a preview is drawn on. A helm is cut per race and gender,
-    /// and a garment is *painted* on a body, so both kinds of preview have
+    /// and a garment is painted on a body, so both kinds of preview have
     /// one to stand on.
     pub race: u8,
     pub gender: u8,
-    /// **Whether the display picker is open**, and what is typed into it.
+    /// Whether the display picker is open, and what is typed into it.
     pub picking_display: bool,
     pub display_query: String,
     pub display_page: usize,
     /// The ids that match the picker's query, and what they were built for.
     display_hits: Vec<u32>,
     display_built: Option<(String, u32, Filter, u32)>,
-    /// **Every display row's three facts**, built once — see
+    /// Every display row's three facts, built once; see
     /// [`DisplayFacts`]. `None` until the archives have been asked.
     display_facts: Option<Vec<DisplayFacts>>,
     /// Which narrowing the picker is offering — see [`Filter`].
@@ -483,19 +487,20 @@ pub struct Items {
     pub display_preview: Option<u32>,
     /// Whether the picker's box should take the keyboard on the next frame.
     pub display_focus: bool,
-    /// **Whether the scripted flags have been acted on.** They name a row that
+    /// Whether the scripted flags have been acted on. They name a row that
     /// is not read on the frame the flag is read, so they are applied once the
-    /// table arrives rather than at startup — see
+    /// table arrives rather than at startup. See
     /// `crate::server::items::on_the_command_line`, which waits on this.
     pub scripted_done: bool,
     seeded: bool,
-    /// **A client table's row a reference on the form was clicked through
-    /// to**, as the table and the id: a spell, a skill, a faction. Answered by
-    /// the shell after everything is drawn, which opens the table browser on
-    /// it — the shell holds the tool while the form is drawn. See
+    /// A client table's row that a reference on the form was clicked through
+    /// to, as the table and the id: a spell, a skill, a faction. The shell
+    /// handles it after everything is drawn and opens the table browser on it,
+    /// because the shell holds the tool while the form is drawn. See
     /// `crate::ui::draw`.
     pub show_row: Option<(&'static str, u32)>,
-    /// …and a quest, which opens the quest workspace.
+    /// A quest that a reference on the form was clicked through to, which
+    /// opens the quest workspace.
     pub show_quest: Option<u32>,
 }
 
@@ -518,6 +523,7 @@ impl Default for Items {
             open: None,
             row: None,
             row_task: None,
+            row_at: None,
             looks: HashMap::new(),
             bodies: HashMap::new(),
             // A human male, which is the body `vale attach` reports against
@@ -567,7 +573,7 @@ impl Items {
         }
     }
 
-    /// …and one by entry.
+    /// One item by entry, from either list.
     pub fn by_entry(&self, entry: u32) -> Option<&Known> {
         self.all
             .iter()
@@ -575,26 +581,26 @@ impl Items {
             .find(|known| known.entry == entry)
     }
 
-    /// **One item as it should be drawn**: the database's reading with the
+    /// One item as it should be drawn: the database's reading with the
     /// project's edits over it.
     pub fn shown(&self, index: usize, edits: &vale_mangos::row::Edits) -> Option<Known> {
         let base = self.at(index)?;
         Some(base.with_edits(edits).unwrap_or_else(|| base.clone()))
     }
 
-    /// …and the open one, on the same terms.
+    /// The open item, with the project's edits over it.
     pub fn open_item(&self, edits: &vale_mangos::row::Edits) -> Option<Known> {
         let entry = self.open?;
         let base = self.by_entry(entry)?;
         Some(base.with_edits(edits).unwrap_or_else(|| base.clone()))
     }
 
-    /// **The rows the query matches**, as indices, newest search cached.
+    /// The rows the query matches, as indices, with the newest search cached.
     ///
-    /// Two kinds of query and they are not exclusive, which is
-    /// [`crate::tools::tables::Browser::matches`]' own rule: a number matches
-    /// the row with that entry, and any text matches a row whose name or kind
-    /// contains it. So `2589` finds Linen Cloth and `linen` finds all of it.
+    /// Two kinds of query, and they are not exclusive, as in
+    /// [`crate::tools::tables::Browser::matches`]: a number matches the row
+    /// with that entry, and any text matches a row whose name or kind contains
+    /// it. So `2589` finds Linen Cloth and `linen` finds every linen item.
     pub fn matches(&mut self, edits: &vale_mangos::row::Edits, revision: u64) -> &[usize] {
         let asked = (
             self.query.trim().to_ascii_lowercase(),
@@ -609,15 +615,15 @@ impl Items {
         self.built = Some(asked);
         self.matches.clear();
         let by_entry: Option<u32> = query.parse().ok();
-        // **The words a row is found by, lowercased once per read** rather
-        // than composed and lowercased for every row on every keystroke.
+        // The words a row is found by, lowercased once per read rather than
+        // composed and lowercased for every row on every keystroke.
         if self.haystacks_for != Some(self.all_generation) || self.haystacks.len() != self.all.len() {
             self.haystacks = self.all.iter().map(Known::haystack).collect();
             self.haystacks_for = Some(self.all_generation);
         }
-        // **The rows this project says anything about**, found once: a
-        // handful against seventeen thousand. Every other row is searched as
-        // it was read, with no lookup and no copy.
+        // The rows this project edits, found once: a handful out of seventeen
+        // thousand. Every other row is searched as it was read, with no lookup
+        // and no copy.
         let touched: std::collections::HashSet<(u32, u32)> = edits
             .rows()
             .filter(|(table, _, _)| *table == item::TEMPLATE)
@@ -661,11 +667,11 @@ impl Items {
         self.built = None;
     }
 
-    /// **The entry a new item gets.**
+    /// The entry a new item gets.
     ///
     /// The highest of three: the reserved base, one past what the table holds,
-    /// and one past the highest this project has already claimed — the creature
-    /// tool's own arithmetic one table along, and for its reasons. See
+    /// and one past the highest this project has already claimed. The creature
+    /// tool uses the same arithmetic for the same reasons. See
     /// `vale_mangos::item::RESERVED_ENTRY_BASE`.
     pub fn next_entry(&self, edits: &vale_mangos::row::Edits) -> u32 {
         let in_database = self.max_entry.map(|highest| highest + 1).unwrap_or(0);
@@ -679,13 +685,13 @@ impl Items {
         item::RESERVED_ENTRY_BASE.max(in_database).max(claimed)
     }
 
-    /// **Make a new item**, and open it.
+    /// Make a new item, and open it.
     ///
-    /// Every column is written at once — see `vale_mangos::item::new_item`,
-    /// which is where the values come from and why they are not zeros — as one
-    /// claim and one undo entry. The patch is **the server's own**, not zero: a
-    /// row written at 0 would be beaten by any later content-patch row of the
-    /// same entry, which for a new entry is none today and is a trap the moment
+    /// Every column is written at once, as one claim and one undo entry. See
+    /// `vale_mangos::item::new_item` for where the values come from and why
+    /// they are not zeros. The patch is the server's own, not zero: a row
+    /// written at 0 would be overridden by any later content-patch row of the
+    /// same entry. A new entry has no such row today, but would as soon as
     /// somebody imports one.
     pub fn create(&mut self, session: &mut EditSession, name: &str, patch: u32, now: f64) -> u32 {
         let entry = self.next_entry(&session.server_edits);
@@ -714,13 +720,12 @@ impl Items {
         entry
     }
 
-    /// **A copy of the open item**, which is the gesture somebody reaches for
-    /// far more often than a blank row: the same sword one point better is this
-    /// row with a new entry.
+    /// A copy of the open item. Copying is used far more often than a blank
+    /// row: the same sword one point better is this row with a new entry.
     ///
-    /// Every column comes across — the database's value where the project has
-    /// not changed it and the project's where it has — so the copy is what is
-    /// *shown*, not what the table holds.
+    /// Every column is copied, the database's value where the project has not
+    /// changed it and the project's where it has, so the copy is what is
+    /// shown, not what the table holds.
     ///
     /// `None` when the whole row has not been read yet, which is the frame or
     /// two after an item is clicked. Copying from a half-read row would take
@@ -750,9 +755,9 @@ impl Items {
                 row.columns.insert(column.name.to_string(), value);
             }
         }
-        // **Named as a copy**, because two rows with one name in a list of
-        // twenty-four thousand is a list you cannot use. The name is the first
-        // thing anybody changes and this says which one they are looking at.
+        // Named as a copy, because two rows with one name cannot be told apart
+        // in a list of twenty-four thousand. The name is usually the first
+        // thing changed, and the suffix shows which row is the copy.
         let named = row
             .columns
             .get("name")
@@ -779,13 +784,13 @@ impl Items {
         Some(entry)
     }
 
-    /// **Whether an entry is already an item**, which is what a renumbering has
-    /// to ask before it writes.
+    /// Whether an entry is already an item, which a renumbering has to check
+    /// before it writes.
     ///
-    /// The lists this holds — the rows the server would load plus the ones this
-    /// project creates — asked two ways: by the entry the project gives each
-    /// row and by the entry the database has it at. **Both, because the
-    /// database is where an apply runs.** An item this project moves away from
+    /// It checks the rows the server would load plus the ones this project
+    /// creates, two ways: by the entry the project gives each row and by the
+    /// entry the database has it at. Both are checked because an apply runs
+    /// against the database. An item this project moves away from
     /// 852 still occupies 852 until that move has run, and the rows of a plan
     /// run in key order, so a second item moved onto 852 could meet the first
     /// still there.
@@ -799,17 +804,17 @@ impl Items {
             .any(|known| known.entry == entry || known.read_entry == entry)
     }
 
-    /// **Move an item to another entry.**
+    /// Move an item to another entry.
     ///
-    /// Whether it may happen is [`plan_move`], which answers with no session in
-    /// hand; this performs it, and it is one operation whatever the row is: the
+    /// [`plan_move`] decides whether it may happen, with no session in hand;
+    /// this performs it, and it is one operation whatever the row is: the
     /// project's claim on the row is re-keyed. A row that is in the database
     /// keeps a record of where the database has it, which is what the `UPDATE`
     /// will name — see `vale_mangos::row::RowEdit::from`. So the item is one
     /// row in the list under its new entry before and after the apply, and
     /// every later edit lands on the same claim.
     ///
-    /// **The project's other rows that name the item follow it**: a quest this
+    /// The project's other rows that name the item follow it: a quest this
     /// project edits to reward entry 852 says the new entry afterwards. The
     /// database's rows follow at the apply — see
     /// `vale_mangos::item::REFERENCES`.
@@ -825,7 +830,7 @@ impl Items {
         };
         // Where the database has the row, for a claim that has not said yet.
         let at_base = item::template_key(known.read_entry, known.patch);
-        // **One subject for every write**, so a move is one press of Ctrl+Z:
+        // One subject for every write, so a move is one press of Ctrl+Z:
         // it is two store writes and one per row that follows, and the undo
         // stack folds them by the subject they name. See
         // `crate::session::Gesture`.
@@ -852,7 +857,7 @@ impl Items {
         Ok(())
     }
 
-    /// **Mark an item for removal**, or give up one this project created.
+    /// Mark an item for removal, or give up one this project created.
     ///
     /// An item in the database becomes a [`Life::Delete`] row, which stays in
     /// the list marked until it is applied, and replaces any column edit the
@@ -860,7 +865,7 @@ impl Items {
     /// created is in no database, so its claim is taken back instead — see
     /// [`Self::discard_created`].
     ///
-    /// **An item whose entry this project changes is refused.** Its claim is
+    /// An item whose entry this project changes is refused. Its claim is
     /// keyed by the new entry and the database has it at the old one, so a
     /// `Delete` under the claim's key would remove nothing. Taking the move
     /// back first leaves one entry to name.
@@ -899,7 +904,7 @@ impl Items {
         Ok(())
     }
 
-    /// **Keep an item that was marked for removal**: the claim is taken back,
+    /// Keep an item that was marked for removal: the claim is taken back,
     /// and with it any column edit made before the mark, which a `Delete` row
     /// does not carry.
     pub fn keep(&mut self, session: &mut EditSession, known: &Known, now: f64) {
@@ -920,7 +925,7 @@ impl Items {
         self.forget_matches();
     }
 
-    /// **Give up a row this project created**, which is in no database, so
+    /// Give up a row this project created, which is in no database, so
     /// giving it up removes nothing there.
     pub fn discard_created(&mut self, session: &mut EditSession, entry: u32, now: f64) {
         let Some(known) = self.by_entry(entry).cloned() else {
@@ -947,7 +952,7 @@ impl Items {
         self.forget_matches();
     }
 
-    /// **What a display id looks like on the chosen body**, memoised.
+    /// What a display id looks like on the chosen body, memoised.
     pub fn look(
         &mut self,
         assets: &GameAssets,
@@ -963,20 +968,19 @@ impl Items {
         found
     }
 
-    /// **A body wearing what this display id paints**, memoised.
+    /// A body wearing what this display id paints, memoised.
     ///
-    /// The picture of the *other* kind of item. A sword, a helm and a pauldron
-    /// hang geometry off the wearer and can be looked at by themselves; a
-    /// shirt, a pair of gloves and a robe have no geometry at all — they paint
-    /// textures into the wearer's own 256x256 body composite — so the only
-    /// picture of one that exists is a body with it on. Two thirds of
-    /// `ItemDisplayInfo.dbc` is that kind.
+    /// The picture of the other kind of item. A sword, a helm and a pauldron
+    /// hang geometry off the wearer and can be shown by themselves. A shirt, a
+    /// pair of gloves and a robe have no geometry at all: they paint textures
+    /// into the wearer's own 256x256 body composite, so the only picture of one
+    /// is a body wearing it. Two thirds of `ItemDisplayInfo.dbc` is that kind.
     ///
-    /// **Dressed through `look::dress::dress`**, which is the one door: the
-    /// rule that decides what a display row paints, which geosets it switches
-    /// the body to and what a cloak does is `assets`', and a second opinion
-    /// here would draw a garment differently from the character standing in
-    /// the world wearing it.
+    /// The body is dressed through `look::dress::dress`, the single
+    /// implementation of the rule that decides what a display row paints, which
+    /// geosets it switches the body to and what a cloak does. That rule belongs
+    /// to `assets`; a second implementation here could draw a garment
+    /// differently from a character wearing it in the world.
     ///
     /// `None` where the race and gender resolve to no model, which is the same
     /// answer the creature picker gives for a display id the tables do not
@@ -996,7 +1000,7 @@ impl Items {
         found
     }
 
-    /// **Every display row's facts**, built once and kept.
+    /// Every display row's facts, built once and kept.
     ///
     /// The whole table, which is 29,604 rows: three small fields each, built
     /// from one pass of `ItemDisplays::appearance`. Done lazily rather than at
@@ -1009,7 +1013,7 @@ impl Items {
         self.display_facts.as_deref().unwrap_or(&[])
     }
 
-    /// **The display ids the picker offers**, cached until the query, the
+    /// The display ids the picker offers, cached until the query, the
     /// filter or the item's slot changes.
     ///
     /// The query is matched against the id and against the row's icon name,
@@ -1068,7 +1072,7 @@ impl Items {
         self.display_built = None;
     }
 
-    /// …and shut it.
+    /// Close the picker.
     pub fn close_picker(&mut self) {
         self.picking_display = false;
         self.display_preview = None;
@@ -1086,11 +1090,11 @@ fn with_blp(path: &str) -> String {
     }
 }
 
-/// **One pass of `ItemDisplayInfo.dbc`**, as the facts a picker filters by.
+/// One pass of `ItemDisplayInfo.dbc`, as the facts a picker filters by.
 ///
-/// Gender 0 throughout: what is being read is *which* components a row names
-/// and whether it names a model, and neither depends on the body — only the
-/// file names of the textures do.
+/// Gender 0 throughout: this reads which components a row names and whether it
+/// names a model, and neither depends on the body. Only the texture file names
+/// do.
 fn build_display_facts(assets: &GameAssets) -> Vec<DisplayFacts> {
     let Ok(tables) = assets.display_tables() else {
         return Vec::new();
@@ -1129,7 +1133,7 @@ fn build_display_facts(assets: &GameAssets) -> Vec<DisplayFacts> {
 /// `vale_assets::tables::item::Slot::object_directory` spells them.
 const OBJECT_DIRECTORIES: [&str; 5] = ["Head", "Shoulder", "Weapon", "Shield", "Cape"];
 
-/// **What each of them holds**, read off the archives' own listing once.
+/// What each of them holds, read once from the archives' own listing.
 ///
 /// Lower case, with the extension taken off, because that is what a row's
 /// `modelName` is once `m2::model_path` has turned `.mdx` into `.m2`.
@@ -1162,14 +1166,14 @@ fn object_components(assets: &GameAssets) -> Vec<(&'static str, HashSet<String>)
     out
 }
 
-/// **Which of those directories holds this row's model**, or `None`.
+/// Which of those directories holds this row's model, or `None`.
 ///
 /// A helm is the one that is not a plain lookup: the row names
 /// `Helm_Plate_D_04.mdx` and the archive holds sixteen files,
 /// `helm_plate_d_04_hum.m2` through `..._trf.m2`. So a name that is in no
 /// directory as itself is tried again with each of the sixteen race-and-gender
-/// suffixes, which is `ItemAppearance::attachment_at`'s own rule read
-/// backwards.
+/// suffixes, which is `ItemAppearance::attachment_at`'s naming rule applied in
+/// reverse.
 fn directory_of(held: &[(&'static str, HashSet<String>)], model: &str) -> Option<&'static str> {
     if model.is_empty() {
         return None;
@@ -1198,14 +1202,14 @@ fn directory_of(held: &[(&'static str, HashSet<String>)], model: &str) -> Option
     None
 }
 
-/// **Whether an item may be moved to another entry**, as the key its claim is
+/// Whether an item may be moved to another entry, as the key its claim is
 /// under and the key it goes to.
 ///
 /// `Ok(None)` is a move to the entry the row already has, which is what a form
 /// answers on every frame somebody is looking at it and must not become an
 /// edit.
 ///
-/// The refusals are the ones that have to be caught *before* anything is
+/// The refusals are the ones that have to be caught before anything is
 /// written rather than reported afterwards: an `INSERT` onto an occupied key
 /// fails the apply, and an `UPDATE` onto one fails on the primary key with the
 /// database's own words.
@@ -1213,7 +1217,7 @@ pub fn plan_move(known: &Known, to: u32, taken: bool) -> Result<Option<(Key, Key
     if to == known.entry {
         return Ok(None);
     }
-    // **A removed item is not moved**: the claim is a `Delete` row, which
+    // A removed item is not moved: the claim is a `Delete` row, which
     // carries no columns and names the entry it removes.
     if known.claim == Life::Delete {
         return Err("this project removes that item; keep it first".to_string());
@@ -1235,7 +1239,7 @@ pub fn plan_move(known: &Known, to: u32, taken: bool) -> Result<Option<(Key, Key
     Ok(Some((known.key(), item::template_key(to, known.patch))))
 }
 
-/// **The join a [`Look`] is of**, which is the archives' half of one column.
+/// Resolve a [`Look`] from the archives: their side of the `display_id` column.
 ///
 /// `inventory_type` decides the slot, which decides the directory the models
 /// live in and the attachment each hangs from — see
@@ -1256,18 +1260,18 @@ fn resolve_look(
     let displays = tables.items()?;
     let appearance = displays.appearance(display_id, gender)?;
     let icon_name = displays.inventory_icon(display_id).unwrap_or_default();
-    // **`icon_path` composes the directory and the name and stops there.** The
-    // row carries a bare `INV_Sword_39`, the folder comes from
-    // `StringLookups.dbc`, and neither of them is the extension — so the path it
-    // answers names no file in the archives and every row of the list drew an
-    // empty square. `ui::data` appends the same four characters for a spell
-    // icon, one door along, and for the same reason.
+    // `icon_path` joins the directory and the name and adds no extension. The
+    // row carries a bare `INV_Sword_39` and the folder comes from
+    // `StringLookups.dbc`, and neither includes `.blp`, so the path it returns
+    // names no file in the archives. Used as is, every row of the list drew an
+    // empty square. `ui::data` appends `.blp` to a spell icon path for the
+    // same reason.
     let icon = tables
         .item_tables()
         .icon_path(&icon_name)
         .map(|path| with_blp(&path));
 
-    // **Which hand a weapon is in is the equipment slot's**, not the item's,
+    // Which hand a weapon is in depends on the equipment slot, not the item,
     // so a preview has to choose — see [`slot_of`].
     let slot = slot_of(inventory_type);
     let models = appearance
@@ -1275,7 +1279,7 @@ fn resolve_look(
         .into_iter()
         .map(|attached| crate::portraits::Worn {
             path: attached.path,
-            // **Slot 4 is the object skin**, which is the one an item model
+            // Slot 4 is the object skin, which is the one an item model
             // asks for: `ModelCache::attached` puts the texture there and this
             // is the same dressing through `worn_unposed`. A shorter array
             // would leave the model's own texture name in place, which for an
@@ -1306,7 +1310,7 @@ fn resolve_look(
     })
 }
 
-/// The join [`Items::body`] is a memo of.
+/// Resolve the dressed body that [`Items::body`] memoises.
 ///
 /// `ChrRaces.dbc`'s own display id for the race and gender — the same number
 /// the character-select plinth stands a body on — resolved through the display
@@ -1346,7 +1350,7 @@ fn resolve_body(
     );
     Some(crate::portraits::Worn {
         path: display.path.clone(),
-        // **Empty, and read by nothing.** A composed body keys and dresses by
+        // Empty and unused: a composed body keys and dresses by
         // its look rather than by a file — see `portraits::Worn::look`.
         skins: Vec::new(),
         hair: dressed.hair,
@@ -1356,7 +1360,7 @@ fn resolve_body(
     })
 }
 
-/// **The prototype a tooltip is composed from**, out of `item_template`'s
+/// The prototype a tooltip is composed from, out of `item_template`'s
 /// columns.
 ///
 /// `value` answers a column's SQL literal: the project's value where it has
@@ -1457,7 +1461,7 @@ pub fn item_info(value: &dyn Fn(&str) -> Option<String>) -> vale_protocol::state
 }
 
 impl Items {
-    /// **One column of the open item as the form shows it**: the project's
+    /// One column of the open item as the form shows it: the project's
     /// literal where it has one and the database's otherwise. `None` while the
     /// row is being read, which is a frame or two after an item is opened.
     pub fn shown_value(
@@ -1478,8 +1482,8 @@ impl Items {
         )
     }
 
-    /// …and the whole prototype on those terms, for the tooltip. `None` while
-    /// the row is being read.
+    /// The open item's whole prototype on the same terms, for the tooltip.
+    /// `None` while the row is being read.
     pub fn open_info(
         &self,
         edits: &vale_mangos::row::Edits,
@@ -1494,7 +1498,7 @@ impl Items {
     }
 }
 
-/// **Read the whole table**, on a task, when an apply has moved what is in it.
+/// Read the whole table, on a task, when an apply has changed what is in it.
 fn read_the_table(
     mut items: ResMut<Items>,
     session: Option<Res<EditSession>>,
@@ -1511,7 +1515,7 @@ fn read_the_table(
                 Ok(read) => {
                     info!("items: {} row(s) read", read.items.len());
                     let mut all = read.items;
-                    // **A removal that has been applied is kept in the list**,
+                    // A removal that has been applied is kept in the list,
                     // under the name the last read gave it: the project still
                     // claims it, and a claim that is in no list cannot be kept
                     // or looked at. See `rebuild_created` for one that no read
@@ -1551,17 +1555,17 @@ fn read_the_table(
         }
         return;
     }
-    // **Read while a playtest is running too**, which is the one place this
-    // differs from the creature tool. An item edit is live on a reload, so the
-    // workspace is usable inside a playtest and refusing to read the table
-    // there would make it usable and empty. What it must not do is read when
-    // the tool is not chosen, which is the guard below.
+    // Read while a playtest is running too, which is the one place this
+    // differs from the creature tool. An item edit takes effect on a reload,
+    // so the workspace is usable inside a playtest, and refusing to read the
+    // table there would leave it empty. It must not read when the tool is not
+    // chosen, which is the guard below.
     let _ = &state;
     if *tool != Tool::Items {
         return;
     }
     let Some(session) = session else { return };
-    let key = session.item_writes;
+    let key = session.database_writes;
     if items.loaded == Some(key) {
         return;
     }
@@ -1580,7 +1584,7 @@ fn read_the_table(
     items.task = Some(crate::server::queue::read(async move {
         let mut db = vale_mangos::conn::Db::open(&at)?;
         let rows = db.rows(&item::all_items_query(patch))?;
-        // **The highest entry in the whole table**, whatever patch it is at: a
+        // The highest entry in the whole table, whatever patch it is at: a
         // new item numbered from the winning rows alone would collide with a
         // row that exists at a patch this server is not loading.
         let highest = db
@@ -1594,9 +1598,10 @@ fn read_the_table(
     }));
 }
 
-/// **Read the open item's whole row**, on a task, when the open item changes.
+/// Read the open item's whole row, on a task, when the open item changes.
 fn read_the_row(
     mut items: ResMut<Items>,
+    session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
     tool: Res<Tool>,
 ) {
@@ -1614,10 +1619,15 @@ fn read_the_row(
         return;
     }
     let Some(entry) = items.open else { return };
-    if items.row.as_ref().is_some_and(|held| held.entry == entry) {
+    let writes = session.as_ref().map_or(0, |session| session.database_writes);
+    let created_now = items
+        .by_entry(entry)
+        .is_some_and(|known| known.claim == Life::Insert);
+    if items.row.as_ref().is_some_and(|held| held.entry == entry) && items.row_at == Some((writes, created_now)) {
         return;
     }
-    // **A row this project created has no row in the database**, so there is
+    items.row_at = Some((writes, created_now));
+    // A row this project created has no row in the database, so there is
     // nothing to read: its columns are the store's own and the form reads them
     // from there. Asking would be a query per frame that always answers
     // nothing.
@@ -1637,7 +1647,7 @@ fn read_the_row(
         return;
     };
     let patch = super::creatures::server_patch(&settings);
-    // **Read from where the database has it**, which is not the entry the
+    // Read from where the database has it, which is not the entry the
     // panel opened while the project moves the item and has not applied it.
     let read_at = items
         .by_entry(entry)
@@ -1645,9 +1655,9 @@ fn read_the_row(
         .unwrap_or(entry);
     items.row_task = Some(crate::server::queue::read(async move {
         let mut db = vale_mangos::conn::Db::open(&at)?;
-        // **A row the database does not hold is an empty row**, which the form
-        // says is absent. Answering nothing instead left the row unread, and
-        // it was asked for again on the next frame, and every frame after.
+        // A row the database does not hold is an empty row, which the form
+        // shows as absent. Answering nothing left the row unread, so it was
+        // asked for again on every following frame.
         let Some(row) = db.row(&item::winning_template_query(read_at, patch))? else {
             return Ok(ItemRow {
                 entry,
@@ -1664,11 +1674,11 @@ fn read_the_row(
     }));
 }
 
-/// **Give every row that was read the entry the project says it has.**
+/// Give every row that was read the entry the project says it has.
 ///
 /// An item whose entry the project changes is in the table that was read at the
 /// entry the database has it at, until the move is applied and the table is
-/// read again. The store keys that row's claim under the *new* entry, so the
+/// read again. The store keys that row's claim under the new entry, so the
 /// list has to show it there or the row and its claim are two things: one
 /// unedited row at the old entry and one claim nobody can open. After this,
 /// [`Known::key`] is the claim's key for every row, moved or not, before an
@@ -1697,11 +1707,11 @@ pub fn fold_the_store_in(all: &mut [Known], edits: &vale_mangos::row::Edits) {
     }
 }
 
-/// **Rebuild the items this project creates**, from the store, when it moves.
+/// Rebuild the items this project creates, from the store, when it changes.
 ///
 /// A second list rather than rows appended to [`Items::all`], because that one
-/// is what a read answered and is replaced whole by the next read — the
-/// creature tool's own arrangement and for its reason.
+/// is what a read answered and is replaced whole by the next read. The
+/// creature tool is arranged the same way for the same reason.
 fn rebuild_created(mut items: ResMut<Items>, session: Option<Res<EditSession>>) {
     let Some(session) = session else { return };
     if items.created_for == Some(session.server_edit_revision) {
@@ -1724,7 +1734,7 @@ fn rebuild_created(mut items: ResMut<Items>, session: Option<Res<EditSession>>) 
         let Some(entry) = key.first().map(|entry| entry as u32) else {
             continue;
         };
-        // **Once it has been applied it is in the table that was read**, and
+        // Once it has been applied it is in the table that was read, and
         // listing it from both would draw it twice and count it twice. The
         // project still claims it as a creation, which `Known::with_edits`
         // reads off the store for the row that is in [`Items::all`].
@@ -1757,7 +1767,7 @@ fn rebuild_created(mut items: ResMut<Items>, session: Option<Res<EditSession>>) 
             claim: Life::Insert,
         });
     }
-    // **A removal no read has seen**: applied in an earlier session, so the
+    // A removal no read has seen: applied in an earlier session, so the
     // item is in neither list. A stand-in carrying the entry and the patch is
     // enough to list it, open it and keep it; its name is not known any more.
     for (table, key, row) in session.server_edits.rows() {
@@ -1796,7 +1806,7 @@ fn rebuild_created(mut items: ResMut<Items>, session: Option<Res<EditSession>>) 
     items.forget_matches();
 }
 
-/// **The command line's four item flags**, acted on once the table has come
+/// The command line's four item flags, acted on once the table has come
 /// back — see [`crate::Args`].
 fn on_the_command_line(
     args: Res<crate::Args>,
@@ -1862,22 +1872,22 @@ fn on_the_command_line(
             .unwrap_or(0);
         items.pick_display(showing);
     }
-    // **Not finished if there is a move still to make.** `--apply-items` waits
+    // Not finished if there is a move still to make. `--apply-items` waits
     // on this flag, and a move that landed after the apply would be applied by
     // nothing. See [`scripted_entry`], which sets it instead.
     items.scripted_done = args.item_entry.is_none() && !args.item_remove;
 }
 
-/// **`--item-entry <n>`: the open item renumbered, and `--item-remove`: the
-/// open item removed, with nobody at the keyboard.** Both at once is only the
-/// move: a moved item is not removed — see [`Items::remove`].
+/// `--item-entry <n>` renumbers the open item and `--item-remove` removes it,
+/// with nobody at the keyboard. Given both, only the move happens, because a
+/// moved item is not removed; see [`Items::remove`].
 ///
-/// Its own system rather than a line in [`on_the_command_line`], because a row
-/// that flag has just *created* is not in [`Items::created`] until
-/// [`rebuild_created`] has run, which is the next frame — the first draft did
-/// it inline and reported "no item is open to move" on the frame it made one.
-/// Written as a retry, which is [`scripted_display`]'s own shape: it answers
-/// nothing until the row it is about can be found.
+/// This is its own system rather than a line in [`on_the_command_line`],
+/// because a row that flag has just created is not in [`Items::created`] until
+/// [`rebuild_created`] has run on the next frame. Done inline, it reported "no
+/// item is open to move" on the frame it created one. It is written as a
+/// retry, the same shape as [`scripted_display`]: it does nothing until the
+/// row it is about can be found.
 fn scripted_entry(
     args: Res<crate::Args>,
     mut items: ResMut<Items>,
@@ -1914,11 +1924,13 @@ fn scripted_entry(
     items.scripted_done = true;
 }
 
-/// …and the second half of it: a display id chosen with nobody at the keyboard.
+/// `--item-display <id>`: a display id written to the open item with nobody at
+/// the keyboard.
 ///
-/// Its own system because it has to run after the row has arrived — writing
-/// `display_id` needs the key, which is the row's entry and patch — and the
-/// flag above fires the frame the *table* lands, which is several before.
+/// Its own system because it has to run after the row has arrived: writing
+/// `display_id` needs the key, which is the row's entry and patch, and
+/// [`on_the_command_line`] fires on the frame the table lands, several frames
+/// earlier.
 fn scripted_display(
     args: Res<crate::Args>,
     mut items: ResMut<Items>,
@@ -1980,9 +1992,9 @@ mod tests {
     use super::*;
     use vale_mangos::row::Edits;
 
-    /// **Every numbered group lands in its own slot**, and a text column loses
-    /// its quotes: the tooltip is composed from this, so a stat read into the
-    /// wrong slot or a name drawn with its quotes on is a wrong plate.
+    /// Every numbered group lands in its own slot, and a text column loses its
+    /// quotes. The tooltip is composed from this, so a stat read into the wrong
+    /// slot or a name drawn with its quotes makes a wrong tooltip.
     #[test]
     fn the_prototype_is_read_column_for_column() {
         let columns: HashMap<&str, &str> = [
@@ -2035,7 +2047,7 @@ mod tests {
         }
     }
 
-    /// **The list shows what the project says**, not what was read: a name
+    /// The list shows what the project says, not what was read: a name
     /// typed into the form is the name in the list beside it.
     #[test]
     fn a_row_is_drawn_with_the_projects_edits_over_it() {
@@ -2063,8 +2075,8 @@ mod tests {
         assert_eq!(shown.entry, 2589, "the key is not moved by an edit");
     }
 
-    /// **A name is stored as a SQL literal and drawn as itself**, escapes and
-    /// all: a list row showing `'Gnomish Death Ray\'s'` is a list nobody trusts.
+    /// A name is stored as a SQL literal and drawn as itself, with its escapes
+    /// resolved, so a list row never shows `'Gnomish Death Ray\'s'`.
     #[test]
     fn a_stored_name_is_unquoted_for_the_list() {
         assert_eq!(unquote("'Linen Cloth'"), "Linen Cloth");
@@ -2072,8 +2084,8 @@ mod tests {
         assert_eq!(unquote("2589"), "2589", "a number is not a literal");
     }
 
-    /// **The second line says what the item is in words**, which is the whole
-    /// of why a subclass is read through its class.
+    /// The second line says what the item is in words, which is why a
+    /// subclass is read through its class.
     #[test]
     fn the_list_line_says_what_the_item_is() {
         let mut sword = an_item(19019);
@@ -2089,7 +2101,7 @@ mod tests {
         assert_eq!(cloth.sub(), "Trade Goods \u{b7} Trade Goods \u{b7} ilvl 5");
     }
 
-    /// **A new entry is above the reserved base, the table and the project.**
+    /// A new entry is above the reserved base, the table and the project.
     ///
     /// The third is what stops two items created between two reads of the table
     /// from taking the same entry, which is an `INSERT` pair whose second
@@ -2114,9 +2126,9 @@ mod tests {
         assert_eq!(items.next_entry(&edits), item::RESERVED_ENTRY_BASE + 101);
     }
 
-    /// **An item this project creates is listed beside the database's**, and
-    /// reachable by entry — a row that could be made and not found again would
-    /// be a row nobody can edit.
+    /// An item this project creates is listed beside the database's, and is
+    /// reachable by entry. A row that could be made but not found again could
+    /// not be edited.
     #[test]
     fn a_created_item_is_in_the_list_and_findable() {
         let mut items = Items::default();
@@ -2134,7 +2146,7 @@ mod tests {
         );
     }
 
-    /// **A move is a re-key of the row's claim whatever the row is**, from the
+    /// A move is a re-key of the row's claim whatever the row is, from the
     /// key the claim is under to the same patch of the new entry.
     #[test]
     fn a_move_is_a_re_key_for_a_new_row_and_an_old_one() {
@@ -2159,9 +2171,9 @@ mod tests {
         );
     }
 
-    /// **A moved row is one row of the list, at the entry the project gives
-    /// it**, and its key is the claim's key — so the list, the form and the
-    /// store all mean the same row. Taking the move back returns it.
+    /// A moved row is one row of the list, at the entry the project gives it,
+    /// and its key is the claim's key, so the list, the form and the store all
+    /// refer to the same row. Taking the move back returns it.
     #[test]
     fn a_moved_row_is_listed_once_at_its_new_entry() {
         let mut all = vec![an_item(2589), an_item(2592)];
@@ -2196,14 +2208,14 @@ mod tests {
         assert_eq!(all[0].entry, 2589);
     }
 
-    /// **A move to where the row already is is not an edit**, which is what a
+    /// A move to where the row already is is not an edit, which is what a
     /// form answers on every frame somebody is looking at it.
     #[test]
     fn a_move_to_the_same_entry_is_nothing() {
         assert_eq!(plan_move(&an_item(2589), 2589, false), Ok(None));
     }
 
-    /// **An entry that is already an item is refused**, and so are the two the
+    /// An entry that is already an item is refused, and so are the two the
     /// column cannot hold.
     #[test]
     fn a_move_onto_an_entry_that_exists_is_refused() {
@@ -2214,12 +2226,11 @@ mod tests {
         assert!(plan_move(&row, item::MAX_ENTRY, false).is_ok());
     }
 
-    /// **A slot with models wants a row that carries one**, and a slot that
-    /// paints wants a row that paints all of what it paints.
+    /// A slot with models wants a row that carries one, and a slot that paints
+    /// wants a row that paints all of what it paints.
     ///
-    /// This is what makes the picker usable: the whole table is 29,604 rows and
-    /// three hundred pages, and what somebody choosing a helm wants is the
-    /// helms.
+    /// The picker depends on this: the whole table is 29,604 rows and three
+    /// hundred pages, and somebody choosing a helm wants to see only helms.
     #[test]
     fn a_slot_takes_the_appearances_that_could_go_in_it() {
         use vale_assets::tables::item::{Component, Slot};
@@ -2234,7 +2245,7 @@ mod tests {
                 .fold(0u8, |mask, component| mask | 1 << component.index()),
         };
 
-        // A helm is geometry, and it is geometry *in the head directory*: a
+        // A helm is geometry, and it is geometry in the head directory: a
         // sword has a model too, and offering every one of them is 97 pages.
         let helm = facts(Some("Head"), &[]);
         let sword = facts(Some("Weapon"), &[]);
@@ -2255,7 +2266,7 @@ mod tests {
         assert!(fits_slot(&sword, Slot::MainHand));
         assert!(!fits_slot(&helm, Slot::MainHand));
 
-        // **A model this editor cannot place falls back to the loose test**,
+        // A model this editor cannot place falls back to the loose test,
         // so a row whose file is missing from the archives is still offered
         // rather than disappearing from every slot.
         let unplaced = DisplayFacts {
@@ -2266,7 +2277,7 @@ mod tests {
         assert!(fits_slot(&unplaced, Slot::Head));
         assert!(fits_slot(&unplaced, Slot::MainHand));
 
-        // …and a boot is the lower leg *and* the foot, which is what tells it
+        // A boot paints the lower leg and the foot, which is what tells it
         // from the robe that also paints a lower leg.
         let boot = facts(None, &[Component::LegLower, Component::Foot]);
         assert!(fits_slot(&boot, Slot::Feet));
@@ -2279,9 +2290,9 @@ mod tests {
         assert!(fits_slot(&boot, Slot::Other));
         assert!(fits_slot(&helm, Slot::Other));
 
-        // **A cloak is neither a model nor a painted component.** The archives
-        // hold no `.m2` in `Cape\` at all, so asking the back slot for geometry
-        // offered nothing — which is the failure this case exists for.
+        // A cloak is neither a model nor a painted component. The archives
+        // hold no `.m2` in `Cape\` at all, so a back-slot filter that asked for
+        // geometry offered nothing. This case guards against that.
         let cloak = DisplayFacts {
             has_model: false,
             directory: None,
@@ -2293,8 +2304,8 @@ mod tests {
         assert!(!fits_slot(&cloak, Slot::Head));
     }
 
-    /// **Which hand a weapon is in is the equipment slot's**, so a picker
-    /// chooses one — and every weapon type lands on a slot that has models.
+    /// Which hand a weapon is in depends on the equipment slot, so a picker
+    /// chooses one, and every weapon type lands on a slot that has models.
     #[test]
     fn every_weapon_type_picks_a_slot_with_models() {
         use vale_assets::tables::item::Slot;
@@ -2306,7 +2317,7 @@ mod tests {
         assert_eq!(slot_of(23), Slot::Shield);
         assert_eq!(slot_of(1), Slot::Head);
         assert!(slot_of(13).object_directory().is_some());
-        // …and a slot that is neither geometry nor paint is `Other`, which the
+        // A slot that is neither geometry nor paint is `Other`, which the
         // filter passes everything for.
         assert_eq!(slot_of(11), Slot::Other);
     }
@@ -2338,7 +2349,7 @@ mod tests {
         assert!(items.matches(&edits, 0).is_empty());
     }
 
-    /// **What one keystroke in the search box costs**, over a table the size of
+    /// What one keystroke in the search box costs, over a table the size of
     /// the reference install's, with a project that edits a handful of rows.
     /// `--ignored --nocapture` prints it; it is an instrument, not a check.
     #[test]

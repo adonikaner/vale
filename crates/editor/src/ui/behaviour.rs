@@ -133,7 +133,7 @@ fn badge(ui: &mut egui::Ui, text: &str, colour: egui::Color32) {
         .inner_margin(egui::Margin::symmetric(5, 1))
         .show(ui, |ui| {
             ui.set_min_width(44.0);
-            ui.label(egui::RichText::new(text).size(10.5).strong().color(colour));
+            ui.label(egui::RichText::new(text).size(theme::SMALL).strong().color(colour));
         });
 }
 
@@ -144,7 +144,7 @@ fn fold_button(ui: &mut egui::Ui, open: bool) -> bool {
         true => "hide details",
         false => "details",
     };
-    ui.selectable_label(open, egui::RichText::new(text).size(11.5)).clicked()
+    ui.selectable_label(open, egui::RichText::new(text).size(theme::SMALL)).clicked()
 }
 
 /// A card's first line: `left` wraps in the room `right` leaves, and
@@ -173,9 +173,9 @@ impl Namer<'_> {
     fn name(&self, table: &str, id: u32) -> Option<String> {
         match table {
             "broadcast_text" => self.behaviour.said(id, &self.session.server_edits),
-            "creature_template" => self.quests.borrow_mut().holder(Holder::Creature, id),
-            "gameobject_template" => self.quests.borrow_mut().holder(Holder::Object, id),
-            "item_template" => self.quests.borrow_mut().item(id).map(|found| found.name),
+            "creature_template" => self.quests.borrow_mut().holder(Holder::Creature, id, &self.session.server_edits),
+            "gameobject_template" => self.quests.borrow_mut().holder(Holder::Object, id, &self.session.server_edits),
+            "item_template" => self.quests.borrow_mut().item(id, &self.session.server_edits).map(|found| found.name),
             "quest_template" => self.quests.borrow().title_of(id, &self.session.server_edits),
             dbc => super::quests::name_in(self.session, dbc, id),
         }
@@ -926,7 +926,7 @@ fn spells_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                         .color(theme::INK_FAINT),
                 );
             });
-            match (list.life, subject.behaviour.users_of(list.list.entry)) {
+            match (list.life, subject.behaviour.users_of(list.list.entry, &subject.session.server_edits)) {
                 (Life::Insert, _) => {
                     ui.label(egui::RichText::new("New: this list is in no database yet. Apply writes it.").small().color(theme::WARN));
                 }
@@ -1215,7 +1215,7 @@ fn script_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                 .max_height(ui.available_height().max(60.0))
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
-                    ui.label(egui::RichText::new("START").size(10.5).strong().color(theme::INK_FAINT));
+                    ui.label(egui::RichText::new("START").size(theme::SMALL).strong().color(theme::INK_FAINT));
                     if script.rows.is_empty() {
                         theme::note(ui, "No steps. A script with no steps does nothing; applied, it deletes the steps the database holds.");
                     }
@@ -1229,7 +1229,7 @@ fn script_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                             ui.add_space(18.0);
                             step_menu(ui, subject, &script, script.rows.len(), "+ then\u{2026}");
                         });
-                        ui.label(egui::RichText::new("END").size(10.5).strong().color(theme::INK_FAINT));
+                        ui.label(egui::RichText::new("END").size(theme::SMALL).strong().color(theme::INK_FAINT));
                     }
                 });
         });

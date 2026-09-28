@@ -399,7 +399,7 @@ fn tile(
                 egui::pos2(rect.center().x, rect.bottom() - 4.0),
                 egui::Align2::CENTER_BOTTOM,
                 subject.name,
-                egui::FontId::proportional(10.5),
+                egui::FontId::proportional(theme::SMALL),
                 ink,
             );
         }

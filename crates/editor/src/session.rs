@@ -328,28 +328,21 @@ pub struct EditSession {
     pub applied_behaviour: Option<u64>,
     /// …and for what creatures sell and teach. See `crate::server::services`.
     pub applied_services: Option<u64>,
-    /// How many times this session has written the quest tables, applying
-    /// or putting back. What the quest tool's read of them is keyed on.
+    /// How many times this session has written the world database, applying
+    /// or putting back any subject, or pointed at a different database. Every
+    /// cache of what the database holds is keyed on it; see
+    /// [`crate::server::fresh`].
     ///
-    /// Not [`Self::applied_quests`], which cannot tell a put-back from nothing
-    /// in a session that did not make the apply: it is `None` before and `None`
-    /// after, so the list went on showing a row the database no longer held.
-    pub quest_writes: u64,
-    /// …and the same for the item table and for the creature tables, each what
-    /// its own tool's read is keyed on. One counter per subject because a
-    /// read is the whole table — 17,710 items, 24,610 spawns on Azeroth — and
-    /// an item apply is not a reason to read the creatures again.
-    pub item_writes: u64,
-    pub creature_writes: u64,
-    pub gameobject_writes: u64,
-    /// …and for the loot tables, which every loot window's read is keyed on.
-    pub loot_writes: u64,
-    /// …and for the behaviour tables, which the events, scripts and spell
-    /// windows' reads are keyed on.
-    pub behaviour_writes: u64,
-    /// …and for the vendor and trainer tables, which those two windows' reads
-    /// are keyed on.
-    pub services_writes: u64,
+    /// One counter for every subject, not one each, because a write of one
+    /// subject changes others' rows: an item renumber moves loot, vendor and
+    /// quest columns, and a creature renumber moves quest relations, vendor
+    /// and trainer lists and AI events. With a counter per subject, a list
+    /// keyed on its own subject's counter went on showing the rows from before
+    /// such a move. Bump it with [`Self::wrote_the_database`].
+    ///
+    /// Not [`Self::applied_quests`] and its siblings, which cannot tell a
+    /// put-back from nothing in a session that did not make the apply.
+    pub database_writes: u64,
     /// The undo entry every server-row write goes on while a group is being
     /// changed, as `(label, subject)`. See [`Self::as_one`].
     ///
@@ -888,6 +881,13 @@ impl EditSession {
         self.server_edits.set(table, key, column, value);
         self.server_edits_unsaved = true;
         self.server_edit_revision += 1;
+    }
+
+    /// Record that the world database has changed under every cache of it:
+    /// an Apply or a Put back of any subject finished, whether or not it
+    /// succeeded, or the editor was pointed at another database.
+    pub fn wrote_the_database(&mut self) {
+        self.database_writes += 1;
     }
 
     /// Record that this project creates a row, removes one, or says nothing
@@ -1862,13 +1862,7 @@ fn open(
         applied_loot: None,
         applied_behaviour: None,
         applied_services: None,
-        quest_writes: 0,
-        item_writes: 0,
-        creature_writes: 0,
-        gameobject_writes: 0,
-        loot_writes: 0,
-        behaviour_writes: 0,
-        services_writes: 0,
+        database_writes: 0,
         one_gesture: None,
     });
 }

@@ -328,7 +328,7 @@ fn water(ui: &mut egui::Ui, water: &mut crate::tools::water::Water) {
                 true => format!("{over:.2} yd over the ground here"),
                 false => format!("{:.2} yd UNDER the ground here", -over),
             })
-            .size(11.0)
+            .size(theme::SMALL)
             .color(match over >= 0.0 {
                 true => theme::INK_DIM,
                 false => theme::BAD,
@@ -604,13 +604,13 @@ fn zones(
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(name_of(*id))
-                            .size(11.0)
+                            .size(theme::SMALL)
                             .color(theme::INK_DIM),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
                             egui::RichText::new(count.to_string())
-                                .size(11.0)
+                                .size(theme::SMALL)
                                 .color(theme::INK_FAINT),
                         );
                     });
@@ -761,7 +761,7 @@ fn holes(ui: &mut egui::Ui, holes: &crate::tools::holes::Holes, session: &EditSe
                     true => "already cut — shift-click puts it back",
                     false => "solid — click cuts it",
                 })
-                .size(11.0)
+                .size(theme::SMALL)
                 .color(match holes.already {
                     true => theme::WARN,
                     false => theme::INK_DIM,
@@ -861,7 +861,7 @@ fn placing(
         ui.label(
             egui::RichText::new(format!("{} does not open", place::leaf(&bad)))
                 .color(theme::BAD)
-                .size(11.0),
+                .size(theme::SMALL),
         )
         .on_hover_text(bad);
     }
@@ -1054,7 +1054,7 @@ fn browse(
         }
         egui::CollapsingHeader::new(
             egui::RichText::new(format!("{name} ({})", paths.len()))
-                .size(11.0)
+                .size(theme::SMALL)
                 .color(theme::INK_DIM),
         )
         .id_salt(("kept", name, kind as u8))
@@ -1177,10 +1177,10 @@ fn breadcrumb(ui: &mut egui::Ui, here: &str, root: &str) -> Option<String> {
         let mut first = true;
         let mut crumb = |ui: &mut egui::Ui, label: &str, walked: Option<String>| {
             if !first {
-                ui.label(egui::RichText::new("/").color(theme::INK_FAINT).size(11.0));
+                ui.label(egui::RichText::new("/").color(theme::INK_FAINT).size(theme::SMALL));
             }
             first = false;
-            let text = egui::RichText::new(label).size(11.0).color(match walked {
+            let text = egui::RichText::new(label).size(theme::SMALL).color(match walked {
                 None => theme::INK,
                 Some(_) => theme::ACCENT,
             });
@@ -1258,7 +1258,7 @@ fn folder_rows(
                 egui::pos2(rect.right() - 6.0, rect.center().y),
                 egui::Align2::RIGHT_CENTER,
                 count.to_string(),
-                egui::FontId::proportional(11.0),
+                egui::FontId::proportional(theme::SMALL),
                 theme::INK_FAINT,
             );
         }
@@ -1342,7 +1342,7 @@ fn text_rows(
                             egui::pos2(rect.left() + 5.0, rect.center().y + 7.0),
                             egui::Align2::LEFT_CENTER,
                             folder,
-                            egui::FontId::proportional(10.0),
+                            egui::FontId::proportional(theme::SMALL),
                             theme::INK_FAINT,
                         );
                     }
@@ -2270,7 +2270,7 @@ fn paint(
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new("grows")
-                        .size(11.0)
+                        .size(theme::SMALL)
                         .color(theme::INK_DIM),
                 );
                 ui.add(
@@ -2494,7 +2494,7 @@ fn texture_row(ui: &mut egui::Ui, thumbnails: &mut Thumbnails, path: &str, chose
             egui::pos2(square.right() + 6.0, rect.center().y + 7.0),
             egui::Align2::LEFT_CENTER,
             folder,
-            egui::FontId::proportional(10.0),
+            egui::FontId::proportional(theme::SMALL),
             theme::INK_FAINT,
         );
     }
@@ -2589,7 +2589,7 @@ fn chunk_layers(
                 true => "PINNED",
                 false => "following the pointer",
             })
-            .size(10.0)
+            .size(theme::SMALL)
             .color(match pinned {
                 true => theme::WARN,
                 false => theme::INK_FAINT,
@@ -2644,7 +2644,7 @@ fn chunk_layers(
             ui.vertical(|ui| {
                 ui.label(
                     egui::RichText::new(textures::leaf(&layer.texture))
-                        .size(11.0)
+                        .size(theme::SMALL)
                         .color(theme::INK),
                 )
                 .on_hover_text(layer.texture.clone());

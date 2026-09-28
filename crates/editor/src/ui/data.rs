@@ -1,79 +1,76 @@
 //! The workspace a table is edited in: the browser, and the form beside it.
 //!
-//! ## The viewport is not the document here
+//! ## Why a data subject replaces the viewport
 //!
-//! For every tool on the rail's world half — *Terrain* and *World* — the world
-//! **is** the document: the
-//! panels are around it and the thing being edited is in the middle. A spell is
-//! not in the world, and a form squeezed into a 300-point inspector beside a
-//! picture of some ground it has nothing to do with would be the worst of both.
+//! For the tools on the rail's world half, *Terrain* and *World*, the world is
+//! the thing being edited: the panels surround it and it fills the middle. A
+//! spell has no place in the world, and a 300-point inspector beside an
+//! unrelated view of terrain is too narrow for its form.
 //!
-//! So a *Data* subject replaces the middle region: a searchable list on the
-//! left and the row's fields in the rest. Everything else in the shell stays
-//! exactly where it was — the same top bar, the same rail, the same view bar,
-//! the same status line, and **the same undo stack**, so `Ctrl+Z` is the last
-//! thing you did whether that was a wall or a spell's name.
+//! A *Data* subject therefore replaces the middle region with a searchable list
+//! on the left and the row's fields in the rest. The rest of the shell is
+//! unchanged: the same top bar, rail, view bar, status line and undo stack, so
+//! `Ctrl+Z` undoes the last edit whether it was to a wall or to a spell's name.
 //!
-//! The shape is a list, a form, and a drill-down into the detail, inside the
-//! shell rather than in windows of their own. The shell has no floating panels
-//! for data, because a floating panel of loose controls reads as a debug
+//! The layout is a list, a form, and a drill-down into the detail, all inside
+//! the shell rather than in separate windows. The shell has no floating panels
+//! for data, because a floating panel of loose controls looks like a debug
 //! window.
 //!
-//! ## What a field is drawn as comes from the schema
+//! ## The schema decides each field's widget
 //!
-//! `vale_assets::tables::schema` says what each column *is* — a number, a
-//! mask, a gate, one of a named set, a row id in another table, a string — and
-//! this draws the widget that fits. Nothing here knows what a spell is: point
-//! the browser at another table with a schema and it draws that instead.
+//! `vale_assets::tables::schema` says what each column is: a number, a mask, a
+//! gate, one of a named set, a row id in another table, or a string. This
+//! module draws the matching widget. It has no knowledge of spells; pointed at
+//! another table with a schema, it draws that table.
 //!
-//! A number with no name is the failure mode that matters. 173 anonymous
-//! columns is a table nobody can edit safely, which is why the schema came
-//! before the panel.
+//! The schema exists because a table of 173 unnamed numeric columns cannot be
+//! edited safely.
 //!
-//! ## A reference is a name, a picture, and a way through
+//! ## How a reference column is drawn
 //!
-//! The first draft drew a reference column as its number and the word
-//! `SpellVisualKit` beside it, which is what the file holds and is no use to a
-//! person: `4689` is not a thing anybody recognises. It is drawn now as what
-//! the row *resolves to* — `Browser::describe`'s sentence — with the picture
-//! where there is one, a dot saying whether the archives hold the model, a
-//! `▶` for a sound, a picker that searches the target table by name, and the
-//! name itself as the link that opens the row. The number is still there and
-//! still editable; it is simply not the only thing on the line.
+//! A reference column shows what the target row resolves to
+//! (`Browser::describe`'s sentence) rather than only its id, because an id
+//! such as `4689` means nothing to a person. Beside it are the row's picture
+//! where it has one, a dot saying whether the archives hold the model, a `▶`
+//! for a sound, and a picker that searches the target table by name. The
+//! resolved name is a link that opens the target row. The id stays on the line
+//! and stays editable.
 //!
-//! ## A picker is a dialog, and a row can be made from a form
+//! ## Reference pickers, and creating rows from a form
 //!
-//! The `…` beside a reference opens a dialog in the middle of the window — a
-//! search box over the target table and the rows that match, with the
-//! keyboard in the box — rather than a popup hanging off the button. A popup
-//! is dismissed by egui on the first click it does not own, and a list that
-//! has to be scrolled and typed into is not a thing a popup holds well.
+//! The `…` beside a reference opens a dialog in the middle of the window: a
+//! search box over the target table, with keyboard focus, and the matching
+//! rows. It is a dialog rather than a popup on the button because egui closes
+//! a popup on the first click outside it, which does not suit a list that must
+//! be scrolled and typed into.
 //!
-//! Beside the same reference: `+ new` when it names nothing, which makes a
-//! blank row in the target table and points here at it; `copy` when it names
-//! a kit or an effect, which copies that row and points here at the copy, so
-//! the kit forty spells share becomes this visual's own; and `clone chain`
-//! on a spell's visual, which copies the visual with every kit and effect it
-//! names and points the spell at the copy. The list's own `+ New`, `Clone`
-//! and `Delete` are the same three operations on the open table, and every
-//! one of them is one entry on the undo stack. See `tools::tables`.
+//! The same reference also offers: `+ new` when it names nothing, which makes a
+//! blank row in the target table and points this column at it; `copy` when it
+//! names a kit or an effect, which copies that row and points this column at
+//! the copy, so a kit shared by forty spells becomes this visual's own; and
+//! `clone chain` on a spell's visual, which copies the visual with every kit
+//! and effect it names and points the spell at the copy. The list's `+ New`,
+//! `Clone` and `Delete` are the same three operations on the open table. Each
+//! of these operations is one entry on the undo stack. See `tools::tables`.
 //!
-//! ## The seven empty locales are folded
+//! ## Other locales are folded
 //!
 //! Every string in `Spell.dbc` is eight columns and a flags word, and an enUS
-//! install ships seven of the eight empty — so a form that drew them all was
-//! two thirds blank boxes. They are real columns and they stay editable, under
-//! an *Other locales* fold at the end of the section that is shut by default.
+//! install leaves seven of the eight empty, so drawing them all would make two
+//! thirds of the form blank boxes. They are real columns and stay editable,
+//! under an *Other locales* fold at the end of the section that is closed by
+//! default.
 //!
-//! ## …and the widths are deliberate
+//! ## Field widths
 //!
-//! [`LABEL`] and [`VALUE`] are what stop this reading as a debug dump. The
-//! first draft put a small-text label and a default `DragValue` on one line and
-//! the result was correct and unreadable: sixty rows of grey 11-point text with
-//! nothing to fix the eye on. A label column wide enough for the longest name
-//! in the schema, values at a common width, and a row tall enough to click is
-//! the whole of the difference. The field index is a tooltip now rather than a
-//! suffix on every label, along with what the schema knows about the column.
+//! [`LABEL`] and [`VALUE`] set the label column and the common value width. A
+//! small-text label followed by a default-width `DragValue` on each line gave
+//! sixty rows of grey 11-point text with no alignment, which was hard to read.
+//! The form uses a label column wide enough for the longest name in the schema,
+//! values at a common width, and rows tall enough to click. The field index and
+//! what the schema knows about the column are in the label's tooltip rather
+//! than a suffix on every label.
 
 use super::theme;
 use super::thumbnails::Thumbnails;
@@ -85,11 +82,11 @@ use bevy_egui::egui;
 
 /// How wide the row list is.
 const BROWSER_WIDTH: f32 = 320.0;
-/// …and the gap between it and the form beside it, in points.
+/// The gap between the row list and the form beside it, in points.
 const FORM_GAP: f32 = 12.0;
-/// How tall one row of it is, and how big the icon in it is — the editor's
-/// own, so that this list and the item list are one list drawn twice. The
-/// cache decodes at [`super::thumbnails::SIDE`]; an icon is a 64x64 BLP whose
+/// The height of one row of the list and the size of its icon. These are the
+/// editor's shared list sizes, so this list and the item list look the same.
+/// The cache decodes at [`super::thumbnails::SIDE`]; an icon is a 64x64 BLP whose
 /// 32 level is what comes back, so the picture is that level at its own size.
 const ROW_HEIGHT: f32 = theme::LIST_ROW;
 const ICON: f32 = theme::LIST_PICTURE;
@@ -102,14 +99,14 @@ const HEAD_ICON: f32 = 36.0;
 /// draw their forms at the same widths: a change to one here is a change to
 /// all three forms.
 const LABEL: f32 = super::rowform::FORM_LABEL;
-/// …and the common width of a value, so that a column of numbers lines up.
+/// The common width of a value, so that a column of numbers lines up.
 const VALUE: f32 = super::rowform::FORM_VALUE;
-/// …and of a string, which wants the rest of the row.
+/// The width of a string value, which takes the rest of the row.
 const TEXT: f32 = super::rowform::FORM_TEXT;
 /// How wide the visual chain is on the storyboard view, leaving the rest of the
 /// middle for the preview.
 const CHAIN_WIDTH: f32 = 480.0;
-/// …and the narrowest the preview is allowed to become.
+/// The minimum width of the storyboard preview.
 const STAGE_FLOOR: f32 = 360.0;
 /// How wide a reference picker's dialog is, and how many rows a page of it
 /// holds. A search over 22,360 spells is paged rather than cut off, so every
@@ -118,23 +115,23 @@ const PICKER_WIDTH: f32 = 380.0;
 
 /// How tall the mask dialog's list may get before it scrolls.
 ///
-/// The longest of them is 32 bits with a note under most of them, which is
-/// well past a window; this is about a dozen rows, which is enough to see a
-/// group without the dialog becoming the screen.
+/// The longest mask has 32 bits, most with a note, which is taller than a
+/// window. This height shows about a dozen rows, enough to see a group of bits
+/// without the dialog filling the screen.
 const BITS_HEIGHT: f32 = 420.0;
 const PICKER_PAGE: usize = 100;
 /// The model browser's rows: tall enough for a picture, and the picture's
 /// side. See `crate::portraits`.
 pub(super) const MODEL_ROW: f32 = 48.0;
 const MODEL_PICTURE: f32 = 40.0;
-/// …and how tall the model browser's own list is, which is what is left of a
-/// 720-tall window once the preview pane under it has its room.
+/// The height of the model browser's list: what is left of a 720-tall window
+/// after the preview pane under it.
 const MODEL_LIST_HEIGHT: f32 = 250.0;
 /// The two entries after `MODEL_FOLDERS` on the browser's folder row: the
 /// starred models and the recently used ones.
 const STARRED_FOLDER: usize = MODEL_FOLDERS.len();
 const RECENT_FOLDER: usize = MODEL_FOLDERS.len() + 1;
-/// …and the icon picker, which is a grid: this many icons across at
+/// The icon picker's grid: this many icons across at
 /// [`super::thumbnails::ICON_SIDE`] points each, this many to a page.
 const GRID_COLUMNS: usize = 8;
 const GRID_PAGE: usize = 64;
@@ -143,15 +140,14 @@ const GRID_PAD: f32 = 8.0;
 
 /// Everything the workspace reads, as one parameter.
 ///
-/// It is four things and they arrive from four different places in the shell;
-/// bundling them keeps the two entry points here to three arguments each rather
-/// than seven.
+/// Its four fields come from four different places in the shell. Bundling them
+/// keeps the two entry points here to three arguments each rather than seven.
 pub struct Workspace<'a> {
-    /// **Which data subject this is**, which decides the chain's tabs — see
-    /// [`crate::tools::Tool::tabs`]. Carried rather than derived from
-    /// `browser.table`, because a followed reference leaves the browser on a
-    /// table that is not one of its chain's tabs and the tabs must not change
-    /// under it.
+    /// The data subject, which decides the chain's tabs (see
+    /// [`crate::tools::Tool::tabs`]). It is passed in rather than derived from
+    /// `browser.table`, because a followed reference can leave the browser on
+    /// a table that is not one of the chain's tabs, and the tabs must not
+    /// change when that happens.
     pub tool: crate::tools::Tool,
     pub session: &'a mut EditSession,
     pub browser: &'a mut Browser,
@@ -162,30 +158,29 @@ pub struct Workspace<'a> {
     pub portraits: &'a mut crate::portraits::Portraits,
     pub favourites: &'a mut crate::favourites::Favourites,
     pub now: f64,
-    /// **The two switches the model view's foot toggles**, which are the view
-    /// bar's own: the debug overlay's wireframe and the world's particles.
-    /// `None` where the caller has neither to hand — the inspector — and for
-    /// the wireframe in a build without diagnostics, where the box is drawn
+    /// The two switches toggled at the foot of the model view. They are the
+    /// view bar's own: the debug overlay's wireframe and the world's particles.
+    /// `None` when the caller has neither (the inspector), and for the
+    /// wireframe in a build without diagnostics, where the checkbox is drawn
     /// disabled.
     pub wireframe: Option<&'a mut bool>,
     pub particles: Option<&'a mut bool>,
-    /// **The lights on the open map**, for the one subject whose rows have a
-    /// place — see [`crate::tools::lights`]. `None` where the caller has none
-    /// to hand, which is the inspector.
+    /// The lights on the open map, for the one subject whose rows have a place
+    /// in the world (see [`crate::tools::lights`]). `None` when the caller has
+    /// none, which is the case in the inspector.
     pub lights: Option<&'a mut crate::tools::lights::Lights>,
-    /// **What time of day the world is showing**, in half-minutes past
-    /// midnight, so a band's strip can mark where on it the viewport is
-    /// standing. `vale_assets::tables::light::NOON` where the caller has no
-    /// clock to hand.
+    /// The time of day the world is showing, in half-minutes past midnight, so
+    /// a band's strip can mark the viewport's current time on it.
+    /// `vale_assets::tables::light::NOON` when the caller has no clock.
     pub hour: u32,
 }
 
 impl Workspace<'_> {
     /// The archive path of a row's picture, or `None` for a row with none.
     ///
-    /// A spell's is its icon, through the client's own tables and not the
-    /// edited one: `SpellIcon` is a path by an id and changing that mapping is
-    /// not what a spell editor is for. A `SpellIcon` row's is its own path.
+    /// A spell's picture is its icon: `SpellIcon` maps an id to a path, and
+    /// the spell's icon id is looked up there by `icon_by_id`. A `SpellIcon`
+    /// row's picture is its own path.
     fn icon_of(&self, record: usize) -> Option<String> {
         match self.browser.table.as_str() {
             "Spell" => {
@@ -201,13 +196,14 @@ impl Workspace<'_> {
         }
     }
 
-    /// …and by the `SpellIcon` row id itself, for the icon field's own preview.
+    /// The archive path of an icon by its `SpellIcon` row id, also used for the
+    /// icon field's own preview.
     fn icon_by_id(&self, icon_id: u32) -> Option<String> {
         if icon_id == 0 {
             return None;
         }
-        // The edited table first, so a re-pointed icon shows; the client's own
-        // parse otherwise.
+        // Read the edited table first, so a re-pointed icon shows, and fall
+        // back to the client's own parse.
         if let Some(path) = self
             .session
             .table("SpellIcon")
@@ -225,8 +221,8 @@ impl Workspace<'_> {
         Some(with_blp(&path))
     }
 
-    /// Draw one at `side`, leaving a gap of the same size when there is nothing
-    /// to draw — so a list of rows does not jitter as pictures arrive.
+    /// Draw a picture at `side`, or leave a gap of the same size when there is
+    /// nothing to draw, so a list of rows does not shift as pictures load.
     fn icon(&mut self, ui: &mut egui::Ui, path: Option<String>, side: f32) {
         let size = egui::vec2(side, side);
         let Some(path) = path else {
@@ -275,9 +271,9 @@ impl Workspace<'_> {
 /// A column's value as the file states it: an `int32`, so the `-1` that half
 /// the effect columns carry reads as `-1` and not as `4294967295`.
 ///
-/// The cut is at `i32::MAX` rather than at some threshold of taste: below it
-/// the two spellings agree, and above it no column in these tables holds a
-/// real value — a row id runs to five figures and a mask is drawn as hex.
+/// The cut is at `i32::MAX`: below it the signed and unsigned readings agree,
+/// and above it no column in these tables holds a real value, since a row id
+/// has at most five digits and a mask is drawn as hex.
 fn signed(raw: u32) -> String {
     match raw > i32::MAX as u32 {
         true => format!("{}", raw as i32),
@@ -285,9 +281,9 @@ fn signed(raw: u32) -> String {
     }
 }
 
-/// **The tables carry no extension**, because the files do not write one and
-/// the client appends it. See `ui::framexml::decode_rgba`, which is the same
-/// rule one crate along.
+/// Append `.blp` to a table's texture path unless it already has it. The
+/// tables store paths without an extension and the client appends it. See
+/// `ui::framexml::decode_rgba`, which applies the same rule in another crate.
 fn with_blp(path: &str) -> String {
     match path.to_ascii_lowercase().ends_with(".blp") {
         true => path.to_string(),
@@ -297,10 +293,10 @@ fn with_blp(path: &str) -> String {
 
 /// Which view of the open row is drawn.
 ///
-/// **A view and not a panel.** `Spell.dbc` row 74 is Fireball either way; what
-/// changes is whether you are looking at its 173 columns or at the sequence
-/// they describe. A second panel would have needed a second row selection to
-/// keep in step with the first.
+/// This is a view rather than a second panel. `Spell.dbc` row 74 is Fireball
+/// in both views; one shows its 173 columns and the other the sequence they
+/// describe. A second panel would need a second row selection kept in step
+/// with the first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum View {
     #[default]
@@ -323,25 +319,24 @@ pub fn draw(
         return;
     }
 
-    // **Both views paint their own ground.** The preview used to be a hole in
-    // the chrome and this was the fields view only; the stage renders into an
-    // image now, so nothing needs the world behind it — and leaving the strip
-    // above the panels unpainted was the world bleeding through the top of the
-    // storyboard.
+    // Both views paint their own background. The stage renders into an image,
+    // so no view needs the world visible behind it. When only the fields view
+    // painted a background, the world showed through the strip above the
+    // panels at the top of the storyboard.
     let all = ui.available_rect_before_wrap();
     ui.painter().rect_filled(all, 0.0, theme::SHELL);
 
-    // **Docked rather than laid out by hand.** A `horizontal` layout hands its
-    // children a horizontal cursor, so a list built inside one runs across the
-    // top of the window instead of down the side of it — which is what the
-    // first draft did, 22,360 rows wide. A panel takes its space from the `Ui`
-    // and gives its contents a column, which is what the shell itself does.
+    // The list is a docked panel rather than part of a `horizontal` layout. A
+    // `horizontal` layout gives its children a horizontal cursor, so a list
+    // built inside one runs across the top of the window instead of down the
+    // side: 22,360 rows wide. A panel takes its space from the `Ui` and gives
+    // its contents a column, as the shell itself does.
     //
-    // **This is the [`Surface::Middle`](crate::tools::Surface::Middle)
-    // workspace and only that one.** A data subject whose rows have a place in
-    // the world is drawn in the inspector instead — see
-    // [`light_inspector`] — so there is one arrangement here rather than two,
-    // and the list has the width a list of 22,360 rows wants.
+    // This draws the [`Surface::Middle`](crate::tools::Surface::Middle)
+    // workspace only. A data subject whose rows have a place in the world is
+    // drawn in the inspector instead (see [`light_inspector`]), so this
+    // function has one layout, and the list keeps the width that 22,360 rows
+    // need.
     egui::Panel::left("data-browser")
         .default_size(BROWSER_WIDTH)
         .min_size(220.0)
@@ -351,12 +346,12 @@ pub fn draw(
         .show(ui, |ui| {
             list(ui, &mut work);
         });
-    // **A gap between the list and the form.** The panel's own margin ends at
-    // its edge, and the form drew from the first point after it, so `< back`
-    // and the section heads sat against the list's border. A child `Ui` inset
-    // by [`FORM_GAP`] rather than a frame, because the storyboard and the lab
-    // dock panels of their own into whatever `Ui` they are handed and a frame's
-    // content rectangle is not settled until its contents are.
+    // Leave a gap between the list and the form. The panel's margin ends at its
+    // edge, so without a gap `< back` and the section heads touch the list's
+    // border. The gap is a child `Ui` inset by [`FORM_GAP`] rather than a
+    // frame, because the storyboard and the lab dock their own panels into the
+    // `Ui` they are given, and a frame's content rectangle is not settled until
+    // its contents are laid out.
     let rect = ui.available_rect_before_wrap();
     let inset = egui::Rect::from_min_max(rect.min + egui::vec2(FORM_GAP, 0.0), rect.max);
     let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(inset).layout(*ui.layout()));
@@ -365,13 +360,13 @@ pub fn draw(
 
 /// The left column: the chain's tabs, a search box, and the rows that match.
 fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
-    // **The chain as tabs**, which is the reference tool's sidebar: a spell,
-    // its visual, its kits and its effects are four tables a person moves
-    // between constantly, and a followed reference is not the only way to
-    // reach one. Which tables they are is the tool's — see `Tool::tabs`, since
-    // there are two chains. A table that is not one of them — `SpellIcon`,
-    // reached by a follow — lights no tab, and a press on one still goes
-    // there.
+    // The chain's tables as tabs, like the reference tool's sidebar. A spell,
+    // its visual, its kits and its effects are four tables a person switches
+    // between often, so they need a way in other than following a reference.
+    // The tool decides which tables they are (see `Tool::tabs`), because there
+    // are two chains. A table outside the chain, such as `SpellIcon` reached by
+    // following a reference, highlights no tab, and pressing a tab still opens
+    // that tab's table.
     let tabs = work.tool.tabs();
     let before: &'static str = tabs
         .iter()
@@ -443,15 +438,14 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         });
 }
 
-/// `Undo`, `Redo`, `Save`, `Discard` — the four things that are about the
-/// table as a file rather than about a row of it.
+/// `Undo`, `Redo`, `Save`, `Discard`: the four actions on the table as a file
+/// rather than on one of its rows.
 ///
-/// Undo and redo are the inspector's own pair drawn again here, because the
-/// keyboard's `Ctrl+Z` is egui's while a text box has the keyboard, and in a
-/// workspace made of text boxes one usually does. Discard puts the table back
-/// to what is written down and forgets its entries on the stack — see
-/// `EditSession::discard_table` for why forgetting is the only honest thing
-/// to do with them.
+/// Undo and redo repeat the inspector's pair here, because egui takes
+/// `Ctrl+Z` while a text box has keyboard focus, and in a workspace made of
+/// text boxes one usually does. Discard reloads the table from the file and
+/// removes its entries from the undo stack. `EditSession::discard_table`
+/// explains why the entries are removed rather than kept.
 fn table_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let table_name = work.browser.table.clone();
     let unsaved = work.session.unsaved_tables.contains(&table_name);
@@ -573,9 +567,9 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
 /// One row of the list: the picture, two lines of text, and the id on the
 /// right. The whole rectangle is the button.
 ///
-/// [`theme::list_row`] is the row, and every list in the editor is drawn by it
-/// — see its own note. What is this panel's is only what goes in the picture,
-/// which here is a spell icon out of the thumbnail cache.
+/// [`theme::list_row`] draws the row, as it does for every list in the editor
+/// (see its own note). This function adds only the picture, which here is a
+/// spell icon from the thumbnail cache.
 fn row(
     ui: &mut egui::Ui,
     work: &mut Workspace<'_>,
@@ -657,9 +651,8 @@ fn form(
         place_strip(ui, work, record);
     }
 
-    // **Only a spell has a second view**, because only a spell names a chain.
-    // The switch is not drawn at all on a table that has one view: an offer
-    // that does nothing is worse than no offer.
+    // Only a spell has a second view, because only a spell names a chain. On a
+    // table with one view the switch is not drawn, since it would do nothing.
     let has_story = table_name == "Spell";
     if has_story {
         ui.add_space(4.0);
@@ -683,9 +676,9 @@ fn form(
             .session
             .table(&table_name)
             .and_then(|table| table.u32_at(record, 0));
-        // **The pane has a floor and the chain gets the rest.** A preview
-        // squeezed to a sliver is not a preview, and the first draft's fixed
-        // 480-point chain left exactly that on a 1280-wide window.
+        // The preview pane has a minimum width, `STAGE_FLOOR`, and the chain
+        // gets the rest. A fixed 480-point chain left the preview a sliver on a
+        // 1280-wide window.
         let here = ui.available_width();
         let chain = CHAIN_WIDTH.min((here - STAGE_FLOOR).max(300.0));
         egui::Panel::left("storyboard-chain")
@@ -708,10 +701,10 @@ fn form(
         return;
     }
 
-    // **An effect always has the pane**, drawn like the storyboard: the fields
-    // on the left, the stage on the right with the model by itself — and, once
-    // **Position on character…** is pressed, the lab's card above the fields
-    // and the mannequin under the model. See `crate::lab`.
+    // An effect always has the preview pane, laid out like the storyboard: the
+    // fields on the left and the stage on the right with the model alone. Once
+    // **Position on character…** is pressed, the lab's card is added above the
+    // fields and the mannequin under the model. See `crate::lab`.
     let id = work
         .session
         .table(&table_name)
@@ -721,9 +714,9 @@ fn form(
         if !lab.is_open_on(id) {
             super::lab::open_alone(lab, stage, work.browser, work.session, record);
         } else if let Some(table) = work.session.table(&table_name) {
-            // The row's `Model` and `Scale` as they stand now — see
-            // `Lab::follow_row`, which is what makes an edit to either show
-            // in the pane beside it.
+            // Pass the row's current `Model` and `Scale` to
+            // `Lab::follow_row`, which makes an edit to either show in the
+            // pane beside the form.
             use vale_assets::tables::spell::{effect_scale, fields};
             let model = table
                 .string_at(record, fields::EFFECT_MODEL)
@@ -735,18 +728,18 @@ fn form(
         lab.preview = work.browser.model_preview.clone();
         stage.showing = None;
         let here = ui.available_width();
-        // The lab's card wants the width; an effect's five fields do not, so
-        // the model view gives the pane the room. Two panel ids, so each
-        // mode keeps the width it was dragged to.
+        // The lab's card needs width and an effect's five fields do not, so
+        // the model view gives the extra room to the pane. The two modes use
+        // different panel ids, so each keeps the width it was dragged to.
         let on_character = lab.on_character(id);
         let form_width = match on_character {
             true => (CHAIN_WIDTH + 140.0).min((here - STAGE_FLOOR).max(320.0)),
             false => 360.0_f32.min((here - STAGE_FLOOR).max(320.0)),
         };
-        // **Bounded to the panel as it was drawn last frame.** The panel's
-        // inner `Ui` reports more width than the panel shows — a note wrapped
-        // a hundred points past its edge — so the contents are held to the
-        // rectangle the panel actually took, one frame behind a resize.
+        // The contents are limited to the panel's width from the last frame.
+        // The panel's inner `Ui` reports more width than the panel shows, which
+        // let a note wrap a hundred points past its edge. Using the width the
+        // panel actually took lags a resize by one frame.
         let known = lab.panel_width;
         let shown = egui::Panel::left(match on_character {
             true => "lab-form",
@@ -782,8 +775,8 @@ fn form(
         modals(ui, work);
         return;
     }
-    // Off the storyboard and the lab, nothing is being previewed — which is
-    // what takes the units off the stage and gives the camera back.
+    // Outside the storyboard and the lab nothing is previewed. Clearing these
+    // removes the units from the stage and returns the camera.
     stage.showing = None;
     stage.lab = false;
 
@@ -791,9 +784,10 @@ fn form(
         .id_salt("data-form")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            // Rows tall enough to click and spaced enough to read. Set on the
-            // form's own `Ui` rather than in the theme: this is the one panel in
-            // the editor that is a page of fields rather than a few controls.
+            // Rows tall enough to click and spaced enough to read. This is set
+            // on the form's own `Ui` rather than in the theme, because this is
+            // the one panel in the editor that is a page of fields rather than
+            // a few controls.
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 7.0);
             ui.spacing_mut().interact_size.y = 24.0;
             fields(ui, work, record, schema);
@@ -812,11 +806,11 @@ fn fields(
     match schema {
         Some(schema) => {
             for section in schema.sections {
-                // **A light's sphere is drawn in the world's own units.**
-                // The five columns behind it are in 1/36 of a yard measured
-                // from the corner of the map — `557760`, `0`, `966720` — which
-                // is not a number anybody can read or type. The same five
-                // fields, converted, are below.
+                // A light's sphere is drawn in the world's units. Its five
+                // columns are in 1/36 of a yard measured from the corner of
+                // the map (for example `557760`, `0`, `966720`), which cannot
+                // be read or typed sensibly. `sphere_block` shows the same
+                // five fields converted.
                 if schema.table == "Light" && section.name == "Sphere" {
                     sphere_block(ui, work, record);
                     continue;
@@ -824,26 +818,27 @@ fn fields(
                 section_block(ui, work, record, schema, section);
             }
         }
-        // **A table with no schema is still worth opening.** Numbered
-        // fields with guessed types is what `vale dbc <Table>`
-        // prints, and it is how the next schema gets written.
+        // A table with no schema still opens, as numbered fields with guessed
+        // types. This is what `vale dbc <Table>` prints, and it is the
+        // starting point for writing that table's schema.
         None => unschemad(ui, work, record),
     }
     ui.add_space(24.0);
 }
 
-/// **A light's whole form, in the inspector** — what is picked in the world,
+/// A light's whole form, drawn in the inspector: the light picked in the world
 /// and the numbers behind it.
 ///
-/// This is the lights tool's only panel. The subject is reached by pointing at
-/// it in the viewport rather than by finding it in a list, so the shell's own
-/// rule puts it here: the inspector is about the selection. The list of all 374
-/// is a dialog behind **Browse…**, for finding one that is not on screen.
+/// This is the lights tool's only panel. A light is chosen by picking it in
+/// the viewport rather than from a list, and the shell's rule is that the
+/// inspector shows the selection, so the form is drawn here. The list of all
+/// 374 lights is a dialog behind **Browse…**, for finding one that is not on
+/// screen.
 ///
-/// What it holds, in the order the work is done: which light this is, a button
-/// to go and look at it, where it is and how far it reaches — in yards, not in
-/// the file's 1/36 of one — and then the five `LightParams` rows it uses under
-/// the five conditions, which is where the colours are.
+/// Its contents, in the order they are used: which light this is, a button to
+/// fly the camera to it, its position and radius in yards rather than the
+/// file's 1/36 of a yard, and then the five `LightParams` rows it uses under
+/// the five conditions, which hold the colours.
 pub fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
     if !work.session.open_table(work.assets, "Light") {
         theme::note(ui, "opening Light.dbc…");
@@ -852,18 +847,17 @@ pub fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
     browse_button(ui, &mut work);
     ui.add_space(6.0);
 
-    // **Whatever the browser is looking at, not always `Light`.** A press on a
-    // `ParamsClear` link is a jump to `LightParams`, and the bands hang off
-    // that row; a panel that drew the light's own form regardless would make
-    // every one of those five links do nothing visible.
+    // Draw whatever table the browser has open, which is not always `Light`.
+    // Pressing a `ParamsClear` link opens `LightParams`, and the bands belong
+    // to that row. If this panel always drew the light's own form, those five
+    // links would have no visible effect.
     //
-    // **And the browser is not re-pointed here.** It was, on every frame,
-    // against the light selected in the world — which undid a followed
-    // reference on the frame after the press. Nothing needs it: the two places
-    // that change the selection (the pick in the viewport, and the browse
-    // dialog) each point the browser at the row themselves, which is the one
-    // moment it should move. That is the same rule, and the same fault, as
-    // `tables::open_tables`' own note about the rail's table.
+    // The browser is not re-pointed here. Re-pointing it at the selected light
+    // on every frame undid a followed reference on the frame after the press.
+    // The two places that change the selection, the pick in the viewport and
+    // the browse dialog, each point the browser at the row themselves, which
+    // is the only time it should move. `tables::open_tables` has a note on the
+    // same rule for the rail's table.
     let table_name = work.browser.table.clone();
     let on_the_light = table_name == "Light";
     let Some(record) = work.browser.open else {
@@ -877,9 +871,9 @@ pub fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
         return;
     };
 
-    // **The way back from a followed reference**, which the middle workspace
-    // has in its own heading and this one had nowhere at all: a jump between
-    // tables with no way back is a dead end.
+    // A `< back` button to return from a followed reference. The middle
+    // workspace has one in its heading; without this one the inspector had no
+    // way back after following a reference to another table.
     if !work.browser.back.is_empty() {
         ui.horizontal(|ui| {
             if ui.button("< back").clicked() {
@@ -929,9 +923,9 @@ pub fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
             match (on_the_light, schema) {
                 // The light's own form: the sphere in the world's units, then
                 // the five `LightParams` rows it uses under the five
-                // conditions, which is where the colours are. Drawn through the
-                // ordinary section so the picker, the resolved name and the
-                // link all behave as they do everywhere else.
+                // conditions, which hold the colours. The conditions are drawn
+                // by the ordinary `section_block`, so the picker, the resolved
+                // name and the link behave as they do elsewhere.
                 (true, Some(schema)) => {
                     sphere_block(ui, &mut work, record);
                     if let Some(section) = schema
@@ -942,14 +936,15 @@ pub fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
                         section_block(ui, &mut work, record, schema, section);
                     }
                 }
-                // Anything followed out of it — a `LightParams` row, a
-                // `LightSkybox` — is the ordinary form for that table.
+                // A row reached by following a reference from the light, such
+                // as a `LightParams` or `LightSkybox` row, gets the ordinary
+                // form for its table.
                 _ => {
                     fields(ui, &mut work, record, schema);
-                    // **…and, for a params row, its bands.** They are the
-                    // reason to be on this row at all: every colour the world
-                    // is drawn in hangs off it, and nothing points at the two
-                    // tables holding them, so this is the only route there.
+                    // A `LightParams` row also shows its bands, which hold
+                    // every colour the world is drawn in. No column points at
+                    // the two tables that hold the bands, so this is the only
+                    // way to reach them.
                     if table_name == "LightParams" {
                         if let Some(id) = work
                             .session
@@ -967,11 +962,13 @@ pub fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
     modals(ui, &mut work);
 }
 
-/// **Find a light that is not on screen** — the list, as a dialog.
+/// A button that opens the list of all lights as a dialog, for finding a light
+/// that is not on screen.
 ///
-/// The tool is built around pointing at what you want, and that answers every
-/// question except "where is the one I cannot see". A button rather than a
-/// standing panel, because the standing panel was the thing in the way.
+/// The tool is built around picking a light in the viewport, which cannot
+/// reach a light that is off screen. The list is a dialog behind a button
+/// rather than a permanent panel, because a permanent panel took space the
+/// form needed.
 fn browse_button(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let count = work
         .session
@@ -993,28 +990,27 @@ fn browse_button(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     }
 }
 
-/// **A light's position and falloff, in yards** — the `Sphere` section, drawn
-/// in the world's units instead of the file's.
+/// A light's position and falloff in yards: the `Sphere` section, drawn in the
+/// world's units instead of the file's.
 ///
-/// **The unit changes and the names do not.** `FalloffStart` and `FalloffEnd`
-/// are the columns' own names and keep them; the three coordinates are shown
-/// as the world's `x`, `y` and `z`, because that is what they are once
-/// converted and they are not the columns they come from — the axes swap, so a
-/// field holding the world's x is `InternalZ` in the file. Each one's tooltip
-/// says which column it writes and in what unit.
+/// The unit changes and the radius names do not: `FalloffStart` and
+/// `FalloffEnd` keep the columns' names. The three coordinates are labelled as
+/// the world's `x`, `y` and `z`, because after conversion they no longer match
+/// the columns they come from. The axes swap, so the field holding the world's
+/// x is `InternalZ` in the file. Each field's tooltip names the column it
+/// writes and its unit.
 ///
-/// The five columns underneath are
+/// The five columns are
 /// [`light_field`](vale_assets::tables::light::light_field)'s: three
-/// coordinates in the internal representation every placement in the game is
-/// in, scaled by 36, and two radii in the same unit. Every one of them is
-/// converted here rather than shown raw, and typing into one converts back —
-/// [`vale_assets::world::adt::placement_from_world`] is the direction that
-/// loading the game's own tiles never exercises, so it is called rather than
-/// restated.
+/// coordinates in the internal representation used by every placement in the
+/// game, scaled by 36, and two radii in the same unit. All five are converted
+/// here rather than shown raw, and typing into one converts back.
+/// [`vale_assets::world::adt::placement_from_world`] does the conversion back;
+/// loading the game's own tiles never uses that direction, so it is called
+/// here rather than reimplemented.
 ///
-/// The raw columns are still reachable, folded away underneath, because they
-/// are what is actually written to the file and a person checking a diff wants
-/// to see them.
+/// The raw columns are still available, folded away underneath, because they
+/// are what is written to the file and a person checking a diff needs them.
 fn sphere_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
     use vale_assets::tables::light::{light_field as lf, YARDS_PER_UNIT};
     use vale_assets::world::adt::{placement_from_world, placement_to_world};
@@ -1092,8 +1088,9 @@ fn sphere_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
             );
         });
 
-    // **Written only when one of them moved**, and all five under one gesture,
-    // so a drag on the x box is one entry on the stack and not one per pixel.
+    // Write only when a value changed, and write all five under one gesture, so
+    // a drag on the x box is one entry on the undo stack rather than one per
+    // pixel.
     if (x, y, z, start, end) == (was_x, was_y, was_z, was_start, was_end) {
         return;
     }
@@ -1116,14 +1113,14 @@ fn sphere_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
     );
 }
 
-/// **Where a light is, and how to go and look at it** — the strip under a
-/// `Light` row's heading.
+/// The strip under a `Light` row's heading: where the light is, and a button
+/// to fly the camera there.
 ///
-/// The row's three coordinates are stored in a representation nobody can read
-/// (`612096, 0, 998400`, in 1/36 of a yard from the corner of the map), so the
-/// form alone cannot tell you where the light you are editing *is*. This says
-/// it in the world's own numbers, keeps the ring in the viewport on the row
-/// that is open, and flies the camera there.
+/// The row's three coordinates are stored in a form that cannot be read at a
+/// glance (`612096, 0, 998400`, in 1/36 of a yard from the corner of the map),
+/// so the form alone does not show where the light is. This strip gives the
+/// position in world coordinates, keeps the viewport's ring on the open row,
+/// and flies the camera there.
 ///
 /// It is drawn only for `Light`. The other four tables of the chain have no
 /// position: a `LightParams` row is a look, and where it applies is whichever
@@ -1139,16 +1136,16 @@ fn place_strip(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
     let Some(lights) = work.lights.as_deref_mut() else {
         return;
     };
-    // **Opening a row selects its light.** The pick does this the other way
-    // round already; without this half, a row reached from the list or by
-    // following a reference leaves the viewport highlighting the previous one,
-    // which is the ring a person would then go and drag.
+    // Opening a row selects its light. Picking a light already opens its row;
+    // without this direction, a row reached from the list or by following a
+    // reference left the viewport highlighting the previous light, which is
+    // the ring a person would then drag.
     if lights.selected != Some(id) {
         lights.selected = Some(id);
     }
     let Some(&mark) = lights.marks.iter().find(|mark| mark.id == id) else {
-        // A light on another map. The row still edits — a `Light` row names its
-        // own map — and there is nothing to fly to from here.
+        // A light on another map. The row can still be edited, because a
+        // `Light` row names its own map, but there is nothing to fly to here.
         theme::note(
             ui,
             "This light is on another map. Open that map to see it in the world.",
@@ -1159,8 +1156,7 @@ fn place_strip(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
     ui.horizontal(|ui| {
         if mark.everywhere {
             // The default light applies everywhere and its coordinates are not
-            // read, so offering to fly to them would be offering to fly to a
-            // number that means nothing.
+            // read, so there is no position to fly to.
             ui.label(
                 egui::RichText::new("the whole map")
                     .size(13.0)
@@ -1228,7 +1224,7 @@ fn head(
                 if work.session.unsaved_tables.contains(&table_name) {
                     ui.label(egui::RichText::new("unsaved").color(theme::WARN));
                 }
-                // **What can be done to this row that is not a field.**
+                // Actions on this row other than editing a field.
                 match table_name.as_str() {
                     "SpellVisual" => {
                         clone_chain = ui
@@ -1265,10 +1261,10 @@ fn head(
             });
         });
     });
-    // **Who points here**, in a line — the full list is in the inspector. A
-    // spell is pointed at by other spells only through trigger columns, which
-    // is rarely what somebody opened it for, so the line is for the chain
-    // tables.
+    // One line listing the rows that point here; the full list is in the
+    // inspector. Other spells point at a spell only through trigger columns,
+    // which is rarely why a spell is opened, so the line is shown only for the
+    // chain tables.
     if table_name != "Spell" {
         used_by_line(ui, work, &table_name, label.id);
     }
@@ -1304,8 +1300,8 @@ fn used_by_line(ui: &mut egui::Ui, work: &mut Workspace<'_>, table_name: &str, i
                 .small()
                 .color(theme::INK_FAINT),
         );
-        // Grouped by table, the spells first because they are what a person is
-        // looking for.
+        // Grouped by table, with spells first because they are usually what a
+        // person is looking for.
         let mut sources: Vec<String> = uses.iter().map(|at| at.table.clone()).collect();
         sources.sort();
         sources.dedup();
@@ -1331,7 +1327,8 @@ fn used_by_line(ui: &mut egui::Ui, work: &mut Workspace<'_>, table_name: &str, i
                     true => format!("#{}", label.id),
                     false => label.title.clone(),
                 };
-                // The same spell nine times over is nine ranks; say it once.
+                // A name repeated nine times is one spell's nine ranks; show it
+                // once.
                 if shown.contains(&name) {
                     continue;
                 }
@@ -1421,18 +1418,19 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
     };
 
     ui.horizontal(|ui| {
-        // The index and what the schema knows are a tooltip: read when wanted,
-        // and not sixty `[117]`s down the page otherwise.
+        // The field index and the schema's note go in a tooltip rather than
+        // beside each label, where they would add sixty `[117]`-style suffixes
+        // down the page.
         let mut tip = format!("field {}", column.field);
         if !column.about.is_empty() {
             tip.push_str("\n\n");
             tip.push_str(column.about);
         }
-        // **At most [`LABEL`], and at most half of what there is.** The
-        // constant is the middle workspace's, where the form has 700 points to
-        // itself; the same form is drawn in the inspector now, and a fixed 210
-        // there left the resolved name of every reference clipped against the
-        // window's edge.
+        // The label is at most [`LABEL`] wide and at most 45% of the available
+        // width. [`LABEL`] suits the middle workspace, where the form has 700
+        // points. The same form is also drawn in the inspector, where a fixed
+        // 210 clipped the resolved name of every reference at the window's
+        // edge.
         let label_width = LABEL.min(ui.available_width() * 0.45);
         ui.add_sized(
             egui::vec2(label_width, 22.0),
@@ -1449,11 +1447,11 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                     write(work, record, column, value);
                 }
             }
-            // **Unused is signed for `reference`'s reason**, and it is the
-            // column most likely to be holding the `-1` this table writes for
-            // nothing: `SpellVisualKit`'s own unused slot carries one on
-            // almost every row. An `Int` stays unsigned — those are counts and
-            // durations — and so do the locale flags, which are a mask.
+            // `Unused` is drawn signed for the same reason as `reference`. It is
+            // the column most likely to hold the `-1` this table writes for
+            // "nothing": `SpellVisualKit`'s unused slot holds one on almost
+            // every row. An `Int` stays unsigned, because those are counts and
+            // durations, and so do the locale flags, which are a mask.
             Kind::Signed | Kind::Unused => {
                 let mut value = raw as i32;
                 if number(ui, &mut value).changed() {
@@ -1475,11 +1473,12 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                 if number(ui, &mut value).changed() {
                     write(work, record, column, value);
                 }
-                // **The list, where there is one.** A mask is read bit by bit
-                // by everything that consumes it, so the number is the
-                // *encoding* and the bits are the value — see
-                // `vale_assets::tables::spellbits`. Without this a person
-                // setting "castable while dead" had to know 0x00800000.
+                // A button that opens the list of named bits, when the mask
+                // has one. Everything that reads a mask reads it bit by bit,
+                // so the bits are the value and the number is only their
+                // encoding (see `vale_assets::tables::spellbits`). Without the
+                // list, setting "castable while dead" required knowing
+                // 0x00800000.
                 if !bits.is_empty()
                     && ui
                         .add(
@@ -1497,9 +1496,9 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                     });
                 }
                 ui.label(theme::number(format!("0x{raw:08X}")));
-                // …and what is set, in words, without opening anything. The
-                // one-line form is what a form is read down; the dialog is for
-                // changing it.
+                // The names of the set bits, shown on the row so they can be
+                // read without opening the dialog. The dialog is for changing
+                // them.
                 let set = schema::named_bits(raw, bits);
                 if !set.is_empty() {
                     ui.label(
@@ -1508,9 +1507,9 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                             .color(theme::INK_DIM),
                     );
                 }
-                // **A bit nothing names is said rather than hidden**, because
-                // it is either a bit this list has not learnt or a value
-                // somebody has typed by hand, and both are worth seeing.
+                // Set bits with no name are shown rather than hidden. Such a
+                // bit is either missing from the list or was typed by hand,
+                // and the user needs to see both cases.
                 let unnamed = schema::unnamed_bits(raw, bits);
                 if unnamed != 0 {
                     ui.label(
@@ -1525,17 +1524,16 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                 if ui.checkbox(&mut on, "").changed() {
                     write(work, record, column, u32::from(on));
                 }
-                // A gate with a value that is not 0 or 1 is said, not hidden.
+                // A gate with a value other than 0 or 1 shows the value.
                 if raw > 1 {
                     ui.label(theme::number(format!("{raw}")).color(theme::WARN));
                 }
             }
             Kind::Enum(names) => {
-                // A value the list does not name is shown as the number,
-                // which is what the game does — **as a signed one**, for
-                // `reference`'s reason: these columns are `int32` and the
-                // "nothing here" they carry is `-1`, which as a `u32` reads
-                // as `4294967295`.
+                // A value the list does not name is shown as a number, as
+                // the game does. It is shown signed for the same reason as
+                // `reference`: these columns are `int32`, and their "nothing
+                // here" value is `-1`, which reads as `4294967295` as a `u32`.
                 let shown = names
                     .iter()
                     .find(|&&(value, _)| value == raw)
@@ -1560,10 +1558,10 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                     ((raw >> 8) & 0xff) as u8,
                     (raw & 0xff) as u8,
                 ];
-                // **The top byte rides through untouched.** It is zero on all
-                // but one shipped `LightIntBand` row, and a picker that
-                // rebuilt the word from three channels would quietly clear the
-                // `0xff` that row carries — see `Kind::Colour`.
+                // The top byte is kept unchanged. It is zero on all but one
+                // shipped `LightIntBand` row, and rebuilding the word from the
+                // three channels would clear the `0xff` that row carries. See
+                // `Kind::Colour`.
                 let keep = raw & 0xff00_0000;
                 if ui.color_edit_button_srgb(&mut rgb).changed() {
                     let packed =
@@ -1574,8 +1572,8 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                     theme::number(format!("{} {} {}", rgb[0], rgb[1], rgb[2]))
                         .color(theme::INK_DIM),
                 );
-                // The word itself, because the packing order is the thing most
-                // likely to be in doubt when somebody is reading this column.
+                // The packed word as hex, because the channel order is the
+                // part of this column a reader is most likely to doubt.
                 ui.label(theme::number(format!("0x{raw:06X}")).color(theme::INK_DIM));
             }
             Kind::Reference(points_at) => reference(ui, work, record, column, points_at, raw),
@@ -1586,8 +1584,8 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                     .buffer(work.session, record, column.field)
                     .clone();
                 let mut editing = text.clone();
-                // No wider than the row has room for: beside the lab's pane
-                // the form is narrow, and a fixed width ran off its edge.
+                // Limited to the room left on the row. Beside the lab's pane
+                // the form is narrow, and a fixed width ran past its edge.
                 let width = TEXT.min((ui.available_width() - 90.0).max(140.0));
                 let response = match wide {
                     true => ui.add(
@@ -1604,10 +1602,10 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                 if editing != text {
                     *work.browser.buffer(work.session, record, column.field) = editing.clone();
                 }
-                // **Written when the box is left, not on every keystroke.**
-                // The string block is append-only, so a write per character
-                // would put one dead copy of every prefix of the word in the
-                // file. See `vale_edit::dbc`.
+                // Written when the text box loses focus, not on every
+                // keystroke. The string block is append-only, so a write per
+                // character would leave an unused copy of every prefix of the
+                // word in the file. See `vale_edit::dbc`.
                 if response.lost_focus() {
                     let now_in_file = work
                         .session
@@ -1655,10 +1653,11 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
     });
 }
 
-/// A reference column: the number, what it resolves to, and the ways through.
+/// A reference column: the id, what it resolves to, and the controls to pick
+/// or follow it.
 ///
-/// See the module comment. The number stays editable because a person who
-/// knows the id types it; the picker is for the one who does not.
+/// See the module comment. The id stays editable for a person who knows it;
+/// the picker is for one who does not.
 fn reference(
     ui: &mut egui::Ui,
     work: &mut Workspace<'_>,
@@ -1667,19 +1666,18 @@ fn reference(
     points_at: &'static str,
     raw: u32,
 ) {
-    // **Signed, because the column is.** A reference holds a row id, which is
-    // positive, or one of the table's two ways of saying nothing — `0` and
-    // `-1`. Drawn as the `u32` it is read as, the second of those is
-    // `4294967295`, which is a number nobody recognises sitting where an id
-    // goes: the kits are full of them, since `blank_defaults` and the shipped
-    // rows both write `-1`. The label beside it has always said "none"; this
-    // makes the box agree.
+    // Drawn signed, because the column is signed. A reference holds a row id,
+    // which is positive, or one of the table's two values for "nothing": `0`
+    // and `-1`. Drawn as the `u32` it is read as, `-1` appears as
+    // `4294967295` in the id box. The kits hold many of these, because
+    // `blank_defaults` and the shipped rows both write `-1`. The label beside
+    // the box says "none" for it, and the signed box now agrees.
     let mut value = raw as i32;
     if number(ui, &mut value).changed() {
         write(work, record, column, value as u32);
     }
-    // **The picker**, which searches the target table by what its rows resolve
-    // to. A dialog rather than a popup — see the module comment.
+    // The picker, which searches the target table by what its rows resolve
+    // to. It is a dialog rather than a popup; see the module comment.
     if ui
         .add(
             egui::Button::new(egui::RichText::new("…").size(13.0)).min_size(egui::vec2(24.0, 22.0)),
@@ -1701,12 +1699,12 @@ fn reference(
         "SpellVisual" | "SpellVisualKit" | "SpellVisualEffectName"
     );
 
-    // **Whether `0` means "nothing" is asked of the table, not assumed.**
-    // Every table of the spell chain numbers from 1, so a `0` there is one of
-    // the two ways a column says nothing. `Map.dbc` numbers from 0 and map 0
-    // is Azeroth, so `Light.Map` read by that rule showed `none` on 232 of
-    // 374 lights — the most common value in the column, drawn as absent. The
-    // table itself settles it: if it has a row 0, `0` is a reference to it.
+    // Whether `0` means "nothing" depends on the target table. Every table of
+    // the spell chain numbers from 1, so a `0` there is one of the two
+    // "nothing" values. `Map.dbc` numbers from 0 and map 0 is Azeroth, so
+    // treating `0` as nothing showed `none` for `Light.Map` on 232 of 374
+    // lights, the most common value in the column. The rule used here: if the
+    // target table has a row 0, `0` is a reference to it.
     let zero_is_a_row = work
         .session
         .table(points_at)
@@ -1736,7 +1734,7 @@ fn reference(
         return;
     }
 
-    // What the row is, in words — and a picture where the table has one.
+    // What the target row is, in words, with a picture where the table has one.
     if points_at == "SpellIcon" {
         let icon = work.icon_by_id(raw);
         work.icon(ui, icon, ICON);
@@ -1744,8 +1742,8 @@ fn reference(
     if points_at == "SpellVisualEffectName" {
         presence(ui, work.model_present(raw));
     }
-    // The target may not be open yet — the chain arrives one table a frame —
-    // in which case the number is all there is for a moment.
+    // The target table may not be open yet, because the chain's tables open
+    // one per frame. Until it opens, only the id is shown.
     let resolved = work
         .session
         .open_table(work.assets, points_at)
@@ -1793,8 +1791,9 @@ fn reference(
     {
         work.browser.audition.push(raw);
     }
-    // **Making a shared row this row's own.** A kit or an effect is copied and
-    // this field pointed at the copy; a visual is copied with its whole chain.
+    // Copying a shared row so that only this row uses it. A kit or an effect
+    // is copied and this field pointed at the copy; a visual is copied with
+    // its whole chain.
     if matches!(points_at, "SpellVisualKit" | "SpellVisualEffectName")
         && ui
             .small_button("copy")
@@ -1849,12 +1848,11 @@ fn presence(ui: &mut egui::Ui, present: Option<bool>) {
 /// The dialog that is up, if one is: a reference picker or the model browser.
 /// Drawn once per frame from the form, whichever field opened it.
 ///
-/// **Both are paged.** The first draft cut a picker at two hundred hits and
-/// the model browser at three hundred, which for the twelve thousand icons or
-/// the six thousand models is a list most of which cannot be reached. A page
-/// is turned with the arrows, `PageUp` and `PageDown`, and a search narrows
-/// it as before — and the page is put back to the first whenever the hits
-/// are rebuilt.
+/// Both are paged rather than truncated. Cutting a picker at two hundred hits
+/// and the model browser at three hundred left most of the twelve thousand
+/// icons or six thousand models unreachable. A page is turned with the arrows,
+/// `PageUp` and `PageDown`, and a search narrows the list. The page returns to
+/// the first whenever the hits are rebuilt.
 fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let Some(modal) = work.browser.modal.clone() else {
         return;
@@ -1875,9 +1873,9 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 .and_then(|schema| schema.column(field))
                 .map(|column| column.name)
                 .unwrap_or("this field");
-            // **An icon is chosen by looking at it**, so the icon table is a
-            // grid of pictures at the file's own size rather than rows with a
-            // thumbnail beside a file name.
+            // An icon is chosen by its picture, so the icon table is shown as a
+            // grid of pictures at the file's own size rather than as rows with
+            // a thumbnail beside a file name.
             let grid = points_at == "SpellIcon";
             let width = match grid {
                 true => {
@@ -2046,10 +2044,9 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 work.browser.look_at(table);
                 let session = &*work.session;
                 work.browser.follow(session, table, id);
-                // **Chosen here means chosen in the world too**, and the camera
-                // goes to it: the whole reason to open this list is a light that
-                // cannot be seen, so leaving the view where it was would answer
-                // half the question.
+                // A light chosen here is also selected in the world, and the
+                // camera flies to it. This list is opened to find a light that
+                // is not on screen, so the view has to move to show it.
                 if table == "Light" {
                     if let Some(lights) = work.lights.as_deref_mut() {
                         lights.selected = Some(id);
@@ -2072,9 +2069,9 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             column,
             bits,
         } => {
-            // **The mask as what it is: a list of switches.** Every bit gets a
-            // row — its name, its note where vmangos wrote one, and its mask —
-            // and the value is rebuilt from the ticks rather than typed.
+            // The mask as a list of checkboxes. Every bit gets a row with its
+            // name, its note where vmangos wrote one, and its mask, and the
+            // value is rebuilt from the checkboxes rather than typed.
             let raw = work
                 .session
                 .table(&work.browser.table.clone())
@@ -2128,8 +2125,8 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                     if ui.button("Close").clicked() {
                         close = true;
                     }
-                    // **Clearing is a button** rather than thirty-two clicks,
-                    // and it is the ordinary way a mask is emptied.
+                    // A button clears every bit at once, rather than up to
+                    // thirty-two clicks; it is the usual way to empty a mask.
                     if ui.button("None").on_hover_text("clear every bit").clicked() {
                         wanted = 0;
                     }
@@ -2168,12 +2165,12 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                         .collect(),
                 );
             }
-            // **It opens on the model the field already names.** Without this
-            // the dialog came up with nothing previewed, its pane absent, and
-            // **Use** greyed out reading "nothing chosen" — on a row whose
-            // model is written three lines above the button. Seeded here
-            // rather than at either door, because there are two: the form's
-            // `browse…` and `--browse`.
+            // The dialog opens with the field's current model previewed.
+            // Otherwise it opened with no preview pane and **Use** disabled,
+            // reading "nothing chosen", even though the row already named a
+            // model. The preview is set here rather than where the dialog is
+            // opened, because there are two such places: the form's `browse…`
+            // and `--browse`.
             if work.browser.model_preview.is_none() {
                 let current = work
                     .session
@@ -2186,17 +2183,17 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 work.browser.model_preview = current;
             }
             let mut picked: Option<String> = None;
-            // **A lighter backdrop than a picker's**, because the stage behind
-            // it is part of this dialog: a press on a row previews that model
-            // there, and a backdrop that hid it would hide the whole point.
+            // A lighter backdrop than a picker's, because the stage behind the
+            // dialog is part of it: pressing a row previews that model on the
+            // stage, and a dark backdrop would hide the preview.
             let response = egui::Modal::new(egui::Id::new("data-models"))
                 .backdrop_color(egui::Color32::from_black_alpha(60))
                 .show(ui.ctx(), |ui| {
                     ui.set_width(PICKER_WIDTH + 200.0);
                     ui.label(egui::RichText::new("Model").strong().size(14.0));
                     ui.allocate_ui(egui::vec2(ui.available_width(), 24.0), |ui| {
-                        // The archives' folders, then the two lists the person
-                        // keeps — see `crate::favourites`.
+                        // The archives' folders, then the person's two lists,
+                        // starred and recent; see `crate::favourites`.
                         let mut options: Vec<(&str, usize)> =
                             MODEL_FOLDERS.iter().enumerate().map(|(at, (name, _))| (*name, at)).collect();
                         options.push(("Starred", STARRED_FOLDER));
@@ -2267,10 +2264,10 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                     let browser = &mut *work.browser;
                     egui::ScrollArea::vertical()
                         .id_salt(("models", page))
-                        // **Shorter than the 380 it was**, because the preview
-                        // pane goes under it: the two together at the old
-                        // height put the dialog's own buttons past the foot of
-                        // a 720-tall window.
+                        // Shorter than the previous 380, because the preview
+                        // pane sits under the list: at 380 the two together
+                        // pushed the dialog's buttons below the bottom of a
+                        // 720-tall window.
                         .max_height(MODEL_LIST_HEIGHT)
                         .auto_shrink([false, true])
                         .show_rows(ui, MODEL_ROW, rows.len(), |ui, range| {
@@ -2288,11 +2285,10 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                                 }
                             }
                         });
-                    // **The model being previewed, under the list.** The stage
-                    // behind the dialog shows it too, and that is what the
-                    // lighter backdrop is for; this is the one that can be
-                    // seen without looking past a dialog, and it is the same
-                    // pane the placement pickers carry.
+                    // The previewed model, under the list. The stage behind
+                    // the dialog also shows it, which is why the backdrop is
+                    // lighter; this pane shows it without looking past the
+                    // dialog. It is the same pane the placement pickers use.
                     if let Some(path) = work.browser.model_preview.clone() {
                         ui.add_space(4.0);
                         super::inspector::preview_pane(ui, work.portraits, &path);
@@ -2424,7 +2420,7 @@ pub(super) fn model_row(
         egui::pos2(picture.right() + 8.0, rect.center().y + 7.0),
         egui::Align2::LEFT_CENTER,
         folder,
-        egui::FontId::proportional(10.0),
+        egui::FontId::proportional(theme::SMALL),
         theme::INK_FAINT,
     );
     let on = favourites.is_starred(kind, path);
@@ -2443,7 +2439,7 @@ pub(super) fn model_row(
 
 /// The page controls: first, back, `page 3 of 12 · 201–300 of 1,183`,
 /// forward, last; `PageUp` and `PageDown` on the keyboard. Clamps the page
-/// to what there is and answers the range of the list that is on it.
+/// to the pages that exist and returns the range of the list on that page.
 fn pager(
     ui: &mut egui::Ui,
     page: &mut usize,
@@ -2499,8 +2495,8 @@ fn pager(
 
 /// How many pages a list of `total` makes at `per_page`, and which of its
 /// rows page `page` holds — the last page when `page` is past the end, and
-/// an empty range for an empty list. Always at least one page, so a page
-/// number is always a page.
+/// an empty range for an empty list. There is always at least one page, so
+/// every page number is valid.
 fn page_bounds(total: usize, page: usize, per_page: usize) -> (usize, std::ops::Range<usize>) {
     let per_page = per_page.max(1);
     let pages = total.div_ceil(per_page).max(1);
@@ -2558,12 +2554,12 @@ fn number<T: egui::emath::Numeric>(ui: &mut egui::Ui, value: &mut T) -> egui::Re
     ui.add_sized(egui::vec2(VALUE, 22.0), egui::DragValue::new(value))
 }
 
-/// **Open the table a reference names, at the row it names.**
+/// Open the table a reference names, at the row it names.
 ///
-/// The table is opened here rather than only being looked up, which is the
-/// whole of why the button used to do nothing: `SpellVisual.dbc` is not open
-/// until something asks for it, and the first thing to ask is the press that
-/// wants to look at it.
+/// The table is opened here, not only looked up. `SpellVisual.dbc` is not
+/// open until something asks for it, and the first thing to ask for it is the
+/// press on the link. When this function only looked the table up, the button
+/// did nothing.
 pub fn follow_reference(work: &mut Workspace<'_>, table: &str, id: u32) {
     if !work.session.open_table(work.assets, table) {
         return;
@@ -2640,12 +2636,12 @@ fn write(work: &mut Workspace<'_>, record: usize, column: &Column, value: u32) {
     );
 }
 
-/// **What this row points at, and what points at it** — the inspector's half
-/// of the workspace.
+/// What this row points at, and what points at it: the inspector's part of
+/// the workspace.
 ///
-/// It is in the inspector rather than in the middle because it is about the
-/// selection, which is the rule this shell already has for where a control
-/// goes. See [`super`].
+/// It is in the inspector rather than in the middle because it describes the
+/// selection, and the shell's rule is that the inspector shows the selection.
+/// See [`super`].
 pub fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let table_name = work.browser.table.clone();
     let Some(record) = work.browser.open else {
@@ -2687,7 +2683,7 @@ pub fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                     .selectable(false),
             );
             if ui
-                .add(egui::Link::new(egui::RichText::new(text).size(11.5)))
+                .add(egui::Link::new(egui::RichText::new(text).size(theme::SMALL)))
                 .on_hover_text(format!("open {points_at} {value}"))
                 .clicked()
             {
@@ -2702,7 +2698,7 @@ pub fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         follow_reference(work, table, id);
     }
 
-    // …and the other direction, which is the whole of what an index is for.
+    // The rows that point at this one, looked up in the reference index.
     theme::heading(ui, "Used by");
     let id = work
         .session
@@ -2739,7 +2735,7 @@ pub fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                     false => format!("{} [{}]", label.title, label.id),
                 };
                 if ui
-                    .add(egui::Link::new(egui::RichText::new(name).size(11.5)))
+                    .add(egui::Link::new(egui::RichText::new(name).size(theme::SMALL)))
                     .on_hover_text(format!("open {source} {}", label.id))
                     .clicked()
                 {
@@ -2790,10 +2786,10 @@ mod tests {
         assert_eq!(page_bounds(5, 0, 0), (5, 0..1), "a page holds at least one");
     }
 
-    /// **`-1` reads as `-1`.** Half the effect columns of a kit carry it —
-    /// it is what `blank_defaults` and the shipped rows write for "nothing
-    /// here" — and drawn as the `u32` the reader returns it is
-    /// `4294967295`, sitting where a row id goes.
+    /// `-1` is drawn as `-1`. Half the effect columns of a kit hold it, since
+    /// `blank_defaults` and the shipped rows write it for "nothing here".
+    /// Drawn as the `u32` the reader returns, it would show as `4294967295`
+    /// where a row id belongs.
     #[test]
     fn a_column_that_says_nothing_reads_as_minus_one() {
         assert_eq!(signed(u32::MAX), "-1");

@@ -98,7 +98,7 @@ pub fn draw(
                             .color(theme::INK),
                     );
                     if let Some(subtitle) = &card.subtitle {
-                        ui.label(egui::RichText::new(subtitle).size(11.0).color(theme::INK_DIM));
+                        ui.label(egui::RichText::new(subtitle).size(theme::SMALL).color(theme::INK_DIM));
                     }
                     ui.add_space(3.0);
                     egui::Grid::new("world-hover-card-rows")
@@ -107,15 +107,15 @@ pub fn draw(
                         .show(ui, |ui| {
                             for (label, value) in &card.rows {
                                 ui.label(
-                                    egui::RichText::new(*label).size(10.5).color(theme::INK_FAINT),
+                                    egui::RichText::new(*label).size(theme::SMALL).color(theme::INK_FAINT),
                                 );
-                                ui.label(egui::RichText::new(value).size(10.5).color(theme::INK));
+                                ui.label(egui::RichText::new(value).size(theme::SMALL).color(theme::INK));
                                 ui.end_row();
                             }
                         });
                     if let Some(status) = card.status {
                         ui.add_space(2.0);
-                        ui.label(egui::RichText::new(status).size(10.5).color(theme::WARN));
+                        ui.label(egui::RichText::new(status).size(theme::SMALL).color(theme::WARN));
                     }
                 });
         });

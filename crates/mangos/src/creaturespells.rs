@@ -357,11 +357,12 @@ pub fn search_query(term: &str, limit: usize) -> String {
     )
 }
 
-/// How many creature templates name a list, as `n`. A template has a row per
-/// patch, so the entries are counted rather than the rows.
+/// The creature templates that name a list, one `entry` each. A template has
+/// a row per patch, so the entries are listed rather than the rows; the
+/// editor folds its project's own `spell_list_id` edits over them.
 pub fn users_query(entry: u32) -> String {
     format!(
-        "SELECT COUNT(DISTINCT `entry`) AS `n` FROM {} WHERE `spell_list_id` = {entry}",
+        "SELECT DISTINCT `entry` FROM {} WHERE `spell_list_id` = {entry}",
         crate::sql::name(crate::creature::TEMPLATE)
     )
 }

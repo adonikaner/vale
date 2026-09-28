@@ -1,29 +1,29 @@
-//! What a project changes about the server's quests, as SQL, applied when a
-//! person asks — and live on a reload, removals included.
+//! The server quest rows a project changes, written as SQL and applied when
+//! the user asks. Every change, including a removal, takes effect on a reload.
 //!
-//! ## The same shape as [`super::items`], with a third life
+//! ## Storage and apply follow [`super::items`]; a removal is live on a reload
 //!
-//! How an edit is stored, batched, written and undone is that module's: the
+//! An edit is stored, batched, written and undone as in that module: the
 //! project's store accumulates typed values, a save writes the SQL, nothing
 //! reaches the database until **Apply**, and the statements that put each row
 //! back are written from the database immediately before anything runs.
 //!
-//! What is different is that a row here can be **removed**. `LoadQuests` clears
-//! its map before it reads and every lookup of a quest tests the pointer it is
-//! given, so a quest that has gone from the table is one the server stops
-//! offering rather than one it crashes on — `vale_mangos::quest`'s module
-//! comment is where that was read. So a [`Life::Delete`] row is written rather
-//! than refused, and its undo is [`snapshot_the_quest`]: every version of the
-//! template and every row of the six dependent tables, as the `INSERT`s that
-//! restore them.
+//! The difference is that a quest row can be removed without a restart.
+//! `LoadQuests` clears its map before it reads and every lookup of a quest
+//! tests the pointer it is given, so the server stops offering a quest that has
+//! gone from the table rather than crashing on it. `vale_mangos::quest`'s
+//! module comment records where this was read. A [`Life::Delete`] row is
+//! therefore written rather than refused, and its undo is
+//! [`snapshot_the_quest`]: every version of the template and every row of the
+//! six dependent tables, as the `INSERT`s that restore them.
 //!
-//! ## Five tables, one file, and the reloads in a stated order
+//! ## Files, tables and reload order
 //!
 //! ```text
 //! sql\quests.sql         what this project does to quest_template and the four
 //!                        relation tables
-//! sql\quests-revert.sql  …and what puts those rows back
-//! server\rows.txt        …and the store both are written from, shared
+//! sql\quests-revert.sql  the statements that put those rows back
+//! server\rows.txt        the store both are written from, shared
 //! ```
 //!
 //! An apply asks a running playtest for one `.reload` per table it wrote, in
@@ -32,9 +32,9 @@
 //! relation to a quest created in the same apply would be dropped by a reload
 //! in the other order and reported as loaded.
 //!
-//! **What a reload costs is stated on the Server panel and not prevented**:
-//! it frees every `Quest`, and two escort script bases hold a pointer to one.
-//! See `vale_mangos::quest`.
+//! The cost of a reload is stated on the Server panel and not prevented: it
+//! frees every `Quest`, and two escort script bases hold a pointer to one. See
+//! `vale_mangos::quest`.
 
 use crate::session::EditSession;
 use vale_mangos::conn::Db;
@@ -47,7 +47,7 @@ pub use super::creatures::Undo;
 /// What this project does to the server's quests, as SQL.
 pub const SQL_VPATH: &str = "sql\\quests.sql";
 
-/// …and what puts it back.
+/// The statements that put the changed rows back, as SQL.
 pub const REVERT_VPATH: &str = "sql\\quests-revert.sql";
 
 /// One row's worth of change: what is to become of it, and the columns it sets.
@@ -57,8 +57,8 @@ pub struct Row {
     pub key: Key,
     pub life: Life,
     pub changes: Vec<Assignment>,
-    /// **Where the database has the row**, which is [`Self::key`] unless the
-    /// project changes the quest's entry — see
+    /// Where the database has the row. This is [`Self::key`] unless the
+    /// project changes the quest's entry; see
     /// `vale_mangos::row::RowEdit::from`.
     pub at: Key,
 }
@@ -152,17 +152,17 @@ impl Plan {
     }
 }
 
-/// **What the project's store comes to**, as statements.
+/// The plan the project's store comes to.
 pub fn plan(session: &EditSession) -> Plan {
     plan_from(&session.server_edits)
 }
 
-/// …and the same over the store alone, so it can be checked with no session.
+/// The plan for a store on its own, so it can be checked with no session.
 pub fn plan_from(edits: &vale_mangos::row::Edits) -> Plan {
     let mut out = Plan::default();
     for (table, key, row) in edits.rows() {
-        // Another subject's row: skipped in silence, as every writer here skips
-        // the others' — see `super::items::plan_from`.
+        // Another subject's row: skipped without a message, as every writer
+        // here skips the others'. See `super::items::plan_from`.
         let Some(table) = quest::table_named(table) else {
             continue;
         };
@@ -186,8 +186,8 @@ pub fn plan_from(edits: &vale_mangos::row::Edits) -> Plan {
             });
         }
         match row.life {
-            // A creation names every column or it is not written, on
-            // `super::creatures`' own rule.
+            // A creation must name every column or it is not written, the
+            // same rule as in `super::creatures`.
             Life::Insert => {
                 let missing: Vec<&str> = quest::columns_of(table)
                     .iter()
@@ -212,9 +212,9 @@ pub fn plan_from(edits: &vale_mangos::row::Edits) -> Plan {
             }
         }
         let at = row.from.clone().unwrap_or_else(|| key.clone());
-        // **A removal is of the row where the database has it.** A row the
+        // A removal deletes the row where the database has it. A row the
         // project moved and then removed is at its old id, and a `DELETE`
-        // naming the new one would match nothing and say so to nobody.
+        // naming the new id would match nothing without reporting it.
         let key = match row.life {
             Life::Delete => at.clone(),
             _ => key.clone(),
@@ -230,7 +230,7 @@ pub fn plan_from(edits: &vale_mangos::row::Edits) -> Plan {
     out
 }
 
-/// **Write `sql\quests.sql`**, or remove it when the project changes nothing.
+/// Writes `sql\quests.sql`, or removes it when the project changes nothing.
 pub fn write_sql(session: &mut EditSession) -> Result<usize, String> {
     let plan = plan(session);
     for refused in &plan.refused {
@@ -268,7 +268,7 @@ pub fn write_sql(session: &mut EditSession) -> Result<usize, String> {
     Ok(count)
 }
 
-/// **The quest half of a save**: the SQL the store comes to. The store itself
+/// The quest part of a save: the SQL the store comes to. The store itself
 /// is written by [`super::creatures::save`], on the same save.
 pub fn save(session: &mut EditSession) {
     match write_sql(session) {
@@ -305,8 +305,8 @@ impl Applied {
     }
 }
 
-/// **An Apply, with everything it needs to run off the main thread** — see
-/// [`super::items::ApplyJob`], which is the same three halves.
+/// An Apply with everything it needs to run off the main thread. It has the
+/// same three parts as [`super::items::ApplyJob`].
 pub struct ApplyJob {
     plan: Plan,
     project: vale_edit::project::Project,
@@ -316,7 +316,7 @@ pub struct ApplyJob {
     own: vale_mangos::row::Edits,
 }
 
-/// …and what running one answered.
+/// The result of running an [`ApplyJob`].
 pub struct ApplyDone {
     signature: u64,
     pub result: Result<Applied, String>,
@@ -355,11 +355,11 @@ pub fn prepare_apply(
 }
 
 impl ApplyJob {
-    /// **The worker's half**, in [`super::reconcile`]'s order: what the project
-    /// applied before is put back, and then each row is read as it stands, its
-    /// undo written, and its own statements run — the templates before the
-    /// relations, so a relation of a quest whose entry changes is met where the
-    /// move left it.
+    /// The worker thread's half, in [`super::reconcile`]'s order: what the
+    /// project applied before is put back, then each row is read as it stands,
+    /// its undo is written, and its own statements run. Templates run before
+    /// relations, so a relation of a quest whose entry changes is found where
+    /// the move left it.
     pub fn run(self) -> ApplyDone {
         let signature = self.plan.signature();
         let result = (|| {
@@ -386,7 +386,7 @@ impl ApplyJob {
                 affected: done.affected,
                 newly_undoable: done.undoable,
                 taken_back: done.taken_back,
-                // **All five, in order**, and not only the tables the plan
+                // All five tables in order, not only the tables the plan
                 // writes: the put-back before it may have written any of them,
                 // and a move writes the relation tables through its references.
                 tables: quest::RELOAD_ORDER.to_vec(),
@@ -396,23 +396,23 @@ impl ApplyJob {
     }
 }
 
-/// **The main thread's second half.** The tables have moved whether or not
-/// the run finished, so the list the tool read is stale and the server's copy
-/// with it: all five reloads are asked for, deferred, in order.
+/// The main thread's second half. The tables have changed whether or not the
+/// run finished, so the list the tool read is stale and so is the server's
+/// copy. All five reloads are asked for, deferred, in order.
 pub fn finish_apply(
     session: &mut EditSession,
     reloads: &mut super::reload::Reloads,
     done: &ApplyDone,
 ) {
-    session.quest_writes += 1;
+    session.wrote_the_database();
     session.applied_quests = done.result.as_ref().ok().map(|_| done.signature);
     for table in quest::RELOAD_ORDER {
         reloads.when_there_is_a_session(table);
     }
 }
 
-/// **An Apply as one step of [`super::stack`]**, which is the only way it
-/// runs: `None` when there is nothing to apply.
+/// An Apply as one step of [`super::stack`], which is the only way an Apply
+/// runs. `None` when there is nothing to apply.
 pub fn apply_step(
     session: &EditSession,
     server: &super::settings::ServerSettings,
@@ -431,8 +431,8 @@ pub fn apply_step(
     })))
 }
 
-/// **One row's undo, read immediately before the row is written** — the
-/// subject's half of [`super::reconcile`]'s step 3.
+/// One row's undo, read immediately before the row is written. This is the
+/// quest module's part of [`super::reconcile`]'s step 3.
 fn undo_of_a_row(
     db: &mut Db,
     row: &Row,
@@ -443,7 +443,7 @@ fn undo_of_a_row(
         match row.table == quest::TEMPLATE {
             true => super::reconcile::refuse_a_taken_id(db, row.table, &row.key, references, own)?,
             // A relation's key is two ids and neither is its own, so the
-            // question is the whole key.
+            // check is on the whole key.
             false => {
                 if db.row(&quest::exists_query(row.table, &row.key))?.is_some() {
                     return Err(format!(
@@ -486,8 +486,8 @@ fn undo_of_a_row(
     })
 }
 
-/// **Everything a removed quest takes with it, as the statements that put it
-/// back**: every content-patch version of the template, then each of
+/// Everything a removed quest takes with it, as the statements that put it
+/// back: every content-patch version of the template, then each of
 /// [`quest::DEPENDENTS`]. `None` when the quest is not in the database.
 fn snapshot_the_quest(db: &mut Db, key: &Key) -> Result<Option<Vec<String>>, String> {
     let Some(entry) = key.first() else {
@@ -519,7 +519,7 @@ fn snapshot_the_quest(db: &mut Db, key: &Key) -> Result<Option<Vec<String>>, Str
     Ok(Some(out))
 }
 
-/// **A Put back, with everything it needs to run off the main thread.**
+/// A Put back with everything it needs to run off the main thread.
 pub struct RevertJob {
     project: vale_edit::project::Project,
     at: vale_mangos::conn::Where,
@@ -555,13 +555,14 @@ impl RevertJob {
 /// file does not say which it touches.
 pub fn finish_revert(session: &mut EditSession, reloads: &mut super::reload::Reloads) {
     session.applied_quests = None;
-    session.quest_writes += 1;
+    session.wrote_the_database();
     for table in quest::RELOAD_ORDER {
         reloads.when_there_is_a_session(table);
     }
 }
 
-/// …and a Put back as one: `None` when this project has applied nothing.
+/// A Put back as one step of [`super::stack`]: `None` when this project has
+/// applied nothing.
 pub fn revert_step(
     session: &EditSession,
     server: &super::settings::ServerSettings,
@@ -585,8 +586,8 @@ pub fn revert_step(
     })))
 }
 
-/// **What of this project is in the database** — [`super::items::OnTheServer`]
-/// for the quest half.
+/// Which of this project's quest rows are in the database. The quest
+/// counterpart of [`super::items::OnTheServer`].
 pub struct OnTheServer {
     undo: Undo,
     current: bool,
@@ -619,8 +620,8 @@ impl OnTheServer {
     }
 }
 
-/// **`--apply-quests` and `--revert-quests`**: the Server panel's two buttons
-/// with nobody at the keyboard. Fires once, after any scripted edit has landed.
+/// Runs `--apply-quests` and `--revert-quests`, the command-line forms of the
+/// Server panel's two buttons. Fires once, after any scripted edit has landed.
 pub fn on_the_command_line(
     args: Res<crate::Args>,
     session: Option<ResMut<EditSession>>,
@@ -639,9 +640,8 @@ pub fn on_the_command_line(
     *done = true;
     super::creatures::save(&mut session);
     save(&mut session);
-    // **Through the stack**, as the Server panel's buttons are — see
-    // [`super::stack`] — so a flag puts back and applies the later subjects
-    // with this one.
+    // Run through [`super::stack`], as the Server panel's buttons are, so a
+    // flag also puts back and applies the later subjects with this one.
     let wanted = [
         (args.revert_quests, "--revert-quests", super::stack::Wanted::PutBack(super::stack::Subject::Quests)),
         (args.apply_quests, "--apply-quests", super::stack::Wanted::Apply(super::stack::Subject::Quests)),
@@ -711,7 +711,7 @@ mod tests {
         );
     }
 
-    /// **A quest is written before the relation that names it**, whatever order
+    /// A quest is written before the relation that names it, whatever order
     /// the store holds them in, and the reloads are asked for in that order.
     #[test]
     fn a_quest_is_written_and_reloaded_before_its_relations() {
@@ -742,8 +742,8 @@ mod tests {
         assert_eq!(plan.tables(), vec![quest::TEMPLATE, quest::CREATURE_GIVES]);
     }
 
-    /// **A removal is written**, which is the one way this half differs from
-    /// the items': the entry alone, and the six dependent tables.
+    /// A removed quest is written as a `DELETE` of the entry alone, and of the
+    /// six dependent tables. Unlike an item removal, it allows the reload.
     #[test]
     fn a_removed_quest_is_written_with_its_dependents() {
         let mut edits = Edits::default();
@@ -756,7 +756,7 @@ mod tests {
         assert_eq!(sql[0], "DELETE FROM `quest_template` WHERE `entry` = 783;");
     }
 
-    /// …and a removed relation is one `DELETE` naming both key columns.
+    /// A removed relation is one `DELETE` naming both key columns.
     #[test]
     fn a_removed_relation_is_one_delete() {
         let mut edits = Edits::default();
@@ -783,7 +783,8 @@ mod tests {
         assert!(plan.refused[0].contains("RewXP"), "{:?}", plan.refused);
     }
 
-    /// **The three halves of the store do not complain about each other.**
+    /// The item, quest and creature writers each skip the other subjects' rows
+    /// in the shared store without a refusal.
     #[test]
     fn each_writer_ignores_the_other_subjects_rows() {
         let mut edits = Edits::default();

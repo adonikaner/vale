@@ -443,7 +443,7 @@ fn narrowing(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>)
     };
     let name = work
         .quests
-        .holder(holder, id)
+        .holder(holder, id, &work.session.server_edits)
         .unwrap_or_else(|| format!("{} {id}", holder.word()));
     ui.add_space(4.0);
     egui::Frame::new()
@@ -1043,8 +1043,8 @@ fn resolved(ui: &mut egui::Ui, work: &mut Workspace<'_>, column: &'static Column
 /// while the pointer is over it and keeps its quality colour rather than a
 /// link colour, because the colour states the item's quality.
 fn item_name(ui: &mut egui::Ui, work: &mut Workspace<'_>, entry: u32) {
-    let Some(found) = work.quests.item(entry) else {
-        match work.quests.item_known(entry) {
+    let Some(found) = work.quests.item(entry, &work.session.server_edits) else {
+        match work.quests.item_known(entry, &work.session.server_edits) {
             true => {
                 ui.label(
                     egui::RichText::new("no such item")
@@ -1094,7 +1094,7 @@ fn item_name(ui: &mut egui::Ui, work: &mut Workspace<'_>, entry: u32) {
 
 /// A creature's or game object's name, with which of the two it is.
 fn holder_name(ui: &mut egui::Ui, work: &mut Workspace<'_>, holder: Holder, id: u32) {
-    match work.quests.holder(holder, id) {
+    match work.quests.holder(holder, id, &work.session.server_edits) {
         Some(name) => {
             ui.label(egui::RichText::new(name).color(theme::INK));
             ui.label(
@@ -1103,7 +1103,7 @@ fn holder_name(ui: &mut egui::Ui, work: &mut Workspace<'_>, holder: Holder, id: 
                     .color(theme::INK_FAINT),
             );
         }
-        None => match work.quests.holder_known(holder, id) {
+        None => match work.quests.holder_known(holder, id, &work.session.server_edits) {
             true => {
                 ui.label(
                     egui::RichText::new(format!("no such {}", holder.word()))
@@ -1612,7 +1612,7 @@ fn log_entry(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
                     true => Holder::Creature,
                     false => Holder::Object,
                 };
-                let found = work.quests.holder(holder, id.unsigned_abs() as u32);
+                let found = work.quests.holder(holder, id.unsigned_abs() as u32, &work.session.server_edits);
                 // The client appends " slain" to a creature's own name.
                 found.map(|name| match holder {
                     Holder::Creature => format!("{name} slain"),
@@ -1631,7 +1631,7 @@ fn log_entry(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
         if id <= 0 || count == 0 {
             continue;
         }
-        let found = work.quests.item(id as u32);
+        let found = work.quests.item(id as u32, &work.session.server_edits);
         let name = found
             .map(|item| item.name)
             .unwrap_or_else(|| format!("item {id}"));
@@ -1824,7 +1824,7 @@ fn relation_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, relation: Relation,
         };
         let name = work
             .quests
-            .holder(relation.holder, relation.id)
+            .holder(relation.holder, relation.id, &work.session.server_edits)
             .unwrap_or_else(|| format!("{} {}", relation.holder.word(), relation.id));
         if ui
             .add(egui::Link::new(egui::RichText::new(name).color(colour)))

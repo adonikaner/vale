@@ -220,13 +220,13 @@ fn running(ui: &mut egui::Ui, playing: &mut Session, session: &mut EditSession) 
             Playtest::Playing => "in the world",
             _ => "logging in",
         })
-        .size(11.0)
+        .size(theme::SMALL)
         .color(theme::INK_FAINT),
     );
     ui.label(
         egui::RichText::new("PLAYTEST")
             .color(theme::GOOD)
-            .size(11.0),
+            .size(theme::SMALL),
     );
 }
 

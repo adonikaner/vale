@@ -137,7 +137,7 @@ fn summary(ui: &mut egui::Ui, flights: &Flightpaths) {
     for finding in flights.findings.iter().take(6) {
         ui.label(
             egui::RichText::new(finding.to_string())
-                .size(11.0)
+                .size(theme::SMALL)
                 .color(theme::WARN),
         );
     }
@@ -416,7 +416,7 @@ fn route_row(
     if !back {
         ui.label(
             egui::RichText::new("   no path back")
-                .size(11.0)
+                .size(theme::SMALL)
                 .color(theme::WARN),
         );
     }
@@ -551,7 +551,7 @@ fn points_list(ui: &mut egui::Ui, session: &EditSession, flights: &mut Flightpat
             point.index, point.at[2]
         );
         if ui
-            .selectable_label(chosen, egui::RichText::new(text).monospace().size(11.0))
+            .selectable_label(chosen, egui::RichText::new(text).monospace().size(theme::SMALL))
             .clicked()
         {
             flights.select_point(point.id);

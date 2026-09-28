@@ -1,13 +1,12 @@
 //! The one line at the bottom: where you are, what is open, and the last thing
 //! worth saying.
 //!
-//! ## Everything on it is a fact and none of it is a control
+//! ## The status line reports state and has no controls
 //!
-//! That is the whole rule, and it is what keeps it readable at a glance: the eye
-//! learns that nothing down here has to be clicked, so it can be read without
-//! being looked at. The one thing that used to be here and is not — "drop to
-//! it", which put the camera on the ground — moved to the `Go to…` menu, where
-//! the other three ways of moving the camera already were.
+//! Nothing on the line is clickable, so a reader learns that nothing here needs
+//! clicking and can take it in at a glance. "Drop to it", which put the camera
+//! on the ground, used to be here; it moved to the `Go to…` menu, where the
+//! other three ways of moving the camera already were.
 //!
 //! ## The numbers are monospaced and the words are not
 //!
@@ -15,14 +14,15 @@
 //! width as they change value, so a coordinate readout shuffles sideways while
 //! you fly. See [`super::theme::number`].
 //!
-//! ## …and what the view bar is doing is a fact too
+//! ## View bar state
 //!
-//! The one thing the bar above cannot say about itself: *which* of its
-//! thirty-two buttons are not in their default state, in words rather than as a
-//! dim square somewhere in a row. It is printed as the flags that reproduce it —
-//! `--without doodads,water` — so a subtraction found by clicking can be
-//! re-taken in a screenshot without anybody having to remember the spelling.
-//! The same affordance the client's debug window has on its two switch tabs.
+//! The status line states what the view bar above cannot show about itself:
+//! which of its thirty-two buttons are not in their default state, in words
+//! rather than as a dim square somewhere in a row. It is printed as the flags
+//! that reproduce it (`--without doodads,water`), so a subtraction found by
+//! clicking can be reproduced in a scripted screenshot without remembering the
+//! flag spelling. The client's debug window does the same on its two switch
+//! tabs.
 
 use bevy_egui::egui;
 
@@ -37,17 +37,18 @@ use vale_client::render::focus::WorldFocus;
 /// flashed for one frame would be noticed as a flicker rather than read.
 const TOAST_LINGER: f64 = 0.6;
 
-/// …and how long it takes to fade in or out.
+/// How long the toast takes to fade in or out, in seconds.
 const TOAST_FADE: f32 = 0.25;
 
-/// **"Server sync in progress…"**, in the bottom-right corner while anything is
-/// reading or writing the world database — see [`crate::server::queue`], which
+/// "Server sync in progress…", in the bottom-right corner while anything is
+/// reading or writing the world database; see [`crate::server::queue`], which
 /// counts both.
 ///
-/// **One line, over the foot of the inspector**: the text is about one and a
-/// half times the status line's, so it is seen without being looked for. It is not
-/// on this status line, whose rule is that nothing on it changes shape while
-/// it is being read. Hovering it lists the writes running and waiting.
+/// One line, over the foot of the inspector. The text is about one and a half
+/// times the size of the status line's, so it is seen without being looked
+/// for. It is not on the status line, whose rule is that nothing on it changes
+/// shape while it is being read. Hovering it lists the writes running and
+/// waiting.
 ///
 /// `bottom` is the top of the two bottom bars, which the toast stands on.
 pub fn sync_toast(
@@ -116,9 +117,9 @@ pub fn draw(
     camera: &EditorCamera,
     // The view bar's own state as flags — see `super::viewbar::scripted`.
     scripted: &[String],
-    // …and whatever slow work is running — a shadow rebake (`crate::jobs`),
-    // a run of the server's tile tools (`crate::server::datadir::Step`) —
-    // each as what kind of work it is, the step it is on, and how far it has
+    // The slow work that is running, such as a shadow rebake (`crate::jobs`)
+    // or a run of the server's tile tools (`crate::server::datadir::Step`).
+    // Each entry is the kind of work, the step it is on, and how far it has
     // got.
     working: &[(&str, String, f32)],
     // Whether the panels are open over a running playtest — see
@@ -137,13 +138,13 @@ pub fn draw(
             theme::number(format!("{} {}", session.map_id, session.map)),
         );
         field(ui, "tile", theme::number(format!("{cx}, {cy}")));
-        // **Whose position this is depends on who is driving.** While the
-        // editor is driving it is the free camera's target and the pick's
-        // ground under it. During a playtest neither runs — the session has the
-        // camera and the viewport rectangle is empty — so both would be frozen
-        // at wherever the editor left them, which reads as a live number that
-        // is not. `WorldFocus` follows the character then, so the one position
-        // there is to report is the character's.
+        // Which position is shown depends on who controls the camera. While
+        // the editor does, it is the free camera's target and the pick's
+        // ground under it. During a playtest neither runs (the session has the
+        // camera and the viewport rectangle is empty), so both would be frozen
+        // where the editor left them and would look live while not updating.
+        // `WorldFocus` follows the character then, so the position reported
+        // is the character's.
         match playing {
             true => field(
                 ui,
@@ -172,7 +173,7 @@ pub fn draw(
                         ui,
                         "pointer",
                         egui::RichText::new("over nothing")
-                            .size(11.0)
+                            .size(theme::SMALL)
                             .color(theme::INK_FAINT),
                     ),
                 }
@@ -186,11 +187,11 @@ pub fn draw(
             "open",
             theme::number(format!("{} tiles", session.tiles.len())),
         );
-        // **The tile count, plus a mark when the server half is owed a save.**
-        // That half is not tiles and has no count of its own, so it reads as a
-        // `+` rather than being folded into a number it is not part of — and
-        // leaving it out entirely is what let a creature edit sit unsaved with
-        // this bar reading `unsaved 0`.
+        // The unsaved tile count, plus a mark when the server half has unsaved
+        // edits. That half is not tiles and has no count of its own, so it is
+        // shown as a `+` rather than folded into a number it is not part of.
+        // Without the mark, a creature edit could sit unsaved while this bar
+        // read `unsaved 0`.
         let unsaved = session.unsaved.len();
         let owed = session.server_unsaved();
         let text = match (unsaved, owed) {
@@ -206,10 +207,10 @@ pub fn draw(
             }),
         );
 
-        // **What is running, if anything** — see `crate::jobs`. First after the
-        // numbers rather than pushed right, because it is the one thing here
-        // that is *changing*, and a bar that moved about as its label grew
-        // would be harder to ignore than to read.
+        // What is running, if anything; see `crate::jobs`. Placed directly
+        // after the numbers rather than pushed right, because it is the one
+        // thing here that changes, and a bar that moved as its label grew
+        // would be distracting.
         for (kind, label, fraction) in working {
             ui.add_space(4.0);
             theme::progress(ui, *fraction, kind, label, 320.0).on_hover_text(format!(
@@ -220,12 +221,12 @@ pub fn draw(
             ui.add_space(4.0);
         }
 
-        // …and whatever the session last said, pushed to the right so it has the
-        // room a sentence needs and never shoves the numbers about.
+        // The session's last status message, pushed to the right so it has the
+        // room a sentence needs and never moves the numbers.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
                 egui::RichText::new(&session.status)
-                    .size(11.0)
+                    .size(theme::SMALL)
                     .color(theme::INK_DIM),
             );
             // The view flags go between the numbers and the message, coloured
@@ -241,7 +242,7 @@ pub fn draw(
 
 /// One `name value` pair with a hairline after it.
 fn field(ui: &mut egui::Ui, name: &str, value: egui::RichText) {
-    ui.label(egui::RichText::new(name).size(11.0).color(theme::INK_FAINT));
+    ui.label(egui::RichText::new(name).size(theme::SMALL).color(theme::INK_FAINT));
     ui.label(value);
     ui.add_space(2.0);
     let height = ui.spacing().interact_size.y;

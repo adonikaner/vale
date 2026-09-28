@@ -403,7 +403,7 @@ impl ApplyJob {
 /// The main thread's second half of an Apply. The database has moved whether
 /// or not the run finished, so what the tool read out of it is stale either way.
 pub fn finish_apply(session: &mut EditSession, done: &ApplyDone) {
-    session.gameobject_writes += 1;
+    session.wrote_the_database();
     session.applied_gameobjects = done.result.as_ref().ok().map(|_| done.signature);
 }
 
@@ -528,7 +528,7 @@ impl RevertJob {
 /// The main thread's second half.
 pub fn finish_revert(session: &mut EditSession) {
     session.applied_gameobjects = None;
-    session.gameobject_writes += 1;
+    session.wrote_the_database();
 }
 
 /// A Put back as one step of [`super::stack`]. `None` when this project has

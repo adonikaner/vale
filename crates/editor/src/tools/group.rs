@@ -501,9 +501,12 @@ fn paint(mut contexts: EguiContexts, marquee: Res<Marquee>) -> Result {
         egui::Order::Foreground,
         egui::Id::new("group-marquee"),
     ));
+    // Held in the window's logical pixels, which the tools compare with
+    // `on_screen`; painted in egui's points, which are larger by the zoom.
+    let zoom = ctx.zoom_factor().max(0.01);
     let rect = egui::Rect::from_two_pos(
-        egui::pos2(held.from.x, held.from.y),
-        egui::pos2(held.to.x, held.to.y),
+        egui::pos2(held.from.x / zoom, held.from.y / zoom),
+        egui::pos2(held.to.x / zoom, held.to.y / zoom),
     );
     let accent = crate::ui::theme::ACCENT;
     painter.rect_filled(rect, 0.0, accent.gamma_multiply(0.12));

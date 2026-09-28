@@ -211,13 +211,14 @@ use vale_client::render::focus::WorldFocus;
 /// or to a panel. The module comment explains why the two egui answers do not
 /// work.
 ///
-/// The rectangle is in the same units as `Window::cursor_position`: egui's
-/// points are the window's logical pixels, because bevy_egui sets
-/// `pixels_per_point` from the window's scale factor. The pick multiplies by
-/// the scale factor and this does not, because the pick's ray goes into a
-/// render target measured in physical pixels and this is a comparison against
-/// the window.
-#[derive(Resource, Debug, Clone, Default)]
+/// The rectangles are in egui's points and `Window::cursor_position` is in
+/// the window's logical pixels. The two are equal only while egui's zoom
+/// factor is 1: bevy_egui sets `pixels_per_point` to the window's scale factor
+/// times the zoom, which Ctrl and + or - change. [`Viewport::holds`] divides
+/// the pointer by [`Viewport::zoom`] before comparing. The pick multiplies by
+/// the scale factor instead, because its ray goes into a render target
+/// measured in physical pixels, which the zoom does not change.
+#[derive(Resource, Debug, Clone)]
 pub struct Viewport {
     /// `None` before the panels are first drawn; on that frame the whole
     /// window is the world.
@@ -225,6 +226,19 @@ pub struct Viewport {
     /// The rectangles drawn floating over it this frame: popovers, windows,
     /// modals and egui areas.
     floating: Vec<egui::Rect>,
+    /// egui's zoom factor this frame: how many of the window's logical pixels
+    /// one point is. Set by the shell; 1 before it has run.
+    pub zoom: f32,
+}
+
+impl Default for Viewport {
+    fn default() -> Viewport {
+        Viewport {
+            rect: None,
+            floating: Vec::new(),
+            zoom: 1.0,
+        }
+    }
 }
 
 impl Viewport {
@@ -235,6 +249,8 @@ impl Viewport {
     /// `is_using_pointer` and `is_popup_open`, so this is asked together with
     /// egui's own answer rather than instead of it. See [`over_the_world`].
     pub fn holds(&self, at: Vec2) -> bool {
+        // The pointer is in logical pixels and the rectangles in points.
+        let at = at / self.zoom.max(0.01);
         let at = egui::pos2(at.x, at.y);
         let inside = match self.rect {
             Some(rect) => rect.contains(at),
@@ -456,6 +472,7 @@ fn draw(
     };
     let ctx = contexts.ctx_mut()?.clone();
     theme::install(&ctx);
+    viewport.zoom = ctx.zoom_factor();
     // The two lists kept beside the project folders, read once per install.
     // See `crate::favourites` for where they are stored and why.
     if let Some(dir) = session.project.root.parent() {
@@ -1420,6 +1437,7 @@ mod tests {
                 egui::pos2(1312.0, 868.0),
             )),
             floating: Vec::new(),
+            zoom: 1.0,
         };
         assert!(viewport.holds(Vec2::new(700.0, 400.0)), "the middle");
         assert!(!viewport.holds(Vec2::new(60.0, 400.0)), "the rail");
@@ -1448,6 +1466,7 @@ mod tests {
                 egui::pos2(600.0, 36.0),
                 egui::pos2(860.0, 200.0),
             )],
+            zoom: 1.0,
         };
         assert!(!viewport.holds(Vec2::new(700.0, 100.0)), "in the popover");
         assert!(viewport.holds(Vec2::new(700.0, 400.0)), "under it");
@@ -1470,6 +1489,7 @@ mod tests {
         Viewport {
             rect: Some(screen),
             floating: areas_over_the_world(&ctx),
+            zoom: 1.0,
         }
     }
 
@@ -1511,6 +1531,22 @@ mod tests {
         });
         assert!(!viewport.holds(Vec2::new(210.0, 305.0)), "on the window");
         assert!(viewport.holds(Vec2::new(610.0, 305.0)), "on the card");
+    }
+
+    /// With egui zoomed in, a point is more than one logical pixel, and the
+    /// pointer is divided by the zoom before it is compared with the panels.
+    /// Without that, at 150% only the top-left two thirds of the viewport took
+    /// a press.
+    #[test]
+    fn a_zoomed_shell_measures_the_pointer_in_points() {
+        let viewport = Viewport {
+            rect: Some(egui::Rect::from_min_max(egui::pos2(132.0, 40.0), egui::pos2(633.0, 560.0))),
+            zoom: 1.5,
+            ..Viewport::default()
+        };
+        assert!(viewport.holds(Vec2::new(900.0, 800.0)), "600, 533 in points: in the world");
+        assert!(!viewport.holds(Vec2::new(1000.0, 400.0)), "666 in points: on the inspector");
+        assert!(!viewport.holds(Vec2::new(150.0, 400.0)), "100 in points: on the rail");
     }
 
     /// Before anything is drawn the whole window is viewport, as it would be
@@ -1571,14 +1607,14 @@ fn playtest_bar(
                 ui.label(
                     egui::RichText::new("PLAYTEST")
                         .color(theme::GOOD)
-                        .size(11.0),
+                        .size(theme::SMALL),
                 );
                 ui.label(
                     egui::RichText::new(match *state {
                         Playtest::Playing => "in the world",
                         _ => "logging in",
                     })
-                    .size(11.0)
+                    .size(theme::SMALL)
                     .color(theme::INK_FAINT),
                 );
                 // The panels are reachable from a button as well as a key,

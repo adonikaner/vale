@@ -593,7 +593,7 @@ impl ApplyJob {
 /// make every kind of creature change live, so the instruction is to restart
 /// the server, and the status line says so.
 pub fn finish_apply(session: &mut EditSession, done: &ApplyDone) {
-    session.creature_writes += 1;
+    session.wrote_the_database();
     session.applied_creatures = done.result.as_ref().ok().map(|_| done.signature);
 }
 
@@ -744,7 +744,7 @@ impl RevertJob {
 /// project says is in it.
 pub fn finish_revert(session: &mut EditSession) {
     session.applied_creatures = None;
-    session.creature_writes += 1;
+    session.wrote_the_database();
 }
 
 /// A Put back as one step of [`super::stack`]: `None` when this project has

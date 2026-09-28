@@ -1,11 +1,10 @@
-//! **The path a creature walks, drawn on the ground and edited there.**
+//! The path a creature walks, drawn on the ground and edited there.
 //!
-//! The second subject in this editor whose document is a row in vmangos'
-//! database, and the first whose edit is a *set* of rows. A `creature_movement`
-//! row is one point of one path; a path is all of them under one key, in order,
-//! and the only sane unit to edit is the whole thing. See
-//! [`vale_mangos::path`], which has the argument and the server source it
-//! comes from.
+//! This is the second subject in this editor whose document is a row in
+//! vmangos' database, and the first whose edit is a set of rows. A
+//! `creature_movement` row is one point of one path; a path is all of them
+//! under one key, in order, and the tool edits the whole path as one unit. See
+//! [`vale_mangos::path`] for the reason and the server source it comes from.
 //!
 //! ## It is a mode of the creature tool, not a tool of its own
 //!
@@ -16,12 +15,12 @@
 //! **Waypoints** button opens its path here, and this takes the pointer while
 //! it is open.
 //!
-//! **The window follows the selection** once it is open, as the template window
-//! beside it does: clicking another creature shows that creature's path. So
+//! Once open, the window follows the selection, as the template window beside
+//! it does: clicking another creature shows that creature's path. So
 //! [`Waypoints::showing`] is whether the window is open and [`Waypoints::open`]
-//! is which path is in it, and they move at different moments.
+//! is which path is in it, and they change at different moments.
 //!
-//! ## The pointer does three things and they are three gestures
+//! ## Pointer gestures: select, drag and add
 //!
 //! ```text
 //! click a node          select it
@@ -29,11 +28,11 @@
 //! click the ground      add a node there, while Add is armed
 //! ```
 //!
-//! **All three are presses on the world and none of them is a press on the
-//! interface.** `crate::ui::over_the_world` is the guard, and it is not
-//! optional: without it Add points took every click in its own window — the
-//! button that turns it off added a point and stayed armed, and a click on a
-//! row of the point list added a point rather than selecting it.
+//! All three act only on presses over the world, never on presses over the
+//! interface. `crate::ui::over_the_world` is the guard and is required: without
+//! it, Add took every click in its own window. The button that turns Add off
+//! added a point and stayed armed, and a click on a row of the point list added
+//! a point instead of selecting it.
 //!
 //! The first two are [`crate::tools::creatures`]' own rule and are here for its
 //! reason: without the select-then-drag split, every click on a node moved it a
@@ -53,14 +52,14 @@
 //! columns and for the same reason: without it a node dragged across a field
 //! would move nothing on screen until it had been applied and read back.
 //!
-//! ## A node is placed on the ground, and that is a decision
+//! ## A node takes the ground's height by default
 //!
 //! [`Waypoints::follow_ground`] is on by default: a node added or dragged takes
 //! the height of the terrain under the pointer. That is right for the creatures
-//! this tool is for and wrong for two whole populations — anything flying, and
-//! anything indoors, whose floor is a building rather than the terrain. So it
-//! is a switch and not a rule, and with it off a drag keeps the node's own
-//! height and moves it across the horizontal plane only.
+//! this tool is for and wrong for two groups: anything flying, and anything
+//! indoors, whose floor is a building rather than the terrain. So it is a
+//! switch, and with it off a drag keeps the node's own height and moves it in
+//! the horizontal plane only.
 //!
 //! `vale waypoints <map>` is the check that has no window: it reports every
 //! node's distance from the terrain as a distribution, and says why that is a
@@ -75,46 +74,54 @@ use bevy::tasks::{block_on, futures_lite::future, Task};
 
 /// What the pointer is doing with the open creature's path.
 ///
-/// [`Default`] is written out rather than derived for one field: the module
-/// comment says a point takes the ground's height by default and a derived
-/// `Default` made `follow_ground` false, so the switch on the window drew
-/// unticked and the documented behaviour was the one you had to ask for.
+/// [`Default`] is written out rather than derived because of one field: the
+/// module comment says a point takes the ground's height by default, and a
+/// derived `Default` set `follow_ground` to false, so the switch on the window
+/// was drawn unticked.
 #[derive(Resource, Debug)]
 pub struct Waypoints {
-    /// **Whether the window is open.** Off by default, which is the ordinary
+    /// Whether the window is open. Off by default, which is the ordinary
     /// state.
     ///
-    /// Separate from [`Self::open`], which is *which* path is loaded, because
+    /// Separate from [`Self::open`], which is which path is loaded, because
     /// the two change at different moments: the window is opened and shut by
     /// its button, and what it holds follows whichever creature is selected.
-    /// The first draft had only the second, so the window stayed on the
+    /// An earlier version had only [`Self::open`], so the window stayed on the
     /// creature it was opened for while the template window beside it followed
-    /// the selection — two panels about the same click disagreeing about what
-    /// had been clicked.
+    /// the selection, and the two panels showed different creatures for the
+    /// same click.
     pub showing: bool,
-    /// **Which creature the window is about**, which is not the same as which
-    /// table its path is in — see [`PathSubject`].
+    /// The creature the window is about. This is not the same as the table its
+    /// path is in; see [`PathSubject`].
     pub subject: Option<PathSubject>,
     /// Whose path is loaded, and out of which table. `None` when the window is
     /// shut, when it is open with no creature selected, and until the read that
-    /// decides *which* table has come back.
+    /// decides which table has come back.
     pub open: Option<(Which, u64)>,
-    /// **What the database holds** for it, read once when it is opened.
+    /// What the database holds for it, read once when it is opened.
     ///
     /// Kept beside the working copy so the panel can say what an edit is
     /// against, and so a path can be reverted to it without a round trip.
     pub from_database: Option<Path>,
     /// The read, while it is running.
     task: Option<Task<Result<Path, String>>>,
+    /// The `EditSession::database_writes` [`Self::from_database`] was read
+    /// at. The path is read again when it moves; see `crate::server::fresh`.
+    read_at: Option<u64>,
+    /// Whether [`Self::from_database`] is an empty spawn path standing in for
+    /// the database's because the project gives the spawn a path of its own.
+    /// It is read again when the project stops claiming that path, after a
+    /// discard or a project switch, or the database's path stays hidden.
+    stands_in: bool,
     /// Why there is nothing, when there is nothing.
     pub trouble: Option<String>,
     /// Which node's form is open, as an index into the drawn path.
     pub selected: Option<usize>,
-    /// …and which is under the pointer.
+    /// Which node is under the pointer, as an index into the drawn path.
     pub hovered: Option<usize>,
     /// A held drag, once it has travelled far enough to be one.
     pub drag: Option<NodeDrag>,
-    /// **Whether a click on the ground adds a node.** Off by default: with it
+    /// Whether a click on the ground adds a node. Off by default: with it
     /// on, the pointer cannot be used to select a creature.
     pub adding: bool,
     /// Whether a node placed or moved takes the ground's height — see the
@@ -125,7 +132,7 @@ pub struct Waypoints {
     /// What the spawn's `movement_type` is, so the panel can say whether the
     /// path is walked at all. Read with the path.
     pub movement_type: u32,
-    /// **Whether `--waypoint-add` has finished**, or was never asked for.
+    /// Whether `--waypoint-add` has finished, or was never asked for.
     ///
     /// `crate::server::creatures::on_the_command_line` waits on it. Without
     /// that, `--apply-creatures` fires on the first frame there is a session
@@ -144,14 +151,16 @@ impl Default for Waypoints {
             open: None,
             from_database: None,
             task: None,
+            read_at: None,
+            stands_in: false,
             trouble: None,
             selected: None,
             hovered: None,
             drag: None,
             adding: false,
-            // **On**, which is what the module comment says and what is right
-            // for the creatures this tool is for. Turned off for anything
-            // flying or indoors.
+            // On, as the module comment states, because that is right for the
+            // creatures this tool is for. Turned off for anything flying or
+            // indoors.
             follow_ground: true,
             fly_to: None,
             movement_type: 0,
@@ -160,25 +169,23 @@ impl Default for Waypoints {
     }
 }
 
-/// **Which creature a path is being edited for**, and everything needed to find
-/// the path the server would actually use for it.
+/// The creature a path is being edited for, and the ids needed to find the
+/// path the server would use for it.
 ///
 /// Two ids rather than one because vmangos resolves a creature's path in two
 /// steps. `WaypointManager::GetDefaultPath` takes `creature_movement` keyed by
-/// the spawn's **guid**, and *only if there is none* falls back to
-/// `creature_movement_template` keyed by the template's **entry**.
+/// the spawn's guid, and only if there is none falls back to
+/// `creature_movement_template` keyed by the template's entry.
 ///
-/// The first draft looked in the first table and stopped. So a creature whose
-/// path is a template path — Princess in Elwynn, entry 330, nine nodes under
-/// `creature_movement_template` — opened a window reading "This creature has no
-/// path" while walking its patrol in the game. It was reported twice, which is
-/// the right number for a panel that states something false rather than
-/// something missing.
+/// An earlier version read only the first table. A creature whose path is a
+/// template path (Princess in Elwynn, entry 330, nine nodes under
+/// `creature_movement_template`) opened a window reading "This creature has no
+/// path" while walking its patrol in the game. This was reported twice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PathSubject {
     /// The `creature` row's guid, which keys `creature_movement`.
     pub guid: u64,
-    /// …and the template's entry, which keys `creature_movement_template`.
+    /// The template's entry, which keys `creature_movement_template`.
     pub entry: u32,
     /// `creature.movement_type`, so the panel can say whether the path is
     /// walked at all.
@@ -200,7 +207,7 @@ pub struct NodeDrag {
     pub moving: bool,
 }
 
-/// **How far the pointer must travel before a drag moves anything**, in pixels.
+/// How far the pointer must travel before a drag moves anything, in pixels.
 ///
 /// `creatures::DRAG_PIXELS`' value and its reason: a click on a node is a
 /// selection, and without a threshold every one of them nudged the node.
@@ -209,13 +216,12 @@ const DRAG_PIXELS: f32 = 6.0;
 /// How near the pointer has to be to a node to pick it, in pixels.
 const GRAB_PIXELS: f32 = 14.0;
 
-/// **What a path is drawn in**, named here because the four are a set and are
-/// read against each other rather than on their own.
+/// The colour of a path's legs. The path colours are named constants because
+/// the four are a set and are read against each other rather than on their own.
 ///
-/// A soft teal rather than the electric cyan the first draft used. Saturated
-/// blue over the brown of a road is sharp enough to be tiring to look at for
-/// the length of an editing session, and a path is on screen for the whole of
-/// one.
+/// A soft teal rather than the bright cyan an earlier version used. Saturated
+/// blue over the brown of a road is tiring to look at over an editing session,
+/// and a path is on screen for the whole session.
 const LEG: Color = Color::srgb(0.38, 0.76, 0.78);
 
 /// The leg back to the first node, which the creature walks and which is not
@@ -226,7 +232,7 @@ const LEG_HOME: Color = Color::srgb(0.24, 0.45, 0.47);
 const NODE: Color = Color::srgb(0.46, 0.84, 0.86);
 
 impl Waypoints {
-    /// **The path as it is drawn**: the database's reading with the project's
+    /// The path as it is drawn: the database's reading with the project's
     /// store over it.
     pub fn path(&self, session: Option<&EditSession>) -> Option<Path> {
         let (which, owner) = self.open?;
@@ -253,19 +259,19 @@ impl Waypoints {
         Walk::of(self.movement_type)
     }
 
-    /// **Whether the path being edited is the template's** — shared by every
-    /// spawn of this creature that has none of its own.
+    /// Whether the path being edited is the template's, which is shared by
+    /// every spawn of this creature that has none of its own.
     ///
-    /// The one thing the window has to say before anything else, for the reason
-    /// the creature panel says *this spawn* over *its template*: the two have
-    /// different blast radiuses and the difference is not visible in the path.
+    /// The window states this before anything else, for the same reason the
+    /// creature panel shows "this spawn" over "its template": an edit to each
+    /// reaches a different set of creatures, and the path does not show which.
     pub fn editing_the_template(&self) -> bool {
         matches!(self.open, Some((Which::Template, _)))
     }
 
     /// Open a creature's path, dropping whatever was open.
     ///
-    /// Which *table* it comes out of is not decided here: it is what the read
+    /// Which table it comes out of is not decided here: it is what the read
     /// finds, following `GetDefaultPath`'s own order. See [`PathSubject`].
     pub fn open_for(&mut self, guid: u64, entry: u32, movement_type: u32) {
         if self.subject.map(|subject| subject.guid) == Some(guid) {
@@ -286,22 +292,22 @@ impl Waypoints {
         self.adding = false;
     }
 
-    /// **Forget what the database held**, so the open path is read again.
+    /// Forget what the database held, so the open path is read again.
     ///
-    /// `Creatures::forget`'s counterpart, called from the same four places and
-    /// for the reason that fix was made: after an apply or a revert the rows
-    /// have moved, and a reading taken before it is a second reading of the
-    /// same column disagreeing with the first on screen. Without it the window
-    /// went on showing the path as it was when the creature was clicked.
+    /// The counterpart of `Creatures::forget`, called from the same four places
+    /// for the same reason: after an apply or a revert the rows have changed,
+    /// and a reading taken before it disagrees on screen with the current rows.
+    /// Without it the window kept showing the path as it was when the creature
+    /// was clicked.
     ///
     /// The selection is kept. It is an index into a path that is about to be
-    /// read again as very nearly the same path, and throwing it away would
-    /// close the form under somebody mid-edit.
+    /// read again as very nearly the same path, and dropping it would close the
+    /// node form while it is being edited.
     pub fn forget(&mut self) {
         self.from_database = None;
     }
 
-    /// …and shut it.
+    /// Shut the window and drop the open path.
     pub fn close(&mut self) {
         *self = Waypoints {
             showing: false,
@@ -314,7 +320,7 @@ impl Waypoints {
         };
     }
 
-    /// **Write a path into the project's store**, under one undo entry.
+    /// Write a path into the project's store, under one undo entry.
     ///
     /// Every edit in this file goes through here, which is what makes each of
     /// them undoable and each of them mark the project unsaved. The subject is
@@ -375,19 +381,19 @@ impl Plugin for WaypointToolPlugin {
     }
 }
 
-/// **Point the window at whichever creature is selected.**
+/// Point the window at whichever creature is selected.
 ///
-/// The template window beside this one draws `creatures.chosen_edited` — the
-/// *current* selection — so clicking another creature changes what it shows.
-/// This window held the creature it was opened for instead, which made two
-/// panels about the same click disagree about what had been clicked.
+/// The template window beside this one draws `creatures.chosen_edited`, the
+/// current selection, so clicking another creature changes what it shows.
+/// This window used to hold the creature it was opened for, so the two panels
+/// showed different creatures for the same click.
 ///
 /// [`Waypoints::open_for`] is a no-op for the creature already loaded, so this
 /// runs every frame and costs a comparison; when the selection does move it
 /// drops the reading, the chosen node and the drag, and the next frame reads
 /// the new path.
 ///
-/// With the window open and **nothing** selected the path is dropped, so the
+/// With the window open and nothing selected the path is dropped, so the
 /// window disappears rather than going on showing a path belonging to a
 /// creature that is no longer chosen. That is the template window's behaviour
 /// too.
@@ -417,7 +423,7 @@ fn follow_the_selection(
     }
 }
 
-/// **Read the open creature's path**, on a task.
+/// Read the open creature's path, on a task.
 ///
 /// Re-read when the selection changes and when an apply has put something
 /// different in the database, on `creatures::read_the_map`'s rule — never on
@@ -441,6 +447,7 @@ fn read_the_path(
                     );
                     waypoints.open = Some((path.which, path.owner));
                     waypoints.from_database = Some(path);
+                    waypoints.stands_in = false;
                     waypoints.trouble = None;
                 }
                 Err(e) => {
@@ -454,25 +461,40 @@ fn read_the_path(
                     }
                 }
             }
-            // **A path this project has given the spawn wins**, whatever the
-            // database currently answers. Without this, re-opening the window
-            // on a creature whose own path exists only as an unapplied edit
-            // read the template's from the database and drew that instead — the
-            // project's work invisible until it had been applied.
+            // A path this project has given the spawn takes precedence over
+            // whatever the database answers. Without this, re-opening the
+            // window on a creature whose own path exists only as an unapplied
+            // edit read the template's path from the database and drew that,
+            // so the project's edit was not visible until it had been applied.
             if let (Some(subject), Some(session)) = (subject, session.as_deref()) {
                 if session.server_paths.touches(Which::Spawn, subject.guid)
                     && waypoints.open != Some((Which::Spawn, subject.guid))
                 {
                     waypoints.open = Some((Which::Spawn, subject.guid));
                     waypoints.from_database = Some(Path::empty(Which::Spawn, subject.guid));
+                    waypoints.stands_in = true;
                 }
             }
         }
         return;
     }
+    // Read again when the database has been written since the path was read,
+    // or when the empty path standing in for a claimed one has lost its claim.
+    let writes = session.as_ref().map_or(0, |session| session.database_writes);
+    let claim_gone = match (waypoints.subject, session.as_deref()) {
+        (Some(subject), Some(session)) => {
+            waypoints.stands_in && !session.server_paths.touches(Which::Spawn, subject.guid)
+        }
+        _ => false,
+    };
+    if waypoints.from_database.is_some() && (waypoints.read_at != Some(writes) || claim_gone) {
+        waypoints.from_database = None;
+        waypoints.stands_in = false;
+    }
     if !state.editing() || waypoints.from_database.is_some() {
         return;
     }
+    waypoints.read_at = Some(writes);
     let Some(subject) = waypoints.subject else {
         return;
     };
@@ -487,16 +509,15 @@ fn read_the_path(
     };
     waypoints.task = Some(crate::server::queue::read(async move {
         let mut db = vale_mangos::conn::Db::open(&at)?;
-        // **`GetDefaultPath`'s own order**: the spawn's own path first, the
-        // template's only when there is none. Reading one table and stopping is
-        // what made a creature walking a template patrol report having no path
-        // at all — see [`PathSubject`].
+        // `GetDefaultPath`'s order: the spawn's own path first, the template's
+        // only when there is none. Reading only one table made a creature
+        // walking a template patrol report having no path; see [`PathSubject`].
         let read = |db: &mut vale_mangos::conn::Db, which: Which, owner: u64| {
             let rows = db.rows(&path::path_query(which, owner))?;
             let mut nodes: Vec<(u32, Node)> = rows.iter().filter_map(path::node_from_row).collect();
-            // **Ordered by the point the table states**, not by the order the
-            // rows arrived: a path read out of order is a creature walking a
-            // tangle and nothing on screen says why.
+            // Sorted by the point number the table stores, not by the order
+            // the rows arrived: a path read out of order draws a creature
+            // walking a tangle, and nothing on screen says why.
             nodes.sort_by_key(|(point, _)| *point);
             Ok::<Path, String>(Path {
                 which,
@@ -509,10 +530,10 @@ fn read_the_path(
             return Ok(own);
         }
         let shared = read(&mut db, Which::Template, u64::from(subject.entry))?;
-        // Neither answered: the creature has no path anywhere, and what a new
-        // one should be is **its own** rather than one shared by every spawn of
-        // its kind. That is the narrower edit, and it is the one somebody
-        // building a patrol on one guard means.
+        // Neither answered: the creature has no path anywhere, and a new one
+        // should be its own rather than one shared by every spawn of its kind.
+        // That is the narrower edit, and it is what somebody building a patrol
+        // for one guard means.
         Ok(match shared.nodes.is_empty() {
             true => own,
             false => shared,
@@ -520,7 +541,7 @@ fn read_the_path(
     }));
 }
 
-/// **Which node the pointer is over**, by its distance in pixels on screen.
+/// Which node the pointer is over, by its distance in pixels on screen.
 ///
 /// In pixels rather than in yards, for `creatures::aim`'s reason: a node twenty
 /// yards off is a speck and a node underfoot fills the screen, and a grab
@@ -539,9 +560,9 @@ fn aim(
         waypoints.hovered = None;
         return;
     }
-    // **A pointer over a panel is not over the world**, and a node behind the
-    // waypoint window must not light up under it. `creatures::aim` asks the
-    // same question for the same reason.
+    // A pointer over a panel is not over the world, and a node behind the
+    // waypoint window must not be highlighted under it. `creatures::aim` makes
+    // the same check for the same reason.
     if !crate::ui::over_the_world(&viewport, &wants, &windows) {
         waypoints.hovered = None;
         return;
@@ -585,7 +606,7 @@ fn aim(
     waypoints.hovered = best.map(|(_, index)| index);
 }
 
-/// **Choose a node, arm a drag, or add a node.**
+/// Choose a node, arm a drag, or add a node.
 ///
 /// Three outcomes from one button, and which one is decided before the press is
 /// looked at: with Add armed a click on the ground appends, otherwise a click
@@ -608,11 +629,11 @@ fn press(
     if !buttons.just_pressed(MouseButton::Left) {
         return;
     }
-    // **Only a press that belongs to the world.** Without this, Add points
-    // took *every* click in the window: the button that turns it off added a
-    // point and stayed on, and clicking a row in the point list added a point
-    // instead of selecting it. `crate::ui::over_the_world` is the one question
-    // every other tool here asks, and this was the only one not asking it.
+    // Only a press over the world counts. Without this check, Add took every
+    // click in the window: the button that turns it off added a point and
+    // stayed on, and clicking a row in the point list added a point instead of
+    // selecting it. Every other tool here checks `crate::ui::over_the_world`
+    // too.
     if !crate::ui::over_the_world(&viewport, &wants, &windows) {
         return;
     }
@@ -624,9 +645,9 @@ fn press(
     };
 
     if waypoints.adding {
-        // **A click on the world appends**, or inserts after the selected node
-        // when there is one — which is what makes it possible to repair the
-        // middle of a path rather than only extend its end.
+        // A click on the world appends a node, or inserts one after the
+        // selected node when there is one, so the middle of a path can be
+        // repaired rather than only its end extended.
         //
         // The surface and not the ground, so a patrol route laid over a bridge
         // or through a building's upper floor sits on it rather than under it —
@@ -650,8 +671,8 @@ fn press(
     };
     if waypoints.selected != Some(index) {
         waypoints.selected = Some(index);
-        // **And no drag**: the press that chose it is not the press that moves
-        // it. See the module comment.
+        // No drag starts here: the press that selects a node does not also
+        // move it. See the module comment.
         return;
     }
     let from = path
@@ -673,7 +694,7 @@ fn press(
     });
 }
 
-/// **Move the held node**, once the pointer has travelled far enough.
+/// Move the held node, once the pointer has travelled far enough.
 ///
 /// The whole path is written on every frame of the drag, under one gesture, for
 /// `creatures::drag`'s reason: the drawing reads the project's store over the
@@ -762,28 +783,28 @@ fn drag(
     waypoints.write(session, &path, time.elapsed_secs_f64(), "Move waypoint");
 }
 
-/// **Draw the path**: a line through its nodes and a marker at each, every one
-/// of them drawn once.
+/// Draw the path: a line through its nodes and a marker at each, each drawn
+/// once.
 ///
-/// Two groups, and both are in front of the world:
+/// Two groups, both in front of the world:
 ///
 /// * [`super::gizmo::PathMarks`] — the legs and the nodes.
 /// * [`super::gizmo::EditorHandles`] — the selected and hovered node, which is
 ///   what a person is aiming at, and the only thing here drawn a second time.
 ///
-/// ## It is always visible, and that took three tries
+/// ## Why the path is drawn in one pass in front of the world
 ///
-/// The first draft was depth-tested and vanished behind every rise. The second
-/// drew each leg twice, solid here and dashed in front, and flickered, because
-/// two coincident translucent lines are visible as both and the blend order of
-/// two gizmo groups is not stable frame to frame. The third drew each leg once
-/// and chose the pass from whether its nodes were under the terrain — which is
-/// a different question from whether anything is in front of the leg, needs a
-/// height lookup per node per frame, and still left every leg hidden by a rise
-/// between it and the camera.
+/// Three earlier versions failed. A depth-tested path vanished behind every
+/// rise. Drawing each leg twice, solid in place and dashed in front, flickered,
+/// because two coincident translucent lines are visible as both and the blend
+/// order of two gizmo groups is not stable from frame to frame. Drawing each
+/// leg once and choosing the pass by whether its nodes were under the terrain
+/// answered a different question from whether anything is in front of the
+/// leg, needed a height lookup per node per frame, and still hid every leg
+/// behind a rise between it and the camera.
 ///
 /// So it is one pass, in front, like every other thing in this crate a person
-/// aims at. See [`super::gizmo::PathMarks`], where the argument is.
+/// aims at. [`super::gizmo::PathMarks`] gives the full reasoning.
 fn draw(
     mut handles: Gizmos<super::gizmo::EditorHandles>,
     mut path_marks: Gizmos<super::gizmo::PathMarks>,
@@ -804,7 +825,7 @@ fn draw(
 
     let point = |node: &Node| vale_client::render::axes::to_bevy([node.x, node.y, node.z]);
 
-    // **Closed when the generator repeats**, which both of them do: the leg
+    // Closed when the generator repeats, which both of them do: the leg
     // from the last node back to the first is one the creature really walks,
     // and a path drawn open reads as ending where it does not.
     let legs = path.nodes.len();
@@ -834,9 +855,9 @@ fn draw(
         let here = Vec3::new(node.x, node.y, node.z);
         // The same screen-proportional radius the creature markers use, so a
         // node stays grabbable at any distance.
-        // Half again the radius the first draft used: a node is a thing to aim
-        // at, and these are drawn at every distance from underfoot to the far
-        // side of a zone.
+        // One and a half times the radius an earlier version used: a node is
+        // a thing to aim at, and these are drawn at every distance from
+        // underfoot to the far side of a zone.
         let radius = (here.distance(eye) * 0.015).clamp(0.5, 4.5);
         let colour = match (chosen, under, node.waittime > 0) {
             (true, _, _) => Color::srgb(1.0, 0.82, 0.25),
@@ -847,17 +868,16 @@ fn draw(
             _ => NODE,
         };
         let ring = Isometry3d::new(at, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2));
-        // A stick up from each, so a node on a slope reads as standing on it
-        // rather than as painted on the picture. Scaled with the ring, because
-        // both are screen-proportional and a fixed height reads as a forest of
-        // spikes close up and as nothing at all far away.
+        // A vertical line up from each, so a node on a slope reads as standing
+        // on it rather than as painted on the picture. Scaled with the ring,
+        // because both are screen-proportional; a fixed height would be too
+        // tall close up and too small to see far away.
         let top = vale_client::render::axes::to_bevy([node.x, node.y, node.z + radius * 1.5]);
         path_marks.circle(ring, radius, colour);
         path_marks.line(at, top, colour);
         if chosen || under {
-            // …and once more in front of everything, which is what makes the
-            // one being aimed at unmistakable whatever is between it and the
-            // eye.
+            // Drawn a second time in front of everything, so the node being
+            // aimed at stays visible whatever is between it and the eye.
             handles.circle(ring, radius * 1.3, colour);
             handles.line(at, top, colour);
         }
@@ -883,12 +903,12 @@ fn draw(
     }
 }
 
-/// **`--waypoint-add <n>`**: ring the chosen creature with points.
+/// `--waypoint-add <n>`: ring the chosen creature with points.
 ///
 /// The scripted stand-in for placing a point with the pointer — see
 /// [`crate::Args::waypoint_add`]. It waits for the path to have been read,
 /// because the edit it makes is written over whatever the database holds and a
-/// read landing afterwards would be read *into* `from_database` under an edit
+/// read landing afterwards would be read into `from_database` under an edit
 /// that had already been recorded against the empty one.
 ///
 /// The radius is the creature's own `wander_distance` when it has one and ten
@@ -898,7 +918,7 @@ fn draw(
 /// Every point is on the terrain at its own position, whatever the ground
 /// switch says: a scripted run has no pointer, so there is no ground under one
 /// to take, and a ring at the creature's own height would sink into any slope.
-/// The height comes out of the **session's open tiles** rather than the
+/// The height comes out of the session's open tiles rather than the
 /// archives, which is `pick::session_ground`'s source and for its reason: a
 /// tile this project has raised is the ground a point should land on.
 pub fn on_the_command_line(
@@ -930,11 +950,11 @@ pub fn on_the_command_line(
         warn!("--waypoint-add: no creature with guid {owner} on this map");
         return;
     };
-    // **And the ground has to be there.** This fires about sixty milliseconds
-    // after the map query lands, which is well before the tile under the
-    // creature has been opened and parsed, so every point took the fallback
-    // height and the ring came out a flat disc buried in the slope. Measured:
-    // five points at the creature's own 66.757, one of them 5.2 yards under the
+    // The tile under the creature must also be open. This system runs about
+    // sixty milliseconds after the map query lands, well before that tile has
+    // been opened and parsed. Without this wait every point took the fallback
+    // height and the ring was a flat disc buried in the slope. Measured: five
+    // points at the creature's own 66.757, one of them 5.2 yards under the
     // terrain. Waiting costs a few frames of a scripted run and nothing else.
     let home = vale_assets::tile_for_position(spawn.at.x, spawn.at.y);
     if !session.tiles.contains_key(&home) {
@@ -1008,7 +1028,7 @@ mod tests {
         }
     }
 
-    /// **Opening a creature drops everything about the last one.** A selection
+    /// Opening a creature drops everything about the last one. A selection
     /// carried across would be an index into a path that is not there, and the
     /// stale `from_database` would draw the previous creature's path under the
     /// new one's name.
@@ -1034,7 +1054,7 @@ mod tests {
         );
     }
 
-    /// …and opening the one already open changes nothing, so a panel redrawing
+    /// Opening the creature already open changes nothing, so a panel redrawing
     /// every frame does not throw away a selection.
     #[test]
     fn opening_the_same_creature_keeps_the_selection() {
@@ -1047,7 +1067,7 @@ mod tests {
         assert!(waypoints.from_database.is_some());
     }
 
-    /// **The window stays open across a change of creature.** It is what the
+    /// The window stays open across a change of creature. It is what the
     /// follow depends on: `showing` is whether the window is up and `open` is
     /// what is in it, and re-pointing the second must not close the first.
     #[test]
@@ -1068,7 +1088,8 @@ mod tests {
         );
     }
 
-    /// …and the button shuts it, which is the one thing that should.
+    /// Only `close`, which the window's button calls, shuts the window;
+    /// `forget` does not.
     #[test]
     fn closing_is_the_only_thing_that_shuts_the_window() {
         let mut waypoints = Waypoints {
@@ -1083,19 +1104,18 @@ mod tests {
         assert!(waypoints.open.is_none() && waypoints.subject.is_none());
     }
 
-    /// **The ground switch is on by default**, which the module comment states
-    /// and a derived `Default` got wrong: the window drew it unticked, so the
-    /// documented behaviour was the one you had to ask for.
+    /// The ground switch is on by default, as the module comment states. A
+    /// derived `Default` set it off, and the window drew it unticked.
     #[test]
     fn a_point_takes_the_ground_unless_it_is_told_not_to() {
         assert!(Waypoints::default().follow_ground);
-        // …and nothing else is on: a fresh tool has no path open, nothing
+        // Nothing else is on: a fresh tool has no path open, nothing
         // selected, and Add disarmed.
         let fresh = Waypoints::default();
         assert!(fresh.subject.is_none() && fresh.selected.is_none() && !fresh.adding);
     }
 
-    /// **Closing keeps the ground switch and drops the rest.** It is a
+    /// Closing keeps the ground switch and drops the rest. The switch is a
     /// preference about how this tool behaves rather than a fact about the
     /// creature that was open.
     #[test]
@@ -1132,10 +1152,10 @@ mod tests {
             "nothing open, nothing drawn"
         );
         waypoints.open_for(12345, 12345, 2);
-        // **Nothing is drawn until the read says which table answered.** The
-        // spawn's own path and its template's are different rows with different
-        // blast radiuses, and drawing one before knowing which would be a guess
-        // the person could edit.
+        // Nothing is drawn until the read says which table answered. The
+        // spawn's own path and its template's are different rows that reach
+        // different sets of creatures, and drawing one before knowing which
+        // would show a guess the person could edit.
         assert!(waypoints.path(None).is_none(), "the table is not known yet");
         waypoints.open = Some((Which::Spawn, 12345));
         assert_eq!(waypoints.path(None), Some(Path::empty(Which::Spawn, 12345)));

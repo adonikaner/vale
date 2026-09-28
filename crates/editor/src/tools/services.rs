@@ -18,7 +18,7 @@
 //! two vendor lists together hold at most 254 items. So while a window is open
 //! both of its lists are read, one query each (`vale_mangos::vendor::rows_query`,
 //! `vale_mangos::trainer::rows_query`), and kept until an apply lands
-//! (`EditSession::services_writes`). A template list is read with the
+//! (`EditSession::database_writes`). A template list is read with the
 //! creatures that name it, since an edit to it changes every one of them.
 //!
 //! ## A row is a row of the project's store
@@ -193,7 +193,7 @@ pub struct Services {
     /// The creatures that name each template list read so far, as entry and
     /// name.
     users: HashMap<List, Vec<(u32, String)>>,
-    /// What those were read at: `EditSession::services_writes`.
+    /// What those were read at: `EditSession::database_writes`.
     loaded_for: Option<u64>,
     reading: Option<(List, Task<Result<(Read, Vec<(u32, String)>), String>>)>,
     /// Why the last read answered nothing, when it answered nothing.
@@ -274,9 +274,12 @@ impl Services {
         list.entry == 0 || self.wares.contains_key(&list) || self.lessons.contains_key(&list)
     }
 
-    /// The creatures that name a template list, once it has been read.
-    pub fn users(&self, list: List) -> Option<&[(u32, String)]> {
-        self.users.get(&list).map(Vec::as_slice)
+    /// The creatures that name a template list, once it has been read: the
+    /// database's, with the project's `vendor_id` or `trainer_id` edits and
+    /// its created templates over them.
+    pub fn users(&self, list: List, edits: &Edits) -> Option<Vec<(u32, String)>> {
+        let from_database = self.users.get(&list)?;
+        Some(crate::server::fresh::naming(from_database, edits, list.kind().template_column(), list.entry))
     }
 
     /// Every vendor row of one list, the database's with the project's over
@@ -852,11 +855,13 @@ fn read_the_rows(
         return;
     }
     let Some(session) = session else { return };
-    if services.loaded_for != Some(session.services_writes) {
-        services.loaded_for = Some(session.services_writes);
+    if services.loaded_for != Some(session.database_writes) {
+        services.loaded_for = Some(session.database_writes);
         services.wares.clear();
         services.lessons.clear();
         services.users.clear();
+        // A read that failed against the database as it was is tried again.
+        services.trouble = None;
     }
     if services.trouble.is_some() {
         return;

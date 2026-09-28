@@ -400,7 +400,7 @@ impl ApplyJob {
 /// run finished, so every window's read is stale, and both reloads are asked
 /// for.
 pub fn finish_apply(session: &mut EditSession, reloads: &mut super::reload::Reloads, done: &ApplyDone) {
-    session.services_writes += 1;
+    session.wrote_the_database();
     session.applied_services = done.result.as_ref().ok().map(|_| done.signature);
     for table in RELOADS {
         reloads.when_there_is_a_session(table);
@@ -492,7 +492,7 @@ impl RevertJob {
 /// say which tables it touches.
 pub fn finish_revert(session: &mut EditSession, reloads: &mut super::reload::Reloads) {
     session.applied_services = None;
-    session.services_writes += 1;
+    session.wrote_the_database();
     for table in RELOADS {
         reloads.when_there_is_a_session(table);
     }

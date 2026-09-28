@@ -424,6 +424,7 @@ fn row(
                         subject.items,
                         subject.assets,
                         subject.thumbnails,
+                        &subject.session.server_edits,
                         shown.entry.item,
                     ),
                 }
@@ -661,14 +662,15 @@ pub(super) fn item_name(
     items: &mut Items,
     assets: &GameAssets,
     thumbnails: &mut Thumbnails,
+    edits: &vale_mangos::row::Edits,
     entry: u32,
 ) {
-    let Some(found) = quests.item(entry) else {
-        let text = match quests.item_known(entry) {
+    let Some(found) = quests.item(entry, edits) else {
+        let text = match quests.item_known(entry, edits) {
             true => format!("item {entry} \u{2014} not in item_template"),
             false => format!("item {entry}\u{2026}"),
         };
-        let colour = match quests.item_known(entry) {
+        let colour = match quests.item_known(entry, edits) {
             true => theme::BAD,
             false => theme::INK_DIM,
         };

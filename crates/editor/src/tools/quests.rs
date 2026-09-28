@@ -54,6 +54,7 @@
 //! holder and a template entry, which is all a relation holds.
 
 use super::Tool;
+use crate::server::fresh::{claimed, Fresh};
 use crate::session::EditSession;
 use vale_mangos::quest::{self, RowValue};
 use vale_mangos::row::{Edits, Key, Life, RowEdit};
@@ -206,6 +207,14 @@ impl Holder {
         match self {
             Holder::Creature => "creature",
             Holder::Object => "game object",
+        }
+    }
+
+    /// The template table its name is in.
+    pub fn template(self) -> &'static str {
+        match self {
+            Holder::Creature => vale_mangos::creature::TEMPLATE,
+            Holder::Object => vale_mangos::gameobject::TEMPLATE,
         }
     }
 }
@@ -393,6 +402,8 @@ pub struct Picker {
     /// What [`Self::hits`] was built for, so an unchanged query is not searched
     /// again on every frame.
     pub built: Option<(Target, String)>,
+    /// The `EditSession::database_writes` [`Self::hits`] was built at.
+    built_at: Option<u64>,
     task: Option<Task<Result<Vec<Hit>, String>>>,
 }
 
@@ -406,6 +417,7 @@ impl Picker {
             focus: true,
             hits: Vec::new(),
             built: None,
+            built_at: None,
             task: None,
         }
     }
@@ -438,17 +450,20 @@ pub struct Quests {
     /// The name of every creature and game object a relation mentions, and of
     /// any other that has been asked for — `None` for an id the database does
     /// not hold.
-    holders: HashMap<(Holder, u32), Option<String>>,
+    holders: Fresh<HashMap<(Holder, u32), Option<String>>>,
     /// The name, quality and display id of every item named by a quest opened
     /// so far — `None` for an entry the database does not hold.
-    items: HashMap<u32, Option<ItemName>>,
+    items: Fresh<HashMap<u32, Option<ItemName>>>,
     /// What has been asked for and is in neither cache yet.
     wanted_items: HashSet<u32>,
     wanted_holders: HashSet<(Holder, u32)>,
-    names_task: Option<Task<Result<NamesRead, String>>>,
+    /// The name read in progress, and the `EditSession::database_writes` it
+    /// was started at: an answer that lands after the counter has moved
+    /// describes a database that is gone, and is dropped.
+    names_task: Option<(u64, Task<Result<NamesRead, String>>)>,
     task: Option<Task<Result<TableRead, String>>>,
     /// What [`Self::all`] was read for: how many times the session had written
-    /// the tables — see `EditSession::quest_writes`.
+    /// the tables — see `EditSession::database_writes`.
     loaded: Option<u64>,
     /// Why the list is empty, when a read failed or no database is set.
     pub trouble: Option<String>,
@@ -464,6 +479,9 @@ pub struct Quests {
     /// The open quest's whole row, read when the open quest changes.
     pub row: Option<QuestRow>,
     row_task: Option<Task<Result<Option<QuestRow>, String>>>,
+    /// What [`Self::row`] was made at, on `crate::tools::items::Items`'
+    /// terms: the counter, and whether the project created the quest.
+    row_at: Option<(u64, bool)>,
     /// The reference picker, when one is open.
     pub picker: Option<Picker>,
     /// The pass the picker was last drawn on. Several panels draw the one
@@ -1008,25 +1026,54 @@ impl Quests {
         self.forget_matches();
     }
 
-    /// What an item is called, or `None` while it is being fetched and for an
-    /// entry the database does not hold — see [`Self::item_known`] for which.
-    pub fn item(&mut self, entry: u32) -> Option<ItemName> {
-        match self.items.get(&entry) {
+    /// What an item is called, its quality and its display id, or `None`
+    /// while it is being fetched and for an entry neither the project nor the
+    /// database holds; see [`Self::item_known`] for which.
+    ///
+    /// The project's own claim on the item's template row comes first, column
+    /// by column, over what the database answered: an item this project
+    /// creates has its name before it is applied, and one it renames shows the
+    /// new name. The database's answer is kept only until the database is next
+    /// written; see `crate::server::fresh`.
+    pub fn item(&mut self, entry: u32, edits: &Edits) -> Option<ItemName> {
+        let name = claimed(edits, vale_mangos::item::TEMPLATE, entry, "name");
+        let quality = claimed(edits, vale_mangos::item::TEMPLATE, entry, "quality").and_then(|v| v.parse().ok());
+        let display = claimed(edits, vale_mangos::item::TEMPLATE, entry, "display_id").and_then(|v| v.parse().ok());
+        let read = match self.items.get(&entry) {
             Some(found) => found.clone(),
             None => {
                 self.wanted_items.insert(entry);
                 None
             }
+        };
+        match (read, name) {
+            (Some(read), name) => Some(ItemName {
+                name: name.unwrap_or(read.name),
+                quality: quality.unwrap_or(read.quality),
+                display_id: display.unwrap_or(read.display_id),
+            }),
+            (None, Some(name)) => Some(ItemName {
+                name,
+                quality: quality.unwrap_or(0),
+                display_id: display.unwrap_or(0),
+            }),
+            (None, None) => None,
         }
     }
 
-    /// Whether the database has been asked about an item yet.
-    pub fn item_known(&self, entry: u32) -> bool {
-        self.items.contains_key(&entry)
+    /// Whether an item's name is settled: the project names it, or the
+    /// database has answered, with a row or without one.
+    pub fn item_known(&self, entry: u32, edits: &Edits) -> bool {
+        self.items.contains_key(&entry) || claimed(edits, vale_mangos::item::TEMPLATE, entry, "name").is_some()
     }
 
-    /// What a creature or game object is called, on [`Self::item`]'s terms.
-    pub fn holder(&mut self, holder: Holder, id: u32) -> Option<String> {
+    /// What a creature or game object is called, on [`Self::item`]'s terms:
+    /// the project's claim on its template's `name` first, the database's
+    /// answer after.
+    pub fn holder(&mut self, holder: Holder, id: u32, edits: &Edits) -> Option<String> {
+        if let Some(name) = claimed(edits, holder.template(), id, "name") {
+            return Some(name);
+        }
         match self.holders.get(&(holder, id)) {
             Some(found) => found.clone(),
             None => {
@@ -1036,9 +1083,10 @@ impl Quests {
         }
     }
 
-    /// Whether the database has been asked about a creature or game object yet.
-    pub fn holder_known(&self, holder: Holder, id: u32) -> bool {
-        self.holders.contains_key(&(holder, id))
+    /// Whether a creature's or game object's name is settled, on
+    /// [`Self::item_known`]'s terms.
+    pub fn holder_known(&self, holder: Holder, id: u32, edits: &Edits) -> bool {
+        self.holders.contains_key(&(holder, id)) || claimed(edits, holder.template(), id, "name").is_some()
     }
 
     /// Remember a name a picker's own search answered, so the row that was just
@@ -1122,7 +1170,7 @@ fn read_the_tables(
         return;
     }
     let Some(session) = session else { return };
-    let key = session.quest_writes;
+    let key = session.database_writes;
     if quests.loaded == Some(key) {
         return;
     }
@@ -1179,6 +1227,7 @@ fn read_the_tables(
 /// Read the open quest's whole row, on a task, when the open quest changes.
 fn read_the_row(
     mut quests: ResMut<Quests>,
+    session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
     tool: Res<Tool>,
 ) {
@@ -1196,9 +1245,14 @@ fn read_the_row(
         return;
     }
     let Some(entry) = quests.open else { return };
-    if quests.row.as_ref().is_some_and(|held| held.entry == entry) {
+    let writes = session.as_ref().map_or(0, |session| session.database_writes);
+    let created_now = quests
+        .by_entry(entry)
+        .is_some_and(|known| known.claim == Life::Insert);
+    if quests.row.as_ref().is_some_and(|held| held.entry == entry) && quests.row_at == Some((writes, created_now)) {
         return;
     }
+    quests.row_at = Some((writes, created_now));
     // A row this project created has no row in the database: its columns are
     // the store's own and the form reads them from there.
     let known = quests.by_entry(entry).cloned();
@@ -1345,14 +1399,29 @@ fn rebuild_created(mut quests: ResMut<Quests>, session: Option<Res<EditSession>>
 }
 
 /// Turn the names that were asked for and not known into one query a kind.
+///
+/// Both name caches are emptied when `EditSession::database_writes` moves, so
+/// a name is never drawn from a row an apply or a put back has changed; see
+/// `crate::server::fresh`.
 fn fetch_the_names(
     mut quests: ResMut<Quests>,
+    session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
 ) {
-    if let Some(task) = quests.names_task.as_mut() {
+    let writes = session.as_ref().map_or(0, |session| session.database_writes);
+    let quests = &mut *quests;
+    let emptied = quests.holders.renew(writes) | quests.items.renew(writes);
+    if emptied {
+        // What was asked for before is asked for again by whoever draws it.
+        quests.wanted_items.clear();
+        quests.wanted_holders.clear();
+    }
+    if let Some((started, task)) = quests.names_task.as_mut() {
+        let started = *started;
         if let Some(done) = block_on(future::poll_once(task)) {
             quests.names_task = None;
             match done {
+                Ok(_) if started != writes => {}
                 Ok(read) => {
                     for (entry, found) in read.items {
                         quests.items.insert(entry, found);
@@ -1384,7 +1453,7 @@ fn fetch_the_names(
     let patch = super::creatures::server_patch(&settings);
     let items: Vec<u32> = quests.wanted_items.drain().collect();
     let holders: Vec<(Holder, u32)> = quests.wanted_holders.drain().collect();
-    quests.names_task = Some(crate::server::queue::read(async move {
+    quests.names_task = Some((writes, crate::server::queue::read(async move {
         let mut db = vale_mangos::conn::Db::open(&at)?;
         let mut out = NamesRead {
             // Everything asked for starts absent, and what the query answers
@@ -1430,12 +1499,54 @@ fn fetch_the_names(
             }
         }
         Ok(out)
-    }));
+    })));
 }
 
 /// Run the picker's search, for the three targets whose rows are in the
 /// database: one `LIKE` per change to the box, on a task. A quest is searched
 /// in memory and a client table by the panel.
+/// Put the project's own rows into a search the database answered: a
+/// creature, game object or item the project names is listed under that name,
+/// and one it creates that matches the search is listed first. The database
+/// has never held a created row, so without this it could not be chosen.
+fn fold_the_projects_rows(hits: &mut Vec<Hit>, target: Target, query: &str, edits: &Edits) {
+    let table = match target {
+        Target::Item => vale_mangos::item::TEMPLATE,
+        Target::Creature => vale_mangos::creature::TEMPLATE,
+        Target::Object => vale_mangos::gameobject::TEMPLATE,
+        _ => return,
+    };
+    for hit in hits.iter_mut() {
+        if let Some(name) = claimed(edits, table, hit.id, "name") {
+            hit.title = name;
+        }
+    }
+    let by_entry: Option<u32> = query.parse().ok();
+    let mut created: Vec<Hit> = Vec::new();
+    for (claimed_table, key, row) in edits.rows() {
+        if claimed_table != table || row.life != Life::Insert {
+            continue;
+        }
+        let Some(entry) = key.first().map(|entry| entry as u32) else {
+            continue;
+        };
+        if hits.iter().chain(created.iter()).any(|hit| hit.id == entry) {
+            continue;
+        }
+        let name = claimed(edits, table, entry, "name").unwrap_or_default();
+        if by_entry == Some(entry) || name.to_ascii_lowercase().contains(query) {
+            created.push(Hit {
+                id: entry,
+                title: name,
+                sub: "created by this project".to_string(),
+            });
+        }
+    }
+    created.sort_by_key(|hit| hit.id);
+    hits.splice(0..0, created);
+    hits.truncate(PICK_LIMIT);
+}
+
 fn search_the_picker(
     mut quests: ResMut<Quests>,
     session: Option<Res<EditSession>>,
@@ -1450,16 +1561,27 @@ fn search_the_picker(
         if let Some(done) = block_on(future::poll_once(task)) {
             picker.task = None;
             match done {
-                Ok(hits) => picker.hits = hits,
+                Ok(mut hits) => {
+                    if let (Some(edits), Some((target, query))) = (edits, picker.built.as_ref()) {
+                        fold_the_projects_rows(&mut hits, *target, query, edits);
+                    }
+                    picker.hits = hits;
+                }
                 Err(e) => warn!("quest picker: {e}"),
             }
         }
         return;
     }
     let asked = (picker.target, picker.query.trim().to_ascii_lowercase());
-    if picker.built.as_ref() == Some(&asked) {
+    // A search answered before the database was written is sent again, and
+    // the project's own rows are folded over what the database answers; see
+    // `fold_the_projects_rows`.
+    let writes = session.as_ref().map_or(0, |session| session.database_writes);
+    if picker.built.as_ref() == Some(&asked) && picker.built_at == Some(writes) {
         return;
     }
+    picker.built_at = Some(writes);
+    picker.task = None;
     let query = asked.1.clone();
     match picker.target {
         // The panel's — see `crate::ui::quests::search_a_table`.
@@ -1857,17 +1979,88 @@ mod tests {
     #[test]
     fn a_missing_name_is_asked_for_once() {
         let mut quests = Quests::default();
-        assert!(quests.item(2589).is_none());
-        assert!(!quests.item_known(2589));
+        let none = Edits::default();
+        assert!(quests.item(2589, &none).is_none());
+        assert!(!quests.item_known(2589, &none));
         assert!(quests.wanted_items.contains(&2589));
         quests.wanted_items.clear();
         quests.items.insert(2589, None);
-        assert!(quests.item(2589).is_none());
-        assert!(quests.item_known(2589));
+        assert!(quests.item(2589, &none).is_none());
+        assert!(quests.item_known(2589, &none));
         assert!(
             quests.wanted_items.is_empty(),
             "an absent item is not asked for again"
         );
+    }
+
+    /// The case that was reported: a creature was created at entry 2000000,
+    /// applied, put back and discarded, and a new creature made at the same
+    /// entry was drawn under the first one's name in the form, because the
+    /// name the database answered while the first was applied was kept for
+    /// the session. The cache is emptied when the database is written, and
+    /// the project's own row names its creature before the database does.
+    #[test]
+    fn a_name_follows_the_database_and_the_projects_own_row() {
+        let mut quests = Quests::default();
+        let none = Edits::default();
+        // The first creature, applied: the database names it.
+        quests.holders.renew(4);
+        quests.holders.insert((Holder::Creature, 2_000_000), Some("Hamfort Gaga".into()));
+        assert_eq!(quests.holder(Holder::Creature, 2_000_000, &none).as_deref(), Some("Hamfort Gaga"));
+        // Put back: the counter moves and the name goes with it.
+        assert!(quests.holders.renew(5));
+        assert_eq!(quests.holder(Holder::Creature, 2_000_000, &none), None);
+        assert!(!quests.holder_known(Holder::Creature, 2_000_000, &none), "asked for again");
+        // A new creature at the same entry, which the database has never held.
+        let mut created = RowEdit {
+            life: Life::Insert,
+            ..RowEdit::default()
+        };
+        created.columns.insert("name".into(), "'Hobart Stefa'".into());
+        let mut edits = Edits::default();
+        let key = vale_mangos::creature::template_key(2_000_000, 10);
+        edits.set_row_line(vale_mangos::creature::TEMPLATE, &key, Some(&created.to_line()));
+        assert_eq!(quests.holder(Holder::Creature, 2_000_000, &edits).as_deref(), Some("Hobart Stefa"));
+        assert!(quests.holder_known(Holder::Creature, 2_000_000, &edits));
+        // …and the project's rename is shown over a name the database holds.
+        quests.holders.insert((Holder::Creature, 68), Some("Stormwind City Guard".into()));
+        let mut renamed = Edits::default();
+        renamed.set(vale_mangos::creature::TEMPLATE, &vale_mangos::creature::template_key(68, 0), "name", Some("'Gate Guard'".into()));
+        assert_eq!(quests.holder(Holder::Creature, 68, &renamed).as_deref(), Some("Gate Guard"));
+    }
+
+    /// A search lists a creature the project creates, which the database has
+    /// never held, and shows a rename the project makes.
+    #[test]
+    fn a_search_lists_the_projects_own_rows() {
+        let mut edits = Edits::default();
+        let mut created = RowEdit { life: Life::Insert, ..RowEdit::default() };
+        created.columns.insert("name".into(), "'Hobart Stefa'".into());
+        edits.set_row_line(vale_mangos::creature::TEMPLATE, &vale_mangos::creature::template_key(2_000_000, 10), Some(&created.to_line()));
+        edits.set(vale_mangos::creature::TEMPLATE, &vale_mangos::creature::template_key(68, 0), "name", Some("'Gate Guard'".into()));
+        let mut hits = vec![Hit { id: 68, title: "Stormwind City Guard".into(), sub: String::new() }];
+        fold_the_projects_rows(&mut hits, Target::Creature, "g", &edits);
+        assert_eq!(hits[0].title, "Gate Guard");
+        assert!(hits.iter().all(|hit| hit.id != 2_000_000), "\"g\" is not in Hobart Stefa");
+        fold_the_projects_rows(&mut hits, Target::Creature, "hobart", &edits);
+        assert_eq!((hits[0].id, hits[0].title.as_str()), (2_000_000, "Hobart Stefa"));
+        let mut by_entry = Vec::new();
+        fold_the_projects_rows(&mut by_entry, Target::Creature, "2000000", &edits);
+        assert_eq!(by_entry.len(), 1);
+    }
+
+    /// An item the project creates is named, coloured and pictured from its
+    /// own row, and a column the project leaves alone comes from the database.
+    #[test]
+    fn an_item_is_named_from_the_projects_row_first() {
+        let mut quests = Quests::default();
+        quests.items.renew(0);
+        quests.items.insert(2589, Some(ItemName { name: "Linen Cloth".into(), quality: 1, display_id: 7090 }));
+        let mut edits = Edits::default();
+        let key = vale_mangos::item::template_key(2589, 0);
+        edits.set(vale_mangos::item::TEMPLATE, &key, "name", Some("'Fine Linen'".into()));
+        let found = quests.item(2589, &edits).expect("named");
+        assert_eq!((found.name.as_str(), found.quality, found.display_id), ("Fine Linen", 1, 7090));
     }
 }
 

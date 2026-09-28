@@ -54,7 +54,7 @@ use std::collections::HashSet;
 const NAME: f32 = 210.0;
 
 /// How wide a small number is drawn: a slot, a count, a level, a condition.
-const NUMBER: f32 = 44.0;
+const NUMBER: f32 = 52.0;
 
 /// …a skill line's name and id, which holds `Leatherworking (165)`.
 const SKILL: f32 = 150.0;
@@ -171,7 +171,7 @@ fn window(ctx: &egui::Context, subject: &mut Subject<'_>, about: &About, kind: K
         .open(&mut keep_open)
         // Wide enough for every cell of a row, and tall enough for the head,
         // the tabs and about eight rows. A longer list scrolls.
-        .default_size([640.0, 460.0])
+        .default_size([700.0, 460.0])
         .default_pos(pos)
         .resizable(true)
         .frame(
@@ -314,7 +314,7 @@ fn list_head(ui: &mut egui::Ui, subject: &mut Subject<'_>, about: &About, kind: 
     )
     .on_hover_text(format!("Keyed by {keyed_by}."));
     if list.is_template() {
-        if let Some(users) = subject.services.users(list) {
+        if let Some(users) = subject.services.users(list, &subject.session.server_edits) {
             let others: Vec<&(u32, String)> = users.iter().filter(|(entry, _)| *entry != about.entry).collect();
             match others.len() {
                 0 => {
@@ -464,7 +464,8 @@ fn vendor_rows(ui: &mut egui::Ui, subject: &mut Subject<'_>, about: &About, own:
                     place += 1;
                 }
                 let mut faults = shown.ware.check();
-                if subject.quests.item_known(shown.ware.item) && subject.quests.item(shown.ware.item).is_none() {
+                let edits = &subject.session.server_edits;
+                if subject.quests.item_known(shown.ware.item, edits) && subject.quests.item(shown.ware.item, edits).is_none() {
                     faults.push(format!("item {} is not in item_template", shown.ware.item));
                 }
                 if shown.forbidden {
@@ -520,6 +521,7 @@ fn vendor_row(
                     subject.items,
                     subject.assets,
                     subject.thumbnails,
+                    &subject.session.server_edits,
                     ware.item,
                 );
             },

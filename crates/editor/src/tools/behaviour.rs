@@ -14,7 +14,7 @@
 //! ## What is read
 //!
 //! One creature's events, one list and one script at a time, on demand, and
-//! kept for the session until an apply lands (`EditSession::behaviour_writes`).
+//! kept for the session until an apply lands (`EditSession::database_writes`).
 //! Beside those, in batches: every script the shown events, the shown list
 //! and the search results name, so each event can be drawn with its steps;
 //! and the `broadcast_text` row of every Talk step in hand, so a step reads
@@ -216,7 +216,7 @@ enum Reading {
     MaxId(&'static str, Task<Result<u32, String>>),
     Scripts(&'static str, Vec<u32>, Task<Result<Vec<(u32, ScriptRow)>, String>>),
     Texts(Vec<u32>, Task<Result<Vec<Text>, String>>),
-    Users(u32, Task<Result<u32, String>>),
+    Users(u32, Task<Result<Vec<(u32, String)>, String>>),
     Search(String, Task<Result<Found, String>>),
 }
 
@@ -257,11 +257,11 @@ pub struct Behaviour {
     /// the table does not hold, so a missing one is asked for once.
     texts: HashMap<u32, Option<Text>>,
     /// How many creature templates name each list read so far.
-    users: HashMap<u32, u32>,
+    users: HashMap<u32, Vec<(u32, String)>>,
     /// The highest id each table holds, read once.
     max_ids: HashMap<&'static str, u32>,
     reading: Option<Reading>,
-    /// What those were read at: `EditSession::behaviour_writes`.
+    /// What those were read at: `EditSession::database_writes`.
     loaded_for: Option<u64>,
     /// Why the last read answered nothing, when it answered nothing.
     pub trouble: Option<String>,
@@ -428,8 +428,9 @@ impl Behaviour {
     }
 
     /// How many creature templates name a list, once read.
-    pub fn users_of(&self, entry: u32) -> Option<u32> {
-        self.users.get(&entry).copied()
+    pub fn users_of(&self, entry: u32, edits: &Edits) -> Option<u32> {
+        let from_database = self.users.get(&entry)?;
+        Some(crate::server::fresh::naming(from_database, edits, "spell_list_id", entry).len() as u32)
     }
 
     /// Create a list at an entry, with nothing in it.
@@ -670,6 +671,7 @@ impl Behaviour {
         self.lists.clear();
         self.scripts.clear();
         self.users.clear();
+        self.texts.clear();
         self.max_ids.clear();
         self.trouble = None;
     }
@@ -939,8 +941,8 @@ fn land(behaviour: &mut Behaviour) -> bool {
             })
         }
         Reading::Users(entry, task) => block_on(future::poll_once(task)).map(|done| {
-            done.map(|count| {
-                behaviour.users.insert(*entry, count);
+            done.map(|users| {
+                behaviour.users.insert(*entry, users);
             })
         }),
         Reading::Search(text, task) => {
@@ -1074,8 +1076,8 @@ fn read_the_rows(
         return;
     }
     let Some(session) = session else { return };
-    if behaviour.loaded_for != Some(session.behaviour_writes) {
-        behaviour.loaded_for = Some(session.behaviour_writes);
+    if behaviour.loaded_for != Some(session.database_writes) {
+        behaviour.loaded_for = Some(session.database_writes);
         behaviour.forget();
     }
     if behaviour.trouble.is_some() {
@@ -1094,7 +1096,7 @@ fn read_the_rows(
         .as_ref()
         .filter(|about| behaviour.spells_open && about.spell_list_id != 0)
         .map(|about| about.spell_list_id)
-        .filter(|entry| behaviour.cached_list(*entry).is_some() && behaviour.users_of(*entry).is_none());
+        .filter(|entry| behaviour.cached_list(*entry).is_some() && !behaviour.users.contains_key(entry));
     let want_script = behaviour
         .script
         .filter(|_| behaviour.script_open)
@@ -1173,7 +1175,11 @@ fn read_the_rows(
             entry,
             crate::server::queue::read(async move {
                 let sql = creaturespells::users_query(entry);
-                Ok(open()?.row(&sql)?.and_then(|row| row.integer("n")).unwrap_or(0).max(0) as u32)
+                Ok(open()?
+                    .rows(&sql)?
+                    .iter()
+                    .filter_map(|row| Some((row.integer("entry")?.max(0) as u32, String::new())))
+                    .collect())
             }),
         )
     } else if let Some((sql, text, table)) = search_wanted(&mut behaviour) {

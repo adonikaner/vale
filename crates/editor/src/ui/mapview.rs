@@ -1,71 +1,67 @@
 //! The map from above: which tiles exist, and the ones you are about to change.
 //!
-//! ## Why this exists, and what it replaced
+//! ## Why tiles are chosen on a map
 //!
-//! The tile tool's first draft acted on **the tile under the pointer**, which
-//! was not merely awkward — it could not work at all. `crate::pick::Cursor`'s
-//! `ground` is `None` "off the map, over a hole, or over a tile that is not
-//! open", so over a tile that does not exist there is no pointer position, the
-//! panel had nothing to name, and *Create* was unreachable code. The one
-//! operation the whole subject was for could never run.
+//! An earlier version of the tile tool acted on the tile under the pointer,
+//! and that could not create a tile. `crate::pick::Cursor`'s `ground` is
+//! `None` "off the map, over a hole, or over a tile that is not open", so over
+//! a tile that does not exist there is no pointer position, the panel had no
+//! tile to name, and **Create** could never run.
 //!
-//! And even where it worked it asked the wrong thing of a person: *fly to where
-//! a tile is not*, in a viewport that by construction draws nothing there. There
-//! is no landmark, no ground, and no way to tell 33,48 from 34,48 except the
-//! status line.
+//! It also required the user to fly to where no tile exists, in a viewport
+//! that draws nothing there: no landmark, no ground, and no way to tell 33,48
+//! from 34,48 except the status line.
 //!
-//! A map has 64x64 tiles and a person choosing among them wants to see them laid
-//! out. So this is a grid of 4,096 cells, each showing that tile's **own minimap
-//! picture** out of the archives — a real top-down render of the world, which is
-//! the one picture of a tile that already exists — with the ones that do not
-//! exist drawn as holes.
+//! A map has 64x64 tiles, and choosing among them needs them laid out. This
+//! window is a grid of 4,096 cells, each showing that tile's minimap picture
+//! from the archives: a top-down render of the world, and the only existing
+//! picture of a tile. Tiles that do not exist are drawn as holes.
 //!
-//! ## It is the whole subject, not a view onto one
+//! ## All tile operations are in this window
 //!
-//! Creating ground, deleting it, copying it, and the three files derived from a
-//! tile are all here. They began as a **Tiles** row on the rail with a panel of
-//! its own, which was wrong twice: the rail is a list of *what the pointer
-//! edits* and none of these is held with the pointer, and splitting them left
-//! the map choosing the tiles and a panel elsewhere acting on them. Reported
-//! from the window, and the answer was to put the operations where the selection
-//! is. The rail lost the row and the top bar gained a button, because *which
-//! tiles this map has* is a fact about the session, which is what that bar is
-//! for.
+//! Creating ground, deleting it, copying it, and the three files derived from
+//! a tile are all here. They were first a **Tiles** row on the rail with its
+//! own panel, which was wrong for two reasons: the rail lists what the pointer
+//! edits, and none of these operations uses the pointer; and the split left
+//! the map choosing the tiles while a panel elsewhere acted on them. After a
+//! report from the window, the operations were moved to where the selection
+//! is. The rail lost the row and the top bar gained a button, because which
+//! tiles this map has is a fact about the session, and the top bar holds
+//! session facts.
 //!
-//! ## Everything here works on a selection
+//! ## Every operation works on the selection
 //!
-//! Click, box-drag, ctrl-click to toggle. Every operation then applies to
-//! whatever is selected, which is what makes *create nine tiles* and *delete a
-//! row* one action rather than nine. See [`crate::tools::tiles`], which is where
-//! the operations themselves are.
+//! Click, box-drag, or ctrl-click to toggle. Every operation then applies to
+//! the whole selection, so creating nine tiles or deleting a row is one action
+//! rather than nine. The operations themselves are in
+//! [`crate::tools::tiles`].
 //!
-//! ## The map is framed to the tiles it has
+//! ## The fit zoom frames the map's existing tiles
 //!
 //! Azeroth claims about 700 of the 4,096 slots, in a region twenty tiles wide.
-//! Drawn as the whole grid, that region was a stamp in the middle of a window of
-//! cells that read as background, and nothing on screen said which row was
-//! which. The **fit** zoom, which is the one the window opens on, frames the
-//! claimed tiles with one empty ring around them at whatever cell size fills the
-//! window; *far*, *mid* and *near* are the whole grid at three sizes, for the
-//! case of making ground somewhere the map has none. Rulers along the top and
-//! left name the columns and rows at every zoom, and at every zoom but the
-//! smallest each cell has its edge drawn.
+//! Drawn as the whole grid, that region was a small patch in the middle of a
+//! window of cells that looked like background, and nothing on screen
+//! identified the rows. The **fit** zoom, which the window opens on, frames
+//! the claimed tiles with one empty ring around them, at whatever cell size
+//! fills the window. **far**, **mid** and **near** show the whole grid at
+//! three sizes, for making ground where the map has none. Rulers along the top
+//! and left name the columns and rows at every zoom, and at every zoom except
+//! the smallest each cell has its edge drawn.
 //!
-//! ## What a cell says
+//! ## What a cell shows
 //!
-//! Its picture, when the archives have one; a plain fill for a tile that exists
-//! and has no picture, which is one this editor made; a sunken square for an
-//! empty slot. Over that, a corner mark on a tile **this project carries** —
-//! edited and saved, or made — and a dot on one edited since the last save,
+//! Its picture, when the archives have one; a plain fill for a tile that
+//! exists without a picture, which is a tile this editor made; a sunken square
+//! for an empty slot. Over that, a corner mark on a tile this project carries
+//! (edited and saved, or made), and a dot on one edited since the last save,
 //! so the map shows where the work is.
 //!
-//! ## The pictures are the texture picker's own machinery
+//! ## The pictures use the texture picker's thumbnail cache
 //!
-//! A minimap tile is a BLP at a path, and [`super::thumbnails`] already decodes
-//! BLPs at a path a few a frame with a cache. So the grid fills in over about
-//! three seconds on a map with seven hundred tiles and costs nothing on the
-//! frames after that — the same behaviour, and the same code, as the tileset
-//! list.
+//! A minimap tile is a BLP at a path, and [`super::thumbnails`] already
+//! decodes BLPs by path, a few per frame, with a cache. The grid fills in over
+//! about three seconds on a map with seven hundred tiles and costs nothing on
+//! later frames, with the same behaviour and code as the tileset list.
 
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
@@ -80,21 +76,21 @@ const SIDE: u32 = 64;
 
 /// How big a cell is, in points, at each of the three whole-grid zooms.
 ///
-/// Three rather than a slider: the whole map, a quarter of it, and close enough
-/// to read a coastline. A continuous zoom on a 4,096-cell grid is a control
-/// nobody sets precisely and a layout that never settles. The *fit* zoom is
-/// index 0 and has no fixed size — see [`frame`].
+/// Three fixed sizes rather than a slider: the whole map, a quarter of it, and
+/// close enough to read a coastline. A continuous zoom on a 4,096-cell grid is
+/// hard to set precisely and keeps changing the layout. The fit zoom is index
+/// 0 and has no fixed size; see [`frame`].
 const ZOOMS: [f32; 4] = [0.0, 8.0, 14.0, 22.0];
 
 /// The smallest and largest cell the fit zoom will draw, in points. Eight is
 /// the smallest a cell can be clicked; past forty the pictures blur.
 const FIT_CELL: (f32, f32) = (8.0, 40.0);
 
-/// …and how wide the control that picks between them is.
+/// How wide the zoom control is, in points.
 ///
-/// Stated rather than taken from the row, because `theme::segmented` fills
-/// whatever it is given: left to itself at the end of a row it drew a control
-/// as wide as the window.
+/// A fixed width rather than the rest of the row, because `theme::segmented`
+/// fills whatever width it is given: at the end of a row it drew a control as
+/// wide as the window.
 const ZOOM_WIDTH: f32 = 190.0;
 
 /// The rulers' width, top and left, in points.
@@ -106,35 +102,35 @@ pub struct MapView {
     pub open: bool,
     /// The tiles every operation applies to.
     pub selection: HashSet<(u32, u32)>,
-    /// …and where a box-drag began, while one is going on.
+    /// Where a box-drag began, while one is in progress.
     drag_from: Option<(u32, u32)>,
-    /// **What *copy* took**, in the coordinates it was taken from.
+    /// The tiles the last **Copy** took, in the coordinates they were taken
+    /// from.
     ///
     /// A set rather than one tile, so a region can be moved as a region. What
-    /// *paste* does with it depends on how many are in it, and the rule is the
-    /// one that makes both useful:
+    /// **Paste** does with it depends on how many tiles it holds:
     ///
-    /// * **one tile** fills *every* selected slot, which is how you lay the same
-    ///   ground over a nine-tile square;
-    /// * **several** are pasted as a **block**, keeping their relative layout,
-    ///   with the copied region's own corner landing on the selection's corner.
-    ///   Anything else would need a second gesture to say which of the copied
-    ///   tiles goes where.
+    /// * one tile fills every selected slot, which lays the same ground over,
+    ///   for example, a nine-tile square;
+    /// * several tiles are pasted as a block, keeping their relative layout,
+    ///   with the copied region's corner placed on the selection's corner.
+    ///   Any other rule would need a second gesture to say which copied tile
+    ///   goes where.
     pub clipboard: Vec<(u32, u32)>,
     zoom: usize,
-    /// **Select the camera's tile on the first frame this is drawn.**
+    /// Select the camera's tile on the first frame the window is drawn.
     ///
-    /// Set by [`MapView::opened`], which is `--tiles`. The window's own foot
-    /// panel appears only while something is selected, so without this the
-    /// half of the window that holds the settings is the one part `--shot`
-    /// cannot photograph — and it is a reasonable default for a person too,
-    /// since the tile you are standing on is the one you are most likely to
-    /// act on.
+    /// Set by [`MapView::opened`], which `--tiles` uses. The window's foot
+    /// panel appears only while something is selected, so without this
+    /// `--shot` could not capture the half of the window that holds the
+    /// settings. It is also a sensible default for a user, who is most likely
+    /// to act on the tile the camera stands on.
     preselect: bool,
     /// Where the view is scrolled to, as the top-left tile.
     scroll: egui::Vec2,
-    /// **The tiles this project carries**, read off the project folder — a
-    /// walk of it, so held and re-read when [`Self::edited_stale`] says.
+    /// The tiles this project carries, read from the project folder. Reading
+    /// walks the folder, so the result is kept and re-read only when
+    /// [`Self::edited_stale`] is set.
     edited: HashSet<(u32, u32)>,
     /// Set by whatever changes the project's tiles: the window opening, and
     /// every operation that makes, deletes or pastes one.
@@ -144,7 +140,8 @@ pub struct MapView {
 }
 
 impl MapView {
-    /// …already open, for `--tiles`, which is how the window is photographed.
+    /// A map view that starts open, for `--tiles`, which is how the window is
+    /// captured in screenshots.
     pub fn opened() -> MapView {
         MapView {
             open: true,
@@ -189,9 +186,9 @@ impl MapView {
 
 /// What the window asked for, handed back to the caller to act on.
 ///
-/// The window itself performs nothing: it holds the session shared, and every
-/// operation wants it mutably and the archives besides. The same arrangement
-/// `tools::tiles` already uses one layer down.
+/// The window performs nothing itself: it holds the session by shared
+/// reference, and every operation needs it mutably and also needs the
+/// archives. `tools::tiles` uses the same arrangement one layer down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Asked {
     Create,
@@ -201,14 +198,15 @@ pub enum Asked {
     FlyTo((u32, u32)),
     /// Rebake the selection's `MCSH` from what stands on it.
     Rebake,
-    /// …and redraw its minimap picture.
+    /// Redraw the selection's minimap picture.
     Minimap,
-    /// …and regenerate the server's files for it: `maps`, `vmaps`, `mmaps`.
+    /// Regenerate the server's files for the selection: `maps`, `vmaps`,
+    /// `mmaps`.
     ServerFiles,
 }
 
-/// **The tiles a zoom draws**: the top-left tile, how many across and down,
-/// and the cell size.
+/// The tiles a zoom draws: the top-left tile, how many across and down, and
+/// the cell size.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Frame {
     origin: (u32, u32),
@@ -228,10 +226,11 @@ impl Frame {
 
 /// The frame for a zoom, given the room the grid has.
 ///
-/// *Fit* takes the bounding box of the claimed tiles and the selection, with
-/// one empty ring around it, at the largest whole cell that fits the room —
-/// so the map opens on the tiles it has rather than on 4,096 slots most of
-/// which are nothing. A map with no tiles at all fits the whole grid.
+/// The fit zoom takes the bounding box of the claimed tiles and the
+/// selection, with one empty ring around it, at the largest whole cell size
+/// that fits the room. The map therefore opens on the tiles it has rather than
+/// on 4,096 slots, most of them empty. A map with no tiles fits the whole
+/// grid.
 fn frame(zoom: usize, session: &EditSession, selection: &HashSet<(u32, u32)>, room: egui::Vec2) -> Frame {
     if zoom > 0 {
         return Frame {
@@ -299,8 +298,8 @@ pub fn draw(
         // screen is moved up over the bar to fit, and then covers the button
         // that opened it.
         .default_size([640.0, 650.0])
-        // **Clear of the top bar**, which is what opens it: a window that covers
-        // the button it came from hides the thing you press to put it away.
+        // Below the top bar, which holds the button that opens the window. A
+        // window covering that button hides the control that closes it.
         .default_pos([40.0, 52.0])
         .resizable(true)
         .frame(
@@ -337,9 +336,9 @@ fn contents(
                 false => theme::INK,
             },
         ));
-        // **A fixed width, not the rest of the row, and left to right.**
-        // `theme::segmented` sizes itself from `available_width` and lays its
-        // segments out in the row's own direction: at the end of a
+        // A fixed width rather than the rest of the row, laid out left to
+        // right. `theme::segmented` sizes itself from `available_width` and
+        // lays its segments out in the row's direction: at the end of a
         // right-to-left row it was as wide as the window and read
         // `near mid far fit`.
         ui.add_space(12.0);
@@ -358,9 +357,9 @@ fn contents(
 
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        // **Create is enabled by what is *absent* in the selection and delete by
-        // what is present**, so the two are never both the obvious thing and
-        // neither silently does nothing.
+        // **Create** is enabled by empty slots in the selection and **Delete**
+        // by existing tiles, so each button is enabled only when it has
+        // something to act on, and neither silently does nothing.
         let (exist, absent) = view.split(session);
         if ui
             .add_enabled(absent > 0, egui::Button::new(format!("Create {absent}")))
@@ -430,15 +429,15 @@ fn contents(
     ui.add_space(4.0);
 
     // ------------------------------------------------------------- the foot
-    // **The foot is laid out first, from the bottom, and the grid gets what
-    // is left.** It used to be drawn after the grid with a constant height
-    // subtracted for it, and the constant was short of what three rows and a
-    // status line take: the window's content overran its frame by the
-    // difference, egui grew the window by that much, the grid — sized to what
-    // was available — grew with it, and the next frame overran again, so
-    // selecting a tile ran the window to the bottom of the screen at every
-    // zoom. A bottom panel inside the window takes exactly the height its
-    // rows need and leaves the rest to the grid.
+    // The foot is laid out first, from the bottom, and the grid gets the
+    // remaining height. The foot was previously drawn after the grid with a
+    // constant height reserved for it, and the constant was smaller than
+    // three rows and a status line: the window's content overran its frame by
+    // the difference, egui grew the window by that much, the grid (sized to
+    // the available height) grew with it, and the next frame overran again.
+    // Selecting a tile then grew the window to the bottom of the screen at
+    // every zoom. A bottom panel inside the window takes exactly the height
+    // its rows need and leaves the rest to the grid.
     if !view.selection.is_empty() {
         egui::Panel::bottom("map-foot")
             .resizable(false)
@@ -473,10 +472,9 @@ fn contents(
             let painter = ui.painter_at(whole);
             painter.rect_filled(rect, 0.0, theme::SUNK);
 
-            // Which cells are actually on screen — at the far zoom that is all
-            // of them and at the near one it is a few hundred, and asking for
-            // four thousand pictures a frame is what the budget in
-            // `thumbnails` exists to bound.
+            // Draw only the cells on screen: all of them at the far zoom, a
+            // few hundred at the near zoom. Asking for four thousand pictures
+            // a frame is the load the budget in `thumbnails` exists to bound.
             let clip = ui.clip_rect();
             let first = |v: f32, min: f32| (((v - min) / cell).floor().max(0.0)) as u32;
             let last = |v: f32, min: f32, n: u32| (((v - min) / cell).ceil().min(n as f32)) as u32;
@@ -525,9 +523,9 @@ fn contents(
                 view.drag_from = response.interact_pointer_pos().and_then(of);
             }
             if response.dragged() {
-                // **The box is recomputed from both ends every frame** rather
-                // than accumulated, so dragging back over yourself shrinks the
-                // selection instead of leaving a trail.
+                // The box is recomputed from both ends every frame rather than
+                // accumulated, so dragging back shrinks the selection instead
+                // of leaving a trail.
                 if let (Some(from), Some(to)) =
                     (view.drag_from, response.interact_pointer_pos().and_then(of))
                 {
@@ -565,8 +563,8 @@ fn contents(
                 }
             }
 
-            // …and what is under the pointer, named, since a cell is eight
-            // points across and nothing else says which one it is.
+            // Name the tile under the pointer in a hover text: a cell can be
+            // eight points across, and nothing else identifies it.
             if let Some(at) = response.hover_pos().and_then(of) {
                 response.clone().on_hover_text(describe(view, session, at));
             }
@@ -575,7 +573,8 @@ fn contents(
     asked
 }
 
-/// The bar's first words: what is selected, in the terms a person acts on.
+/// The bar's first text: what is selected, as the counts the operations act on
+/// (existing, empty, in this project).
 fn selection_line(view: &MapView, session: &EditSession) -> String {
     let (exist, absent) = view.split(session);
     let mine = view
@@ -622,7 +621,7 @@ fn describe(view: &MapView, session: &EditSession, at: (u32, u32)) -> String {
     format!("{}, {}\n{}", at.0, at.1, describe_state(view, session, at))
 }
 
-/// **The column and row numbers**, along the top and the left, every cell at
+/// The column and row numbers, along the top and the left, every cell at
 /// the near zoom and every few at the others, with a tick per cell.
 fn rulers(
     painter: &egui::Painter,
@@ -637,7 +636,7 @@ fn rulers(
         c if c >= 12.0 => 2,
         _ => 4,
     };
-    let font = egui::FontId::proportional(9.0);
+    let font = egui::FontId::proportional(theme::SMALL);
     let top = egui::Rect::from_min_size(whole.min, egui::vec2(whole.width(), RULER));
     let left = egui::Rect::from_min_size(whole.min, egui::vec2(RULER, whole.height()));
     painter.rect_filled(top, 0.0, theme::PANEL);
@@ -678,11 +677,11 @@ fn rulers(
     }
 }
 
-/// **What a selected tile is made of, and the three files derived from it.**
+/// What new ground in the selection is made of, and the three files derived
+/// from each selected tile.
 ///
-/// Under the grid rather than beside it, and only while something is selected:
-/// these are all *about the selection*, so a panel showing them with nothing
-/// chosen is a form with no subject.
+/// Drawn under the grid rather than beside it, and only while something is
+/// selected, because every control here acts on the selection.
 fn foot_panel(
     ui: &mut egui::Ui,
     view: &MapView,
@@ -698,7 +697,7 @@ fn foot_panel(
             [64.0, 18.0],
             egui::Label::new(
                 egui::RichText::new(text)
-                    .size(11.0)
+                    .size(theme::SMALL)
                     .color(theme::INK_DIM),
             ),
         );
@@ -736,9 +735,10 @@ fn foot_panel(
 
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        // **Both pictures need the tile open**, which the streamer only does
-        // within the 3x3 around the camera. Saying how many are is the
-        // difference between a greyed button and one that fails after a minute.
+        // Both picture operations need the tile open, and the streamer opens
+        // only the 3x3 tiles around the camera. The buttons count the open
+        // selected tiles and are disabled when there are none, rather than
+        // failing after a minute.
         let open = view
             .selection
             .iter()
@@ -820,7 +820,7 @@ struct Marks {
     camera: bool,
     /// This project carries the tile — see [`MapView::edited`].
     in_project: bool,
-    /// …and has changed it since the last save.
+    /// The project has changed the tile since the last save.
     unsaved: bool,
     /// Whether the cell is large enough for its edge to be drawn.
     edged: bool,
@@ -840,8 +840,8 @@ fn paint_cell(
     let inner = square.shrink(0.5);
 
     if exists {
-        // The tile's own minimap picture, which is the whole point of drawing a
-        // map rather than a checkerboard.
+        // The tile's minimap picture, which is what makes this a map rather
+        // than a checkerboard.
         match minimaps.texture(&session.map, at.0, at.1) {
             Some(path) => {
                 thumbnails.want(&path);
@@ -922,7 +922,7 @@ mod tests {
         assert!(view.selection.contains(&(5, 5)));
     }
 
-    /// **Every zoom is a whole number of points**, so a cell boundary lands on a
+    /// Every zoom is a whole number of points, so a cell boundary lands on a
     /// pixel and the grid does not shimmer as it scrolls.
     #[test]
     fn the_zooms_are_whole_points() {
@@ -933,8 +933,8 @@ mod tests {
         assert_eq!(FIT_CELL.0, FIT_CELL.0.floor());
     }
 
-    /// The whole map fits a window at the far zoom, which is what makes it a
-    /// map rather than a spreadsheet.
+    /// The whole map fits a 640-point window at the far zoom, so all 64x64
+    /// tiles are visible without scrolling.
     #[test]
     fn the_whole_map_fits_at_the_far_zoom() {
         assert!(RULER + ZOOMS[1] * SIDE as f32 <= 640.0);

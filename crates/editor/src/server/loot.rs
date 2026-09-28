@@ -1,16 +1,16 @@
-//! What a project changes about the server's loot, as SQL, applied when a
-//! person asks — and live on a reload of each table written.
+//! What a project changes about the server's loot, as SQL. It is applied when
+//! a person asks, and takes effect on a reload of each table written.
 //!
-//! ## The same shape as [`super::quests`], over nine tables of one schema
+//! ## Edits work as in [`super::quests`], over nine tables of one schema
 //!
-//! How an edit is stored, batched, written and undone is that module's: the
+//! An edit is stored, batched, written and undone as in that module: the
 //! project's store accumulates typed values, a save writes the SQL, nothing
 //! reaches the database until **Apply**, and the statements that put each row
 //! back are written from the database immediately before anything runs.
 //!
 //! A row here is created, edited or removed, and all three are live on
 //! `.reload <table>`: `LootStore::LoadLootTable` clears its store before it
-//! reads — `vale_mangos::loot`'s module comment is where that was read. So a
+//! reads (see `vale_mangos::loot`'s module comment). So a
 //! [`Life::Delete`] row is written, and its undo is the row as it stood.
 //!
 //! ## Removals before creations, inside a table
@@ -23,8 +23,8 @@
 //!
 //! ```text
 //! sql\loot.sql          what this project does to the loot tables
-//! sql\loot-revert.sql   …and what puts those rows back
-//! server\rows.txt       …and the store both are written from, shared
+//! sql\loot-revert.sql   the statements that put those rows back
+//! server\rows.txt       the store both files are written from, shared
 //! ```
 
 use crate::session::EditSession;
@@ -38,7 +38,7 @@ pub use super::creatures::Undo;
 /// What this project does to the server's loot, as SQL.
 pub const SQL_VPATH: &str = "sql\\loot.sql";
 
-/// …and what puts it back.
+/// The SQL that puts back the loot rows this project changed.
 pub const REVERT_VPATH: &str = "sql\\loot-revert.sql";
 
 /// One row's worth of change: what is to become of it, and the columns it sets.
@@ -122,17 +122,17 @@ impl Plan {
     }
 }
 
-/// **What the project's store comes to**, as statements.
+/// The loot rows of the project's store, as a plan of statements.
 pub fn plan(session: &EditSession) -> Plan {
     plan_from(&session.server_edits)
 }
 
-/// …and the same over the store alone, so it can be checked with no session.
+/// [`plan`] over the store alone, so it can be tested without a session.
 pub fn plan_from(edits: &vale_mangos::row::Edits) -> Plan {
     let mut out = Plan::default();
     for (table, key, row) in edits.rows() {
-        // Another subject's row: skipped in silence, as every writer here skips
-        // the others' — see `super::items::plan_from`.
+        // Another subject's row is skipped without a message, as every writer
+        // here skips the others' rows. See `super::items::plan_from`.
         let Some(table) = loot::table_named(table) else {
             continue;
         };
@@ -214,7 +214,7 @@ fn entry_of(key: &Key, changes: &[Assignment]) -> Option<loot::Entry> {
     loot::Entry::from_row(&row)
 }
 
-/// **Write `sql\loot.sql`**, or remove it when the project changes nothing.
+/// Writes `sql\loot.sql`, or removes it when the project changes nothing.
 pub fn write_sql(session: &mut EditSession) -> Result<usize, String> {
     let plan = plan(session);
     for refused in &plan.refused {
@@ -251,8 +251,8 @@ pub fn write_sql(session: &mut EditSession) -> Result<usize, String> {
     Ok(count)
 }
 
-/// **The loot half of a save**: the SQL the store comes to. The store itself
-/// is written by [`super::creatures::save`], on the same save.
+/// The loot part of a save: writes the SQL for the store's loot rows. The
+/// store itself is written by [`super::creatures::save`], on the same save.
 pub fn save(session: &mut EditSession) {
     match write_sql(session) {
         Ok(0) => {}
@@ -288,15 +288,15 @@ impl Applied {
     }
 }
 
-/// **An Apply, with everything it needs to run off the main thread** — see
-/// [`super::items::ApplyJob`], which is the same three halves.
+/// An Apply, with everything it needs to run off the main thread. It is split
+/// into the same three parts as [`super::items::ApplyJob`].
 pub struct ApplyJob {
     plan: Plan,
     project: vale_edit::project::Project,
     at: vale_mangos::conn::Where,
 }
 
-/// …and what running one answered.
+/// The result of running an [`ApplyJob`].
 pub struct ApplyDone {
     signature: u64,
     pub result: Result<Applied, String>,
@@ -334,9 +334,9 @@ pub fn prepare_apply(
 }
 
 impl ApplyJob {
-    /// **The worker's half**, in [`super::reconcile`]'s order: what the project
-    /// applied before is put back, and then each row is read as it stands, its
-    /// undo written, and its own statements run.
+    /// The worker's half, in [`super::reconcile`]'s order. What the project
+    /// applied before is put back. Then each row is read as it stands, its
+    /// undo is written, and its own statements run.
     pub fn run(self) -> ApplyDone {
         let signature = self.plan.signature();
         let result = (|| {
@@ -363,8 +363,8 @@ impl ApplyJob {
                 affected: done.affected,
                 newly_undoable: done.undoable,
                 taken_back: done.taken_back,
-                // **All nine**, and not only the tables the plan writes: the
-                // put-back before it may have written any of them.
+                // All nine tables, not only the tables the plan writes, because
+                // the put-back before it may have written any of them.
                 tables: loot::TABLES.to_vec(),
             })
         })();
@@ -372,23 +372,23 @@ impl ApplyJob {
     }
 }
 
-/// **The main thread's second half.** The tables have moved whether or not
-/// the run finished, so every window's read is stale and the server's copy
-/// with it: a reload of each table is asked for, deferred.
+/// The main thread's second half. The tables may have changed whether or not
+/// the run finished, so every window's read is stale, and so is the server's
+/// copy. A deferred reload of each table is requested.
 pub fn finish_apply(
     session: &mut EditSession,
     reloads: &mut super::reload::Reloads,
     done: &ApplyDone,
 ) {
-    session.loot_writes += 1;
+    session.wrote_the_database();
     session.applied_loot = done.result.as_ref().ok().map(|_| done.signature);
     for table in loot::TABLES {
         reloads.when_there_is_a_session(table);
     }
 }
 
-/// **An Apply as one step of [`super::stack`]**, which is the only way it
-/// runs: `None` when there is nothing to apply.
+/// An Apply as one step of [`super::stack`], which is the only way an Apply
+/// runs. `None` when there is nothing to apply.
 pub fn apply_step(
     session: &EditSession,
     server: &super::settings::ServerSettings,
@@ -407,14 +407,14 @@ pub fn apply_step(
     })))
 }
 
-/// **One row's undo, read immediately before the row is written** — the
-/// subject's half of [`super::reconcile`]'s step 3.
+/// One row's undo, read immediately before the row is written. This is the
+/// loot part of [`super::reconcile`]'s step 3.
 ///
-/// A created row is refused when the whole key is already there: a loot row's
-/// key is five columns and none of them is an id of its own, so the question
-/// is the whole key, as it is for a quest relation. A table whose primary key
+/// A created row is refused when the whole key is already there. A loot row's
+/// key is five columns and none of them is an id of its own, so the check is
+/// on the whole key, as it is for a quest relation. A table whose primary key
 /// is `(entry, item)` alone refuses a second group of the same item itself,
-/// and MySQL's own words are the report.
+/// and MySQL's error message is reported unchanged.
 fn undo_of_a_row(db: &mut Db, row: &Row) -> Result<Option<Vec<String>>, String> {
     if row.life == Life::Insert && db.row(&loot::exists_query(row.table, &row.key))?.is_some() {
         return Err(format!(
@@ -440,7 +440,7 @@ fn undo_of_a_row(db: &mut Db, row: &Row) -> Result<Option<Vec<String>>, String> 
     })
 }
 
-/// **A Put back, with everything it needs to run off the main thread.**
+/// A Put back, with everything it needs to run off the main thread.
 pub struct RevertJob {
     project: vale_edit::project::Project,
     at: vale_mangos::conn::Where,
@@ -476,13 +476,14 @@ impl RevertJob {
 /// file does not say which it touches.
 pub fn finish_revert(session: &mut EditSession, reloads: &mut super::reload::Reloads) {
     session.applied_loot = None;
-    session.loot_writes += 1;
+    session.wrote_the_database();
     for table in loot::TABLES {
         reloads.when_there_is_a_session(table);
     }
 }
 
-/// …and a Put back as one: `None` when this project has applied nothing.
+/// A Put back as one step of [`super::stack`]. `None` when this project has
+/// applied nothing.
 pub fn revert_step(
     session: &EditSession,
     server: &super::settings::ServerSettings,
@@ -506,8 +507,8 @@ pub fn revert_step(
     })))
 }
 
-/// **What of this project is in the database** — [`super::items::OnTheServer`]
-/// for the loot half.
+/// Which of this project's loot rows are in the database. The loot
+/// counterpart of [`super::items::OnTheServer`].
 pub struct OnTheServer {
     undo: Undo,
     current: bool,
@@ -540,8 +541,9 @@ impl OnTheServer {
     }
 }
 
-/// **`--apply-loot` and `--revert-loot`**: the Server panel's two buttons with
-/// nobody at the keyboard. Fires once, after any scripted edit has landed.
+/// Handles `--apply-loot` and `--revert-loot`, which do what the Server
+/// panel's two buttons do, for a scripted run. Fires once, after any scripted
+/// edit has landed.
 pub fn on_the_command_line(
     args: Res<crate::Args>,
     session: Option<ResMut<EditSession>>,
@@ -560,9 +562,8 @@ pub fn on_the_command_line(
     *done = true;
     super::creatures::save(&mut session);
     save(&mut session);
-    // **Through the stack**, as the Server panel's buttons are — see
-    // [`super::stack`] — so a flag puts back and applies the later subjects
-    // with this one.
+    // Runs through [`super::stack`], as the Server panel's buttons do, so a
+    // flag puts back and applies the later subjects with this one.
     let wanted = [
         (args.revert_loot, "--revert-loot", super::stack::Wanted::PutBack(super::stack::Subject::Loot)),
         (args.apply_loot, "--apply-loot", super::stack::Wanted::Apply(super::stack::Subject::Loot)),
@@ -620,9 +621,9 @@ mod tests {
         assert_eq!(plan.tables(), vec![loot::CREATURE]);
     }
 
-    /// **A removal is written before a creation in the same table**, whatever
-    /// order the store holds them in — which is what a regroup on a table keyed
-    /// by `(entry, item)` needs.
+    /// A removal is written before a creation in the same table, whatever
+    /// order the store holds them in. A regroup on a table keyed by
+    /// `(entry, item)` needs that order.
     #[test]
     fn a_removal_is_written_before_a_creation() {
         let mut edits = Edits::default();

@@ -107,8 +107,8 @@ pub fn name(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, table: &'static str,
 /// An item's name in its quality's colour, as a link that opens the item
 /// workspace on it.
 fn item_name(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, entry: u32) {
-    let Some(found) = resolver.quests.item(entry) else {
-        match resolver.quests.item_known(entry) {
+    let Some(found) = resolver.quests.item(entry, &resolver.session.server_edits) else {
+        match resolver.quests.item_known(entry, &resolver.session.server_edits) {
             true => {
                 ui.label(
                     egui::RichText::new("no such item")
@@ -128,11 +128,11 @@ fn item_name(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, entry: u32) {
 
 /// A creature's or a game object's name, out of the quest tool's cache.
 fn holder_name(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, holder: Holder, id: u32) {
-    match resolver.quests.holder(holder, id) {
+    match resolver.quests.holder(holder, id, &resolver.session.server_edits) {
         Some(name) => {
             ui.label(egui::RichText::new(name).color(theme::INK));
         }
-        None => match resolver.quests.holder_known(holder, id) {
+        None => match resolver.quests.holder_known(holder, id, &resolver.session.server_edits) {
             true => {
                 ui.label(
                     egui::RichText::new(format!("no such {}", holder.word()))

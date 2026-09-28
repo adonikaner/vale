@@ -1,6 +1,7 @@
-//! What a spell **looks like**, as the sequence it actually is.
+//! The spell storyboard: a spell's visual chain, drawn as its fixed sequence
+//! of phases.
 //!
-//! ## The data has phases, so the panel has phases
+//! ## Why the panel is a set of lanes
 //!
 //! A `SpellVisual` row is a fixed set of slots — a precast kit, a cast kit, an
 //! impact kit, a channel kit, a state kit, and the missile and area blocks. The
@@ -13,42 +14,43 @@
 //!                 area      (a DynamicObject standing on the ground)
 //! ```
 //!
-//! So this is a rail of those lanes and not a node graph and not a keyframe
-//! timeline. Both of those would be **inventing structure the format does not
-//! have**, which is the failure this repository has a heading about; the honest
-//! drawing of a fixed set of slots is a fixed set of rows.
+//! The panel is therefore a rail of those lanes, not a node graph and not a
+//! keyframe timeline. Both of those would show structure the format does not
+//! have, and a person editing them would be arranging something the file
+//! cannot store. A fixed set of slots is drawn as a fixed set of rows.
 //!
-//! ## …and it is the form's second view rather than a second panel
+//! ## Why the storyboard is a second view of the form, not a second panel
 //!
-//! `Spell.dbc` row 74 is Fireball whichever way you look at it. **Fields** is
-//! the 173 columns and **Storyboard** is the same row resolved through three
-//! more tables — one segmented control, one selection, one undo stack. A
-//! separate panel would have needed its own row selection, kept in step with
-//! the form's.
+//! `Spell.dbc` row 74 is Fireball in both views. **Fields** shows the 173
+//! columns and **Storyboard** shows the same row resolved through three more
+//! tables. The two views share one segmented control, one selection and one
+//! undo stack. A separate panel would have needed its own row selection, kept
+//! in step with the form's.
 //!
-//! ## Every number here is resolved from the *edited* tables
+//! ## Numbers are resolved from the edited tables
 //!
-//! Not from `GameAssets::display_tables`, which is what the renderer parsed at
-//! startup and is exactly what does not move when somebody edits a kit. The
-//! chain is walked over the `DbcFile`s the session has open, through
-//! `vale_assets::tables::spell::fields` — the same constants the client's own
-//! walk uses, so there is one reading of the layout rather than two.
+//! They are not read from `GameAssets::display_tables`, which the renderer
+//! parsed at startup and which does not change when a kit is edited. The chain
+//! is walked over the `DbcFile`s the session has open, through
+//! `vale_assets::tables::spell::fields`. The client's own walk uses the same
+//! constants, so the layout is read one way in both places.
 //!
 //! ## It is rebuilt when something changes, not every frame
 //!
-//! Walking four tables and asking the archives whether each model exists is not
-//! a per-frame cost. [`Storyboard`] holds what it built and for which row, and
-//! `EditSession::table_revision` is what says an edit has landed since.
+//! Walking four tables and asking the archives whether each model exists is too
+//! slow to do every frame. [`Storyboard`] holds what it built and for which
+//! row, and `EditSession::table_revision` says whether an edit has landed
+//! since.
 //!
-//! ## The transport is a bar with the phases on it
+//! ## The phase bar and the transport
 //!
-//! Under the picture: the loop as segments — precast, channel, flight, impact,
-//! state, rest — each the length the spell's own tables give it, with the
-//! playhead across them. A click on the bar seeks there and the two arrows
-//! step a phase either way. The timing is real (cast time from
-//! `SpellCastTimes`, channel from `SpellDuration`, flight from the missile
-//! speed) and the slots are still slots; see `crate::stage`, where a seek is
-//! a restart and a fast-forward.
+//! Under the picture, a bar shows the loop as segments (precast, channel,
+//! flight, impact, state, rest), each as long as the spell's own tables make
+//! it, with the playhead across them. A click on the bar seeks there, and the
+//! two arrows step one phase back or forward. The segment lengths come from the
+//! tables (cast time from `SpellCastTimes`, channel from `SpellDuration`,
+//! flight from the missile speed), while the kits are still drawn as fixed
+//! slots. See `crate::stage`, where a seek is a restart and a fast-forward.
 
 use super::data::Workspace;
 use super::theme;
@@ -69,14 +71,14 @@ pub struct EffectRow {
     pub where_it_hangs: &'static str,
     /// The `SpellVisualEffectName` id.
     pub id: u32,
-    /// …and that row's own name and model path.
+    /// The name of that `SpellVisualEffectName` row; `path` is its model path.
     pub name: String,
     pub path: String,
     pub scale: f32,
-    /// Whether the archives answer for the model. **A missing model is the
-    /// whole point of drawing this**: an id that resolves to a path that opens
-    /// nothing is a spell that casts and shows nothing, and no number on the
-    /// form says so.
+    /// Whether the archives hold the model. A missing model is the main reason
+    /// this list is drawn: an id that resolves to a path that opens nothing
+    /// gives a spell that casts and shows nothing, and no number on the form
+    /// shows that.
     pub present: bool,
     /// Whether the client draws this column at all. The breath and the two
     /// weapon columns are read and not drawn — the schema says so — and a
@@ -129,9 +131,10 @@ pub struct Storyboard {
     pub notes: Vec<String>,
 }
 
-/// The lanes, in the order they happen. The fourth and fifth do not happen *in*
-/// that order — a channel runs for a duration and a state is worn — which the
-/// panel says rather than implying by position.
+/// The lanes, in the order they happen. The fourth and fifth are not part of
+/// that sequence: a channel runs for a duration and a state is worn while the
+/// aura lasts. The panel says so in words rather than implying an order by
+/// position.
 const LANES: [(&str, usize, &str); 5] = [
     (
         "Precast",
@@ -287,8 +290,8 @@ impl Storyboard {
                 });
         }
 
-        // …and the area, which the client refuses to draw at all unless the
-        // flag beside it is set. See `tables::spell`.
+        // The area block. The client does not draw it unless the flag beside
+        // it is set. See `tables::spell`.
         if visuals.u32_at(row, fields::AREA_FLAG).unwrap_or(0) != 0 {
             let id = visuals.u32_at(row, fields::AREA_MODEL).unwrap_or(0);
             self.area = self.effect_row(0, "Area", id, assets, names);
@@ -415,8 +418,8 @@ impl Storyboard {
         let declared = names
             .string_at(row, fields::EFFECT_MODEL)
             .unwrap_or_default();
-        // **The table names an `.mdx` and the archives hold an `.m2`.** The
-        // client's own rule, called rather than restated.
+        // The table names an `.mdx` and the archives hold an `.m2`.
+        // `model_path` applies the client's rule, so it is not restated here.
         let path = model_path(&declared);
         let present = !path.is_empty()
             && assets
@@ -432,9 +435,10 @@ impl Storyboard {
             id,
             name,
             path,
-            // **The file's own rule, called rather than restated.** A quarter
-            // of this table's rows carry a scale of zero and the client reads
-            // that as one; showing the raw number would read as a broken effect.
+            // `effect_scale` applies the client's rule for this column. A
+            // quarter of this table's rows carry a scale of zero and the client
+            // reads that as one; the raw number would make the effect look
+            // broken.
             scale: effect_scale(names.f32_at(row, fields::EFFECT_SCALE)),
             present,
             // The missile and the area are not kit columns and are drawn.
@@ -445,14 +449,15 @@ impl Storyboard {
 
 /// Draw the chain: the head, then the kits as cards, then the missile and area.
 ///
-/// ## Cards in a grid, which is the reference tool's shape
+/// ## Why the kits are cards in a grid
 ///
-/// The first draft was collapsing headers down a column and it read as a log
-/// rather than as a chain: every lane the same weight, the empty ones as loud
-/// as the full ones, and nothing showing at a glance which of the six a spell
-/// actually uses. The reference tool draws each kit as a **box** with its name
-/// and its id in the corner, two to a row, greyed when the slot is empty — so
-/// the shape of a spell's visual is legible before a word of it is read.
+/// An earlier layout used collapsing headers down a column, and it read as a
+/// log rather than as a chain: every lane had the same weight, empty lanes
+/// were as prominent as full ones, and nothing showed at a glance which of the
+/// six a spell uses. The reference tool draws each kit as a box with its name
+/// and its id in the corner, two to a row, greyed when the slot is empty. This
+/// panel does the same, so the shape of a spell's visual is visible before any
+/// text is read.
 pub fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Storyboard, record: usize) {
     let table = work.browser.table.clone();
     board.refresh(work.session, work.assets, &table, record);
@@ -515,16 +520,16 @@ pub fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Storyboard,
         });
     ui.add_space(8.0);
 
-    // **Two to a row**, and the pairs are the ones that belong together: the
+    // Two cards to a row. The pairs are the lanes that belong together: the
     // wind-up beside the release, what lands beside what is worn.
     let count = board.phases.len();
     let mut at = 0;
     while at < count {
-        // **A share of the row, as a maximum and not as a wish.** `allocate_ui`
-        // states a size the contents may exceed, and a card that exceeds it runs
-        // off the panel and takes the card beside it with it — which is how the
-        // first draft lost the *Cast* card entirely. `set_max_width` inside the
-        // column is what actually holds them apart.
+        // Each card gets half the row as a maximum width. `allocate_ui` states
+        // a size the contents may exceed, and a card that exceeds it runs off
+        // the panel and pushes the card beside it off too; an earlier layout
+        // lost the Cast card this way. `set_max_width` inside the column is
+        // what keeps the two apart.
         let width = (ui.available_width() - 12.0) / 2.0;
         ui.horizontal_top(|ui| {
             for which in at..(at + 2).min(count) {
@@ -646,9 +651,9 @@ fn sound_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, sound: u32, name: &str
 
 /// The box every card is drawn in: a title, an id in the corner, and a body.
 ///
-/// Greyed when the slot is empty, because **an empty slot is information**: a
-/// spell with no impact kit bursts nowhere, and a card that simply vanished
-/// would read as a chain with fewer parts than it has.
+/// Greyed when the slot is empty, because an empty slot is information: a
+/// spell with no impact kit bursts nowhere, and leaving the card out would make
+/// the chain look as if it had fewer parts than it has.
 fn boxed(
     ui: &mut egui::Ui,
     title: &str,
@@ -706,9 +711,9 @@ fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, phase: &Phase) {
             return;
         };
         ui.add_space(4.0);
-        // **One row per fact, because a card is a column.** A kit, an animation
-        // and a sound written across one line is a line wider than half a panel,
-        // and what runs off the edge of a card is gone rather than wrapped.
+        // One row per fact, because a card is a narrow column. A kit, an
+        // animation and a sound on one line is wider than half a panel, and
+        // text that runs off the edge of a card is clipped, not wrapped.
         let mut open_kit = false;
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("kit").small().color(theme::INK_FAINT));
@@ -797,8 +802,9 @@ fn effect(ui: &mut egui::Ui, work: &mut Workspace<'_>, row: &EffectRow) {
             ui.label(theme::number(format!("x{:.2}", row.scale)));
         }
     });
-    // The path under it, dimmed — and **red when the archives do not hold it**,
-    // which is the one thing about a kit that no number on the form says.
+    // The path under the row, dimmed, and red when the archives do not hold
+    // it. A missing file is the one fact about a kit that no number on the
+    // form shows.
     let colour = match row.present {
         true => theme::INK_FAINT,
         false => theme::BAD,
@@ -826,7 +832,7 @@ fn effect(ui: &mut egui::Ui, work: &mut Workspace<'_>, row: &EffectRow) {
 /// How tall the phase bar is.
 const BAR_HEIGHT: f32 = 20.0;
 
-/// **The preview pane**: the picture, the phase bar, and the transport.
+/// Draw the preview pane: the picture, the phase bar, and the transport.
 ///
 /// The stage is rendered into an image and drawn here like any other texture,
 /// so this is an ordinary column: a title, the picture, the bar, the buttons.
@@ -855,10 +861,9 @@ pub fn stage_pane(
             })
             .color(theme::INK_DIM),
         );
-        // **What the world is not showing, said here.** A model the archives do
-        // not hold draws nothing at all, and a pane with nothing in it is the
-        // one case where a person cannot tell a working preview from a broken
-        // one.
+        // The first note goes beside the title. A model the archives do not
+        // hold draws nothing at all, and an empty pane looks the same whether
+        // the preview works or is broken.
         if let Some(note) = notes.first() {
             ui.label(egui::RichText::new(note).small().color(theme::WARN));
         }
@@ -869,7 +874,7 @@ pub fn stage_pane(
         pane.available_width(),
         (pane.available_height() - BAR_HEIGHT - 58.0).max(60.0),
     );
-    // **How big the stage's own image has to be**, in physical pixels: egui's
+    // The size the stage's image has to be, in physical pixels. egui's
     // sizes are in points and a texture is in pixels, and on a 125% display
     // those differ by a quarter. Written every frame because the pane is
     // resizable; `crate::stage::keep_the_target` rebuilds only on a change.
@@ -885,11 +890,11 @@ pub fn stage_pane(
                 egui::Image::new(egui::load::SizedTexture::new(id, picture))
                     .sense(egui::Sense::click_and_drag()),
             );
-            // **The drag is the widget's own.** egui has already decided whether
-            // this press belongs to the preview, which is the question the
-            // shell's own chrome rule asks one layer up — and it is the reason
-            // a drag that began on the form does not turn the stage when it
-            // wanders across it.
+            // The drag is read from the image widget's own response. egui has
+            // already decided whether this press belongs to the preview, which
+            // is the question the shell's chrome rule asks one layer up. That
+            // is why a drag that began on the form does not turn the stage
+            // when the pointer crosses it.
             if shown.dragged() {
                 stage.turn(shown.drag_delta());
             }
@@ -1006,7 +1011,7 @@ fn phase_bar(ui: &mut egui::Ui, stage: &mut crate::stage::Stage, board: &Storybo
             _ => false,
         }
     };
-    let font = egui::FontId::proportional(10.0);
+    let font = egui::FontId::proportional(theme::SMALL);
     for segment in stage.segments() {
         let x0 = rect.left() + rect.width() * (segment.from / whole);
         let x1 = rect.left() + rect.width() * (segment.to / whole);

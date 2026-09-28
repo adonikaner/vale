@@ -58,6 +58,7 @@
 //! then, and a preview in the same place would be a second copy of each one.
 
 use super::Tool;
+use crate::server::fresh::Fresh;
 use crate::session::EditSession;
 use vale_client::render::focus::WorldFocus;
 use vale_client::world::camera::WorldCamera;
@@ -398,6 +399,8 @@ pub struct NewSpawn {
     pub chosen: Option<Known>,
     /// Why the search found nothing, when it is not that nothing matched.
     pub trouble: Option<String>,
+    /// The `EditSession::database_writes` the matches were read at.
+    searched_at: Option<u64>,
 }
 
 impl NewSpawn {
@@ -460,7 +463,7 @@ pub struct Creatures {
     /// Filled from the map query, which already carries these columns for
     /// every spawn on the map; from the picker's matches; and, for an entry
     /// neither knows, from a read of its own.
-    pub known: HashMap<u32, Known>,
+    pub known: Fresh<HashMap<u32, Known>>,
     /// The read of [`Self::known`]'s own, while it is running.
     known_task: Option<Task<Result<Vec<Known>, String>>>,
     /// What a display id looks like, resolved once per id.
@@ -496,7 +499,7 @@ pub struct Creatures {
     /// What [`Self::spawns`] was read for: the map, and what the last apply
     /// put in the database.
     ///
-    /// Keyed on `EditSession::creature_writes`, which counts every apply and
+    /// Keyed on `EditSession::database_writes`, which counts every apply and
     /// every Put back, and not on the project's edit counter, which changes
     /// on every keystroke; a map query per typed character is 24,610 rows per
     /// keystroke. A row this project has edited and not yet applied is
@@ -531,10 +534,18 @@ pub struct Creatures {
     pub template: Option<TemplateRow>,
     /// The template read, while it is running.
     template_task: Option<Task<Result<Option<TemplateRow>, String>>>,
+    /// What [`Self::template`] was made at: `EditSession::database_writes`,
+    /// and whether the project created the row, in which case it is an empty
+    /// row holding the key. Either changing makes it be made again: an apply
+    /// or a put back changes what the database holds, and a discard turns a
+    /// created row into one the database may hold.
+    template_at: Option<(u64, bool)>,
     /// The selected spawn's whole spawn row. The map query reads only ten of
     /// its columns.
     pub spawn_row: Option<SpawnRow>,
     spawn_task: Option<Task<Result<Option<SpawnRow>, String>>>,
+    /// …and the same for [`Self::spawn_row`].
+    spawn_at: Option<(u64, bool)>,
     /// Draw the near ones as models, or as markers only.
     pub show_models: bool,
     /// How many models at once — see the module comment.
@@ -569,7 +580,7 @@ impl Default for Creatures {
             max_entry: None,
             scripted_template_done: false,
             max_guid: None,
-            known: HashMap::new(),
+            known: Fresh::default(),
             known_task: None,
             worn: HashMap::new(),
             display_pick: None,
@@ -587,8 +598,10 @@ impl Default for Creatures {
             group_from: Vec::new(),
             template: None,
             template_task: None,
+            template_at: None,
             spawn_row: None,
             spawn_task: None,
+            spawn_at: None,
             show_models: true,
             // 200 creatures is about what a busy city block holds, and is
             // well inside what the entity pass draws in a session. The panel
@@ -1654,7 +1667,16 @@ fn learn_the_created(
     settings: Res<crate::server::settings::ServerSettings>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
+    session: Option<Res<EditSession>>,
 ) {
+    // The templates held were read from the database as it stood at the
+    // counter; after an apply or a put back they are read again, and a read
+    // still running is dropped with them.
+    let writes = session.as_ref().map_or(0, |session| session.database_writes);
+    if creatures.known.renew(writes) {
+        creatures.known_task = None;
+        creatures.created_for = None;
+    }
     if let Some(task) = creatures.known_task.as_mut() {
         if let Some(done) = block_on(future::poll_once(task)) {
             creatures.known_task = None;
@@ -1739,7 +1761,17 @@ fn search_creatures(
     settings: Res<crate::server::settings::ServerSettings>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
+    session: Option<Res<EditSession>>,
 ) {
+    // The matches were read from the database as it stood at the counter; an
+    // apply or a put back empties them, drops a search still running, and
+    // sends the typed text again.
+    let writes = session.as_ref().map_or(0, |session| session.database_writes);
+    if creatures.new_spawn.searched_at != Some(writes) {
+        creatures.new_spawn.searched_at = Some(writes);
+        creatures.new_spawn.task = None;
+        creatures.new_spawn.forget();
+    }
     if let Some(task) = creatures.new_spawn.task.as_mut() {
         if let Some(done) = block_on(future::poll_once(task)) {
             creatures.new_spawn.task = None;
@@ -1832,15 +1864,15 @@ fn read_the_map(
         return;
     }
     let Some(session) = session else { return };
-    // Keyed on this subject's write counter, which every apply and every Put
-    // back increments. It was keyed on `EditSession::applied_creatures`, which
-    // a Put back sets to `None`; in a session that did not make the apply it
-    // was already `None`, so the key did not change and spawns the Put back
-    // had deleted stayed on the map. It is not keyed on the spell tables'
-    // signature either: a creature apply would leave that unchanged, and a
-    // spell save would re-read every creature on the map. The game-object
-    // tool keys on `gameobject_writes` for the same reason.
-    let key = (session.map_id, session.creature_writes);
+    // Keyed on `EditSession::database_writes`, which every apply and every
+    // Put back of any subject increments. It was keyed on
+    // `EditSession::applied_creatures`, which a Put back sets to `None`; in a
+    // session that did not make the apply it was already `None`, so the key
+    // did not change and spawns the Put back had deleted stayed on the map.
+    // It is not keyed on the spell tables' signature either: a spell save
+    // would re-read every creature on the map. The game-object tool keys the
+    // same way.
+    let key = (session.map_id, session.database_writes);
     if creatures.loaded == Some(key) {
         return;
     }
@@ -3298,6 +3330,10 @@ pub fn fetch_rows(
     if !state.editing() || *tool != Tool::Creatures {
         return;
     }
+    // A row is made again when the database has been written since it was
+    // made, or when the project has started or stopped creating it; see
+    // `crate::server::fresh`.
+    let writes = session.as_ref().map_or(0, |session| session.database_writes);
     let Some((at, _)) = settings.resolve() else {
         return;
     };
@@ -3308,11 +3344,10 @@ pub fn fetch_rows(
         .and_then(|session| creatures.template_subject(&session.server_edits));
     if let Some(subject) = subject {
         let wants_template = creatures.template_task.is_none()
-            && creatures
-                .template
-                .as_ref()
-                .is_none_or(|had| had.entry != subject.entry);
+            && (creatures.template.as_ref().is_none_or(|had| had.entry != subject.entry)
+                || creatures.template_at != Some((writes, subject.is_new())));
         if wants_template {
+            creatures.template_at = Some((writes, subject.is_new()));
             if subject.is_new() {
                 // A template this project creates has no row to read. Its
                 // whole row is in the store, so the form is given an empty
@@ -3356,13 +3391,12 @@ pub fn fetch_rows(
     // which is never editable and so never in the store, shows the guid
     // rather than `NULL`.
     if spawn.is_new() {
-        if creatures
-            .spawn_row
-            .as_ref()
-            .is_none_or(|had| had.guid != spawn.guid)
+        if creatures.spawn_row.as_ref().is_none_or(|had| had.guid != spawn.guid)
+            || creatures.spawn_at != Some((writes, true))
         {
             let mut row = creature::Row::new();
             row.insert("guid".to_string(), Some(spawn.guid.to_string()));
+            creatures.spawn_at = Some((writes, true));
             creatures.spawn_row = Some(SpawnRow {
                 guid: spawn.guid,
                 row,
@@ -3371,12 +3405,11 @@ pub fn fetch_rows(
     }
     let wants_spawn = !spawn.is_new()
         && creatures.spawn_task.is_none()
-        && creatures
-            .spawn_row
-            .as_ref()
-            .is_none_or(|had| had.guid != spawn.guid);
+        && (creatures.spawn_row.as_ref().is_none_or(|had| had.guid != spawn.guid)
+            || creatures.spawn_at != Some((writes, false)));
 
     if wants_spawn {
+        creatures.spawn_at = Some((writes, false));
         let guid = spawn.guid;
         creatures.spawn_task = Some(crate::server::queue::read(async move {
             let mut db = vale_mangos::conn::Db::open(&at)?;

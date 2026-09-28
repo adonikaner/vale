@@ -47,7 +47,8 @@ pub fn open_on(
     open_in(lab, stage, browser, session, record, false);
 }
 
-/// …and the model view on it: the same, by itself.
+/// Open the model view on the effect row that is open: the same as
+/// [`open_on`], with the model shown by itself.
 pub fn open_alone(
     lab: &mut Lab,
     stage: &mut Stage,
@@ -102,15 +103,14 @@ pub fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: 
         .show(ui, |ui| {
             let width = ui.available_width();
             ui.set_max_width(width);
-            // **The title and the hint, left to right and nothing else.**
-            // A way out lived here for two drafts — a `×` at the right — and
-            // both were an egui layout fight: a `with_layout` takes its
-            // parent's whole rectangle (which ate the card), and an
-            // `allocate_ui_with_layout` laying out from the right overflows
-            // to the *left* when its contents do not fit (which pushed the
-            // card off the panel). The way out is the button beside **Bake &
-            // Apply**, where a person looking for it looks, and a card with
-            // one of them has one.
+            // The title and the hint, left to right, and nothing else. Two
+            // earlier layouts put a way out here, a `×` at the right, and both
+            // broke the egui layout: a `with_layout` takes its parent's whole
+            // rectangle (which filled the card), and an
+            // `allocate_ui_with_layout` laying out from the right overflows to
+            // the left when its contents do not fit (which pushed the card off
+            // the panel). The way out is the button beside **Bake & Apply**,
+            // where a person looks for it, and the card has only that one.
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new("ATTACHMENT LAB")
@@ -211,17 +211,17 @@ pub fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: 
             }
 
             ui.add_space(4.0);
-            // **What the chosen point actually is**: a column of the kit, so
-            // the tables moved with it, or somewhere only the preview hangs
-            // from. Without this the drop-down looks the same either way.
+            // What the chosen point is: a column of the kit, so the tables
+            // moved with it, or a point only the preview hangs from. Without
+            // this the drop-down looks the same in both cases.
             let slot = lab
                 .effect
                 .and_then(|effect| tables::effect_slot(work.browser, work.session, effect));
-            // **One sentence, whichever case this is.** The kit's own column
-            // explains both where the point started and what choosing
-            // another does, so the anchor sentence is drawn only when there
-            // is no kit to explain it — a missile or an area model, where it
-            // is the only account of the point there is.
+            // One sentence in either case. The kit's own column explains both
+            // where the point started and what choosing another does, so the
+            // anchor sentence is drawn only when there is no kit to explain
+            // it: for a missile or an area model, where it is the only
+            // description of the point.
             let column = slot.and_then(|(_, field, _)| {
                 schema::for_table("SpellVisualKit").and_then(|schema| schema.column(field))
             });
@@ -235,10 +235,10 @@ pub fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: 
                         column.name
                     ),
                 ),
-                // **A kit hangs models from six attachments and no others** —
-                // head, chest, base and either hand. Any other point the body
-                // carries is somewhere the preview can hang one and nothing
-                // in the tables can.
+                // A kit hangs models from six attachments and no others: head,
+                // chest, base and either hand. Any other point the body carries
+                // is one the preview can hang a model from and nothing in the
+                // tables can.
                 (Some((_, _, kit)), _, None) => (
                     theme::WARN,
                     format!(
@@ -248,12 +248,12 @@ pub fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: 
                 ),
                 _ => (theme::INK_FAINT, lab.anchor.clone()),
             };
-            // **The verdict first, in two words.** The sentence after it is
-            // four lines long in a narrow panel and was reported as missable:
+            // The verdict first, in two words. The sentence after it is four
+            // lines long in a narrow panel and was reported as easy to miss:
             // choosing a point that writes and one that does not looked the
-            // same, so a choice that changed no table read as a choice that
-            // did not stick. See [`point_combo`], which groups the list on
-            // the same argument.
+            // same, so a choice that changed no table looked like a choice
+            // that did not stick. See [`point_combo`], which groups the list
+            // for the same reason.
             let writes = slot.is_some() && tables::slot_for_point(lab.point).is_some();
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 5.0;
@@ -261,8 +261,8 @@ pub fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: 
                     true => ("kit slot", theme::GOOD),
                     false => ("preview only", theme::WARN),
                 };
-                ui.label(egui::RichText::new(word).size(11.0).strong().color(mark));
-                ui.label(egui::RichText::new(note).size(11.0).color(colour));
+                ui.label(egui::RichText::new(word).size(theme::SMALL).strong().color(mark));
+                ui.label(egui::RichText::new(note).size(theme::SMALL).color(colour));
             });
             if let Some(report) = &lab.report {
                 ui.label(egui::RichText::new(report).small().color(theme::WARN));
@@ -301,9 +301,9 @@ pub fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: 
                 if bake.clicked() {
                     export(work, lab, record);
                 }
-                // **The way out without baking.** It is not a *close* of the
-                // pane — the pane is what an effect row is — so it says what
-                // it leaves you looking at.
+                // The way out without baking. It does not close the pane,
+                // because the pane is what an effect row shows, so its hover
+                // text says what is left on screen.
                 if ui
                     .button("Close")
                     .on_hover_text(
@@ -319,19 +319,19 @@ pub fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: 
         });
 }
 
-/// **The attachment points the chosen body carries, and the six that are also
-/// a kit column.**
+/// The attachment points the chosen body carries, with the six that are also
+/// a kit column listed first.
 ///
 /// The attachment an effect hangs from is not a field of the effect: it is
-/// *which column* of the kit names it — `spell::fields::EFFECTS`. So choosing
-/// one of those six writes the tables, moving the effect between two columns
-/// of one row, and choosing any of the body's other points moves the preview
-/// and says that is all it does.
+/// which column of the kit names it (`spell::fields::EFFECTS`). Choosing one
+/// of those six writes the tables, moving the effect between two columns of
+/// one row. Choosing any of the body's other points moves the preview, and the
+/// card says that is all it does.
 ///
-/// **It used to write nothing at all.** The choice was the preview's alone
-/// and the card did not say so, so changing it, baking, and coming back
-/// showed the point the tables still stated — reported as the attachment
-/// point not sticking.
+/// The choice used to write nothing. It changed only the preview and the card
+/// did not say so, so changing it, baking and coming back showed the point the
+/// tables still stated. That was reported as the attachment point not
+/// sticking.
 fn point_combo(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab) {
     let mut point = lab.point;
     let named = |id: u32| super::storyboard::attachment_name(id);
@@ -339,16 +339,16 @@ fn point_combo(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab) {
     let slot = lab
         .effect
         .and_then(|effect| tables::effect_slot(work.browser, work.session, effect));
-    // **Two groups under two headings, the ones that write first.**
+    // Two groups under two headings, the ones that write first.
     //
     // A body carries some thirty attachment points and a kit's columns name
     // six of them. Choosing one of the other twenty-four moves the preview
-    // and writes nothing — which is a legitimate thing to want and an
-    // illegitimate thing to be surprised by, and it *was* surprising: the
-    // list was one run of names in id order with a `· kit slot` suffix on
-    // six of them and a quiet grey sentence underneath, so choosing a point
-    // that does not write looked exactly like choosing one that does, and
-    // coming back to find the old point was read as the choice not sticking.
+    // and writes nothing. That is a valid choice, but the list has to make it
+    // visible. The list used to be one run of names in id order, with a
+    // `· kit slot` suffix on six of them and a grey sentence underneath, so
+    // choosing a point that does not write looked the same as choosing one
+    // that does, and finding the old point on return was read as the choice
+    // not sticking.
     let writes = |id: u32| slot.is_some() && tables::slot_for_point(id).is_some();
     let (mut kit_slots, mut preview_only): (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
     for (id, _) in &lab.points {
@@ -384,24 +384,24 @@ fn point_combo(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab) {
                 ui.selectable_value(&mut point, *id, named(*id));
             }
         });
-    // **Which kind the chosen one is goes under the row, not beside it.** It
-    // was beside the box for one run and came out as `kit…` against the
-    // panel's edge: the card's inner `Ui` reports more width than the panel
-    // actually shows — the reason `lab.panel_width` exists one file along —
-    // so reserving room from `available_width` reserves room that is not
-    // there. See [`verdict`], which is drawn at the head of the note.
+    // Which kind the chosen point is goes under the row, not beside it.
+    // Placed beside the box, it was cut to `kit…` at the panel's edge: the
+    // card's inner `Ui` reports more width than the panel shows (the reason
+    // `lab.panel_width` exists, one file along), so room reserved from
+    // `available_width` is not there. See [`verdict`], which is drawn at the
+    // head of the note.
     if point == lab.point {
         return;
     }
     lab.point = point;
-    // …and if both ends are real kit columns, the tables move with it.
+    // If both the old and the new point are kit columns, the tables move too.
     let (Some((record, from, kit)), Some(to)) = (slot, tables::slot_for_point(point)) else {
         return;
     };
-    // **Two columns share the base point.** `BaseEffect` and `GroundEffect`
-    // both hang at the feet — see `spell::fields::EFFECTS` — so an effect
-    // already in one of them, re-chosen as the base, would be moved into the
-    // other for no reason anybody asked for.
+    // Two columns share the base point. `BaseEffect` and `GroundEffect` both
+    // hang at the feet (see `spell::fields::EFFECTS`), so an effect already in
+    // one of them, chosen again as the base, would otherwise be moved into the
+    // other without being asked.
     if tables::point_for_slot(from) == Some(point) {
         return;
     }
@@ -420,15 +420,15 @@ fn point_combo(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab) {
     }
 }
 
-/// **What a control may actually have**, which is what is left of the row and
-/// never more than it asked for.
+/// The width a control can have: what is left of the row, and never more than
+/// it asked for.
 ///
-/// A width handed to a widget is a *wish* — `theme::segmented` carries the
-/// same note for the same reason — so a fixed 300-point field inside a
-/// 320-point panel does not shrink, it runs off the edge and is clipped
-/// there. Every fixed width on this card went through that, which is what a
-/// 1280-wide window showed: a combo box, a note and the export path all cut
-/// mid-glyph.
+/// A width handed to a widget is a request, not a limit (`theme::segmented`
+/// carries the same note for the same reason), so a fixed 300-point field
+/// inside a 320-point panel does not shrink; it runs off the edge and is
+/// clipped there. Every fixed width on this card had that problem, and a
+/// 1280-wide window showed it: a combo box, a note and the export path were
+/// all cut mid-glyph.
 fn fits(ui: &egui::Ui, wanted: f32) -> f32 {
     wanted.min(ui.available_width() - 4.0).max(60.0)
 }
@@ -636,7 +636,7 @@ pub fn pane(ui: &mut egui::Ui, work: &mut Workspace<'_>, stage: &mut Stage, lab:
                         tip + egui::vec2(6.0, -6.0),
                         egui::Align2::LEFT_BOTTOM,
                         names[axis],
-                        egui::FontId::proportional(11.0),
+                        egui::FontId::proportional(theme::SMALL),
                         colours[axis],
                     );
                 }
@@ -650,10 +650,10 @@ pub fn pane(ui: &mut egui::Ui, work: &mut Workspace<'_>, stage: &mut Stage, lab:
 
     pane.add_space(4.0);
     pane.horizontal_wrapped(|ui| {
-        // **The switches are the world's own.** Wireframe is the debug
-        // overlay's and particles is the view bar's subtraction; the pane
-        // toggles the same two the bar does, so a view left in wireframe
-        // here is in wireframe there, and the bar's lit button says so.
+        // The switches are the world's own. Wireframe is the debug overlay's
+        // and particles is the view bar's subtraction; the pane toggles the
+        // same two the bar does, so a view left in wireframe here is in
+        // wireframe there, and the bar's lit button shows it.
         match work.wireframe.as_deref_mut() {
             Some(wireframe) => {
                 ui.checkbox(wireframe, "wireframe")
