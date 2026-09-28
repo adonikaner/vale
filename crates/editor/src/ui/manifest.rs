@@ -79,14 +79,7 @@ fn server_lines(project: &vale_edit::project::Project) -> Vec<(String, String)> 
 
     let mut out = Vec::new();
     for subject in Subject::ORDER {
-        let mine = |table: &str| match subject {
-            Subject::Creatures => vale_mangos::creature::table_named(table).is_some(),
-            Subject::GameObjects => vale_mangos::gameobject::table_named(table).is_some(),
-            Subject::Items => vale_mangos::item::table_named(table).is_some(),
-            Subject::Quests => vale_mangos::quest::table_named(table).is_some(),
-            Subject::Loot => vale_mangos::loot::table_named(table).is_some(),
-            Subject::Behaviour => crate::server::behaviour::owns(table),
-        };
+        let mine = |table: &str| subject.owns(table);
         let (mut edited, mut created, mut removed) = (0usize, 0usize, 0usize);
         for (table, _, row) in edits.rows() {
             if !mine(table) {

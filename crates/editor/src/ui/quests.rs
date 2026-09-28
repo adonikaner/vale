@@ -2030,6 +2030,8 @@ pub(super) fn picker(
             PickFor::QuestOf { role, .. } => format!("Choose a quest it {}", role.word()),
             PickFor::ServerColumn(target) => format!("Choose {}", target.column),
             PickFor::LootItem { table, entry } => format!("Choose an item for {table} {entry}"),
+            PickFor::VendorItem { table, entry } => format!("Choose an item for {table} {entry}"),
+            PickFor::TrainerSpell { table, entry } => format!("Choose a spell for {table} {entry}"),
             PickFor::ScriptCell { column, .. } => format!("Choose {column}"),
         };
         ui.label(egui::RichText::new(heading).strong().size(14.0));
@@ -2188,6 +2190,10 @@ pub(super) fn picker(
         }
         (PickFor::LootItem { table, entry }, Some(hit), _) => {
             quests.loot_pick = Some((table, *entry, hit.id));
+            close = true;
+        }
+        (PickFor::VendorItem { table, entry } | PickFor::TrainerSpell { table, entry }, Some(hit), _) => {
+            quests.service_pick = Some((table, *entry, hit.id));
             close = true;
         }
         (PickFor::ScriptCell { table, id, row, column }, picked, cleared)

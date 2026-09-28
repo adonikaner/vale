@@ -164,6 +164,8 @@ pub fn publish(
     super::items::save(session);
     super::quests::save(session);
     super::loot::save(session);
+    super::services::save(session);
+    super::behaviour::save(session);
 
     let mut head = Head {
         name: name.to_string(),

@@ -100,6 +100,9 @@ pub struct Subject<'a> {
     /// The behaviour windows' state, for the Events and Spells buttons. See
     /// `super::behaviour::windows`.
     pub behaviour: &'a mut crate::tools::behaviour::Behaviour,
+    /// The Vendor and Trainer windows' state, for their two buttons. See
+    /// `super::services::windows`.
+    pub services: &'a mut crate::tools::services::Services,
     /// Where this machine's server is. The panel's sentences read it, and it
     /// decides whether there is anything to say.
     pub server: &'a crate::server::settings::ServerSettings,
@@ -1241,34 +1244,36 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         {
             subject.behaviour.spells_open = !subject.behaviour.spells_open;
         }
-        for (name, about) in NOT_BUILT {
-            ui.add_enabled(
-                false,
-                egui::Button::new(egui::RichText::new(*name).color(theme::INK_FAINT)),
+        // Vendor and Trainer are two windows over the world that follow the
+        // selection, like the four beside them. See `super::services`.
+        use crate::tools::services::Kind;
+        if ui
+            .selectable_label(subject.services.is_open(Kind::Vendor), "Vendor")
+            .on_hover_text(
+                "What it sells: npc_vendor under its entry, and npc_vendor_template under its \
+                 vendor_id, which other creatures may share. Each item with its place in the \
+                 list, its stock and its restock time.",
             )
-            .on_disabled_hover_text(format!("{about}\n\nNot built yet."));
+            .clicked()
+        {
+            subject.services.toggle(Kind::Vendor);
+        }
+        if ui
+            .selectable_label(subject.services.is_open(Kind::Trainer), "Trainer")
+            .on_hover_text(
+                "What it teaches: npc_trainer under its entry, and npc_trainer_template under its \
+                 trainer_id, which other creatures may share. Each teaching spell with the level, \
+                 the price and the skill it needs.",
+            )
+            .clicked()
+        {
+            subject.services.toggle(Kind::Trainer);
         }
     });
 }
 
 /// The side of the picture beside the summary, in points.
 const SUMMARY_PICTURE: f32 = 56.0;
-
-/// The other windows a creature will have, named where they will be.
-///
-/// Drawn greyed rather than left out, for the reason [`crate::ui::rail`]
-/// gives: a control that appears later somewhere a person has to find it is
-/// harder to use than one that has been in place, stating what it is for.
-const NOT_BUILT: &[(&str, &str)] = &[
-    (
-        "Vendor",
-        "What it sells, out of npc_vendor and npc_vendor_template.",
-    ),
-    (
-        "Trainer",
-        "What it teaches, out of npc_trainer and npc_trainer_template.",
-    ),
-];
 
 /// `creature_template`'s own window, where a creature is edited.
 ///

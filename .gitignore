@@ -14,6 +14,7 @@
 /Data
 /WTF
 /Interface
+/WDB
 
 # Python bytecode.
 __pycache__/

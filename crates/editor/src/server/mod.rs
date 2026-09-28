@@ -22,6 +22,9 @@
 //!                their maps first
 //! loot.rs        the nine *_loot_template tables, one schema under nine names,
 //!                each live on its own reload, removals included
+//! services.rs    npc_vendor, npc_trainer and their two template tables: what a
+//!                creature sells and teaches, live on two reloads, removals
+//!                included
 //! behaviour.rs   creature_ai_events and creature_spells as keyed rows, and the
 //!                eleven *_scripts tables as whole scripts under an id, since a
 //!                script row has no key; live on a reload of the events, the
@@ -32,7 +35,7 @@
 //!                before is put back, then each row is read, its undo kept and
 //!                its statements run, so the database always holds what it
 //!                held before plus what the project says now
-//! stack.rs       the order the five row subjects stand in the database: to
+//! stack.rs       the order the seven row subjects stand in the database: to
 //!                apply or put back one, every applied subject after it is put
 //!                back first and applied again after, so each revert file runs
 //!                against the database it was read from
@@ -73,9 +76,9 @@
 //! `Spell.dbc` and `TaxiNodes.dbc` against the archives' copies, so its
 //! statements are the same whatever order the edits were made in, and an edit
 //! undone drops out of the plan. [`creatures`], [`gameobjects`], [`items`],
-//! [`quests`] and [`loot`] read a store of typed values, shared and keyed by
-//! table, each writer skipping the others' rows. [`dbcs`] copies files rather
-//! than writing rows.
+//! [`quests`], [`loot`], [`services`] and [`behaviour`] read a store of typed
+//! values, shared and keyed by table, each writer skipping the others' rows.
+//! [`dbcs`] copies files rather than writing rows.
 //!
 //! What makes an applied change live differs by table, and each block of the
 //! Server panel states it:
@@ -100,6 +103,9 @@
 //! *_loot_template      .reload <table>, one per loot table written, removals
 //!                      included, for the same reason. Loot already rolled onto
 //!                      a corpse in the world keeps its list
+//! npc_vendor           .reload npc_vendor and .reload npc_trainer, each of
+//! npc_trainer          which re-reads its template table first, removals
+//! and their templates  included
 //! ```
 //!
 //! ## Why the server half is a directory of its own
@@ -138,6 +144,7 @@ pub mod quests;
 pub mod reconcile;
 pub mod release;
 pub mod reload;
+pub mod services;
 pub mod rows;
 pub mod settings;
 pub mod stack;
@@ -186,6 +193,7 @@ pub fn save(
     items::save(session);
     quests::save(session);
     loot::save(session);
+    services::save(session);
     behaviour::save(session);
     // The client-table rows, which are a diff of two files rather than a
     // store, and which return their own apply under the same switch.
@@ -289,6 +297,7 @@ impl Plugin for ServerPlugin {
                     items::on_the_command_line,
                     quests::on_the_command_line,
                     loot::on_the_command_line,
+                    services::on_the_command_line,
                     behaviour::on_the_command_line,
                     patch::on_the_command_line,
                     release::migration_on_the_command_line,

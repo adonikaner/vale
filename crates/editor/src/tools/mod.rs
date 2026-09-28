@@ -45,6 +45,10 @@
 //!                column names it, in a window that follows the selection.
 //!                What a set holds, read one set at a time, and what an edit
 //!                to a row of it is
+//! services.rs    what a creature sells and teaches: npc_vendor, npc_trainer
+//!                and their template tables, in two windows that follow the
+//!                selection. Both lists of a kind read together, and what an
+//!                edit to a row is, refused where the server would skip it
 //! displays.rs    the display id picker's state: a creature's or a game
 //!                object's model chosen from CreatureDisplayInfo or
 //!                GameObjectDisplayInfo by picture, searched by model path.
@@ -127,6 +131,7 @@ pub mod measure;
 pub mod place;
 pub mod quests;
 pub mod rehome;
+pub mod services;
 pub mod shading;
 pub mod spawn;
 pub mod sweep;
@@ -576,6 +581,7 @@ impl Plugin for ToolPlugin {
             quests::QuestToolPlugin,
             loot::LootToolPlugin,
             behaviour::BehaviourToolPlugin,
+            services::ServicesToolPlugin,
             spawn::SpawnKeysPlugin,
             group::GroupPlugin,
             measure::MeasureToolPlugin,

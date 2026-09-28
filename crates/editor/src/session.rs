@@ -1,56 +1,54 @@
 //! What is open: the project, the tiles, the history, and the overlay the
 //! archives are read through.
 //!
-//! ## An edited tile answers as itself before it is saved
+//! ## How an unsaved edit reaches the renderer
 //!
 //! The renderer reads a tile by its virtual path, through
-//! `vale_client::assets::GameAssets`, on the task pool. So the way to put an
-//! edit on the screen is to make that path answer with the edited bytes, which
-//! is what the overlay installed here does: an in-memory map first, the project
-//! folder second, the archives last. Nothing else in the client changes, and a
-//! path with no edit behind it costs one hash lookup.
+//! `vale_client::assets::GameAssets`, on the task pool. To draw an edit, that
+//! path must answer with the edited bytes. The overlay installed here does
+//! this: it looks in an in-memory map first, the project folder second, and
+//! the archives last. Nothing else in the client changes, and a path with no
+//! edit behind it costs one hash lookup.
 //!
 //! The order matters in both directions. In memory before the folder, so an
 //! unsaved edit is what is drawn; the folder before the archives, so a project
 //! opened in a new session draws what it saved last time without having to load
 //! every tile it ever touched.
 //!
-//! ## What a tile can be behind, and the six sets that name it
+//! ## Open tiles and the six sets of pending work
 //!
 //! * Open — parsed into an [`AdtFile`] in [`EditSession::tiles`], which is
 //!   what a tool edits.
-//! * Dirty — the ground *on screen* is behind the heights, per chunk.
+//! * Dirty — the ground on screen is behind the heights, per chunk.
 //!   [`crate::tools::live_ground`] clears it by pushing the new vertices into
 //!   the meshes already on the GPU, every frame of a stroke.
-//! * Regrow — the *foliage* on that ground is behind it, per chunk. A lawn
+//! * Regrow — the foliage on that ground is behind it, per chunk. A lawn
 //!   is a merged mesh and has to be built again rather than patched, so
 //!   [`crate::tools::terrain::live_foliage`] drains this once, when the button
 //!   comes up.
-//! * Moved — the *placements* on it are behind their `MDDF` records, per
+//! * Moved — the placements on it are behind their `MDDF` records, per
 //!   entry. Nothing about a doodad is in the ground's mesh, so this is its own
 //!   set and [`crate::tools::doodads::reconcile`] drains it.
-//! * Repaint — the *blend maps* on the GPU are behind `MCAL`, per chunk.
-//!   A fourth route to the screen for a fourth kind of thing: the paint is in a
-//!   texture rather than in a mesh or a transform, so neither of the two above
-//!   reaches it. [`crate::tools::textures::live_paint`] drains it.
+//! * Repaint — the blend maps on the GPU are behind `MCAL`, per chunk.
+//!   The paint is in a texture rather than in a mesh or a transform, so
+//!   neither of the two sets above reaches it.
+//!   [`crate::tools::textures::live_paint`] drains it.
 //! * Stale — the whole tile has to be read again: what the live path could
 //!   not reach. [`crate::tools::remesh`] forgets it and lets the streamer do it.
 //! * Unsaved — its bytes have moved ahead of the project folder. Saving
 //!   clears it.
 //!
 //! They are separate because they are cleared by different things and at
-//! different rates. Folding any two of them together has a name: sharing one
-//! set between the ground and the grass would have left the grass following
-//! only the last frame's four chunks, because the ground's set is emptied sixty
-//! times a second.
+//! different rates. Merging any two breaks one of them: if the ground and the
+//! grass shared one set, the grass would follow only the last frame's four
+//! chunks, because the ground's set is emptied sixty times a second.
 //!
-//! The rule that decides whether a change goes in one of the live sets or in
-//! stale is the same one every time: *is what changed something the thing on
-//! screen was built from, or something it merely holds?* A height is held in a
-//! vertex buffer and a blend weight in a texel, so both can be written. Which
-//! textures a chunk names, and how many placements a tile has, are decided when
-//! the tile is built — so a change to either is a tile that has to be read
-//! again.
+//! A change goes in one of the live sets when it alters something the drawn
+//! tile holds, and in stale when it alters something the drawn tile was built
+//! from. A height is held in a vertex buffer and a blend weight in a texel, so
+//! both can be written in place. Which textures a chunk names, and how many
+//! placements a tile has, are decided when the tile is built, so a change to
+//! either means the tile has to be read again.
 
 use vale_client::assets::GameAssets;
 use vale_client::render::focus::WorldFocus;
@@ -133,7 +131,7 @@ pub struct EditSession {
     /// drains it every frame of a stroke because one chunk's cell is 16 KB
     /// against the ground's 81,840 vertices.
     ///
-    /// A chunk whose texture *set* changed is not in here; it is in `stale`.
+    /// A chunk whose set of textures changed is not in here; it is in `stale`.
     /// The set is part of the material a draw group was built with, so there is
     /// nothing to patch and the tile has to be read again.
     pub repaint: HashMap<(u32, u32), HashSet<usize>>,
@@ -143,7 +141,7 @@ pub struct EditSession {
     pub stale: HashSet<(u32, u32)>,
     /// Tiles whose bytes are ahead of the project folder.
     pub unsaved: HashSet<(u32, u32)>,
-    /// …and tables, which are the same question one container along.
+    /// Tables whose bytes are ahead of the project folder, by name.
     pub unsaved_tables: HashSet<String>,
     /// How many field edits have landed, for anything that caches a reading
     /// of a table rather than the table itself.
@@ -171,18 +169,19 @@ pub struct EditSession {
     ///
     /// The renderer's `ModelCache` is the one that matters: it holds every
     /// model it has read for the life of the process, so an edited `.m2`
-    /// published here goes on drawing as it was — which is what a baked
-    /// attachment offset not appearing in the storyboard actually is. A path
-    /// that failed to read is remembered too, so a model written after
-    /// something asked for it would never be looked at again.
+    /// published here goes on drawing as it was. A baked attachment offset
+    /// did not appear in the storyboard for this reason. A path that failed
+    /// to read is remembered too, so a model written after something asked
+    /// for it would never be looked at again.
     ///
-    /// Recorded rather than acted on, for this crate's usual reason: the
-    /// cache is a Bevy resource and the things that publish — a bake, a save,
-    /// the lab's own scratch copy — are panels with no `World` to hand. See
-    /// [`forget_changed_models`], which drains it.
+    /// Recorded rather than acted on, because the cache is a Bevy resource
+    /// and the things that publish (a bake, a save, the lab's own scratch
+    /// copy) are panels with no `World` to hand. See
+    /// [`forget_what_changed`], which drains it.
     pub republished: Vec<String>,
-    /// …and whether *everything* has, which a project switch is: every path
-    /// the overlay answers now comes out of a different folder.
+    /// Whether every path has changed under the overlay, which is what a
+    /// project switch does: every path the overlay answers now comes out of a
+    /// different folder.
     pub republished_all: bool,
     /// The edited tables have been put where the client reads them, and
     /// the banks that have already read them have to be told.
@@ -191,8 +190,8 @@ pub struct EditSession {
     /// client, and it is two deep: `GameAssets` parses each table once, and
     /// `world::entities::DisplayCache` holds an `Arc` of that parse from the
     /// first entity of the session. Forgetting only the first leaves every
-    /// pass reading the parse from before — which is what "an edited spell
-    /// does not change in the storyboard or in a playtest" was.
+    /// pass reading the old parse, so an edited spell does not change in the
+    /// storyboard or in a playtest.
     ///
     /// Set by [`publish_for_the_preview`] and by `crate::playtest::start`,
     /// drained by [`forget_what_changed`].
@@ -200,12 +199,12 @@ pub struct EditSession {
     /// How many times a file has been forgotten, for anything holding a
     /// picture of a file rather than the file.
     ///
-    /// `table_revision`'s counterpart one container along, and the lab is the
-    /// one reader: what it has hanging is compared against what it wants, and
-    /// a re-bake over the same path is the same path — so without this the
-    /// preview goes on showing the copy it hung the first time, which is the
-    /// same fault one level up from the cache this fixes. Bumped by
-    /// [`forget_changed_models`], which runs before the hang.
+    /// The file counterpart of `table_revision`. The lab is the one reader: it
+    /// compares what it has hanging against what it wants, and a re-bake over
+    /// the same path has the same path. Without this counter the preview goes
+    /// on showing the copy it hung the first time, even after the model cache
+    /// has forgotten the path. Bumped by [`forget_what_changed`], which runs
+    /// before the hang.
     pub republished_revision: u64,
     /// Everything drawn is from a project that is no longer open.
     ///
@@ -217,12 +216,12 @@ pub struct EditSession {
     /// Which map [`Self::claimed`] is of.
     ///
     /// Without it the grid is the first map's for the whole session: switching
-    /// maps clears the open tiles but the claims are read once at startup, so
-    /// the map window went on drawing Azeroth's coastline over Development's
-    /// empty grid — with every cell claimed and no picture behind it, which is
-    /// exactly what a real tile that has no minimap looks like. Reported from
-    /// the window. [`refresh_claims`] is what puts it back in step, and it does
-    /// so for *any* route that changes the map rather than only the drop-down.
+    /// maps clears the open tiles but the claims were read once at startup, so
+    /// the map window drew Azeroth's claims over Development's empty grid. A
+    /// cell claimed with no picture behind it looks the same as a real tile
+    /// that has no minimap, so the fault was not visible as an error.
+    /// [`refresh_claims`] puts it back in step for every route that changes
+    /// the map, not only the drop-down.
     pub claims_for: String,
     /// The last thing worth telling the person at the keyboard.
     pub status: String,
@@ -233,16 +232,16 @@ pub struct EditSession {
     /// several frames later, and anything published in between is a change that
     /// read cannot have seen. The copy that arrives is then built from the older
     /// bytes and nothing corrects it: the live sets above were drained against
-    /// the *outgoing* copy, which is despawned when the incoming one appears.
+    /// the outgoing copy, which is despawned when the incoming one appears.
     ///
     /// So the number is what `crate::tools::terrain::remesh` compares. It
     /// remembers the revision each replacement was started at and asks for
     /// another read when the file has moved on since. See [`Self::publish`],
     /// which is the only thing that bumps it.
     ///
-    /// It was reported as a building that stayed where it had been dragged after
-    /// an undo, with the file already correct — an undo landing inside the
-    /// re-read the drag itself asked for.
+    /// Without it, an undo that landed during the re-read a drag had asked for
+    /// left the building drawn where it had been dragged, while the file was
+    /// already correct.
     revision: HashMap<(u32, u32), u64>,
     edited: Edited,
     /// The rows this project changes in the server's database.
@@ -282,10 +281,10 @@ pub struct EditSession {
     pub server_paths_unsaved: bool,
     /// …and whether [`Self::server_scripts`] is.
     pub server_scripts_unsaved: bool,
-    /// **What the last apply that succeeded in this process put in the
-    /// database**, as `crate::server::rows::Plan::signature` measures it.
+    /// What the last apply that succeeded in this process put in the
+    /// database, as `crate::server::rows::Plan::signature` measures it.
     ///
-    /// The statements a save emits are a diff of the *project* rather than of
+    /// The statements a save emits are a diff of the project rather than of
     /// what changed since the last save, so a project carrying an edit from a
     /// previous session emits the same statements every time — on every save
     /// and at the start of every playtest. Re-applying them is harmless; the
@@ -302,9 +301,9 @@ pub struct EditSession {
     /// Two fields and not one because the two are applied at different
     /// moments: a spell reaches the database on every save and a creature row
     /// when a person presses a button, so one number would report the other
-    /// half's state. What it is for is the panel's own sentence: *applied*
-    /// against *applied, and changed since*, which are different things to
-    /// know and look identical in a revert file.
+    /// half's state. The panel uses it to choose between "applied" and
+    /// "applied, and changed since", two states that look identical in a
+    /// revert file.
     ///
     /// Per process, for [`Self::applied_signature`]'s reason. `None` at the
     /// start of a session means the panel falls back to what the revert file
@@ -327,6 +326,8 @@ pub struct EditSession {
     /// …and for the behaviour half: events, scripts and spell lists. See
     /// `crate::server::behaviour`.
     pub applied_behaviour: Option<u64>,
+    /// …and for what creatures sell and teach. See `crate::server::services`.
+    pub applied_services: Option<u64>,
     /// How many times this session has written the quest tables, applying
     /// or putting back. What the quest tool's read of them is keyed on.
     ///
@@ -346,6 +347,9 @@ pub struct EditSession {
     /// …and for the behaviour tables, which the events, scripts and spell
     /// windows' reads are keyed on.
     pub behaviour_writes: u64,
+    /// …and for the vendor and trainer tables, which those two windows' reads
+    /// are keyed on.
+    pub services_writes: u64,
     /// The undo entry every server-row write goes on while a group is being
     /// changed, as `(label, subject)`. See [`Self::as_one`].
     ///
@@ -359,7 +363,7 @@ pub struct EditSession {
 /// What undo entry a server-row edit goes on, and what folds into it.
 ///
 /// `subject` is the gesture key `vale_edit::undo::History::begin_gesture`
-/// folds on, and choosing it is the whole of the decision. A form passes a
+/// folds on, so it alone decides what becomes one entry. A form passes a
 /// subject naming the column, so typing into a name box is one entry and
 /// editing two columns is two. A drag passes one naming the row, so the
 /// three position columns it writes are one entry — without that, moving a
@@ -444,8 +448,8 @@ impl EditSession {
     /// Make a tile's path answer with nothing.
     ///
     /// The overlay is asked before the archives, so an entry of zero bytes is a
-    /// path that reads back empty — and `Adt::parse` of nothing fails, which the
-    /// streamer already treats as *there is no tile here*. That is how a deleted
+    /// path that reads back empty. `Adt::parse` of nothing fails, and the
+    /// streamer treats that failure as "there is no tile here", so a deleted
     /// tile stops being drawn.
     ///
     /// A tombstone rather than a removal, because the tile is still in the
@@ -471,9 +475,8 @@ impl EditSession {
     ///
     /// The history goes. An undo entry holds bytes belonging to a file in
     /// the folder that was open; replaying one against another project's file
-    /// would write bytes from one map's tile into another's. A stack that
-    /// cannot be replayed is a stack that has to be dropped, and saying so is
-    /// better than offering a `Ctrl+Z` that corrupts.
+    /// would write bytes from one map's tile into another's. The stack is
+    /// therefore dropped, so that `Ctrl+Z` cannot corrupt the new project.
     ///
     /// `false` when the folder cannot be made, which leaves the session exactly
     /// where it was.
@@ -557,6 +560,7 @@ impl EditSession {
         self.applied_gameobjects = None;
         self.applied_loot = None;
         self.applied_behaviour = None;
+        self.applied_services = None;
         // Every path the overlay answers now comes out of a different folder.
         self.republished_all = true;
         self.tables_republished = true;
@@ -572,9 +576,9 @@ impl EditSession {
     /// the one edits land in when nobody has said otherwise, so it stays and
     /// its contents go — see `vale_edit::project::clear`.
     ///
-    /// Nothing is saved first, unlike a switch, and that is the point
-    /// rather than an oversight: what a save would write is the very files
-    /// being thrown away. The caller is the one that has to have asked.
+    /// Nothing is saved first, unlike a switch, because a save would write
+    /// the same files that are being thrown away. The caller must have asked
+    /// the person before calling this.
     ///
     /// Returns how many files went, or `None` when the folder would not
     /// empty; the status line says which.
@@ -667,10 +671,10 @@ impl EditSession {
 
     /// Note that a table's bytes are ahead of what is written down.
     ///
-    /// The table counterpart of the `unsaved` mark, and deliberately *not* of
+    /// The table counterpart of the `unsaved` mark, and not of
     /// [`Self::publish`]: a field edit does not write the file anywhere.
     ///
-    /// The reason is arithmetic. `Spell.dbc` is 16 MB, an edit arrives on every
+    /// The reason is cost. `Spell.dbc` is 16 MB, an edit arrives on every
     /// frame a number is dragged, and [`Self::publish_table`] serialises the
     /// whole table — so publishing per edit is a gigabyte a second of copying
     /// for no reader at all. There is no reader because
@@ -722,16 +726,16 @@ impl EditSession {
     /// The same two, for a path minted fresh on every publish — the lab's
     /// scratch copy, which is `custom\lab\<n>.m2` for a new `n` each time.
     ///
-    /// They record nothing in [`Self::republished`], and that is the whole
-    /// difference. There is nothing to forget: no cache can be holding a
-    /// reading of *this* path, because the path did not exist a moment ago.
+    /// They differ from [`Self::publish_bytes`] and [`Self::unpublish_bytes`]
+    /// only in recording nothing in [`Self::republished`]. There is nothing to
+    /// forget: no cache can be holding a reading of a path that did not exist
+    /// a moment ago.
     ///
-    /// And recording would be a loop rather than a waste. The lab
-    /// publishes its copy and hangs it in one frame, and compares what it has
-    /// hanging against [`Self::republished_revision`]; a scratch publish that
-    /// bumped that counter would make the next frame's compare differ, which
-    /// re-hangs, which publishes again. Every frame, for as long as the lab is
-    /// open.
+    /// Recording would also cause a loop. The lab publishes its copy and
+    /// hangs it in one frame, and compares what it has hanging against
+    /// [`Self::republished_revision`]; a scratch publish that bumped that
+    /// counter would make the next frame's compare differ, which re-hangs,
+    /// which publishes again, on every frame the lab is open.
     pub fn publish_scratch(&mut self, vpath: &str, bytes: Vec<u8>) {
         if let Ok(mut edited) = self.edited.write() {
             edited.insert(vpath.to_ascii_lowercase(), bytes);
@@ -791,17 +795,6 @@ impl EditSession {
         true
     }
 
-    /// Set one column of one row of one of the server's tables, or clear it.
-    ///
-    /// `value` is already a SQL literal — quoted and escaped by
-    /// `vale_mangos::sql` at the moment it is typed, so there is one
-    /// escaping rule and it is applied once. `None` takes the edit back, which
-    /// removes the column from the project's file and so from the next save's
-    /// statements.
-    ///
-    /// Nothing is sent anywhere here. The project's file is written and the
-    /// database is reached by [`crate::server::rows::save`], which is what
-    /// Save and a playtest call.
     /// Run `write` with every server-row write in it on one undo entry.
     ///
     /// For a change to a group of spawns: each spawn's writer names its own row
@@ -840,6 +833,17 @@ impl EditSession {
         }
     }
 
+    /// Set one column of one row of one of the server's tables, or clear it.
+    ///
+    /// `value` is already a SQL literal — quoted and escaped by
+    /// `vale_mangos::sql` at the moment it is typed, so there is one
+    /// escaping rule and it is applied once. `None` takes the edit back, which
+    /// removes the column from the project's file and so from the next save's
+    /// statements.
+    ///
+    /// Nothing is sent anywhere here. The project's file is written and the
+    /// database is reached by [`crate::server::rows::save`], which is what
+    /// Save and a playtest call.
     pub fn set_server_edit(
         &mut self,
         table: &str,
@@ -847,7 +851,7 @@ impl EditSession {
         column: &str,
         value: Option<String>,
         // …and the entry it goes on the undo stack as. `None` is an edit made
-        // *by* an undo, which must not push one of its own.
+        // by an undo, which must not push one of its own.
         under: Option<Gesture<'_>>,
     ) {
         if self.server_edits.get(table, key, column) == value.as_deref() {
@@ -873,7 +877,7 @@ impl EditSession {
                     after: value.clone(),
                 });
             // Closed at once, as `tables::set_fields` closes its own.
-            // `History::begin_gesture` leaves the change *open*, and an open
+            // `History::begin_gesture` leaves the change open, and an open
             // change is not on the stack: `next_undo` reads `done` and the panel
             // greys its button off that, so the last edit made could not be
             // undone at all and the one before it came back instead. The next
@@ -886,8 +890,8 @@ impl EditSession {
         self.server_edit_revision += 1;
     }
 
-    /// **Say that this project creates a row, removes one, or says nothing
-    /// about it at all.**
+    /// Record that this project creates a row, removes one, or says nothing
+    /// about it at all.
     ///
     /// [`Self::set_server_edit`]'s counterpart for the claim that is not a
     /// column. Creating a spawn sets no column of a row that is already there,
@@ -895,8 +899,8 @@ impl EditSession {
     /// in both cases is the project's whole claim, so that is what is written
     /// and what goes on the undo stack — see `vale_edit::undo::ServerRow`.
     ///
-    /// `None` takes the claim back entirely, which is what undoing a creation
-    /// is and what *keep this spawn after all* is.
+    /// `None` takes the claim back entirely. Undoing a creation does this, and
+    /// so does keeping a spawn that was marked for removal.
     ///
     /// Nothing is sent anywhere. The project's file is written and the database
     /// is reached by [`crate::server::creatures::apply`], which is a button.
@@ -906,7 +910,7 @@ impl EditSession {
         key: &vale_mangos::row::Key,
         row: Option<&vale_mangos::row::RowEdit>,
         // …and the entry it goes on the undo stack as. `None` is an edit made
-        // *by* an undo, which must not push one of its own.
+        // by an undo, which must not push one of its own.
         under: Option<Gesture<'_>>,
     ) {
         let before = self.server_edits.row_line(table, key);
@@ -941,8 +945,7 @@ impl EditSession {
     /// [`Self::set_server_edit`]'s counterpart for the subject whose edit is a
     /// set of rows. `None` takes the claim back entirely, which leaves the
     /// database's own path alone; a `Some` holding a path with no nodes is
-    /// the edit that *deletes* the path, and the two are deliberately not the
-    /// same thing.
+    /// the edit that deletes the path. The two are kept distinct on purpose.
     ///
     /// Nothing is sent anywhere. The project's file is written and the database
     /// is reached by [`crate::server::creatures::apply`], which is a button.
@@ -952,7 +955,7 @@ impl EditSession {
         owner: u64,
         path: Option<&vale_mangos::path::Path>,
         // …and the entry it goes on the undo stack as. `None` is an edit made
-        // *by* an undo, which must not push one of its own.
+        // by an undo, which must not push one of its own.
         under: Option<Gesture<'_>>,
     ) {
         let before = self.server_paths.get(which, owner);
@@ -1028,25 +1031,24 @@ impl EditSession {
 
     /// Put a change's server-row edits in, or take them out.
     ///
-    /// [`Self::step_tables`]' counterpart one container along, and simpler:
+    /// The server-row counterpart of [`Self::step_tables`], and simpler:
     /// there is no file to be open or not, because the store is the session's
     /// own and is always there. What it cannot do is reach the database — an
     /// undone edit is written back to the server by the next save, exactly as
     /// the edit itself was, because the statements a save emits are a diff of
     /// the project rather than a log of what was typed.
     fn step_server(&mut self, change: &vale_edit::undo::Change, forward: bool) {
-        // The paths first, and outside the guard below. A waypoint edit is
-        // a change with no `server_cells` at all, so putting this call after an
-        // `is_empty` return on that list meant every path edit was silently
-        // unaffected by Undo and Redo — the entry was on the stack, the button
-        // was lit, pressing it did nothing. That is the failure a list-per-kind
-        // invites and it is why this runs before the guard rather than after
-        // the loop.
+        // The paths first, and outside the guard in `step_server_cells`. A
+        // waypoint edit is a change with no `server_cells` at all, so when
+        // this call came after an `is_empty` return on that list, Undo and
+        // Redo did nothing to a path edit even though the entry was on the
+        // stack and the button was lit. Each list of a change must be stepped
+        // independently of the others being empty.
         self.step_server_paths(change, forward);
-        // **A created or removed row before its columns going forward, and
-        // after them coming back.** A change that creates a spawn and then
-        // writes one of its columns has to have the row first, and taking the
-        // row away has to come after the column — see
+        // A created or removed row is stepped before its columns going
+        // forward, and after them coming back. A change that creates a spawn
+        // and then writes one of its columns has to have the row first, and
+        // taking the row away has to come after the column — see
         // `vale_edit::undo::Change::server_rows`.
         if forward {
             self.step_server_rows(change, forward);
@@ -1070,9 +1072,9 @@ impl EditSession {
             };
             let Some(key) = vale_mangos::row::Key::parse(&cell.key) else {
                 // The key is written by `Key::text` and read by `Key::parse`,
-                // so this cannot happen from anything this crate wrote. Said
-                // rather than ignored: an entry that silently did nothing would
-                // be an undo a person pressed and watched not work.
+                // so this cannot happen from anything this crate wrote. It is
+                // logged rather than ignored, because otherwise an undo would
+                // do nothing and give no reason.
                 warn!("undo: {} is not a row key", cell.key);
                 continue;
             };
@@ -1220,12 +1222,12 @@ impl EditSession {
 
     /// Whether the server half of this project is ahead of its folder.
     ///
-    /// The third thing a save writes, beside the tiles and the tables, and for
-    /// a long time the only one nothing on screen counted: the Save button read
-    /// the two lists and so said *Saved* with a creature edit outstanding — and,
-    /// worse, disabled itself, so the only way to write it was the keystroke.
-    /// Reverting the rows was where that showed: the store still claimed them,
-    /// `sql\creatures.sql` was still on disk, and nothing asked for a save.
+    /// The third thing a save writes, beside the tiles and the tables. When the
+    /// Save button read only the tile and table lists, it showed "Saved" and
+    /// disabled itself while a creature edit was outstanding, so the keystroke
+    /// was the only way to write it. After a revert of the rows, the store
+    /// still claimed them, `sql\creatures.sql` was still on disk, and nothing
+    /// asked for a save.
     ///
     /// Both stores, because both are written by the same press and neither has
     /// a count worth showing — what a person needs to know is that a save is
@@ -1346,7 +1348,7 @@ impl EditSession {
     /// Write an open tile's bytes into the overlay, so the next read of its path
     /// answers with them.
     ///
-    /// This is what makes an edit real to everything downstream. It does not
+    /// After this, everything that reads the path sees the edit. It does not
     /// touch the disk: [`EditSession::save`] does that.
     pub fn publish(&mut self, coord: (u32, u32)) {
         let Some(tile) = self.tiles.get(&coord) else {
@@ -1527,16 +1529,15 @@ impl EditSession {
     /// the last thing done, wherever it was done. A stroke that crossed a tile
     /// border is one entry naming two tiles and comes back off in one press.
     ///
-    /// **A tile the change names and this session does not have open is opened
-    /// again**, which is why this wants the archives. It used to be skipped,
-    /// silently — which was safe only because [`crate::tools::close_tiles`]
-    /// refused to close anything the history named, and that guard is what a
-    /// map-wide edit cannot live with: a find-and-replace over 687 tiles would
-    /// pin every one of them in memory for the rest of the session. Opening on
-    /// demand is the same answer from the other end, and it is the correct one
-    /// either way: a change is put back where it was made, whether or not the
-    /// camera has been there since. Opening reads through the overlay, so what
-    /// comes back is the *edited* tile — the one the change applies to.
+    /// A tile the change names and this session does not have open is opened
+    /// again, which is why this takes the archives. Skipping such a tile is
+    /// safe only if [`crate::tools::close_tiles`] refuses to close anything
+    /// the history names, and that rule does not scale: a find-and-replace
+    /// over 687 tiles would pin every one of them in memory for the rest of
+    /// the session. Opening on demand puts a change back where it was made,
+    /// whether or not the camera has been there since. Opening reads through
+    /// the overlay, so what comes back is the edited tile, which is the one
+    /// the change applies to.
     pub fn undo(&mut self, assets: &GameAssets) -> Vec<(u32, u32)> {
         let Some(change) = self.history.undo() else {
             return Vec::new();
@@ -1555,9 +1556,9 @@ impl EditSession {
                     self.touched(coord, chunk);
                 }
                 // …and the placements, which are neither a chunk nor in one.
-                // **A change that renumbers the lists marks the whole tile
-                // stale instead**: there is no index that survives it, so
-                // reconciling entry by entry would move the wrong ones.
+                // A change that renumbers the lists marks the whole tile stale
+                // instead: no index survives it, so reconciling entry by entry
+                // would move the wrong ones.
                 match change.renumbers_placements(&key) {
                     true => {
                         self.stale.insert(coord);
@@ -1689,13 +1690,12 @@ impl Plugin for SessionPlugin {
                     .chain()
                     .after(vale_client::world::session::follow_the_session),
             )
-            // Before the lab hangs anything, and the ordering is the
-            // point rather than a tidiness: the lab publishes a scratch copy
+            // Before the lab hangs anything. The lab publishes a scratch copy
             // and asks for it in the same frame, so a drain that ran after it
             // would forget the path that had just been asked for and cost a
             // second read of it. Draining first means what is forgotten is
-            // what changed before this frame — which is every other publish
-            // there is. See [`forget_what_changed`].
+            // what changed before this frame, which covers every other
+            // publish. See [`forget_what_changed`].
             //
             // …and the publish before the drain, so an edit that settles on
             // this frame is told about on this frame rather than the next.
@@ -1708,7 +1708,6 @@ impl Plugin for SessionPlugin {
     }
 }
 
-/// Build the session and hand the archive chain its overlay.
 /// What the archives are read through: the unsaved edits, then the project
 /// folder, then the game's own files.
 ///
@@ -1716,9 +1715,9 @@ impl Plugin for SessionPlugin {
 /// archives so a project opened in a new session draws what it saved last time
 /// without having to load every tile it ever touched. See the module comment.
 ///
-/// A function rather than a closure written once at startup because **a project
-/// can be changed while the editor is running**, and the overlay is what a
-/// project *is* as far as everything downstream is concerned.
+/// A function rather than a closure written once at startup because the
+/// project can be changed while the editor is running, and to everything
+/// downstream the overlay is the project.
 fn overlay_over(project: &Project, edited: &Edited) -> vale_assets::archive::Overlay {
     let edited = Arc::clone(edited);
     let project = project.clone();
@@ -1733,6 +1732,7 @@ fn overlay_over(project: &Project, edited: &Edited) -> vale_assets::archive::Ove
     })
 }
 
+/// Build the session and hand the archive chain its overlay.
 fn open(
     mut commands: Commands,
     args: Res<crate::Args>,
@@ -1783,10 +1783,10 @@ fn open(
     // resolve at all while neither the server nor a person has said what time it
     // is, and only a server sends the clock. The same override `--hour` uses.
     //
-    // The two switches that used to be set here — the game's interface and the
-    // login screen's own 3D scene — are [`crate::playtest::arrange`]'s now.
-    // They are not settings of the editor's: they are off while it is editing
-    // and on while it is being played, which is one state and not two defaults.
+    // The game's interface and the login screen's own 3D scene are switched
+    // by [`crate::playtest::arrange`], not here. They are off while the editor
+    // is editing and on while it is being played, which is one state and not
+    // two defaults.
     let noon = 12 * 120;
     *clock = vale_client::render::sky::WorldClock {
         half_minutes: noon,
@@ -1861,29 +1861,23 @@ fn open(
         applied_gameobjects: None,
         applied_loot: None,
         applied_behaviour: None,
+        applied_services: None,
         quest_writes: 0,
         item_writes: 0,
         creature_writes: 0,
         gameobject_writes: 0,
         loot_writes: 0,
         behaviour_writes: 0,
+        services_writes: 0,
         one_gesture: None,
     });
 }
 
-/// Read every drawn tile again after the project changed.
-///
-/// The ground on screen was built from bytes the old project's overlay
-/// answered with, and nothing about it is wrong in a way a patch could fix — a
-/// different project is a different file. So every tile that is drawn is made
-/// stale, which is the same route a texture edit takes: the streamer reads it
-/// again and `terrain::swap` puts the new one up in one frame, leaving the old
-/// one on screen until then.
 /// Tell every cache in the client what has changed under it.
 ///
 /// Publishing bytes into the overlay is half of a change. The other half is
-/// that the overlay is asked on every *read*, and the client has three banks
-/// that read a path once and keep what they read:
+/// that the overlay is asked only when a path is read, and the client has four
+/// banks that read a path once and keep what they read:
 ///
 /// ```text
 /// ModelCache             every model, dressing and skin, by archive path
@@ -1894,12 +1888,11 @@ fn open(
 ///                        the path the index names
 /// ```
 ///
-/// Each has needed the same seam, and the third is the one that hid behind
-/// the second: `GameAssets::forget_tables` drops the *bank's* copy and
-/// `DisplayCache` goes on holding the `Arc` it took at the first entity. The
-/// fourth is why a redrawn minimap reached a playtest once and never again:
-/// the picture was read at the first playtest and answered from the cache at
-/// every one after.
+/// Each needs to be told. The third is easy to miss behind the second:
+/// `GameAssets::forget_tables` drops the bank's copy, and `DisplayCache` goes
+/// on holding the `Arc` it took at the first entity. Without the fourth, a
+/// redrawn minimap reaches only the first playtest: the picture is read then
+/// and answered from the cache at every playtest after.
 ///
 /// None of this rebuilds what is drawn. What is standing keeps its
 /// handles; the next thing to ask reads the file. For the lab that is the
@@ -1945,7 +1938,7 @@ pub fn forget_what_changed(
             displays.forget();
         }
         // What is standing is told to look again. The effect pass hangs
-        // a kit on a counter's *change*, so a re-read the actors are not
+        // a kit when a counter changes, so a re-read the actors are not
         // restarted for shows on the next loop and not before; and the lab's
         // compare keys on the revision below, so without the bump the model
         // view keeps the effect it hung off the tables from before.
@@ -1987,14 +1980,14 @@ pub fn forget_what_changed(
     }
 }
 
-/// **Put the edited tables where the client reads them, while a preview is
-/// open.**
+/// Put the edited tables where the client reads them, while a preview is
+/// open.
 ///
 /// The storyboard's preview is the client's own passes (see `crate::stage`),
 /// and those read `DisplayCache` — the client's parse of the archives — not
-/// the editor's open `DbcFile`s. So a kit edited on the form changed the
-/// rail, which reads the edit, and not the picture, which does not. Reported
-/// as a baked model never appearing in the storyboard.
+/// the editor's open `DbcFile`s. Without this, a kit edited on the form
+/// changes the rail, which reads the edit, and not the picture, which does
+/// not; a baked model then never appears in the storyboard.
 ///
 /// Only while something is being previewed, and only once it has settled.
 /// A field edit arrives on every frame of a drag and the re-read is not
@@ -2007,8 +2000,8 @@ pub fn publish_for_the_preview(
     tool: Res<crate::tools::Tool>,
     session: Option<ResMut<EditSession>>,
     // The revision last seen, when it changed, the revision last published,
-    // and whether the stage was open last frame. **The third is what makes
-    // this once per change** rather than once per settle: publishing does not
+    // and whether the stage was open last frame. The third makes this run
+    // once per change rather than once per settle: publishing does not
     // clear `unsaved_tables` — only saving does — so a re-arm on the clock
     // alone would put the tables where the client reads them every settle for
     // as long as the preview was open.
@@ -2021,7 +2014,7 @@ pub fn publish_for_the_preview(
 
     let Some(mut session) = session else { return };
     let (had, changed_at, published, was_open) = &mut *seen;
-    // What counts as a preview being open is two things now.
+    // Two things count as a preview being open.
     //
     // The stage is one: a spell played on two actors, which reads the tables
     // when it builds a loop. The lights tool is the other, and its preview is
@@ -2043,8 +2036,8 @@ pub fn publish_for_the_preview(
     // loop begins on the frame it opens, so a publish that waited for the
     // settle hung the first cast off the tables from before the edit and the
     // person saw the change one loop later, or never on a stage that was
-    // paused. Reported as the preview not following an edit until it was
-    // navigated away from and back.
+    // paused. The preview then showed an edit only after the person
+    // navigated away and back.
     let opened = !*was_open;
     *was_open = true;
     let now = time.elapsed_secs_f64();
@@ -2071,6 +2064,14 @@ pub fn publish_for_the_preview(
     };
 }
 
+/// Read every drawn tile again after the project changed.
+///
+/// The ground on screen was built from bytes the old project's overlay
+/// answered with, and nothing about it is wrong in a way a patch could fix — a
+/// different project is a different file. So every tile that is drawn is made
+/// stale, which is the same route a texture edit takes: the streamer reads it
+/// again and `terrain::swap` puts the new one up in one frame, leaving the old
+/// one on screen until then.
 pub fn reread_after_a_switch(
     session: Option<ResMut<EditSession>>,
     tiles: Query<&vale_client::render::terrain::TerrainTile>,
@@ -2110,7 +2111,6 @@ pub fn refresh_claims(
     view.clipboard.clear();
 }
 
-/// Which tiles a map's WDT claims, the project's copy first.
 /// Read the project's row edits, or nothing.
 ///
 /// A project with no server edits has no file, which is the ordinary case and
@@ -2142,11 +2142,6 @@ fn read_server_edits(project: &vale_edit::project::Project) -> vale_mangos::row:
     }
 }
 
-/// Read the project's waypoint paths, or nothing.
-///
-/// [`read_server_edits`]' sibling, on the same terms: no file is the ordinary
-/// case, and a file that will not decode is reported and treated as empty
-/// rather than failing the open.
 /// The scripts the project changes, read out of its own file, or none.
 fn read_server_scripts(project: &vale_edit::project::Project) -> vale_mangos::scripts::Scripts {
     let Some(bytes) = project.read(crate::server::behaviour::SCRIPTS_VPATH) else {
@@ -2161,6 +2156,11 @@ fn read_server_scripts(project: &vale_edit::project::Project) -> vale_mangos::sc
     }
 }
 
+/// Read the project's waypoint paths, or nothing.
+///
+/// [`read_server_edits`]' sibling, on the same terms: no file is the ordinary
+/// case, and a file that will not decode is reported and treated as empty
+/// rather than failing the open.
 fn read_server_paths(project: &vale_edit::project::Project) -> vale_mangos::path::Paths {
     let Some(bytes) = project.read(crate::server::creatures::PATHS_VPATH) else {
         return vale_mangos::path::Paths::default();
@@ -2174,6 +2174,7 @@ fn read_server_paths(project: &vale_edit::project::Project) -> vale_mangos::path
     }
 }
 
+/// Which tiles a map's WDT claims, the project's copy first.
 fn claimed_tiles(
     assets: &GameAssets,
     project: &vale_edit::project::Project,
@@ -2256,8 +2257,9 @@ fn drop_to_the_ground(
 /// Keep [`crate::places::Places`] in step with the map being edited.
 ///
 /// The join it holds is over two parsed DBCs and a few hundred rows, which is
-/// nothing to do once and not something to do every frame. The map id is the
-/// witness: it changes when the panel's drop-down does and at no other time.
+/// nothing to do once and not something to do every frame. The map id decides
+/// when to rebuild: it changes when the panel's drop-down does and at no other
+/// time.
 fn follow_the_map(
     session: Option<Res<EditSession>>,
     assets: Res<GameAssets>,

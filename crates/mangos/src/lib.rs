@@ -32,10 +32,15 @@
 //!              combat, one row of ninety columns per list. Live on a reload
 //! broadcast.rs `broadcast_text`: the lines a Talk step says, yells or emotes.
 //!              Read at start, so a change is live after a restart
+//! vendor.rs    `npc_vendor` and `npc_vendor_template`: what a creature sells,
+//!              from its own list and from the one its `vendor_id` names. Live
+//!              on a reload, removals included
+//! trainer.rs   `npc_trainer` and `npc_trainer_template`: what a creature
+//!              teaches, as teaching spells, on the same terms
 //! schema.rs    the vocabulary the row subjects (creature, gameobject, item,
-//!              quest, loot, event, script, spell list) are described in:
-//!              what a column is, how it is read, and which part of a form it
-//!              is drawn in
+//!              quest, loot, event, script, spell list, vendor, trainer) are
+//!              described in: what a column is, how it is read, and which part
+//!              of a form it is drawn in
 //! row.rs       what an edit to a row is when there is no file to diff: the key,
 //!              the assignment, the undo, and the file a project keeps them in
 //! path.rs      a waypoint path, the one subject whose edit is a set of rows
@@ -105,3 +110,5 @@ pub mod scripts;
 pub mod spell;
 pub mod sql;
 pub mod taxi;
+pub mod trainer;
+pub mod vendor;

@@ -43,7 +43,7 @@
 //!   create a spawn at 10,000,000 collide at the second patch.
 
 use super::stack::Subject;
-use super::{behaviour, creatures, gameobjects, items, loot, quests, rows};
+use super::{behaviour, creatures, gameobjects, items, loot, quests, rows, services};
 use crate::session::EditSession;
 use vale_client::assets::GameAssets;
 use vale_edit::project::Project;
@@ -121,6 +121,11 @@ pub fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<Entry>,
                     push(&mut out, row.table, row.key.clone(), row.statements());
                 }
             }
+            Subject::Services => {
+                for row in services::plan(session).ordered() {
+                    push(&mut out, row.table, row.key.clone(), row.statements());
+                }
+            }
             Subject::Behaviour => {
                 let plan = behaviour::plan(session);
                 for row in &plan.rows {
@@ -166,14 +171,7 @@ pub fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<Entry>,
 }
 
 fn revert_vpath(subject: Subject) -> &'static str {
-    match subject {
-        Subject::Creatures => creatures::REVERT_VPATH,
-        Subject::GameObjects => gameobjects::REVERT_VPATH,
-        Subject::Items => items::REVERT_VPATH,
-        Subject::Quests => quests::REVERT_VPATH,
-        Subject::Loot => loot::REVERT_VPATH,
-        Subject::Behaviour => behaviour::REVERT_VPATH,
-    }
+    subject.revert_vpath()
 }
 
 /// The record of the last migration — see `vale_mangos::migration`.
@@ -264,6 +262,8 @@ pub fn migrate(session: &mut EditSession, assets: &GameAssets) -> String {
     super::items::save(session);
     super::quests::save(session);
     super::loot::save(session);
+    super::services::save(session);
+    super::behaviour::save(session);
     let Some(into) = session.project.path_for(migration::MIGRATIONS_DIR) else {
         return format!("{} leaves the project", migration::MIGRATIONS_DIR);
     };

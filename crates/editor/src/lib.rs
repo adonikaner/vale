@@ -517,6 +517,22 @@ pub struct Args {
     /// loot table.
     pub apply_loot: bool,
     pub revert_loot: bool,
+    /// `--vendor` and `--trainer`: open the Vendor or the Trainer window on
+    /// `--spawn`'s creature. Each follows the selection, so it needs
+    /// `--spawn`.
+    pub vendor_window: bool,
+    pub trainer_window: bool,
+    /// `--vendor-add <item>` and `--trainer-add <spell>`: add a row to the
+    /// list the window shows, which a scripted run cannot do otherwise. A
+    /// spell that is not a teaching spell is replaced by the one that teaches
+    /// it, as the window's own add does. Each implies its window.
+    pub vendor_add: Option<u32>,
+    pub trainer_add: Option<u32>,
+    /// `--apply-services` / `--revert-services`: the Server panel's two
+    /// buttons for the vendor and trainer lists. The apply also asks a running
+    /// playtest for `.reload npc_vendor` and `.reload npc_trainer`.
+    pub apply_services: bool,
+    pub revert_services: bool,
     /// `--events`: open the events window on `--spawn`'s creature;
     /// `--event-add`: add an event to it, which is the gesture a scripted run
     /// cannot make and every check downstream needs. `--spells`: open the
@@ -776,6 +792,12 @@ impl Default for Args {
             loot_add: None,
             apply_loot: false,
             revert_loot: false,
+            vendor_window: false,
+            trainer_window: false,
+            vendor_add: None,
+            trainer_add: None,
+            apply_services: false,
+            revert_services: false,
             events_window: false,
             event_add: false,
             spells_window: false,
@@ -1000,6 +1022,18 @@ impl Args {
                 }
                 "--apply-loot" => parsed.apply_loot = true,
                 "--revert-loot" => parsed.revert_loot = true,
+                "--vendor" => parsed.vendor_window = true,
+                "--trainer" => parsed.trainer_window = true,
+                "--vendor-add" => {
+                    parsed.vendor_add = args.next().as_deref().and_then(|v| v.trim().parse().ok());
+                    parsed.vendor_window = true;
+                }
+                "--trainer-add" => {
+                    parsed.trainer_add = args.next().as_deref().and_then(|v| v.trim().parse().ok());
+                    parsed.trainer_window = true;
+                }
+                "--apply-services" => parsed.apply_services = true,
+                "--revert-services" => parsed.revert_services = true,
                 "--events" => parsed.events_window = true,
                 "--event-add" => {
                     parsed.event_add = true;

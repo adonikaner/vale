@@ -16,7 +16,7 @@
 //! ## A row is drawn as the server reads it
 //!
 //! The columns are drawn as what they mean rather than as the two signed
-//! numbers the table holds: a chance and a *quest* switch for
+//! numbers the table holds: a chance and a `quest` checkbox for
 //! `ChanceOrQuestChance`, a count range for `mincountOrRef` on an item and a
 //! link for a reference. The rows are grouped as `LootTemplate::AddEntry`
 //! groups them, and each group's heading says in a sentence what one roll of
@@ -26,7 +26,7 @@
 //! the server reads it as. A row the server would skip at load says why, in
 //! red, off `vale_mangos::loot::Entry::check`.
 //!
-//! ## Nothing here reaches the database
+//! ## Edits go to the project, not the database
 //!
 //! An edit goes into the project's store and onto the undo stack; a save
 //! writes `sql\loot.sql`; **Apply** is on the bar's **Server…** with the other
@@ -55,10 +55,10 @@ const NAME: f32 = 200.0;
 /// server rolls (`LootMgr.cpp:309`), and for `29.78891%`.
 const CHANCE: f32 = 90.0;
 
-/// …and a count or a condition, which are small integers.
+/// How wide a count or condition cell is. Both hold small integers.
 const NUMBER: f32 = 44.0;
 
-/// …and the group drop-down, which holds `Group 12`.
+/// How wide the group drop-down is: room for `Group 12`.
 const GROUP: f32 = 76.0;
 
 /// How tall a cell is.
@@ -75,7 +75,7 @@ pub struct Subject<'a> {
     pub items: &'a mut Items,
     pub assets: &'a GameAssets,
     pub thumbnails: &'a mut Thumbnails,
-    /// **The edit that would make the holder name a set**, one per tab, where
+    /// The edit that would make the holder name a set, one per tab, where
     /// there is one: a creature's `loot_id` written as its own entry, an
     /// item's `LOOTABLE` flag set. `None` where nothing is offered.
     pub fixes: Vec<Option<Fix>>,
@@ -96,7 +96,7 @@ pub struct Fix {
     pub gesture: &'static str,
 }
 
-/// **The window**, or nothing when it is shut or the selection names nothing.
+/// Draws the window, or nothing when it is shut or the selection names nothing.
 ///
 /// Returns its rectangle so the viewport can keep a click inside it from also
 /// being a click on the ground behind it.
@@ -205,7 +205,7 @@ fn tabs(ui: &mut egui::Ui, subject: &mut Subject<'_>, window: &crate::tools::loo
     }
 }
 
-/// **What the tab's set is keyed to**, and the two things that can be wrong
+/// Draws what the tab's set is keyed to, and the two things that can be wrong
 /// with it: the column names nothing, or the set has no rows. `false` when
 /// there is no set to draw.
 fn set_head(ui: &mut egui::Ui, subject: &mut Subject<'_>, set: Set, fix: Option<Fix>) -> bool {
@@ -288,18 +288,19 @@ fn body(ui: &mut egui::Ui, subject: &mut Subject<'_>, set: Set) {
         return;
     }
     let rows = subject.loot.rows_of(set, &subject.session.server_edits);
-    // **The two ways to add a row stay under the list**, outside the scroll,
-    // so a set of a hundred rows does not have to be scrolled to the end to
-    // be added to.
+    // The two ways to add a row stay under the list, outside the scroll, so a
+    // set of a hundred rows does not have to be scrolled to the end to be
+    // added to.
     //
-    // **In a bottom panel, so the scroll gets exactly what is left.** Until a
-    // window is dragged, egui's `Resize` makes it `max(its size, its content)`
-    // (`resize.rs:269`). The scroll used to be asked for the available height
-    // less a guess at the foot's, the foot was taller than the guess, so the
-    // content was always a little taller than the window and the window grew
-    // on every frame until it filled the screen. A panel measures the foot
-    // itself, the scroll can then never be taller than the window, and the
-    // window stays at `default_size` — about eight rows — until it is dragged.
+    // They sit in a bottom panel so that the scroll gets exactly the height
+    // that is left. Until a window is dragged, egui's `Resize` makes it
+    // `max(its size, its content)` (`resize.rs:269`). When the scroll was
+    // given the available height less an estimate of the foot's height, the
+    // foot was taller than the estimate, so the content was always a little
+    // taller than the window and the window grew on every frame until it
+    // filled the screen. A panel measures the foot itself, so the scroll is
+    // never taller than the window, and the window stays at `default_size`
+    // (about eight rows) until it is dragged.
     egui::Panel::bottom("loot-foot")
         .resizable(false)
         .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 4)))
@@ -336,16 +337,17 @@ fn body(ui: &mut egui::Ui, subject: &mut Subject<'_>, set: Set) {
         });
 }
 
-/// **A chance, as a person reads one**: at most six places, which is the
+/// Formats a chance for display: at most six decimal places, which is the
 /// server's own floor (`LootMgr.cpp:309`), with trailing zeros left off. A sum
-/// or a share of f32 chances carries the noise of each term, and this is where
-/// it is dropped.
+/// or a share of f32 chances carries the rounding noise of each term, and this
+/// function drops it.
 fn percent(value: f32) -> String {
     let text = format!("{value:.6}");
     text.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-/// **A group's heading, and what it means in one line under it.**
+/// Draws a group's heading, and one line under it that says what the group
+/// does.
 ///
 /// Group 0 is not a group: every row in it rolls its own chance and any number
 /// of them can drop. A numbered group drops at most one row per roll — see
@@ -416,22 +418,29 @@ fn row(
                 state_dot(ui, shown.life, &faults);
                 match shown.entry.reference_to() {
                     Some(reference) => reference_link(ui, subject, reference),
-                    None => item_name(ui, subject, shown.entry.item),
+                    None => item_name(
+                        ui,
+                        subject.quests,
+                        subject.items,
+                        subject.assets,
+                        subject.thumbnails,
+                        shown.entry.item,
+                    ),
                 }
             },
         );
         // The chance, and whether it is a quest drop.
-        // **Written as the shortest decimal that reads back as the same f32**,
-        // with no cap on the places. `ChanceOrQuestChance` is a MySQL `float`
-        // and shipped rows go as low as 0.0001; a fixed cap of four drew those
-        // as 0%, and a higher one draws a single-precision value through f64 as
-        // `29.78890038` where the table holds `29.7889`. Rust's `Display` for
-        // f32 is that shortest round-trip form, and it is also what
-        // `vale_mangos::sql::float` writes, so the cell shows what the
-        // statement will say.
+        // The chance is written as the shortest decimal that reads back as the
+        // same f32, with no cap on the decimal places. `ChanceOrQuestChance`
+        // is a MySQL `float` and shipped rows go as low as 0.0001. A fixed cap
+        // of four places drew those as 0%, and a higher cap draws a
+        // single-precision value through f64 as `29.78890038` where the table
+        // holds `29.7889`. Rust's `Display` for f32 is that shortest
+        // round-trip form, and `vale_mangos::sql::float` writes the same form,
+        // so the cell shows what the statement will say.
         //
-        // **A 0 in a group is drawn as `equal`**, which is what it means: an
-        // equal share of what the group's stated chances leave. The share
+        // A 0 in a group is drawn as `equal`, because the server reads it as
+        // an equal share of what the group's stated chances leave. The share
         // itself is on hover and in the group's heading. Typing `equal` or 0
         // writes 0; typing a number gives the row a chance of its own.
         let mut chance = shown.entry.chance;
@@ -545,10 +554,10 @@ fn row(
                 .loot
                 .set_column(subject.session, set, shown, "maxcount", max.to_string(), now);
         }
-        // **The group, chosen from a list.** It is part of the row's key, so a
-        // change removes the row and creates it again under the new key — one
-        // discrete choice, which a drag could not be: a drag changes the value
-        // on every frame it moves, and each change was another row.
+        // The group is chosen from a list. It is part of the row's key, so a
+        // change removes the row and creates it again under the new key. A
+        // list gives one discrete choice; a drag changes the value on every
+        // frame it moves, and each change created another row.
         let mut chosen: Option<u32> = None;
         let next = groups.iter().copied().max().unwrap_or(0) + 1;
         let word = |group: u32| match group {
@@ -617,10 +626,10 @@ fn row(
     });
 }
 
-/// **The row's state, as a dot**: amber for a row this project creates, red
+/// Draws the row's state as a dot: amber for a row this project creates, red
 /// for one it removes or one the server would skip at load, and nothing — the
 /// same space, unpainted — for an ordinary row. What it means is on hover.
-fn state_dot(ui: &mut egui::Ui, life: Life, faults: &[String]) {
+pub(super) fn state_dot(ui: &mut egui::Ui, life: Life, faults: &[String]) {
     const DOT: f32 = 8.0;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(DOT, CELL), egui::Sense::hover());
     let (colour, about) = match (life, faults.is_empty()) {
@@ -645,28 +654,33 @@ fn state_dot(ui: &mut egui::Ui, life: Life, faults: &[String]) {
 }
 
 /// An item's icon and name, coloured by quality, opening the item workspace.
-fn item_name(ui: &mut egui::Ui, subject: &mut Subject<'_>, entry: u32) {
-    let Some(found) = subject.quests.item(entry) else {
-        let text = match subject.quests.item_known(entry) {
+/// The loot, vendor and trainer windows draw an item this way.
+pub(super) fn item_name(
+    ui: &mut egui::Ui,
+    quests: &mut Quests,
+    items: &mut Items,
+    assets: &GameAssets,
+    thumbnails: &mut Thumbnails,
+    entry: u32,
+) {
+    let Some(found) = quests.item(entry) else {
+        let text = match quests.item_known(entry) {
             true => format!("item {entry} \u{2014} not in item_template"),
             false => format!("item {entry}\u{2026}"),
         };
-        let colour = match subject.quests.item_known(entry) {
+        let colour = match quests.item_known(entry) {
             true => theme::BAD,
             false => theme::INK_DIM,
         };
         ui.add(egui::Label::new(egui::RichText::new(text).color(colour)).truncate());
         return;
     };
-    let icon = subject
-        .items
-        .look(subject.assets, found.display_id, 0)
-        .and_then(|look| look.icon);
+    let icon = items.look(assets, found.display_id, 0).and_then(|look| look.icon);
     let (rect, picture) = ui.allocate_exact_size(egui::Vec2::splat(ICON), egui::Sense::click());
     ui.painter().rect_filled(rect, 2.0, theme::SUNK);
     if let Some(path) = icon {
-        subject.thumbnails.want(&path);
-        if let Some(texture) = subject.thumbnails.get(&path) {
+        thumbnails.want(&path);
+        if let Some(texture) = thumbnails.get(&path) {
             ui.painter().image(
                 texture,
                 rect,
@@ -686,7 +700,7 @@ fn item_name(ui: &mut egui::Ui, subject: &mut Subject<'_>, entry: u32) {
         .on_hover_text(format!("{} ({entry}). Open it in the item workspace.", found.name))
         .clicked()
     {
-        subject.quests.show_item = Some(entry);
+        quests.show_item = Some(entry);
     }
 }
 
@@ -706,7 +720,7 @@ fn reference_link(ui: &mut egui::Ui, subject: &mut Subject<'_>, reference: u32) 
     }
 }
 
-/// **The two ways to add a row**: an item through the picker, and a reference
+/// Draws the two ways to add a row: an item through the picker, and a reference
 /// by its number, since a reference set has no name.
 fn adders(ui: &mut egui::Ui, subject: &mut Subject<'_>, set: Set) {
     ui.horizontal(|ui| {

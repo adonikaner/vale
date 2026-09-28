@@ -1,15 +1,15 @@
-//! What the server's quests are: which one is open, who gives and takes
-//! each, and what an edit to any of it is.
+//! The quest tool's state: the server's quests, which one is open, which
+//! creatures and game objects give and take each, and the edits to them.
 //!
-//! ## Not a pointer tool
+//! ## The quest tool is a workspace, not a pointer tool
 //!
-//! [`super::items`]' own first line, one table along: a quest has no place in
-//! the world, so its workspace takes the middle of the window. See
-//! [`crate::ui::quests`], which draws it. What is open and what an edit does
-//! are here rather than in `ui/` so that `--quest 783` can put the tool in a
-//! known state with nothing drawn yet.
+//! A quest has no place in the world, so, as with [`super::items`], its
+//! workspace takes the middle of the window. [`crate::ui::quests`] draws it.
+//! The open quest and the edit operations are kept here rather than in `ui/`
+//! so that `--quest 783` can put the tool in a known state before anything is
+//! drawn.
 //!
-//! ## Two documents, and both are read once
+//! ## What is read from the database
 //!
 //! ```text
 //! quest_template   4,433 rows on the reference database, as twelve columns a
@@ -18,29 +18,31 @@
 //!                  each of the ~1,850 creatures and game objects they mention
 //! ```
 //!
-//! The relations are read whole rather than per quest because both directions
-//! are asked: the workspace asks *who gives this quest* and the creature tool's
-//! window asks *which quests does this creature give*, and one list in memory
-//! answers both with a filter. They are read with the templates, on one task,
-//! whenever an apply lands.
+//! Both templates and relations are read in full. The relations are read
+//! whole rather than per quest because they are looked up in both
+//! directions: the workspace asks which creatures give a quest, and the
+//! creature tool's window asks which quests a creature gives. One list in
+//! memory answers both with a filter. They are read with the templates, on
+//! one task, whenever an apply lands.
 //!
-//! ## A relation is a row of the project's store like any other
+//! ## Relations are rows in the project's store
 //!
 //! [`Relation::key`] is `(id, quest)` and its table is one of the four, so
 //! adding one is a [`Life::Insert`] row carrying the patch band, removing one
 //! that is in the database is a [`Life::Delete`] row, and removing one this
 //! project added takes the claim back. [`Quests::relations_of_quest`] and
-//! [`Quests::relations_of_holder`] answer the database's rows with the project's
-//! over them, each marked with what the project says is to become of it.
+//! [`Quests::relations_of_holder`] return the database's rows with the
+//! project's rows over them, each marked with what the project says is to
+//! become of it.
 //!
 //! ## The names a quest's ids resolve to are fetched in batches
 //!
-//! A quest row names up to eighteen items and four creatures or game objects,
-//! and a form drawing `2589` where it could draw *Linen Cloth* is a form nobody
-//! can check by reading. [`Quests::item`] and [`Quests::holder`] answer from a
-//! cache and note a miss; [`fetch_the_names`] turns the misses into one query
-//! per kind per frame that has any. An id the database does not hold is cached
-//! as absent, so it is asked for once.
+//! A quest row names up to eighteen items and four creatures or game objects.
+//! The form shows each by name (item `2589` as Linen Cloth) so that the row
+//! can be checked by reading it. [`Quests::item`] and [`Quests::holder`]
+//! answer from a cache and note a miss; [`fetch_the_names`] turns the misses
+//! into one query per kind, on each frame that has any. An id the database
+//! does not hold is cached as absent, so it is asked for once.
 //!
 //! ## The creature and game-object tools reach this through two fields
 //!
@@ -99,8 +101,9 @@ impl Known {
         quest::template_key(self.entry, self.patch)
     }
 
-    /// The quieter second line of a list row: its level, where it is filed and
-    /// what kind of quest it is.
+    /// The second line of a list row: its level, where it is filed, what kind
+    /// of quest it is, and whether it auto-completes, is disabled or is
+    /// repeatable.
     pub fn sub(&self) -> String {
         let mut parts = vec![format!("level {}", self.level)];
         if !self.zone.is_empty() {
@@ -160,7 +163,7 @@ impl Known {
     }
 }
 
-/// One row of the brief query.
+/// One row of [`vale_mangos::quest::all_quests_query`], as a [`Known`].
 fn read_known(row: &quest::Row) -> Option<Known> {
     let integer = |column: &str| row.integer(column).unwrap_or(0);
     let entry = row.integer("entry")? as u32;
@@ -256,7 +259,8 @@ pub fn table_of(holder: Holder, role: Role) -> &'static str {
     }
 }
 
-/// …and the other way round, for a table name read out of the store.
+/// The holder and role a relation table is for: the inverse of [`table_of`],
+/// for a table name read out of the store.
 fn relation_of_table(table: &str) -> Option<(Holder, Role)> {
     match table {
         quest::CREATURE_GIVES => Some((Holder::Creature, Role::Gives)),
@@ -361,6 +365,13 @@ pub enum PickFor {
     /// decision: a row already in the set and marked for removal is kept
     /// rather than created again.
     LootItem { table: &'static str, entry: u32 },
+    /// An item to add to a vendor list, or a spell to add to a trainer list:
+    /// the Vendor and Trainer windows' use of the same dialog. Answered into
+    /// [`Quests::service_pick`], because an add is `crate::tools::services`'
+    /// decision: it refuses a row the server would skip, and replaces a spell
+    /// that is not a teaching spell with the one that teaches it.
+    VendorItem { table: &'static str, entry: u32 },
+    TrainerSpell { table: &'static str, entry: u32 },
     /// One cell of one row of a script, which is the script window's use of
     /// the same dialog. Answered into [`Quests::script_pick`], because a
     /// script is written whole by `crate::tools::behaviour` and not through
@@ -413,22 +424,23 @@ pub const PICK_LIMIT: usize = 200;
 pub struct Quests {
     /// Every quest the server would load, as the database has it.
     pub all: Vec<Known>,
-    /// …and the ones this project creates, rebuilt from the store when it moves.
+    /// The quests this project creates, rebuilt from the store when it moves.
     pub created: Vec<Known>,
     created_for: Option<u64>,
     /// The highest entry the table holds at any patch.
     pub max_entry: Option<u32>,
-    /// Every relation row the server would load, **under the entry the project
-    /// gives each quest** — see [`fold_the_store_in`].
+    /// Every relation row the server would load, with each quest under the
+    /// entry the project gives it — see [`fold_the_store_in`].
     pub relations: Vec<Relation>,
-    /// …and as the read answered them, which is what the line above is rebuilt
-    /// from when the store moves.
+    /// The relation rows as the read returned them, under the database's
+    /// entries. [`Self::relations`] is rebuilt from these when the store moves.
     relations_read: Vec<Relation>,
     /// The name of every creature and game object a relation mentions, and of
     /// any other that has been asked for — `None` for an id the database does
     /// not hold.
     holders: HashMap<(Holder, u32), Option<String>>,
-    /// …and of every item a quest opened so far has named.
+    /// The name, quality and display id of every item named by a quest opened
+    /// so far — `None` for an entry the database does not hold.
     items: HashMap<u32, Option<ItemName>>,
     /// What has been asked for and is in neither cache yet.
     wanted_items: HashSet<u32>,
@@ -438,7 +450,7 @@ pub struct Quests {
     /// What [`Self::all`] was read for: how many times the session had written
     /// the tables — see `EditSession::quest_writes`.
     loaded: Option<u64>,
-    /// Why there is nothing, when there is nothing.
+    /// Why the list is empty, when a read failed or no database is set.
     pub trouble: Option<String>,
     /// What is in the search box.
     pub query: String,
@@ -449,19 +461,20 @@ pub struct Quests {
     pub of_holder: Option<(Holder, u32)>,
     /// The open quest, by entry.
     pub open: Option<u32>,
-    /// …and its whole row, read on demand.
+    /// The open quest's whole row, read when the open quest changes.
     pub row: Option<QuestRow>,
     row_task: Option<Task<Result<Option<QuestRow>, String>>>,
     /// The reference picker, when one is open.
     pub picker: Option<Picker>,
-    /// The pass the picker was last drawn on. Four panels draw the one dialog
-    /// (the quest and item workspaces, the loot window, and the creature and
-    /// game object forms), and two of them may be up in one frame; the second
-    /// draw of a pass is skipped, or egui would see two widgets with one id.
+    /// The pass the picker was last drawn on. Several panels draw the one
+    /// dialog (the quest and item workspaces, the loot, behaviour, vendor and
+    /// trainer windows, and the creature and game object forms), and two of
+    /// them may be up in one frame; the second draw of a pass is skipped, or
+    /// egui would see two widgets with one id.
     pub picker_pass: Option<u64>,
-    /// **The creature or game object whose quests its tool's window is
-    /// showing**, as the kind of holder, its template entry and its name.
-    /// `None` is the window shut.
+    /// The creature or game object whose quests its tool's window is showing,
+    /// as the kind of holder, its template entry and its name. `None` when the
+    /// window is closed.
     pub window_for: Option<(Holder, u32, String)>,
     /// An item a form names that was clicked, to be opened in the item
     /// workspace. Answered by the shell after everything is drawn, because the
@@ -480,6 +493,10 @@ pub struct Quests {
     /// table and entry and the item: taken by the loot window on the frame
     /// after — see [`PickFor::LootItem`].
     pub loot_pick: Option<(&'static str, u32, u32)>,
+    /// An item or a spell chosen for a vendor or trainer list, as the list's
+    /// table and entry and the id chosen: taken by that window on the frame
+    /// after. See [`PickFor::VendorItem`].
+    pub service_pick: Option<(&'static str, u32, u32)>,
     /// A value chosen for one cell of a script row through the picker, as
     /// the script's table and id, the row's index, the column and the value:
     /// taken by the script window on the frame after. See
@@ -521,7 +538,7 @@ impl Quests {
         }
     }
 
-    /// …and one by entry.
+    /// One quest by entry, from either list.
     pub fn by_entry(&self, entry: u32) -> Option<&Known> {
         // The database's list is sorted by entry, which is the query's own
         // `ORDER BY`, so this is a binary search rather than a walk of 4,433.
@@ -538,7 +555,8 @@ impl Quests {
         Some(base.with_edits(edits).unwrap_or_else(|| base.clone()))
     }
 
-    /// …and one by entry, on the same terms.
+    /// One quest by entry, with the project's edits over it, as
+    /// [`Self::shown`] gives it.
     pub fn shown_entry(&self, entry: u32, edits: &Edits) -> Option<Known> {
         let base = self.by_entry(entry)?;
         Some(base.with_edits(edits).unwrap_or_else(|| base.clone()))
@@ -750,9 +768,9 @@ impl Quests {
     /// A copy of the open quest under a new entry, with every column as it
     /// is drawn. `None` until the whole row has been read.
     ///
-    /// The relations are not copied: who gives the copy is a separate decision,
-    /// and a copy that silently appeared on the original's giver would be a
-    /// second quest offered in the world by pressing a button in a list.
+    /// The relations are not copied, because who gives the copy is a separate
+    /// decision. Copying them would make the original's giver offer a second
+    /// quest as a side effect of the copy button.
     pub fn duplicate(&mut self, session: &mut EditSession, patch: u32, now: f64) -> Option<u32> {
         let from = self
             .row
@@ -884,7 +902,8 @@ impl Quests {
         self.relations_where(edits, |relation| relation.quest == entry)
     }
 
-    /// …and every relation of one creature or game object.
+    /// Every relation of one creature or game object, on the same terms as
+    /// [`Self::relations_of_quest`].
     pub fn relations_of_holder(
         &self,
         holder: Holder,
@@ -1089,14 +1108,14 @@ fn read_the_tables(
         }
         return;
     }
-    // Read for either tool that shows a quest. The workspace is one, and
-    // the creature tool's window is the other; a window that opened on an empty
-    // list because the Quests row had never been pressed would be showing a
-    // creature with no quests, which is a false statement about the database.
+    // Read for every tool that shows quests: the quest workspace, and the
+    // creature and game object tools while their Quests window is open.
+    // Without this read, that window would open on an empty list when the
+    // Quests row had never been pressed, and show the creature as giving no
+    // quests.
     //
-    // …and for the item workspace, whose `start_quest` is a quest's title
-    // and whose picker searches this list: an item that starts a quest named
-    // only by its number is the thing the link is there to fix.
+    // The item workspace reads it too: it shows `start_quest` as the quest's
+    // title rather than its number, and its picker searches this list.
     let wanted = matches!(*tool, Tool::Quests | Tool::Items)
         || (matches!(*tool, Tool::Creatures | Tool::GameObjects) && quests.window_for.is_some());
     if !wanted {
@@ -1214,11 +1233,11 @@ fn read_the_row(
     }));
 }
 
-/// **Give every quest that was read, and every relation of it, the entry the
-/// project says the quest has** — `crate::tools::items::fold_the_store_in` for
-/// this subject, and for its reason: a quest whose entry the project changes is
-/// read at the entry the database has it at until the move is applied, and its
-/// claim is keyed under the new one.
+/// Give every quest that was read, and every relation of it, the entry the
+/// project says the quest has. This is `crate::tools::items::fold_the_store_in`
+/// for quests, for the same reason: a quest whose entry the project changes is
+/// read at its database entry until the move is applied, while its claim is
+/// keyed under the new entry.
 ///
 /// The list is sorted again afterwards, because [`Quests::by_entry`] is a
 /// binary search over it.
@@ -1470,8 +1489,8 @@ fn search_the_picker(
         }
         Target::Item | Target::Creature | Target::Object => {
             picker.built = Some(asked);
-            // An empty box lists nothing rather than the first two hundred rows
-            // of a table of twenty thousand, which answer no question.
+            // An empty box lists nothing. The first two hundred rows of a table
+            // of twenty thousand are an arbitrary selection.
             if query.is_empty() {
                 picker.hits.clear();
                 return;
@@ -1584,14 +1603,14 @@ fn on_the_command_line(
             }
         }
     }
-    // Not finished while there is a move still to make — see
-    // `crate::tools::items::scripted_entry`, whose shape [`scripted_entry`] is.
+    // Not finished while a move is still to make. [`scripted_entry`] makes it,
+    // in the same way as `crate::tools::items::scripted_entry`.
     quests.scripted_done = args.quest_entry.is_none();
 }
 
-/// **`--quest-entry <n>`: the open quest renumbered, with nobody at the
-/// keyboard.** A retry, because a quest `--quest-new` has just created is not in
-/// [`Quests::created`] until [`rebuild_created`] has run.
+/// `--quest-entry <n>`: move the open quest to entry `n` without user input.
+/// It retries on later frames, because a quest `--quest-new` has just created
+/// is not in [`Quests::created`] until [`rebuild_created`] has run.
 fn scripted_entry(
     args: Res<crate::Args>,
     mut quests: ResMut<Quests>,

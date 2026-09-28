@@ -43,6 +43,9 @@
 //!               creature, a selected game object or the open item: its rows
 //!               by group, each drawn as the server reads it, and the
 //!               reference sets they name, followed and edited in place
+//! services.rs   the Vendor and Trainer windows of a selected creature: its
+//!               own list and its template's, each row drawn as the server
+//!               reads it, with the reasons it would skip one
 //! rowform.rs    the widgets all of those forms are built from: how a column
 //!               of each kind is drawn, and what typing into one produces. The
 //!               form itself stays with its subject
@@ -166,6 +169,7 @@ pub mod quests;
 pub mod rail;
 pub mod reference;
 pub mod rowform;
+pub mod services;
 pub mod status;
 pub mod storyboard;
 pub mod sync;
@@ -361,6 +365,9 @@ pub struct Editing<'w> {
     /// its events, its spell list and one script hold. See
     /// [`crate::tools::behaviour`].
     pub(crate) behaviour: ResMut<'w, crate::tools::behaviour::Behaviour>,
+    /// The Vendor and Trainer windows' state: the creature they are about,
+    /// and what its lists hold. See [`crate::tools::services`].
+    pub(crate) services: ResMut<'w, crate::tools::services::Services>,
     /// The time of day the world is showing. Read-only here: the view bar
     /// sets the hour, and the panels read it so a band's day strip can mark
     /// the viewport's current hour on itself.
@@ -898,6 +905,7 @@ fn draw(
                 quests: &mut editing.quests,
                 loot: &mut editing.loot,
                 behaviour: &mut editing.behaviour,
+                services: &mut editing.services,
                 server: &playing.server,
                 server_panel: &mut popovers.server,
                 assets: &assets,
@@ -1207,6 +1215,61 @@ fn draw(
             }),
         _ => None,
     };
+    // The Vendor and Trainer windows of a creature, on the same terms: the
+    // subject is rebuilt each frame from the selection with the project's
+    // edits over the template row, so a `vendor_id`, a `trainer_id` or
+    // `npc_flags` typed into the template form changes the window on the next
+    // frame.
+    editing.services.about = match *tool {
+        Tool::Creatures => editing
+            .creatures
+            .chosen_edited(Some(&session.server_edits))
+            .and_then(|spawn| {
+                let key = spawn.template_key();
+                let template = editing
+                    .creatures
+                    .template
+                    .as_ref()
+                    .filter(|held| held.entry == spawn.entry)?;
+                let column = |name: &str| -> u32 {
+                    use vale_mangos::creature::RowValue;
+                    session
+                        .server_edits
+                        .get(vale_mangos::creature::TEMPLATE, &key, name)
+                        .and_then(|value| value.trim().parse::<i64>().ok())
+                        .or_else(|| template.row.integer(name))
+                        .map_or(0, |value| value.max(0) as u32)
+                };
+                Some(crate::tools::services::About {
+                    entry: spawn.entry,
+                    label: spawn.label(),
+                    template_key: key.clone(),
+                    npc_flags: column("npc_flags"),
+                    vendor_id: column("vendor_id"),
+                    trainer_id: column("trainer_id"),
+                    trainer_type: column("trainer_type"),
+                    trainer_class: column("trainer_class"),
+                    trainer_race: column("trainer_race"),
+                    trainer_spell: column("trainer_spell"),
+                })
+            }),
+        _ => None,
+    };
+    if *tool == Tool::Creatures {
+        let service_windows = services::windows(
+            &ctx,
+            services::Subject {
+                session,
+                services: &mut editing.services,
+                quests: &mut editing.quests,
+                items: &mut editing.items,
+                assets: &assets,
+                thumbnails: &mut editing.thumbnails,
+                now: time.elapsed_secs_f64(),
+            },
+        );
+        viewport.floating.extend(service_windows);
+    }
     if *tool == Tool::Creatures {
         let behaviour_windows = behaviour::windows(
             &ctx,

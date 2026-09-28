@@ -6,8 +6,8 @@
 //!
 //! Several subjects store their edits as rows in vmangos' database rather than
 //! as bytes in a file: the client tables (spells and flight nodes), creatures,
-//! objects, items, quests, loot and behaviour. Each subject used to keep these
-//! operations in its own panel. The result was three names for one operation
+//! objects, items, quests, loot, vendors and trainers, and behaviour. Each
+//! subject used to keep these operations in its own panel. The result was three names for one operation
 //! (*Apply to the server*, *Apply*, and a checkbox in a third window for
 //! spells), three names for its inverse (*Put the rows back*, *Revert*, *Put
 //! the server back*), and one panel that applied on every save while the other
@@ -46,7 +46,7 @@
 //! the server.
 //!
 //! Apply and Put back on a row subject also act on the blocks below it. The
-//! six row subjects stand in the database in the panel's order, and an item
+//! seven row subjects stand in the database in the panel's order, and an item
 //! renumber moves loot rows and quest columns, so every applied subject below
 //! the one pressed is put back first and applied again after. See
 //! `crate::server::stack`. The client-table block is outside that order.
@@ -72,6 +72,9 @@
 //!                   holds a pointer to
 //! *_loot_template   live on one .reload per loot table written, removals
 //!                   included; loot already rolled in the world keeps its list
+//! npc_vendor        live on .reload npc_vendor and .reload npc_trainer, each
+//! npc_trainer       of which re-reads its template table first; removals
+//! and templates     included. The client asks for a list each time it opens
 //! creature_ai_events live on .reload creature_ai_events, which re-reads
 //! creature_spells   creature_ai_scripts first, and .reload creature_spells;
 //! *_scripts         five script tables reload under their own names and six
@@ -89,7 +92,7 @@ use bevy_egui::egui;
 use super::theme;
 use crate::server::{
     behaviour, creatures, dbcs, gameobjects, items, loot, queue::ServerQueue, quests, rows,
-    settings::ServerSettings, stack,
+    services, settings::ServerSettings, stack,
 };
 use crate::session::EditSession;
 use vale_client::assets::GameAssets;
@@ -233,22 +236,26 @@ pub enum Half {
     /// The nine loot tables, which have no rail entry of their own: a loot
     /// set is reached from the creature, the object or the item it hangs off.
     Loot,
+    /// What creatures sell and teach, reached from a selected creature's
+    /// Vendor and Trainer windows.
+    Services,
     /// A creature's events, scripts and spell lists, reached from a selected
     /// creature's Events and Spells windows.
     Behaviour,
 }
 
 /// The number of subjects. [`Standings`] holds one answer for each.
-pub const HALVES: usize = 7;
+pub const HALVES: usize = 8;
 
 impl Half {
-    pub const ALL: [Half; 7] = [
+    pub const ALL: [Half; 8] = [
         Half::Tables,
         Half::Creatures,
         Half::GameObjects,
         Half::Items,
         Half::Quests,
         Half::Loot,
+        Half::Services,
         Half::Behaviour,
     ];
 
@@ -261,6 +268,7 @@ impl Half {
             Half::Items => "Items",
             Half::Quests => "Quests",
             Half::Loot => "Loot",
+            Half::Services => "Vendors and trainers",
             Half::Behaviour => "Behaviour",
         }
     }
@@ -275,6 +283,7 @@ impl Half {
             Half::Items => "item_template",
             Half::Quests => "quest_template, and the four quest relation tables",
             Half::Loot => "the nine *_loot_template tables",
+            Half::Services => "npc_vendor, npc_vendor_template, npc_trainer, npc_trainer_template",
             Half::Behaviour => "creature_ai_events, creature_spells, broadcast_text, and the eleven *_scripts tables",
         }
     }
@@ -288,6 +297,7 @@ impl Half {
             Half::Items => items::SQL_VPATH,
             Half::Quests => quests::SQL_VPATH,
             Half::Loot => loot::SQL_VPATH,
+            Half::Services => services::SQL_VPATH,
             Half::Behaviour => behaviour::SQL_VPATH,
         }
     }
@@ -302,6 +312,7 @@ impl Half {
             Half::Items => items::REVERT_VPATH,
             Half::Quests => quests::REVERT_VPATH,
             Half::Loot => loot::REVERT_VPATH,
+            Half::Services => services::REVERT_VPATH,
             Half::Behaviour => behaviour::REVERT_VPATH,
         }
     }
@@ -348,6 +359,13 @@ impl Half {
                  clears its store before it reads. Loot already rolled onto a corpse or into \
                  an opened chest keeps the list it was given."
             }
+            Half::Services => {
+                "Live on `.reload npc_vendor` and `.reload npc_trainer`, which an apply sends \
+                 to a running playtest \u{2014} removals included, since each re-reads its \
+                 template table and its own and clears both lists first. The client asks for a \
+                 list each time the window opens, so no relog is needed. A vendor's current \
+                 count of a limited item is not reset."
+            }
             Half::Behaviour => {
                 "Live on `.reload creature_ai_events`, which re-reads creature_ai_scripts \
                  first, and `.reload creature_spells`, which an apply sends to a running \
@@ -383,6 +401,7 @@ impl Half {
             Half::Items => Some(stack::Subject::Items),
             Half::Quests => Some(stack::Subject::Quests),
             Half::Loot => Some(stack::Subject::Loot),
+            Half::Services => Some(stack::Subject::Services),
             Half::Behaviour => Some(stack::Subject::Behaviour),
         }
     }
@@ -400,17 +419,10 @@ impl Half {
     }
 
     /// Whether a table read out of the project's store belongs to this
-    /// subject. Both the writers and the discard use this test.
+    /// subject: [`stack::Subject::owns`], which the writers use. The
+    /// client-table block owns none, because its edits are files.
     pub fn owns(self, table: &str) -> bool {
-        match self {
-            Half::Tables => false,
-            Half::Creatures => vale_mangos::creature::table_named(table).is_some(),
-            Half::GameObjects => vale_mangos::gameobject::table_named(table).is_some(),
-            Half::Items => vale_mangos::item::table_named(table).is_some(),
-            Half::Quests => vale_mangos::quest::table_named(table).is_some(),
-            Half::Loot => vale_mangos::loot::table_named(table).is_some(),
-            Half::Behaviour => behaviour::owns(table),
-        }
+        self.subject().is_some_and(|subject| subject.owns(table))
     }
 }
 
@@ -616,6 +628,23 @@ pub fn standing(half: Half, session: &EditSession, assets: &GameAssets) -> Stand
                 unsaved: false,
             }
         }
+        Half::Services => {
+            let plan = services::plan(session);
+            let on_server = services::OnTheServer::read_with(session, &plan);
+            Standing {
+                changed: plan.rows.len(),
+                outstanding: plan
+                    .rows
+                    .iter()
+                    .filter(|row| !on_server.covers(row.table, &row.key))
+                    .count(),
+                applied: on_server.rows(),
+                current: on_server.current(),
+                refused: plan.refused.clone(),
+                trouble: None,
+                unsaved: false,
+            }
+        }
         Half::Behaviour => {
             let plan = behaviour::plan(session);
             let on_server = behaviour::OnTheServer::read_with(session, &plan);
@@ -679,6 +708,10 @@ pub fn save(half: Half, work: &mut Work<'_>) {
         Half::Loot => {
             creatures::save(work.session);
             loot::save(work.session);
+        }
+        Half::Services => {
+            creatures::save(work.session);
+            services::save(work.session);
         }
         Half::Behaviour => {
             creatures::save(work.session);
@@ -1127,6 +1160,7 @@ mod tests {
             .chain(vale_mangos::item::TABLES.iter())
             .chain(vale_mangos::quest::TABLES.iter())
             .chain(vale_mangos::loot::TABLES.iter())
+            .chain(services::TABLES.iter())
             .chain(vale_mangos::scripts::TABLES.iter())
             .chain([vale_mangos::eventai::TABLE, vale_mangos::creaturespells::TABLE, vale_mangos::broadcast::TABLE].iter())
             .copied()
