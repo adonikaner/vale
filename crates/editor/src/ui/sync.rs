@@ -87,6 +87,7 @@
 //! Each block states its own requirement in the hover text of its name.
 
 use bevy::prelude::Resource;
+use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
 use bevy_egui::egui;
 
 use super::theme;
@@ -120,6 +121,10 @@ pub struct Standings {
     /// held longer than the others because computing it hashes every tile the
     /// project carries.
     tiles: Option<(f64, usize)>,
+    /// The tile count being taken, on a worker. Taken on the main thread it
+    /// stopped the window every [`TILES_REFRESH`] seconds for a time that grew
+    /// with the number of tiles.
+    counting: Option<Task<usize>>,
     /// Where the project's server DBC files stand against the live
     /// `DataDir\5875\dbc\`, or why that could not be read. See
     /// `crate::server::dbcs`.
@@ -134,22 +139,36 @@ const REFRESH: f64 = 0.5;
 const TILES_REFRESH: f64 = 3.0;
 
 impl Standings {
-    /// The number of tiles *Regenerate changed tiles* would rebuild. See
-    /// `crate::server::datadir::dirty`.
-    pub fn changed_tiles(&mut self, session: &EditSession, assets: &GameAssets, now: f64) -> usize {
+    /// The number of tiles *Regenerate changed tiles* would rebuild, or `None`
+    /// until the first count has finished. See `crate::server::datadir::dirty`.
+    ///
+    /// The count is taken on a worker. A stale count is shown until the next
+    /// one arrives.
+    pub fn changed_tiles(
+        &mut self,
+        session: &EditSession,
+        assets: &GameAssets,
+        now: f64,
+    ) -> Option<usize> {
+        use crate::server::datadir::{self, Record, TileReader, LIVE_RECORD};
+        if let Some(task) = self.counting.as_mut() {
+            if let Some(count) = block_on(future::poll_once(task)) {
+                self.counting = None;
+                self.tiles = Some((now, count));
+            }
+        }
         let fresh = self
             .tiles
             .is_some_and(|(taken, _)| now - taken < TILES_REFRESH);
-        if !fresh {
-            let maps = crate::session::map_directories(assets);
-            let record = crate::server::datadir::Record::read(
-                &session.project,
-                crate::server::datadir::LIVE_RECORD,
-            );
-            let count = crate::server::datadir::dirty(session, assets, &maps, &record).0.len();
-            self.tiles = Some((now, count));
+        if !fresh && self.counting.is_none() {
+            let project = session.project.clone();
+            let reader = TileReader::new(&project, assets);
+            self.counting = Some(AsyncComputeTaskPool::get().spawn(async move {
+                let record = Record::read(&project, LIVE_RECORD);
+                datadir::dirty(&reader, &record, &mut |_, _| {}).0.len()
+            }));
         }
-        self.tiles.map(|(_, count)| count).unwrap_or(0)
+        self.tiles.map(|(_, count)| count)
     }
 
     /// The subject's [`Standing`], recomputed if the held answer is stale.
@@ -193,9 +212,14 @@ impl Standings {
 
     /// Drops every held answer. Called by code that has just changed one of
     /// them.
+    ///
+    /// The tile count is marked stale rather than dropped, so the button shows
+    /// the last count until the next one arrives. A count still running was
+    /// started before the change and is dropped, which cancels it.
     pub fn forget(&mut self) {
         self.held = Default::default();
-        self.tiles = None;
+        self.tiles = self.tiles.map(|(_, count)| (f64::NEG_INFINITY, count));
+        self.counting = None;
         self.files = None;
     }
 }

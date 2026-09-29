@@ -5,7 +5,7 @@
 //! ## One window for every holder
 //!
 //! A loot row is the same nine columns whichever of the nine tables it is in,
-//! so there is one window and three buttons that open it: **Loot** on a
+//! so there is one window and three buttons that open it: *Loot* on a
 //! selected creature, on a selected game object, and on the open item. What
 //! differs is which sets the holder's columns name, and that is a row of tabs:
 //! a creature's `loot_id`, `pickpocket_loot_id` and `skinning_loot_id`; an
@@ -29,7 +29,7 @@
 //! ## Edits go to the project, not the database
 //!
 //! An edit goes into the project's store and onto the undo stack; a save
-//! writes `sql\loot.sql`; **Apply** is on the bar's **Server…** with the other
+//! writes `sql\loot.sql`; *Apply* is on the bar's *Server…* with the other
 //! subjects' — see [`super::sync`] and [`crate::server::loot`].
 
 use super::theme;
@@ -171,6 +171,7 @@ pub fn window(ctx: &egui::Context, mut subject: Subject<'_>) -> Option<egui::Rec
         subject.session,
         subject.quests,
         subject.assets,
+        subject.thumbnails,
         None,
         subject.now,
     );

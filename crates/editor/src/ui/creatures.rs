@@ -20,10 +20,11 @@
 //! The two rows are drawn in two places on the same split: the columns of the
 //! clicked spawn are in the sidebar, and the columns of its kind are behind a
 //! button. The sidebar carries the spawn's own 21 columns, which describe a
-//! place in the world shown by the viewport beside them, plus a read-only
-//! summary of what the creature is. [`template_window`] holds
-//! `creature_template`'s 78, in a window that can be dragged off the panel and
-//! left open while the pointer works in the world.
+//! place in the world shown by the viewport beside them, under a read-only
+//! summary of what the creature is and the buttons that open its windows. The
+//! summary and the buttons stay in place and the 21 columns scroll under them.
+//! [`template_window`] holds `creature_template`'s 78, in a window that can be
+//! dragged off the panel and left open while the pointer works in the world.
 //!
 //! The sidebar is also where the other things a creature has are opened from,
 //! and each is its own window for the same reason: waypoints are a path drawn
@@ -116,6 +117,9 @@ pub struct Subject<'a> {
     /// The pictures drawn in the picker's rows, the form's display cells and
     /// the preview panes. See `crate::portraits`.
     pub portraits: &'a mut crate::portraits::Portraits,
+    /// The icons the reference picker's spell and item rows draw. See
+    /// `super::thumbnails`.
+    pub thumbnails: &'a mut super::thumbnails::Thumbnails,
     /// The frame clock the undo stack folds a gesture by. See
     /// `crate::session::Gesture`. Typing into a name box is one entry rather
     /// than one per keystroke because every keystroke names the same subject
@@ -150,6 +154,7 @@ fn dialogs(ctx: &egui::Context, subject: &mut Subject<'_>) {
         subject.session,
         subject.quests,
         subject.assets,
+        subject.thumbnails,
         None,
         subject.now,
     );
@@ -228,17 +233,27 @@ fn panel(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         Some(GroupAsk::Clear) => subject.creatures.select_only(None),
         None => {}
     }
+    // The spawn's name, its claim, the template summary and the buttons stay
+    // in place; only the spawn's columns scroll. The buttons are used while
+    // the form below is scrolled to any column.
     head(ui, subject, &spawn);
     claim(ui, subject, &spawn, &on_server);
+    ui.add_space(6.0);
+    what_it_is(ui, subject, &spawn);
     ui.add_space(8.0);
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
-        .show(ui, |ui| {
-            what_it_is(ui, subject, &spawn);
-            ui.add_space(8.0);
-            spawn_form(ui, subject, &spawn);
-        });
+        .min_scrolled_height(SPAWN_FORM_MIN)
+        .show(ui, |ui| spawn_form(ui, subject, &spawn));
 }
+
+/// The least height the scrolled spawn form takes, in points. Shared with the
+/// game-object panel.
+///
+/// The inspector is itself a scroll area. When the window is too short for
+/// the fixed part and this much of the form, the whole panel scrolls instead.
+/// Without a minimum the form would be egui's default of 64 points, two rows.
+pub(super) const SPAWN_FORM_MIN: f32 = 240.0;
 
 /// What the line about a group of spawns asked for.
 pub(super) enum GroupAsk {
@@ -1070,14 +1085,13 @@ pub(super) fn placement(
 /// A summary rather than a form: the columns a person wants to see while
 /// looking at a spawn (what it is called, how strong it is, what it offers)
 /// without the 78 that editing it needs, with a picture of its model beside
-/// them. Editing is in [`template_window`], behind the first button.
+/// them. Editing is in [`template_window`], behind the first button. The other
+/// buttons open what a creature has besides its template.
 ///
-/// The other buttons cover what a creature has besides its template. Those not
-/// built yet are drawn greyed with a description of what they will do, on the
-/// rail's rule: a control that is not built yet is shown where it will be,
-/// rather than appearing later somewhere a person has to find it.
+/// Drawn under the spawn's name with no heading of its own, outside the
+/// scrolled form. The first line names the template row, which is what tells
+/// its scope from the spawn's.
 fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
-    theme::heading(ui, "What it is");
     let edited = subject
         .session
         .server_edits

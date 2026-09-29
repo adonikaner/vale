@@ -78,6 +78,9 @@ pub struct Subject<'a> {
     /// reference resolves through.
     pub quests: &'a mut Quests,
     pub assets: &'a GameAssets,
+    /// The icons the reference picker's spell and item rows draw. See
+    /// `super::thumbnails`.
+    pub thumbnails: &'a mut super::thumbnails::Thumbnails,
     pub now: f64,
 }
 
@@ -227,7 +230,15 @@ pub fn windows(ctx: &egui::Context, mut subject: Subject<'_>) -> Vec<egui::Rect>
     out.extend(spells_window(ctx, &mut subject));
     out.extend(script_window(ctx, &mut subject));
     chooser(ctx, &mut subject);
-    super::quests::picker(ctx, subject.session, subject.quests, subject.assets, None, subject.now);
+    super::quests::picker(
+        ctx,
+        subject.session,
+        subject.quests,
+        subject.assets,
+        subject.thumbnails,
+        None,
+        subject.now,
+    );
     out
 }
 

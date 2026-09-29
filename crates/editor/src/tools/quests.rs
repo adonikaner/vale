@@ -305,11 +305,31 @@ pub enum Target {
 }
 
 /// One row a picker offers.
-#[derive(Debug, Clone)]
+///
+/// A spell or an item row carries what its own workspace's list draws: the
+/// icon, and for an item the quality its name is coloured by. `about` is the
+/// hover: a spell's effects one to a line, an item's quality and levels.
+#[derive(Debug, Clone, Default)]
 pub struct Hit {
     pub id: u32,
     pub title: String,
     pub sub: String,
+    pub picture: Option<Picture>,
+    pub quality: Option<u32>,
+    pub about: Vec<String>,
+    /// An item row's columns, kept so the project's edits can be laid over
+    /// them. `None` for every other target.
+    pub item: Option<ItemFacts>,
+}
+
+/// The picture of a picker row, by the id it is found through. The path is
+/// resolved when the row is drawn, as the workspace lists resolve theirs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Picture {
+    /// A `SpellIcon.dbc` row.
+    SpellIcon(u32),
+    /// An `ItemDisplayInfo.dbc` row, whose inventory icon is the picture.
+    ItemDisplay(u32),
 }
 
 /// One column of one server row, as the place a chosen value is written.
@@ -1531,6 +1551,7 @@ fn fetch_the_names(
                         id: found.id,
                         title: found.title,
                         sub: found.sub,
+                        ..Hit::default()
                     });
                 }
             }
@@ -1616,6 +1637,7 @@ fn created_list(table: &'static str, id: u32, edits: &Edits) -> Option<Hit> {
         id,
         title: "created by this project".to_string(),
         sub: format!("{rows} row(s) not yet applied"),
+        ..Hit::default()
     })
 }
 
@@ -1635,6 +1657,9 @@ fn fold_the_projects_rows(hits: &mut Vec<Hit>, target: Target, query: &str, edit
         if let Some(name) = claimed(edits, table, hit.id, "name") {
             hit.title = name;
         }
+        if target == Target::Item {
+            follow_the_projects_item(hit, edits);
+        }
     }
     let by_entry: Option<u32> = query.parse().ok();
     let mut created: Vec<Hit> = Vec::new();
@@ -1650,16 +1675,114 @@ fn fold_the_projects_rows(hits: &mut Vec<Hit>, target: Target, query: &str, edit
         }
         let name = claimed(edits, table, entry, "name").unwrap_or_default();
         if by_entry == Some(entry) || name.to_ascii_lowercase().contains(query) {
-            created.push(Hit {
+            let mut hit = Hit {
                 id: entry,
                 title: name,
                 sub: "created by this project".to_string(),
-            });
+                ..Hit::default()
+            };
+            if target == Target::Item {
+                follow_the_projects_item(&mut hit, edits);
+            }
+            created.push(hit);
         }
     }
     created.sort_by_key(|hit| hit.id);
     hits.splice(0..0, created);
     hits.truncate(PICK_LIMIT);
+}
+
+/// An item row as the database describes it. See [`describe_item`].
+fn item_hit(id: u32, title: String, row: &impl RowValue) -> Hit {
+    let mut facts = ItemFacts::default();
+    for column in ItemFacts::COLUMNS {
+        facts.set(column, row.integer(column).unwrap_or(0).max(0) as u32);
+    }
+    let mut hit = Hit {
+        id,
+        title,
+        ..Hit::default()
+    };
+    describe_item(&mut hit, facts);
+    hit
+}
+
+/// The seven `item_template` columns a picker row describes an item by.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ItemFacts {
+    pub quality: u32,
+    pub display_id: u32,
+    pub class: u32,
+    pub subclass: u32,
+    pub inventory_type: u32,
+    pub item_level: u32,
+    pub required_level: u32,
+}
+
+impl ItemFacts {
+    /// The columns, by their names in `item_template`.
+    const COLUMNS: [&'static str; 7] = [
+        "quality",
+        "display_id",
+        "class",
+        "subclass",
+        "inventory_type",
+        "item_level",
+        "required_level",
+    ];
+
+    fn set(&mut self, column: &str, value: u32) {
+        match column {
+            "quality" => self.quality = value,
+            "display_id" => self.display_id = value,
+            "class" => self.class = value,
+            "subclass" => self.subclass = value,
+            "inventory_type" => self.inventory_type = value,
+            "item_level" => self.item_level = value,
+            "required_level" => self.required_level = value,
+            _ => {}
+        }
+    }
+}
+
+/// Fill an item row's picture, quality, second line and hover from its
+/// columns: the icon of its display id, the item list's second line, and a
+/// hover with the quality, the required level and the display id.
+fn describe_item(hit: &mut Hit, facts: ItemFacts) {
+    use vale_mangos::item;
+    hit.item = Some(facts);
+    hit.quality = Some(facts.quality);
+    hit.picture = (facts.display_id != 0).then_some(Picture::ItemDisplay(facts.display_id));
+    hit.sub = crate::tools::items::sub_line(
+        facts.class,
+        facts.subclass,
+        facts.inventory_type,
+        facts.item_level,
+    );
+    hit.about = vec![item::value_word(&item::QUALITIES, facts.quality)];
+    if facts.required_level > 0 {
+        hit.about.push(format!("requires level {}", facts.required_level));
+    }
+    hit.about.push(format!("display_id {}", facts.display_id));
+}
+
+/// Put the project's edits to an item's columns over a picker row, so an item
+/// this project recolours, re-icons or creates is drawn as the project has it.
+/// A column the project does not set keeps the database's value, and a row
+/// the database has never held starts from zeros.
+fn follow_the_projects_item(hit: &mut Hit, edits: &Edits) {
+    let table = vale_mangos::item::TEMPLATE;
+    let mut facts = hit.item.unwrap_or_default();
+    let mut any = false;
+    for column in ItemFacts::COLUMNS {
+        if let Some(value) = claimed(edits, table, hit.id, column).and_then(|v| v.parse().ok()) {
+            facts.set(column, value);
+            any = true;
+        }
+    }
+    if any {
+        describe_item(hit, facts);
+    }
 }
 
 /// Run the picker's search, for the targets whose rows are in the database:
@@ -1729,6 +1852,7 @@ fn search_the_picker(
                         id: found.id,
                         title: found.title,
                         sub: found.sub,
+                        ..Hit::default()
                     })
                     .collect())
             }));
@@ -1753,6 +1877,7 @@ fn search_the_picker(
                     id: known.entry,
                     sub: known.sub(),
                     title: known.title,
+                    ..Hit::default()
                 })
                 .collect();
         }
@@ -1780,16 +1905,21 @@ fn search_the_picker(
                     .rows(&sql)?
                     .iter()
                     .filter_map(|row| {
-                        Some(Hit {
-                            id: row.integer("entry")? as u32,
-                            title: row.text("name").unwrap_or_default().to_string(),
-                            sub: match target {
-                                Target::Item => vale_mangos::item::value_word(
-                                    &vale_mangos::item::QUALITIES,
-                                    row.integer("quality").unwrap_or(0) as u32,
-                                ),
-                                Target::Creature => "creature".to_string(),
-                                _ => "game object".to_string(),
+                        let id = row.integer("entry")? as u32;
+                        let title = row.text("name").unwrap_or_default().to_string();
+                        Some(match target {
+                            Target::Item => item_hit(id, title, row),
+                            Target::Creature => Hit {
+                                id,
+                                title,
+                                sub: "creature".to_string(),
+                                ..Hit::default()
+                            },
+                            _ => Hit {
+                                id,
+                                title,
+                                sub: "game object".to_string(),
+                                ..Hit::default()
                             },
                         })
                     })
@@ -2185,7 +2315,11 @@ mod tests {
         created.columns.insert("name".into(), "'Hobart Stefa'".into());
         edits.set_row_line(vale_mangos::creature::TEMPLATE, &vale_mangos::creature::template_key(2_000_000, 10), Some(&created.to_line()));
         edits.set(vale_mangos::creature::TEMPLATE, &vale_mangos::creature::template_key(68, 0), "name", Some("'Gate Guard'".into()));
-        let mut hits = vec![Hit { id: 68, title: "Stormwind City Guard".into(), sub: String::new() }];
+        let mut hits = vec![Hit {
+            id: 68,
+            title: "Stormwind City Guard".into(),
+            ..Hit::default()
+        }];
         fold_the_projects_rows(&mut hits, Target::Creature, "g", &edits);
         assert_eq!(hits[0].title, "Gate Guard");
         assert!(hits.iter().all(|hit| hit.id != 2_000_000), "\"g\" is not in Hobart Stefa");

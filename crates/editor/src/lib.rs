@@ -528,6 +528,12 @@ pub struct Args {
     /// it, as the window's own add does. Each implies its window.
     pub vendor_add: Option<u32>,
     pub trainer_add: Option<u32>,
+    /// `--vendor-find <text>` and `--trainer-find <text>`: open the window's
+    /// own picker for adding an item or a spell, with `text` searched. The
+    /// picker is two clicks in, so a scripted run cannot reach it otherwise.
+    /// Each implies its window.
+    pub vendor_find: Option<String>,
+    pub trainer_find: Option<String>,
     /// `--apply-services` / `--revert-services`: the Server panel's two
     /// buttons for the vendor and trainer lists. The apply also asks a running
     /// playtest for `.reload npc_vendor` and `.reload npc_trainer`.
@@ -796,6 +802,8 @@ impl Default for Args {
             trainer_window: false,
             vendor_add: None,
             trainer_add: None,
+            vendor_find: None,
+            trainer_find: None,
             apply_services: false,
             revert_services: false,
             events_window: false,
@@ -1030,6 +1038,14 @@ impl Args {
                 }
                 "--trainer-add" => {
                     parsed.trainer_add = args.next().as_deref().and_then(|v| v.trim().parse().ok());
+                    parsed.trainer_window = true;
+                }
+                "--vendor-find" => {
+                    parsed.vendor_find = args.next().filter(|text| !text.trim().is_empty());
+                    parsed.vendor_window = true;
+                }
+                "--trainer-find" => {
+                    parsed.trainer_find = args.next().filter(|text| !text.trim().is_empty());
                     parsed.trainer_window = true;
                 }
                 "--apply-services" => parsed.apply_services = true,

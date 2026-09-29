@@ -72,8 +72,9 @@ use super::thumbnails::Thumbnails;
 use crate::session::EditSession;
 use crate::tools::items::Items;
 use crate::tools::quests::{
-    Hit, Holder, Known, PickFor, Picker, Quests, Relation, Role, Target, PICK_LIMIT,
+    Hit, Holder, Known, PickFor, Picker, Picture, Quests, Relation, Role, Target, PICK_LIMIT,
 };
+use vale_edit::dbc::DbcFile;
 use crate::tools::Tool;
 use vale_client::assets::GameAssets;
 use vale_mangos::quest::{self, Column, Group, Kind};
@@ -234,6 +235,7 @@ pub fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>, mut shell: Shell<'_>) {
         work.session,
         work.quests,
         work.assets,
+        work.thumbnails,
         open.as_ref(),
         work.now,
     );
@@ -1975,21 +1977,127 @@ fn search_a_table(session: &mut EditSession, assets: &GameAssets, picker: &mut P
         if !hit || name.is_empty() {
             continue;
         }
-        // Ranks of one spell share its name (there are nine Fireballs), so the
-        // rank, field 129, is the sub-line that tells them apart.
-        let sub = match table {
-            "Spell" => open.string_at(record, 129).unwrap_or_default(),
-            _ => String::new(),
-        };
-        picker.hits.push(Hit {
+        let mut hit = Hit {
             id,
             title: name,
-            sub,
-        });
+            ..Hit::default()
+        };
+        if table == "Spell" {
+            describe_spell(session, open, record, &mut hit);
+        }
+        picker.hits.push(hit);
         if picker.hits.len() >= PICK_LIMIT {
             break;
         }
     }
+}
+
+/// A spell row as the spell list draws it, with its effects added.
+///
+/// Ranks of one spell share its name (there are nine Fireballs), so the rank,
+/// field 129, leads the second line. The effect names follow it, which is what
+/// tells a teaching spell (`LEARN_SPELL`) from the spell it teaches. The hover
+/// has one line per effect, with its aura and the spell it triggers or
+/// teaches, by name.
+fn describe_spell(session: &EditSession, open: &DbcFile, record: usize, hit: &mut Hit) {
+    use vale_assets::tables::spellbook::spell_fields as field;
+    use vale_assets::tables::spellnames::{aura_name, effect_name};
+    let number = |at: usize| open.u32_at(record, at).unwrap_or(0);
+    let mut names: Vec<String> = Vec::new();
+    for slot in 0..3 {
+        let effect = number(field::EFFECT + slot);
+        if effect == 0 {
+            continue;
+        }
+        let name = effect_name(effect)
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("effect {effect}"));
+        let mut line = name.clone();
+        let aura = number(field::EFFECT_APPLY_AURA + slot);
+        if aura != 0 {
+            let word = aura_name(aura)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("aura {aura}"));
+            line.push_str(&format!(" {word}"));
+        }
+        let trigger = number(field::EFFECT_TRIGGER_SPELL + slot);
+        if trigger != 0 {
+            let called = open
+                .row_of(trigger)
+                .and_then(|row| record_name(session, "Spell", row))
+                .unwrap_or_default();
+            line.push_str(&format!(" \u{2192} {called} {trigger}"));
+        }
+        names.push(name);
+        hit.about.push(line);
+    }
+    let rank = open.string_at(record, 129).unwrap_or_default();
+    hit.sub = [rank, names.join(", ")]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ");
+    let icon = number(vale_assets::tables::schema::SPELL_ICON_FIELD);
+    hit.picture = (icon != 0).then_some(Picture::SpellIcon(icon));
+}
+
+/// One row of the picker, drawn as the spell list and the item list draw
+/// theirs: the icon, an item's name in its quality's colour, and the second
+/// line, with [`Hit::about`] as the hover. Answers whether it was clicked.
+///
+/// The icon is asked for on every frame the row is drawn, as in those lists:
+/// only rows on screen pay for a decode. A row whose icon has not been decoded
+/// yet draws an empty square in its place.
+fn hit_row(
+    ui: &mut egui::Ui,
+    session: &EditSession,
+    assets: &GameAssets,
+    thumbnails: &mut Thumbnails,
+    hit: &Hit,
+) -> bool {
+    let shape = theme::list_row(
+        ui,
+        theme::ListRow {
+            title: &hit.title,
+            sub: &hit.sub,
+            trailing: &hit.id.to_string(),
+            tint: hit
+                .quality
+                .map(super::items::quality_colour)
+                .unwrap_or(theme::INK),
+            picture: hit.picture.is_some(),
+        },
+        false,
+    );
+    if let Some(picture) = hit.picture {
+        let path = match picture {
+            Picture::SpellIcon(icon) => super::data::spell_icon_path(session, assets, icon),
+            Picture::ItemDisplay(display) => crate::tools::items::icon_of(assets, display),
+        };
+        let texture = path.and_then(|path| {
+            thumbnails.want(&path);
+            thumbnails.get(&path)
+        });
+        match texture {
+            Some(id) => {
+                ui.painter().image(
+                    id,
+                    shape.picture,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
+            None => {
+                ui.painter().rect_filled(shape.picture, 3.0, theme::SUNK);
+            }
+        }
+    }
+    let response = match hit.about.is_empty() {
+        true => shape.response,
+        false => shape.response.on_hover_text(hit.about.join("
+")),
+    };
+    response.clicked()
 }
 
 /// One dialog over every table a quest names.
@@ -2002,6 +2110,7 @@ pub(super) fn picker(
     session: &mut EditSession,
     quests: &mut Quests,
     assets: &GameAssets,
+    thumbnails: &mut Thumbnails,
     open: Option<&Open>,
     now: f64,
 ) {
@@ -2100,18 +2209,7 @@ pub(super) fn picker(
             .auto_shrink([false, true])
             .show_rows(ui, theme::LIST_ROW, picker.hits.len(), |ui, range| {
                 for hit in &picker.hits[range] {
-                    let shape = theme::list_row(
-                        ui,
-                        theme::ListRow {
-                            title: &hit.title,
-                            sub: &hit.sub,
-                            trailing: &hit.id.to_string(),
-                            tint: theme::INK,
-                            picture: false,
-                        },
-                        false,
-                    );
-                    if shape.response.clicked() {
+                    if hit_row(ui, session, assets, thumbnails, hit) {
                         chosen = Some(hit.clone());
                     }
                 }
@@ -2227,6 +2325,8 @@ pub struct HolderQuests<'a> {
     /// [`HolderIs`].
     pub is: HolderIs,
     pub switch_to: &'a mut Option<Tool>,
+    /// The icons the reference picker's spell and item rows draw.
+    pub thumbnails: &'a mut Thumbnails,
     pub now: f64,
 }
 
@@ -2376,6 +2476,7 @@ pub fn holder_window(ctx: &egui::Context, mut subject: HolderQuests<'_>) -> Opti
         subject.session,
         subject.quests,
         subject.assets,
+        subject.thumbnails,
         None,
         subject.now,
     );

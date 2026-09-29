@@ -199,26 +199,7 @@ impl Workspace<'_> {
     /// The archive path of an icon by its `SpellIcon` row id, also used for the
     /// icon field's own preview.
     fn icon_by_id(&self, icon_id: u32) -> Option<String> {
-        if icon_id == 0 {
-            return None;
-        }
-        // Read the edited table first, so a re-pointed icon shows, and fall
-        // back to the client's own parse.
-        if let Some(path) = self
-            .session
-            .table("SpellIcon")
-            .and_then(|icons| icons.row_of(icon_id))
-            .and_then(|row| self.session.table("SpellIcon")?.string_at(row, 1))
-        {
-            return Some(with_blp(&path));
-        }
-        let path = self
-            .assets
-            .display_tables()
-            .ok()?
-            .spellbook()?
-            .icon_path(icon_id)?;
-        Some(with_blp(&path))
+        spell_icon_path(self.session, self.assets, icon_id)
     }
 
     /// Draw a picture at `side`, or leave a gap of the same size when there is
@@ -284,6 +265,35 @@ fn signed(raw: u32) -> String {
 /// Append `.blp` to a table's texture path unless it already has it. The
 /// tables store paths without an extension and the client appends it. See
 /// `ui::framexml::decode_rgba`, which applies the same rule in another crate.
+/// The archive path of a spell icon by its `SpellIcon` row id, or `None` for
+/// id 0 and an id no row has. Shared with the reference picker's spell rows.
+///
+/// The session's own `SpellIcon` is read first, so an icon the project
+/// re-points shows, and the client's parse is read when the session has not
+/// opened the table.
+pub(super) fn spell_icon_path(
+    session: &EditSession,
+    assets: &GameAssets,
+    icon_id: u32,
+) -> Option<String> {
+    if icon_id == 0 {
+        return None;
+    }
+    if let Some(path) = session
+        .table("SpellIcon")
+        .and_then(|icons| icons.row_of(icon_id))
+        .and_then(|row| session.table("SpellIcon")?.string_at(row, 1))
+    {
+        return Some(with_blp(&path));
+    }
+    let path = assets
+        .display_tables()
+        .ok()?
+        .spellbook()?
+        .icon_path(icon_id)?;
+    Some(with_blp(&path))
+}
+
 fn with_blp(path: &str) -> String {
     match path.to_ascii_lowercase().ends_with(".blp") {
         true => path.to_string(),
@@ -703,7 +713,7 @@ fn form(
 
     // An effect always has the preview pane, laid out like the storyboard: the
     // fields on the left and the stage on the right with the model alone. Once
-    // **Position on character…** is pressed, the lab's card is added above the
+    // *Position on character…* is pressed, the lab's card is added above the
     // fields and the mannequin under the model. See `crate::lab`.
     let id = work
         .session
@@ -832,7 +842,7 @@ fn fields(
 /// This is the lights tool's only panel. A light is chosen by picking it in
 /// the viewport rather than from a list, and the shell's rule is that the
 /// inspector shows the selection, so the form is drawn here. The list of all
-/// 374 lights is a dialog behind **Browse…**, for finding one that is not on
+/// 374 lights is a dialog behind *Browse…*, for finding one that is not on
 /// screen.
 ///
 /// Its contents, in the order they are used: which light this is, a button to
@@ -2166,7 +2176,7 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 );
             }
             // The dialog opens with the field's current model previewed.
-            // Otherwise it opened with no preview pane and **Use** disabled,
+            // Otherwise it opened with no preview pane and *Use* disabled,
             // reading "nothing chosen", even though the row already named a
             // model. The preview is set here rather than where the dialog is
             // opened, because there are two such places: the form's `browse…`

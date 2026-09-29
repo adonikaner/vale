@@ -238,6 +238,7 @@ pub fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>) {
         work.session,
         work.quests,
         work.assets,
+        work.thumbnails,
         None,
         work.now,
     );
@@ -326,8 +327,8 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
 ///
 /// An item in the database is *marked*: it stays in the list in red until
 /// Apply, and Keep takes the mark off. One this project created is in no
-/// database, so removing it gives the claim up. **A removal needs a restart of
-/// the server**, and the apply sends no reload while one is in the plan — see
+/// database, so removing it gives the claim up. A removal needs a restart of
+/// the server, and the apply sends no reload while one is in the plan — see
 /// `vale_mangos::item`'s module comment.
 fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let open = work.open_item();
@@ -760,10 +761,10 @@ fn field(
             Kind::Text => text_cell(ui, id.with("text"), &showing),
             Kind::Flags(bits) => flags_cell(ui, &showing, bits, id),
             Kind::Choice(values) => choice_cell(ui, &showing, values, id),
-            // **The one column whose options depend on another column of the
-            // same row.** 0 is *Axe* on a weapon, *Cloth* on a piece of armour
-            // and *Bandage* on a consumable, so the list is the class's — see
-            // `vale_mangos::item::subclasses`.
+            // The subclass is the one column whose options depend on another
+            // column of the same row: 0 is *Axe* on a weapon, *Cloth* on a
+            // piece of armour and *Bandage* on a consumable, so the list is
+            // the class's — see `vale_mangos::item::subclasses`.
             Kind::Subclass => choice_cell(ui, &showing, item::subclasses(known.class), id),
             // A display id is picked by looking at it. The number stays
             // editable beside the button, because an id read off a wiki is a
@@ -1345,8 +1346,8 @@ fn appearance(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
 
     ui.add_space(6.0);
     let side = ui.available_width();
-    // **A model where the row has one, and the body it paints where it does
-    // not.** See the module comment: these are the two kinds of item, and both
+    // A model where the row has one, and the body it paints where it does
+    // not. See the module comment: these are the two kinds of item, and both
     // of them have a picture — what changes is whether the thing being looked
     // at is the item or the wearer.
     let on_a_body = match look.models.first() {
@@ -1371,8 +1372,8 @@ fn appearance(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
         // a glove and a robe paint components of the wearer's composite; a
         // cloak paints none of them and is the wearer's own group-15 geoset
         // with a texture, which is why the dressing is asked rather than the
-        // row; and some rows switch a geoset group without painting. **A trade
-        // good, a bag, a reagent and a quest item are none of the three** —
+        // row; and some rows switch a geoset group without painting. A trade
+        // good, a bag, a reagent and a quest item are none of the three:
         // they are an icon and nothing else, and a body drawn for one would be
         // a naked human standing in for a stack of copper ore.
         None => {
@@ -1628,8 +1629,8 @@ fn picker(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 box_.request_focus();
                 work.items.display_focus = false;
             }
-            // **The narrowing that is about the item rather than about what
-            // was typed.** 29,604 rows is three hundred pages; the slot this
+            // This narrowing is by the item rather than by what was typed.
+            // 29,604 rows is three hundred pages; the slot this
             // item is worn in cuts it to the appearances that could go
             // there, which is what somebody choosing one is after. See
             // `crate::tools::items::fits_slot`.

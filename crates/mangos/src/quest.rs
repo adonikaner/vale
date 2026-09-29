@@ -21,10 +21,10 @@
 //! `item_template` does. The reference database holds 4,725 rows for 4,433
 //! quests: 287 quests have more than one version.
 //!
-//! **That is what decides how a removal is written.** Deleting the winning row
-//! of a quest with two versions does not remove the quest: the server loads the
-//! older one instead. [`delete_statements`] therefore names the entry alone and
-//! takes every version, and the rows of [`DEPENDENTS`] with it.
+//! Deleting the winning row of a quest with two versions does not remove the
+//! quest: the server loads the older one instead. [`delete_statements`]
+//! therefore names the entry alone and takes every version, and the rows of
+//! [`DEPENDENTS`] with it.
 //!
 //! ## A quest is created, edited and removed, and all three are live on a reload
 //!
@@ -36,8 +36,8 @@
 //! before using it. A character holding a removed quest keeps the row in
 //! `character_queststatus` and the server skips it.
 //!
-//! **What a reload does cost**, for any quest change and not only a removal:
-//! the map holds each `Quest` by `unique_ptr`, so clearing it frees every one,
+//! A reload has a cost for any quest change, not only for a removal: the map
+//! holds each `Quest` by `unique_ptr`, so clearing it frees every one,
 //! and two script bases keep a `Quest const*` across frames —
 //! `m_pQuestForEscort` (`ScriptedEscortAI.h:119`) and `m_pQuestForFollow`
 //! (`ScriptedFollowerAI.h:68`). An escort in progress while the table is
@@ -113,12 +113,12 @@ pub const TABLES: [&str; 5] = [
     OBJECT_TAKES,
 ];
 
-/// **The order the tables are reloaded in**: the templates first, because the
+/// The order the tables are reloaded in: the templates first, because the
 /// relation loader drops a row whose quest it cannot find — see the module
 /// comment.
 pub const RELOAD_ORDER: [&str; 5] = TABLES;
 
-/// **Every table that names a quest by id and is removed with it**, as the
+/// Every table that names a quest by id and is removed with it, as the
 /// table and the column the id is in.
 ///
 /// `locales_quest` is the translated text and `areatrigger_involvedrelation`
@@ -134,7 +134,7 @@ pub const DEPENDENTS: [(&str, &str); 6] = [
     ("locales_quest", "entry"),
 ];
 
-/// **Every column of the world database that names a quest by entry**, which
+/// Every column of the world database that names a quest by entry, which
 /// is what follows a quest whose entry changes — see
 /// [`crate::row::move_statements`], and `crate::item::REFERENCES` for the item
 /// half's own list.
@@ -146,7 +146,7 @@ pub const DEPENDENTS: [(&str, &str); 6] = [
 /// (`ObjectMgr.cpp:5936` reads `abs(NextQuestId)`). Read off the reference
 /// install's `information_schema`.
 ///
-/// **Not reached**: `character_queststatus` in the `characters` database, which
+/// Not reached: `character_queststatus` in the `characters` database, which
 /// is another connection, so a character half way through a moved quest loses
 /// it; and `quest_start_scripts`/`quest_end_scripts`, whose `id` is a script id
 /// that a quest names in `StartScript`/`CompleteScript` and that only happens
@@ -269,7 +269,7 @@ const QUEST_SIGNED: Kind = Kind::Either(TEMPLATE, TEMPLATE);
 /// An emote the giver plays: a row of `Emotes.dbc`.
 const EMOTE: Kind = Kind::Ref("Emotes");
 
-/// **`quest_template`'s 131 columns**, in the order `ObjectMgr::LoadQuests`
+/// `quest_template`'s 131 columns, in the order `ObjectMgr::LoadQuests`
 /// selects them (`ObjectMgr.cpp:5318`).
 ///
 /// `patch` is not among them: it is half the key, and [`template_key`] is where
@@ -408,7 +408,7 @@ pub const TEMPLATE_COLUMNS: [Column; 131] = [
     Column { name: "RewRepSpilloverMask", kind: Kind::Unsigned, group: Group::Rewards, about: "which of the five reputation rewards do not spill over to sister factions, a bit each" },
 ];
 
-/// **A relation table's two columns**, the key's two aside — see the module
+/// A relation table's two columns, the key's two aside — see the module
 /// comment.
 pub const RELATION_COLUMNS: [Column; 4] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the creature_template or gameobject_template entry" },
@@ -432,7 +432,7 @@ pub fn column(table: &str, name: &str) -> Option<&'static Column> {
     columns_of(table).iter().find(|column| column.name == name)
 }
 
-/// **The four numbered groups an objective is spread across**, as the column
+/// The four numbered groups an objective is spread across, as the column
 /// stems a form walks to draw one objective per line: the creature or object,
 /// its count, the spell cast on it and what the log calls it.
 pub const KILL_STEMS: [&str; 4] =
@@ -448,7 +448,7 @@ pub fn relation_key(id: u32, quest: u32) -> Key {
     Key::two(("id", id as u64), ("quest", quest as u64))
 }
 
-/// **Where a quest this project creates gets its entry from.**
+/// Where a quest this project creates gets its entry from.
 ///
 /// `quest_template.entry` is `mediumint unsigned`, so the ceiling is
 /// [`MAX_ENTRY`]. The reference database's highest is 9,665 and upstream
@@ -460,12 +460,12 @@ pub const RESERVED_ENTRY_BASE: u32 = 2_000_000;
 /// The highest entry the column can hold.
 pub const MAX_ENTRY: u32 = 0x00FF_FFFF;
 
-/// **Every column of a new quest**, as the values a row created here starts
+/// Every column of a new quest, as the values a row created here starts
 /// from.
 ///
-/// `Method` **2**, which is the ordinary quest and the DDL's own default; a row
+/// `Method` 2, which is the ordinary quest and the DDL's own default; a row
 /// of zeros is `Method` 0, which completes the moment it is accepted. Levels
-/// **1**. The text columns are empty strings rather than the `NULL` the DDL
+/// 1. The text columns are empty strings rather than the `NULL` the DDL
 /// defaults them to, because a form draws an empty box for one and the word
 /// `NULL` for the other. Everything else is zero, which for every remaining
 /// column means none: no item, no kill, no reward, no prerequisite.
@@ -494,7 +494,7 @@ pub fn new_relation() -> Vec<Assignment> {
     ]
 }
 
-/// **Everything a removed quest takes with it**, as statements.
+/// Everything a removed quest takes with it, as statements.
 ///
 /// Every version of the template — see the module comment, where the reason
 /// the patch is left out of the `WHERE` is — and then each of [`DEPENDENTS`].
@@ -513,7 +513,7 @@ pub fn delete_statements(entry: u32) -> Vec<String> {
     out
 }
 
-/// **The statements a save emits for one row this project claims.**
+/// The statements a save emits for one row this project claims.
 ///
 /// One `UPDATE` for a row it edits, a `DELETE`/`INSERT` pair for one it creates
 /// — so applying twice means the same as applying once — and for a removal the
@@ -533,7 +533,7 @@ pub fn statements(table: &str, key: &Key, life: Life, changes: &[Assignment]) ->
     }
 }
 
-/// **Whether a table can hold a row that is created or removed.** Every table
+/// Whether a table can hold a row that is created or removed. Every table
 /// here can, and every one is live on a reload — see the module comment.
 pub fn can_live(table: &str, _life: Life) -> bool {
     table_named(table).is_some()
@@ -561,12 +561,12 @@ fn winning_join(wow_patch: u32) -> String {
     )
 }
 
-/// **Every quest the server would load**, briefly — what the list reads once.
+/// Every quest the server would load, briefly — what the list reads once.
 pub fn all_quests_query(wow_patch: u32) -> String {
     format!("SELECT {BRIEF} {} ORDER BY t.`entry`", winning_join(wow_patch))
 }
 
-/// **The whole row the server would load for one entry**, with its `patch`.
+/// The whole row the server would load for one entry, with its `patch`.
 pub fn winning_template_query(entry: u32, wow_patch: u32) -> String {
     format!(
         "SELECT * FROM `quest_template` t1 WHERE `entry` = {entry} AND `patch` = \
@@ -596,7 +596,7 @@ pub fn exists_query(table: &str, key: &Key) -> String {
 /// The highest entry the table holds, at any patch.
 pub const MAX_ENTRY_QUERY: &str = "SELECT MAX(`entry`) AS `entry` FROM `quest_template`";
 
-/// **Every row of one relation table the server would load**, which is what the
+/// Every row of one relation table the server would load, which is what the
 /// tool reads once: about four thousand rows for the creature tables and a few
 /// hundred for the game objects'.
 pub fn relations_query(table: &str, wow_patch: u32) -> String {
@@ -607,7 +607,7 @@ pub fn relations_query(table: &str, wow_patch: u32) -> String {
     )
 }
 
-/// **The name of every creature or game object that gives or takes a quest**,
+/// The name of every creature or game object that gives or takes a quest,
 /// for a relation row to be drawn as a name rather than as an entry.
 ///
 /// One query per kind over the ids the relation tables hold, rather than a
@@ -630,7 +630,7 @@ pub fn relation_names_query(creatures: bool, wow_patch: u32) -> String {
     )
 }
 
-/// **Creatures or game objects whose name contains a term**, for the picker a
+/// Creatures or game objects whose name contains a term, for the picker a
 /// relation is added through. An all-digit term also matches the entry.
 pub fn holder_search_query(creatures: bool, term: &str, wow_patch: u32, limit: usize) -> String {
     let template = match creatures {
@@ -692,7 +692,9 @@ pub fn item_names_query(entries: &[u32], wow_patch: u32) -> Option<String> {
 }
 
 /// …and items whose name contains a term, for the picker an item column is
-/// chosen through.
+/// chosen through. Besides the name, each row carries what the item list
+/// draws: the quality, the display id its icon comes from, the class,
+/// subclass and slot it is described by, and its item and required levels.
 pub fn item_search_query(term: &str, wow_patch: u32, limit: usize) -> String {
     let like = crate::sql::text(&format!("%{}%", term.trim()));
     let by_entry = match term.trim().parse::<u32>() {
@@ -700,7 +702,8 @@ pub fn item_search_query(term: &str, wow_patch: u32, limit: usize) -> String {
         Err(_) => String::new(),
     };
     format!(
-        "SELECT t.`entry`, t.`name`, t.`quality`, t.`display_id` FROM `item_template` t \
+        "SELECT t.`entry`, t.`name`, t.`quality`, t.`display_id`, t.`class`, t.`subclass`, \
+         t.`inventory_type`, t.`item_level`, t.`required_level` FROM `item_template` t \
          JOIN (SELECT `entry`, MAX(`patch`) AS `patch` FROM `item_template` \
                WHERE `patch` <= {wow_patch} GROUP BY `entry`) w \
            ON w.`entry` = t.`entry` AND w.`patch` = t.`patch` \
@@ -712,7 +715,7 @@ pub fn item_search_query(term: &str, wow_patch: u32, limit: usize) -> String {
 mod tests {
     use super::*;
 
-    /// **The schema is `LoadQuests`' `SELECT`, column for column.** The list is
+    /// The schema is `LoadQuests`' `SELECT`, column for column. The list is
     /// the query at `ObjectMgr.cpp:5318` with the backticks taken off.
     #[test]
     fn every_column_is_the_servers_own_in_the_servers_own_order() {
@@ -789,7 +792,7 @@ mod tests {
         assert_eq!(of("RewXP"), "0");
     }
 
-    /// **A removal names the entry alone**, so every content-patch version goes
+    /// A removal names the entry alone, so every content-patch version goes
     /// and the server cannot fall back to an older one, and takes the six
     /// dependent tables with it.
     #[test]

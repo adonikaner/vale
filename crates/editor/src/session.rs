@@ -36,7 +36,8 @@
 //! * Stale — the whole tile has to be read again: what the live path could
 //!   not reach. [`crate::tools::remesh`] forgets it and lets the streamer do it.
 //! * Unsaved — its bytes have moved ahead of the project folder. Saving
-//!   clears it.
+//!   clears it. A save of a tile whose bytes are the archives' own removes
+//!   the tile's file instead of writing it; see [`EditSession::save_one`].
 //!
 //! They are separate because they are cleared by different things and at
 //! different rates. Merging any two breaks one of them: if the ground and the
@@ -59,6 +60,7 @@ use vale_edit::undo::History;
 use vale_edit::TileKey;
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
+use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
 use std::sync::{Arc, RwLock};
 
 /// The tiles this editor has changed and not yet saved, keyed by virtual path in
@@ -351,6 +353,13 @@ pub struct EditSession {
     /// is set, every write that carries a gesture takes this one instead, and
     /// the twelve fold into one.
     one_gesture: Option<(String, String)>,
+    /// The archives' own copy of a file, which [`Self::save`] compares a
+    /// tile against. `None` in a test session, which has no archives; every
+    /// tile is then written.
+    pub shipped: Option<Shipped>,
+    /// The check for tiles the project folder already holds unchanged,
+    /// started when a project is opened. See [`drop_unchanged_tiles`].
+    unchanged: Option<Task<Vec<Unchanged>>>,
 }
 
 /// What undo entry a server-row edit goes on, and what folds into it.
@@ -422,6 +431,8 @@ impl EditSession {
             applied_services: None,
             database_writes: 0,
             one_gesture: None,
+            shipped: None,
+            unchanged: None,
         }
     }
 
@@ -612,6 +623,12 @@ impl EditSession {
         // Everything on screen came out of the old folder. See
         // [`Self::reread_everything`].
         self.reread_everything = true;
+        // The new folder may hold tiles it does not change. A check still
+        // running for the old folder is dropped with the task it is in.
+        self.unchanged = self
+            .shipped
+            .as_ref()
+            .map(|shipped| shipped.look_for_unchanged(&self.project));
     }
 
     /// Throw away every file in the open project, and everything this
@@ -1463,21 +1480,54 @@ impl EditSession {
         self.unsaved.insert(coord);
     }
 
-    /// Write one tile to the project folder.
+    /// Write one tile to the project folder, or take it out of the folder
+    /// when its bytes are the archives' own. Answers whether the folder now
+    /// matches the tile; see [`Self::save_one`].
     pub fn save(&mut self, coord: (u32, u32)) -> bool {
-        let Some(tile) = self.tiles.get(&coord) else {
-            return false;
-        };
+        self.save_one(coord).is_some()
+    }
+
+    /// [`Self::save`], answering which of the two it did.
+    ///
+    /// A tile is marked unsaved by any edit, including one that is undone and
+    /// a drag that ends where it began, so a save can hold exactly what the
+    /// archives hold. Kept, such a file is listed as a tile the project
+    /// changes, goes into every patch archive, and makes a server tile
+    /// regeneration rebuild the tile. It is removed from the folder instead,
+    /// and a file an earlier save wrote is removed with it, so a tile whose
+    /// edits have all been taken back leaves the project.
+    ///
+    /// The comparison is of bytes, with the archives read past this project's
+    /// own archives in `Data\`. `vale_edit::adt::diff`, which the project
+    /// dialog lists tiles by, does not compare every chunk, so a tile it calls
+    /// the same can still differ.
+    fn save_one(&mut self, coord: (u32, u32)) -> Option<Saved> {
+        let tile = self.tiles.get(&coord)?;
         let key = self.key(coord);
-        match self.project.save_tile(&key, tile) {
-            Ok(path) => {
-                self.unsaved.remove(&coord);
+        let vpath = key.vpath();
+        let bytes = tile.write();
+        let unchanged = self
+            .shipped
+            .as_ref()
+            .is_some_and(|shipped| shipped.holds(&self.project, &vpath, &bytes));
+        let done = match unchanged {
+            true => self.project.revert(&vpath).map(|_| {
+                self.status = format!("{key} is the archives' own and is not kept in the project");
+                Saved::Dropped
+            }),
+            false => self.project.write(&vpath, &bytes).map(|path| {
                 self.status = format!("saved {}", path.display());
-                true
+                Saved::Written
+            }),
+        };
+        match done {
+            Ok(saved) => {
+                self.unsaved.remove(&coord);
+                Some(saved)
             }
             Err(e) => {
                 self.status = format!("{key}: {e}");
-                false
+                None
             }
         }
     }
@@ -1506,14 +1556,34 @@ impl EditSession {
         };
     }
 
-    /// …and all of them.
+    /// …and all of them. Answers how many tiles the folder now matches,
+    /// written or removed.
     pub fn save_all(&mut self) -> usize {
         let unsaved: Vec<(u32, u32)> = self.unsaved.iter().copied().collect();
-        let saved = unsaved.iter().filter(|&&coord| self.save(coord)).count();
-        if saved > 0 {
-            self.status = format!("saved {saved} tiles to {}", self.project.root.display());
+        let (mut written, mut dropped) = (0, 0);
+        for coord in unsaved {
+            match self.save_one(coord) {
+                Some(Saved::Written) => written += 1,
+                Some(Saved::Dropped) => dropped += 1,
+                None => {}
+            }
         }
-        saved
+        let root = self.project.root.display();
+        match (written, dropped) {
+            (0, 0) => {}
+            (written, 0) => self.status = format!("saved {written} tiles to {root}"),
+            (0, dropped) => {
+                self.status =
+                    format!("{dropped} tiles are the archives' own and are not kept in {root}")
+            }
+            (written, dropped) => {
+                self.status = format!(
+                    "saved {written} tiles to {root}; {dropped} are the archives' own and are \
+                     not kept"
+                )
+            }
+        }
+        written + dropped
     }
 
     /// Pack the project into a patch archive beside the game's own, replacing
@@ -1756,7 +1826,8 @@ impl Plugin for SessionPlugin {
                 (publish_for_the_preview, forget_what_changed)
                     .chain()
                     .before(crate::lab::hang_the_effect),
-            );
+            )
+            .add_systems(Update, drop_unchanged_tiles);
     }
 }
 
@@ -1782,6 +1853,158 @@ fn overlay_over(project: &Project, edited: &Edited) -> vale_assets::archive::Ove
         }
         project.read(path)
     })
+}
+
+/// What [`EditSession::save_one`] did with a tile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Saved {
+    /// The tile differs from the archives' copy, and its bytes are in the
+    /// project folder.
+    Written,
+    /// The tile is the archives' copy, and the project folder has no file
+    /// for it.
+    Dropped,
+}
+
+/// The archives' own files, read past this project's archives in `Data\`,
+/// for telling a tile that changes something from one that changes nothing.
+///
+/// Reads through a chain borrowed from the client's pool (`GameAssets::chains`)
+/// rather than through `GameAssets`, so the check [`Self::look_for_unchanged`]
+/// starts can hold one on a worker. A pool chain has no overlay, so it answers
+/// the archives' bytes whatever the project holds.
+#[derive(Clone)]
+pub struct Shipped {
+    chains: Arc<vale_assets::archive::ChainPool>,
+    /// The folder the pool is keyed on: `GameAssets::gamedata_dir` as it is
+    /// written. A borrow under any other spelling empties the pool, and the
+    /// tile loaders would open their chains again.
+    gamedata_dir: String,
+}
+
+impl Shipped {
+    pub fn new(assets: &GameAssets) -> Shipped {
+        Shipped {
+            chains: assets.chains(),
+            gamedata_dir: assets.gamedata_dir.clone(),
+        }
+    }
+
+    /// Whether `bytes` are, byte for byte, the archives' file at `vpath`.
+    ///
+    /// False when the archives do not have the file or cannot be read, so a
+    /// tile is taken out of a project only on a positive answer.
+    pub fn holds(&self, project: &Project, vpath: &str, bytes: &[u8]) -> bool {
+        let Ok(mut chain) = self.chains.take(&self.gamedata_dir) else {
+            return false;
+        };
+        chain
+            .read_past_overlay_skipping(vpath, &own_archives(project))
+            .is_ok_and(|shipped| shipped == bytes)
+    }
+
+    /// Start finding, on a worker, every tile file in `project` whose bytes
+    /// are the archives' own.
+    ///
+    /// Save stops a tile like this from being written, but a project saved
+    /// before it did may hold some. The check reads each tile the folder
+    /// holds and the archives' copy, so its cost grows with the number of
+    /// tiles, and it runs off the main thread. [`drop_unchanged_tiles`]
+    /// collects the answer and removes the files.
+    fn look_for_unchanged(&self, project: &Project) -> Task<Vec<Unchanged>> {
+        let shipped = self.clone();
+        let project = project.clone();
+        AsyncComputeTaskPool::get().spawn(async move {
+            let own = own_archives(&project);
+            let Ok(mut chain) = shipped.chains.take(&shipped.gamedata_dir) else {
+                return Vec::new();
+            };
+            project
+                .files()
+                .into_iter()
+                .filter_map(|vpath| {
+                    let key = TileKey::from_vpath(&vpath)?;
+                    let path = project.path_for(&vpath)?;
+                    // Read before the bytes, so a save that lands between
+                    // the two leaves a record that no longer matches the file
+                    // and the file is kept.
+                    let meta = std::fs::metadata(&path).ok()?;
+                    let bytes = std::fs::read(&path).ok()?;
+                    let shipped = chain.read_past_overlay_skipping(&vpath, &own).ok()?;
+                    (shipped == bytes).then(|| Unchanged {
+                        vpath,
+                        key,
+                        len: meta.len(),
+                        modified: meta.modified().ok(),
+                    })
+                })
+                .collect()
+        })
+    }
+}
+
+/// This project's own archives in `Data\`, which a comparison with the
+/// archives reads past. A chain that included them would compare an edit
+/// with its own published copy.
+fn own_archives(project: &Project) -> Vec<String> {
+    project
+        .published()
+        .into_iter()
+        .map(|archive| archive.name)
+        .collect()
+}
+
+/// A tile file the open-time check found to be the archives' own, and the
+/// size and time the file had when it was read.
+struct Unchanged {
+    vpath: String,
+    key: TileKey,
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+/// Remove the tile files [`Shipped::look_for_unchanged`] found, once it has
+/// finished.
+///
+/// A file is kept when its tile has unsaved edits, or when its size or time
+/// has changed since the check read it: a save landed in between, and the
+/// check's answer is about bytes that are no longer there.
+fn drop_unchanged_tiles(session: Option<ResMut<EditSession>>) {
+    let Some(mut session) = session else { return };
+    if session.unchanged.is_none() {
+        return;
+    }
+    let Some(found) = session
+        .unchanged
+        .as_mut()
+        .and_then(|task| block_on(future::poll_once(task)))
+    else {
+        return;
+    };
+    session.unchanged = None;
+    let mut dropped = 0;
+    for one in found {
+        let open_here = one.key.map.eq_ignore_ascii_case(&session.map);
+        if open_here && session.unsaved.contains(&(one.key.x, one.key.y)) {
+            continue;
+        }
+        let Some(path) = session.project.path_for(&one.vpath) else {
+            continue;
+        };
+        let as_read = std::fs::metadata(&path)
+            .is_ok_and(|meta| meta.len() == one.len && meta.modified().ok() == one.modified);
+        if as_read && session.project.revert(&one.vpath).is_ok_and(|gone| gone) {
+            dropped += 1;
+        }
+    }
+    if dropped > 0 {
+        let line = format!(
+            "{dropped} tiles in {} were the archives' own and are no longer kept",
+            session.project.name
+        );
+        info!("{line}");
+        session.status = line;
+    }
 }
 
 /// Build the session and hand the archive chain its overlay.
@@ -1855,6 +2078,10 @@ fn open(
     let server_edits = read_server_edits(&project);
     let server_paths = read_server_paths(&project);
     let server_scripts = read_server_scripts(&project);
+    // …and which of its tiles are the archives' own, which it should not keep.
+    // See [`Shipped::look_for_unchanged`].
+    let shipped = Shipped::new(&assets);
+    let unchanged = Some(shipped.look_for_unchanged(&project));
 
     let at = args.at.unwrap_or((0.0, 0.0));
     camera.go_to(Vec2::new(at.0, at.1));
@@ -1916,6 +2143,8 @@ fn open(
         applied_services: None,
         database_writes: 0,
         one_gesture: None,
+        shipped: Some(shipped),
+        unchanged,
     });
 }
 

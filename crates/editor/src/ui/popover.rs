@@ -539,13 +539,20 @@ fn this_project(
     // window has the per-tile form of this button.
     ui.add_space(10.0);
     theme::heading(ui, "Server tiles");
+    // `None` until the first count, which runs on a worker, has finished. The
+    // button is enabled while the count is unknown; a press with nothing
+    // changed says so on the status line.
     let changed = standings.changed_tiles(session, assets, now);
     let busy = queue.busy();
     ui.horizontal(|ui| {
+        let count = match changed {
+            Some(n) => n.to_string(),
+            None => "counting\u{2026}".to_string(),
+        };
         if ui
             .add_enabled(
-                !playing && !busy && changed > 0,
-                egui::Button::new(format!("Regenerate changed tiles ({changed})")),
+                !playing && !busy && changed != Some(0),
+                egui::Button::new(format!("Regenerate changed tiles ({count})")),
             )
             .on_hover_text(
                 "Rebuild this project's archive, then regenerate the server's files for \

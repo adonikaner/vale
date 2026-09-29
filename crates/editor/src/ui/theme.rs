@@ -86,10 +86,10 @@ pub const INSPECTOR_MAX: f32 = 560.0;
 
 /// The size of secondary text, in points: notes, hover lines, the state line
 /// under a window's title, and everything drawn with `RichText::small`, which
-/// [`paint`] sets egui's `TextStyle::Small` to. egui's own default is 9, and
-/// in the game's typeface, which the client installs as egui's proportional
-/// font, 9 points is too small to read and drops the underscore out of
-/// `npc_flags`. No text in the editor is set smaller than this.
+/// [`paint`] sets egui's `TextStyle::Small` to. egui's own default is 9,
+/// which is too small to read and, in the game's typeface, dropped the
+/// underscore out of `npc_flags`. No text in the editor is set smaller than
+/// this.
 pub const SMALL: f32 = 11.5;
 
 /// The size of body text, buttons and fields, in points: egui's `Body` and
@@ -108,6 +108,46 @@ pub fn install(ctx: &egui::Context) {
     // host's preference, so writing only the one showing would make the
     // editor's colours change when the desktop's do. The editor is always dark.
     ctx.all_styles_mut(paint);
+    keep_own_face(ctx);
+}
+
+/// Keep egui's own typeface at the head of its proportional family.
+///
+/// The client's interface installs the game's four typefaces into the shared
+/// context when a playtest first shows it, and puts Friz Quadrata at the head
+/// of `FontFamily::Proportional` as well as under its own name. Every editor
+/// panel is set in `Proportional`, so from the first playtest on the whole
+/// editor was drawn in the game's face. The game's own text asks for its faces
+/// by name, so putting the family back changes nothing the game draws. See
+/// the module comment for why the editor does not use the game's look.
+///
+/// `set_fonts` takes effect at the start of the next pass, so the editor is
+/// drawn in the game's face for one frame after the interface installs it.
+///
+/// Nothing is checked before the context's first pass has finished: egui
+/// builds its fonts in the first pass, `Context::fonts` panics before then,
+/// and nothing can have installed another face yet.
+fn keep_own_face(ctx: &egui::Context) {
+    if ctx.cumulative_pass_nr() == 0 {
+        return;
+    }
+    static OWN: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let own = OWN.get_or_init(|| {
+        egui::FontDefinitions::default()
+            .families
+            .remove(&egui::FontFamily::Proportional)
+            .unwrap_or_default()
+    });
+    let taken = ctx.fonts(|fonts| {
+        fonts.definitions().families.get(&egui::FontFamily::Proportional) != Some(own)
+    });
+    if taken {
+        let mut definitions = ctx.fonts(|fonts| fonts.definitions().clone());
+        definitions
+            .families
+            .insert(egui::FontFamily::Proportional, own.clone());
+        ctx.set_fonts(definitions);
+    }
 }
 
 /// The style, applied to whichever of egui's two it is handed.
@@ -620,5 +660,43 @@ mod tests {
                     });
             });
         }
+    }
+
+    /// A face another part of the program puts at the head of the
+    /// proportional family is taken back out, and a family it installs under
+    /// its own name stays. The game's interface does both when a playtest
+    /// shows it; `Hack` stands in for the game's face, since a test has no
+    /// archives.
+    #[test]
+    fn the_editor_keeps_its_own_face_after_another_is_installed() {
+        use egui::FontFamily;
+        let proportional = |ctx: &egui::Context| {
+            ctx.fonts(|fonts| fonts.definitions().families[&FontFamily::Proportional].clone())
+        };
+        let ctx = egui::Context::default();
+        let own = egui::FontDefinitions::default().families[&FontFamily::Proportional].clone();
+
+        let mut theirs = egui::FontDefinitions::default();
+        theirs
+            .families
+            .get_mut(&FontFamily::Proportional)
+            .expect("egui has a proportional family")
+            .insert(0, "Hack".to_string());
+        theirs
+            .families
+            .insert(FontFamily::Name("game".into()), vec!["Hack".to_string()]);
+        ctx.set_fonts(theirs);
+        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        assert_eq!(proportional(&ctx)[0], "Hack", "the other face is installed");
+
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| install(ui.ctx()));
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| install(ui.ctx()));
+        assert_eq!(proportional(&ctx), own);
+        assert!(ctx.fonts(|fonts| {
+            fonts
+                .definitions()
+                .families
+                .contains_key(&FontFamily::Name("game".into()))
+        }));
     }
 }

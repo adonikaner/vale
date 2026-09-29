@@ -26,7 +26,7 @@
 //! done, and with the table in memory two letters typed into a name filter a
 //! `Vec` instead of making a database round trip.
 //!
-//! It is read again when an apply lands and when **Reload** is pressed. It is
+//! It is read again when an apply lands and when *Reload* is pressed. It is
 //! not polled.
 //!
 //! ## Appearances are resolved from the archives and memoised
@@ -104,22 +104,9 @@ impl Known {
         format!("{} ({})", self.name, self.entry)
     }
 
-    /// The dimmer second line of a list row: what kind of item it is, where it
-    /// is worn, and its item level.
+    /// The dimmer second line of a list row. See [`sub_line`].
     pub fn sub(&self) -> String {
-        let class = item::value_word(&item::CLASSES, self.class);
-        let subclass = item::value_word(item::subclasses(self.class), self.subclass);
-        let worn = match self.inventory_type {
-            0 => String::new(),
-            other => format!(
-                " \u{b7} {}",
-                item::value_word(&item::INVENTORY_TYPES, other)
-            ),
-        };
-        match self.item_level {
-            0 => format!("{class} \u{b7} {subclass}{worn}"),
-            level => format!("{class} \u{b7} {subclass}{worn} \u{b7} ilvl {level}"),
-        }
+        sub_line(self.class, self.subclass, self.inventory_type, self.item_level)
     }
 
     /// What the search box is matched against: the name and the second
@@ -1083,6 +1070,46 @@ impl Items {
 ///
 /// The display row names the icon and the directory table names the folder;
 /// neither says `.blp`, and the archives are keyed by the whole file name.
+/// The dimmer second line of an item's list row: what kind of item it is,
+/// where it is worn, and its item level. Shared by the item list and the
+/// reference picker, which draw an item alike.
+pub fn sub_line(class: u32, subclass: u32, inventory_type: u32, item_level: u32) -> String {
+    let class_word = item::value_word(&item::CLASSES, class);
+    let subclass_word = item::value_word(item::subclasses(class), subclass);
+    let worn = match inventory_type {
+        0 => String::new(),
+        other => format!(
+            " \u{b7} {}",
+            item::value_word(&item::INVENTORY_TYPES, other)
+        ),
+    };
+    match item_level {
+        0 => format!("{class_word} \u{b7} {subclass_word}{worn}"),
+        level => format!("{class_word} \u{b7} {subclass_word}{worn} \u{b7} ilvl {level}"),
+    }
+}
+
+/// The archive path of an item's bag icon, from its display id, or `None`
+/// when the display row names none.
+///
+/// `icon_path` joins the directory and the name and adds no extension. The
+/// row carries a bare `INV_Sword_39` and the folder comes from
+/// `StringLookups.dbc`, and neither includes `.blp`, so the path it returns
+/// names no file in the archives. Used as is, every row of the list drew an
+/// empty square. `ui::data` appends `.blp` to a spell icon path for the same
+/// reason.
+pub fn icon_of(assets: &GameAssets, display_id: u32) -> Option<String> {
+    if display_id == 0 {
+        return None;
+    }
+    let tables = assets.display_tables().ok()?;
+    let icon_name = tables.items()?.inventory_icon(display_id)?;
+    tables
+        .item_tables()
+        .icon_path(&icon_name)
+        .map(|path| with_blp(&path))
+}
+
 fn with_blp(path: &str) -> String {
     match path.to_ascii_lowercase().ends_with(".blp") {
         true => path.to_string(),
@@ -1260,16 +1287,7 @@ fn resolve_look(
     let displays = tables.items()?;
     let appearance = displays.appearance(display_id, gender)?;
     let icon_name = displays.inventory_icon(display_id).unwrap_or_default();
-    // `icon_path` joins the directory and the name and adds no extension. The
-    // row carries a bare `INV_Sword_39` and the folder comes from
-    // `StringLookups.dbc`, and neither includes `.blp`, so the path it returns
-    // names no file in the archives. Used as is, every row of the list drew an
-    // empty square. `ui::data` appends `.blp` to a spell icon path for the
-    // same reason.
-    let icon = tables
-        .item_tables()
-        .icon_path(&icon_name)
-        .map(|path| with_blp(&path));
+    let icon = icon_of(assets, display_id);
 
     // Which hand a weapon is in depends on the equipment slot, not the item,
     // so a preview has to choose — see [`slot_of`].

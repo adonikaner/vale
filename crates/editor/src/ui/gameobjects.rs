@@ -2,7 +2,9 @@
 //! edit to either means.
 //!
 //! The layout follows [`super::creatures`], for the same reason. The spawn's 19
-//! columns are in the sidebar because they describe one place in the world.
+//! columns are in the sidebar because they describe one place in the world,
+//! and they scroll under a summary of the template and its buttons, which stay
+//! in place.
 //! `gameobject_template`'s 34 columns are in a window opened by the Edit
 //! object… button because they apply to every object of that kind. Each form
 //! states which of the two it is before its first field, and both are
@@ -69,6 +71,9 @@ pub struct Subject<'a> {
     /// the client tables a reference resolves through.
     pub assets: &'a GameAssets,
     pub portraits: &'a mut crate::portraits::Portraits,
+    /// The icons the reference picker's spell and item rows draw. See
+    /// `super::thumbnails`.
+    pub thumbnails: &'a mut super::thumbnails::Thumbnails,
     pub now: f64,
     /// The gizmo, for the Handles switch drawn under the Select/Place switch.
     /// `None` where the panel's parts are drawn without it, as in the
@@ -171,6 +176,7 @@ fn dialogs(ctx: &egui::Context, subject: &mut Subject<'_>) {
         subject.session,
         subject.quests,
         subject.assets,
+        subject.thumbnails,
         None,
         subject.now,
     );
@@ -225,14 +231,17 @@ fn panel(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         Some(super::creatures::GroupAsk::Clear) => subject.objects.select(None),
         None => {}
     }
+    // As on the creature panel, everything above the spawn's columns stays in
+    // place and only the columns scroll.
     head(ui, subject, &spawn);
     claim(ui, subject, &spawn, &on_server);
+    ui.add_space(6.0);
+    what_it_is(ui, subject, &spawn);
     ui.add_space(8.0);
-    egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
-        what_it_is(ui, subject, &spawn);
-        ui.add_space(8.0);
-        spawn_form(ui, subject, &spawn);
-    });
+    egui::ScrollArea::vertical()
+        .auto_shrink([false; 2])
+        .min_scrolled_height(super::creatures::SPAWN_FORM_MIN)
+        .show(ui, |ui| spawn_form(ui, subject, &spawn));
 }
 
 /// What the tool is showing, and the two switches that decide how much of it.
@@ -851,9 +860,9 @@ fn spawn_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
 
 /// A summary of the object's template, with a picture of its model, and the
 /// buttons that open the template window, the quest window and the loot
-/// window.
+/// window. Drawn under the spawn's name with no heading of its own, outside
+/// the scrolled form; the first line names the template row.
 fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
-    theme::heading(ui, "What it is");
     let edited = subject
         .session
         .server_edits

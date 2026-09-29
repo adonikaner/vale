@@ -207,6 +207,10 @@ pub struct Services {
     /// Whether the scripted flags have been acted on; see
     /// `crate::server::services::on_the_command_line`, which waits on this.
     pub scripted_done: bool,
+    /// `--vendor-find` or `--trainer-find`: the window whose add-picker is
+    /// to be opened, and the text to search, taken by the window the first
+    /// time it draws that list.
+    pub find: Option<(Kind, String)>,
 }
 
 impl Services {
@@ -923,9 +927,10 @@ fn read_the_rows(
     ));
 }
 
-/// `--vendor`, `--trainer`, `--vendor-add <item>` and `--trainer-add <spell>`:
-/// the windows opened, and a row added to the creature's own list, with
-/// nobody at the keyboard. An add waits for `--spawn`'s creature and for both
+/// `--vendor`, `--trainer`, `--vendor-add <item>`, `--trainer-add <spell>`,
+/// `--vendor-find <text>` and `--trainer-find <text>`: the windows opened, a
+/// row added to the creature's own list, and a window's add-picker opened,
+/// with nobody at the keyboard. An add waits for `--spawn`'s creature and for both
 /// lists of its kind to be read.
 fn on_the_command_line(
     args: Res<crate::Args>,
@@ -940,6 +945,11 @@ fn on_the_command_line(
         *opened = true;
         services.vendor_open = args.vendor_window;
         services.trainer_open = args.trainer_window;
+        services.find = args
+            .vendor_find
+            .clone()
+            .map(|text| (Kind::Vendor, text))
+            .or_else(|| args.trainer_find.clone().map(|text| (Kind::Trainer, text)));
         let mut adds = Vec::new();
         adds.extend(args.vendor_add.map(|item| (Kind::Vendor, item)));
         adds.extend(args.trainer_add.map(|spell| (Kind::Trainer, spell)));

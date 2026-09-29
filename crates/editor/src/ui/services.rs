@@ -99,7 +99,15 @@ pub fn windows(ctx: &egui::Context, mut subject: Subject<'_>) -> Vec<egui::Rect>
             }
         }
     }
-    super::quests::picker(ctx, subject.session, subject.quests, subject.assets, None, subject.now);
+    super::quests::picker(
+        ctx,
+        subject.session,
+        subject.quests,
+        subject.assets,
+        subject.thumbnails,
+        None,
+        subject.now,
+    );
     out
 }
 
@@ -374,6 +382,31 @@ fn body(ui: &mut egui::Ui, subject: &mut Subject<'_>, about: &About, kind: Kind,
 
 /// The button that opens the picker on the list.
 fn adders(ui: &mut egui::Ui, subject: &mut Subject<'_>, kind: Kind, list: List) {
+    // `--vendor-find` and `--trainer-find` open the picker this button opens,
+    // with the text already typed.
+    if let Some((wanted, text)) = subject.services.find.clone() {
+        if wanted == kind {
+            subject.services.find = None;
+            let mut picker = Picker::new(
+                match kind {
+                    Kind::Vendor => Target::Item,
+                    Kind::Trainer => Target::Dbc("Spell"),
+                },
+                match kind {
+                    Kind::Vendor => PickFor::VendorItem {
+                        table: list.table,
+                        entry: list.entry,
+                    },
+                    Kind::Trainer => PickFor::TrainerSpell {
+                        table: list.table,
+                        entry: list.entry,
+                    },
+                },
+            );
+            picker.query = text;
+            subject.quests.picker = Some(picker);
+        }
+    }
     ui.horizontal(|ui| match kind {
         Kind::Vendor => {
             if ui

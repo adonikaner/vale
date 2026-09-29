@@ -932,6 +932,7 @@ fn draw(
                 server_panel: &mut popovers.server,
                 assets: &assets,
                 portraits: &mut editing.portraits,
+                thumbnails: &mut editing.thumbnails,
                 now: time.elapsed_secs_f64(),
                 gizmo: None,
             },
@@ -952,6 +953,7 @@ fn draw(
                 server_panel: &mut popovers.server,
                 assets: &assets,
                 portraits: &mut editing.portraits,
+                thumbnails: &mut editing.thumbnails,
                 now: time.elapsed_secs_f64(),
                 gizmo: None,
             },
@@ -1007,6 +1009,7 @@ fn draw(
                 assets: &assets,
                 is,
                 switch_to: &mut switch_to,
+                thumbnails: &mut editing.thumbnails,
                 now: time.elapsed_secs_f64(),
             },
         );
@@ -1300,6 +1303,7 @@ fn draw(
                 behaviour: &mut editing.behaviour,
                 quests: &mut editing.quests,
                 assets: &assets,
+                thumbnails: &mut editing.thumbnails,
                 now: time.elapsed_secs_f64(),
             },
         );

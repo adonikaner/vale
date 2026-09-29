@@ -231,9 +231,9 @@ pub fn publish(
     // The tiles: the previous patch's, plus the ones changed since.
     let previous = last(&project).filter(|p| p != name);
     head.from = previous.clone();
-    let maps = crate::session::map_directories(assets);
     let record = Record::read(&project, tiles::PATCH_RECORD);
-    let (dirty, skipped) = tiles::dirty(session, assets, &maps, &record);
+    let reader = tiles::TileReader::new(&project, assets);
+    let (dirty, skipped) = tiles::dirty(&reader, &record, &mut |_, _| {});
     for line in &skipped {
         warn!("publish: {line}");
     }
