@@ -3,27 +3,26 @@ use super::*;
 /// Two batches wanting the same material are one material, and two wanting
 /// different ones are two.
 ///
-/// The first half is the whole reason [`MaterialPool`] exists: Bevy's
-/// batch-set key holds the material's *bind group index*, and a non-bindless
-/// material gets one per asset — so `materials.add` called twice for equal
-/// values is two batch sets and two draw calls that could have been one.
-/// `vale wmos Azeroth 30 48` puts the size of that at 3,042 batches over
-/// 186 distinct materials, in a single building.
+/// The first half is the reason [`MaterialPool`] exists: Bevy's batch-set key
+/// holds the material's bind group index, and a non-bindless material gets one
+/// per asset, so `materials.add` called twice for equal values makes two batch
+/// sets and two draw calls where one would do. `vale wmos Azeroth 30 48`
+/// measures 3,042 batches over 186 distinct materials in a single building.
 ///
-/// The second half is the one that would be a *wrong picture* rather than a
-/// slow one, and it is checked field by field: a key that ignored `texture`
+/// The second half guards against incorrect rendering rather than slow
+/// rendering, and it is checked field by field: a key that ignored `texture`
 /// would paint every batch of a building with whichever texture arrived
-/// first, and nothing would warn. `MaterialKey::of` destructures
-/// `M2Material` exhaustively so a new field cannot skip the key silently;
-/// this asserts each existing one actually separates.
+/// first, with no warning. `MaterialKey::of` destructures `M2Material`
+/// exhaustively so a new field cannot be left out of the key silently; this
+/// test asserts that each existing field separates two materials.
 #[test]
 fn one_material_per_distinct_material_and_no_fewer() {
     fn key(material: M2Material) -> MaterialKey {
         MaterialKey::of(&material)
     }
     // Two handles naming two different images, without an asset server:
-    // `Handle::Uuid` is the stable-identifier form and needs no store, which
-    // is what keeps this a unit test rather than an app.
+    // `Handle::Uuid` is the stable-identifier form and needs no store, so this
+    // stays a unit test rather than an app.
     let image = |n: u128| -> Handle<Image> {
         Handle::Uuid(bevy::asset::uuid::Uuid::from_u128(n), std::marker::PhantomData)
     };
@@ -48,6 +47,7 @@ fn one_material_per_distinct_material_and_no_fewer() {
         texture: red.clone(),
         overlay_a: red.clone(),
         overlay_b: red.clone(),
+        uv_table: UV_TABLE,
         blend: 1,
         two_sided: false,
         no_depth_write: false,
@@ -104,21 +104,21 @@ fn one_material_per_distinct_material_and_no_fewer() {
     }
 }
 
-/// **The pool shares a material for as long as anything holds it, and lets go
-/// the moment nothing does.**
+/// The pool shares a material while anything holds it, and releases it as soon
+/// as nothing does.
 ///
-/// Both halves matter and they pull opposite ways. The sharing is what the
-/// pool is *for* — two batches meaning the same thing have to get one handle,
-/// or they are two batch sets and two draw calls (3,042 of them in
-/// `stormwind.wmo` where 186 would do). The letting go is what stops it owning
-/// the world: a pool of strong handles keeps every material ever built, and
-/// with it every `Handle<Image>` it binds, so a session that walks across
-/// three zones holds all three zones' textures until the process ends.
+/// Sharing is the pool's purpose: two batches with the same material must get
+/// one handle, or they become two batch sets and two draw calls (3,042 of them
+/// in `stormwind.wmo` where 186 would do). Releasing keeps the pool from
+/// retaining everything: a pool of strong handles keeps every material ever
+/// built, and with it every `Handle<Image>` it binds, so a session that walks
+/// across three zones would hold all three zones' textures until the process
+/// ends.
 ///
-/// The mechanism is that the entry is an `AssetId` rather than a `Handle`, so
-/// `get_strong_handle` answers `None` once the last real holder has dropped
-/// it. This checks the observable consequence rather than the mechanism: same
-/// handle while held, a *different* one after.
+/// The entry is an `AssetId` rather than a `Handle`, so `get_strong_handle`
+/// returns `None` once the last real holder has dropped it. This test checks
+/// the observable result rather than the mechanism: the same handle while
+/// held, a different one after.
 #[test]
 fn a_material_is_shared_while_held_and_rebuilt_once_dropped() {
     let mut app = App::new();
@@ -148,6 +148,7 @@ fn a_material_is_shared_while_held_and_rebuilt_once_dropped() {
         texture: Handle::Uuid(bevy::asset::uuid::Uuid::from_u128(7), std::marker::PhantomData),
         overlay_a: Handle::Uuid(bevy::asset::uuid::Uuid::from_u128(7), std::marker::PhantomData),
         overlay_b: Handle::Uuid(bevy::asset::uuid::Uuid::from_u128(7), std::marker::PhantomData),
+        uv_table: UV_TABLE,
         blend: 1,
         two_sided: false,
         no_depth_write: false,
@@ -169,7 +170,8 @@ fn a_material_is_shared_while_held_and_rebuilt_once_dropped() {
     assert_eq!(first.id(), second.id(), "two equal batches, one material");
     assert_eq!(app.world().resource::<MaterialPool>().distinct(), 1);
 
-    // Everything lets go — the dressings evicted, the batches despawned.
+    // Every holder drops its handle: the dressings evicted, the batches
+    // despawned.
     let dropped = first.id();
     drop(first);
     drop(second);
@@ -180,14 +182,14 @@ fn a_material_is_shared_while_held_and_rebuilt_once_dropped() {
         "the material outlived every holder of it"
     );
 
-    // The key is stale rather than dangerous: interning again rebuilds, and
-    // the pool never hands out an id whose asset is gone.
+    // The stale key is harmless: interning again rebuilds, and the pool never
+    // hands out an id whose asset is gone.
     let again = intern(&mut app);
     assert_ne!(again.id(), dropped, "a dead id was handed back");
     assert_eq!(app.world().resource::<MaterialPool>().distinct(), 1);
 
-    // …and the prune is bookkeeping on top of that, not a correctness
-    // requirement: it is what keeps the HUD's count honest.
+    // The prune is bookkeeping on top of that, not a correctness
+    // requirement: it keeps the HUD's material count accurate.
     drop(again);
     app.update();
     app.world_mut()
@@ -222,8 +224,8 @@ fn sample() -> M2 {
         attachments: Vec::new(),
         bounding_radius: 1.0,
         bounds: [[0.0; 3], [1.0; 3]],
-        // Walked through, like most of the world. What a hull does with a
-        // placement is `doodads.rs`' business and `vale collision`'s.
+        // No hull, like most of the world. How a hull is placed is handled by
+        // `doodads.rs` and checked by `vale collision`.
         collision: Default::default(),
         particles: Vec::new(),
         ribbons: Vec::new(),
@@ -237,10 +239,9 @@ fn sample() -> M2 {
 
 /// An empty cache entry with a given stamp, for the eviction tests.
 ///
-/// **Everything here is empty on purpose.** What eviction is about is *when*
-/// an entry is dropped, not what is in it — filling one would need a loader
-/// thread, an archive and a render world, and would test the loader rather
-/// than the rule.
+/// Every field is empty. Eviction decides when an entry is dropped, not what
+/// is in it; filling one would need a loader thread, an archive and a render
+/// world, and would test the loader rather than the eviction rule.
 fn stub_geometry(used: f32) -> Geometry {
     Geometry {
         used,
@@ -319,8 +320,8 @@ fn batch(index_start: u32, index_count: u32) -> M2Batch {
 }
 
 /// Splitting a model into per-batch meshes must not lose or duplicate a
-/// triangle, and a batch must carry only the vertices it uses — that is what
-/// makes its bounding box, and therefore Bevy's per-instance cull, tight.
+/// triangle, and a batch must carry only the vertices it uses, which keeps its
+/// bounding box, and therefore Bevy's per-instance cull, tight.
 #[test]
 fn a_batch_keeps_its_triangles_and_only_its_vertices() {
     let model = sample();
@@ -333,10 +334,10 @@ fn a_batch_keeps_its_triangles_and_only_its_vertices() {
     assert_eq!(half.positions.len(), 3);
 }
 
-/// A model with no skeleton gets **no** skinning attributes, because their
-/// presence is what compiles Bevy's `SKINNED` shader variant: adding them to
-/// eight thousand doodads would put every tree in the world through the
-/// skinning path to say that it is standing still.
+/// A model with no skeleton gets no skinning attributes, because their
+/// presence compiles Bevy's `SKINNED` shader variant: adding them to eight
+/// thousand doodads would put every tree in the world through the skinning
+/// path with nothing to animate.
 #[test]
 fn scenery_carries_no_skinning_attributes() {
     let draw = batch_draw(&sample(), &batch(0, 6), None, Default::default()).expect("a draw");
@@ -344,12 +345,12 @@ fn scenery_carries_no_skinning_attributes() {
     assert!(draw.weights.is_empty());
 }
 
-/// A vertex the file gives no weights must ride on the appended identity
-/// joint, not on joint zero and not on nothing.
+/// A vertex the file gives no weights must be bound to the appended identity
+/// joint, not to joint zero and not to no joint.
 ///
 /// `M2::skin_position` leaves such a vertex where it is; the shader has no
 /// such branch and sums `weight * joint`, which for all-zero weights is the
-/// origin — so the vertex is dragged to the model's feet, stretching a
+/// origin, so the vertex would move to the model's feet and stretch a
 /// triangle across the whole creature. The same clamp covers an index that
 /// points past the skeleton, which the shader reads regardless of weight.
 #[test]
@@ -363,10 +364,10 @@ fn a_weightless_vertex_rides_the_identity_joint() {
     assert_eq!(draw.joints.len(), 4);
     assert_eq!(draw.weights.len(), 4);
 
-    // An ordinary vertex keeps its bone. **The indices are into the batch's
-    // own bone subset** (`a_batch_names_only_the_bones_it_rides`); here every
-    // bone of the two-bone skeleton and the identity joint are all ridden, so
-    // the subset is `[0, 1, 2]` and the local index is the global one.
+    // An ordinary vertex keeps its bone. The indices are into the batch's
+    // own bone subset (`a_batch_names_only_the_bones_it_rides`); here both
+    // bones of the skeleton and the identity joint are used, so the subset is
+    // `[0, 1, 2]` and the local index equals the global one.
     assert_eq!(draw.bones, vec![0, 1, 2]);
     assert_eq!(draw.joints[0][0], 1);
     assert!((draw.weights[0][0] - 1.0).abs() < 1e-6);
@@ -382,8 +383,8 @@ fn a_weightless_vertex_rides_the_identity_joint() {
 }
 
 /// A batch pointing past the buffers is dropped rather than drawn or
-/// panicked on. These are twenty-year-old files from patched archives, and
-/// the settled rule is that a failed part costs that part.
+/// panicked on. The files come from patched archives, and the rule is that a
+/// part that fails to load is dropped without affecting the rest.
 #[test]
 fn a_batch_outside_its_buffers_is_dropped() {
     let model = sample();
@@ -396,9 +397,9 @@ fn a_batch_outside_its_buffers_is_dropped() {
 }
 
 /// A composed player skin travels to the loader as its cache key and back
-/// again, so the round trip has to be exact — a key that parses to a
-/// *different* appearance composes somebody else's face and caches it under
-/// this player's name, which is a wrong-looking character and not an error.
+/// again, so the round trip has to be exact: a key that parses to a different
+/// appearance composes another character's face and caches it under this
+/// player's key, which draws the wrong character and raises no error.
 #[test]
 fn a_composed_skin_key_round_trips_through_the_loader() {
     let look = Appearance {
@@ -420,8 +421,8 @@ fn a_composed_skin_key_round_trips_through_the_loader() {
     let key = character_key(&look);
     assert_eq!(parse_character_key(&key), Some(look.clone()));
 
-    // Two players who look alike share the composite; one who does not, does
-    // not — which is what keeps a populated realm to a handful of them.
+    // Two players who look alike share the composite, and two who do not
+    // have separate ones, which keeps a populated realm to a handful of them.
     let other = CharacterLook {
         appearance: Appearance {
             face: 9,
@@ -431,17 +432,17 @@ fn a_composed_skin_key_round_trips_through_the_loader() {
     };
     assert_ne!(character_key(&other), key);
 
-    // The same face in different armour is a different composite…
+    // The same face in different armour is a different composite,
     let changed = CharacterLook {
         equipment: vec![(3210, 5)],
         ..look.clone()
     };
     assert_ne!(character_key(&changed), key);
-    // …but the same *hair*, which equipment cannot touch, so the hair
+    // but the same hair, which equipment does not affect, so the hair
     // texture is shared and is not recomposed when the boots change.
     assert_eq!(character_hair_key(&changed), character_hair_key(&look));
 
-    // And an archive path is never mistaken for one: MPQ paths cannot hold
+    // An archive path is never mistaken for a key: MPQ paths cannot hold
     // a NUL, so the two namespaces cannot collide.
     assert_eq!(
         parse_character_key("Textures\\BakedNpcTextures\\deadbeef.blp"),
@@ -452,20 +453,20 @@ fn a_composed_skin_key_round_trips_through_the_loader() {
 
 /// Two texture types mean the same slot and one model is never both: a
 /// creature declares its body as type 11 and a character model as type 1.
-/// Getting this backwards repaints a wolf with somebody's face.
+/// Getting this backwards paints a character's face texture onto a wolf.
 #[test]
 fn the_body_slot_takes_both_of_its_texture_types() {
     assert_eq!(skin_slot(1), Some(0));
     assert_eq!(skin_slot(11), Some(0));
     assert_eq!(skin_slot(12), Some(1));
     assert_eq!(skin_slot(13), Some(2));
-    // Type 6 is the hair mesh's own texture — the one part of a character
-    // that is *not* in the body composite, because it dresses separate
+    // Type 6 is the hair mesh's own texture, the one part of a character
+    // that is not in the body composite, because it dresses separate
     // geometry. Without a slot of its own the hair draws magenta.
     assert_eq!(skin_slot(6), Some(3));
-    // Type 2 is the *object* skin, and the client supplies it from an item:
+    // Type 2 is the object skin, and the client supplies it from an item:
     // a pauldron's own texture, and the cloak that dresses the wearer's
-    // cape geoset. Left unfilled it is the same magenta the hair was.
+    // cape geoset. Left unfilled it also draws magenta.
     assert_eq!(skin_slot(2), Some(4));
     // Type 0 is the one the model names itself, and the client fills nothing.
     assert_eq!(skin_slot(0), None);
@@ -473,9 +474,9 @@ fn the_body_slot_takes_both_of_its_texture_types() {
 }
 
 /// A dressing is keyed by the skins as well as the path, or the first
-/// display id to ask for `Wolf.m2` would decide what colour every wolf in
-/// the world is. Undressed stays keyed by the path alone, so the eight
-/// thousand doodads pay nothing for a distinction only entities make.
+/// display id to request `Wolf.m2` would decide the colour of every wolf in
+/// the world. Undressed stays keyed by the path alone, so the eight thousand
+/// doodads pay nothing for a distinction only entities need.
 #[test]
 fn a_dressing_is_keyed_by_its_skins() {
     let path = "Creature\\Wolf\\Wolf.m2";
@@ -490,9 +491,9 @@ fn a_dressing_is_keyed_by_its_skins() {
         dressing_key(path, true, &["WolfSkinBlack".into()], plain, false, false, SceneLighting::NONE)
     );
 
-    // And by the geosets, or the first *player* to ask for `HumanMale.m2`
-    // would decide what hair every human in the world has — which is the
-    // whole reason the batch list is no longer baked per path.
+    // Also keyed by the geosets, or the first player to request
+    // `HumanMale.m2` would decide the hair of every human in the world. This
+    // is why the batch list is not cached per path.
     let hair = |g: u16| {
         Dress::Character(vale_assets::world::m2::CharacterGeosets {
             hair: g,
@@ -513,14 +514,14 @@ fn a_dressing_is_keyed_by_its_skins() {
     );
 }
 
-/// **…and by whether a room lights it — but never by which room.** Room-lit
-/// is a different material (`vertex_lit`), so it has to be a different
-/// dressing; the room's *colour* rides on each instance as its `MeshTag`,
-/// so a barrel in a dozen buildings at a dozen brightnesses is one dressing
-/// and one material. Keying the colour in here is what once made one tile
-/// of Stormwind's furniture ~1,800 materials. The outdoor build stays keyed
-/// by the path alone, which is what keeps the eight thousand trees paying
-/// nothing for a distinction only furniture makes.
+/// A dressing is also keyed by whether a room lights it, but not by which
+/// room. Room-lit is a different material (`vertex_lit`), so it has to be a
+/// different dressing; the room's colour is carried on each instance as its
+/// `MeshTag`, so a barrel in a dozen buildings at a dozen brightnesses is one
+/// dressing and one material. Keying the colour here made one tile of
+/// Stormwind's furniture ~1,800 materials. The outdoor build stays keyed by
+/// the path alone, so the eight thousand trees pay nothing for a distinction
+/// only furniture needs.
 #[test]
 fn a_dressing_is_keyed_by_room_lit_and_not_by_the_rooms_colour() {
     let barrel = "World\\Generic\\Human\\Passive Doodads\\Barrel\\Barrel01.m2";
@@ -534,17 +535,16 @@ fn a_dressing_is_keyed_by_room_lit_and_not_by_the_rooms_colour() {
     );
 }
 
-/// **A worn item is dressed by the room its wearer is standing in**, on
-/// exactly the terms the wearer's own body is.
+/// A worn item is lit by the room its wearer is standing in, in the same way
+/// as the wearer's own body.
 ///
-/// `ModelCache::attached` passed `None` unconditionally for a milestone, so a
-/// geared player who walked into a tavern wore sun-lit pauldrons and a sun-lit
-/// helm over a room-lit body — the one lighting mismatch a character can carry
-/// around with them, and the shape of it (a bright head and shoulders on a dim
-/// body, in Ironforge above all) is exactly what it was reported as.
+/// When `ModelCache::attached` passed `None` unconditionally, a geared player
+/// who walked into a tavern wore sun-lit pauldrons and a sun-lit helm over a
+/// room-lit body: a bright head and shoulders on a dim body, most visible in
+/// Ironforge.
 ///
-/// The check is the *key*, because that is where the two dressings are forced
-/// apart: same geometry, same skin, different material.
+/// The test checks the key, because the key is what separates the two
+/// dressings: same geometry, same skin, different material.
 #[test]
 fn a_worn_item_is_dressed_by_the_room_its_wearer_stands_in() {
     let helm = "Item\\ObjectComponents\\Head\\Helm_Plate_D_04_HuM.m2";
@@ -558,10 +558,10 @@ fn a_worn_item_is_dressed_by_the_room_its_wearer_stands_in() {
     );
 }
 
-/// **The tag is `0x00RRGGBB`, red high, and the ends survive the packing.**
-/// A swapped channel renders as a plausible room of the wrong hue — the
-/// same failure `MOCV`'s BGRA byte order produces one format down — and a
-/// fully lit spawn has to come back fully lit.
+/// The tag is `0x00RRGGBB`, red high, and the extreme values survive the
+/// packing. A swapped channel renders as a plausible room of the wrong hue
+/// (the same failure `MOCV`'s BGRA byte order produces in the WMO format),
+/// and a fully lit spawn has to come back fully lit.
 #[test]
 fn a_room_light_packs_into_its_tag_red_first() {
     assert_eq!(RoomLight::new([1.0, 0.0, 0.0]).tag(), 0x00FF_0000, "red is high");
@@ -573,11 +573,11 @@ fn a_room_light_packs_into_its_tag_red_first() {
     assert_eq!(RoomLight::new([2.0, -1.0, 0.5]).tag(), 0x00FF_0080);
 }
 
-/// **The sun scale rides in the tag's top byte and 1.0 costs nothing.**
+/// The sun scale is stored in the tag's top byte, and 1.0 encodes as zero.
 /// The encoding is 1/32 fixed point, and the shader decodes `bits / 32`
-/// with zero meaning "unspecified" — so every instance that never sets a
-/// tag (entities, WMO batches) keeps exactly the light it had, and the
-/// two values the client states round-trip to themselves.
+/// with zero meaning "unspecified", so every instance that never sets a
+/// tag (entities, WMO batches) keeps the light it had, and the two values
+/// the client states round-trip exactly.
 #[test]
 fn the_sun_scale_packs_into_the_byte_the_room_light_never_used() {
     assert_eq!(instance_tag(None, sun_scale::NEUTRAL), 0, "neutral is absent");
@@ -597,12 +597,12 @@ fn the_sun_scale_packs_into_the_byte_the_room_light_never_used() {
     assert_eq!(both >> 24, 80);
 }
 
-/// **A tint packs into the same word as `0xAARRGGBB`, and the opacity is
-/// the byte the sun scale would otherwise be reading.** Two failures this
-/// pins: a swapped channel is a plausible effect of the wrong hue, and a
-/// fully faded batch has to pack to *zero* — the one value the sun-scale
-/// reading treats as "unspecified", which is why the material has to say
-/// which payload the word holds rather than the encoding implying it.
+/// A tint packs into the same word as `0xAARRGGBB`, and the opacity occupies
+/// the byte the sun scale would otherwise use. The test guards two failures:
+/// a swapped channel is a plausible effect of the wrong hue, and a fully
+/// faded batch has to pack to zero. Zero is the value the sun-scale reading
+/// treats as "unspecified", so the material has to state which payload the
+/// word holds; the encoding alone cannot.
 #[test]
 fn a_tint_packs_alpha_over_the_same_rgb_the_room_light_uses() {
     assert_eq!(tint_tag([1.0, 1.0, 1.0, 1.0]), 0xFFFF_FFFF);
@@ -620,29 +620,29 @@ fn a_tint_packs_alpha_over_the_same_rgb_the_room_light_uses() {
     assert_eq!(tint_tag([0.0, 0.0, 0.0, 0.5]) >> 24, 128);
 }
 
-/// **An aura's colour packs into `particle.w` offset by one, and black is not
-/// nothing.**
+/// An aura's colour packs into `particle.w` offset by one, so black is
+/// distinct from no colour.
 ///
-/// `Glowy (Black)` states `#000000` and `SpellVisualKit` really means it, so
-/// the encoding has to tell "painted black" from "not painted" — every material
-/// in the world carries a zero there and must go on being drawn at its own
-/// colour. The offset is the whole of how, and this pins it in both directions:
-/// the pack here and the unpack in `m2.wgsl`, which are the two halves that
-/// have to agree.
+/// `Glowy (Black)` states `#000000` in `SpellVisualKit` as a real colour, so
+/// the encoding has to distinguish "painted black" from "not painted": every
+/// material in the world carries a zero there and must still be drawn in its
+/// own colour. The offset provides that distinction, and this test checks it
+/// in both directions: the pack here and the unpack in `m2.wgsl`, which must
+/// agree.
 ///
-/// It also pins the exactness the encoding rests on. An `f32` mantissa is 24
-/// bits and the payload is 24 bits plus one, so the largest colour there is —
-/// white — is the last value that round-trips; `#ffffff` coming back as
-/// `#fffffe` would be a lifetime of very slightly grey ghosts.
+/// It also checks the precision the encoding depends on. An `f32` mantissa is
+/// 24 bits and the payload is 24 bits plus one, so the largest colour, white,
+/// is the last value that round-trips; if `#ffffff` came back as `#fffffe`,
+/// ghosts would be drawn slightly grey.
 #[test]
 fn an_aura_colour_packs_into_the_slot_the_struct_already_carried() {
-    // The pack, as `Materials::with_model_tint` does it…
+    // The pack, as `Materials::with_model_tint` does it.
     let pack = |colour: Option<[u8; 3]>| {
         colour.map_or(0.0, |c| {
             (1 + ((c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32)) as f32
         })
     };
-    // …and the unpack, as m2.wgsl does it.
+    // The unpack, as m2.wgsl does it.
     let unpack = |packed: f32| {
         let bits = packed as u32;
         (bits != 0).then(|| {
@@ -653,8 +653,8 @@ fn an_aura_colour_packs_into_the_slot_the_struct_already_carried() {
     for colour in [
         [0x44, 0x46, 0x5e], // Stoneform
         [0x8c, 0xb9, 0xfd], // Ghost
-        [0x00, 0x00, 0x00], // Glowy (Black) — a real colour, not an absence
-        [0xff, 0xff, 0xff], // …and the value the 24-bit mantissa ends on
+        [0x00, 0x00, 0x00], // Glowy (Black): a real colour, not an absence
+        [0xff, 0xff, 0xff], // the largest value the 24-bit mantissa holds
     ] {
         assert_eq!(unpack(pack(Some(colour))), Some(colour), "{colour:?}");
     }
@@ -663,33 +663,32 @@ fn an_aura_colour_packs_into_the_slot_the_struct_already_carried() {
     assert_ne!(pack(Some([0, 0, 0])), pack(None), "black is not nothing");
 }
 
-/// **Fading a body has to change its *pipeline*, and it has to be able to change
-/// it back.**
+/// Fading a body has to change its pipeline, and has to be able to change it
+/// back.
 ///
 /// The colour and the highlight beside it are pure uniform writes; this one is
 /// not. `M2Material::blend` decides which render phase a batch lands in and what
-/// blend factors it gets, and it is in the pipeline key — so an opaque body has
-/// to *become* mode 2 before an opacity means anything at all, and the mode it
-/// really has has to survive somewhere until the aura ends. `params.body.y` is
-/// that somewhere, and this is what says the round trip closes.
+/// blend factors it gets, and it is in the pipeline key, so an opaque body has
+/// to become mode 2 before an opacity has any effect, and its original mode has
+/// to be stored until the aura ends. `params.body.y` stores it, and this test
+/// checks that the round trip restores it.
 ///
-/// The already-translucent case is the other half and is not symmetric: a
-/// spell's additive glow scaled by an opacity is simply a dimmer glow, and
-/// forcing it to ordinary alpha blending would turn it into a decal. So mode 4
-/// keeps mode 4 and nothing is stashed.
+/// The already-translucent case is handled differently: a spell's additive
+/// glow scaled by an opacity is a dimmer glow, and forcing it to ordinary
+/// alpha blending would turn it into a decal. So mode 4 keeps mode 4 and
+/// nothing is stored.
 ///
-/// ## The mode this used to leave out is the one that was broken
+/// ## Mode 0 is stored as the mode plus one
 ///
-/// It covered mode 1 and mode 4 and **not mode 0** — and mode 0 is `Opaque`,
-/// which is nearly every batch of a character's body. The stash was written as
-/// the mode itself, so an opaque batch stashed `0.0`, the restore's `> 0.0`
-/// test read that as "never forced", and the batch stayed in mode 2 for the
-/// rest of its life: drawn in the transparent phase, which writes no depth and
-/// sorts per batch, so a character who had been a ghost or stealthed came back
-/// with their limbs drawing through and behind one another. The stash is the
-/// mode **plus one** now, and the mode-0 leg below is the assertion that says
-/// so — including the handle identity, which is what a wrong restore breaks
-/// even when every number in the material looks plausible.
+/// Mode 0 is `Opaque`, which is nearly every batch of a character's body.
+/// When the stored value was the mode itself, an opaque batch stored `0.0`,
+/// the restore's `> 0.0` test read that as "never forced", and the batch
+/// stayed in mode 2 permanently: drawn in the transparent phase, which writes
+/// no depth and sorts per batch, so a character who had been a ghost or
+/// stealthed came back with their limbs drawing through and behind one
+/// another. The stored value is now the mode plus one, and the mode-0 case
+/// below asserts it, including the handle identity, which a wrong restore
+/// breaks even when every number in the material looks correct.
 #[test]
 fn fading_a_body_forces_a_blend_and_puts_the_real_one_back() {
     let mut app = App::new();
@@ -718,6 +717,7 @@ fn fading_a_body_forces_a_blend_and_puts_the_real_one_back() {
         texture: Handle::Uuid(bevy::asset::uuid::Uuid::from_u128(9), std::marker::PhantomData),
         overlay_a: Handle::Uuid(bevy::asset::uuid::Uuid::from_u128(9), std::marker::PhantomData),
         overlay_b: Handle::Uuid(bevy::asset::uuid::Uuid::from_u128(9), std::marker::PhantomData),
+        uv_table: UV_TABLE,
         blend,
         two_sided: false,
         no_depth_write: false,
@@ -751,23 +751,22 @@ fn fading_a_body_forces_a_blend_and_puts_the_real_one_back() {
         handle
     };
 
-    // An alpha-keyed body — a character's hair and cloak — goes translucent by
-    // becoming mode 2, and remembers that it was 1. The stash is the mode plus
-    // one, so 1 is kept as 2.0.
+    // An alpha-keyed body (a character's hair and cloak) goes translucent by
+    // becoming mode 2, and stores that it was 1. The stored value is the mode
+    // plus one, so 1 is kept as 2.0.
     let keyed = intern(&mut app, solid(1));
     let faded = fade(&mut app, &keyed, 0.5).expect("a copy");
     assert_eq!(read(&mut app, &faded), (2, 0.5, 2.0));
-    // Asking for what it already has is not a second material.
+    // Requesting the opacity it already has does not make a second material.
     assert!(fade(&mut app, &faded, 0.5).is_none(), "the pool grew for nothing");
-    // …and back: mode 1 again, and nothing stashed.
+    // Restored: mode 1 again, and nothing stored.
     let solid_again = fade(&mut app, &faded, 1.0).expect("a copy");
     assert_eq!(read(&mut app, &solid_again), (1, 1.0, 0.0));
     assert_eq!(solid_again.id(), keyed.id(), "the way back is the way in");
 
-    // **And the mode this test used to leave out**, which is the one that was
-    // broken: an opaque body — skin, most armour, nearly every batch a
-    // character is made of — stashes 0 as 1.0, so that "was mode 0" and
-    // "nothing was stashed" are different values.
+    // Mode 0: an opaque body (skin, most armour, nearly every batch of a
+    // character) stores 0 as 1.0, so that "was mode 0" and "nothing was
+    // stored" are different values.
     let opaque = intern(&mut app, solid(0));
     let ghost = fade(&mut app, &opaque, 0.5).expect("a copy");
     assert_eq!(read(&mut app, &ghost), (2, 0.5, 1.0));
@@ -777,14 +776,14 @@ fn fading_a_body_forces_a_blend_and_puts_the_real_one_back() {
         (0, 1.0, 0.0),
         "an opaque body comes back opaque rather than staying blended"
     );
-    // The identity is the sharpest half: a batch left in mode 2 is a *different*
-    // material, so it interns to a different handle — which is what put a
+    // The handle identity is the stricter check: a batch left in mode 2 is a
+    // different material, so it interns to a different handle. That left a
     // character's limbs in the transparent phase, sorted per batch and writing
     // no depth, for the rest of the session.
     assert_eq!(alive_again.id(), opaque.id(), "and to the very same material");
 
-    // An additive glow keeps its own mode and stashes nothing — there is
-    // nothing to put back, and `body.y` staying zero is what says so.
+    // An additive glow keeps its own mode and stores nothing: there is
+    // nothing to restore, and `body.y` stays zero.
     let additive = intern(&mut app, solid(4));
     let dimmed = fade(&mut app, &additive, 0.5).expect("a copy");
     assert_eq!(read(&mut app, &dimmed), (4, 0.5, 0.0));
@@ -794,11 +793,10 @@ fn fading_a_body_forces_a_blend_and_puts_the_real_one_back() {
     );
 }
 
-/// **A tinted batch is not room-lit, and the material is where the two are
-/// forced apart.** They want the same 32 bits and only one can have them,
-/// so this is the line that decides — and if it ever stops agreeing with
-/// the spawner (which writes the tint tag instead of the room's), an effect
-/// indoors is lit by an opacity byte read as a colour.
+/// A tinted batch is not room-lit, and the material enforces this. Both use
+/// the same 32-bit tag and only one can have it, so the material decides; if
+/// it disagrees with the spawner (which writes the tint tag instead of the
+/// room's), an effect indoors is lit by an opacity byte read as a colour.
 #[test]
 fn a_tinted_batch_gives_up_the_room_branch_for_its_own_colour() {
     let params = |tint| DrawParams {
@@ -814,7 +812,7 @@ fn a_tinted_batch_gives_up_the_room_branch_for_its_own_colour() {
         liquid: None,
         tint,
         uv: None,
-        // A quad this client builds has no environment map — see
+        // A quad this client builds has no environment map; see
         // `models::loader::RawDraw::overlays`.
         overlays: Default::default(),
     };
@@ -846,11 +844,11 @@ fn a_tinted_batch_gives_up_the_room_branch_for_its_own_colour() {
     assert_eq!(tinted.params.vertex_lit, 0.0, "the room would eat the tint");
 }
 
-/// **The two builds of a model must never share a cache entry.** Bevy picks
-/// the pipeline from the mesh's attributes and the bind group from whether
-/// the entity has a skin, so a doodad handed a skinned mesh gets the skinned
-/// pipeline with no joints bound — which is not a wrong picture, it is
-/// `Quitting the application due to Validation RenderError` the moment a
+/// The two builds of a model must never share a cache entry. Bevy picks the
+/// pipeline from the mesh's attributes and the bind group from whether the
+/// entity has a skin, so a doodad given a skinned mesh gets the skinned
+/// pipeline with no joints bound, and the application exits with
+/// `Quitting the application due to Validation RenderError` as soon as a
 /// windmill comes into view.
 #[test]
 fn the_skinned_and_unskinned_builds_are_different_entries() {
@@ -866,10 +864,11 @@ fn the_skinned_and_unskinned_builds_are_different_entries() {
 /// A geometry key strips back to the archive path it was built from, both
 /// ways round.
 ///
-/// The HUD's model count is distinct *paths* where the cache holds builds, and
-/// [`ModelCache::evict`] rebuilds that count from the keys that survived — so
-/// a `path_of` that failed to strip the suffix would report a model wanted
-/// both skinned and not as two, silently, and only after an eviction.
+/// The HUD's model count is distinct paths where the cache holds builds, and
+/// [`ModelCache::evict`] rebuilds that count from the keys that survived, so
+/// a `path_of` that failed to strip the suffix would count a model requested
+/// both skinned and unskinned as two, with no warning, and only after an
+/// eviction.
 #[test]
 fn a_geometry_key_strips_back_to_its_path() {
     let path = "World\\Azeroth\\Elwynn\\PassiveDoodads\\Windmill\\Windmill.m2";
@@ -877,16 +876,15 @@ fn a_geometry_key_strips_back_to_its_path() {
     assert_eq!(path_of(&geometry_key(path, false)), path);
 }
 
-/// **A dressing keeps alive exactly what it was built from, and nothing keeps
-/// alive what nothing wants.**
+/// A dressing keeps alive exactly what it was built from, and anything no
+/// dressing uses is evicted.
 ///
-/// This is the rule the whole residency sweep rests on. A hit on a cached
-/// dressing has to touch its *geometry* and its *skins* as well as itself:
-/// those are only ever looked up while a dressing is being built, so without
-/// this a texture behind a model the player is staring at ages out, gets
-/// evicted, and is then read a second time into a second `Image` while the
-/// live material still holds the first — more memory after the eviction than
-/// before it, which is the opposite of the point.
+/// The residency sweep depends on this rule. A hit on a cached dressing has to
+/// touch its geometry and its skins as well as itself: those are only looked
+/// up while a dressing is being built, so without this a texture behind a
+/// model the player is looking at ages out, is evicted, and is then read a
+/// second time into a second `Image` while the live material still holds the
+/// first, using more memory after the eviction than before it.
 #[test]
 fn a_dressing_touched_now_keeps_its_geometry_and_its_skins() {
     let mut cache = ModelCache::default();
@@ -894,8 +892,8 @@ fn a_dressing_touched_now_keeps_its_geometry_and_its_skins() {
     let stale = "Creature\\Bear\\Bear.m2";
 
     // Two dressings a minute apart, each with a skin and a geometry of its
-    // own. Built by hand: the loader is a thread and an archive, and none of
-    // what is under test needs either.
+    // own. Built by hand: the loader needs a thread and an archive, and the
+    // code under test needs neither.
     cache.tick(0.0);
     for path in [wolf, stale] {
         let skin = format!("{path}\u{0}skin");
@@ -915,7 +913,7 @@ fn a_dressing_touched_now_keeps_its_geometry_and_its_skins() {
         );
     }
 
-    // A minute on, the wolf is asked for and the bear is not.
+    // A minute later, the wolf is requested and the bear is not.
     cache.tick(60.0);
     assert!(matches!(cache.lookup(wolf), Lookup::Ready(_)));
 
@@ -927,19 +925,19 @@ fn a_dressing_touched_now_keeps_its_geometry_and_its_skins() {
     );
     assert_eq!(cache.resident(), (1, 1, 1), "the wolf's three survived");
     assert!(matches!(cache.lookup(wolf), Lookup::Ready(_)));
-    // And the count the HUD reads is rebuilt from what survived rather than
-    // decremented — one path, not one per build.
+    // The count the HUD reads is rebuilt from what survived rather than
+    // decremented: one per path, not one per build.
     assert_eq!(cache.counts().0, 1);
 }
 
 /// A skin still in flight is never evicted, however long the request has been
 /// outstanding.
 ///
-/// Dropping a `Loading` entry does not cancel the loader's read — it only
-/// forgets that one was asked for, so the next asker files a second request
-/// and is then handed the first one's answer for the second one's slot. The
-/// class of bug that produces is a texture on the wrong model, which renders
-/// plausibly.
+/// Dropping a `Loading` entry does not cancel the loader's read; it only
+/// forgets that the texture was requested, so the next requester files a
+/// second request and is then given the first request's result for the second
+/// one's slot. The resulting bug is a texture on the wrong model, which looks
+/// plausible.
 #[test]
 fn a_skin_still_loading_is_never_evicted() {
     let mut cache = ModelCache::default();
@@ -955,37 +953,24 @@ fn a_skin_still_loading_is_never_evicted() {
     assert_eq!(cache.resident().2, 1);
 }
 
-/// **The skinning attributes are a property of the build, not of the model** —
-/// so the same M2 has two of them and they are not interchangeable.
+/// The skeleton is kept on both builds and the joints are not. This decides
+/// whether scenery can animate.
 ///
-/// This used to read "a doodad's build carries no skinning attributes even when
-/// the model has a skeleton", which was the policy rather than the invariant: a
-/// doodad near enough to animate asks for the *skinned* build now
-/// (`ModelCache::lookup_scenery`, and `vale_assets::look::scenery` for which
-/// ones). What has not changed, and is what this pins, is that the unskinned
-/// build cannot be posed and the skinned one always can — a mesh built without
-/// the attributes has nothing for the shader to read, so handing one to a
-/// `SkinnedMesh` collapses every vertex onto the identity joint.
-/// **The skeleton survives onto both builds and the joints do not**, which is
-/// the asymmetry that decides whether scenery can ever animate.
-///
-/// A doodad only ever has the unskinned build, so it is the only place the
-/// question *does this model move?* can be asked from — and the answer decides
-/// whether `render::doodads` asks for the other build in order to pose it. The
-/// skeleton used to be dropped alongside the tints, which made that question
-/// unanswerable and meant **no scenery in the world ever animated**:
-/// `resolve_doodads` read `model.skeleton`, got `None` for every model in the
-/// game, and built no rig. Nothing failed, no count moved, and the whole suite
-/// passed — every other test that looks at a skeleton looks at the entity
+/// A doodad starts with the unskinned build, so that build must say whether
+/// the model moves, and the answer decides whether `render::doodads` requests
+/// the skinned build in order to pose it. When the skeleton was dropped along
+/// with the tints, `resolve_doodads` read `model.skeleton`, got `None` for
+/// every model in the game, and built no rig, so no scenery animated. No test
+/// failed, because every other test that looks at a skeleton uses the entity
 /// build, which has one.
 ///
-/// `joint_count` is the half that stays build-specific, and it is a different
-/// question: *can this build be posed*. It is what every joint spawner
-/// iterates, which is why dropping the skeleton bought nothing.
+/// `joint_count` stays build-specific and answers a different question:
+/// whether this build can be posed. Every joint spawner iterates it, so
+/// dropping the skeleton saved nothing.
 #[test]
 fn joints_are_build_specific_and_the_skeleton_is_not() {
-    // `sample()` is boneless — the ordinary case for scenery geometry — so the
-    // skeleton this asks about is built here, as a moving doodad's is.
+    // `sample()` has no bones (the ordinary case for scenery geometry), so the
+    // skeleton under test is built here, as a moving doodad's is.
     let bone = vale_assets::world::m2::M2Bone {
         key_bone: -1,
         flags: 0,
@@ -1003,26 +988,36 @@ fn joints_are_build_specific_and_the_skeleton_is_not() {
         None,
         "the doodad build offered joints nothing can pose"
     );
-    // …and a model with no skeleton has no joints on either build, which is
-    // most of the world.
+    // A model with no skeleton has no joints on either build, which is most
+    // of the world.
     assert_eq!(joint_count_for(true, None), None);
     assert_eq!(joint_count_for(false, None), None);
 }
 
+/// The skinning attributes are a property of the build, not of the model, so
+/// the same M2 has two builds and they are not interchangeable.
+///
+/// A doodad near enough to animate requests the skinned build
+/// (`ModelCache::lookup_scenery`, and `vale_assets::look::scenery` for which
+/// ones), so the invariant is not that a doodad has no skinning attributes.
+/// It is that the unskinned build cannot be posed and the skinned one always
+/// can: a mesh built without the attributes has nothing for the shader to
+/// read, so giving one to a `SkinnedMesh` collapses every vertex onto the
+/// identity joint.
 #[test]
 fn the_two_builds_of_one_model_differ_by_their_skinning_attributes() {
     let model = sample();
     // The entity build of a model with two bones gets the attributes.
     let skinned = batch_draw(&model, &batch(0, 6), Some(2), Default::default()).expect("a draw");
     assert_eq!(skinned.joints.len(), skinned.positions.len());
-    // The doodad build of the very same model does not.
+    // The doodad build of the same model does not.
     let plain = batch_draw(&model, &batch(0, 6), None, Default::default()).expect("a draw");
     assert!(plain.joints.is_empty() && plain.weights.is_empty());
 }
 
 /// The declared bounding box survives the change of basis with its corners
 /// the right way round: `to_bevy` flips two of the three axes, so a min that
-/// is taken as a min lands *above* the max and culls the model everywhere.
+/// is taken as a min lands above the max and culls the model everywhere.
 #[test]
 fn the_declared_box_keeps_its_corners_in_order() {
     let bounds = model_bounds([[-1.0, -2.0, 0.0], [3.0, 4.0, 21.0]]).expect("a box");
@@ -1037,8 +1032,8 @@ fn the_declared_box_keeps_its_corners_in_order() {
 
 /// The winding survives the change of basis. `to_bevy` is a rotation, so a
 /// triangle wound the way `models.js` drew it with back-face culling on
-/// still faces the same way — and Bevy culls back faces by default, which is
-/// what turned the terrain inside out when *its* winding was wrong.
+/// still faces the same way. Bevy culls back faces by default, which turned
+/// the terrain inside out when its winding was wrong.
 #[test]
 fn a_batch_keeps_the_winding_the_file_gave_it() {
     let model = sample();
@@ -1056,20 +1051,18 @@ fn a_batch_keeps_the_winding_the_file_gave_it() {
     );
 }
 
-/// **The per-blend alpha reference is the client's own table**, and it has
-/// three values rather than two.
-///
-/// It is read every time the blend state is written:
+/// The alpha reference per blend mode matches the 1.12.1 client's, and it has
+/// three values rather than two:
 ///
 /// ```text
 /// blend    0    1    2    3    4    5    6
 /// ref      0  224    1    1    1    1    1
 /// ```
 ///
-/// The 224 used to be 0.5 here, which is a number that appears nowhere in the
-/// client; the 1 used to be 0, which is a *different* claim — "no test at all"
-/// rather than "discard what is fully transparent". Both mattered on the same
-/// family of draws: see [`crate::render::models::M2_ALPHA_KEY`].
+/// Blend 1 was previously 0.5 here, which does not match the client; blends 2
+/// to 6 were previously 0, which means no alpha test at all rather than
+/// discarding fully transparent pixels. Both affected the same family of
+/// draws; see [`crate::render::models::M2_ALPHA_KEY`].
 #[test]
 fn the_alpha_cut_is_the_clients_own_per_blend_table() {
     use crate::render::models::{alpha_cut, M2_TRANSLUCENT_CUT};
@@ -1078,8 +1071,8 @@ fn the_alpha_cut_is_the_clients_own_per_blend_table() {
     for blend in 2..=6u16 {
         assert_eq!(alpha_cut(blend, M2_ALPHA_KEY), M2_TRANSLUCENT_CUT, "blend {blend}");
     }
-    // …and the cutoff is a *parameter*, because a WMO's key is the same 224 by
-    // the same table but arrives through its own constant.
+    // The cutoff is a parameter, because a WMO's key is the same 224 from the
+    // same table but arrives through its own constant.
     assert_eq!(
         alpha_cut(1, crate::render::wmos::WMO_ALPHA_KEY),
         M2_ALPHA_KEY,
@@ -1118,8 +1111,8 @@ fn source(bones: &[u16], vertices: usize) -> Arc<loader::MergeSource> {
         positions: (0..vertices).map(|i| [i as f32, 0.0, 0.0]).collect(),
         normals: vec![[0.0, 1.0, 0.0]; vertices],
         uvs: vec![[0.0, 0.0]; vertices],
-        // Every vertex on the batch's own **first** bone, which is the index
-        // the remap has to move.
+        // Every vertex on the batch's own first bone, which is the index the
+        // remap has to move.
         joints: vec![[0, 0, 0, 0]; vertices],
         weights: vec![[1.0, 0.0, 0.0, 0.0]; vertices],
         indices: (0..vertices as u32).collect(),
@@ -1144,18 +1137,18 @@ fn material(n: u128) -> Handle<M2Material> {
     Handle::Uuid(bevy::asset::uuid::Uuid::from_u128(n), std::marker::PhantomData)
 }
 
-/// **Two batches wearing one material become one mesh, and the joint indices
-/// are remapped into the union of their bone subsets.**
+/// Two batches with one material become one mesh, and the joint indices are
+/// remapped into the union of their bone subsets.
 ///
-/// The remap is the half that would be a *wrong picture* rather than a slow
-/// one: a batch's joint indices point into its own subset
-/// (`loader::RawDraw::bones`), so concatenating two batches without moving
-/// them poses the second one off the first one's bones — a helmet on a knee.
+/// A missing remap would render incorrectly, not only slowly: a batch's joint
+/// indices point into its own subset (`loader::RawDraw::bones`), so
+/// concatenating two batches without remapping poses the second one off the
+/// first one's bones, for example a helmet on a knee.
 #[test]
 fn a_merge_concatenates_the_vertices_and_remaps_the_joints() {
     let mut meshes = Assets::<Mesh>::default();
     let one = material(1);
-    // Two batches on the same material riding **different** bones: the first
+    // Two batches on the same material using different bones: the first
     // bone 7, the second bone 3, so the union is [3, 7] and the second batch's
     // local 0 has to become 0 while the first batch's local 0 becomes 1.
     let merge = vec![Some(source(&[7], 2)), Some(source(&[3], 3))];
@@ -1186,17 +1179,17 @@ fn a_merge_concatenates_the_vertices_and_remaps_the_joints() {
     );
 }
 
-/// **A batch that may not be merged keeps its own draw, in its own place.**
+/// A batch that may not be merged keeps its own draw, in its original position.
 ///
-/// The order is what makes this more than tidiness: a translucent batch is
-/// drawn against its neighbours, and a merge that moved one up the list would
-/// change which of two overlapping planes wins.
+/// The order affects rendering: a translucent batch is drawn against its
+/// neighbours, and a merge that moved one up the list would change which of
+/// two overlapping planes is drawn on top.
 #[test]
 fn an_unmergeable_batch_keeps_its_place_in_the_order() {
     let mut meshes = Assets::<Mesh>::default();
     let (one, two) = (material(1), material(2));
     // opaque(A) · translucent(B, no source) · opaque(A): the two A batches
-    // merge and the merged draw takes the *first* one's slot, so B stays after
+    // merge and the merged draw takes the first one's slot, so B stays after
     // it rather than being lifted to the front.
     let merge = vec![Some(source(&[0], 1)), None, Some(source(&[1], 1))];
     let draws = vec![draw(one.clone(), &[0]), draw(two.clone(), &[]), draw(one.clone(), &[1])];
@@ -1209,8 +1202,8 @@ fn an_unmergeable_batch_keeps_its_place_in_the_order() {
     assert_eq!(out[1].material.id(), two.id());
 }
 
-/// **A group of one is not a merge**, because a second copy of a mesh the
-/// geometry already holds costs memory and saves nothing.
+/// A group of one is not merged, because a second copy of a mesh the geometry
+/// already holds costs memory and saves nothing.
 #[test]
 fn a_lone_batch_keeps_the_shared_mesh() {
     let mut meshes = Assets::<Mesh>::default();
@@ -1223,23 +1216,24 @@ fn a_lone_batch_keeps_the_shared_mesh() {
     assert!(meshes.is_empty(), "nothing was built");
 }
 
-/// **A batch names only the bones its own vertices ride, and its joint
-/// indices are into that list rather than into the skeleton.**
+/// A batch names only the bones its own vertices use, and its joint indices
+/// are into that list rather than into the skeleton.
 ///
-/// This is what makes a crowd affordable: bevy's `extract_skins` reads and
-/// writes a matrix for every joint a visible skinned mesh names, every frame,
-/// and a dressed character draws about a dozen batches over a 119-bone
+/// This keeps the per-frame cost of a crowd down: bevy's `extract_skins` reads
+/// and writes a matrix for every joint a visible skinned mesh names, every
+/// frame, and a dressed character draws about a dozen batches over a 119-bone
 /// skeleton. Naming the whole skeleton on each of them is two thousand joint
-/// reads a frame for a body whose batches ride a handful each — measured at
-/// 40,156 joints a frame for a forty-player crowd against 5,362 with this.
+/// reads a frame for a body whose batches use a handful each; measured at
+/// 40,156 joints a frame for a forty-player crowd against 5,362 with the
+/// subset.
 ///
-/// The subset has to be **sorted and deduplicated** and the per-vertex indices
+/// The subset has to be sorted and deduplicated and the per-vertex indices
 /// remapped in the same pass, or the mesh poses off the wrong bones.
 #[test]
 fn a_batch_names_only_the_bones_it_rides() {
     let mut model = sample();
-    // Four vertices on bones 9 and 4 of a twelve-bone skeleton. Nothing rides
-    // the other ten, and nothing rides the identity joint.
+    // Four vertices on bones 9 and 4 of a twelve-bone skeleton. No vertex uses
+    // the other ten, and none uses the identity joint.
     model.bone_weights = vec![[255, 0, 0, 0]; 4];
     model.bone_indices = vec![[9, 0, 0, 0], [4, 0, 0, 0], [9, 0, 0, 0], [4, 0, 0, 0]];
 
@@ -1250,7 +1244,7 @@ fn a_batch_names_only_the_bones_it_rides() {
         "the bones actually ridden, sorted — 0 is the second slot of every \
          vertex, which `vertex_skin` fills at zero weight"
     );
-    // …and the indices are into that list: bone 9 is slot 2, bone 4 is slot 1.
+    // The indices are into that list: bone 9 is slot 2, bone 4 is slot 1.
     assert_eq!(draw.joints[0][0], 2);
     assert_eq!(draw.joints[1][0], 1);
     assert!(
@@ -1259,8 +1253,8 @@ fn a_batch_names_only_the_bones_it_rides() {
     );
 }
 
-/// **A model with no skeleton names no bones at all**, which is what keeps a
-/// tree from acquiring a `SkinnedMesh` it has no joints for.
+/// A model with no skeleton names no bones at all, which keeps a tree from
+/// getting a `SkinnedMesh` it has no joints for.
 #[test]
 fn scenery_has_no_bone_subset() {
     let draw = batch_draw(&sample(), &batch(0, 6), None, Default::default()).expect("a draw");
@@ -1268,29 +1262,25 @@ fn scenery_has_no_bone_subset() {
     assert!(draw.joints.is_empty());
 }
 
-/// **Every `SkinnedMesh` in this crate is built through [`skin_for`]**, and
+/// Every `SkinnedMesh` in this crate is built through [`skin_for`], and
 /// nothing else may name a joint list.
 ///
-/// [`skin_for`]'s own doc has said *"one function, three callers, and a fourth
-/// cannot get it wrong"* since the round that introduced the bone subset. It
-/// was not true when it was written: there were **four** spawners, not three —
-/// `render::portraits` builds a model's parts exactly as the other three do,
-/// was not in the list, and went on binding the model's whole skeleton to
-/// meshes whose joint indices had become subset-local. Every vertex posed off
-/// the wrong bone, which on a 64-pixel face is a smear rather than a
-/// recognisable mistake, and it survived the whole test suite and six
-/// interface probes because **no headless check looks at a portrait** — the
-/// same hole the glue screens had, one door along.
+/// There are four spawners: `world::entities::spawn`,
+/// `world::entities::effects`, `render::glue` and `render::portraits`. When the
+/// bone subset was introduced, `render::portraits` was missed and kept binding
+/// the model's whole skeleton to meshes whose joint indices had become
+/// subset-local. Every vertex posed off the wrong bone, which on a 64-pixel
+/// face looks like a smear, and it passed the whole test suite and six
+/// interface probes because no headless check looks at a portrait (the glue
+/// screens had the same gap).
 ///
-/// A sentence in a doc comment is not an invariant. This is: the rule is one
-/// line of source per call site, so it can be read off the source, and a fifth
-/// spawner fails the build instead of drawing a smear.
+/// This test enforces the rule: each call site has one line of source that
+/// names `skin_for`, so a new spawner that skips it fails the test.
 ///
-/// It is deliberately textual rather than clever. `SkinnedMesh` is a Bevy
-/// component with public fields and there is no type-level way to require a
-/// constructor; what there is, is that all four call sites are five lines long
-/// and identical, so "the words `skin_for` appear just above" is exactly the
-/// property that matters and costs nothing to keep.
+/// The check is textual. `SkinnedMesh` is a Bevy component with public fields
+/// and there is no type-level way to require a constructor; all four call
+/// sites are five lines long and identical, so checking that `skin_for`
+/// appears just above each one tests the property that matters.
 #[test]
 fn every_skinned_mesh_is_built_through_skin_for() {
     /// How far above the `SkinnedMesh {` the call may sit. The four real sites
@@ -1353,21 +1343,20 @@ fn every_skinned_mesh_is_built_through_skin_for() {
     );
 }
 
-/// **A forgotten path is read again, and a forgotten failure is forgiven.**
+/// A forgotten path is read again, and a forgotten failure is cleared.
 ///
-/// Both halves are what a host editing the archives' own namespace needs, and
-/// the second is the one that reads as a model that never appears: a path
-/// asked for *before* the file existed is remembered as unreadable for the
-/// life of the process, so writing the file afterwards changes nothing at
-/// all. See [`ModelCache::forget`].
+/// A host editing the archives' own namespace needs both. Without the second,
+/// a path requested before the file existed is remembered as unreadable for
+/// the life of the process, so writing the file afterwards has no effect and
+/// the model never appears. See [`ModelCache::forget`].
 #[test]
 fn a_forgotten_model_is_read_again_and_its_failure_forgiven() {
     let mut cache = ModelCache::default();
     let edited = "Custom\\Thing_pos.m2";
     let other = "Creature\\Wolf\\Wolf.m2";
 
-    // Built by hand, as the eviction tests are: the loader is a thread and an
-    // archive, and none of what is under test needs either.
+    // Built by hand, as in the eviction tests: the loader needs a thread and
+    // an archive, and the code under test needs neither.
     cache.tick(0.0);
     for path in [edited, other] {
         cache.geometry.insert(geometry_key(path, false), stub_geometry(0.0));
@@ -1386,9 +1375,9 @@ fn a_forgotten_model_is_read_again_and_its_failure_forgiven() {
 
     assert!(cache.forget(edited), "it was held");
     assert!(!cache.forget(edited), "and is not held twice");
-    // With no loader a request fails where it stands, so the *next* lookup is
-    // the one that reports it. What matters here is that this one went back to
-    // the file rather than answering `Ready` off the build it already had.
+    // With no loader a request fails immediately, so the next lookup is the
+    // one that reports it. This lookup must go back to the file rather than
+    // returning `Ready` from the build it already had.
     assert!(
         matches!(cache.lookup(edited), Lookup::Loading),
         "it was read again"
@@ -1398,8 +1387,8 @@ fn a_forgotten_model_is_read_again_and_its_failure_forgiven() {
         "and nothing else was dropped"
     );
 
-    // …and the failure that read produced does not outlive the next write of
-    // the same path.
+    // The failure that read produced is cleared by the next forget of the
+    // same path.
     assert!(matches!(cache.lookup(edited), Lookup::Failed));
     assert!(cache.forget(edited));
     assert!(
@@ -1408,8 +1397,8 @@ fn a_forgotten_model_is_read_again_and_its_failure_forgiven() {
     );
 }
 
-/// A read in flight when the path is forgotten is dropped and re-filed rather
-/// than installed: what it is carrying is the file as it was.
+/// A read in flight when the path is forgotten is dropped and requested again
+/// rather than installed, because it carries the old contents of the file.
 #[test]
 fn a_forget_during_a_read_discards_what_that_read_was_carrying() {
     let mut cache = ModelCache::default();
@@ -1424,7 +1413,7 @@ fn a_forget_during_a_read_discards_what_that_read_was_carrying() {
     );
     assert!(cache.refetch.contains(&key));
 
-    // …and forgetting everything does the same for every read outstanding.
+    // Forgetting everything does the same for every outstanding read.
     let mut cache = ModelCache::default();
     cache.pending.insert(key.clone());
     cache.geometry.insert(key.clone(), stub_geometry(0.0));
@@ -1432,4 +1421,125 @@ fn a_forget_during_a_read_discards_what_that_read_was_carrying() {
     assert!(cache.pending.is_empty());
     assert!(cache.refetch.contains(&key));
     assert_eq!(cache.resident(), (0, 0, 0));
+}
+
+/// What `m2.wgsl`'s `uv_table_float` does with one texel of the table: each
+/// byte arrives as the unorm value `k / 255`, is scaled and rounded back to
+/// `k`, and the four bytes are reassembled into the float's bits.
+fn decode_table_float(bytes: &[u8]) -> f32 {
+    let mut bits = 0u32;
+    for (i, &byte) in bytes.iter().enumerate() {
+        let unorm = f32::from(byte) / 255.0;
+        bits |= ((unorm * 255.0).round() as u32) << (8 * i);
+    }
+    f32::from_bits(bits)
+}
+
+/// The table's texel encoding returns every float bit for bit, including
+/// negative, subnormal and large values.
+#[test]
+fn the_uv_table_encoding_is_lossless() {
+    for value in [0.0f32, -0.0, 1.0, -0.91, 0.125, 1e-40, -3.4e38, 12345.678, f32::EPSILON] {
+        let bytes = value.to_le_bytes();
+        assert_eq!(decode_table_float(&bytes).to_bits(), value.to_bits(), "{value}");
+    }
+}
+
+/// A moving material gets its own row of `UV_TABLE`, recorded in
+/// `uv_row0.w`; `follow_uv_animations` writes the matrix into that row of the
+/// image and leaves the material alone; and a dropped material's row is handed
+/// to the next moving material.
+#[test]
+fn a_moving_material_reads_its_matrix_from_its_own_table_row() {
+    let mut app = App::new();
+    app.add_plugins(bevy::asset::AssetPlugin::default())
+        .init_asset::<M2Material>()
+        .init_asset::<Image>()
+        .init_resource::<MaterialPool>()
+        .init_resource::<UvAnimations>()
+        .init_resource::<Time>()
+        .add_systems(Startup, insert_uv_table)
+        .add_systems(Update, follow_uv_animations);
+
+    let anims = std::sync::Arc::new(vale_assets::world::m2::M2TextureAnims {
+        transforms: vec![vale_assets::world::m2::M2TextureTransform {
+            rotation: None,
+            translation: Some(vale_assets::world::m2::M2Track {
+                interpolation: 0,
+                global_sequence: -1,
+                times: vec![0],
+                values: vec![0.25, -0.5, 0.0],
+                dim: 3,
+            }),
+            scale: None,
+        }],
+        global_sequences: Vec::new(),
+    });
+    let expected = anims.matrix(0, 0, 0, 1, 0);
+    let plain = || M2Material {
+        params: M2Params {
+            ambient: Vec4::ZERO,
+            alpha_cutoff: 0.0,
+            unlit: 0.0,
+            vertex_lit: 0.0,
+            liquid: 0.0,
+            liquid_close: Vec4::ZERO,
+            liquid_far: Vec4::ZERO,
+            uv_row0: UV_STILL.0,
+            uv_row1: UV_STILL.1,
+            particle: Vec4::ZERO,
+            body: Vec4::X,
+            overlay: Vec4::ZERO,
+            scene_ambient: SceneLighting::NONE.ambient,
+            scene_lamps: SceneLighting::NONE.lamps,
+        },
+        texture: Handle::default(),
+        overlay_a: Handle::default(),
+        overlay_b: Handle::default(),
+        uv_table: UV_TABLE,
+        blend: 0,
+        two_sided: false,
+        no_depth_write: false,
+        wind: false,
+    };
+    let moving = |app: &mut App| {
+        let mut system = bevy::ecs::system::SystemState::<Materials>::new(app.world_mut());
+        let handle = system
+            .get_mut(app.world_mut())
+            .expect("the pool and the store")
+            .moving(plain(), std::sync::Arc::clone(&anims), 0, None);
+        system.apply(app.world_mut());
+        handle
+    };
+    let row_of = |app: &App, handle: &Handle<M2Material>| {
+        let material = app.world().resource::<Assets<M2Material>>().get(handle).unwrap();
+        material.params.uv_row0.w - UV_TABLE_BASE
+    };
+
+    let first = moving(&mut app);
+    let second = moving(&mut app);
+    assert_eq!(row_of(&app, &first), 0.0);
+    assert_eq!(row_of(&app, &second), 1.0);
+    app.update();
+
+    let image = app.world().resource::<Assets<Image>>().get(&UV_TABLE).expect("the table");
+    let data = image.data.as_ref().expect("a main-world copy");
+    let row = |r: usize| -> Vec<f32> {
+        (0..6)
+            .map(|i| decode_table_float(&data[(r * 8 + i) * 4..(r * 8 + i) * 4 + 4]))
+            .collect()
+    };
+    assert_eq!(row(0), expected.to_vec(), "row 0 holds the first material's matrix");
+    assert_eq!(row(1), expected.to_vec(), "row 1 holds the second's");
+    let material = app.world().resource::<Assets<M2Material>>().get(&first).unwrap();
+    assert_eq!(material.params.uv_row1, Vec4::ZERO, "the material itself is not written");
+
+    // The first material is dropped: its entry goes on the next pass and its
+    // row is the next one handed out.
+    drop(first);
+    app.update();
+    app.update();
+    assert_eq!(app.world().resource::<UvAnimations>().len(), 1);
+    let third = moving(&mut app);
+    assert_eq!(row_of(&app, &third), 0.0, "the released row is reused");
 }

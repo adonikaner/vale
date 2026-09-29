@@ -1,39 +1,40 @@
 //! Ribbon trails: the streak a weapon leaves, the tail behind a fireball, the
 //! streamer off a wisp.
 //!
-//! **A ribbon is the one thing in this renderer with a memory.** Every other
-//! drawn thing is a function of the current frame — a mesh at a transform, a
-//! particle at a position it integrated to. A trail is the *path* its emitter
-//! took over the last half second, and nothing about the emitter's present
-//! state contains it. That is why it cannot be a particle emitter with a long
-//! tail, and why it needs its own ring of committed edges.
+//! A ribbon is the only thing in this renderer that depends on past frames.
+//! Every other drawn thing is a function of the current frame: a mesh at a
+//! transform, or a particle at the position it integrated to. A trail is the
+//! path its emitter took over the last half second, which the emitter's
+//! current state does not contain. It therefore cannot be a particle emitter
+//! with a long tail, and it keeps its own ring of committed edges.
 //!
-//! The simulation is the 5875 client's:
+//! The simulation follows the 1.12.1 (build 5875) client:
 //!
-//! * the emitter's bone-local origin goes through the **live** bone matrix
-//!   every frame to give the node;
-//! * an **edge** — a vertex pair at `+height_above` and `-height_below` along
-//!   the bone's own local **+Y** — is committed at `edges_per_second`;
-//! * edges age out at `edge_lifetime` and sag at `2·gravity·dt` while they
-//!   live;
-//! * the ring draws as one strip, `u` sliding from 0 at the head to 1 at the
-//!   tail across the atlas cell, so the texture's own transparent end is the
-//!   fade.
+//! * the emitter's bone-local origin is transformed by the current bone
+//!   matrix every frame to give the node;
+//! * an edge (a vertex pair at `+height_above` and `-height_below` along the
+//!   bone's own local +Y) is committed at `edges_per_second`;
+//! * edges expire at `edge_lifetime` and sag by `2·gravity·dt` per frame
+//!   while they live;
+//! * the ring draws as one strip, with `u` running from 0 at the head to 1 at
+//!   the tail across the atlas cell, so the texture's own transparent end
+//!   provides the fade.
 //!
-//! **The look tracks are sampled, not baked**, and that is the difference
-//! between a trail and nothing at all: `Spells\HolySmite_Low_Chest.m2` keys its
-//! slash's height `0 -> 0.167 -> 0` over its first 267 ms, so the "constant
-//! property" shortcut the particle emitters get away with reads a permanent
-//! zero and the slash never draws. `vale model` counts the population that
-//! trap applies to — **34 of the 36 keyed-height ribbons start at zero**.
+//! The look tracks are sampled every frame, not reduced to a constant.
+//! `Spells\HolySmite_Low_Chest.m2` keys its slash's height `0 -> 0.167 -> 0`
+//! over its first 267 ms, so reading the first key as a constant, as the
+//! particle emitters do for some properties, gives a permanent zero and the
+//! slash is never drawn. `vale model` counts the affected ribbons: 34 of the
+//! 36 keyed-height ribbons start at zero.
 //!
-//! Structurally this is `particles.rs` with a different kernel, deliberately:
-//! same [`Anchor`], same owner-liveness retirement, same one-mesh-per-emitter
-//! rebuilt in world space with the entity's `Transform` carrying only the
-//! anchor the transparent phase sorts by, and the same `M2Material` particle
-//! branch — a strip's tint rides `ATTRIBUTE_COLOR` exactly as a quad's
-//! over-life colour does. Sharing the *shape* is what keeps a fix to one from
-//! having to be found and re-made in the other.
+//! The structure matches `particles.rs` with a different simulation: the same
+//! [`Anchor`], the same retirement when the owner is gone, the same single
+//! mesh per emitter rebuilt in world space with the entity's `Transform`
+//! holding only the point the transparent phase sorts by, and the same
+//! `M2Material` particle branch. A strip's tint is carried in
+//! `ATTRIBUTE_COLOR`, as a quad's over-life colour is. Keeping the two
+//! modules in the same shape means a fix to one can be applied directly to
+//! the other.
 
 use crate::axes;
 use crate::render::models::{M2Material, M2Params, Materials, SceneLighting, M2_ALPHA_KEY};
@@ -48,8 +49,8 @@ use bevy::render::mesh::{Indices, PrimitiveTopology};
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-/// A backstop on the ring, far above `rate x lifetime` for anything shipped —
-/// the busiest trail in the game is 30 edges/s for half a second.
+/// An upper limit on the ring, far above `rate x lifetime` for any shipped
+/// model. The busiest trail in the game is 30 edges/s for half a second.
 const MAX_EDGES: usize = 256;
 
 /// One ribbon definition and the material its strip draws through.
@@ -58,8 +59,8 @@ pub struct RibbonDraw {
     pub material: Handle<M2Material>,
 }
 
-/// Every ribbon of one model, shared by all its dressings and placements —
-/// the counterpart of `ParticleSet`.
+/// Every ribbon of one model, shared by all its dressings and placements. The
+/// counterpart of `ParticleSet`.
 pub struct RibbonSet {
     pub ribbons: Vec<RibbonDraw>,
     /// The same sequence-0 clip the emitters run on. A ribbon's keyed height,
@@ -68,13 +69,13 @@ pub struct RibbonSet {
     pub clip: Option<ParticleClip>,
 }
 
-/// Build a model's ribbon set, interning one material per trail.
+/// Builds a model's ribbon set, interning one material per trail.
 ///
 /// The texture is the model's own, as an emitter's is. A ribbon that names no
-/// texture is **dropped** rather than given the magenta placeholder: a
-/// placeholder emitter is a visible magenta spray that says *look here*, but a
-/// placeholder trail is a magenta band welded to a weapon for as long as it is
-/// carried, and the file is telling us it has nothing to draw.
+/// texture is dropped rather than given the magenta placeholder. A
+/// placeholder emitter is a brief magenta spray that marks a missing texture,
+/// but a placeholder trail would be a magenta band attached to a weapon for as
+/// long as it is carried, and a ribbon with no texture has nothing to draw.
 pub fn build_set(
     defs: &[M2Ribbon],
     clip: Option<ParticleClip>,
@@ -94,9 +95,9 @@ pub fn build_set(
                 .get(slot)
                 .filter(|_| kinds.get(slot) == Some(&0))
                 .cloned()?;
-            // The client's own per-blend fog policy, the same table the
-            // emitters take: an additive trail fogs toward black, so a distant
-            // one fades instead of painting a fog-coloured band.
+            // The 1.12.1 client's fog mode per blend mode, the same mapping
+            // the emitters use: an additive trail fogs toward black, so a
+            // distant one fades instead of drawing a fog-coloured band.
             let mode = match def.blend {
                 3 | 4 => 2.0,
                 _ => 1.0,
@@ -112,7 +113,7 @@ pub fn build_set(
                     liquid_far: Vec4::ZERO,
                     uv_row0: Vec4::ZERO,
                     uv_row1: Vec4::ZERO,
-                    // Unlit, like the emitters this rides beside.
+                    // Unlit, like the particle emitters.
                     // Solid: `body.x` is the opacity and 1.0 is "as authored".
             body: Vec4::X,
                     // A ribbon has no environment map — see
@@ -122,12 +123,14 @@ pub fn build_set(
                     scene_lamps: SceneLighting::NONE.lamps,
                     particle: Vec4::new(mode, 0.0, 0.0, 0.0),
                 },
-                // **No layers, and the base's own handle in both slots** —
-                // see `M2Material::overlay_a`: a binding cannot be empty, and
-                // bevy ref-counts bindless resources by id, so naming a handle
-                // the material already holds takes no extra slot in the slab.
+                // No overlay layers; the base texture's handle fills both
+                // slots. See `M2Material::overlay_a`: a binding cannot be
+                // empty, and bevy ref-counts bindless resources by id, so a
+                // handle the material already holds takes no extra slot in the
+                // slab.
                 overlay_a: texture.clone(),
                 overlay_b: texture.clone(),
+                uv_table: crate::render::models::UV_TABLE,
                 texture,
                 blend: def.blend,
                 two_sided: def.two_sided,
@@ -162,19 +165,19 @@ struct Edge {
 pub struct Ribbon {
     set: Arc<RibbonSet>,
     index: usize,
-    /// Whose existence this trail is tied to. Gone means [`retire_ribbons`]
-    /// despawns this too — the same liveness rule the emitters follow, and for
-    /// the same reason: a trail entity lives at the world root and does not
-    /// despawn with the thing that laid it.
+    /// The entity this trail's lifetime is tied to. When it no longer exists,
+    /// [`retire_ribbons`] despawns this trail. The emitters follow the same
+    /// rule for the same reason: a trail entity is at the world root and does
+    /// not despawn with the entity that emitted it.
     owner: Entity,
     anchor: Anchor,
     /// The placement's uniform scale. A ribbon's widths are model-space yards,
     /// so a model drawn at half size trails at half width.
     scale: f32,
-    /// Newest at the back. The **live head** is not in here — it is appended at
-    /// mesh time from the node's current position, so the strip stays welded to
-    /// the emitter between commits rather than lagging by up to a whole
-    /// commit interval.
+    /// Newest at the back. The current head is not stored here; it is added
+    /// when the mesh is built, from the node's current position, so the strip
+    /// stays attached to the emitter between commits instead of lagging by up
+    /// to one commit interval.
     edges: VecDeque<Edge>,
     accumulator: f32,
     /// Seconds since spawn: the clip clock the keyed tracks sample against.
@@ -182,18 +185,18 @@ pub struct Ribbon {
 }
 
 impl Ribbon {
-    /// **Whose this trail is** — the entity its life is tied to. Read-only,
-    /// for the reason `Emitter::owner` gives: a trail lives at the world root,
-    /// and this is the only join back to the thing that laid it.
+    /// The entity this trail's lifetime is tied to. Read-only, for the reason
+    /// `Emitter::owner` gives: a trail is at the world root, and this is the
+    /// only link back to the entity that emitted it.
     pub fn owner(&self) -> Entity {
         self.owner
     }
 }
 
-/// Spawn one trail entity per ribbon of a model.
+/// Spawns one trail entity per ribbon of a model.
 ///
-/// `anchors` says where each ribbon's node comes from, exactly as it does for
-/// the emitters — a joint of the model's own skeleton where it has one, the
+/// `anchors` gives the source of each ribbon's node, as it does for the
+/// emitters: a joint of the model's own skeleton where it has one, the
 /// owner's frame otherwise.
 pub fn spawn_ribbons(
     commands: &mut Commands,
@@ -203,8 +206,8 @@ pub fn spawn_ribbons(
     anchors: impl Fn(usize, &M2Ribbon) -> Anchor,
     scale: f32,
 ) -> Vec<Entity> {
-    // One switch for the whole family: a subtraction run must
-    // take the trails out with the clouds or it measures neither.
+    // One switch for particles and ribbons: a measurement run that removes
+    // particles must remove the trails too, or it measures neither cleanly.
     if std::env::var_os("VALE_NO_PARTICLES").is_some() {
         return Vec::new();
     }
@@ -238,17 +241,16 @@ pub fn spawn_ribbons(
 }
 
 /// The mesh a trail starts with. Every attribute the material's pipeline
-/// variant reads is present from the first frame, so the variant never changes
-/// shape underneath it — and, as with the emitters, this is
-/// `MAIN_WORLD | RENDER_WORLD` because it is rewritten every frame and a mesh
-/// that has been *taken* by the render world panics on `insert_attribute`.
+/// variant reads is present from the first frame, so the mesh layout never
+/// changes under the variant. As with the emitters, this is
+/// `MAIN_WORLD | RENDER_WORLD` because it is rewritten every frame, and a mesh
+/// that the render world has taken panics on `insert_attribute`.
 ///
-/// **It holds the degenerate quad rather than nothing at all**, and a trail is
-/// the one of the four per-frame passes where that is guaranteed to matter: a
-/// ribbon is spawned with no edges, so `simulate_ribbons` takes its `spans < 2`
-/// exit on the first frame of every trail in the game and the mesh reaches the
-/// allocator exactly as it was created. See [`crate::render::nothing`] for what
-/// an empty one costs.
+/// It holds the degenerate quad rather than no vertices. Of the four
+/// per-frame passes, this is the one where that always matters: a ribbon is
+/// spawned with no edges, so `simulate_ribbons` takes its `spans < 2` exit on
+/// the first frame of every trail and the mesh reaches the allocator exactly
+/// as created. See [`crate::render::nothing`] for what an empty mesh costs.
 fn empty_strip() -> Mesh {
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
@@ -259,17 +261,17 @@ fn empty_strip() -> Mesh {
     mesh
 }
 
-/// Despawn trails whose owner is gone.
+/// Despawns trails whose owner is gone.
 ///
-/// **Immediately, and that is a deliberate difference from the reference.**
-/// The 5875 client keeps the model alive while its emitters drain, so a
+/// The despawn is immediate, which differs from the 1.12.1 (build 5875)
+/// client. That client keeps the model alive while its emitters drain, so a
 /// fireball's tail finishes fading after the fireball is gone. Draining here
-/// would mean a trail outliving the entity it hangs off — and this renderer
-/// despawns an owner at the moment its effect is reaped, so the tail would
-/// hang in the air where the model used to be. The visible cost is the last
-/// tenth of a second of a trail that was about to end anyway; the visible cost
-/// of the other choice is a streak left standing in an empty field, which is
-/// the same failure `retire_emitters` exists to prevent.
+/// would mean a trail outliving the entity it is attached to, and this
+/// renderer despawns an owner as soon as its effect ends, so the tail would
+/// stay in the air where the model was. Despawning immediately cuts the last
+/// tenth of a second of a trail that was about to end. Draining would leave a
+/// streak standing in an empty field, the same failure `retire_emitters`
+/// prevents.
 fn retire_ribbons(mut commands: Commands, ribbons: Query<(Entity, &Ribbon)>, owners: Query<()>) {
     for (entity, ribbon) in &ribbons {
         if owners.get(ribbon.owner).is_err() {
@@ -278,13 +280,13 @@ fn retire_ribbons(mut commands: Commands, ribbons: Query<(Entity, &Ribbon)>, own
     }
 }
 
-/// Place each node, commit and expire edges, and rebuild the strips.
+/// Places each node, commits and expires edges, and rebuilds the strips.
 fn simulate_ribbons(
     time: Res<Time>,
-    // The trails ride the particle switch, because they are the same subject to
-    // anyone looking at the screen and they already share the env kill-switch.
-    // Folded in for the same reason `render::particles` folds it in: this
-    // system owns their `Visibility`.
+    // The trails use the particle switch, because on screen they are part of
+    // the same effects and they already share the environment kill switch.
+    // The switch is checked here for the same reason `render::particles`
+    // checks it: this system owns their `Visibility`.
     tuning: Res<crate::render::tuning::WorldTuning>,
     mut meshes: ResMut<Assets<Mesh>>,
     frames: Query<&GlobalTransform, Without<Ribbon>>,
@@ -319,9 +321,9 @@ fn simulate_ribbons(
             continue;
         };
         let def = &draw.def;
-        // A joint that vanished mid-frame (a rebuild in progress) holds the
-        // ring where it is for a frame rather than laying an edge at the
-        // origin, which would draw a band from the model to the world's centre.
+        // If a joint has disappeared (a rebuild in progress), the ring is left
+        // unchanged for a frame rather than committing an edge at the origin,
+        // which would draw a band from the model to the world's origin.
         let frame = match &ribbon.anchor {
             Anchor::Fixed(placement) => placement.compute_affine(),
             Anchor::Joint(joint) => match frames.get(*joint) {
@@ -345,18 +347,19 @@ fn simulate_ribbons(
             (Some(t), None) => t.first(),
         };
 
-        // The ON/OFF gate. A dark trail stops committing and lets what it has
-        // age out, which is what a thrown weapon wants: the same file is the
-        // dagger in the hand and the dagger in flight, and only the second
-        // sequence lights the trail.
+        // The visibility track switches the trail on and off. A trail that is
+        // off stops committing edges and lets the existing ones expire. A
+        // thrown weapon needs this: the same file is the dagger in the hand
+        // and the dagger in flight, and only the second sequence turns the
+        // trail on.
         let lit = sample(&def.visibility, 1.0) > 0.5;
         let above = sample(&def.height_above, 0.0).max(0.0) * ribbon.scale;
         let below = sample(&def.height_below, 0.0).max(0.0) * ribbon.scale;
 
-        // **The cross-section is the carrying bone's own local +Y**, captured
-        // fresh from the live matrix every frame — the reference multiplies
-        // only that row by the two heights. It is what makes a sword's trail lie in the plane
-        // of the blade instead of standing across it.
+        // The cross-section runs along the carrying bone's own local +Y, read
+        // from the current matrix every frame; the 1.12.1 client offsets the
+        // two heights along that axis only. This makes a sword's trail lie in
+        // the plane of the blade instead of across it.
         let node = frame.transform_point3(axes::to_bevy(def.position));
         let axis = frame
             .transform_vector3(axes::to_bevy([0.0, 1.0, 0.0]))
@@ -389,8 +392,9 @@ fn simulate_ribbons(
                 }
             }
         } else {
-            // Reset rather than let it run: a gate that opens again should lay
-            // its first edge at once, not a fraction of an interval late.
+            // Reset rather than keep accumulating: a trail that is switched on
+            // again should commit its first edge at once, not a fraction of an
+            // interval late.
             ribbon.accumulator = 0.0;
         }
 
@@ -408,9 +412,9 @@ fn simulate_ribbons(
             continue;
         }
 
-        // The anchor the transparent phase sorts by, exactly as an emitter's
-        // is: the head while the trail is being laid, the newest surviving
-        // edge while it drains.
+        // The point the transparent phase sorts by, as for an emitter: the
+        // head while the trail is being emitted, the newest remaining edge
+        // while it drains.
         let sort_at = match head {
             Some((top, bottom)) => (top + bottom) * 0.5,
             None => {
@@ -439,9 +443,9 @@ fn simulate_ribbons(
             *aabb = grown;
         }
 
-        // Same gate the clouds take: the ring above advanced whether or not
-        // anyone can see it, but the geometry build and the asset re-upload
-        // only happen for a strip whose draw survived last frame's cull.
+        // The same test the particle emitters use: the ring above advances
+        // whether or not it is visible, but the geometry build and the asset
+        // re-upload happen only for a strip that passed last frame's cull.
         if !seen.get() {
             continue;
         }
@@ -510,8 +514,8 @@ fn simulate_ribbons(
     }
 }
 
-/// Seconds of trail age onto the clip's millisecond clock — the emitters'
-/// rule, shared because it is the same clock.
+/// Converts seconds of trail age to the clip's millisecond clock, using the
+/// emitters' rule because it is the same clock.
 fn clip_time(clip: &Option<ParticleClip>, age: f32) -> u32 {
     let ms = (age * 1000.0) as u32;
     match clip {
@@ -535,10 +539,10 @@ impl Plugin for RibbonPlugin {
             Update,
             (
                 retire_ribbons,
-                // **Stated, not inherited** — the same ordering the emitters
-                // take and for the same reason: a node read before the joints
-                // are posed lays this frame's edge at last frame's bone, which
-                // on a swinging weapon is the whole width of the swing.
+                // Explicit ordering, the same as the emitters', for the same
+                // reason: a node read before the joints are posed commits this
+                // frame's edge at last frame's bone position, which on a
+                // swinging weapon can be the whole width of the swing.
                 simulate_ribbons
                     .after(retire_ribbons)
                     .after(crate::world::camera::place)
@@ -562,9 +566,9 @@ mod tests {
         })
     }
 
-    /// A one-shot clip **clamps** rather than wraps, which is what makes a
-    /// slash finish: a trail whose height ramps back to zero at 267 ms must
-    /// stay at zero, not restart the flare every 1.1 seconds.
+    /// A one-shot clip clamps rather than wraps, so a slash finishes: a trail
+    /// whose height returns to zero at 267 ms must stay at zero, not restart
+    /// every 1.1 seconds.
     #[test]
     fn a_one_shot_clip_clamps_and_a_looping_one_wraps() {
         assert_eq!(clip_time(&clip(3300, 4433, false), 2.0), 1133);
@@ -572,16 +576,16 @@ mod tests {
         assert_eq!(clip_time(&clip(0, 1000, true), 2.5), 500);
     }
 
-    /// **A trail never hands Bevy a zero-vertex mesh**, and it is the pass where
-    /// that is certain rather than occasional: a ribbon is spawned with no edges
-    /// at all, so `simulate_ribbons` takes its `spans < 2` exit on the first
-    /// frame of every trail in the game and the mesh reaches the allocator
-    /// exactly as [`empty_strip`] built it. An empty one there is two
-    /// `Use-after-free` lines per trail — see [`crate::render::nothing`].
+    /// A trail never gives Bevy a zero-vertex mesh. For trails this case
+    /// always occurs: a ribbon is spawned with no edges, so `simulate_ribbons`
+    /// takes its `spans < 2` exit on the first frame of every trail and the
+    /// mesh reaches the allocator exactly as [`empty_strip`] built it. An
+    /// empty mesh there produces two `Use-after-free` lines per trail; see
+    /// [`crate::render::nothing`].
     ///
     /// The `COLOR` count is asserted beside the vertex count because it is
     /// written here rather than by the shared writer, and `count_vertices`
-    /// silently takes the *shortest* attribute array.
+    /// silently uses the shortest attribute array.
     #[test]
     fn a_new_trail_never_hands_bevy_an_empty_mesh() {
         let mesh = empty_strip();
@@ -593,10 +597,9 @@ mod tests {
         );
     }
 
-    /// The trap the whole module is arranged around: a keyed height authored
-    /// from zero. `peak_height` is what the spawn filter asks, because
-    /// `values[0]` would reject exactly the ribbons whose width is the
-    /// animated part.
+    /// A keyed height authored from zero (see the module doc). The spawn
+    /// filter checks `peak_height`, because `values[0]` would reject exactly
+    /// the ribbons whose width is animated.
     #[test]
     fn a_slash_authored_from_zero_still_has_a_peak() {
         let mut def = ribbon_def();

@@ -29,8 +29,8 @@ use super::*;
 /// multidraw the batch sets collapse from one per material (~1,239 in a loaded
 /// town) to roughly one per pipeline variant. That also removes most of the
 /// per-frame binned-phase rebuild (`write_binned_instance_buffers`,
-/// `prepare_preprocess_bind_groups`), which the trace named as the cause of
-/// the CPU-bound frame. On a machine without bindless support the `BINDLESS`
+/// `prepare_preprocess_bind_groups`), which a frame profile named as the cause
+/// of the CPU-bound frame. On a machine without bindless support the `BINDLESS`
 /// shader def is absent and the derive falls back to plain per-material bind
 /// groups, with the same behaviour as the non-bindless material.
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
@@ -42,23 +42,22 @@ pub struct M2Material {
     #[texture(1)]
     #[sampler(2)]
     pub texture: Handle<Image>,
-    /// The environment-map layers folded onto this batch, and the reason they
-    /// are here rather than drawn separately — see
-    /// [`vale_assets::world::m2::overlay_layers`].
+    /// The first environment-map layer folded onto this batch. The rule for
+    /// which layers are folded is [`vale_assets::world::m2::overlay_layers`].
     ///
     /// Nearly every piece of armour and every weapon in the game is a base
     /// batch plus one or two blended layers over the same triangles, not
     /// writing depth, drawn straight after it. Drawn separately, each layer is
     /// an item in the sorted phase, and a sorted item is a draw call at about
     /// 18 µs on this machine: four worn models on a geared character came to
-    /// 173 of the ~195 draw calls forty players added. Folded, they are two
-    /// more texture fetches in a fragment that was already running.
+    /// 173 of the ~195 draw calls forty players added. Folded, each layer is one
+    /// more texture fetch in the base batch's fragment.
     ///
     /// `params.overlay.x` and `.y` are the blend modes, zero meaning "no
-    /// layer". A slot with no layer still holds a handle — the base's own —
-    /// because a binding cannot be empty. That costs nothing: bevy's bindless
-    /// allocator ref-counts resources by id, so every unlayered material in a
-    /// slab shares the one slot its base texture already occupies.
+    /// layer". A slot with no layer still holds a handle, the base's own,
+    /// because a binding cannot be empty. Bevy's bindless allocator ref-counts
+    /// resources by id, so every unlayered material in a slab shares the slot
+    /// its base texture already occupies, and the extra handle costs no slot.
     #[texture(3)]
     #[sampler(4)]
     pub overlay_a: Handle<Image>,
@@ -84,13 +83,79 @@ pub struct M2Material {
     /// 5875 does not sway foliage. See `wind.wgsl`, which carries the
     /// measurement.
     pub wind: bool,
+    /// The texture-matrix table: [`UV_TABLE`] on every material.
+    ///
+    /// A batch whose texture moves reads its matrix from row
+    /// `uv_row0.w - 2` of this image rather than from its own params, so that
+    /// [`follow_uv_animations`] updates one shared image per frame instead of
+    /// rewriting each moving material. A material rewrite makes the render world
+    /// rebuild that material's bind group and re-specialize every mesh using it;
+    /// an image rewrite with an unchanged size is a texture upload into the same
+    /// GPU texture, so no bind group changes.
+    ///
+    /// Every material names the same image, and bevy's bindless allocator
+    /// deduplicates resources by id, so the table takes one slot per slab.
+    #[texture(7)]
+    pub uv_table: Handle<Image>,
+}
+
+/// The shared texture-matrix table every [`M2Material`] binds; see
+/// [`M2Material::uv_table`]. Inserted by [`insert_uv_table`] and written by
+/// [`follow_uv_animations`].
+pub const UV_TABLE: Handle<Image> = bevy::asset::uuid_handle!("7d3c9a52-1f6e-4b8a-9c0d-5e2f81a4b6c3");
+
+/// How many moving batches the table holds at once. A batch registered while
+/// every row is taken keeps its matrix in its own params instead, and
+/// [`follow_uv_animations`] rewrites that material on each frame the matrix
+/// changes.
+pub const UV_TABLE_ROWS: u32 = 1024;
+
+/// Texels per row: one per matrix element, `a, b, tx, c, d, ty`, and two unused.
+const UV_TABLE_WIDTH: u32 = 8;
+
+/// `uv_row0.w` for a batch whose matrix is in row 0 of [`UV_TABLE`]; row `n`
+/// is this plus `n`. The values below it are 0, no matrix, and 1, a matrix held
+/// in `uv_row0` and `uv_row1` themselves.
+pub const UV_TABLE_BASE: f32 = 2.0;
+
+/// The table as an image: `Rgba8Unorm`, each texel holding the four bytes of
+/// one `f32`, least significant byte in red. The shader reads a texel with
+/// `textureLoad` and reassembles the bits. The round trip is exact, because an
+/// 8-bit unorm channel converts to `k / 255` and back to `k` without loss. A
+/// float format would need `FLOAT32_FILTERABLE` to sit in bevy's filterable
+/// bindless texture array; this format needs no feature.
+///
+/// The image is kept in both the main and the render world, because
+/// [`follow_uv_animations`] rewrites it in the main world.
+pub fn uv_table_image() -> Image {
+    Image::new(
+        bevy::render::render_resource::Extent3d {
+            width: UV_TABLE_WIDTH,
+            height: UV_TABLE_ROWS,
+            depth_or_array_layers: 1,
+        },
+        bevy::render::render_resource::TextureDimension::D2,
+        vec![0u8; (UV_TABLE_WIDTH * UV_TABLE_ROWS * 4) as usize],
+        bevy::render::render_resource::TextureFormat::Rgba8Unorm,
+        bevy::asset::RenderAssetUsages::MAIN_WORLD | bevy::asset::RenderAssetUsages::RENDER_WORLD,
+    )
+}
+
+/// Put [`UV_TABLE`] into `Assets<Image>` at startup. A material whose table
+/// image is missing fails `AsBindGroup` and waits, so this runs before any
+/// material can be prepared.
+pub fn insert_uv_table(mut images: ResMut<Assets<Image>>) {
+    // An id-addressed insert fails only on a stale generation, which a UUID
+    // id does not have.
+    let _ = images.insert(UV_TABLE.id(), uv_table_image());
 }
 
 /// A batch that states no texture matrix: leave the UV alone.
 ///
-/// The `w` of the first row is the switch, and it has to be a switch rather
-/// than the identity matrix — a zero-initialised pair would map every UV in the
-/// world to one texel.
+/// The `w` of the first row selects whether a matrix applies (see
+/// [`M2Params::uv_row0`]). A selector is used rather than storing the identity
+/// matrix because a zero-initialised pair, read as a matrix, would map every UV
+/// in the world to one texel.
 pub const UV_STILL: (Vec4, Vec4) = (Vec4::ZERO, Vec4::ZERO);
 
 #[derive(Clone, Copy, ShaderType)]
@@ -104,13 +169,14 @@ pub struct M2Params {
     pub ambient: Vec4,
     pub alpha_cutoff: f32,
     pub unlit: f32,
-    /// Light this batch from its vertex colours plus [`Self::ambient`] instead of
-    /// from the outdoor sun. 1.0 or 0.0; see the note in `m2.wgsl` for why a
-    /// room lit by the sun is lit through its own roof.
+    /// Which lighting law this batch takes: 0.0 the outdoor sun, 1.0 its vertex
+    /// colours plus [`Self::ambient`], 2.0 those vertex colours faded per vertex
+    /// toward the sun (a WMO transition batch). See the note in `m2.wgsl` for
+    /// why a room lit by the sun is lit through its own roof.
     pub vertex_lit: f32,
     /// This batch is an `MLIQ` surface, so its colour and its alpha come from
-    /// the two fields below rather than from the texel. 1.0 or 0.0. This was the
-    /// `_pad` the struct needed anyway to reach its 16-byte alignment.
+    /// the two fields below rather than from the texel. 1.0 or 0.0. It occupies
+    /// the slot the struct needs as padding for its 16-byte alignment.
     pub liquid: f32,
     /// The liquid's near colour with its shallow opacity in `w`, and its far
     /// colour with the deep opacity in `w`, taken from
@@ -118,34 +184,48 @@ pub struct M2Params {
     ///
     /// Both are here because the texture has neither. `lake_a` peaks at
     /// channel 41 of 255 across the whole image and `ocean_h` at 82, greyscale;
-    /// they are foam masks, and the colour of water in this game is a property of
-    /// the zone and the hour, not of the water. Zero on every other batch, where
+    /// they are foam masks. The colour of water is a property of the zone and
+    /// the hour, not of the liquid texture. Zero on every other batch, where
     /// `liquid` is 0 and nothing reads them.
     pub liquid_close: Vec4,
     pub liquid_far: Vec4,
     /// The batch's texture matrix, as the 2x3 affine `M2TextureTransform`
     /// resolves to: `x`, `y`, `z` of the first are `a`, `b`, `tx` and of the
-    /// second are `c`, `d`, `ty`, so `u' = a*u + b*v + tx`. `w` of the first is
-    /// the switch — 0 leaves the UV alone, which is every batch in the world
-    /// but the two dozen that state one.
+    /// second are `c`, `d`, `ty`, so `u' = a*u + b*v + tx`.
     ///
-    /// It is in the material rather than in a `MeshTag`, unlike the animated
-    /// colour beside it, because there is only one tag and the tint already
-    /// uses it, and because the value is shared more widely than a tint: a
-    /// scroll on a global sequence is the same number for every instance of the
-    /// model at a given moment. The cost is that the batches carrying one are
-    /// not interned (see [`Materials::moving`]): they are mutated in place every
-    /// frame, and a pooled handle that mutates would change some other batch's
-    /// picture.
+    /// `w` of the first says where the matrix is:
+    ///
+    /// * 0: no matrix; the UV is left alone. This is every batch in the world
+    ///   but the two dozen that state one.
+    /// * 1: the matrix is in `uv_row0` and `uv_row1`. Used by a moving batch
+    ///   registered while [`UV_TABLE`] was full.
+    /// * [`UV_TABLE_BASE`] + `n`: the matrix is in row `n` of [`UV_TABLE`], and
+    ///   the other seven components are zero. The shader replaces both rows
+    ///   with the table's values before applying them.
+    ///
+    /// The matrix is per material rather than in a `MeshTag`, unlike the
+    /// animated colour beside it, because there is only one tag and the tint
+    /// already uses it, and because the value is shared more widely than a
+    /// tint: a scroll on a global sequence is the same number for every
+    /// instance of the model at a given moment. The batches carrying one are
+    /// not interned (see [`Materials::moving`]), because each owns its table
+    /// row, or in the table-full case is rewritten in place, and a pooled
+    /// handle would give another batch its matrix.
     pub uv_row0: Vec4,
     pub uv_row1: Vec4,
     /// `.x`: 0 for everything that is not a particle quad, 1 for one, 2 for an
-    /// additive one, which fogs toward black rather than toward the air —
-    /// the client's own per-blend fog policy. The
-    /// particle branch multiplies the texel by the quad's own over-life colour
-    /// in byte space; see `m2.wgsl`. `.yzw` unused — the struct's size is the
-    /// bindless stride, so growing it is a coordinated change with
-    /// `m2_prepass.wgsl` and space is claimed a vec4 at a time.
+    /// additive one, which fogs toward black rather than toward the air, as
+    /// the 1.12.1 client fogs additive blends. The particle branch multiplies
+    /// the texel by the quad's own over-life colour in byte space; see
+    /// `m2.wgsl`.
+    ///
+    /// `.y` is 1 when the batch's `MeshTag` carries an animated colour, `.z` is
+    /// the mouseover highlight lift ([`Materials::with_highlight`]), and `.w` is
+    /// an aura's model colour packed as `0xRRGGBB + 1`
+    /// ([`Materials::with_model_tint`]); `m2.wgsl` describes each. They share
+    /// one `vec4` because the struct's size is the bindless stride, so growing
+    /// it is a coordinated change with `m2_prepass.wgsl` and space is claimed a
+    /// `vec4` at a time.
     pub particle: Vec4,
     /// How opaque this batch's body is drawn, and the blend mode it had before
     /// it was made translucent.
@@ -166,15 +246,14 @@ pub struct M2Params {
     /// and blend mode zero is `Opaque`, the mode almost every batch of a
     /// character's body is in. When the mode itself was stored, an opaque batch
     /// stashed `0.0`, the restore's `> 0.0` test read that as "never forced",
-    /// and the batch stayed in mode 2 for the rest of its life: drawn in the
-    /// transparent phase, which does not write depth and is sorted per batch, so
-    /// a character that had been a ghost or stealthed came back with their limbs
-    /// drawing through and behind each other. See [`Materials::with_opacity`]
-    /// and [`M2Params::stashed_blend`].
+    /// and the batch stayed in mode 2: drawn in the transparent phase, which
+    /// does not write depth and is sorted per batch, so a character that had
+    /// been a ghost or stealthed drew its limbs through and behind each other.
+    /// See [`Materials::with_opacity`] and [`M2Params::stashed_blend`].
     ///
-    /// `.zw` unused. See [`Materials::with_opacity`], and see
-    /// `crate::world::entities::tint`, which is the only writer and which states
-    /// that the rule is this client's own and only the flag is measured.
+    /// `.zw` unused. `crate::world::entities::tint` is the only writer; it
+    /// states that the opacity rule is this client's own and that only the
+    /// flag is measured.
     pub body: Vec4,
     /// The two folded environment-map layers' blend modes, `.x` then `.y`,
     /// as the file's own `M2Material::blending_mode` — 2 alpha, 3 additive, 4
@@ -223,11 +302,12 @@ impl M2Params {
 ///
 /// Free functions as well as the two methods above so that the rule can be
 /// tested without an `M2Params`, which has no meaningful zero value (see
-/// [`UV_STILL`]: a zeroed material is a wrong material, not a blank one).
+/// [`UV_STILL`]: a zeroed material is not a neutral one).
 ///
-/// The plus one fixes a reported bug. Zero has to mean "nothing is stashed",
-/// and blend mode zero is `Opaque` — the mode nearly every batch of a
-/// character's body is in.
+/// The offset of one exists because zero has to mean "nothing is stashed",
+/// and blend mode zero is `Opaque`, the mode nearly every batch of a
+/// character's body is in. Without it an opaque batch's stash read as no stash
+/// and the batch was never restored.
 fn stash_blend(blend: u16) -> f32 {
     f32::from(blend) + 1.0
 }
@@ -240,10 +320,9 @@ fn stashed_blend(y: f32) -> Option<u16> {
 
 /// How many of a model's own lights the shader carries.
 ///
-/// Four, because that is how many every one of the game's glue scenes states —
-/// `vale glue` counts 23 over 13 models and the busiest has four. A model
-/// stating more would have the rest dropped, which is a documented loss rather
-/// than a wrong picture; nothing in 1.12 does.
+/// Four, because no glue scene in the game states more: `vale glue` counts 23
+/// over 13 models and the busiest has four. A model stating more would have
+/// the rest dropped; no model in 1.12 does.
 pub const MAX_SCENE_LAMPS: usize = 4;
 
 /// The lighting a model states for itself, resolved into what the shader
@@ -259,7 +338,7 @@ pub const MAX_SCENE_LAMPS: usize = 4;
 ///
 /// These values are in the material rather than in the view bindings. The sun
 /// and the fill are in Bevy's own light uniform because they belong to the
-/// view — one sun, every surface. These belong to the model, they are point
+/// view: one sun for every surface. These belong to the model, they are point
 /// lights, and `m2.wgsl` has no clustered path to read them through. In the
 /// material, the pool interns two otherwise-identical batches separately when
 /// their scenes differ, which is correct, and the world pays nothing because
@@ -288,10 +367,10 @@ impl SceneLighting {
     /// stands.
     ///
     /// Every light's ambient is summed into [`Self::ambient`] and each one
-    /// that throws something becomes a lamp; every glue scene has one entry that
+    /// that casts light (`M2Light::is_lamp`) becomes a lamp; every glue scene has one entry that
     /// is only a fill and two to three that are only lamps. A model stating more
-    /// than [`MAX_SCENE_LAMPS`] lamps keeps the first four, which is a documented
-    /// loss and one nothing in 1.12 reaches.
+    /// than [`MAX_SCENE_LAMPS`] lamps keeps the first four; no model in 1.12
+    /// states more.
     ///
     /// `place` maps a point light's position; a directional one's aim comes
     /// off the light itself and needs no mapping but the axis change, which is
@@ -331,8 +410,8 @@ impl SceneLighting {
             return SceneLighting::NONE;
         }
         // A model whose only statement is a fill still has to select the scene
-        // branch, and the shader picks on `w`. Half a lamp is the smallest thing above the
-        // `> 0.5` test and rounds to zero lamps in the loop.
+        // branch, and the shader picks on `w`. 0.6 passes the `> 0.5` test and
+        // truncates to zero lamps in the loop.
         scene.ambient.w = scene.ambient.w.max(0.6);
         scene
     }
@@ -476,8 +555,8 @@ impl MaterialPool {
     /// little of it the GPU has to be told about separately.
     ///
     /// Counts the keys, dead ones included, which is why [`Self::prune`] runs
-    /// on the residency sweep: the number on the HUD is the one the report
-    /// "the material count only ever goes up" would be read off.
+    /// on the residency sweep: without it the HUD figure would only ever rise,
+    /// and a leak of materials could not be told from dead keys.
     pub fn distinct(&self) -> usize {
         self.by_key.len()
     }
@@ -495,7 +574,8 @@ impl MaterialPool {
     }
 }
 
-/// A material's identity: every field of [`M2Material`], hashably.
+/// A material's identity: every field of [`M2Material`] except the shared
+/// [`M2Material::uv_table`], in a hashable form.
 ///
 /// The floats go in by their bits rather than by value because that is the only
 /// total equality a float has, and it is the correct one here, since these
@@ -540,6 +620,8 @@ impl MaterialKey {
             two_sided,
             no_depth_write,
             wind,
+            // The same handle on every material, so not part of its identity.
+            uv_table: _,
         } = material;
         let M2Params {
             ambient,
@@ -628,44 +710,93 @@ impl MaterialKey {
 /// The batches whose texture is on a moving matrix, and the matrix that moves
 /// it.
 ///
-/// This is a registry rather than a per-instance channel. That is a deviation,
-/// so the trade is stated here. A texture matrix changes
-/// every frame, so it cannot be an interned material, but the one per-instance
-/// word a batch has (`MeshTag`) already carries the animated colour, and the
+/// This is a registry rather than a per-instance channel, which is a
+/// deviation from per-instance animation. A texture matrix changes every
+/// frame, so it cannot be an interned material, but the one per-instance word
+/// a batch has (`MeshTag`) already carries the animated colour, and the
 /// animated colour is what makes an effect fade out, which matters more. So
-/// the matrix lives in the material and the material is owned by this list,
-/// mutated in place once a frame.
+/// the matrix is kept per material: each registered material owns one row of
+/// [`UV_TABLE`], and [`follow_uv_animations`] writes the rows once a frame.
 ///
-/// The cost: two instances of one model at different points in their own
-/// animation share a phase. It is exact for a global-sequence scroll, which is
-/// free-running wall-clock and the same number for every instance anyway. The
-/// population it is inexact for is small and short-lived: `vale model`
+/// The consequence is that two instances of one model at different points in
+/// their own animation share a phase. It is exact for a global-sequence
+/// scroll, which runs on wall-clock time and is the same number for every
+/// instance. It is inexact for a small, short-lived population: `vale model`
 /// counts 24 batches over 10 spell-effect models in the whole game, all of
 /// them one-shot bursts. Two arcane explosions overlapping within the same
-/// 800 ms would swirl in step.
-#[derive(Resource, Default)]
+/// 800 ms swirl in step.
+#[derive(Resource)]
 pub struct UvAnimations {
     entries: Vec<UvAnimated>,
+    /// The main-world copy of [`UV_TABLE`]'s bytes, compared against before a
+    /// row is written so that the image is re-uploaded only on a frame where
+    /// some matrix changed.
+    table: Vec<u8>,
+    /// Rows released by entries whose material was dropped.
+    free_rows: Vec<u32>,
+    /// The first row never handed out.
+    next_row: u32,
+}
+
+impl Default for UvAnimations {
+    fn default() -> Self {
+        UvAnimations {
+            entries: Vec::new(),
+            table: vec![0u8; (UV_TABLE_WIDTH * UV_TABLE_ROWS * 4) as usize],
+            free_rows: Vec::new(),
+            next_row: 0,
+        }
+    }
 }
 
 struct UvAnimated {
     /// An id, not a handle, for the reason [`MaterialPool`] holds one: a
     /// strong handle here would keep every moving-texture material ever built
-    /// alive. This list is walked and written to every frame, so a dead entry
-    /// costs per-frame work as well as memory. The dressing that asked for the
-    /// material keeps it alive; when the dressing is dropped,
-    /// [`follow_uv_animations`] drops the entry on its next pass.
+    /// alive. This list is walked every frame, so a dead entry costs per-frame
+    /// work as well as memory. The dressing that asked for the material keeps
+    /// it alive; when the dressing is dropped, [`follow_uv_animations`] drops
+    /// the entry and frees its row on its next pass.
     material: AssetId<M2Material>,
     anims: Arc<vale_assets::world::m2::M2TextureAnims>,
     index: u16,
     /// The model's sequence-0 window, which is the clock a non-global track
     /// runs on — the same clip the emitters and the trails use.
     clip: Option<crate::render::particles::ParticleClip>,
+    /// The row of [`UV_TABLE`] this material reads, or `None` when the table
+    /// was full at registration and the matrix is written into the material.
+    row: Option<u32>,
 }
 
 impl UvAnimations {
-    /// How many batches in the world have a moving texture — for the HUD and
-    /// for the check that the plumbing reaches the shader at all.
+    /// Take a free row of [`UV_TABLE`], or `None` when all are in use.
+    fn take_row(&mut self) -> Option<u32> {
+        if let Some(row) = self.free_rows.pop() {
+            return Some(row);
+        }
+        (self.next_row < UV_TABLE_ROWS).then(|| {
+            self.next_row += 1;
+            self.next_row - 1
+        })
+    }
+
+    /// Write one matrix into row `row` of the table copy. Answers whether any
+    /// byte changed.
+    fn write_row(table: &mut [u8], row: u32, m: &vale_assets::world::m2::UvMatrix) -> bool {
+        let start = (row * UV_TABLE_WIDTH * 4) as usize;
+        let mut bytes = [0u8; 24];
+        for (chunk, value) in bytes.chunks_exact_mut(4).zip(m.iter()) {
+            chunk.copy_from_slice(&value.to_le_bytes());
+        }
+        let slot = &mut table[start..start + 24];
+        if *slot == bytes {
+            return false;
+        }
+        slot.copy_from_slice(&bytes);
+        true
+    }
+
+    /// How many batches in the world have a moving texture. A test reads it to
+    /// check that a model's texture animation is registered at all.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -674,72 +805,61 @@ impl UvAnimations {
         self.entries.is_empty()
     }
 
-    /// Is this material one of the ones rewritten every frame?
+    /// Whether this material has a registered texture matrix.
     ///
-    /// Asked by anything that wants to copy a material and hand the copy to
-    /// the same batch — [`crate::render::selection`]'s highlight is the one
-    /// caller. A moving material is not pooled ([`Materials::moving`] says
-    /// why), so interning a copy of one both breaks the sharing rule and stops
-    /// the texture scrolling. Such a batch is left unchanged.
+    /// Checked by the [`Materials`] methods that copy a material and hand the
+    /// copy to the same batch ([`Materials::with_highlight`], used by
+    /// [`crate::render::selection`], and the tint and opacity methods beside
+    /// it). A moving material is not pooled ([`Materials::moving`] says why).
+    /// An interned copy of one would name the original's table row without
+    /// owning it, and would read another batch's matrix once the original is
+    /// dropped and the row reused. Such a batch is left unchanged.
     pub fn is_moving(&self, material: AssetId<M2Material>) -> bool {
         self.entries.iter().any(|entry| entry.material == material)
     }
 }
 
-/// Write this frame's matrix into every batch that states one, and forget the
-/// ones whose material nothing holds any more.
+/// Write this frame's matrix for every registered batch, and forget the ones
+/// whose material nothing holds any more.
 ///
-/// It is cheap because the list is short: two dozen entries, and a `get_mut`
-/// on an asset is what tells the render world to re-upload that one material.
+/// A batch with a row writes its matrix into the table copy, and the image is
+/// updated once, only on a frame where some row changed. That is one texture
+/// upload into the existing GPU texture; no material changes, so no bind group
+/// is rebuilt and no mesh is re-specialized. Every entry is evaluated whether
+/// or not its batch is on screen: a matrix is a few track samples, and there
+/// are about two dozen entries.
+///
+/// A batch without a row (registered while the table was full) has its matrix
+/// written into its own params, with `uv_row0.w` set to 1, which is a
+/// material re-upload. The write is skipped when the matrix is unchanged,
+/// because a re-upload happens whether or not a value moved, and in bevy 0.19
+/// a re-upload of a material whose textures another material in the same
+/// bindless slab also holds permanently costs a slab resource. See
+/// `water::LiquidFlipbook::anchor`.
 ///
 /// The forgetting happens here rather than on the residency sweep because
-/// this pass already walks the list, and the test is the same lookup it has
-/// to make anyway: a material `Assets` no longer holds is a dressing that has
-/// been evicted, and an entry for one is a `get_mut` that misses sixty times a
-/// second forever.
-///
-/// Only the materials a camera saw are written. A `get_mut` is a re-upload,
-/// not only a write: the render world rebuilds the changed material's bind
-/// group and re-specializes its meshes, and Tracy priced the steady stream of
-/// them at most of `prepare_material_bind_groups`' ~0.76 ms/frame while nearly
-/// every animated batch in the loaded tiles was off screen. Skipping a hidden
-/// batch is exact, not approximate: the matrix is a pure function of
-/// wall-clock time (`now_ms` below), so the frame a batch comes back into view
-/// it takes the same matrix it would have carried anyway. The visibility read
-/// is last frame's, which is the same one-frame staleness the particle rebuild
-/// gate accepts — a mesh entering the frustum scrolls from its second visible
-/// frame.
+/// this pass already walks the list: a material `Assets` no longer holds is a
+/// dressing that has been evicted, and its row is released for reuse.
 pub fn follow_uv_animations(
     time: Res<Time>,
     mut registry: ResMut<UvAnimations>,
     mut assets: ResMut<Assets<M2Material>>,
-    meshes: Query<(
-        &MeshMaterial3d<M2Material>,
-        &bevy::camera::visibility::ViewVisibility,
-    )>,
+    // Optional so that headless test apps without an image store can run the
+    // pass; the rows are still computed.
+    images: Option<ResMut<Assets<Image>>>,
 ) {
     if registry.entries.is_empty() {
         return;
     }
-    // Which of the animated materials something visible wears. The scan is
-    // over every M2 mesh in the world, but it is two fetches and a probe of a
-    // set a couple of dozen long — an order of magnitude under the bind-group
-    // rebuilds it prunes.
-    let animated: std::collections::HashSet<AssetId<M2Material>> =
-        registry.entries.iter().map(|entry| entry.material).collect();
-    let mut seen: std::collections::HashSet<AssetId<M2Material>> = std::collections::HashSet::new();
-    for (material, visibility) in &meshes {
-        if visibility.get() && animated.contains(&material.id()) {
-            seen.insert(material.id());
-        }
-    }
     let now_ms = (time.elapsed_secs_f64() * 1000.0) as u32;
-    registry.entries.retain(|entry| {
-        if !seen.contains(&entry.material) {
-            // Off screen: keep the entry, skip the re-upload. The eviction
-            // test still has to run — without it an evicted dressing's entry
-            // would outlive it for as long as it stayed unseen.
-            return assets.contains(entry.material);
+    let UvAnimations { entries, table, free_rows, .. } = &mut *registry;
+    let mut changed = false;
+    entries.retain(|entry| {
+        if !assets.contains(entry.material) {
+            if let Some(row) = entry.row {
+                free_rows.push(row);
+            }
+            return false;
         }
         // The clip clock, the emitters' own rule: wrapped for a looping
         // sequence, held at its end for a one-shot.
@@ -750,27 +870,18 @@ pub fn follow_uv_animations(
         let span = end.saturating_sub(start).max(1);
         let t = start + now_ms % span;
         let m = entry.anims.matrix(entry.index, t, start, end, now_ms);
+        if let Some(row) = entry.row {
+            changed |= UvAnimations::write_row(table, row, &m);
+            return true;
+        }
         let row0 = Vec4::new(m[0], m[1], m[2], 1.0);
         let row1 = Vec4::new(m[3], m[4], m[5], 0.0);
-        // Read before the write, which is also `water::dress`'s rule, for a
-        // second reason as well. A `get_mut` is the re-upload whether or not
-        // anything moved, and a re-upload of a material whose textures another
-        // material in the same bindless slab also holds permanently costs a
-        // slab resource in bevy 0.19. See `water::LiquidFlipbook::anchor`.
-        //
-        // This skips every track that is not moving: a single-key texture
-        // animation, a global sequence standing still, and any batch whose clip
-        // has run out. Those are a majority of the registry in an ordinary
-        // scene, and without the read each of them is a bind-group rebuild
-        // sixty times a second for a matrix that did not change.
         match assets.get(entry.material) {
             Some(current)
                 if current.params.uv_row0 == row0 && current.params.uv_row1 == row1 =>
             {
                 return true
             }
-            // Nothing holds this material any more: the dressing that asked
-            // for it has been evicted, so the entry goes with it.
             None => return false,
             Some(_) => {}
         }
@@ -781,14 +892,25 @@ pub fn follow_uv_animations(
         material.params.uv_row1 = row1;
         true
     });
+    if changed {
+        if let Some(mut images) = images {
+            if let Some(mut image) = images.get_mut(&UV_TABLE) {
+                if let Some(data) = image.data.as_mut() {
+                    data.copy_from_slice(table);
+                }
+            }
+        }
+    }
 }
 
-/// The material store and its pool, as one system parameter.
+/// The material store, its pool and the texture-matrix registry, as one system
+/// parameter.
 ///
-/// Bundled because they are only correct together: adding to the store
-/// without recording the handle is the bug this type makes unrepresentable.
-/// The renderer had that bug when `materials.add` was reachable from four call
-/// sites, none of which could deduplicate.
+/// Bundled because they are only correct together: a material added to the
+/// store without its handle being recorded in the pool is never shared, and
+/// this type allows no such path. The renderer had that bug when
+/// `materials.add` was reachable from four call sites, none of which could
+/// deduplicate.
 #[derive(SystemParam)]
 pub struct Materials<'w> {
     assets: ResMut<'w, Assets<M2Material>>,
@@ -846,8 +968,8 @@ impl Materials<'_> {
     /// It answers `None` in three cases: the handle no longer resolves (a
     /// dressing rebuilt between the walk and here), the lift is already what was
     /// asked for (the common case by far, once a frame per lit part), or the
-    /// material is one of the two dozen rewritten every frame — see
-    /// [`UvAnimations::is_moving`], where the reason is.
+    /// material is one of the two dozen with a moving texture matrix; see
+    /// [`UvAnimations::is_moving`] for the reason.
     ///
     /// It lives here rather than in the caller because the pool's invariant is
     /// this file's: a copy handed back into circulation has to go through
@@ -877,9 +999,9 @@ impl Materials<'_> {
     /// and rewrites one field, so a stone-formed dwarf under the pointer is one
     /// material carrying both values, and neither system overwrites the other.
     ///
-    /// The colour is packed as `0xRRGGBB + 1` — see the note on `.w` in
-    /// `m2.wgsl`, where the offset is explained: `Glowy (Black)` states a
-    /// colour of zero and it has to be tellable from no colour at all.
+    /// The colour is packed as `0xRRGGBB + 1`. The offset exists because
+    /// `Glowy (Black)` states a colour of zero, which has to be distinguishable
+    /// from no colour; see the note on `.w` in `m2.wgsl`.
     pub fn with_model_tint(
         &mut self,
         handle: &Handle<M2Material>,
@@ -951,27 +1073,36 @@ impl Materials<'_> {
         Some(self.intern(copy))
     }
 
-    /// A handle nobody else will ever be handed, registered to be rewritten
-    /// every frame from `anims[index]`.
+    /// A handle nobody else will ever be handed, registered to have its matrix
+    /// written every frame from `anims[index]`.
+    ///
+    /// The material is given its own row of [`UV_TABLE`], recorded in
+    /// `uv_row0.w`, and [`follow_uv_animations`] writes that row. When every
+    /// row is taken it keeps the matrix in its own params instead.
     ///
     /// Not pooled. The pool exists so that two batches meaning the same thing
-    /// share a handle and therefore a batch set; a handle whose contents are
-    /// rewritten every frame must not be shared, or the other batch's picture
-    /// changes with it. The cost is one extra material per batch — two dozen in
-    /// the whole game.
+    /// share a handle and therefore a batch set; this material's row is its own,
+    /// and a pooled handle would give another batch its matrix. The cost is one
+    /// extra material per batch, two dozen in the whole game.
     pub fn moving(
         &mut self,
-        material: M2Material,
+        mut material: M2Material,
         anims: Arc<vale_assets::world::m2::M2TextureAnims>,
         index: u16,
         clip: Option<crate::render::particles::ParticleClip>,
     ) -> Handle<M2Material> {
+        let row = self.uv.take_row();
+        if let Some(row) = row {
+            material.params.uv_row0 = Vec4::new(0.0, 0.0, 0.0, UV_TABLE_BASE + row as f32);
+            material.params.uv_row1 = Vec4::ZERO;
+        }
         let handle = self.assets.add(material);
         self.uv.entries.push(UvAnimated {
             material: handle.id(),
             anims,
             index,
             clip,
+            row,
         });
         handle
     }
@@ -1016,11 +1147,11 @@ impl Material for M2Material {
 
     /// Which render phase a batch lands in.
     ///
-    /// Mode 1 is a `discard`, not a blend — the shader does the test itself, and
-    /// saying `Mask` here is what keeps a cut-out leaf in the opaque phase where
-    /// it belongs instead of being sorted with the smoke. Everything from 2 up
-    /// is genuinely translucent and has to be drawn back to front, whatever
-    /// blend factors [`Self::specialize`] then gives it.
+    /// Mode 1 is a `discard`, not a blend: the shader does the test itself, and
+    /// returning `Mask` keeps a cut-out leaf in the opaque phase instead of
+    /// sorting it with the smoke. Every mode from 2 up is translucent and has
+    /// to be drawn back to front, whatever blend factors [`Self::specialize`]
+    /// then gives it.
     fn alpha_mode(&self) -> AlphaMode {
         match self.blend {
             0 => AlphaMode::Opaque,
@@ -1082,16 +1213,16 @@ impl Material for M2Material {
             }
         }
 
-        // Material flag 0x04, and it is set on most of the world's greenery: a
-        // leaf is one alpha-cut quad and culling half of it leaves the tree
-        // half there depending on where you stand.
+        // Material flag 0x04, set on most of the world's greenery. A leaf is
+        // one alpha-cut quad, so culling its back face hides half the tree from
+        // any given viewpoint.
         if material.two_sided {
             descriptor.primitive.cull_mode = None;
         }
 
-        // Blended geometry is already depth-write-free — Bevy's transparent
-        // phase sees to that — but an opaque batch can carry flag 0x10 too,
-        // and a billboard that writes depth occludes whatever is behind its own
+        // Bevy's transparent phase already draws blended geometry without
+        // depth writes, but an opaque batch can carry flag 0x10 too, and a
+        // billboard that writes depth occludes whatever is behind its own
         // invisible corners.
         if material.no_depth_write {
             if let Some(depth) = descriptor.depth_stencil.as_mut() {
@@ -1112,12 +1243,11 @@ mod tests {
     ///
     /// The stash is a float in a uniform and the restore is a `> 0.0` test, so
     /// when the mode itself was stored, "was mode 0" and "was never forced" were
-    /// the same value — and mode 0 is `Opaque`, which is nearly every batch of a
-    /// character's body. That was the reported bug: a character who had been a
-    /// ghost or stealthed came back with every opaque batch still in mode 2,
-    /// drawn in the transparent phase, which writes no depth and sorts per
-    /// batch, so their limbs drew through and behind one another for the rest
-    /// of the session.
+    /// the same value, and mode 0 is `Opaque`, which is nearly every batch of a
+    /// character's body. The result was a reported bug: a character who had
+    /// been a ghost or stealthed came back with every opaque batch still in
+    /// mode 2, drawn in the transparent phase, which writes no depth and sorts
+    /// per batch, so their limbs drew through and behind one another.
     ///
     /// Tested on the params rather than through `Materials`, which needs a
     /// world and an asset server; the pair below is the entire rule.
@@ -1132,12 +1262,11 @@ mod tests {
         for mode in [0u16, 1] {
             assert_eq!(stashed_blend(stash_blend(mode)), Some(mode), "mode {mode}");
         }
-        // The case that was the bug: a stashed `Opaque` must not be the same
-        // value as no stash at all. Written as the mode itself it was, the
-        // `> 0.0` restore read it as "never forced", and
-        // every opaque batch of a body that had been a ghost or stealthed
-        // stayed in mode 2 — transparent phase, no depth write, sorted per
-        // batch — for the rest of its life.
+        // A stashed `Opaque` must not be the same value as no stash at all.
+        // Stored as the mode itself it was, the `> 0.0` restore read it as
+        // "never forced", and every opaque batch of a body that had been a
+        // ghost or stealthed stayed in mode 2: transparent phase, no depth
+        // write, sorted per batch.
         assert_ne!(stash_blend(0), M2Params::NO_STASH);
     }
 
