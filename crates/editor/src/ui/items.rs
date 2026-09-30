@@ -1241,10 +1241,29 @@ fn plate(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
         },
         home: None,
     };
-    let mut tip = vale_client::interface::api::item_tip(&info, None, tables.as_deref(), &context);
+    let wearer = vale_client::interface::api::Wearer::none();
+    let mut tip =
+        vale_client::interface::api::item_tip(&info, None, tables.as_deref(), &context, &wearer);
+    // No character is looking at the preview, so every requirement is drawn
+    // as met rather than in red.
     tip.level_met = true;
     tip.race_allowed = true;
     tip.class_allowed = true;
+    tip.subclass_usable = true;
+    tip.already_known = false;
+    for met in [
+        tip.race_class_only.as_mut().map(|(_, met)| met),
+        tip.skill.as_mut().map(|(_, _, met)| met),
+        tip.required_spell.as_mut().map(|(_, met)| met),
+        tip.honor_rank.as_mut().map(|(_, met)| met),
+        tip.city_rank.as_mut().map(|(_, met)| met),
+        tip.reputation.as_mut().map(|(_, _, met)| met),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        *met = true;
+    }
     let strings = work.assets.strings();
     let lines =
         vale_client::interface::plate::item_plate(&tip, &|key| strings.get(key).map(str::to_string));
