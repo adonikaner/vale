@@ -1,4 +1,4 @@
-//! **The C functions `TaxiFrame.lua` calls** — twelve reads and three writes.
+//! The C functions `TaxiFrame.lua` calls: twelve reads and three writes.
 //!
 //! ```text
 //! NumTaxiNodes()               how many buttons the frame needs
@@ -12,40 +12,42 @@
 //! TaxiNodeSetCurrent(i)  TakeTaxiNode(i)  CloseTaxiMap()  UnitOnTaxi(unit)
 //! ```
 //!
-//! The split every panel keeps: the frame is `Interface\FrameXML\TaxiFrame.xml`,
-//! the layout and the routing are [`vale_assets::tables::taxi`], the window is
-//! [`crate::interface::taxi`], and this file is registration and arguments.
+//! The files are split as in every panel: the frame is
+//! `Interface\FrameXML\TaxiFrame.xml`, the layout and the routing are
+//! [`vale_assets::tables::taxi`], the window is [`crate::interface::taxi`], and
+//! this file registers the functions and converts their arguments.
 //!
-//! ## Every index is one-based and the *hop* index is too
+//! ## Node and hop indices are one-based
 //!
 //! `TaxiFrame_OnEvent` loops `for index = 1, num_nodes` and
 //! `TaxiNodeOnButtonEnter` loops `for i = 1, NUM_TAXI_ROUTES` passing that `i`
 //! as the second argument. Both are decremented on the way in, so a zero is
-//! out of range at both ends
-//! rather than meaning "the first".
+//! out of range at both ends rather than meaning "the first".
 //!
-//! ## The four position reads answer a **number** for a bad index, not nil
+//! ## The four position reads answer a number for a bad index, not nil
 //!
 //! `TaxiNodeOnButtonEnter` multiplies each of them by the map's width before it
-//! looks at anything, so a nil is `attempt to perform arithmetic on a nil value`
-//! inside an `OnEnter` — which kills the tooltip for every node on the map. The
-//! reference answers `0.0`, and so does this.
+//! checks anything, so a nil raises `attempt to perform arithmetic on a nil
+//! value` inside an `OnEnter`, and that error stops the tooltip for every node
+//! on the map. The 1.12.1 client answers `0.0`, and so does this.
 //!
-//! ## `SetTaxiMap` is a write onto a region, and the only one in this family
+//! ## `SetTaxiMap` writes to a region
 //!
-//! It takes the `<Texture>` and paints `Interface\TaxiFrame\TAXIMAP<map>.blp`
-//! onto it — so it is shaped like [`super::super::api::portrait`]'s `SetPortraitTexture`
-//! rather than like a read, and it is registered in the *scoped* half because
-//! the map id it needs is the open window's.
+//! It is the only function in this family that writes to a region. It takes the
+//! `<Texture>` and paints `Interface\TaxiFrame\TAXIMAP<map>.blp` onto it, so it
+//! works like [`super::super::api::portrait`]'s `SetPortraitTexture` rather
+//! than like a read. It is registered in the scoped half because it needs the
+//! map id of the open window.
 
 use super::super::api::Answers;
 
-/// **The reads this module registers**, for the count that measures the gap.
+/// The reads this module registers, for the check that counts the C functions
+/// the interface calls and this client does not register.
 ///
-/// `SetTaxiMap` is in this list and it is a write — the same exception
-/// [`super::trainer::READS`] makes for `SelectTrainerService`, and for a
-/// related reason: it needs the world at the moment of the call, so it cannot
-/// be recorded and drained a system later.
+/// `SetTaxiMap` is in this list although it is a write. [`super::trainer::READS`]
+/// makes the same exception for `SelectTrainerService`, for a related reason:
+/// the function needs the world at the moment of the call, so it cannot be
+/// recorded and drained by a later system.
 pub const READS: [&str; 12] = [
     "GetNumRoutes",
     "NumTaxiNodes",
@@ -103,8 +105,8 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     globals.set(
         "TaxiNodeGetType",
         scope.create_function(move |_, n: Option<i64>| {
-            // **`"NONE"` for a row that does not exist**, which is what the
-            // frame hides a button for — and the only answer that keeps
+            // `"NONE"` for a row that does not exist. The frame hides a button
+            // of that type, and it is the only answer that keeps
             // `TaxiButtonTypes[type].file` from indexing nil.
             Ok(line(n).map_or("NONE", |row| row.kind))
         })?,
@@ -138,10 +140,10 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
             })?,
         )?;
     }
-    // **Not about the window at all** — see [`TaxiAnswers::unit_on_taxi`]. It
-    // is here rather than among the unit reads because its subject is this
-    // one, and `UIParent.lua` asks it about the player while no map is open:
-    // being on a flight is what suppresses the "you cannot do that now"
+    // `UnitOnTaxi` does not read the window; see [`TaxiAnswers::unit_on_taxi`].
+    // It is registered here rather than among the unit reads because its
+    // subject is flight. `UIParent.lua` asks it about the player while no map
+    // is open: being on a flight suppresses the "you cannot do that now"
     // dialogs on the escape menu.
     globals.set(
         "UnitOnTaxi",
@@ -151,15 +153,15 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
             ))
         })?,
     )?;
-    // **The one write in the scoped half.** `TaxiFrame_OnEvent` calls it before
-    // it places any button, so a window whose art this does not paint draws its
-    // nodes over the frame's own bare paper.
+    // The only write in the scoped half. `TaxiFrame_OnEvent` calls it before
+    // it places any button; if it paints no art, the window draws its nodes
+    // over the frame's own blank paper.
     globals.set(
         "SetTaxiMap",
         scope.create_function(move |lua, target: mlua::Value| {
             // A region or its name, the same two shapes `SetPortraitTexture`
-            // takes — and neither is an error, because this runs inside an
-            // `OnEvent`.
+            // takes. Anything else is ignored rather than raised as an error,
+            // because this runs inside an `OnEvent`.
             let region = match target {
                 mlua::Value::Table(region) => Some(region),
                 mlua::Value::String(name) => lua.globals().get(name.to_string_lossy())?,
@@ -168,7 +170,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
             let (Some(region), Some(art)) = (region, answers.taxi_map_art()) else {
                 return Ok(());
             };
-            super::super::widgets::regions::set_texture_path(&region, Some(&art))
+            super::super::widgets::regions::set_texture_path(lua, &region, Some(&art))
         })?,
     )?;
     Ok(())
@@ -195,12 +197,12 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
     }
     let index = |n: Option<i64>| usize::try_from(n?).ok().filter(|i| *i > 0);
     push!("TakeTaxiNode", Option<i64>, |n| index(n).map(P::Take));
-    // **`TaxiNodeSetCurrent` records and changes nothing observable**, which is
-    // not a stub: the client rebuilds the line list of the node it names, and
-    // that list is derived on demand here ([`vale_assets::tables::taxi::Board::hop`])
-    // rather than cached — so there is nothing for it to rebuild. It is kept
-    // because `TaxiNodeOnButtonEnter` calls it before it reads the lines, and a
-    // missing global there aborts the tooltip.
+    // `TaxiNodeSetCurrent` records the press and changes nothing observable.
+    // The 1.12.1 client rebuilds the route lines of the node it names; here
+    // those lines are derived on demand ([`vale_assets::tables::taxi::Board::hop`])
+    // rather than cached, so there is nothing to rebuild. The function is
+    // registered because `TaxiNodeOnButtonEnter` calls it before it reads the
+    // lines, and a missing global there aborts the tooltip.
     push!("TaxiNodeSetCurrent", Option<i64>, |n| index(n)
         .map(P::SetCurrent));
     push!("CloseTaxiMap", Option<i64>, |_a| Some(P::Close));
@@ -235,8 +237,8 @@ mod tests {
         assert_eq!(eval(&world, "return GetNumRoutes(2)"), "Integer(1)");
     }
 
-    /// **A row past the end is a number and a word, never nil** — the tooltip
-    /// and the button loop both do arithmetic on the answer.
+    /// A row past the end answers a number or a word, never nil, because the
+    /// tooltip and the button loop both do arithmetic on the answer.
     #[test]
     fn a_bad_index_answers_zero_and_none() {
         let world = Stub::default();
@@ -257,8 +259,9 @@ mod tests {
         );
     }
 
-    /// The four line ends pick the two points and the two axes apart — a
-    /// transposition here draws every route as a diagonal to the corner.
+    /// The four line-end reads answer the two points and the two axes
+    /// separately. Swapping any two of them draws every route as a diagonal
+    /// to the corner.
     #[test]
     fn the_four_line_ends_are_two_points_and_two_axes() {
         let world = Stub::default();
@@ -269,11 +272,12 @@ mod tests {
     }
 
     /// `SetTaxiMap` paints the continent's parchment onto the region it is
-    /// handed — by object or by name, like every other region write.
+    /// handed, by object or by name, like every other region write.
     ///
-    /// Its own harness rather than [`eval`], because it is the one read in this
-    /// file that needs the **object model**: `api::tests::eval` installs the
-    /// reads onto a bare state and `CreateFrame` is not one of them.
+    /// The test builds its own state rather than using [`eval`], because it is
+    /// the one read in this file that needs the object model: `api::tests::eval`
+    /// installs the reads onto a bare state, and `CreateFrame` is not one of
+    /// them.
     #[test]
     fn set_taxi_map_paints_the_continents_parchment() {
         let world = Stub::default();
@@ -311,10 +315,10 @@ mod tests {
     }
 }
 
-/// **What the interface may ask about the flight map.**
+/// What the interface may ask about the flight map.
 ///
-/// Beside its own registration, like every other subject trait in this
-/// directory — see [`super::super::api::Answers`], which is the sum of them.
+/// Defined beside its registration, like every other subject trait in this
+/// directory. [`super::super::api::Answers`] combines them all.
 pub trait TaxiAnswers {
     /// `NumTaxiNodes()` — how many buttons the frame needs.
     fn taxi_nodes(&self) -> usize;
@@ -323,9 +327,9 @@ pub trait TaxiAnswers {
     /// The endpoints of one hop of a node's route, both one-based, each in
     /// `0..1` across the map art.
     fn taxi_hop(&self, row: usize, hop: usize) -> Option<([f32; 2], [f32; 2])>;
-    /// `SetTaxiMap`'s file — `None` with no window open.
+    /// The file `SetTaxiMap` paints; `None` with no window open.
     fn taxi_map_art(&self) -> Option<String>;
-    /// `UnitOnTaxi(unit)` — is this unit in the air on a flight path?
+    /// `UnitOnTaxi(unit)`: whether this unit is flying on a flight path.
     fn unit_on_taxi(&self, token: &str) -> bool;
 }
 
@@ -355,10 +359,9 @@ impl TaxiAnswers for super::super::api::Live<'_, '_, '_> {
     }
 
     fn unit_on_taxi(&self, token: &str) -> bool {
-        // **Off the unit's own flags and not off the open window**, which is
-        // the difference that matters: a character who logged out mid-flight
-        // and back in is on a taxi and has never seen a taxi map. See
-        // [`crate::interface::taxi::on_taxi`].
+        // Read from the unit's own flags, not from the open window: a
+        // character who logged out mid-flight and back in is on a taxi and
+        // has not opened a taxi map. See [`crate::interface::taxi::on_taxi`].
         super::super::api::Live::id(token)
             .and_then(|id| self.units.get(id))
             .is_some_and(crate::interface::taxi::on_taxi)

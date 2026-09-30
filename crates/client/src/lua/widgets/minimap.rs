@@ -1,53 +1,54 @@
-//! **The `<Minimap>` widget** — the one frame kind in `Interface\FrameXML\`
-//! whose contents are the *world* rather than art, and the last of the four
-//! `vale_assets::interface::widgets::FRAME_KINDS` names that had nothing at all behind
-//! it.
+//! The `<Minimap>` widget: the one frame kind in `Interface\FrameXML\` that
+//! shows the world rather than art, and the last of the four
+//! `vale_assets::interface::widgets::FRAME_KINDS` names that had no
+//! implementation.
 //!
 //! ```text
-//! Minimap:GetZoom()          which of six                 5 calls
-//! Minimap:GetZoomLevels()    …how many there are          2
-//! Minimap:SetZoom(n)         …and the two buttons' write  2
+//! Minimap:GetZoom()          current level of six         5 calls
+//! Minimap:GetZoomLevels()    number of levels             2
+//! Minimap:SetZoom(n)         written by the two buttons   2
 //! Minimap:PingLocation(x, y) a click on the map           1
-//! Minimap:GetPingPosition()  …and where it has got to     1
+//! Minimap:GetPingPosition()  the ping's position          1
 //! ```
 //!
-//! That is the **whole** of what the directory asks of it — five methods, found
-//! by grepping all 167 files of `Interface\FrameXML\` for `Minimap:` — because
-//! everything else about the widget is the client's own. Where it looks, how far
-//! it sees and what shape it is cut to are the client's and live in
-//! [`vale_assets::tables::minimap`]; what it *draws* is `crate::ui::framexml`'s. This
-//! file holds only the state a script can read and write.
+//! Those five methods are all the directory calls on it, found by searching
+//! all 167 files of `Interface\FrameXML\` for `Minimap:`. The rest of the
+//! widget's behaviour belongs to the client. Where it looks, how far it sees
+//! and the shape it is cut to are in [`vale_assets::tables::minimap`]; what it
+//! draws is in `crate::ui::framexml`. This file holds only the state a script
+//! can read and write.
 //!
-//! ## The zoom is on the widget, not in a CVar
+//! ## The zoom is stored on the widget, not in a CVar
 //!
-//! 1.12 keeps two of them — `minimapZoom` and `minimapInsideZoom`, registered
-//! side by side — and swaps between them on whether the character
-//! is indoors. This client keeps one number on the one widget the game ever
-//! makes, and the indoor/outdoor split is applied where the *radius* is chosen
-//! ([`vale_assets::tables::minimap::radius_yards`]) rather than by holding two
-//! levels. The visible difference is that walking into a building does not
-//! restore the zoom you last used inside it, which is a preference nothing in
-//! the directory reads.
+//! The 1.12.1 client has two zoom CVars, `minimapZoom` and
+//! `minimapInsideZoom`, and uses one or the other depending on whether the
+//! character is indoors. This client keeps one number on the single minimap
+//! widget the game creates, and applies the indoor/outdoor difference where
+//! the radius is chosen ([`vale_assets::tables::minimap::radius_yards`])
+//! instead of holding two levels. The visible difference is that entering a
+//! building does not restore the zoom last used indoors; nothing in the
+//! directory reads that preference.
 //!
-//! **`MINIMAP_UPDATE_ZOOM` is deliberately not raised.** Its only handler
-//! enables and disables the two zoom buttons at the ends of the range, and
-//! `Minimap_ZoomInClick` and `Minimap_ZoomOutClick` already do exactly that
-//! themselves on the way past — so the event is the *external* zoom change's
-//! notification, and nothing in this client changes the zoom except those two
-//! buttons.
+//! `MINIMAP_UPDATE_ZOOM` is not raised. Its only handler enables and disables
+//! the two zoom buttons at the ends of the range, and `Minimap_ZoomInClick`
+//! and `Minimap_ZoomOutClick` already do that themselves. The event reports a
+//! zoom change made from outside those buttons, and nothing in this client
+//! changes the zoom except those two buttons.
 
 use vale_assets::tables::minimap::{DEFAULT_ZOOM, ZOOM_LEVELS};
 
-/// Where the zoom level lives on the widget's own table.
+/// The key of the zoom level on the widget's table.
 const ZOOM_KEY: &str = "__minimapZoom";
 
-/// …and the ping, as an offset in the widget's own units from its centre.
+/// The key of the ping, stored as an offset from the widget's centre in the
+/// widget's units.
 const PING_KEY: &str = "__minimapPing";
 
-/// **The widget methods this file registers.** Sorted, and counted by
-/// `vale framexml` as answered rather than stubbed — `GetZoom` was on
-/// [`super::super::api::stubs::METHODS`] answering a constant `0`, which is a real zoom
-/// level and therefore indistinguishable from a working one.
+/// The widget methods this file registers. Sorted, and counted by
+/// `vale framexml` as implemented rather than stubbed. `GetZoom` was
+/// previously in [`super::super::api::stubs::METHODS`] returning a constant
+/// `0`, which is a valid zoom level and so looked like a working
+/// implementation.
 pub const METHODS: [&str; 7] = [
     "GetPingPosition",
     "GetZoom",
@@ -58,28 +59,29 @@ pub const METHODS: [&str; 7] = [
     "SetZoom",
 ];
 
-/// What one minimap frame is showing, as plain data — everything the painter
+/// What one minimap frame is showing, as plain data: everything the painter
 /// needs from the widget and nothing that borrows Lua.
 ///
-/// It carries no position: where the map is centred is the *world's* answer and
-/// comes through [`crate::interface::minimap::MinimapView`], because the draw walk
-/// runs with no borrow of the world at all.
+/// It has no position. The map's centre comes from the world, through
+/// [`crate::interface::minimap::MinimapView`], because the draw walk runs
+/// without any borrow of the world.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MinimapWidget {
-    /// 0..[`ZOOM_LEVELS`) — an index into the client's own two radius tables.
+    /// 0..[`ZOOM_LEVELS`): an index into the outdoor and indoor radius tables
+    /// in [`vale_assets::tables::minimap`].
     pub zoom: usize,
 }
 
 /// Install the five methods onto the shared frame method table.
 ///
-/// Called from [`super::frames::register_methods`] **before**
-/// [`super::super::api::stubs::install_methods`], which is what lets `GetZoom` here shadow
-/// the stub rather than the other way round.
+/// Called from [`super::frames::register_methods`] before
+/// [`super::super::api::stubs::install_methods`], so that `GetZoom` here takes
+/// precedence over the stub.
 pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
-    // `SetMaskTexture(file)` and `SetBlipTexture(file)` — the round mask the
-    // map is cut by and the sheet the tracking dots come from. Recorded and
-    // read by nothing: the painter cuts the map with the game's own mask and
-    // draws no blips. A square-minimap addon sets the first on load.
+    // `SetMaskTexture(file)` and `SetBlipTexture(file)`: the round mask that
+    // shapes the map and the texture the tracking dots come from. Stored and
+    // not read: the painter shapes the map with the game's mask and draws no
+    // blips. A square-minimap addon calls `SetMaskTexture` on load.
     for (name, key) in [("SetMaskTexture", "__maskTexture"), ("SetBlipTexture", "__blipTexture")] {
         let set = lua.create_function(move |_lua, (this, file): (mlua::Table, Option<String>)| {
             this.set(key, file)
@@ -89,30 +91,30 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     let get_zoom = lua.create_function(|_, this: mlua::Table| Ok(zoom_of(&this)))?;
     methods.set("GetZoom", get_zoom)?;
 
-    // **Clamped rather than refused**, which is the client's own handling:
-    // it writes 5 over anything larger before the value ever reaches a
-    // radius table. `Minimap_ZoomInClick` relies on it — it increments first and
-    // asks whether it has reached the top afterwards.
-    let set_zoom = lua.create_function(|_, (this, zoom): (mlua::Table, Option<i64>)| {
+    // Clamped rather than rejected, as the 1.12.1 client does: a value above
+    // 5 becomes 5. `Minimap_ZoomInClick` relies on this; it increments first
+    // and checks afterwards whether it has reached the top.
+    let set_zoom = lua.create_function(|lua, (this, zoom): (mlua::Table, Option<i64>)| {
         let zoom = zoom.unwrap_or(0).clamp(0, ZOOM_LEVELS as i64 - 1);
-        this.raw_set(ZOOM_KEY, zoom)
+        super::widget::set_paint(lua, &this, ZOOM_KEY, zoom)
     })?;
     methods.set("SetZoom", set_zoom)?;
 
     let levels = lua.create_function(|_, _: mlua::MultiValue| Ok(ZOOM_LEVELS))?;
     methods.set("GetZoomLevels", levels)?;
 
-    // **The ping is held in the widget's own units and not in the world**, which
-    // is a stated deviation: 1.12 anchors it to the ground, so a ping stays over
-    // the place that was clicked while the character walks away from it, and
-    // here it stays where it was drawn. Five seconds of a cosmetic marker
-    // nothing else reads (`MINIMAP_PING` is a party member's ping and this
-    // client raises no such event), against a world borrow this method cannot
-    // take — see the module comment on where the world enters.
+    // The ping is stored in the widget's units, not in world coordinates. This
+    // differs from 1.12, which fixes the ping to the ground, so the ping stays
+    // over the clicked place while the character walks away; here it stays
+    // where it was drawn. The ping is a five-second cosmetic marker that
+    // nothing else reads (`MINIMAP_PING` is a party member's ping, and this
+    // client raises no such event), and storing it in world coordinates would
+    // need a world borrow this method cannot take; see the module comment on
+    // where the world comes in.
     //
-    // `Minimap_SetPing` multiplies what it gets by the frame's width, so the
-    // *read* is a fraction where the *write* is units. That asymmetry is the
-    // file's, not this client's.
+    // `Minimap_SetPing` multiplies the value it receives by the frame's width,
+    // so the read returns a fraction while the write takes units. That
+    // asymmetry comes from the FrameXML file, not from this client.
     let ping = lua.create_function(|_, (this, x, y): (mlua::Table, Option<f32>, Option<f32>)| {
         this.raw_set(PING_KEY, vec![x.unwrap_or(0.0), y.unwrap_or(0.0)])
     })?;
@@ -139,8 +141,9 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     Ok(())
 }
 
-/// The zoom a frame is on, defaulting to the `minimapZoom` CVar's own shipped
-/// value — see [`DEFAULT_ZOOM`], which is why a session opens at 133 yards.
+/// The frame's zoom level, defaulting to the `minimapZoom` CVar's shipped
+/// value; see [`DEFAULT_ZOOM`]. That default is why a session opens at 133
+/// yards.
 fn zoom_of(frame: &mlua::Table) -> usize {
     let held: Option<i64> = frame.raw_get(ZOOM_KEY).ok().flatten();
     held.map_or(DEFAULT_ZOOM, |zoom| {
@@ -148,13 +151,13 @@ fn zoom_of(frame: &mlua::Table) -> usize {
     })
 }
 
-/// **What a frame is showing, or `None` for a frame that is not a minimap.**
+/// What a frame is showing, or `None` for a frame that is not a minimap.
 ///
-/// The test is the widget's own kind — `CreateFrame("Minimap", …)`'s first
-/// argument, which the XML loader sets from the element name — rather than the
-/// frame's *name*, so `Minimap` being a global is a coincidence this does not
-/// depend on. There is exactly one in the game, and an addon making a second
-/// gets a second world view rather than a blank square.
+/// The test is the widget's kind (`CreateFrame("Minimap", …)`'s first
+/// argument, which the XML loader sets from the element name), not the frame's
+/// name, so this does not depend on the global `Minimap`. The game creates
+/// exactly one; an addon that creates a second gets a second world view
+/// rather than a blank square.
 pub(super) fn widget(frame: &mlua::Table) -> Option<MinimapWidget> {
     let kind: Option<String> = frame.raw_get(super::widget::KIND_KEY).ok().flatten();
     (kind.as_deref() == Some("Minimap")).then(|| MinimapWidget { zoom: zoom_of(frame) })
@@ -166,9 +169,9 @@ mod tests {
     use crate::lua::api::tests::Stub;
     use crate::lua::host::LuaHost;
 
-    /// **`Minimap_ZoomInClick`'s own body, run for real** — the four calls it
-    /// makes, including the test against `GetZoomLevels() - 1` that decides
-    /// whether the button disables itself.
+    /// Runs the calls `Minimap_ZoomInClick` makes, including the comparison
+    /// with `GetZoomLevels() - 1` that decides whether the button disables
+    /// itself.
     #[test]
     fn the_zoom_buttons_walk_the_clients_six_levels() {
         let host = LuaHost::new().expect("the interpreter starts");
@@ -198,8 +201,8 @@ mod tests {
         assert_eq!(after_out, 0, "…and so does one below the first");
     }
 
-    /// A frame that is not a `<Minimap>` is not one, however it is named — see
-    /// [`widget`].
+    /// A frame that is not a `<Minimap>` is not treated as one, whatever its
+    /// name; see [`widget`].
     #[test]
     fn only_a_minimap_frame_is_a_minimap() {
         let host = LuaHost::new().expect("the interpreter starts");

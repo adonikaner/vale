@@ -1,4 +1,4 @@
-//! **The `<ScrollFrame>`: a window onto a bigger child.**
+//! `<ScrollFrame>`: a frame that shows a scrolled view of one larger child.
 //!
 //! ```text
 //! <ScrollFrame name="QuestDetailScrollFrame" inherits="UIPanelScrollFrameTemplate">
@@ -8,39 +8,38 @@
 //! </ScrollFrame>
 //! ```
 //!
-//! ## The child's anchor is the C loader's, and forgetting it blanks six panels
+//! ## The scroll child's anchor
 //!
-//! The game's `<ScrollChild>` frames carry a `<Size>` and **no `<Anchors>`**,
-//! because the real client's `SetScrollChild` positions them: top-left to the
-//! scroll frame's top-left, moved by the scroll offset. A host that builds the
-//! child and never anchors it leaves it with no rectangle at all — and every
-//! font string inside anchors to a rect-less parent and is never painted. That
-//! was the whole of "the quest log is blank": the text was set correctly, into
-//! regions with nowhere to be. [`adopt`] is that anchor.
+//! The game's `<ScrollChild>` frames carry a `<Size>` and no `<Anchors>`,
+//! because the 1.12.1 client's `SetScrollChild` positions them: top-left to the
+//! scroll frame's top-left, moved by the scroll offset. A child that is never
+//! anchored has no rectangle, so every font string anchored inside it has a
+//! parent without a rectangle and is never painted. Without this anchor six
+//! panels, the quest log among them, draw blank even though their text is set.
+//! [`adopt`] sets the anchor.
 //!
-//! ## The scroll is an offset on that same anchor
+//! ## Scrolling is an offset on the same anchor
 //!
-//! `SetVerticalScroll(v)` moves the child **up** by `v` — the anchor's `y`
-//! becomes `+v`, since a rectangle's y grows upward — and fires
-//! `OnVerticalScroll`, whose shipped body sets the scroll bar and the two
-//! arrow buttons. The bar's own `OnValueChanged` calls `SetVerticalScroll`
-//! back; **the no-change guard here is what terminates that loop**, not a
-//! nicety.
+//! `SetVerticalScroll(v)` moves the child up by `v` (the anchor's `y` becomes
+//! `+v`, since a rectangle's y grows upward) and fires `OnVerticalScroll`,
+//! whose shipped body sets the scroll bar and the two arrow buttons. The bar's
+//! `OnValueChanged` calls `SetVerticalScroll` back. The no-change guard in
+//! `SetVerticalScroll` terminates that loop.
 //!
-//! ## …and the range is announced, because nothing else would say it
+//! ## Announcing the scroll range
 //!
-//! The reference fires `OnScrollRangeChanged` from its layout engine whenever
-//! the child's rectangle moves; this host's layout is a lazy solve with no
-//! notion of "changed", so [`sweep`] measures each scroll frame once per
-//! interface tick and fires when the answer moves. The range is measured over
-//! the child's **subtree** rather than its own declared box, because a long
-//! quest description is a font string hanging below a fixed-size child — the
-//! text overflows the frame, and the box alone would answer "nothing to
-//! scroll" over a story three screens long.
+//! The 1.12.1 client fires `OnScrollRangeChanged` whenever the child's
+//! rectangle changes. This host's layout is a lazy solve that does not record
+//! changes, so [`sweep`] measures each scroll frame once per interface tick and
+//! fires when the range changes. The range is measured over the child's
+//! subtree rather than its declared box, because a long quest description is a
+//! font string hanging below a fixed-size child: the text overflows the child,
+//! and the box alone would give a range of 0 for text three screens long.
 //!
-//! What is still absent is the **wheel** ([`super::super::api::mouse`]'s own note) and the
-//! thumb drag; the arrow buttons work, because they go through the slider's
-//! `SetValue` → `OnValueChanged` → here.
+//! Not implemented: the mouse wheel (see the note in
+//! [`super::super::api::mouse`]) and dragging the thumb. The arrow buttons work,
+//! because they go through the slider's `SetValue` → `OnValueChanged` →
+//! `SetVerticalScroll`.
 
 use crate::interface::events::EventArg;
 
@@ -50,32 +49,31 @@ use super::widget;
 pub(super) const CHILD_KEY: &str = "__scrollChild";
 /// The current vertical offset, in the interface's own units.
 pub(super) const VSCROLL_KEY: &str = "__verticalScroll";
-/// The last range [`sweep`] announced, so it only speaks when the answer moves.
+/// The last range [`sweep`] announced, so it fires only when the range changes.
 const RANGE_KEY: &str = "__scrollRange";
-/// The registry list of every scroll frame that has a child — what [`sweep`]
-/// walks, so the tick never searches the whole tree.
+/// The registry list of every scroll frame that has a child. [`sweep`] walks
+/// this list, so the tick never searches the whole tree.
 const REGISTRY: &str = "vale-scroll-frames";
 
-/// **The one child a scroll frame is a window onto**, or `None`.
+/// The scroll frame's child, or `None`.
 ///
-/// One raw read, so the draw walk can ask it of every frame it descends into —
-/// see [`super::draw::scroll_window`], which is the only caller and which is
-/// where the rule that a scroll frame clips its *child* and not its subtree is
-/// written down.
+/// One raw read, so the draw walk can call it for every frame it descends
+/// into. The only caller is [`super::draw::scroll_window`], which documents
+/// that a scroll frame clips its child and not its whole subtree.
 pub(super) fn scroll_child(frame: &mlua::Table) -> Option<mlua::Table> {
     frame.raw_get::<Option<mlua::Table>>(CHILD_KEY).ok().flatten()
 }
 
-/// **Adopt a `<ScrollChild>`**: record it, and give it the anchor the real
-/// client's `SetScrollChild` gives — top-left to top-left, at the current
-/// scroll. See the module note; this is the whole of why the quest text
-/// paints.
+/// Adopt a `<ScrollChild>`: record it, and give it the anchor the 1.12.1
+/// client's `SetScrollChild` gives, top-left to top-left at the current
+/// scroll. Without this anchor the quest text does not paint; see the module
+/// note.
 pub(in crate::lua) fn adopt(
     lua: &mlua::Lua,
     frame: &mlua::Table,
     child: &mlua::Table,
 ) -> mlua::Result<()> {
-    frame.raw_set(CHILD_KEY, child.clone())?;
+    widget::set_paint(lua, frame, CHILD_KEY, child.clone())?;
     let scroll = frame
         .raw_get::<Option<f64>>(VSCROLL_KEY)?
         .unwrap_or(0.0);
@@ -104,8 +102,8 @@ pub(in crate::lua) fn adopt(
     list.push(frame.clone())
 }
 
-/// **The methods this module answers**, for the count that measures the gap —
-/// the same bargain every sibling list here makes.
+/// The methods this module installs, listed for the count of implemented
+/// methods, as every sibling module's list is.
 pub const METHODS: [&str; 7] = [
     "GetHorizontalScrollRange",
     "GetScrollChild",
@@ -116,14 +114,14 @@ pub const METHODS: [&str; 7] = [
     "UpdateScrollChildRect",
 ];
 
-/// The methods, installed on the shared frame table beside every other
-/// widget's — see [`super::super::panels::loot::install_methods`], which states the rule.
+/// Install the methods on the shared frame table beside every other widget's.
+/// [`super::super::panels::loot::install_methods`] states the rule.
 pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
     let set_child =
         lua.create_function(|lua, (this, child): (mlua::Table, Option<mlua::Table>)| {
             match child {
                 Some(child) => adopt(lua, &this, &child),
-                None => this.raw_set(CHILD_KEY, mlua::Value::Nil),
+                None => widget::set_paint(lua, &this, CHILD_KEY, mlua::Value::Nil),
             }
         })?;
     methods.set("SetScrollChild", set_child)?;
@@ -133,8 +131,8 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     })?;
     methods.set("GetScrollChild", get_child)?;
 
-    // **The write the scroll bar's `OnValueChanged` ends in.** The no-change
-    // guard terminates the bar ↔ frame loop — see the module note.
+    // The scroll bar's `OnValueChanged` ends in this write. The no-change
+    // guard terminates the bar ↔ frame loop; see the module note.
     let set_scroll = lua.create_function(|lua, (this, value): (mlua::Table, Option<f64>)| {
         let value = value.unwrap_or(0.0).max(0.0);
         if this.raw_get::<Option<f64>>(VSCROLL_KEY)?.unwrap_or(0.0) == value {
@@ -151,8 +149,8 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
                 (0.0, value),
             )?;
         }
-        // The shipped body moves the bar and the arrows; its failure must not
-        // take the write down, on the same terms `SetValue`'s does not.
+        // The shipped body moves the bar and the arrows. An error in it does
+        // not undo the write, as an error in `SetValue`'s handler does not.
         let _ = super::frames::run_script(
             lua,
             &this,
@@ -175,8 +173,8 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     let flat = lua.create_function(|_, _: mlua::MultiValue| Ok(0.0_f64))?;
     methods.set("GetHorizontalScrollRange", flat)?;
 
-    // The reference recalculates the child's box and announces; here the
-    // announcement is the whole of it, since the solve is lazy.
+    // In the 1.12.1 client this recalculates the child's box and fires
+    // `OnScrollRangeChanged`. Here the layout solve is lazy, so it only fires.
     let update = lua.create_function(|lua, this: mlua::Table| {
         announce(lua, &this);
         Ok(())
@@ -185,34 +183,34 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     Ok(())
 }
 
-/// **Announce each scroll frame whose range moved**, once per interface tick —
-/// the stand-in for the reference's layout engine firing `OnScrollRangeChanged`
-/// on a child resize. Called from [`super::super::api::update`]'s tick.
+/// Fire `OnScrollRangeChanged` on each scroll frame whose range changed, once
+/// per interface tick. The 1.12.1 client fires it when a child is resized;
+/// this sweep stands in for that. Called from [`super::super::api::update`]'s
+/// tick.
 pub(in crate::lua) fn sweep(lua: &mlua::Lua) {
     let Ok(list) = lua.named_registry_value::<mlua::Table>(REGISTRY) else {
         return;
     };
     let frames: Vec<mlua::Table> = list.sequence_values::<mlua::Table>().flatten().collect();
     for frame in frames {
-        // **A scroll frame nobody can see is not measured.** The range is a
-        // recursive rect solve over the child's whole subtree, and the
-        // directory registers a scroll frame in nearly every panel — so the
-        // sweep was paying the quest log's and the spellbook's walks on every
-        // tick of a session that had neither open (Tracy: ~1 ms of the
-        // interface tick, most of it on hidden frames). The announcement is
-        // only deferred, not lost: the first tick after the panel shows finds
-        // the stale `RANGE_KEY` and fires — the same one-tick latency any
-        // post-`OnShow` fill already has — and the panels' own
-        // `UpdateScrollChildRect`/`FauxScrollFrame_Update` calls go through
-        // the method, not this sweep, so they are untouched.
+        // A hidden scroll frame is not measured. The range is a recursive
+        // rect solve over the child's whole subtree, and the directory
+        // registers a scroll frame in nearly every panel, so measuring hidden
+        // frames cost the quest log's and the spellbook's walks on every tick
+        // with neither open (Tracy: ~1 ms of the interface tick, most of it on
+        // hidden frames). The announcement is deferred, not lost: the first
+        // tick after the panel shows finds the stale `RANGE_KEY` and fires,
+        // the same one-tick latency any post-`OnShow` fill has. The panels'
+        // own `UpdateScrollChildRect`/`FauxScrollFrame_Update` calls go
+        // through the method, not this sweep, so they are unaffected.
         if !super::layout::visible(&frame) {
             continue;
         }
         let now = range(lua, &frame);
         let last = frame.raw_get::<Option<f64>>(RANGE_KEY).ok().flatten();
         // Half a unit of hysteresis: the solve is f64 arithmetic over anchors
-        // that re-assert per tick, and re-firing on noise would re-run the
-        // shipped body's dozen `getglobal`s thirty times a second.
+        // that are re-set every tick, and firing on rounding noise would re-run
+        // the shipped body's dozen `getglobal`s thirty times a second.
         if last.is_none_or(|last| (last - now).abs() > 0.5) {
             let _ = frame.raw_set(RANGE_KEY, now);
             announce(lua, &frame);
@@ -233,10 +231,10 @@ fn announce(lua: &mlua::Lua, frame: &mlua::Table) {
     );
 }
 
-/// **How far there is to scroll**: the content hanging below the frame's own
-/// bottom edge, measured over the child's subtree — see the module note for
-/// why the child's declared box is not enough. Scroll-independent: the current
-/// offset is added back, so the answer does not shrink as the view descends.
+/// The scroll range: the height of content below the frame's bottom edge,
+/// measured over the child's subtree (the module note gives the reason the
+/// child's declared box is not enough). The current offset is added back, so
+/// the range does not shrink as the view scrolls down.
 fn range(lua: &mlua::Lua, frame: &mlua::Table) -> f64 {
     let Some(own) = super::layout::rect(lua, frame) else {
         return 0.0;
@@ -255,8 +253,8 @@ fn range(lua: &mlua::Lua, frame: &mlua::Table) -> f64 {
     (own.bottom - bottom + scroll).max(0.0)
 }
 
-/// The lowest solved edge in a subtree, hidden branches skipped exactly as the
-/// draw walk skips them — a hidden objective line must not deepen the scroll.
+/// The lowest solved edge in a subtree. Hidden branches are skipped as the draw
+/// walk skips them, so a hidden objective line does not add to the range.
 fn lowest(lua: &mlua::Lua, object: &mlua::Table, depth: u32) -> Option<f64> {
     if depth > 8 {
         return None;
@@ -291,10 +289,9 @@ mod tests {
         lua
     }
 
-    /// **The adopted child has a rectangle and its font strings solve** — the
-    /// whole of the blank-quest-log bug: an unanchored scroll child had no
-    /// rect, so every region inside it was dropped by the layout and never
-    /// painted.
+    /// The adopted child has a rectangle, so its font strings solve. An
+    /// unanchored scroll child has no rectangle, so the layout drops every
+    /// region inside it and the quest log draws blank.
     #[test]
     fn an_adopted_scroll_child_solves_where_its_frame_is() {
         let lua = lua();
@@ -324,9 +321,9 @@ mod tests {
         assert_eq!(solved.height, 400.0, "at its own declared size");
     }
 
-    /// `SetVerticalScroll` moves the child up, answers through
-    /// `GetVerticalScroll`, and fires `OnVerticalScroll` — once per change,
-    /// which is what stops the bar ↔ frame loop recursing.
+    /// `SetVerticalScroll` moves the child up, is read back by
+    /// `GetVerticalScroll`, and fires `OnVerticalScroll` once per change. Firing
+    /// only on a change stops the bar ↔ frame loop recursing.
     #[test]
     fn scrolling_moves_the_child_and_fires_once_per_change() {
         let lua = lua();
@@ -361,9 +358,9 @@ mod tests {
         assert_eq!(lua.load("return S:GetVerticalScroll()").eval::<f64>().unwrap(), 60.0);
     }
 
-    /// The range is the content below the frame's bottom — measured over the
-    /// **subtree**, because a long description is a font string hanging below
-    /// a fixed-size child — and it does not shrink as the view scrolls down.
+    /// The range is the content below the frame's bottom, measured over the
+    /// subtree because a long description is a font string hanging below a
+    /// fixed-size child. It does not shrink as the view scrolls down.
     #[test]
     fn the_range_is_the_overflow_and_survives_scrolling() {
         let lua = lua();

@@ -281,6 +281,9 @@ pub struct LuaHost {
     /// estimate of the live set. Set from the full collection that ends each
     /// interface load, and lowered by any finished cycle that ends below it.
     live_floor: Cell<usize>,
+    /// The layout, pile and paint generations as the last walk left them, for
+    /// [`LuaHost::drawn_if_changed`]. `None` forces the next walk.
+    painted: Cell<Option<(i64, i64, i64)>>,
 }
 
 impl LuaHost {
@@ -477,6 +480,7 @@ impl LuaHost {
             settled: Cell::new(0),
             paused_below: Cell::new(0),
             live_floor: Cell::new(usize::MAX),
+            painted: Cell::new(None),
         })
     }
 
@@ -665,6 +669,8 @@ impl LuaHost {
     fn reset_collector_floor(&self) {
         self.live_floor.set(self.lua.used_memory());
         self.paused_below.set(0);
+        // A new interface: the first walk after a load always runs.
+        self.painted.set(None);
     }
 
     /// Set the screen size in the state, before anything is loaded into it.
@@ -724,6 +730,54 @@ impl LuaHost {
         // by the draw. See [`super::widgets::messages::set_now`].
         super::widgets::messages::set_now(&self.lua, now);
         super::widgets::draw::collect(&self.lua)
+    }
+
+    /// [`Self::drawn`], or `None` when the walk would return `last` unchanged.
+    ///
+    /// The walk is skipped when the layout, pile and paint generations are
+    /// where the last walk left them and that walk drew nothing that changes
+    /// with the clock alone (see `widgets::widget::mark_animating`). The screen
+    /// and the clock are written first either way, since a changed screen bumps
+    /// the layout generation.
+    ///
+    /// With `VALE_PAINT_VERIFY` set, and always in tests, a skipped walk is run
+    /// anyway and compared with `last`. A difference means some write reached a
+    /// field the walk reads without bumping a counter: it is logged once with
+    /// the first differing item (a test panics), and the fresh list is returned.
+    pub fn drawn_if_changed(
+        &self,
+        screen: (f32, f32),
+        now: f64,
+        last: &[super::widgets::draw::Item],
+    ) -> Option<Vec<super::widgets::draw::Item>> {
+        let _ = super::widgets::layout::set_screen(&self.lua, screen.0 as f64, screen.1 as f64);
+        super::widgets::messages::set_now(&self.lua, now);
+        let stamp = || {
+            (
+                super::widgets::layout::generation(&self.lua),
+                super::widgets::widget::pile_generation(&self.lua),
+                super::widgets::widget::paint_generation(&self.lua),
+            )
+        };
+        let unchanged = !super::widgets::widget::animating(&self.lua)
+            && self.painted.get() == Some(stamp());
+        if unchanged {
+            if !paint_verify() {
+                return None;
+            }
+            let fresh = super::widgets::draw::collect(&self.lua);
+            if fresh == last {
+                return None;
+            }
+            report_stale_paint(last, &fresh);
+            self.painted.set(Some(stamp()));
+            return Some(fresh);
+        }
+        let items = super::widgets::draw::collect(&self.lua);
+        // Read after the walk, which writes its own caches (the layout memo, a
+        // button's worn font) and must not force the next walk by doing so.
+        self.painted.set(Some(stamp()));
+        Some(items)
     }
 
     /// The 3D scene the glue screens are showing as their backdrop, or `None`.
@@ -3823,4 +3877,37 @@ mod tests {
         assert!(fresh.interface, "…and the same for the interface");
     }
 
+}
+
+/// Whether a skipped draw walk is run anyway and checked; see
+/// [`LuaHost::drawn_if_changed`]. Always on in tests.
+fn paint_verify() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    cfg!(test) || *ON.get_or_init(|| std::env::var_os("VALE_PAINT_VERIFY").is_some())
+}
+
+/// Report a walk that was going to be skipped but would have drawn something
+/// different: the first differing item on each side. Logged once per session;
+/// a test panics instead.
+fn report_stale_paint(
+    last: &[super::widgets::draw::Item],
+    fresh: &[super::widgets::draw::Item],
+) {
+    let at = last
+        .iter()
+        .zip(fresh)
+        .position(|(a, b)| a != b)
+        .unwrap_or(last.len().min(fresh.len()));
+    let message = format!(
+        "paint: a skipped walk would have drawn differently: {} items held, {} fresh;          first difference at {at}: held {:?}, fresh {:?}",
+        last.len(),
+        fresh.len(),
+        last.get(at),
+        fresh.get(at),
+    );
+    if cfg!(test) {
+        panic!("{message}");
+    }
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| warn!("{message}"));
 }

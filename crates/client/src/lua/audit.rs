@@ -1,132 +1,124 @@
-//! `vale-client --audit` — **load the interface and say what broke**, with no
-//! window, no server and no login.
+//! `vale-client --audit`: load the interface with no window, no server and no
+//! login, and report which Lua bodies failed and why.
 //!
-//! `vale framexml` is the *static* half of this: it counts what the files ask
-//! for against a hand-kept list of what this client registers. It cannot know
-//! what happens when the directory is actually run, and that turns out to be the
-//! number that matters — a global this client has never heard of does not fail
-//! quietly in its own corner, it **aborts the `OnLoad` it appears in**, and every
-//! line below it in that body is then not run either. So one missing name can
-//! cost a whole panel, and the census cannot tell you which.
+//! `vale framexml` is the static check: it counts what the files ask for
+//! against a hand-kept list of what this client registers. It does not run the
+//! directory. A global this client does not register aborts the `OnLoad` it
+//! appears in, and no line below it in that body runs. One missing name can
+//! therefore cost a whole panel, and the static count does not show which.
 //!
-//! This runs the real loader against the real archives with a **stub world** and
-//! prints the [`super::xml::Report`], plus the one thing the round's work order
-//! comes off: the failing names, by how many bodies each one killed.
+//! This command runs the real loader against the real archives with a stub
+//! world and prints the [`super::xml::Report`], followed by the failing names
+//! sorted by how many bodies each one aborted.
 //!
-//! It is not a test, and deliberately: the workspace's tests run with no
-//! `Data/` at all, and a test that skips itself when the archives are absent
-//! reports success for a check it did not make. This is the same bargain every
-//! `vale <check>` command makes — an instrument you run, against the files.
+//! It is not a test. The workspace's tests run with no `Data/`, and a test that
+//! skips itself when the archives are absent reports success for a check it did
+//! not make. Like every `vale <check>` command, it is run by hand against the
+//! files.
 //!
 //! ```powershell
 //! cargo run -p vale-client -- --audit
 //! ```
 //!
-//! **The stub world is the deviation to keep in mind.** [`Login`] is a level-60
-//! character with a target and a full bar and nothing else — no party, no bags,
-//! no buffs — so a body that would run fine against a real session can still
-//! fail here on something the harness does not have. A name in this report is a
-//! name the interface asked for; the count beside it is a lower bound on what it
-//! costs at a real login rather than an exact one.
+//! ## Limits of the stub world
 //!
-//! **And it cuts the other way too, which is what the last remaining failure
-//! is.** `TargetFrame_OnLoad` calls `TargetFrame_Update`, which does nothing
-//! unless `UnitExists("target")` — and this harness *has* a target where a real
-//! login has none, so it walks into `TargetDebuffButton_Update` and reaches
-//! `TargetofTargetFrame`, an element declared 427 lines further down the same
-//! XML file and therefore not built yet. The real client never runs that path at
-//! load. Giving the harness no target is not the fix: an empty world was tried
-//! and it broke `PlayerFrame_OnLoad` four lines in, which is a worse report. It
-//! is left standing, and named here, rather than papered over.
+//! [`Login`] is a level-60 character with a target and a full bar and nothing
+//! else: no party, no bags, no buffs. A body that runs against a real session
+//! can still fail here on something the harness does not have. A name in this
+//! report is a name the interface asked for; the count beside it is a lower
+//! bound on its cost at a real login.
+//!
+//! The stub can also reach paths a real login does not. `TargetFrame_OnLoad`
+//! calls `TargetFrame_Update`, which does nothing unless `UnitExists("target")`.
+//! If the harness has a target at load, where a real login has none, the call
+//! reaches `TargetDebuffButton_Update` and then `TargetofTargetFrame`, an
+//! element declared 427 lines further down the same XML file and not yet built.
+//! The 1.12.1 client does not run that path at load. An empty world is not the
+//! fix: with no units at all, `PlayerFrame_OnLoad` fails four lines in.
+//! [`SELECTED`] holds the target back until the load has finished.
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
 
-// The subject trait whose methods the doubles below call on *themselves* —
-// `Login::action_cooldown` reads `self.now()`, which is a `UnitAnswers` method,
-// and a trait's methods are only in scope when the trait is. `Answers` itself
-// is no longer imported: nothing here implements it directly any more, because
-// it is now the sum of the twelve rather than a trait with bodies.
+// Imported so the doubles below can call its methods on themselves:
+// `Login::action_cooldown` reads `self.now()`, a `UnitAnswers` method, and a
+// trait's methods are in scope only when the trait is. `Answers` is not
+// imported because nothing here implements it directly; it is the sum of the
+// twelve subject traits and has no method bodies of its own.
 use super::api::UnitAnswers;
 use super::host::LuaHost;
 
-/// How many of the bodies a missing name killed to name on its line. Enough to
-/// see the pattern (`ActionButton1`… is one template, not twelve problems)
+/// How many of the bodies a missing name aborted are listed on its line. Six
+/// shows the pattern (`ActionButton1`… is one template, not twelve problems)
 /// without a 540-entry line.
 const SHOW_BODIES: usize = 6;
 
-/// **A world with a player, a target and a full bar in it** — see the module
-/// comment.
+/// The stub world: a player, a target and a full bar. See the module comment.
 ///
-/// Not an *empty* world, and the difference turned out to matter: with nothing
-/// at any token, `UnitPowerType("player")` answers nil and
-/// `ManaBarColor[nil]` takes `PlayerFrame_OnLoad` down four lines in — which is
-/// a report about the harness rather than about the client. Everything here
-/// answers the way a level-60 character at a normal login does.
+/// It is not an empty world. With nothing at any token,
+/// `UnitPowerType("player")` answers nil and `ManaBarColor[nil]` aborts
+/// `PlayerFrame_OnLoad` four lines in, which reports on the harness rather than
+/// the client. Everything here answers the way a level-60 character at a normal
+/// login does.
 ///
-/// **`pub(super)` for [`super::manifest`]**, which needs *an* `Answers` to open
-/// a scope with so it can enumerate what that scope registers. It does not care
-/// what any of them answer — only that the functions exist — and this is the
-/// one double in the directory that is not behind `#[cfg(test)]`.
+/// `pub(super)` for [`super::manifest`], which needs an `Answers` to open a
+/// scope with so it can enumerate what that scope registers. It uses only the
+/// fact that the functions exist, not their answers. This is the one double in
+/// the directory that is not behind `#[cfg(test)]`.
 pub(super) struct Login;
 
-/// The tokens [`Login`] has something at — `target` arrives *after* the load;
-/// see [`SELECTED`].
+/// The unit tokens [`Login`] has a unit at. `target` is present only after the
+/// load; see [`SELECTED`].
 ///
-/// **The party and the pets are here because the double contradicted itself
-/// without them.** [`super::panels::party::PartyAnswers`] below answers a party
-/// of two, so `GetPartyMember(1)` said yes and `UnitExists("party1")` said no —
-/// which is not a state a session can be in, and it meant every probe walked
-/// the *hidden* branch of `PartyMemberFrame_UpdateMember` while reporting that
-/// it had checked the frame.
+/// The party and pet tokens keep the double consistent with itself.
+/// [`super::panels::party::PartyAnswers`] below answers a party of two. Without
+/// `party1` here, `GetPartyMember(1)` answered yes and `UnitExists("party1")`
+/// answered no, a state no session can be in, and every probe ran the hidden
+/// branch of `PartyMemberFrame_UpdateMember` while reporting the frame checked.
 ///
-/// `pet` and `partypet1` are the same argument one unit further out:
-/// `PetFrame_Update`'s whole body is inside `if ( UnitExists("pet") )` and
-/// `PartyMemberFrame_UpdatePet`'s show branch is inside
-/// `UnitExists("partypet"..id)`, so a double with no pet checks two `Hide`
-/// calls and nothing else. Deliberately **one** party pet rather than two: the
-/// no-pet path is a real path and `partypet2` is what keeps it covered.
+/// `pet` and `partypet1` exist for the same reason. `PetFrame_Update`'s whole
+/// body is inside `if ( UnitExists("pet") )` and `PartyMemberFrame_UpdatePet`'s
+/// show branch is inside `UnitExists("partypet"..id)`, so with no pet a probe
+/// checks two `Hide` calls and nothing else. There is one party pet, not two:
+/// `partypet2` keeps the no-pet path covered.
 ///
-/// **The party half is derived from [`PARTY`] rather than listed**, since
-/// `--party <n>` moves it: a token here that `GetPartyMember` denies is the
-/// self-contradiction this note is about, in the other direction.
+/// The party tokens are derived from [`PARTY`] in `Login::has` rather than
+/// listed here, because `--party <n>` changes the group size. A token listed
+/// here that `GetPartyMember` denies would be the same inconsistency in the
+/// other direction.
 const PRESENT: [&str; 3] = ["player", "target", "pet"];
 
-/// **Whether the harness has picked a target yet.** False while
-/// `Interface\FrameXML\` is loading and true for every probe after it, which is
-/// the order a real login happens in: nothing is selected until a person selects
-/// it, and `OnLoad` runs long before that.
+/// Whether the harness has selected a target. False while
+/// `Interface\FrameXML\` is loading and true for every probe after it. This is
+/// the order of a real login: nothing is selected until a person selects it,
+/// and `OnLoad` runs before that.
 ///
-/// It exists because the alternative was excusing a failure for ever. With a
-/// target present from the first instant, `TargetFrame_OnLoad` runs
-/// `TargetFrame_Update` for real and reaches `GetDifficultyColor` — which
-/// **`QuestLogFrame.lua` defines and the `.toc` loads eleven files later**, so
-/// the name is genuinely nil at that moment. That is Blizzard's own latent
-/// load-order bug rather than this client's (the real client reaches it only on
-/// a `/reload` with something selected, which this client has no path to), and
-/// it sat on the report as "1 failure, the harness's own" for six rounds. A
-/// permanently-excused number is one nobody reads: it has to be zero for a new
-/// one to be visible.
+/// With a target present from the start, `TargetFrame_OnLoad` runs
+/// `TargetFrame_Update` in full and reaches `GetDifficultyColor`, which
+/// `QuestLogFrame.lua` defines and the `.toc` loads eleven files later, so the
+/// name is nil at that moment. That is a load-order bug in Blizzard's FrameXML,
+/// not in this client; the 1.12.1 client reaches it only on a `/reload` with
+/// something selected, which this client has no path to. The report must show
+/// zero failures from the harness so that a new failure is visible.
 ///
-/// One boolean, set once, never cleared — deliberately not the stateful machine
-/// `--audit --panels` had to be rescued from, whose residue *accumulated*.
+/// One boolean, set once and never cleared. It keeps no other state between
+/// probes, so nothing accumulates across them.
 static SELECTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// **`PaperDollItemFrame.dbc`, read out of the real archives before the load.**
+/// `PaperDollItemFrame.dbc`, read from the real archives before the load.
 ///
-/// The one table this harness reads for itself, and it is not a shortcut: the
-/// twenty-four paper-doll buttons take their `SetID` straight from
-/// `GetInventorySlotInfo`, so a double that invented the numbers would let
-/// `--panels` walk a character sheet addressing the wrong slots and call it
-/// clean. Filled by [`run`]; empty when there are no archives, which answers
-/// nothing and is what a run with no `Data/` is.
+/// The only table this harness reads itself. The twenty-four paper-doll
+/// buttons take their `SetID` from `GetInventorySlotInfo`, so a double that
+/// invented the numbers would let `--panels` walk a character sheet addressing
+/// the wrong slots and report it clean. Filled by [`run`]. With no `Data/` it
+/// stays empty and answers nothing.
 static SLOT_TABLE: std::sync::OnceLock<vale_assets::tables::inventory::ItemTables> =
     std::sync::OnceLock::new();
 
 impl Login {
     fn has(token: &str) -> bool {
-        // `party<n>` up to the group's size, and **one** party pet — the
-        // no-pet path is a real path and `partypet2` is what keeps it covered.
+        // `party<n>` up to the group's size, and one party pet: `partypet2`
+        // keeps the no-pet path covered.
         if let Some(index) = token
             .strip_prefix("partypet")
             .and_then(|n| n.parse::<usize>().ok())
@@ -144,8 +136,8 @@ impl Login {
         SLOT_TABLE.get()
     }
 
-    /// **The two stacks in the backpack**, one with a template and one without
-    /// — see the note on `container_num_slots`.
+    /// The two stacks in the backpack, one with an item template and one
+    /// without. See the note on `container_num_slots`.
     fn stack(bag: i32, slot: usize) -> Option<(u32, u32)> {
         match (bag, slot) {
             (0, 1) => Some((2589, 20)),
@@ -154,7 +146,7 @@ impl Login {
         }
     }
 
-    /// …and one worn item, in the main hand (inventory slot 16).
+    /// The one worn item, in the main hand (inventory slot 16).
     fn equipped(token: &str, id: u32) -> Option<(u32, u32)> {
         (token == "player" && id == 16).then_some((19019, 1))
     }
@@ -177,14 +169,14 @@ impl Login {
         match entry {
             2589 => 1,
             19019 => 5,
-            // The client's own "not in the item cache" answer — see
-            // [`super::panels::container`].
+            // The 1.12.1 client's answer for an item not in the item cache;
+            // see [`super::panels::container`].
             _ => -1,
         }
     }
 
-    /// One aura of either half, with a clock on the buff and none on the
-    /// debuff — the two shapes `BuffButton_OnUpdate` branches on.
+    /// One buff or one debuff. The buff has a timer and the debuff does not;
+    /// `BuffButton_OnUpdate` branches on that difference.
     fn aura(helpful: bool) -> crate::lua::panels::auras::AuraInfo {
         crate::lua::panels::auras::AuraInfo {
             spell: if helpful { 168 } else { 980 },
@@ -203,15 +195,15 @@ impl super::panels::container::ContainerAnswers for Login {
 
     // --- the bags ---
     //
-    // **A character actually carrying something, because an empty bag is the
-    // branch that does the least.** `ContainerFrame_GenerateFrame` returns from
-    // `ToggleBag` before it draws anything when `GetContainerNumSlots` is 0, so
-    // a harness answering zero opens no bag at all and reports every one of
-    // them clean — the same trap `character_count` above is written against.
+    // The character carries items, because an empty bag runs the least code.
+    // `ToggleBag` returns before `ContainerFrame_GenerateFrame` draws anything
+    // when `GetContainerNumSlots` is 0, so a harness answering zero opens no bag
+    // and reports every bag clean. `character_count` guards against the same
+    // case for the character list.
     //
     // Sixteen backpack slots and one worn bag, with the first two slots filled:
-    // one whose template is in hand and one whose is not, so both branches of
-    // the icon and the `-1` quality are reached.
+    // one item whose template is known and one whose is not, so both branches
+    // of the icon and the `-1` quality are reached.
     fn container_num_slots(&self, bag: i32) -> usize {
         match bag {
             0 => vale_protocol::play::items::BACKPACK_SLOTS,
@@ -226,9 +218,8 @@ impl super::panels::container::ContainerAnswers for Login {
             quality: Self::quality(entry),
             readable: false,
             broken: false,
-            // **Nothing is ever on the double's cursor.** The probes drive the
-            // interface, not a person, and a locked square is a state only a
-            // drag can reach.
+            // The double's cursor never holds an item. The probes drive the
+            // interface without a person, and only a drag locks a slot.
             locked: false,
         })
     }
@@ -241,10 +232,10 @@ impl super::panels::container::ContainerAnswers for Login {
             Self::item_name(entry)?,
         ))
     }
-    /// **A live swirl on every square with something in it**, which is the
-    /// harder branch: `ContainerFrame_Update` passes the triple straight to
-    /// `CooldownFrame_SetTimer`, and a duration of zero takes the body that
-    /// *draws* the clock out of the probe's reach.
+    /// A running cooldown on every occupied slot. `ContainerFrame_Update`
+    /// passes the triple to `CooldownFrame_SetTimer`, and a duration of zero
+    /// skips the body that draws the cooldown sweep, so the probe would not
+    /// reach it.
     fn container_item_cooldown(&self, bag: i32, slot: usize) -> (f64, f64, bool) {
         match Self::stack(bag, slot) {
             Some(_) => (self.now() - 5.0, 30.0, true),
@@ -279,11 +270,11 @@ impl super::panels::container::ContainerAnswers for Login {
             Self::item_name(entry)?,
         ))
     }
-    /// **The real table**, because there is no substitute: the twenty-four
-    /// paper-doll buttons take their ids from it and a double that invented
-    /// them would make `--panels` pass over a character sheet addressing the
-    /// wrong slots. Falls back to nothing when the archives are not open, which
-    /// is what a headless run without game data is.
+    /// Answers from the real table, [`SLOT_TABLE`]. The twenty-four paper-doll
+    /// buttons take their ids from it, and a double that invented them would
+    /// let `--panels` pass a character sheet addressing the wrong slots.
+    /// Answers `None` when the archives are not open, as in a headless run
+    /// without game data.
     fn inventory_slot_info(&self, name: &str) -> Option<(u32, String, bool)> {
         let (info, relic) = Self::tables()?.slot(name)?;
         Some((info.id, info.art.clone(), relic))
@@ -306,8 +297,9 @@ impl super::panels::container::ContainerAnswers for Login {
         u32::from(Self::item_name(entry).is_some()) * 20
     }
     fn money(&self) -> u32 {
-        // Non-zero, and past a gold — `MoneyFrame_Update` hides the gold and
-        // silver labels below their thresholds, so a zero runs the least of it.
+        // Non-zero and over one gold. `MoneyFrame_Update` hides the gold and
+        // silver labels below their thresholds, so zero would run the least
+        // code.
         12_345
     }
     fn cursor_has_item(&self) -> bool {
@@ -334,9 +326,8 @@ impl super::panels::container::ContainerAnswers for Login {
         })
     }
 
-    /// **A pile of gold**, which is the only amount the probe's own letter
-    /// carries — see `MailAnswers for Login`, whose first letter holds 1234
-    /// copper.
+    /// One icon for every amount. The only coin amount the probes show is the
+    /// first letter in `MailAnswers for Login`, which holds 1234 copper.
     fn coin_icon(&self, _copper: u32) -> Option<String> {
         Some(super::panels::loot::UNKNOWN_ICON.to_string())
     }
@@ -394,9 +385,9 @@ impl super::panels::quest::QuestAnswers for Login {
             1500
         }
     }
-    /// **The probe teaches a spell**, so the "You will learn:" block is
-    /// exercised rather than skipped — it is the half of `QuestFrameItems_Update`
-    /// that shipped broken while every headless count said the panel was fine.
+    /// The probe quest teaches a spell, so the "You will learn:" block of
+    /// `QuestFrameItems_Update` runs. That block was once broken while every
+    /// headless count reported the panel clean, because no probe reached it.
     fn quest_reward_spell(&self) -> Option<super::panels::quest::RewardSpell> {
         Some(super::panels::quest::RewardSpell {
             texture: Some(super::panels::loot::UNKNOWN_ICON.to_string()),
@@ -404,17 +395,17 @@ impl super::panels::quest::QuestAnswers for Login {
             tradeskill: false,
         })
     }
-    /// …and the log's selected row does not, which is the other arm.
+    /// The quest log's selected quest teaches no spell, so the log runs the
+    /// other branch.
     fn quest_log_reward_spell(&self) -> Option<super::panels::quest::RewardSpell> {
         None
     }
     fn quest_completable(&self) -> bool {
         true
     }
-    /// **Three rows and one of them is a heading**, which is the shape the
-    /// panel actually branches on: `QuestLog_Update` reads `isHeader` before it
-    /// touches a row's colour, its tag or its watch check, and a probe log of
-    /// quests alone never enters that arm at all.
+    /// Three rows, one of them a heading. `QuestLog_Update` reads `isHeader`
+    /// before it sets a row's colour, its tag or its watch check, and a log of
+    /// quests alone never enters the heading branch.
     fn quest_log_rows(&self) -> usize {
         3
     }
@@ -424,14 +415,15 @@ impl super::panels::quest::QuestAnswers for Login {
     /// The probe's log has a fixed selection; a write is a no-op rather than
     /// a panic, which keeps `QuestLog_SetSelection` running to its end.
     fn select_log_row(&self, _row: usize) {}
-    /// …and the same for a heading: the probe's log has no headings to fold.
+    /// A no-op for the same reason: the probe's log keeps its heading
+    /// expanded.
     fn quest_set_collapsed(&self, _row: usize, _collapsed: bool) {}
-    /// **The abandon latch, and a quest with something to destroy** — which is
-    /// the branch `QuestLogFrameAbandonButton`'s `OnClick` takes when
-    /// `GetAbandonQuestItems()` answers, and the only way `--audit --clicks`
-    /// reaches `ABANDON_QUEST_WITH_ITEMS` at all. The other popup is the
-    /// `nil` branch and is reached by the probe's second quest, which has no
-    /// items.
+    /// The quest to abandon: this setter is a no-op, and the methods below
+    /// name a quest with items to destroy, so
+    /// `QuestLogFrameAbandonButton`'s `OnClick` takes the branch for a non-nil
+    /// `GetAbandonQuestItems()`; this is the only way `--audit --clicks`
+    /// reaches `ABANDON_QUEST_WITH_ITEMS`. The other popup is the `nil` branch,
+    /// reached by the probe's second quest, which has no items.
     fn quest_set_abandon(&self) {}
     fn quest_abandon_name(&self) -> Option<String> {
         Some("A Probe's Errand".to_string())
@@ -448,14 +440,14 @@ impl super::panels::quest::QuestAnswers for Login {
             "Slay 6 Kobold Vermin.".to_string(),
         )
     }
-    /// **Two shapes, because the tracker treats them differently.** Row 2 is a
-    /// counted objective and row 3 is an *exploration* one — a single `"event"`
-    /// line off the quest's `EndText`, with no counter at all.
+    /// Two kinds of objective, which the tracker treats differently. Row 2 has
+    /// a counted objective. Row 3 has an exploration objective: a single
+    /// `"event"` line taken from the quest's `EndText`, with no counter.
     ///
-    /// The second is not decoration: `QuestWatch_Update` skips any quest whose
-    /// `GetNumQuestLeaderBoards` is 0, so a client that did not count `EndText`
-    /// left every exploration quest untrackable and drew nothing for it — and
-    /// no probe could see that while the only quest here had a kill counter.
+    /// `QuestWatch_Update` skips any quest whose `GetNumQuestLeaderBoards` is
+    /// 0. A client that does not count `EndText` as an objective leaves every
+    /// exploration quest untrackable and draws nothing for it, and no probe
+    /// shows that unless one quest here is an exploration quest.
     /// See [`vale_protocol::play::quest::QuestTemplate::end_text`].
     fn quest_log_objectives(&self, row: usize) -> Vec<super::panels::quest::ObjectiveLine> {
         if row == 3 {
@@ -481,8 +473,8 @@ impl super::panels::quest::QuestAnswers for Login {
         None
     }
     fn quest_log_money(&self, required: bool) -> u32 {
-        // The probe's quest pays rather than charges, which is the arm the
-        // panel lays its reward row out from.
+        // The probe's quest pays money rather than requiring it, which is the
+        // branch the panel builds its reward row from.
         match required {
             true => 0,
             false => 1500,
@@ -491,9 +483,8 @@ impl super::panels::quest::QuestAnswers for Login {
     fn quest_log_failed(&self) -> bool {
         false
     }
-    /// **The probe's quest is timed**, so `QuestLogTimerText` and the objective
-    /// re-anchor under it are exercised rather than skipped — that whole branch
-    /// is invisible on an ordinary quest.
+    /// The probe's quest is timed, so `QuestLogTimerText` and the re-anchoring
+    /// of the objectives under it run. An untimed quest skips that branch.
     fn quest_log_time_left(&self) -> Option<u32> {
         Some(600)
     }
@@ -518,14 +509,14 @@ impl super::panels::quest::QuestAnswers for Login {
             })
     }
 
-    /// **The tracker, with both of the log's quests in it** — which is what
-    /// makes `QuestWatch_Update` walk its body instead of returning on the
-    /// first line, and is the only way `--audit --events` reaches
-    /// `QUEST_WATCH_UPDATE`'s handler at all.
+    /// The quest tracker holds both of the log's quests. With a watched quest,
+    /// `QuestWatch_Update` runs its body instead of returning on the first
+    /// line; this is the only way `--audit --events` reaches the
+    /// `QUEST_WATCH_UPDATE` handler.
     ///
-    /// **Two rather than one**, so that the exploration quest is drawn beside
-    /// the counted one: those are the two shapes a watch line can have and only
-    /// the first was ever exercised. See [`Login::quest_log_objectives`].
+    /// Two quests rather than one, so the exploration quest is drawn beside
+    /// the counted one. Those are the two kinds of watch line. See
+    /// [`Login::quest_log_objectives`].
     fn quest_watch_count(&self) -> usize {
         2
     }
@@ -544,27 +535,27 @@ impl super::panels::quest::QuestAnswers for Login {
 }
 
 impl super::panels::gossip::GossipAnswers for Login {
-    // --- what is on the body ---
+    // --- the loot window (`LootAnswers for Login`, below) ---
     //
-    // **A window with two rows and coins in it**, rather than an empty one:
-    // `LootFrame_OnShow` branches on `numLootItems == 0` and every body under
-    // it — the four button fills, the page arrows, the quality colouring — is
-    // only reached when there is something to show. A double that answers zero
-    // walks the probe straight past the panel it is meant to be exercising,
-    // which is the same lesson `unit_level`'s 42 carries above.
+    // A loot window with two rows and coins in it, not an empty one.
+    // `LootFrame_OnShow` branches on `numLootItems == 0`, and every body under
+    // it (the four button fills, the page arrows, the quality colouring) runs
+    // only when there is something to show. A double that answers zero skips
+    // the panel it is meant to exercise. `unit_level` answering 42 for other
+    // units, below, follows the same rule.
 
-    // --- quests ---
+    // --- quests (`QuestAnswers for Login`, above) ---
     //
-    // **A conversation that is up and a log with two quests in it**, not an
-    // empty pair: `QuestFrame_Update` and `QuestLog_Update` both branch on
-    // "is there anything", and a double that answers zero walks the probe past
-    // every body it exists to exercise. Same lesson as `unit_level`'s 42.
+    // An open quest dialog and a log with two quests in it, not an empty pair.
+    // `QuestFrame_Update` and `QuestLog_Update` both branch on whether there is
+    // anything to show, and a double that answers zero skips every body it
+    // exists to exercise.
 
-    // --- talking to an NPC: the same probe shop the Stub answers ---
+    // --- gossip and the merchant: the same probe shop the Stub answers ---
     //
-    // Non-empty for the reason every double here is: `GossipFrameUpdate` and
-    // `MerchantFrame_Update` both branch on "is there anything", and a zero
-    // walks the probe past the bodies it exists to exercise.
+    // Non-empty, like every double here: `GossipFrameUpdate` and
+    // `MerchantFrame_Update` both branch on whether there is anything to show,
+    // and an answer of zero skips the bodies the probe exists to exercise.
     fn gossip_text(&self) -> String {
         "Probe greeting.".to_string()
     }
@@ -600,10 +591,10 @@ impl super::panels::merchant::MerchantAnswers for Login {
         let line = self.merchant_item(row)?;
         Some(super::panels::container::item_link(2589, 1, &line.name))
     }
-    /// **One row, so the second tab has something to draw.** Zero would leave
-    /// `MerchantFrame_UpdateBuybackInfo`'s whole loop on its empty branch and
-    /// the front tab's last-sold button hidden, which is a probe that never
-    /// reaches the bodies it exists to press.
+    /// One buyback row, so the buyback tab has something to draw. Zero would
+    /// keep `MerchantFrame_UpdateBuybackInfo`'s whole loop on its empty branch
+    /// and hide the merchant tab's last-sold button, and the probe would not
+    /// reach the bodies it exists to click.
     fn buyback_rows(&self) -> usize {
         1
     }
@@ -623,11 +614,10 @@ impl super::panels::merchant::MerchantAnswers for Login {
     fn merchant_max_stack(&self, _row: usize) -> u32 {
         5
     }
-    /// **An armourer with something worth repairing**, so the merchant panel's
-    /// repair tooltip and its two cursor buttons are exercised rather than
-    /// skipped: a probe vendor that could not repair would take the
-    /// `SetTooltipMoney` branch away and report a clean run over a body nothing
-    /// entered.
+    /// A merchant that can repair, with a repair cost, so the merchant panel's
+    /// repair tooltip and its two cursor buttons run. A probe vendor that could
+    /// not repair would skip the `SetTooltipMoney` branch and report a clean
+    /// run over code that never ran.
     fn repairs(&self) -> crate::interface::merchant::Repairs {
         crate::interface::merchant::Repairs {
             can_repair: true,
@@ -645,10 +635,10 @@ thread_local! {
 }
 
 impl super::panels::tradeskill::TradeSkillAnswers for Login {
-    /// **A two-row profession**: one subclass header and one orange recipe
-    /// under it, with one reagent half-met — the smallest shape that exercises
-    /// the list's header branch, the colour lookup, the reagent grey-out and
-    /// the create button's enable.
+    /// A profession with one subclass header and orange ("optimal") recipes
+    /// under it. The first recipe has one reagent, half of which is in the
+    /// bags. This exercises the list's header branch, the colour lookup, the
+    /// reagent grey-out and the enabling of the create button.
     fn trade_line(&self) -> Option<(String, u32, u32)> {
         Some(("Blacksmithing".to_string(), 150, 300))
     }
@@ -656,9 +646,9 @@ impl super::panels::tradeskill::TradeSkillAnswers for Login {
         5
     }
     fn trade_row(&self, index: usize) -> Option<super::panels::tradeskill::TradeRow> {
-        // A header and four recipes — four rather than one because the first
-        // live session's covered-title report was about the *last* row of a
-        // four-recipe list, and a sample that cannot select a last row cannot
+        // A header and four recipes. A bug report from a live session, about
+        // the recipe title being covered, concerned the last row of a
+        // four-recipe list; a sample must have a last row to select to
         // reproduce it.
         let recipe = |name: &str| {
             Some(super::panels::tradeskill::TradeRow {
@@ -687,11 +677,11 @@ impl super::panels::tradeskill::TradeSkillAnswers for Login {
     fn trade_first(&self) -> usize {
         2
     }
-    // **The selection is real**, in a thread-local because [`Login`] is a unit
-    // struct: `TradeSkillFrame_SetSelection` writes it and the same click's
-    // `TradeSkillFrame_Update` re-reads it to place the highlight, so a fixed
-    // answer cannot reproduce any selection gesture — which is what the first
-    // covered-title report needed a probe for.
+    // The selection is stored, in a thread-local because [`Login`] is a unit
+    // struct. `TradeSkillFrame_SetSelection` writes it and the same click's
+    // `TradeSkillFrame_Update` reads it back to place the highlight, so a fixed
+    // answer cannot reproduce a change of selection. The covered-title report
+    // (see `trade_row`) needed one.
     fn trade_selection(&self) -> usize {
         TRADE_SELECTED.with(|cell| cell.get())
     }
@@ -754,7 +744,7 @@ impl super::panels::tradeskill::TradeSkillAnswers for Login {
 }
 
 impl super::panels::craft::CraftAnswers for Login {
-    /// **A one-row Enchanting window** — the flat shape the craft list has.
+    /// A one-row Enchanting window. The craft list has no headers.
     fn craft_name(&self) -> Option<String> {
         Some("Enchanting".to_string())
     }
@@ -826,11 +816,11 @@ impl super::panels::craft::CraftAnswers for Login {
 }
 
 impl super::panels::mail::MailAnswers for Login {
-    /// **A two-letter mailbox**, which is the smallest shape that exercises
-    /// both halves of `InboxFrame_Update` and both buttons on
-    /// `OpenMailFrame`: an unread letter from a player carrying coin and a
-    /// parcel (Return, a takeable body, a COD-free package) and a read one from
-    /// a creature with nothing in it (Delete, a nil sender drawing `UNKNOWN`).
+    /// A two-letter mailbox, the smallest that exercises both halves of
+    /// `InboxFrame_Update` and both buttons on `OpenMailFrame`. Letter 1 is
+    /// unread, from a player, and carries coin and a parcel (Return, a
+    /// takeable body, a package without COD). Letter 2 is read, from a
+    /// creature, and empty (Delete, a nil sender drawn as `UNKNOWN`).
     fn mail_count(&self) -> usize {
         2
     }
@@ -847,9 +837,8 @@ impl super::panels::mail::MailAnswers for Login {
                 can_reply: true,
                 ..Default::default()
             }),
-            // **A nil sender**, deliberately: `InboxFrame_Update`'s
-            // `if ( not sender )` arm is the one a wrong answer here would
-            // never reach.
+            // A nil sender, so `InboxFrame_Update`'s `if ( not sender )`
+            // branch runs.
             2 => Some(super::panels::mail::InboxRow {
                 stationery_icon: Some(super::panels::loot::UNKNOWN_ICON.to_string()),
                 subject: "Quest reward".to_string(),
@@ -946,24 +935,23 @@ impl super::panels::mail::MailAnswers for Login {
     }
 }
 
-/// **A stable with one slot bought and a pet in each of the two rows it can
-/// reach**, which is the shape that walks every branch of `PetStable_Update`
-/// the double can: an occupied current stall, an occupied bought stall, and one
-/// stall past what was paid for, which the panel disables and paints red.
-///
-/// A double answering nothing at all is the *shut-window* state — no slots, no
-/// pets, `-1` selected — and that is precisely the state the seven stubs this
-/// replaced already produced. The probes reported the file clean against it for
-/// several rounds without ever drawing a stall. See
-/// [`super::panels::stable`], whose module note is about the same trap.
 impl super::panels::trade::TradeAnswers for Login {}
 impl super::panels::summon::SummonAnswers for Login {}
 
-/// …and a bank with nothing bought, which is every default — see
+/// A bank with no bank bag slots bought, which is every default. See
 /// [`super::panels::bank`].
 impl super::panels::bank::BankAnswers for Login {}
 impl super::panels::pagetext::PageTextAnswers for Login {}
 
+/// A stable with one slot bought and a pet in each of the two rows it can
+/// reach. This runs every branch of `PetStable_Update` the double can reach:
+/// an occupied current stall, an occupied bought stall, and one stall past
+/// what was paid for, which the panel disables and colours red.
+///
+/// A double answering nothing is the closed-window state: no slots, no pets,
+/// `-1` selected. The seven stubs this replaced produced that state, and the
+/// probes reported the file clean against it without drawing a stall. See
+/// [`super::panels::stable`], whose module note covers the same case.
 impl super::panels::stable::StableAnswers for Login {
     fn stable_slots(&self) -> u32 {
         1
@@ -971,8 +959,8 @@ impl super::panels::stable::StableAnswers for Login {
     fn stable_pets(&self) -> u32 {
         2
     }
-    /// The current stall, which is what `PetStable_Update`'s `selectedPet == 0`
-    /// branch needs — the one that fills the level text and shows the model.
+    /// The current stall, so `PetStable_Update` takes its `selectedPet == 0`
+    /// branch, which fills the level text and shows the model.
     fn selected_stable_pet(&self) -> i32 {
         0
     }
@@ -987,8 +975,8 @@ impl super::panels::stable::StableAnswers for Login {
         match panel_slot {
             0 => Some(line("Bruiser", 32, "Wolf")),
             1 => Some(line("Snarl", 28, "Cat")),
-            // …and the second stall is empty, which is the `EMPTY_STABLE_SLOT`
-            // branch and the tooltip that goes with it.
+            // The second stall is empty, which runs the `EMPTY_STABLE_SLOT`
+            // branch and its tooltip.
             _ => None,
         }
     }
@@ -998,15 +986,15 @@ impl super::panels::stable::StableAnswers for Login {
             None => Vec::new(),
         }
     }
-    /// Five silver, which is `StableSlotPrices.dbc`'s own first row — and it
-    /// has to be under the double's money or `PetStablePurchaseButton` walks
-    /// the disabled branch and `--clicks` never presses it.
+    /// Five silver, the first row of `StableSlotPrices.dbc`. It must be less
+    /// than the double's money, or `PetStablePurchaseButton` takes the disabled
+    /// branch and `--clicks` never clicks it.
     fn next_stable_slot_cost(&self) -> u32 {
         500
     }
-    /// **Both shapes**, so the probes walk the display-id path as well as the
-    /// token one: stall 0 is the pet that is out and every other stall is a
-    /// creature named by display id alone. See
+    /// Both kinds of unit string, so the probes run the display-id path as well
+    /// as the unit-token path: stall 0 is the summoned pet (`"pet"`) and every
+    /// other stall is a creature named by display id alone. See
     /// [`crate::render::paperdoll::DISPLAY_ID_PREFIX`].
     fn stable_paperdoll_unit(&self) -> Option<String> {
         match self.selected_stable_pet() {
@@ -1022,10 +1010,10 @@ impl super::panels::stable::StableAnswers for Login {
 
 impl super::panels::trainer::TrainerAnswers for Login {
 
-    /// **A two-line class trainer**: one skill-line header and one green spell
-    /// under it, which is the smallest shape that exercises both branches of
-    /// `ClassTrainerFrame_Update` — the header's plus/minus texture and a
-    /// service's cost, colour and highlight.
+    /// A two-line class trainer: one skill-line header and one available
+    /// (green) spell under it. This is the smallest list that exercises both
+    /// branches of `ClassTrainerFrame_Update`: the header's plus/minus texture,
+    /// and a service's cost, colour and highlight.
     fn trainer_rows(&self) -> usize {
         2
     }
@@ -1070,7 +1058,8 @@ impl super::panels::trainer::TrainerAnswers for Login {
     fn trainer_is_talent(&self) -> bool {
         false
     }
-    /// The window's own default: available and unavailable, not used.
+    /// The trainer window's default filter: available and unavailable shown,
+    /// used hidden.
     fn trainer_type_filter(&self, word: &str) -> bool {
         word != "used"
     }
@@ -1079,11 +1068,10 @@ impl super::panels::trainer::TrainerAnswers for Login {
     }
 }
 
-/// **A two-node flight map**, which is the smallest shape that keeps
-/// `TaxiFrame` open: `DrawOneHopLines` counts the nodes whose route is exactly
-/// one hop and calls `HideUIPanel(TaxiFrame)` when that count is zero. So a
-/// probe with no reachable node measures the frame closing itself, which is
-/// correct behaviour and no test of anything.
+/// A two-node flight map, the smallest that keeps `TaxiFrame` open.
+/// `DrawOneHopLines` counts the nodes whose route is exactly one hop and calls
+/// `HideUIPanel(TaxiFrame)` when that count is zero, so with no reachable node
+/// the frame closes itself and the probe tests nothing.
 impl super::panels::taxi::TaxiAnswers for Login {
     fn taxi_nodes(&self) -> usize {
         2
@@ -1145,10 +1133,10 @@ impl super::panels::loot::LootAnswers for Login {
     }
 }
 
-/// **A roll frame with something on it**, so the probes have a
-/// `GroupLootFrame` to open, press and hover. Bind-on-pickup, which is the
-/// branch `GroupLootFrame_OnShow` swaps the whole backdrop for — the one that
-/// is otherwise never taken headlessly.
+/// A loot roll with an item on it, so the probes have a `GroupLootFrame` to
+/// open, click and hover. The item is bind-on-pickup, for which
+/// `GroupLootFrame_OnShow` replaces the whole backdrop; no other headless path
+/// takes that branch.
 impl super::panels::lootroll::LootRollAnswers for Login {
     fn loot_roll_item(&self, id: u32) -> Option<super::panels::lootroll::RollItem> {
         (id == 0).then(|| super::panels::lootroll::RollItem {
@@ -1168,17 +1156,15 @@ impl super::panels::lootroll::LootRollAnswers for Login {
 }
 
 impl super::panels::pet::PetAnswers for Login {
-    /// **A hunter's pet, so both returns are `true`** — the shape that opens
-    /// `PetFrame_SetHappiness`' body rather than its early return, which is the
-    /// branch a warlock's imp already covers by having no `HasPetUI` at all in
-    /// a real session.
+    /// A hunter's pet, so both values are `true`. `PetFrame_SetHappiness` then
+    /// runs its body rather than returning early. In a real session a
+    /// warlock's imp, which has no `HasPetUI`, covers the early return.
     fn has_pet_ui(&self) -> (bool, bool) {
         (Login::has("pet"), Login::has("pet"))
     }
-    /// …and one that may be released and named, which is what puts all four
-    /// `PET_*` entries in `UnitPopup`'s menu on the screen. A double answering
-    /// `false` would walk the branch that *removes* them and report the file
-    /// clean without ever showing one.
+    /// The pet may be abandoned and renamed, which puts all four `PET_*`
+    /// entries in `UnitPopup`'s menu. A double answering `false` would take the
+    /// branch that removes them and report the file clean without showing one.
     fn pet_can_be_abandoned(&self) -> bool {
         Login::has("pet")
     }
@@ -1190,13 +1176,13 @@ impl super::panels::pet::PetAnswers for Login {
         Login::has("pet")
     }
 
-    /// **A bar with one of each shape on it**, which is what makes the probe
-    /// walk both halves of `PetActionBar_Update`: a command token (its `name`
-    /// and `texture` are *global names* the body resolves with `getglobal`), a
-    /// reaction token, an auto-casting spell and a passive.
+    /// A pet bar with one slot of each kind, so the probe runs both halves of
+    /// `PetActionBar_Update`: a command token (its `name` and `texture` are
+    /// names of globals the body resolves with `getglobal`), a reaction token,
+    /// an auto-casting spell and a passive.
     ///
-    /// A double answering nothing would take the `if ( name )` branch that
-    /// hides every button and report the file clean without a single one drawn.
+    /// A double answering nothing would take the branch of `if ( name )` that
+    /// hides every button and report the file clean without drawing one.
     fn pet_action_info(&self, slot: usize) -> Option<crate::interface::pet::PetSlot> {
         use crate::interface::pet::PetSlot;
         if !Login::has("pet") {
@@ -1241,9 +1227,9 @@ impl super::panels::pet::PetAnswers for Login {
         }
     }
 
-    /// A plate for the two spell slots and nothing for the four tokens, which
-    /// is the live fork: `PetActionButton_OnEnter` only reaches
-    /// `SetPetAction` for a slot whose `isToken` is nil.
+    /// A tooltip for the two spell slots and none for the four tokens, which
+    /// matches the live client: `PetActionButton_OnEnter` reaches
+    /// `SetPetAction` only for a slot whose `isToken` is nil.
     fn pet_action_tooltip(&self, slot: usize) -> Option<crate::interface::api::SpellTip> {
         let info = self.pet_action_info(slot)?;
         (!info.is_token).then(|| crate::interface::api::SpellTip {
@@ -1261,10 +1247,9 @@ impl super::panels::pet::PetAnswers for Login {
         false
     }
 
-    /// **A hunter's pet, content and gaining loyalty**, which is the shape that
-    /// walks `PetFrame_SetHappiness` past its early return and into all three
-    /// of its branches — a double answering nil hides the icon and checks
-    /// nothing.
+    /// A hunter's pet, content and gaining loyalty. `PetFrame_SetHappiness`
+    /// then runs past its early return and into all three of its branches; a
+    /// double answering nil hides the icon and checks nothing.
     fn pet_happiness(&self) -> Option<(u32, f32, f32)> {
         Login::has("pet").then_some((2, 100.0, 5.0))
     }
@@ -1280,7 +1265,8 @@ impl super::panels::pet::PetAnswers for Login {
     fn pet_icon(&self) -> Option<String> {
         Login::has("pet").then(|| r"Interface\Icons\Ability_Hunter_Pet_Wolf".to_string())
     }
-    /// **Two of them**, because `BuildListString` reads differently at one.
+    /// Two food types, because `BuildListString` formats a list of one
+    /// differently.
     fn pet_food_types(&self) -> Vec<String> {
         match Login::has("pet") {
             true => vec!["Meat".to_string(), "Fish".to_string()],
@@ -1297,26 +1283,26 @@ impl super::panels::pet::PetAnswers for Login {
     }
 }
 
-/// **How many forms the double has: none during the load, three after it.**
+/// How many shapeshift forms the double has: none during the load, three
+/// after it.
 ///
-/// Three, once loaded, is a warrior's bar — enough for `ShapeshiftBar_Update`
-/// to take its `numForms > 2` branch, which is the one that shows the middle
-/// art and sizes it, and enough for `ShapeshiftBar_UpdateState` to walk a button
-/// that is pressed in and two that are not. A double answering zero throughout
-/// would take the `else` that hides the frame, and every probe would report the
-/// panel clean without a single button drawn — which is exactly what the stub
-/// this replaced did.
+/// Three is a warrior's stance bar. With more than two, `ShapeshiftBar_Update`
+/// takes its `numForms > 2` branch, which shows and sizes the middle art, and
+/// `ShapeshiftBar_UpdateState` sees one button pressed and two not. A double
+/// answering zero throughout would take the `else` that hides the frame, and
+/// every probe would report the panel clean without drawing a button; the stub
+/// this replaced did that.
 ///
-/// **Zero during the load is not a hedge, it is the state a real client is in**,
-/// and answering three there is a state it cannot be in: the forms are derived
-/// from the spellbook, and `SMSG_INITIAL_SPELLS` always lands after the
-/// directory has finished loading.
+/// Zero during the load is the state of a real client: the forms are derived
+/// from the spellbook, and `SMSG_INITIAL_SPELLS` always arrives after the
+/// directory has finished loading. Three during the load is a state the client
+/// cannot be in.
 ///
-/// The distinction is load-bearing, and the probe found it the first time this
-/// answered three unconditionally. `PetActionBarFrame.xml` is toc line 73 and
-/// `BonusActionBarFrame.xml` — which is where `ShapeshiftBarMiddle` is declared
-/// — is line 74, so during `PetActionBar_OnLoad` that global does not exist yet;
-/// and `UIParent_ManageFramePositions`' line 1720 reaches it **unguarded**:
+/// Answering three during the load makes the load fail.
+/// `PetActionBarFrame.xml` is toc line 73 and `BonusActionBarFrame.xml`, which
+/// declares `ShapeshiftBarMiddle`, is line 74, so during `PetActionBar_OnLoad`
+/// that global does not exist yet. `UIParent_ManageFramePositions` reaches it
+/// at line 1720 without a guard:
 ///
 /// ```lua
 /// if ( GetNumShapeshiftForms() > 2 ) then
@@ -1324,9 +1310,9 @@ impl super::panels::pet::PetAnswers for Login {
 /// end
 /// ```
 ///
-/// The shipped Lua would fail there in the real client too. It never does,
-/// because the character has no forms at that moment — which is the same reason
-/// this answers zero until the load is done. See [`FORMS`].
+/// The shipped Lua would fail there in the 1.12.1 client too. It does not,
+/// because the character has no forms at that moment, which is why [`FORMS`]
+/// answers zero until the load is done.
 static FORMS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 impl super::panels::shapeshift::ShapeshiftAnswers for Login {
@@ -1343,7 +1329,7 @@ impl super::panels::shapeshift::ShapeshiftAnswers for Login {
         Some(super::panels::shapeshift::ShapeshiftInfo {
             texture: r"Interface\Icons\Ability_Warrior_OffensiveStance".to_string(),
             name: (*name).to_string(),
-            // The first one, so the checked branch is walked once.
+            // The first form is active, so the checked branch runs once.
             is_active: index == 1,
             is_castable: true,
         })
@@ -1354,33 +1340,33 @@ impl super::panels::shapeshift::ShapeshiftAnswers for Login {
     }
 }
 
-/// **How many people the double is grouped with**, 0..4 — `--party <n>`.
+/// How many other players are in the double's party, 0..4. Set by
+/// `--party <n>`.
 ///
-/// **Two by default, deliberately**: `PartyMemberFrame_UpdateMember` hides a
-/// frame whose `GetPartyMember(i)` is nil and returns before every read after
-/// it, so a harness with an empty party checks the *hidden* path and nothing
-/// else. Two is enough to exercise both sides of the loop's bound, and it is
-/// what every earlier round's numbers were taken against.
+/// Two by default. `PartyMemberFrame_UpdateMember` hides a frame whose
+/// `GetPartyMember(i)` is nil and returns before every read after it, so a
+/// harness with an empty party checks only the hidden path. Two exercises both
+/// sides of the loop's bound, and earlier measurements were taken with two.
 ///
-/// It is a knob rather than a constant because a report blamed it: "a full party
-/// costs 40 fps" is a claim about the marginal cost of a party frame, and the
-/// only honest way to answer that is two runs differing in this one number —
-/// the same subtraction `--without` makes for a render pass.
+/// It is settable rather than constant so the cost of party frames can be
+/// measured. A report that "a full party costs 40 fps" is a claim about the
+/// marginal cost of a party frame, and it is measured by two runs that differ
+/// only in this number, as `--without` does for a render pass.
 static PARTY: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(2);
 
 fn party_size() -> usize {
     PARTY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// **How big a raid the double is in, us included** — `--raid <n>`, 0 for none.
+/// The size of the double's raid, including the double. Set by `--raid <n>`;
+/// 0 for no raid.
 ///
-/// A knob of its own rather than a reading off [`PARTY`], because the two
-/// screens it decides between are *both* worth probing and only one of them can
-/// be on at a time: at 0 the Raid tab draws its Convert to Raid button and
-/// `RaidGroupFrame_Update` takes its empty branch, and above 0 it fills forty
-/// buttons out of `GetRaidRosterInfo`. The interface hides every party frame
-/// while it is non-zero, which is the reference's own rule and is why this
-/// cannot simply default to a raid.
+/// It is separate from [`PARTY`] because both of the screens it selects
+/// between need probing and only one can be shown at a time. At 0 the Raid tab
+/// draws its Convert to Raid button and `RaidGroupFrame_Update` takes its empty
+/// branch; above 0 it fills forty buttons from `GetRaidRosterInfo`. The
+/// interface hides every party frame while the raid size is non-zero, as the
+/// 1.12.1 client does, so the default cannot be a raid.
 static RAID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 fn raid_size() -> usize {
@@ -1392,10 +1378,10 @@ impl super::panels::raid::RaidAnswers for Login {
         raid_size()
     }
 
-    // **A plausible raid rather than a full one**: every row is online, in a
-    // subgroup that follows from its index, and the double leads. The one row
-    // with a rank above 0 is ours, which is what `RaidFrameReadyCheckButton` and
-    // both of `UnitPopup.lua`'s rank branches are gated on.
+    // Every row is online, in a subgroup derived from its index, and the
+    // double leads. The only row with a rank above 0 is the double's own;
+    // `RaidFrameReadyCheckButton` and both of `UnitPopup.lua`'s rank branches
+    // depend on that rank.
     fn raid_roster_info(&self, index: usize) -> Option<super::panels::raid::RaidRow> {
         if index == 0 || index > raid_size() {
             return None;
@@ -1430,8 +1416,8 @@ impl super::panels::raid::RaidAnswers for Login {
 }
 
 impl super::panels::party::PartyAnswers for Login {
-    /// **True, so the probe presses the row.** The double is standing on
-    /// Kalimdor, which is not an instance — the live answer for the same place.
+    /// True, so the probe clicks the row. The double is standing on Kalimdor,
+    /// which is not an instance, and the live client answers true there.
     fn can_show_reset_instances(&self) -> bool {
         true
     }
@@ -1441,9 +1427,9 @@ impl super::panels::party::PartyAnswers for Login {
     fn party_member_exists(&self, index: usize) -> bool {
         (1..=party_size()).contains(&index)
     }
-    // …and somebody else leads, so `PartyMemberFrame_UpdateLeader`'s crown
-    // branch runs rather than its hide — except in a party of nobody, where
-    // leading is what a solo character does.
+    // Another member (`party1`) leads, so `PartyMemberFrame_UpdateLeader`
+    // shows the leader icon rather than hiding it. With no party the answer is
+    // 0: a solo character leads itself.
     fn party_leader_index(&self) -> usize {
         usize::from(party_size() > 0)
     }
@@ -1460,12 +1446,12 @@ impl super::panels::party::PartyAnswers for Login {
 
 impl super::panels::worldmap::MapAnswers for Login {
 
-    // **A world map open on a zone, which is the state a login leaves it in.**
+    // A world map open on a zone, which is the state after a login.
     //
-    // The view matters: `WorldMapFrame_Update` branches on
-    // `GetCurrentMapContinent() == 0` and `WorldMapButton_OnUpdate` branches on
-    // `GetPlayerMapPosition` being `0, 0`, so a harness sitting on the cosmic
-    // map with no player would take the *other* side of both and check nothing.
+    // `WorldMapFrame_Update` branches on `GetCurrentMapContinent() == 0` and
+    // `WorldMapButton_OnUpdate` branches on `GetPlayerMapPosition` being
+    // `0, 0`. A harness on the cosmic map with no player position would take
+    // the other side of both and check nothing.
     fn current_map_view(&self) -> vale_assets::tables::worldmap::MapView {
         vale_assets::tables::worldmap::MapView::Zone(0, 0)
     }
@@ -1489,15 +1475,16 @@ impl super::panels::worldmap::MapAnswers for Login {
             (0.0, 0.0)
         }
     }
-    // Off north, so `UpdateWorldMapArrowFrames` writes a rotation rather than
-    // clearing one — the probe's job is to run the write, not to agree with it.
+    // Not facing north, so `UpdateWorldMapArrowFrames` writes a rotation
+    // rather than clearing one. The probe runs the write; it does not check
+    // the value.
     fn player_facing(&self) -> f32 {
         std::f32::consts::FRAC_PI_2
     }
-    // **With the art**, deliberately: the `if ( fileName )` half of
-    // `WorldMapButton_OnUpdate` — five widget calls and a `Show` — is only
-    // reachable when the second answer is not nil, and a harness that answers a
-    // bare name never runs it.
+    // With the highlight art. The `if ( fileName )` half of
+    // `WorldMapButton_OnUpdate` (five widget calls and a `Show`) runs only
+    // when the second answer is not nil, and a harness that answers only a
+    // name never runs it.
     fn map_highlight(&self, _: f32, _: f32) -> Option<crate::lua::panels::worldmap::Highlight> {
         Some(crate::lua::panels::worldmap::Highlight {
             name: "Elwynn Forest".to_string(),
@@ -1514,12 +1501,11 @@ impl super::panels::worldmap::MapAnswers for Login {
             .into(),
         })
     }
-    // **Two overlays, deliberately**: `WorldMapFrame_Update`'s overlay block is
-    // the longest loop in that body — it creates textures, cuts each picture
-    // into 256-pixel pieces and anchors them — and a harness answering zero
-    // never runs a line of it. The two sizes are chosen so that one is a single
-    // piece and the other is a 2x2, which is both sides of every `mod` and
-    // `while` in the loop.
+    // Two overlays. `WorldMapFrame_Update`'s overlay block is the longest loop
+    // in that body: it creates textures, cuts each picture into 256-pixel
+    // pieces and anchors them. A harness answering zero runs none of it. One
+    // overlay is a single piece and the other is 2x2, which covers both sides
+    // of every `mod` and `while` in the loop.
     fn map_overlays(&self) -> Vec<crate::lua::panels::worldmap::OverlayArt> {
         let overlay = |texture: &str, width: u32, height: u32| crate::lua::panels::worldmap::OverlayArt {
             texture: format!(r"Interface\WorldMap\Elwynn\{texture}"),
@@ -1534,17 +1520,17 @@ impl super::panels::worldmap::MapAnswers for Login {
         ]
     }
 
-    /// **A living character**, which is the state the probes run in and the one
-    /// `WorldMapCorpse` is hidden on.
+    /// No corpse: the character is alive, which is the state the probes run in
+    /// and the one in which `WorldMapCorpse` is hidden.
     fn corpse_map_position(&self) -> (f32, f32) {
         (0.0, 0.0)
     }
 
-    /// **Two landmarks, one of each kind** — a table row and the flag a
-    /// guard's directions put up — so that `WorldMap_CreatePOI` builds a
-    /// button, `WorldMap_GetPOITextureCoords` cuts a cell, and
-    /// `WorldMapPOI_OnEnter` reaches its *second* tooltip line, which only a
-    /// row with a description does.
+    /// Two landmarks, one of each kind: an `AreaPOI.dbc` row and the flag a
+    /// guard's directions place. `WorldMap_CreatePOI` builds a button,
+    /// `WorldMap_GetPOITextureCoords` cuts a cell, and `WorldMapPOI_OnEnter`
+    /// reaches its second tooltip line, which only a row with a description
+    /// does.
     fn map_landmarks(&self) -> Vec<vale_assets::tables::areapoi::Landmark> {
         vec![
             vale_assets::tables::areapoi::Landmark {
@@ -1575,11 +1561,11 @@ impl super::panels::glue::GlueAnswers for Login {
 
     // --- the two screens before the world ---
     //
-    // **An account with characters on it, because an empty list is the branch
-    // that does the least.** `UpdateCharacterList` with `numChars == 0` disables
-    // both buttons, hides every row and returns three lines in — so a harness
-    // answering zero would report a clean character screen having run almost
-    // none of it. Two rows, one of each gender, one of them a ghost, so the two
+    // An account with characters on it, because an empty list runs the least
+    // code. `UpdateCharacterList` with `numChars == 0` disables both buttons,
+    // hides every row and returns three lines in, so a harness answering zero
+    // would report a clean character screen having run almost none of it. Two
+    // rows, one of each gender, one of them a ghost, so the two
     // `CHARACTER_SELECT_INFO` branches and both `SetBackgroundModel` paths are
     // reached.
     fn character_count(&self) -> usize {
@@ -1606,23 +1592,24 @@ impl super::panels::glue::GlueAnswers for Login {
         true
     }
     fn saved_account_name(&self) -> String {
-        // Non-empty, which is the branch that puts the focus in the *password*
-        // box — `AccountLogin_OnShow`'s own test.
+        // Non-empty, so `AccountLogin_OnShow` puts the focus in the password
+        // box.
         "test".to_string()
     }
 }
 
-/// **Two trees with eight talents between them**, which is the smallest thing
-/// that exercises the panel rather than merely filling it.
+/// Two talent trees with seven talents between them (four and three), the
+/// smallest set that exercises the talent panel's logic rather than only
+/// filling it.
 ///
 /// `TalentFrame_Update` runs all twenty `MAX_NUM_TALENTS` buttons whatever the
-/// tree holds, indexes `TALENT_BRANCH_ARRAY[tier][column]` directly, and draws a
-/// line for every prerequisite — so the double needs **two tabs** (the tab
-/// buttons hide past `numTabs`), a talent at **rank 0 and one part-spent** (the
-/// green-versus-gold rank text is a branch on `rank < maxRank`), a
-/// **second-tier** talent (the five-points-per-tier gate is Lua arithmetic over
-/// `pointsSpent`), and **one arrow** (`TalentFrame_DrawLines` is only reached
-/// through a populated prereq).
+/// tree holds, indexes `TALENT_BRANCH_ARRAY[tier][column]` directly, and draws
+/// a line for every prerequisite. The double therefore needs two tabs (the tab
+/// buttons hide past `numTabs`), a talent at rank 0 and one partly spent (the
+/// green or gold rank text is a branch on `rank < maxRank`), a second-tier
+/// talent (the five-points-per-tier gate is Lua arithmetic over
+/// `pointsSpent`), and one arrow (`TalentFrame_DrawLines` is reached only
+/// through a talent with a prerequisite).
 impl Login {
     /// `(tier, column, rank, maxRank, exceptional, prereq)` — one-based cells,
     /// as `GetTalentInfo` answers them.
@@ -1661,8 +1648,9 @@ impl super::panels::talent::TalentAnswers for Login {
             name: ["Arms", "Fury"][tab - 1].to_string(),
             texture: r"Interface\Icons\INV_Sword_27".to_string(),
             points_spent: talents.iter().map(|row| row.2).sum(),
-            // A real stem, so that the four parchment quarters the addon builds
-            // resolve against the archives when the harness is drawing.
+            // A real background name, so the four parchment quarters the
+            // addon builds from it resolve against the archives when the
+            // harness draws.
             background: ["WarriorArms", "WarriorFury"][tab - 1].to_string(),
         })
     }
@@ -1697,15 +1685,15 @@ impl super::panels::talent::TalentAnswers for Login {
             .unwrap_or_default()
     }
     fn talent_tooltip(&self, tab: usize, index: usize) -> Option<crate::interface::api::SpellTip> {
-        // The same shape [`Self::spell_tooltip`] answers — a plate with a name
-        // and nothing else, which is what the hover needs to not raise.
+        // Like [`Self::spell_tooltip`], a tooltip with a name and little else,
+        // which is enough for the hover not to raise an error.
         let (_, _, rank, max_rank, _, _) = Self::talent_row(tab, index)?;
         Some(crate::interface::api::SpellTip {
-            // **Both halves, so the probe walks the talent line.** The pair is
-            // what turns the plate's grey right-hand cell into a
-            // `TOOLTIP_TALENT_RANK` line of its own; a double answering `None`
-            // would report the hover clean while the line it exists for was
-            // never composed. See [`crate::interface::api::SpellTip::talent_rank`].
+            // Both values, so the probe builds the talent rank line. The pair
+            // turns the tooltip's grey right-hand cell into a separate
+            // `TOOLTIP_TALENT_RANK` line; a double answering `None` would
+            // report the hover clean without composing that line. See
+            // [`crate::interface::api::SpellTip::talent_rank`].
             talent_rank: Some((rank, max_rank)),
             name: format!("Talent {tab}-{index}"),
             rank: "Rank 1".to_string(),
@@ -1716,12 +1704,11 @@ impl super::panels::talent::TalentAnswers for Login {
 
 impl super::panels::spellbook::SpellbookAnswers for Login {
 
-    // **A book with two tabs and four spells on it**, which is the smallest
-    // thing that exercises the panel's arithmetic: `SpellBookFrame_Update` asks
-    // about all eight `MAX_SKILLLINE_TABS` whatever the character has, and
-    // `SpellBook_GetSpellID` adds the *second* tab's offset to a button index —
-    // so a harness with one tab at offset 0 would pass while every offset was
-    // being ignored.
+    // A spellbook with two tabs and four spells, the smallest that exercises
+    // the panel's arithmetic. `SpellBookFrame_Update` asks about all eight
+    // `MAX_SKILLLINE_TABS` whatever the character has, and
+    // `SpellBook_GetSpellID` adds the second tab's offset to a button index.
+    // A harness with one tab at offset 0 would pass with every offset ignored.
     fn num_spell_tabs(&self) -> usize {
         Self::TABS.len()
     }
@@ -1744,9 +1731,9 @@ impl super::panels::spellbook::SpellbookAnswers for Login {
         (0.0, 0.0, true)
     }
     fn spell_passive(&self, index: usize) -> bool {
-        // The last row, so the passive branch of `SpellButton_UpdateButton` —
-        // the one that blackens the border and recolours the label — is reached
-        // at least once per run.
+        // The last spell is passive, so the passive branch of
+        // `SpellButton_UpdateButton`, which blackens the border and recolours
+        // the label, runs at least once per run.
         index == Self::SPELLS.len()
     }
     fn spell_is_current_cast(&self, _: usize) -> bool {
@@ -1770,10 +1757,10 @@ impl super::panels::spellbook::SpellbookAnswers for Login {
 }
 
 impl super::panels::auras::AuraAnswers for Login {
-    // **Two auras, one of each half** — enough that the buff bar's twenty-four
-    // buttons take their populated branch and that a debuff border is coloured,
-    // which is where the `OnUpdate` bodies this harness fires actually live. A
-    // headless run with no auras exercises only the "hide" path.
+    // Two auras, one buff and one debuff, so the buff bar's twenty-four
+    // buttons take their populated branch and a debuff border is coloured.
+    // That is where the `OnUpdate` bodies this harness fires are. A headless
+    // run with no auras exercises only the hide path.
     fn player_buff(&self, index: usize, filter: &str) -> i32 {
         let harmful = filter.eq_ignore_ascii_case("HARMFUL");
         match (index, harmful) {
@@ -1797,41 +1784,37 @@ impl super::panels::auras::AuraAnswers for Login {
 }
 
 impl super::api::ActionAnswers for Login {
-    /// **Every slot a default screen can reach — all seventy-two of them**, not
-    /// the twelve this used to answer.
+    /// Every action slot a default screen can reach: all seventy-two.
     ///
-    /// Seventy-two is `NUM_ACTIONBAR_PAGES * NUM_ACTIONBAR_BUTTONS`, and the
-    /// four extra bars are four of those six pages rather than bars of their
-    /// own: `ActionButton_GetPagedID` reads a `MultiBarRight` button as page 3
-    /// and a `MultiBarBottomLeft` one as page 6. So a double that filled only
-    /// the first twelve left forty-eight buttons empty, and an empty button with
-    /// the grid off is a *hidden* button — one `--draw` does not report and
-    /// `--clicks` counts as vanished. The bars would have been shown and still
-    /// measured as nothing.
+    /// Seventy-two is `NUM_ACTIONBAR_PAGES * NUM_ACTIONBAR_BUTTONS`. The four
+    /// extra bars are four of those six pages, not separate bars:
+    /// `ActionButton_GetPagedID` reads a `MultiBarRight` button as page 3 and a
+    /// `MultiBarBottomLeft` one as page 6. A double that filled only the first
+    /// twelve slots would leave forty-eight buttons empty. An empty button with
+    /// the grid off is hidden, so `--draw` does not report it and `--clicks`
+    /// counts it as vanished; the bars would be shown and measured as empty.
     fn has_action(&self, slot: u8) -> bool {
         (1..=72).contains(&slot)
     }
-    /// No form, so the ordinary bar — which is what makes the twelve above the
-    /// twelve `ActionButton_GetPagedID` asks about.
+    /// No form, so the main bar shows page 1, and slots 1 to 12 are the ones
+    /// `ActionButton_GetPagedID` asks about for it.
     fn bonus_bar_offset(&self) -> u8 {
         0
     }
-    /// **All four extra bars on**, where a fresh account would have none.
+    /// All four extra action bars on, where a new account has none.
     ///
-    /// The double's job is to reach code, and four bits of it are what four
-    /// whole frames are behind: with them off `--draw` reports a screen with no
-    /// extra bars on it and `--events` never runs `MultiActionBar_Update`'s
-    /// showing branch at all.
+    /// These four bits control four whole frames. With them off, `--draw`
+    /// reports a screen with no extra bars and `--events` never runs
+    /// `MultiActionBar_Update`'s showing branch.
     ///
-    /// **`--clicks` is the instructive one, because it was already reaching
-    /// three of the four by accident.** The walk presses the interface options'
-    /// own checkboxes, whose `OnClick` sets `SHOW_MULTI_ACTIONBAR_n` and calls
-    /// `MultiActionBar_Update()` — so `MultiBarBottomLeft`, `MultiBarBottomRight`
-    /// and `MultiBarRight` appeared mid-sweep and 36 of their buttons were
-    /// pressed, while `MultiBarLeft` (which needs bar 3 on *as well*) never did.
-    /// A number that high off a client which could not show a single extra bar
-    /// at login is exactly the kind of accidental coverage that reads as
-    /// working.
+    /// With them off, `--clicks` still reached three of the four bars. The
+    /// walk clicks the interface options' checkboxes, whose `OnClick` sets
+    /// `SHOW_MULTI_ACTIONBAR_n` and calls `MultiActionBar_Update()`, so
+    /// `MultiBarBottomLeft`, `MultiBarBottomRight` and `MultiBarRight` appeared
+    /// during the walk and 36 of their buttons were clicked. `MultiBarLeft`,
+    /// which also needs bar 3 on, never appeared. That count came from a client
+    /// that could not show an extra bar at login, so it did not show that the
+    /// bars worked.
     fn action_bar_toggles(&self) -> u8 {
         vale_protocol::play::spells::multi_bar::ALL
     }
@@ -1849,12 +1832,13 @@ impl super::api::ActionAnswers for Login {
             reagents: Vec::new(),
         })
     }
-    // The double's bar is all spells — see the three item reads below.
+    // Every slot on the double's bar holds a spell; see the three item reads
+    // below.
     fn action_item_tooltip(&self, _: u8) -> Option<crate::interface::api::ItemTip> {
         None
     }
-    // `None`, as the real answer is for anything that is not a macro — see
-    // `interface::api::get_action_text`; the harness has no macros either.
+    // `None`, the live answer for any slot that is not a macro (see
+    // `interface::api::get_action_text`). The harness has no macros.
     fn action_text(&self, _: u8) -> Option<String> {
         None
     }
@@ -1874,30 +1858,29 @@ impl super::api::ActionAnswers for Login {
     fn is_current_action(&self, _: u8) -> bool {
         false
     }
-    /// **Deliberately false**, like the swing above it: the double is a
-    /// character standing still, and a bar that reported itself mid-volley
-    /// would leave `ActionButton_OnUpdate` flashing twelve buttons for the
-    /// whole of every probe.
+    /// False, like `is_attack_action` above: the double is a character
+    /// standing still. A bar that reported auto-repeat would leave
+    /// `ActionButton_OnUpdate` flashing twelve buttons for the whole of every
+    /// probe.
     fn is_auto_repeat_action(&self, _: u8) -> bool {
         false
     }
-    /// **The double's bar is in range of its target**, which is the answer that
-    /// exercises the most code rather than the safest one: `ActionHasRange` true
-    /// is what puts `RANGE_INDICATOR` in the hotkey at all
-    /// (`ActionButton_UpdateHotkeys`), and an in-range `1` is the branch
-    /// `ActionButton_OnUpdate` hides it on. Answering nil to the second would
-    /// take both bodies out of every probe — which is what a stub was doing, and
-    /// the reason this pair went six rounds unnoticed.
+    /// Every action has a range and its target is in range, which runs the
+    /// most code. `ActionHasRange` true puts `RANGE_INDICATOR` in the hotkey
+    /// (`ActionButton_UpdateHotkeys`), and an in-range `1` is the branch in
+    /// which `ActionButton_OnUpdate` hides it. Answering nil to the second
+    /// would skip both bodies in every probe; an earlier stub did that, and no
+    /// probe covered this pair while it did.
     fn action_has_range(&self, _: u8) -> bool {
         true
     }
     fn is_action_in_range(&self, _: u8) -> Option<bool> {
         Some(true)
     }
-    // **The double's bar is all spells**, which is what makes these three the
-    // answers a spell slot gives: no stack count under the icon, no green
-    // border round it. An item slot is exercised by `interface::items`' own tests,
-    // where an inventory can be built without a Lua state.
+    // Every slot on the double's bar holds a spell, so these three give a
+    // spell slot's answers: no stack count under the icon, no green border
+    // round it. Item slots are covered by `interface::items`' tests, where an
+    // inventory can be built without a Lua state.
     fn is_consumable_action(&self, _: u8) -> bool {
         false
     }
@@ -1907,11 +1890,10 @@ impl super::api::ActionAnswers for Login {
     fn action_count(&self, _: u8) -> u32 {
         0
     }
-    // **The spell cursor is never up in a harness run**, which is the honest
-    // answer rather than a convenience: nothing headless presses a spell, so
-    // every `if SpellIsTargeting()` in the directory takes the branch a person
-    // sees 99% of the time — and the *other* branch is exercised by the world,
-    // where the mode actually exists.
+    // The spell targeting cursor is never active in a harness run, because
+    // nothing headless casts a spell. Every `if SpellIsTargeting()` in the
+    // directory takes the branch a player sees 99% of the time. The other
+    // branch is exercised in the world, where targeting mode exists.
     fn spell_is_targeting(&self) -> bool {
         false
     }
@@ -1927,9 +1909,9 @@ impl super::api::UnitAnswers for Login {
     fn now(&self) -> f64 {
         0.0
     }
-    /// **A quarter past six in the evening**, chosen so that the probe's clock
-    /// is neither of the two values `GameTime.lua`'s `OnLoad` seeds, and so the
-    /// night half of the day/night sheet is the one selected.
+    /// 18:15. The probe's clock then differs from both values `GameTime.lua`'s
+    /// `OnLoad` seeds, and the night half of the day/night texture is
+    /// selected.
     fn game_time(&self) -> (u32, u32) {
         (18, 15)
     }
@@ -1938,12 +1920,12 @@ impl super::api::UnitAnswers for Login {
     fn bind_location(&self) -> String {
         "Goldshire".to_string()
     }
-    /// **True**, which is what keeps the box up: an innkeeper the probe never
-    /// walks away from.
+    /// True, which keeps the confirmation dialog open: the probe never moves
+    /// away from the innkeeper.
     fn binder_in_range(&self) -> bool {
         true
     }
-    /// …and the pet trainer likewise.
+    /// True for the pet trainer, for the same reason.
     fn untrainer_in_range(&self) -> bool {
         true
     }
@@ -1953,25 +1935,21 @@ impl super::api::UnitAnswers for Login {
     fn unit_name(&self, token: &str) -> Option<String> {
         Self::has(token).then(|| "Alden".to_string())
     }
-    /// **60 for the player and 42 for the target, and the two being different
-    /// is the point.**
-    ///
-    /// They were both 60 for six rounds, and that one coincidence hid a real
-    /// bug from every probe here: `TargetFrame_CheckLevel` colours the number
-    /// through `GetDifficultyColor`, whose cascade only reaches
-    /// `GetQuestGreenRange` — the name this client did not answer — when the
-    /// difference is more than two levels *down*. A target at the player's own
-    /// level takes the third branch and returns before the missing name, so the
-    /// probe walked past a call that killed the whole target frame in a real
-    /// session. A double that answers the *typical* value is not the same as one
-    /// that answers a *representative* one; 42 against 60 is the shape a player
-    /// actually looks at.
-    /// **The double is male**, and a token naming nobody still answers 2 — see
-    /// [`crate::interface::api::Units::sex`], where the client's fallback is.
+    /// The double is male, and a token naming nobody also answers 2. See
+    /// [`crate::interface::api::Units::sex`], which holds the fallback.
     fn unit_sex(&self, _token: &str) -> u32 {
         2
     }
 
+    /// 60 for the player and 42 for every other unit. The two must differ.
+    ///
+    /// When both were 60, the probes missed a bug. `TargetFrame_CheckLevel`
+    /// colours the level through `GetDifficultyColor`, which reaches
+    /// `GetQuestGreenRange` (a name this client did not register) only when
+    /// the target is more than two levels below the player. A target at the
+    /// player's own level takes the third branch and returns before the
+    /// missing name, so the probes passed a call that aborted the whole target
+    /// frame in a real session. 42 against 60 is a level gap players see.
     fn unit_level(&self, token: &str) -> i32 {
         match token {
             _ if !Self::has(token) => -1,
@@ -1985,11 +1963,10 @@ impl super::api::UnitAnswers for Login {
     fn unit_health_max(&self, token: &str) -> u32 {
         u32::from(Self::has(token)) * 4000
     }
-    /// **Part-way through a level, deliberately.**
-    /// `TextStatusBar_UpdateTextString` **hides** a bar whose maximum is zero,
-    /// so a double answering `(0, 0)` would take the XP bar — and every script
-    /// hanging off it — out of every probe, which is precisely the failure the
-    /// stub it replaces caused in the real client.
+    /// Part-way through a level. `TextStatusBar_UpdateTextString` hides a bar
+    /// whose maximum is zero, so a double answering `(0, 0)` would remove the
+    /// XP bar, and every script attached to it, from every probe. The stub
+    /// this replaced caused that failure in the live client.
     ///
     /// ([`Self::unit_level`] answers 60, which is `MAX_PLAYER_LEVEL`, so
     /// `ReputationWatchBar_Update` would hide the bar for a different reason if
@@ -2002,10 +1979,10 @@ impl super::api::UnitAnswers for Login {
         }
     }
 
-    /// **Points in both pools**, so that the two panels that read this take
-    /// their *populated* branch: `TalentFrame_Update` desaturates every unspent
-    /// talent when the count is zero, which is the branch a zero double would
-    /// pin and the one a real character at level 60 is least often in.
+    /// Points in both pools, so the two panels that read this take their
+    /// populated branch. `TalentFrame_Update` desaturates every unspent talent
+    /// when the count is zero; a double answering zero would always take that
+    /// branch, which a real level-60 character is least often in.
     fn unit_character_points(&self, token: &str) -> (u32, u32) {
         if Self::has(token) {
             (5, 2)
@@ -2023,7 +2000,8 @@ impl super::api::UnitAnswers for Login {
         u32::from(Self::has(token)) * 2000
     }
     fn unit_power_type(&self, token: &str) -> Option<u8> {
-        // **`0`, mana — and `Some` rather than `None` is the whole point.**
+        // `0`, mana. It must be `Some`: `None` answers nil, and
+        // `ManaBarColor[nil]` aborts `PlayerFrame_OnLoad` (see [`Login`]).
         Self::has(token).then_some(0)
     }
     fn unit_is_connected(&self, _: &str) -> bool {
@@ -2032,9 +2010,9 @@ impl super::api::UnitAnswers for Login {
     fn unit_is_dead(&self, _: &str) -> bool {
         false
     }
-    /// **Alive, and not a ghost.** The audit's character is standing in the
-    /// world; a dead one would put `StaticPopup "DEATH"` over every panel the
-    /// probes then try to open.
+    /// Alive and not a ghost. The audit's character is standing in the world;
+    /// a dead one would put `StaticPopup "DEATH"` over every panel the probes
+    /// then open.
     fn unit_is_ghost(&self, _: &str) -> bool {
         false
     }
@@ -2056,9 +2034,10 @@ impl super::api::UnitAnswers for Login {
     fn unit_affecting_combat(&self, _: &str) -> bool {
         false
     }
-    /// **A whole stat block for the player**, because the character sheet's
-    /// `OnShow` divides by two of its numbers — a level-60 warrior's, from
-    /// real update fields through the client's own decode.
+    /// A full stat block for the player, because the character sheet's
+    /// `OnShow` divides by two of its numbers. The values are a level-60
+    /// warrior's, built from update fields through this client's decoder,
+    /// `UnitStats::from_fields`.
     fn unit_stats(&self, token: &str) -> Option<vale_protocol::play::stats::UnitStats> {
         use vale_protocol::state::fields::{player, unit};
         if token != "player" {
@@ -2098,20 +2077,20 @@ impl super::api::UnitAnswers for Login {
     fn unit_class(&self, token: &str) -> Option<(&'static str, &'static str)> {
         Self::has(token).then_some(("Warrior", "Warrior"))
     }
-    /// **An elite humanoid**, on the same argument as the hostile reaction
-    /// below: `TargetFrame_CheckClassification` has five arms and four of them
-    /// swap the frame's border texture, so a double answering `"normal"` never
-    /// runs the branch that loads one.
+    /// An elite humanoid, for the same reason as the hostile reaction below:
+    /// `TargetFrame_CheckClassification` has five branches and four of them
+    /// replace the frame's border texture, so a double answering `"normal"`
+    /// never runs a branch that loads one.
     fn unit_creature_type(&self, token: &str) -> Option<&'static str> {
         Self::has(token).then_some("Humanoid")
     }
     fn unit_classification(&self, token: &str) -> &'static str {
         if Self::has(token) { "elite" } else { "normal" }
     }
-    /// **Alliance for anything that exists**, which is the branch
-    /// `PartyMemberFrame_UpdatePvPStatus` actually draws an icon on: with a nil
-    /// group the whole `elseif` is skipped and the probe checks the `Hide`
-    /// call, which is what a creature does and not what a party member does.
+    /// Alliance for every unit that exists, which is the branch in which
+    /// `PartyMemberFrame_UpdatePvPStatus` draws an icon. With a nil group the
+    /// whole `elseif` is skipped and the probe checks only the `Hide` call,
+    /// which is the path for a creature, not for a party member.
     fn unit_faction_group(&self, token: &str) -> Option<(String, String)> {
         Self::has(token).then(|| ("Alliance".to_string(), "Alliance".to_string()))
     }
@@ -2132,20 +2111,20 @@ impl super::api::UnitAnswers for Login {
             pvp: true,
             dead: false,
             health: Some((100, 100)),
-            // **A zone, so the plate's own zone line runs** — the harness's
-            // character is in Elwynn, and a group mate somewhere else is the
-            // only case that draws one.
+            // A zone other than the player's, so the tooltip's zone line runs.
+            // The harness's character is in Elwynn, and only a group member in
+            // another zone draws that line.
             zone: "Stranglethorn Vale".to_string(),
         })
     }
     fn unit_is_unit(&self, a: &str, b: &str) -> bool {
         Self::has(a) && a == b
     }
-    /// **A hostile target**, which is the harder of the two branches every
-    /// consumer of this has: `TargetFrame_CheckFaction` takes its longest arm,
-    /// `TargetDebuffButton_Update` lays the debuff rows out first, and
-    /// `TargetFrame_OnShow` plays the aggro sound. A friendly one would leave
-    /// three of those bodies half-run.
+    /// A hostile target, which takes the longer of the two branches in every
+    /// caller: `TargetFrame_CheckFaction` takes its longest branch,
+    /// `TargetDebuffButton_Update` lays out the debuff rows first, and
+    /// `TargetFrame_OnShow` plays the aggro sound. A friendly target would
+    /// leave three of those bodies partly run.
     fn unit_rank(&self, a: &str, b: &str) -> Option<vale_assets::tables::faction::Rank> {
         (Self::has(a) && Self::has(b)).then_some(vale_assets::tables::faction::Rank::Hostile)
     }
@@ -2157,22 +2136,23 @@ impl super::api::UnitAnswers for Login {
     }
 }
 
-/// The double's own race and class as ids, for the one seed that needs them as
-/// numbers rather than as words — see [`run`]'s reputation block and
-/// [`Login::CHARACTERS`], whose first row is the character every probe is.
+/// The double's race and class as ids, for the seeds that need them as numbers
+/// rather than names. See [`run`]'s reputation block and
+/// [`Login::CHARACTERS`], whose first row is the character every probe plays.
 const HUMAN: u8 = 1;
 const MAGE: u8 = 8;
 
 impl Login {
-    /// `(name, race, class, level, gender, ghost)` — see
-    /// [`Login::character_row`], where the argument for two rows is.
+    /// `(name, race, class, level, gender, ghost)`. Read by
+    /// [`Login::character_row`]; the reason for two rows is in the comment on
+    /// `character_count`.
     const CHARACTERS: [(&'static str, &'static str, &'static str, u32, u8, bool); 2] = [
         ("Alden", "Human", "Mage", 60, 0, false),
         ("Dessa", "NightElf", "Rogue", 15, 1, true),
     ];
 
-    /// `(name, offset, count)` — General and one skill line, the two shapes
-    /// `GetSpellTabInfo` has.
+    /// `(name, offset, count)`: General and one skill line, the two kinds of
+    /// tab `GetSpellTabInfo` describes.
     const TABS: [(&'static str, usize, usize); 2] = [("General", 0, 1), ("Fire", 1, 3)];
     /// `(name, rank)`, in the flat order the tabs above slice.
     const SPELLS: [(&'static str, &'static str); 4] = [
@@ -2187,13 +2167,12 @@ impl Login {
     }
 }
 
-/// **What to do to the interface once it has loaded**, all five of them
-/// optional.
+/// What to do to the interface once it has loaded. Every field is optional.
 ///
-/// A struct rather than five positional arguments, which is what this was: the
-/// call read `run(&dir, script, draw, spin, events)` and the next one to be
-/// added would have been a fifth `bool` in a row — the exact shape that produced
-/// the `CharSections` and `geosetGroup` field-index bugs one crate over.
+/// A struct rather than positional arguments. The call was
+/// `run(&dir, script, draw, spin, events)`, and the next addition would have
+/// been another `bool` in a row, the pattern that caused the `CharSections`
+/// and `geosetGroup` field-index bugs in `vale-assets`.
 #[derive(Default)]
 pub struct Probe {
     /// One Lua chunk, run the way `--script` runs one at a real login.
@@ -2202,45 +2181,44 @@ pub struct Probe {
     pub draw: bool,
     /// Run this many simulated frames and print the timing shape.
     pub spin: usize,
-    /// `--party <n>` — how many people the double is grouped with, `None` for
-    /// the default of [`PARTY`]'s initial value. See [`PARTY`].
+    /// `--party <n>`: how many other players are in the double's party.
+    /// `None` keeps [`PARTY`]'s initial value. See [`PARTY`].
     pub party: Option<usize>,
-    /// `--raid <n>` — how many people are in the double's raid, us included.
-    /// `None` for [`RAID`]'s initial value, which is 0 and means a party. See
+    /// `--raid <n>`: the size of the double's raid, including the double.
+    /// `None` keeps [`RAID`]'s initial value, 0, which means a party. See
     /// [`RAID`].
     pub raid: Option<usize>,
-    /// Fire every event this client can raise at whoever registered.
+    /// Fire every event this client can raise at the frames registered for it.
     pub events: bool,
-    /// **Type a line into the chat and press Enter** — see [`type_a_line`].
+    /// Type a line into the chat box and press Enter. See [`type_a_line`].
     pub typed: Option<String>,
-    /// **Open every panel the game names** — see [`open_every_panel`].
+    /// Open every panel the game names. See [`open_every_panel`].
     pub panels: bool,
-    /// **Press every button on every one of them** — see [`click_everything`].
+    /// Click every button on every panel. See [`click_everything`].
     pub clicks: bool,
-    /// **Press every key the game binds** — see [`press_every_binding`].
+    /// Press every key the game binds. See [`press_every_binding`].
     pub bindings: bool,
-    /// **`Interface\GlueXML\` instead of `Interface\FrameXML\`** — the login
+    /// Load `Interface\GlueXML\` instead of `Interface\FrameXML\`: the login
     /// screen and character select rather than the in-game interface.
     ///
-    /// Not a seventh probe but a *switch on which directory the load is*, so it
-    /// composes with all six: `--audit --glue --clicks` presses every button on
-    /// the login screen, `--audit --glue --draw` says what that screen would
-    /// hold. It matters because the glue is the one part of the interface a
-    /// player sees **before anything else can have gone wrong**, and it is the
-    /// only part `--audit` could not reach at all — the client loads it and the
-    /// interface load never happens.
+    /// It selects which directory is loaded rather than adding a probe, so it
+    /// combines with the six probes: `--audit --glue --clicks` clicks every
+    /// button on the login screen, and `--audit --glue --draw` lists what that
+    /// screen holds. The glue screens are the first part of the interface a
+    /// player sees, and without this switch `--audit` cannot reach them: the
+    /// client loads them only when the in-game interface is not loaded.
     pub glue: bool,
 }
 
 /// Load `Interface\FrameXML\` out of `gamedata_dir` and print what happened.
 ///
-/// `script` runs after the load — the same chunk `--script` would run at a real
-/// login, so a panel can be opened or a population simulated headlessly — and
-/// `draw` dumps every visible object with its solved rectangle and paint, which
-/// is the instrument for "what is this white box": the screen's pixels named,
-/// with no window and no login. `spin` runs that many simulated frames of the
-/// interface's own per-frame work afterwards and prints the timing shape — the
-/// instrument for "the frame rate oscillates"; see [`spin_frames`].
+/// `script` runs after the load, as `--script` would run it at a real login, so
+/// a panel can be opened or a population simulated headlessly. `draw` dumps
+/// every visible object with its solved rectangle and paint, which identifies
+/// an unexplained object on screen (such as a white box) without a window or a
+/// login. `spin` then runs that many simulated frames of the interface's
+/// per-frame work and prints the timing distribution, for investigating an
+/// oscillating frame rate; see [`spin_frames`].
 pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
     let Probe {
         script,
@@ -2289,8 +2267,8 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
         }
     };
 
-    // **Before the load**, because `PaperDollItemSlotButton_OnLoad` is the
-    // first thing that asks — see [`SLOT_TABLE`].
+    // Before the load, because `PaperDollItemSlotButton_OnLoad` reads it; see
+    // [`SLOT_TABLE`].
     let _ = SLOT_TABLE.set(vale_assets::tables::inventory::ItemTables::parse(
         &assets
             .read(&vale_assets::tables::dbc::dbc_path("PaperDollItemFrame"))
@@ -2304,14 +2282,14 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
             .unwrap_or_default(),
     ));
 
-    // **The character-create tables, which `crate::glue::charcreate` supplies in
-    // a real client.** Without them that screen's `OnShow` dies on its fourth
-    // line — `FACTION_BACKDROP_COLOR_TABLE[nil]`, because `GetFactionForRace`
-    // has no race to answer about — and every probe below reports a screen that
-    // opened clean because it never opened.
+    // The character-create tables, which `crate::glue::charcreate` supplies in
+    // the live client. Without them that screen's `OnShow` fails on its fourth
+    // line, `FACTION_BACKDROP_COLOR_TABLE[nil]`, because `GetFactionForRace`
+    // has no race to answer about, and every probe below reports the screen
+    // clean because it never opened.
     //
-    // Read before the loader's own closure takes the archive: `Assets::read`
-    // wants `&mut`, and the two borrows cannot overlap.
+    // Read before the loader's closure takes the archive: `Assets::read` needs
+    // `&mut`, and the two borrows cannot overlap.
     if glue {
         host.set_char_create_tables(std::sync::Arc::new(
             vale_assets::tables::charcreate::CharCreate::load(|table| {
@@ -2320,14 +2298,14 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
         ));
     }
 
-    // **The reputation panel, seeded the way a freshly-made character is.**
+    // The reputation panel, seeded as for a newly created character.
     //
-    // Without it every probe of that panel checks an *empty* one: `GetNumFactions`
-    // answers 0 honestly, `ReputationFrame_Update`'s loop runs zero times, and
-    // the fifteen bars, the two sorts and the detail pane are never touched — a
-    // screen that reports clean because nothing on it ran. The states are
-    // `Faction.dbc`'s own defaults for the double's race and class (Human Mage),
-    // which is exactly what vmangos' `ReputationMgr::Initialize` would send.
+    // Without it every probe of that panel checks an empty one:
+    // `GetNumFactions` answers 0, `ReputationFrame_Update`'s loop runs zero
+    // times, and the fifteen bars, the two sorts and the detail pane never
+    // run, so the screen reports clean. The states are `Faction.dbc`'s
+    // defaults for the double's race and class (Human Mage), which is what
+    // vmangos' `ReputationMgr::Initialize` sends.
     {
         let factions = assets
             .read(&vale_assets::tables::dbc::dbc_path("Faction"))
@@ -2342,11 +2320,11 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
         }
     }
 
-    // **…and the skills panel, seeded the same way**, for the same reason: the
-    // double is a level-60 Human Mage, so it is given every line that character
-    // could have at its own cap. Without it `GetNumSkillLines` answers an honest
-    // zero, the panel's loop runs no times, and a screen with two headings and
-    // a dozen bars on it reports checked.
+    // The skills panel, seeded for the same reason. The double is a level-60
+    // Human Mage, so it is given every skill line that character could have,
+    // at its cap. Without it `GetNumSkillLines` answers zero, the panel's loop
+    // does not run, and a screen that should hold two headings and a dozen
+    // bars reports checked.
     {
         let mut table = |name: &str| {
             assets
@@ -2385,17 +2363,15 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
         }
     }
 
-    // **…and the key bindings, seeded as a first launch is.**
+    // The key bindings, seeded as on a first launch.
     //
-    // Same argument a third time, and this one is the sharpest of the three:
-    // `KeyBindingFrame_Update` walks `1..GetNumBindings()`, so a board with no
-    // declarations on it runs the loop **zero** times and thirty-four buttons,
-    // seventeen descriptions and the scroll bar are never touched — a panel
-    // that reports clean because nothing on it ran. What is put on it is what a
-    // real login puts on it: `Bindings.xml` for the rows and the archives' own
-    // `WTF\DefaultBindings.wtf` for the keys, with no player file over them,
-    // which is set 1. See `crate::settings::keybindings`, which is the
-    // same three lines against the same two files.
+    // `KeyBindingFrame_Update` walks `1..GetNumBindings()`, so with no
+    // declarations the loop runs zero times, and thirty-four buttons,
+    // seventeen descriptions and the scroll bar never run; the panel reports
+    // clean. The seed is what a real login loads: `Bindings.xml` for the rows
+    // and the archives' `WTF\DefaultBindings.wtf` for the keys, with no player
+    // file over them, which is set 1. `crate::settings::keybindings` does the
+    // same with the same two files.
     {
         let declarations = std::sync::Arc::new(
             vale_assets::interface::bindings::Bindings::parse(
@@ -2404,8 +2380,9 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
                     .unwrap_or_default(),
             ),
         );
-        // `set_bindings` rather than the board directly: it is the one door,
-        // and it is what makes a key press resolve as well as a row draw.
+        // Through `set_bindings` rather than the board directly: it is the
+        // single entry point, and it makes key presses resolve as well as
+        // rows draw.
         host.set_bindings(declarations);
         let defaults = vale_assets::interface::bindings::parse_bind_file(
             &assets
@@ -2418,12 +2395,11 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
         board.use_set(crate::lua::panels::keybindings::ACCOUNT_SET);
     }
 
-    // **The addon board, seeded the way `crate::settings::addons` seeds
-    // it**: the seven shipped addons out of the archives, then whatever the
-    // folder this runs in carries under `Interface\AddOns\`, every one of them
-    // on, since there is no character and so no `AddOns.txt`. A probe run from
-    // a real install loads that install's addons; one run from this repository
-    // loads the seven.
+    // The addon board, seeded as `crate::settings::addons` seeds it: the seven
+    // shipped addons from the archives, then whatever the working folder has
+    // under `Interface\AddOns\`, all enabled, since there is no character and
+    // so no `AddOns.txt`. A probe run from a real install loads that install's
+    // addons; one run from this repository loads the seven.
     let assets = std::rc::Rc::new(std::cell::RefCell::new(assets));
     let mut read = |path: &str| assets.borrow_mut().read(path).ok();
     {
@@ -2448,12 +2424,12 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
         host.load_interface(&Login, &mut read);
     }
     let elapsed = started.elapsed();
-    // **The target arrives here and not before** — see [`SELECTED`]. Every probe
-    // below this line runs against a world with something selected; the load
-    // above it runs against the world a login actually has.
+    // The target is selected here, after the load; see [`SELECTED`]. Every
+    // probe below runs with a target; the load above ran with none, as at a
+    // real login.
     SELECTED.store(true, std::sync::atomic::Ordering::Relaxed);
-    // …and the character's forms, on the same terms and for a sharper reason —
-    // see [`FORMS`].
+    // The shapeshift forms appear at the same point; the load fails if they
+    // are present during it. See [`FORMS`].
     FORMS.store(3, std::sync::atomic::Ordering::Relaxed);
 
     let Some(report) = host.interface() else {
@@ -2475,11 +2451,10 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
         "  {} frames, {} regions, {} templates, {} handlers, {} inline <Script>",
         report.frames, report.regions, report.templates, report.handlers, report.inline_scripts
     );
-    // **…and the keyboard population**, which is the one input device whose
-    // receivers are a *list* rather than a walk of the tree — see
-    // [`crate::lua::widgets::keyboard`]. A zero here means the loader's two
-    // rules found nothing, which is what it reported before that module existed
-    // and is what made the key-bindings panel deaf.
+    // The frames that receive keyboard input. Keyboard receivers are kept in
+    // a list rather than found by walking the frame tree; see
+    // [`crate::lua::widgets::keyboard`]. Zero means the loader's two rules
+    // found no receiver, and then the key-bindings panel receives no keys.
     println!(
         "  {} frame(s) take the keyboard ({}), * = shown now",
         host.keyboard_receivers(),
@@ -2492,9 +2467,10 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
         println!("    UNKNOWN ELEMENT  {name}");
     }
 
-    // **The work order.** Lua names the thing it could not find, so the errors
-    // group by it: "attempt to call global 'IsResting' (a nil value)" over eleven
-    // bodies is one function to write and eleven bodies that come back.
+    // Failures grouped by missing name. Lua names what it could not find, so
+    // the errors group by that name: "attempt to call global 'IsResting' (a nil
+    // value)" in eleven bodies is one function to write, which fixes all
+    // eleven.
     println!("\n  {} distinct failures", report.errors.len());
     let mut by_name: BTreeMap<String, Vec<&str>> = BTreeMap::new();
     let mut other: Vec<&str> = Vec::new();
@@ -2520,10 +2496,10 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
             String::new()
         };
         println!("    {:>3}  {name:<28} {}{and}", bodies.len(), where_from.join(" "));
-        // **One message in full per name**, because the grouped line says which
-        // function is missing and not what was being done with it — and a
-        // `nil` method on an object that should have had one reads identically
-        // to a method this client has never written.
+        // One full message per name, because the grouped line says which
+        // name is missing and not how it was used. A `nil` method on an object
+        // that should have had one looks the same, grouped, as a method this
+        // client has not implemented.
         if let Some(first) = bodies.first() {
             println!("         {first}");
         }
@@ -2535,79 +2511,78 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
         }
     }
 
-    // **Put a screen up, which the glue does not do for itself.** Every one of
-    // `GlueScreenInfo`'s seven frames ships `hidden="true"`, and what shows one
-    // is `SET_GLUE_SCREEN` — an event the *client* raises off the session it is
-    // holding (`crate::glue::glue`), and there is no session here. So the probe
-    // makes the same call that event's handler ends in, and every instrument
-    // below it then sees the login screen rather than an empty `GlueParent`.
+    // Show a glue screen; the glue does not show one itself. All seven of
+    // `GlueScreenInfo`'s frames are declared `hidden="true"`, and one is shown
+    // by `SET_GLUE_SCREEN`, an event the client raises from its session state
+    // (`crate::glue::glue`). There is no session here, so the probe makes the
+    // call that event's handler ends in, and every probe below sees the login
+    // screen rather than an empty `GlueParent`.
     //
-    // `--script "SetGlueScreen('charselect')"` is the other screen, and it works
-    // because `Login` answers a two-character list.
+    // `--script "SetGlueScreen('charselect')"` shows character select, which
+    // works because `Login` answers a two-character list.
     if glue {
         match host.script(r#"SetGlueScreen("login")"#, &Login) {
             Ok(_) => println!("\n  the login screen is up"),
             Err(e) => println!("\n  SetGlueScreen FAILED: {e}"),
         }
     }
-    // The probe half: run one chunk the way `--script` would at a real login —
-    // so a hidden panel can be opened or a hover simulated — and then say what
-    // the screen would hold, object by object.
+    // Run one chunk as `--script` would at a real login, so a hidden panel can
+    // be opened or a hover simulated, before the probes below report the
+    // screen.
     if let Some(script) = script {
         match host.script(script, &Login) {
             Ok(_) => println!("\n  script ran: {script}"),
             Err(e) => println!("\n  script FAILED: {e}"),
         }
     }
-    // **…and then answer it**, which is a client's job and not the interface's.
-    // See [`answer_the_glue`]: without it the character screen draws its frame,
-    // its realm plate and its four buttons and **none of its ten rows**, because
-    // `CharacterSelect_OnShow` asks and waits.
+    // Answer the character screen's requests, which is the client's job and
+    // not the interface's. See [`answer_the_glue`]: without it the character
+    // screen draws its frame, its realm plate and its four buttons and none of
+    // its ten rows, because `CharacterSelect_OnShow` sends a request and waits.
     if glue {
         answer_the_glue(&mut host);
     }
-    // **Events before the draw**, so `--events --draw` dumps the screen as it
-    // stands *after* the interface has been told the world exists — which is
-    // the only state a real login is ever in. `DurabilityFrame` is the standing
-    // example: it is declared visible and hides itself on the first
-    // `PLAYER_ENTERING_WORLD`, so a dump taken before that reports a panel the
-    // player never sees.
+    // Events before the draw, so `--events --draw` dumps the screen after the
+    // interface has received the world's events, which is the state of every
+    // real login. For example, `DurabilityFrame` is declared visible and hides
+    // itself on the first `PLAYER_ENTERING_WORLD`, so a dump taken before that
+    // reports a panel the player never sees.
     if events {
         fire_everything(&mut host);
     }
-    // **After the events**, because the chat line's own `OnUpdate` is what
-    // applies the text `ChatFrame_OpenChat` parked on it, and a frame's
-    // `OnUpdate` is only run for a *visible* frame — which the chat is once the
-    // world has said it exists.
+    // After the events, because the chat edit box's `OnUpdate` applies the
+    // text `ChatFrame_OpenChat` stored on it, and `OnUpdate` runs only for a
+    // visible frame. The chat frame is visible once the world events have
+    // fired.
     if let Some(line) = typed {
         type_a_line(&mut host, line);
     }
-    // **Before the draw** for the same reason the events are: `--panels --draw`
-    // should dump the screen with the last panel it opened still on it, which is
-    // the state worth looking at when one of them came out wrong.
+    // Before the draw, like the events: `--panels --draw` dumps the screen
+    // with the last panel opened still on it, which is the state to inspect
+    // when a panel is wrong.
     if panels {
         open_every_panel(&mut host);
     }
-    // **After the panels and before the draw**, which is the same argument
-    // both of those make: a click is what a panel's tabs are behind, so
-    // `--clicks --draw` dumps the screen as the last press left it.
+    // After the panels and before the draw, for the same reason: a panel's
+    // tabs are reached by clicks, so `--clicks --draw` dumps the screen as the
+    // last click left it.
     if clicks {
         click_everything(&mut host, glue);
     }
-    // **After the clicks and before the draw**, which is the same argument
-    // again — and one more of its own: a binding body may open a panel
-    // (`TOGGLEWORLDMAP` does), so pressing the keys last leaves the screen in
-    // the state the last *key* left it rather than the last button.
+    // After the clicks and before the draw, for the same reason. A binding's
+    // body may also open a panel (`TOGGLEWORLDMAP` does), so pressing the keys
+    // last leaves the screen as the last key left it rather than the last
+    // button.
     if bindings {
         press_every_binding(&mut host);
     }
     if draw {
-        // **One tick before the snapshot.** Three things in this interface are
-        // placed by a per-tick sweep rather than by their own anchors — a
-        // scroll frame's range, a scroll bar's knob, and every `OnUpdate` body
-        // that moves something — so a dump taken with no tick reports a screen
-        // no running client ever shows. It cost a round: the slider knob was
-        // read as still filling its whole track when it had already been fixed.
+        // One tick before the snapshot. Three things in this interface are
+        // placed by a per-tick pass rather than by their own anchors: a scroll
+        // frame's range, a scroll bar's thumb, and every `OnUpdate` body that
+        // moves something. A dump taken with no tick shows a screen no running
+        // client shows; without it a slider thumb that had been fixed was
+        // still reported filling its whole track.
         host.fire_updates(1.0 / 60.0, &Login);
         dump(&host);
     }
@@ -2616,20 +2591,19 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
     }
 }
 
-/// **Stand in for `crate::glue::glue`**: answer the two questions the character
-/// screen asks and then waits on.
+/// Stands in for `crate::glue::glue`: answers the two requests the character
+/// screen sends and then waits on.
 ///
-/// `CharacterSelect_OnShow` ends in `GetCharacterListUpdate()` — a *request*,
-/// whose answer in a real client is `CHARACTER_LIST_UPDATE` raised off the
-/// handshake — and `CharacterSelectButton_OnClick` calls `SelectCharacter(id)`
-/// and waits for `UPDATE_SELECTED_CHARACTER`. Neither moves anything on screen
-/// by itself, which is the interface's whole shape: the client decides and the
-/// interface draws.
+/// `CharacterSelect_OnShow` ends in `GetCharacterListUpdate()`, a request that
+/// the live client answers by raising `CHARACTER_LIST_UPDATE` from the
+/// handshake. `CharacterSelectButton_OnClick` calls `SelectCharacter(id)` and
+/// waits for `UPDATE_SELECTED_CHARACTER`. Neither call changes the screen by
+/// itself: the client decides and the interface draws.
 ///
-/// So a probe that only shows the frame gets a character screen with its plate,
-/// its realm name and its four buttons and **no rows at all** — the third of the
-/// screen that is the point of it. This fires the two, with the same arguments
-/// [`crate::glue::glue`] fires them with against [`Login`]'s two-character list.
+/// A probe that only shows the frame gets a character screen with its plate,
+/// its realm name and its four buttons and no rows, which are the part of the
+/// screen that matters. This fires the two events with the arguments
+/// [`crate::glue::glue`] uses, against [`Login`]'s two-character list.
 fn answer_the_glue(host: &mut LuaHost) {
     host.fire_event("CHARACTER_LIST_UPDATE", &[], &Login);
     host.fire_event(
@@ -2639,11 +2613,11 @@ fn answer_the_glue(host: &mut LuaHost) {
     );
 }
 
-/// **`--audit --type "<line>"`: say something, with no window and no server.**
+/// `--audit --type "<line>"`: type a chat line with no window and no server.
 ///
-/// The third instrument of the same family. `--audit` runs `OnLoad`, `--events`
-/// runs `OnEvent`, and this runs the path a *person* drives — the one that was
-/// impossible to check without one until the chat line stopped being egui:
+/// `--audit` runs `OnLoad` and `--events` runs `OnEvent`; this runs the path a
+/// person drives from the keyboard. It is possible headlessly because the chat
+/// line is a Lua edit box rather than an egui widget:
 ///
 /// ```text
 /// ChatFrame_OpenChat("")   the OPENCHAT binding's own body   ChatFrame.lua:1545
@@ -2654,10 +2628,10 @@ fn answer_the_glue(host: &mut LuaHost) {
 ///                          would have put on the wire
 /// ```
 ///
-/// So a run of `--audit --type "/s hello"` proves the *kind* was parsed off the
-/// game's own `SLASH_SAY1`, and `--type ".tele tanaris"` proves a GM command
-/// still goes out as an ordinary say. What it cannot prove is the drawing, which
-/// is `--draw`'s half.
+/// A run of `--audit --type "/s hello"` shows that the chat type was parsed
+/// from the game's `SLASH_SAY1`, and `--type ".tele tanaris"` shows that a GM
+/// command still goes out as an ordinary say. It does not check drawing; that
+/// is `--draw`.
 fn type_a_line(host: &mut LuaHost, line: &str) {
     use super::widgets::editbox::Stroke;
 
@@ -2666,7 +2640,7 @@ fn type_a_line(host: &mut LuaHost, line: &str) {
         println!("    ChatFrame_OpenChat FAILED: {e}");
         return;
     }
-    // One tick, which is what copies `editBox.text` into the box and parses it.
+    // One tick, which copies `editBox.text` into the box and parses it.
     host.fire_updates(0.0, &Login);
     let Some(name) = host.keyboard_focus().and_then(|frame| {
         frame
@@ -2679,12 +2653,12 @@ fn type_a_line(host: &mut LuaHost, line: &str) {
     };
     println!("    {name} has the keyboard");
 
-    // **What the typing itself breaks is reported here**, because it goes
-    // nowhere else: a stroke's handler failure lands in `missing` for the HUD,
-    // and the load report above was printed before any of this happened. The
-    // first run of this leg found `/dance` — `ChatEdit_ParseText`'s emote arm
-    // calls `DoEmote`, which this client does not register, so the body dies
-    // before the line that closes the box and the chat stays open.
+    // Failures caused by the typing are reported here and nowhere else: a
+    // keystroke handler's failure goes into `missing` for the HUD, and the
+    // load report above was printed before the typing. For example, `/dance`
+    // failed here when `ChatEdit_ParseText`'s emote branch called `DoEmote`
+    // and this client did not register it; the body aborted before the line
+    // that closes the box, and the chat line stayed open.
     let before: Vec<String> = host.missing().iter().cloned().collect();
     let mut strokes: Vec<Stroke> = line.chars().map(|c| Stroke::Char(c.to_string())).collect();
     strokes.push(Stroke::Enter);
@@ -2694,8 +2668,8 @@ fn type_a_line(host: &mut LuaHost, line: &str) {
     }
 
     let said = host.take_said();
-    // …and the channel verbs, which take the other queue: `/join`, `/leave`,
-    // `/chatlist <name>` and the moderation commands never say anything.
+    // Channel commands go to a separate queue: `/join`, `/leave`,
+    // `/chatlist <name>` and the moderation commands send no chat message.
     let verbs = host.take_channel_verbs();
     let emoted = host.take_emoted();
     let listing = std::mem::take(&mut host.channels().borrow_mut().list_wanted);
@@ -2718,9 +2692,9 @@ fn type_a_line(host: &mut LuaHost, line: &str) {
     if listing {
         println!("    -> the client's own channel list");
     }
-    // …and the box is closed again, which is `ChatEdit_OnEscapePressed`'s last
-    // line and the reason a second Enter opens a fresh line rather than typing
-    // into the old one.
+    // The edit box should be closed again. `ChatEdit_OnEscapePressed`'s last
+    // line closes it, which is why a second Enter opens a new line rather than
+    // typing into the old one.
     println!(
         "    the line is {}",
         if host.keyboard_focus().is_some() {
@@ -2731,78 +2705,71 @@ fn type_a_line(host: &mut LuaHost, line: &str) {
     );
 }
 
-/// **`--audit --panels`: open every panel the game has, one at a time.**
+/// Events a panel must receive before it is opened.
 ///
-/// The fourth instrument of the family, and it exists because the first three
-/// each report success while a panel is blank. `--audit` runs `OnLoad`;
-/// `--events` runs `OnEvent`; `--type` runs the keyboard. **None of them runs
-/// `OnShow`** — and `OnShow` is where 1.12 fills a panel, because a panel is
-/// built once at load and re-populated every time it is opened.
+/// A 1.12 panel is built at load and filled from an event, so opening one that
+/// has received no event exercises a state no session is in. Both entries
+/// below were once reported as failures of the probe itself; the comment where
+/// the events are fired, in [`open_every_panel`], describes the bug that hid.
 ///
-/// So the failure this catches is the one that was reported from a screenshot:
-/// the social frame opened with its art, its tabs and **no title and no list**.
-/// `FriendsFrame_OnShow` calls `FriendsFrame_Update`, whose first line inside
-/// the friends branch is `ShowFriends()` — a name this client does not answer —
-/// so the body died there and the seven lines after it, the title among them,
-/// never ran. One missing global, one whole panel, and every existing check
-/// green.
-///
-/// **The list is the game's own.** `UIPanelWindows` in `UIParent.lua` is the
-/// table the client itself uses to decide what a panel *is* — which side of the
-/// screen it takes and whether it can be pushed along — so iterating it cannot
-/// drift from what the interface thinks it has, the way a list written here
-/// would. Each one is opened through `ShowUIPanel`, which is the same door the
-/// micro buttons and the key bindings use.
-///
-/// What it does **not** reach: the tabs. A panel with sub-frames
-/// (`CharacterFrame`'s four, `FriendsFrame`'s four) opens on whichever tab was
-/// last selected, and the other three are a `Tab_OnClick` away — which is
-/// `OnClick`, the kind no instrument here fires yet. That is the next extension
-/// and it is named rather than implied.
-///
-/// **And three of its failures are its own**, each left standing rather than
-/// papered over:
-///
-/// * `LootFrame` is never shown by the real client except from `LOOT_OPENED`,
-///   whose handler sets `this.page = 1` on the line before it calls
-///   `ShowUIPanel` — so opening it cold is a state this client's server could
-///   not produce, and `LootFrame.page` is nil for the probe's reason rather than
-///   for the interface's.
-/// * `MinigameFrame` is a `UIPanelWindows` entry with **no frame anywhere in
-///   5875's FrameXML**. The table names it and nothing creates it.
-/// * `TaxiFrame` **used to close itself** and no longer does. `DrawOneHopLines`
-///   ends in `if ( numSingleHops == 0 ) then … HideUIPanel(TaxiFrame); end`, so
-///   a client that has never spoken to a flight master gets exactly the
-///   behaviour the real one gives — and once [`Login`] answered a two-node
-///   flight map, one of them one hop away, the panel had something to draw and
-///   stayed up. That is the whole difference between 27 of 29 and 28.
-///
-/// ## What it runs, and the tick that was missing
-///
-/// Each panel is reset to a clean panel machine, opened through `ShowUIPanel`,
-/// **asked whether it actually became visible**, and then given **one
-/// `OnUpdate` tick**. The last two are this round's, and both found real
-/// failures the mode had been reporting as successes — see the comments at each.
-/// **What a panel has to be told before it is worth opening.**
-///
-/// A 1.12 panel is built at load and *filled* from an event, so opening one
-/// that has never been told anything exercises a state a session is never in.
-/// Two entries, and both were reported as "the probe's own" failures for
-/// several rounds — see the comment at the fire site for what that excuse cost.
-///
-/// Deliberately a short explicit list rather than "fire everything first":
-/// the point of this mode is one panel at a time from a clean screen, and a
-/// full event sweep before it would hide which panel needed what.
+/// A short explicit list rather than firing every event first: this mode opens
+/// one panel at a time from a clean screen, and a full event sweep beforehand
+/// would hide which panel needed which event.
 const PANEL_PREREQUISITES: [(&str, &str); 2] = [
     // `LootFrame.page` is nil until this; `LootFrame_OnShow` does arithmetic
     // on it.
     ("LootFrame", "LOOT_OPENED"),
     // `QuestLogTitle<n>.r` is nil until `QuestLog_Update` assigns it, and
-    // `QuestLog_SetSelection` reads it — which is upstream of the whole detail
-    // pane.
+    // `QuestLog_SetSelection` reads it before it fills the detail pane.
     ("QuestLogFrame", "QUEST_LOG_UPDATE"),
 ];
 
+/// `--audit --panels`: open every panel the game has, one at a time.
+///
+/// `--audit` runs `OnLoad`, `--events` runs `OnEvent` and `--type` runs the
+/// keyboard. None of them runs `OnShow`, and `OnShow` is where 1.12 fills a
+/// panel: a panel is built once at load and repopulated every time it opens.
+/// Each of those probes reports success while a panel is blank.
+///
+/// For example, the social frame opened with its art and its tabs but no title
+/// and no list. `FriendsFrame_OnShow` calls `FriendsFrame_Update`, whose first
+/// line inside the friends branch is `ShowFriends()`, a name this client did
+/// not register, so the body aborted there and the seven lines after it,
+/// including the title, never ran. Every other check passed.
+///
+/// The list of panels is the game's own. `UIPanelWindows` in `UIParent.lua` is
+/// the table the interface uses to decide what a panel is (which side of the
+/// screen it takes and whether it can be pushed aside), so iterating it cannot
+/// drift from the interface the way a list kept here could. Each panel is
+/// opened through `ShowUIPanel`, as the micro buttons and the key bindings do.
+///
+/// ## Steps per panel
+///
+/// Each panel is:
+///
+/// 1. reset to a clean panel state (`CloseAllWindows`, no full-screen frame);
+/// 2. sent its [`PANEL_PREREQUISITES`] events;
+/// 3. opened through `ShowUIPanel` and checked for visibility;
+/// 4. given one `OnUpdate` tick;
+/// 5. walked tab by tab (`tab_pass`);
+/// 6. closed with `HideUIPanel`.
+///
+/// The comments at each step give the failure it catches.
+///
+/// ## Known panel-specific results
+///
+/// * `LootFrame` is shown in the 1.12.1 client only from `LOOT_OPENED`, whose
+///   handler sets `this.page = 1` on the line before it calls `ShowUIPanel`.
+///   Opening it without that event leaves `LootFrame.page` nil, so the event
+///   is in [`PANEL_PREREQUISITES`].
+/// * `MinigameFrame` is a `UIPanelWindows` entry with no frame anywhere in
+///   5875's FrameXML. The table names it and nothing creates it; it is
+///   reported as "no such frame".
+/// * `TaxiFrame` closes itself when no node is one hop away: `DrawOneHopLines`
+///   ends in `if ( numSingleHops == 0 ) then … HideUIPanel(TaxiFrame); end`,
+///   as in the 1.12.1 client. [`Login`] answers a two-node flight map with one
+///   node one hop away, so the panel stays open. Before that answer existed
+///   the count was 27 of 29 panels; with it, 28.
 fn open_every_panel(host: &mut LuaHost) {
     let names = match panel_names(host) {
         Ok(names) if !names.is_empty() => names,
@@ -2821,40 +2788,35 @@ fn open_every_panel(host: &mut LuaHost) {
     let mut opened = 0usize;
     let mut tabs = 0usize;
     for name in &names {
-        // **The screen is reset before every panel, not merely after.**
+        // The screen is reset before every panel, not only after.
         //
-        // `UIParent`'s panel machine is *stateful* — a full-screen frame, a left
-        // frame and a centre frame, each remembered on `UIParent` — and
-        // `ShowUIPanel` **returns silently** when the state it finds says no:
-        // a full-screen frame is open and this one is not, or the centre slot is
-        // taken by a native centre frame. `HideUIPanel` alone does not undo it,
-        // because its own first line is `if ( not frame:IsShown() )` — so a panel
-        // that was declined leaves the machine exactly as it was.
+        // `UIParent`'s panel manager keeps state: a full-screen frame, a left
+        // frame and a centre frame, each stored on `UIParent`. `ShowUIPanel`
+        // returns without an error when that state refuses the panel: a
+        // full-screen frame is open and this one is not, or the centre slot
+        // holds a native centre frame. `HideUIPanel` alone does not undo this,
+        // because its first line is `if ( not frame:IsShown() )`, so a refused
+        // panel leaves the state as it was.
         //
-        // That is not a hypothetical either. Before this reset the probe reported
-        // **six panels as opening clean that it had never opened at all** —
-        // SpellBookFrame, TabardFrame, TaxiFrame, TradeFrame, WorldMapFrame and
-        // the non-existent MinigameFrame — which is the same class of silence
-        // this whole mode exists to end, in the instrument rather than in the
-        // interface.
+        // Without this reset the probe reported six panels as opening clean
+        // that it never opened: SpellBookFrame, TabardFrame, TaxiFrame,
+        // TradeFrame, WorldMapFrame and the non-existent MinigameFrame.
         let _ = host.script("CloseAllWindows(); SetFullScreenFrame(nil);", &Login);
-        // **…and the panel is told the world exists before it is opened.**
+        // The panel's prerequisite events are fired before it is opened.
         //
-        // 1.12 builds a panel at load and *fills* it from an event; opening one
-        // that has never been told anything exercises a state a session is
-        // never in, and two of this probe's four stragglers were exactly that —
-        // `LootFrame.page` is `nil` until `LOOT_OPENED`, and `QuestLogFrame`'s
-        // rows have no colour until `QUEST_LOG_UPDATE`. Both were excused for
-        // several rounds as "the probe's own", and the excuse cost a real bug:
-        // `QuestLog_SetSelection` dies at the colour, **before**
+        // 1.12 builds a panel at load and fills it from an event; opening one
+        // that has received no event exercises a state no session is in.
+        // `LootFrame.page` is nil until `LOOT_OPENED`, and `QuestLogFrame`'s
+        // rows have no colour until `QUEST_LOG_UPDATE`. While those two
+        // failures were treated as the probe's own, they hid a real bug:
+        // `QuestLog_SetSelection` aborts at the colour, before
         // `QuestLog_UpdateQuestDetails`, so three globals that panel needs
-        // (`IsCurrentQuestFailed` first among them) were missing for as long as
-        // the straggler was, with the probe reporting the same four names each
-        // time. An excused number is one nobody reads.
+        // (`IsCurrentQuestFailed` among them) stayed unregistered and no probe
+        // reported them.
         //
-        // The event is fired at *everything* registered for it rather than at
-        // the panel, because that is what a session does and because the
-        // panel's own fill usually lives on a sibling frame.
+        // The event is fired at every frame registered for it rather than at
+        // the panel, as in a session, and because the code that fills a panel
+        // is often on a sibling frame.
         for event in PANEL_PREREQUISITES
             .iter()
             .filter(|(panel, _)| *panel == name.as_str())
@@ -2862,17 +2824,16 @@ fn open_every_panel(host: &mut LuaHost) {
         {
             host.fire_event(event, &[], &Login);
         }
-        // **The failures are diffed out of `missing`, not read off the return.**
-        // `Show()` swallows what its `OnShow` raised on purpose — see
-        // [`super::widgets::frames::swallowed`] — so `host.script` answers `Ok` for a
-        // panel that opened completely empty. That *is* the bug this mode is
-        // for, and reading the return value would reproduce it.
+        // Failures are found by diffing `missing`, not from the return value.
+        // `Show()` deliberately catches what its `OnShow` raised (see
+        // [`super::widgets::frames::swallowed`]), so `host.script` answers `Ok`
+        // for a panel that opened empty. Reading the return value would miss
+        // exactly the failures this mode looks for.
         let before: std::collections::BTreeSet<String> = host.missing().clone();
-        // `ShowUIPanel` is the game's own door — it places the frame, hides
-        // whatever it displaces, and calls `Show()`, which is what fires the
-        // `OnShow` cascade. **And the frame is then asked whether it is
-        // actually visible**, which is the other half of the same lesson: a
-        // decline raises nothing, so "did not raise" is not "opened".
+        // `ShowUIPanel` is the game's own entry point: it places the frame,
+        // hides whatever it displaces, and calls `Show()`, which fires the
+        // `OnShow` handlers. The frame is then asked whether it is visible,
+        // because a refusal raises nothing: not raising does not mean opened.
         let chunk = format!("ShowUIPanel(getglobal({name:?}))");
         let raised = host.script(&chunk, &Login).err();
         let visible = host
@@ -2889,57 +2850,54 @@ fn open_every_panel(host: &mut LuaHost) {
             .unwrap_or(Some(true));
         let declined = match visible {
             None => Some("no such frame".to_string()),
-            // **"not visible" is two different things and they are worth
-            // telling apart.** `ShowUIPanel` can decline outright (the panel
-            // machine said no), or the panel can open and *close itself* from
-            // inside its own `OnShow` — which `TaxiFrame` does deliberately
-            // when there are no flight paths, the real client included, and
-            // which is what it did here until the probe had a map to answer.
+            // Not visible has two causes. `ShowUIPanel` can refuse the panel
+            // (the panel manager's state), or the panel can open and close
+            // itself inside its own `OnShow`. `TaxiFrame` closes itself when
+            // there are no flight paths, in the 1.12.1 client too, and did so
+            // here until [`Login`] answered a flight map.
             Some(false) => Some(
                 "not visible after ShowUIPanel — declined, or closed itself in OnShow".to_string(),
             ),
             Some(true) => None,
         };
-        // **…and one `OnUpdate` tick with the panel open**, which is the third
-        // script kind a panel runs and the one no instrument here reached.
+        // One `OnUpdate` tick with the panel open. `OnUpdate` is the third
+        // kind of script a panel runs, and no other probe here runs it with
+        // the panel open.
         //
-        // `OnShow` builds a panel; `OnUpdate` keeps it. The world map is the
-        // case that made this necessary: it opened clean, drew its parchment,
-        // and showed `WorldMapFrameAreaLabel`'s shipped placeholder — the
-        // literal text "BLAH!" — for the whole session, because
-        // `WorldMapButton_OnUpdate`'s first line called a global this client did
-        // not have and the body died before it reached the label. Every check
-        // was green.
+        // `OnShow` fills a panel; `OnUpdate` keeps it current. The world map
+        // opened clean and drew its parchment but showed
+        // `WorldMapFrameAreaLabel`'s shipped placeholder, the literal text
+        // "BLAH!", for the whole session: `WorldMapButton_OnUpdate`'s first
+        // line called a global this client did not register, and the body
+        // aborted before it reached the label. Every other check passed.
         host.fire_updates(1.0 / 60.0, &Login);
         let mut failures: Vec<String> = host.missing().difference(&before).cloned().collect();
         failures.extend(raised);
         failures.extend(declined.map(|why| format!("{name}: {why}")));
         match failures.first() {
             None => opened += 1,
-            // One per panel: the *first* thing that broke is the one to fix, and
-            // the rest of that panel's body never ran to produce the others.
+            // One failure per panel: the first is the one to fix, since the
+            // rest of that panel's body did not run after it.
             Some(first) => broken.push((name.clone(), first.clone())),
         }
-        // **…and every tab on it, which is three quarters of some panels.**
+        // Every tab on the panel.
         //
-        // A tabbed panel opens on tab 1 and the other tabs' frames are `Show()`n
-        // by the tab's own `OnClick` — so `ShowUIPanel` alone runs one `OnShow`
-        // of four and reports the panel checked. That is not a small gap:
-        // `CharacterFrame` is five tabs, and **two of them had never had a body
-        // executed** — the reputation panel died on line 44 of its update
-        // (`UnitSex`) and drew fifteen empty bars for it, and the skills panel
-        // answered a stubbed zero and drew nothing. Both reported clean here,
-        // in `--clicks`, and in the load, for as many rounds as they existed.
+        // A tabbed panel opens on tab 1, and each other tab's frame is shown
+        // by that tab's `OnClick`, so `ShowUIPanel` alone runs one `OnShow` of
+        // four and reports the panel checked. `CharacterFrame` has five tabs,
+        // and two of them had never run a body: the reputation panel aborted
+        // on line 44 of its update (`UnitSex`) and drew fifteen empty bars,
+        // and the skills panel got a stubbed zero and drew nothing. Both were
+        // reported clean here, in `--clicks`, and in the load.
         //
-        // `--clicks` presses the tabs too and still missed it, for a reason
-        // worth writing down: a tab's `OnClick` shows a *sibling* frame, and
-        // what that frame's `OnShow` raises is swallowed by `Show()` exactly as
-        // a panel's is. The diff against `missing` is what sees it, and this is
-        // the mode that takes one.
+        // `--clicks` clicks the tabs too and still missed them: a tab's
+        // `OnClick` shows a sibling frame, and `Show()` catches what that
+        // frame's `OnShow` raises, as it does for a panel. Only a diff against
+        // `missing` sees it, and this mode takes one.
         tabs += tab_pass(host, name, &before, &mut broken);
-        // …and closed again, so the next panel is opened against a clean screen
-        // rather than on top of whatever the last one left. A failure to close
-        // is not interesting: the frame it names is the one that just failed.
+        // Close the panel, so the next one opens on a clean screen rather than
+        // on top of what this one left. A failure to close is ignored: it
+        // names the frame whose failure was just recorded.
         let _ = host.script(&format!("HideUIPanel(getglobal({name:?}))"), &Login);
     }
     println!(
@@ -2949,9 +2907,9 @@ fn open_every_panel(host: &mut LuaHost) {
     if broken.is_empty() {
         return;
     }
-    // Ranked by the name Lua blamed, exactly as the load report and `--events`
-    // are: one unwritten function costs every panel that calls it, and the
-    // count is what says which to write first.
+    // Ranked by the name Lua reported, as in the load report and `--events`:
+    // one missing function breaks every panel that calls it, and the count
+    // shows which to write first.
     let mut by_name: BTreeMap<String, Vec<&str>> = BTreeMap::new();
     for (panel, error) in &broken {
         by_name
@@ -2970,37 +2928,33 @@ fn open_every_panel(host: &mut LuaHost) {
     }
 }
 
-/// **`--audit --bindings`: press every key the game binds by default.**
+/// `--audit --bindings`: press every key the game binds by default.
 ///
-/// The sixth instrument of the family, and the one the key-bindings round
-/// needed to state its own cost honestly. `--audit` runs `OnLoad`, `--events`
-/// runs `OnEvent`, `--type` runs the keyboard's *characters*, `--panels` runs
-/// `OnShow` and `--clicks` runs `OnClick` — and none of them runs a
-/// **`<Binding>` body**, which is 234 chunks of Lua and the only kind a
-/// *keystroke* reaches.
+/// `--audit` runs `OnLoad`, `--events` runs `OnEvent`, `--type` runs typed
+/// characters, `--panels` runs `OnShow` and `--clicks` runs `OnClick`. None of
+/// them runs a `<Binding>` body, of which there are 234 chunks of Lua, and
+/// those are the only bodies a keystroke reaches.
 ///
-/// Until this round that gap was invisible for a reason that is worth writing
-/// down: the client bound twenty keys it had chosen itself, all twenty to names
-/// something answered. It now binds the game's own 152 lines, so what a key
-/// press does is the reference's question rather than this client's, and about a
-/// third of them bottom out in a C function nobody has written — the movement
-/// cascade first among them.
+/// When the client bound twenty keys of its own choosing, all to names it
+/// registered, this gap did not show. It now binds the game's own 152 default
+/// lines, so what a key press does is defined by the game's files, and about
+/// a third of them end in a C function this client has not implemented, the
+/// movement functions first among them.
 ///
-/// What it does is the ordinary dispatch: for every **distinct command in the
-/// live key table**, run its declaration through [`LuaHost::fire`] on the press
-/// edge and, where the declaration is `runOnUp`, on the release too, and rank
-/// whatever broke by the name Lua blamed. The same [`blamed`] grouping the load
-/// report and the other four use.
+/// For every distinct command in the live key table, this runs its
+/// declaration through [`LuaHost::fire`] on the press and, where the
+/// declaration is `runOnUp`, on the release too. Failures are ranked by the
+/// name Lua reported, with the same [`blamed`] grouping as the load report
+/// and the other probes.
 ///
-/// **The commands come from the key table and not from `Bindings.xml`**, which
-/// is the difference between "what could be pressed" and "what a player will
-/// press": 143 of the 234 are bound by the shipped defaults and the other 91 are
-/// keys nobody has. A name in the table with no declaration behind it is counted
-/// separately, because that is a *different* bug — a dead key rather than a dead
-/// body — and `vale bindings` says it should be zero.
+/// The commands come from the key table, not from `Bindings.xml`: 143 of the
+/// 234 declarations are bound by the shipped defaults, and the other 91 have
+/// no key. A command in the table with no declaration is counted separately,
+/// because it is a different bug (a key bound to nothing rather than a body
+/// that fails), and `vale bindings` expects zero of them.
 fn press_every_binding(host: &mut LuaHost) {
-    // The live table's commands, deduplicated and in table order — so two runs
-    // are comparable line by line and a command on two keys is pressed once.
+    // The live table's commands, deduplicated and in table order, so two runs
+    // compare line by line and a command on two keys is pressed once.
     let mut commands: Vec<String> = Vec::new();
     for (_, command) in host.keybindings().borrow().live() {
         if !commands.contains(command) {
@@ -3019,21 +2973,21 @@ fn press_every_binding(host: &mut LuaHost) {
     let mut releases = 0usize;
     for command in &commands {
         let Some(declaration) = host.declaration(command).cloned() else {
-            // Not a body that broke: a key bound to a name the game does not
-            // declare. `fire` records it under the binding's own name, which
-            // would rank it beside the real failures and read as one.
+            // Not a failing body: a key bound to a name the game does not
+            // declare. `fire` would record it under the binding's name, and
+            // the ranking would list it as a body failure.
             undeclared.push(command.clone());
             continue;
         };
-        // **Diffed out of `missing` rather than read off the return.** `fire`
-        // catches and records what a body raised — see its own comment — so it
-        // has no error to hand back, exactly as `Show()` has none.
+        // Failures are found by diffing `missing`, not from a return value.
+        // `fire` catches and records what a body raised (see its comment), so
+        // it returns no error, as `Show()` returns none.
         let before: std::collections::BTreeSet<String> = host.missing().clone();
         host.fire(command, true, &Login);
-        // **…and the release half, which is half of what a hundred of them
-        // do.** `MOVEFORWARD`'s whole `else` branch is `MoveForwardStop()`, and
-        // a probe that only pressed would report every one of those bodies as
-        // half-checked while reporting a number that looks complete.
+        // The release, which about a hundred bindings handle.
+        // `MOVEFORWARD`'s whole `else` branch is `MoveForwardStop()`; a probe
+        // that only pressed would check half of each such body while
+        // reporting a complete count.
         if declaration.run_on_up {
             host.fire(command, false, &Login);
             releases += 1;
@@ -3041,8 +2995,8 @@ fn press_every_binding(host: &mut LuaHost) {
         let failures: Vec<String> = host.missing().difference(&before).cloned().collect();
         match failures.first() {
             None => ran += 1,
-            // One per command: the first thing that broke is the one to write,
-            // and the rest of that body never ran to produce the others.
+            // One failure per command: the first is the one to fix, since the
+            // rest of that body did not run after it.
             Some(first) => broken.push((command.clone(), first.clone())),
         }
     }
@@ -3075,13 +3029,12 @@ fn press_every_binding(host: &mut LuaHost) {
     }
 }
 
-/// **The panels the game itself thinks it has**, sorted — `UIPanelWindows`'
-/// own keys.
+/// The panels the game declares: the keys of `UIPanelWindows`, sorted.
 ///
-/// Shared by [`open_every_panel`] and [`click_everything`], because a list of
-/// panels written here rather than read out of `UIParent.lua` is a list that
-/// drifts from what the interface has: the table is the one the client's own
-/// `ShowUIPanel` consults, so iterating it cannot go stale.
+/// Shared by [`open_every_panel`] and [`click_everything`]. A list of panels
+/// kept here rather than read from `UIParent.lua` would drift from the
+/// interface; `UIPanelWindows` is the table `ShowUIPanel` consults, so
+/// iterating it stays current.
 fn panel_names(host: &mut LuaHost) -> mlua::Result<Vec<String>> {
     host.run(&Login, |lua| {
         let table: Option<mlua::Table> = lua.globals().get("UIPanelWindows")?;
@@ -3091,54 +3044,25 @@ fn panel_names(host: &mut LuaHost) -> mlua::Result<Vec<String>> {
                 names.push(name);
             }
         }
-        // Sorted, so two runs of this are comparable line by line.
+        // Sorted, so two runs compare line by line.
         names.sort();
         Ok(names)
     })
 }
 
-/// **`--audit --clicks`: press every button the interface has.**
+/// Clicks every tab a panel has and records what each sub-frame's `OnShow`
+/// raised. Returns how many tabs were clicked.
 ///
-/// The fifth instrument of the family, and the one the four before it kept
-/// naming as the next extension. `--audit` runs `OnLoad`, `--events` runs
-/// `OnEvent`, `--type` runs the keyboard, `--panels` runs `OnShow` — and none of
-/// them runs `OnClick`, which is **285 bodies**, more than `OnLoad` and
-/// `OnEvent` together, and the kind a player spends a session in.
-///
-/// It is also the only way to reach most of the interface at all, because the
-/// **tabs** are behind it: `CharacterFrame` has four sub-frames and
-/// `FriendsFrame` four, of which a panel opens exactly one. Everything on the
-/// other three is built, never shown, and never checked — three quarters of
-/// every tabbed panel.
-///
-/// ## What it presses, and why a fixed point rather than a list
-///
-/// For each screen — the login screen as it stands, then every panel
-/// [`panel_names`] gives — it collects every **visible, enabled, mouse-enabled
-/// button that has an `OnClick`**, presses the ones it has not pressed yet, and
-/// then *collects again*. A tab's whole point is that pressing it puts a
-/// different set of buttons on the screen, so a single pass would check the
-/// tab and nothing behind it. [`CLICK_ROUNDS`] bounds the walk.
-///
-/// The press itself is `frame:Click("LeftButton")` — **the installed method**,
-/// which is the same door [`super::api::mouse`] goes through, so the disabled test,
-/// the `arg1` and 1.12's zero-argument calling convention are the ones a real
-/// mouse gets. A second way to press a button is exactly the shape of the bug
-/// that took casting out two rounds ago.
-///
-/// **Press every tab a panel has**, and report what the sub-frame's `OnShow`
-/// broke on. Returns how many were pressed.
-///
-/// The tabs are found by name — `<Panel>Tab1`, `Tab2`, … until one is missing —
-/// which is the game's own convention and the one `PanelTemplates_SetNumTabs`
+/// Tabs are found by name, `<Panel>Tab1`, `Tab2`, … until one is missing,
+/// which is the game's naming convention and the one `PanelTemplates_SetNumTabs`
 /// counts. Nothing here reads that count: a panel whose tabs are named
-/// otherwise simply has none found, which under-reports rather than inventing a
-/// press.
+/// otherwise has none found, which under-reports rather than inventing a
+/// click.
 ///
-/// **The panel is re-opened before each tab**, for the same reason
-/// [`click_everything`] re-opens per round: `ToggleCharacter` *closes* the whole
-/// panel when the tab it is given is the one already showing, so pressing tab 1
-/// on a freshly-opened panel takes the other four off the screen.
+/// The panel is reopened before each tab, for the same reason
+/// [`click_everything`] reopens it every round: `ToggleCharacter` closes the
+/// whole panel when the tab it is given is the one already showing, so
+/// clicking tab 1 on a newly opened panel takes the other four off the screen.
 fn tab_pass(
     host: &mut LuaHost,
     panel: &str,
@@ -3165,8 +3089,8 @@ fn tab_pass(
                 &Login,
             )
             .err();
-        // One `OnUpdate` with the sub-frame open, on `open_every_panel`'s own
-        // argument: `OnShow` builds a tab and `OnUpdate` keeps it.
+        // One `OnUpdate` with the sub-frame open, as in `open_every_panel`:
+        // `OnShow` fills a tab and `OnUpdate` keeps it current.
         host.fire_updates(1.0 / 60.0, &Login);
         pressed += 1;
         let mut failures: Vec<String> = host.missing().difference(&seen).cloned().collect();
@@ -3174,51 +3098,77 @@ fn tab_pass(
         if let Some(first) = failures.first() {
             broken.push((tab.clone(), first.clone()));
         }
-        // **Accumulated rather than re-snapshotted**, so the same missing name
-        // is not charged to every tab after the one that first hit it.
+        // Accumulated rather than replaced, so a missing name is charged only
+        // to the first tab that hit it, not to every tab after.
         seen.extend(host.missing().iter().cloned());
     }
     pressed
 }
 
-/// How far the tab search counts. `CharacterFrame` has five and
-/// `FriendsFrame` four; eight is room for a panel this client has not met.
+/// The highest tab number the tab search tries. `CharacterFrame` has five and
+/// `FriendsFrame` four; eight leaves room for a panel with more.
 const MAX_TABS: usize = 8;
 
-/// ## Its own deviations, stated
+/// `--audit --clicks`: click every button the interface has.
 ///
-/// * **A click can hide what has not been pressed yet.** A close button, a
-///   dialog's Cancel, a tab that swaps a sub-frame — each takes buttons off the
-///   screen mid-round. Those are re-checked at the moment of pressing and
-///   skipped rather than pressed blind, and the count of them is printed: a
-///   large number there is coverage this did not get, not a failure.
-/// * **The order is the tree's**, so what a screen ends up in depends on what
-///   was pressed first. Two runs are comparable because the walk is
+/// `--audit` runs `OnLoad`, `--events` runs `OnEvent`, `--type` runs the
+/// keyboard and `--panels` runs `OnShow`. None of them runs `OnClick`, which
+/// has 285 bodies, more than `OnLoad` and `OnEvent` together, and is what a
+/// player triggers most in a session.
+///
+/// It is also the only way to reach most of the interface, because the tabs
+/// are behind it: `CharacterFrame` has four sub-frames and `FriendsFrame`
+/// four, and opening a panel shows one. Everything on the other three is built
+/// but never shown or checked.
+///
+/// ## What it clicks, and why it repeats until nothing is new
+///
+/// For each screen (the base screen as it stands, then every panel
+/// [`panel_names`] gives) it collects every visible, enabled, mouse-enabled
+/// button that has an `OnClick`, clicks the ones not yet clicked, and then
+/// collects again. Clicking a tab puts a different set of buttons on the
+/// screen, so a single pass would check the tab and nothing behind it.
+/// [`CLICK_ROUNDS`] bounds the walk.
+///
+/// The click is `frame:Click("LeftButton")`, the installed method, which is
+/// the path [`super::api::mouse`] uses, so the disabled check, `arg1` and
+/// 1.12's zero-argument calling convention are the ones a real mouse gets. A
+/// second click path would allow the two to differ; a difference of that kind
+/// once broke spell casting.
+///
+/// ## Limits
+///
+/// * A click can hide buttons not yet clicked. A close button, a dialog's
+///   Cancel, or a tab that swaps a sub-frame each remove buttons from the
+///   screen during a round. Those are re-checked at the moment of clicking
+///   and skipped rather than clicked blind, and the count of them is printed:
+///   a large number there is coverage this did not get, not a failure.
+/// * The order is the frame tree's, so the state a screen ends in depends on
+///   what was clicked first. Two runs are comparable because the walk is
 ///   deterministic, not because the order is meaningful.
-/// * **The world is [`Login`]'s stub**, as everywhere else here: a body that
-///   would only fail with a real bag or a real party passes. A failure reported
-///   is real; a pass is a lower bound.
+/// * The world is [`Login`]'s stub, as everywhere else here: a body that would
+///   fail only with a real bag or a real party passes. A reported failure is
+///   real; a pass is a lower bound.
 fn click_everything(host: &mut LuaHost, glue: bool) {
-    // **The reset between rounds, and it is a different sentence per
-    // directory.** In the interface it is "close every panel and every static
-    // popup"; in the glue there are no panels and no popups, and what a press
-    // takes off the screen is the *screen itself* — `AccountLoginTOSButton`
-    // hides `AccountLoginUI` and shows the agreement pane over it. So the glue's
-    // reset is `SetGlueScreen`, which is exactly the call that puts one back.
+    // The reset between rounds differs by directory. In the interface it
+    // closes every panel and every static popup. The glue has no panels and
+    // no popups; a click there can replace the screen itself
+    // (`AccountLoginTOSButton` hides `AccountLoginUI` and shows the agreement
+    // pane over it). The glue's reset is therefore `SetGlueScreen`, the call
+    // that shows a screen.
     //
-    // Without this the glue's own run reported **4 of 9 buttons pressed with 5
-    // skipped**: `CloseAllWindows` does not exist in `Interface\GlueXML\`, the
-    // chunk raised, nothing was restored, and the first press that hid the login
-    // box took the other five with it for the rest of the walk. The same lesson
-    // `--panels` had, arriving in the same shape one instrument later.
-    // **The screen the walk is *about*, read once and then pinned.** Not
-    // `GetCurrentGlueScreenName()` at reset time, which is the shape this had
-    // first and which is wrong in a way that reads as coverage: `Cinematics` and
-    // `Credits` each call `SetGlueScreen` themselves, so a reset that asked what
-    // screen was current restored *the one the last press had switched to* and
-    // the walk never came back. Pinning it means a press that leaves the screen
-    // is undone on the next round, which is exactly what the interface's own
-    // `CloseAllWindows` does one directory over.
+    // With the interface's reset, the glue run reported 4 of 9 buttons
+    // clicked and 5 skipped: `CloseAllWindows` does not exist in
+    // `Interface\GlueXML\`, so the chunk raised, nothing was restored, and the
+    // first click that hid the login box hid the other five for the rest of
+    // the walk.
+    //
+    // The screen being walked is read once and fixed. Asking
+    // `GetCurrentGlueScreenName()` at each reset does not work: `Cinematics`
+    // and `Credits` each call `SetGlueScreen` themselves, so such a reset
+    // restored the screen the last click switched to, and the walk never
+    // returned. With the screen fixed, a click that leaves it is undone on the
+    // next round, as `CloseAllWindows` does in the interface.
     let pinned = if glue {
         host.run(&Login, |lua| {
             lua.load("return GetCurrentGlueScreenName()")
@@ -3240,22 +3190,21 @@ fn click_everything(host: &mut LuaHost, glue: bool) {
          if ( f ) then f:Hide(); end end"
     };
     let panels = if glue {
-        // `UIPanelWindows` is `UIParent.lua`'s and the glue has no equivalent:
-        // its screens are the seven `GlueScreenInfo` names, of which the realm
-        // wizard, the patch downloader, the movie player and the credits are
-        // unreachable without a server, a patch, a movie or a menu this client
-        // does not have. The two that a person really gets to are the character
-        // list and the create screen — and the create screen is by some way the
-        // busiest thing in this directory, twenty-two buttons against the login
-        // screen's eight.
+        // `UIPanelWindows` is defined in `UIParent.lua`, and the glue has no
+        // equivalent. Its screens are the seven `GlueScreenInfo` names; the
+        // realm wizard, the patch downloader, the movie player and the credits
+        // need a server, a patch, a movie or a menu this client does not have.
+        // The two a player reaches are the character list and the create
+        // screen. The create screen has the most buttons in the directory,
+        // twenty-two against the login screen's eight.
         GLUE_SCREENS.iter().map(|s| (*s).to_string()).collect()
     } else {
         panel_names(host).unwrap_or_default()
     };
-    // The base screen first — in the interface that is the action bar, the micro
-    // buttons, the chat tabs and the minimap, which are the buttons a session
-    // spends most of its time on and which no panel opens; in the glue it is
-    // whichever of the two screens is up.
+    // The base screen first. In the interface that is the action bar, the
+    // micro buttons, the chat tabs and the minimap, the buttons used most in a
+    // session and opened by no panel. In the glue it is whichever screen is
+    // shown.
     let screens: Vec<Option<String>> = std::iter::once(None)
         .chain(panels.into_iter().map(Some))
         .collect();
@@ -3265,44 +3214,44 @@ fn click_everything(host: &mut LuaHost, glue: bool) {
     let mut broken: Vec<(String, String)> = Vec::new();
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut found: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    // …and which of them are the second kind, so the line can say how much of
-    // the walk is the half that had no probe at all before it existed.
+    // The found widgets pressed with `Press::DownUp`, counted separately in
+    // the report line.
     let mut others: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for screen in &screens {
         for _ in 0..CLICK_ROUNDS {
-            // **The screen is rebuilt at the top of every round, not once per
-            // panel**, and that is what the vanish count is for. The first
-            // draft opened each panel once and walked it, and reported *180
-            // vanished against 126 pressed*: pressing a close button, or a
-            // dialog's Cancel, takes every button beside it off the screen, so
-            // most of a panel was being skipped rather than checked. Re-opening
-            // per round and leaving a skipped button **unmarked** turns each of
-            // those into a press on the next pass.
+            // The screen is rebuilt at the start of every round, not once per
+            // panel. Opening each panel once and walking it reported 180
+            // vanished against 126 clicked: clicking a close button or a
+            // dialog's Cancel removes every button beside it, so most of a
+            // panel was skipped. Reopening every round, and leaving a skipped
+            // button unmarked, turns each of those into a click on the next
+            // round.
             //
-            // The reset is [`open_every_panel`]'s, for the same reason —
-            // `UIParent`'s panel machine is stateful and a decline leaves it
-            // that way — plus the static popups, which `CloseAllWindows` does
-            // not close and which would otherwise leave a stray "are you sure?"
-            // over every screen after the one that raised it.
+            // The reset is [`open_every_panel`]'s, for the same reason
+            // (`UIParent`'s panel manager keeps state, and a refusal leaves it
+            // unchanged), plus the static popups, which `CloseAllWindows` does
+            // not close and which would otherwise leave an "are you sure?"
+            // dialog over every later screen.
             let _ = host.script(reset, &Login);
             if glue {
                 answer_the_glue(host);
             }
             if let Some(name) = screen {
-                // **A glue screen is shown by name and an interface panel by
-                // frame**, which is the one place the two directories' walks
-                // differ: `GlueScreenInfo` maps a name onto a frame and
-                // `SetGlueScreen` is the only thing that shows one — there is no
-                // `ShowUIPanel` in `Interface\GlueXML\` at all.
+                // A glue screen is shown by name and an interface panel by
+                // frame; this is the one place the two walks differ.
+                // `GlueScreenInfo` maps a name to a frame and `SetGlueScreen`
+                // is the only way to show one; `Interface\GlueXML\` has no
+                // `ShowUIPanel`.
                 let show = if glue {
                     format!("SetGlueScreen({name:?})")
                 } else {
                     format!("ShowUIPanel(getglobal({name:?}))")
                 };
                 let _ = host.script(&show, &Login);
-                // One tick, because a panel is filled by `OnShow` and *kept* by
-                // `OnUpdate` — a button whose label the tick writes is a button
-                // this would otherwise press in a state the player never sees.
+                // One tick, because a panel is filled by `OnShow` and kept
+                // current by `OnUpdate`. Without it, a button whose label the
+                // tick writes would be clicked in a state the player never
+                // sees.
                 host.fire_updates(1.0 / 60.0, &Login);
             }
 
@@ -3324,9 +3273,9 @@ fn click_everything(host: &mut LuaHost, glue: bool) {
             }
             for (label, button, how) in fresh {
                 let before: std::collections::BTreeSet<String> = host.missing().clone();
-                // **Still there?** The click before this one may have hidden
-                // it — see the deviations above. Deliberately *not* marked as
-                // seen, so the next round's fresh screen presses it.
+                // Check the button is still shown and enabled; an earlier
+                // click may have hidden it (see Limits above). A skipped
+                // button is not marked as seen, so the next round clicks it.
                 let raised = host.run(&Login, |lua| {
                     if !visible(&button) || !enabled(&button) {
                         return Ok(Some(String::new()));
@@ -3339,10 +3288,10 @@ fn click_everything(host: &mut LuaHost, glue: bool) {
                                 .err()
                                 .map(|e| first_line(&e)))
                         }
-                        // A press and its release, through the same two calls
-                        // the mouse pass makes for them. The first thing either
-                        // handler raised is the failure; a pair that raises
-                        // nothing answers `None` exactly as `Click` does.
+                        // A press and its release, through the two calls the
+                        // mouse pass makes. The first error either handler
+                        // raised is the failure; a pair that raises nothing
+                        // answers `None`, as `Click` does.
                         Press::DownUp => Ok(super::api::mouse::press_and_release(
                             lua,
                             &button,
@@ -3361,9 +3310,9 @@ fn click_everything(host: &mut LuaHost, glue: bool) {
                 match raised {
                     Ok(reason) => {
                         // The same diff `--panels` takes: a handler that fails
-                        // inside a nested call is *recorded* rather than
-                        // returned, so reading the return alone reports a clean
-                        // press for a button that broke two frames down.
+                        // inside a nested call is recorded rather than
+                        // returned, so the return value alone reports a clean
+                        // click for a button whose failure was two frames down.
                         let mut failures: Vec<String> =
                             host.missing().difference(&before).cloned().collect();
                         failures.extend(reason);
@@ -3377,10 +3326,10 @@ fn click_everything(host: &mut LuaHost, glue: bool) {
         }
     }
 
-    // **The three numbers are only useful together.** Pressed is the coverage;
-    // found-minus-pressed is what the rounds never got to and is the honest
-    // ceiling on it; vanished is how often a press took its neighbours with it,
-    // which is a property of the interface rather than a fault.
+    // The three numbers are read together. Pressed is the coverage; found
+    // minus pressed is what the rounds did not reach, the limit on that
+    // coverage; vanished is how often a click removed its neighbours, which is
+    // a property of the interface rather than a fault.
     println!(
         "\n  clicks: {pressed} of {} pressed over {} screens \
          ({vanished} skipped under the hand) \
@@ -3418,18 +3367,18 @@ fn click_everything(host: &mut LuaHost, glue: bool) {
         };
         println!("    {:>3}  {name:<28} {}{and}", buttons.len(), shown.join(" "));
     }
-    // **One message in full per name**, the load report's own treatment and for
-    // its reason: the grouped line says which function is missing and not what
-    // was being done with it, and a `nil` method on an object that should have
-    // had one reads identically to a method this client has never written.
+    // One full message per name, as in the load report and for the same
+    // reason: the grouped line says which name is missing and not how it was
+    // used, and a `nil` method on an object that should have had one looks the
+    // same, grouped, as a method this client has not implemented.
     for (_, buttons) in ranked.iter().take(SHOW_BODIES * 2) {
         if let Some((button, error)) = buttons.first() {
             println!("         {button}: {error}");
         }
     }
-    // …and the interesting bucket **in full**, never truncated: a click that
-    // failed for a *reason* rather than for an absence is a bug in this client
-    // rather than a gap in it, and there are never many.
+    // Failures that are not a missing name are printed in full, never
+    // truncated: such a failure is a bug in this client rather than a missing
+    // feature, and there are few of them.
     if !other.is_empty() {
         println!("\n  {} failures that are not a missing name:", other.len());
         for (button, error) in &other {
@@ -3440,29 +3389,29 @@ fn click_everything(host: &mut LuaHost, glue: bool) {
 
 /// How many times a screen is re-collected after being clicked through.
 ///
-/// Each round rebuilds the screen and presses whatever the last one could not
-/// reach, so this bounds both the tab depth (a panel, its tab, and what that
-/// tab's own buttons reveal) *and* the number of times a panel is restored
-/// after a close button emptied it. The loop stops early the moment a round
-/// turns up no button it has not already pressed.
+/// Each round rebuilds the screen and clicks whatever the previous round could
+/// not reach, so this bounds both the tab depth (a panel, its tab, and what
+/// that tab's buttons reveal) and the number of times a panel is restored
+/// after a close button emptied it. The loop stops early when a round finds
+/// no button it has not already clicked.
 const CLICK_ROUNDS: usize = 6;
 
-/// **The glue screens the click walk visits**, beside whichever one is already
-/// up — `GlueScreenInfo`'s own keys.
+/// The glue screens the click walk visits in addition to the one already
+/// shown, as `GlueScreenInfo` keys.
 ///
-/// Two of the seven. The other five need something this client cannot produce
-/// in a probe: `realmwizard` needs `GET_PREFERRED_REALM_INFO`, `patchdownload`
+/// Two of the seven. The others need something this client cannot produce in
+/// a probe: `realmwizard` needs `GET_PREFERRED_REALM_INFO`, `patchdownload`
 /// needs a patch, `movie` needs a movie, and `credits` is a menu item on a
 /// screen that is itself one of these two.
 const GLUE_SCREENS: [&str; 2] = ["charselect", "charcreate"];
 
-/// **How a widget is pressed**, which is not one answer.
+/// How a widget is pressed.
 ///
-/// A `<Button>` has `OnClick` and nothing else has it at all; every other
-/// pressable widget in the directory is a press and a release. The two are
-/// collected by the same walk and pressed through the two doors
-/// [`super::api::mouse`] uses for them, and they are counted apart in the
-/// report because the second was invisible to this probe until it existed.
+/// Only a `<Button>` has `OnClick`; every other pressable widget in the
+/// directory handles a press and a release. Both kinds are collected by the
+/// same walk and pressed through the two paths [`super::api::mouse`] uses for
+/// them. They are counted separately in the report because the probe did not
+/// press the second kind before this enum existed.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Press {
     /// `frame:Click("LeftButton")`.
@@ -3473,28 +3422,27 @@ enum Press {
 
 /// Every widget on the screen a person could press, in tree order.
 ///
-/// The conditions are the ones a real click has to satisfy: **shown** (the walk
-/// only descends into shown objects), **mouse-enabled** — a widget with the
-/// mouse off is one the interface drives itself — **enabled**, and carrying a
-/// handler a press would reach, since pressing one without is a no-op rather
-/// than a check. Disabled buttons are left out for the same reason: `Click`
-/// refuses them, so counting one as pressed would be counting a press that
-/// never happened.
+/// The conditions are those a real click must satisfy: shown (the walk only
+/// descends into shown objects), mouse-enabled (a widget with the mouse off is
+/// driven by the interface itself), enabled, and with a handler a press would
+/// reach, since pressing a widget without one does nothing. Disabled buttons
+/// are left out because `Click` refuses them, so counting one as pressed would
+/// count a press that did not happen.
 ///
-/// ## Two kinds, and the second one cost a panel
+/// ## Buttons and other pressable widgets
 ///
-/// A `<Button>` qualifies on `OnClick`. **Everything else qualifies on
-/// `OnMouseDown` or `OnMouseUp`**, which is how 1.12 writes any widget that is
-/// meant to be pressed and is not a button — `ReputationBarTemplate` is a
-/// `<StatusBar>` whose `<OnMouseUp>` is the whole of what opens
-/// `ReputationDetailFrame`, and every reputation bar in the game is one. While
-/// this walk collected buttons only, its "N of M pressed" was N of M *buttons*
-/// and the rest of the pressable interface had no probe at all.
+/// A `<Button>` qualifies on `OnClick`. Every other widget qualifies on
+/// `OnMouseDown` or `OnMouseUp`, which is how 1.12 writes a widget that is
+/// pressed but is not a button. `ReputationBarTemplate` is a `<StatusBar>`
+/// whose `<OnMouseUp>` alone opens `ReputationDetailFrame`, and every
+/// reputation bar uses it. While this walk collected only buttons, its "N of M
+/// pressed" counted buttons, and the rest of the pressable interface had no
+/// probe.
 ///
-/// The other three of [`super::api::mouse::MOUSE_SCRIPTS`] are deliberately not
-/// here: `OnEnter` and `OnLeave` are a hover and `OnDragStart` is a drag.
-/// Neither is a press, and a probe that fired them would be reporting on a
-/// gesture it does not make.
+/// The other three of [`super::api::mouse::MOUSE_SCRIPTS`] are not collected:
+/// `OnEnter` and `OnLeave` are a hover and `OnDragStart` is a drag. None is a
+/// press, and firing them here would report on an action the probe does not
+/// perform.
 fn clickable(lua: &mlua::Lua) -> Vec<(String, mlua::Table, Press)> {
     let mut found = Vec::new();
     let Ok(roots) = super::widgets::widget::roots(lua) else {
@@ -3519,10 +3467,11 @@ fn gather(object: &mlua::Table, found: &mut Vec<(String, mlua::Table, Press)>, d
         None
     };
     if let Some(how) = how.filter(|_| enabled(object) && super::api::mouse::is_enabled(object)) {
-        // **Named, or named after where it hangs.** 1,000 of the interface's
-        // frames have no name at all, and the label is what the fixed point
-        // dedupes on — so an anonymous button gets its parent's name and its
-        // place in the tree, which is stable across rounds because the walk is.
+        // The frame's name, or a label built from its parent's name. 1,000 of
+        // the interface's frames have no name, and the round loop dedupes on
+        // the label, so an anonymous button is labelled with its parent's name
+        // and its position in the walk, which is the same every round because
+        // the walk is deterministic.
         let name: Option<String> = object.raw_get(super::widgets::widget::NAME_KEY).ok().flatten();
         let label = name.filter(|n| !n.is_empty()).unwrap_or_else(|| {
             let parent: Option<String> = object
@@ -3566,7 +3515,7 @@ fn has_click(button: &mlua::Table) -> bool {
     declares(button, "OnClick")
 }
 
-/// **Would a press on this reach a body?** — the non-button half of
+/// Whether a press on this frame would reach a handler: the non-button half of
 /// [`clickable`]'s test.
 fn has_press(frame: &mlua::Table) -> bool {
     declares(frame, "OnMouseDown") || declares(frame, "OnMouseUp")
@@ -3579,11 +3528,11 @@ fn declares(frame: &mlua::Table, script: &str) -> bool {
         .is_ok_and(|handler| handler.is_some())
 }
 
-/// Is this object *and every one of its parents* shown?
+/// Whether this object and every one of its parents is shown.
 ///
-/// `IsVisible`'s own question, asked here rather than through the method
-/// because the walk that found the button has already left the parent chain
-/// behind.
+/// The same test as `IsVisible`, done here by walking the parent chain rather
+/// than calling the method, because the walk that found the button no longer
+/// holds that chain.
 fn visible(object: &mlua::Table) -> bool {
     let mut current = object.clone();
     for _ in 0..64 {
@@ -3606,26 +3555,24 @@ fn first_line(e: &mlua::Error) -> String {
     e.to_string().lines().next().unwrap_or_default().to_string()
 }
 
-/// **`--audit --events`: every event this client can raise, delivered for real.**
+/// `--audit --events`: fire every event this client can raise, through the
+/// normal dispatch.
 ///
-/// The half of the interface `--audit` had never been able to see. A load
-/// exercises `OnLoad` and nothing else, so the report has said "1 failure" for
-/// two rounds while an `OnEvent` body — the thing that runs *while you are
-/// playing* — could be failing on every message and cost nothing but a panel
-/// that quietly stops keeping up. There are 36 script kinds and the load reaches
-/// one of them.
+/// A load runs `OnLoad` and nothing else. An `OnEvent` body, which runs during
+/// play, can fail on every event while the load report shows no failure; the
+/// only symptom is a panel that stops updating. There are 36 script kinds and
+/// the load reaches one of them.
 ///
-/// What it does is the ordinary dispatch: for each name in
-/// [`crate::interface::events::FIRED`], call [`LuaHost::fire_event`] with the
-/// arguments that event really carries, and rank whatever broke by the name Lua
-/// blamed — the same treatment, and the same [`blamed`] grouping, the load
-/// report gets.
+/// For each name in [`crate::interface::events::FIRED`], this calls
+/// [`LuaHost::fire_event`] with the arguments that event carries, and ranks
+/// failures by the name Lua reported, with the same [`blamed`] grouping as the
+/// load report.
 ///
-/// **The arguments are the real ones**, taken from the message types' own
-/// `GameEvent::args`, so this cannot drift into checking a shape nothing sends.
-/// The one thing it does not reproduce is *state*: a handler is called against
-/// [`Login`]'s stub world, so a body that would fail only with a real party or
-/// a real bag passes here. A failure reported is real; a pass is a lower bound.
+/// The arguments are taken from the message types' own `GameEvent::args`, so
+/// they cannot drift from what is sent. State is not reproduced: a handler
+/// runs against [`Login`]'s stub world, so a body that would fail only with a
+/// real party or a real bag passes here. A reported failure is real; a pass is
+/// a lower bound.
 fn fire_everything(host: &mut LuaHost) {
     use crate::interface::events::{
         self, ActionbarSlotChanged, ChatMessageReceived, PlayerLevelUp, SpellcastChannelStart,
@@ -3634,9 +3581,9 @@ fn fire_everything(host: &mut LuaHost) {
     };
     use crate::interface::api::UnitId;
 
-    // One representative instance per shape, keyed by the name it fires under.
-    // Anything in `FIRED` that is not listed here fires with no arguments,
-    // which is the truth for most of them.
+    // One representative instance per argument layout, keyed by the name it
+    // fires under. Anything in `FIRED` not listed here fires with no
+    // arguments, which is correct for most of them.
     let mut samples: Vec<(&'static str, Vec<events::EventArg>)> = Vec::new();
     let mut push = |e: &dyn GameEvent2| samples.push((e.fire_name(), e.fire_args()));
     push(&UiErrorMessage("You are too far away!".to_string()));
@@ -3644,30 +3591,32 @@ fn fire_everything(host: &mut LuaHost) {
         name: "Fireball".to_string(),
         duration_ms: 3500,
     });
-    // **The channel pair, and their arguments are the other way round from the
-    // cast's** — `(duration, name)` against `(name, duration)`, on adjacent
-    // branches of the same file. Fired with no arguments at all they die on
-    // `arg1 / 1000`, which is how this probe found the sample was missing.
+    // The channel pair. Their arguments are in the opposite order from the
+    // cast's, `(duration, name)` against `(name, duration)`, on adjacent
+    // branches of the same file. Fired with no arguments they fail on
+    // `arg1 / 1000`, which is how this probe showed the sample was missing.
     push(&SpellcastChannelStart {
         duration_ms: 8000,
         name: "Evocation".to_string(),
     });
     push(&SpellcastChannelUpdate { remaining_ms: 5000 });
-    // …and the pushback, whose one argument is the time *added* rather than the
-    // time left — a third arithmetic on `arg1` in the same file, on a third
-    // meaning of the number.
+    // The cast pushback. Its one argument is the time added, not the time
+    // left: the same file does arithmetic on `arg1` a third time, with a third
+    // meaning.
     push(&SpellcastDelayed { delay_ms: 500 });
     push(&ActionbarSlotChanged(1));
-    // **The offerer's name**, which the box formats into its own sentence:
-    // `StaticPopup_Show("RESURRECT", arg1)` passes it through as the dialog's
-    // `text_arg1` and `StaticPopup_Show` ends in `format(text, text_arg1)`. Bare
-    // it dies with "bad argument #2 to 'format' (string expected, got nil)",
-    // which is how this probe found the sample was missing.
+    // The resurrecter's name, which the dialog formats into its text:
+    // `StaticPopup_Show("RESURRECT", arg1)` passes it as the dialog's
+    // `text_arg1`, and `StaticPopup_Show` ends in `format(text, text_arg1)`.
+    // Without it the call fails with "bad argument #2 to 'format' (string
+    // expected, got nil)", which is how this probe showed the sample was
+    // missing.
     push(&crate::interface::events::ResurrectRequest("Bram".to_string()));
-    // **…and the trade's three that carry one**: the request formats the
-    // asker's name into `TRADE_WITH_QUESTION`, and the two square events
-    // concatenate their id into a frame name. Bare, all three die the way the
-    // resurrect box did, which is how this probe found the samples missing.
+    // The three trade events that carry an argument. The request formats the
+    // requester's name into `TRADE_WITH_QUESTION`, and the two item-slot
+    // events concatenate their slot id into a frame name. Without arguments
+    // all three fail like the resurrect dialog, which is how this probe showed
+    // the samples were missing.
     push(&crate::interface::events::TradeRequest("Bram".to_string()));
     push(&crate::interface::events::TradePlayerItemChanged(1));
     push(&crate::interface::events::TradeTargetItemChanged(1));
@@ -3675,72 +3624,73 @@ fn fire_everything(host: &mut LuaHost) {
         player: true,
         target: false,
     });
-    // **…and the party invitation, which is the same trap one dialog along.**
+    // The party invitation, the same case in another dialog.
     // `UIParent_OnEvent` calls `StaticPopup_Show("PARTY_INVITE", arg1)` and
-    // `INVITATION` is `"%s has invited you to join a group."`, so a bare raise
-    // dies in `format` exactly as the resurrect box did — which is how this
-    // probe found this sample was missing, on the round the event was added.
+    // `INVITATION` is `"%s has invited you to join a group."`, so firing it
+    // without an argument fails in `format` like the resurrect dialog. This
+    // probe showed the sample was missing when the event was added.
     push(&crate::interface::events::PartyInviteRequest {
         from: "Bram".to_string(),
     });
-    // **…and the innkeeper's, which is the same trap a third time.**
+    // The innkeeper's confirmation, the same case a third time.
     // `UIParent_OnEvent` calls `StaticPopup_Show("CONFIRM_BINDER", arg1)` and
-    // `CONFIRM_BINDER` is `"Do you want to make %s your new home?"`. This probe
-    // found it bare on the round the event was added, with the same
-    // `format` error the two above produced.
+    // `CONFIRM_BINDER` is `"Do you want to make %s your new home?"`. When the
+    // event was added without a sample, this probe reported the same `format`
+    // error as the two above.
     push(&crate::interface::events::ConfirmBinder {
         place: "Lion's Pride Inn".to_string(),
         guid: 0xF130_0000_0000_0007,
     });
-    // **…and the duel's, the same trap a fifth time**: `StaticPopup_Show(
+    // The duel request, the same case a fifth time: `StaticPopup_Show(
     // "DUEL_REQUESTED", arg1)` formats the name into `"%s has challenged you
-    // to a duel."`. And `/played`'s two numbers, which
+    // to a duel."`. Then `/played`'s two numbers, which
     // `ChatFrame_TimeBreakDown` divides.
     push(&crate::interface::events::DuelRequested("Bram".to_string()));
     push(&crate::interface::events::TimePlayedMsg { total: 90_061, level: 3_600 });
-    // **…and the pet trainer's, which is the same trap a fourth time and dies
-    // one file further along.** `UIParent_OnEvent` follows its
+    // The pet trainer's confirmation, the same case a fourth time, failing
+    // in a different file. `UIParent_OnEvent` follows its
     // `StaticPopup_Show("CONFIRM_PET_UNLEARN")` with
-    // `MoneyFrame_Update(dialog:GetName().."MoneyFrame", arg1)`, so a bare
-    // raise reaches `MoneyFrame.lua:185` and does arithmetic on nil rather than
-    // failing in `format` — a different error for the same missing sample, and
-    // this probe found it on the round the event was added.
+    // `MoneyFrame_Update(dialog:GetName().."MoneyFrame", arg1)`, so firing it
+    // without an argument reaches `MoneyFrame.lua:185` and does arithmetic on
+    // nil rather than failing in `format`. This probe reported it when the
+    // event was added.
     //
-    // Ten silver is a plausible reset: enough to fill the gold, silver and
-    // copper the money frame lays out.
+    // 1000 copper is a plausible cost for a pet talent reset, and non-zero so
+    // the money frame lays out its coin fields.
     push(&crate::interface::events::ConfirmPetUnlearn { cost: 1000 });
-    // **The name and the quality**, and `UIParent_OnEvent` needs both: its body
-    // is `if ( arg2 >= 3 )`, so a bare fire dies comparing a number with nil —
-    // which is what this probe reported the round the event was added.
+    // The item name and the quality; `UIParent_OnEvent` needs both. Its body
+    // is `if ( arg2 >= 3 )`, so firing without arguments fails comparing a
+    // number with nil, which this probe reported when the event was added.
     push(&crate::interface::events::DeleteItemConfirm {
         name: "Linen Cloth".to_string(),
         quality: 1,
     });
-    // **The glue's modal, whose `arg1` is a *key into a table*** —
-    // `GlueDialog_Show` opens with `GlueDialogTypes[which].text`, so a bare fire
-    // dies indexing nil, which is what this probe reported the round the event
-    // was added. `"OKAY"` is the kind a failure ends on and the one that
-    // exercises the most of that file: it hides the keypad, calls
-    // `StatusDialogClick()` and sizes the plate off the text.
+    // The glue's modal dialog, whose `arg1` is a key into a table:
+    // `GlueDialog_Show` begins with `GlueDialogTypes[which].text`, so firing
+    // without arguments fails indexing nil, which this probe reported when the
+    // event was added. `"OKAY"` is the dialog type shown after a failure, and
+    // it runs the most of that file: it hides the keypad, calls
+    // `StatusDialogClick()` and sizes the dialog to the text.
     push(&crate::interface::events::OpenStatusDialog {
         which: "OKAY",
         text: "Unable to connect".to_string(),
     });
-    // …and the character screen's own highlight, whose `arg1` is stored on the
-    // frame and then *compared*: `CharacterSelect_OnEvent` writes
+    // The character screen's selection, whose `arg1` is stored on the frame
+    // and then compared: `CharacterSelect_OnEvent` writes
     // `CharacterSelect.selectedIndex = arg1` and `UpdateCharacterSelection`
-    // opens `if ( index > 0 )`, so a bare fire dies comparing a number with nil.
-    // **Zero, not one**: the stub world holds no characters, and 0 is what the
-    // client really sends for an empty account.
+    // begins `if ( index > 0 )`, so firing without an argument fails comparing
+    // a number with nil. Zero, not one: the stub world holds no characters
+    // here, and the 1.12.1 client raises the event with 0 for an empty
+    // account.
     push(&crate::interface::events::UpdateSelectedCharacter(0));
-    // **The breath bar's six**, and every one of them is arithmetic somewhere:
-    // `MirrorTimer_Show` divides `arg2` and `arg3` by 1000, compares `arg5`
-    // against zero, indexes `MirrorTimerColors` by `arg1` and puts `arg6` in a
-    // font string. Fired bare it dies on `value / 1000`, which is what this
-    // probe reported the round the event was added. The stop and the pause are
-    // the same file one function down: the stop compares `arg1` against the
-    // frame's stored *name*, and the pause reads the same `arg1` as a number —
-    // see `vale_protocol::play::timers` for why both cannot be satisfied.
+    // The breath bar's six arguments, each used somewhere: `MirrorTimer_Show`
+    // divides `arg2` and `arg3` by 1000, compares `arg5` against zero, indexes
+    // `MirrorTimerColors` by `arg1` and puts `arg6` in a font string. Fired
+    // without arguments it fails on `value / 1000`, which this probe reported
+    // when the event was added. The stop and the pause are handled one
+    // function down in the same file: the stop compares `arg1` against the
+    // frame's stored name, and the pause reads the same `arg1` as a number.
+    // See `vale_protocol::play::timers` for why both cannot be satisfied.
     push(&crate::interface::events::MirrorTimerStart {
         timer: "BREATH".to_string(),
         remaining_ms: 45_000,
@@ -3753,16 +3703,16 @@ fn fire_everything(host: &mut LuaHost) {
         timer: "BREATH".to_string(),
     });
     push(&crate::interface::events::MirrorTimerPause { paused: true });
-    // **The row, and it has to be a real one**: `LootFrame_OnEvent`'s arm does
-    // arithmetic on `arg1` in its second line, so an event fired with no
-    // argument at all fails there — which is exactly what this probe caught the
-    // first time these three names were added to `FIRED`.
+    // The loot row, which must be a real one: `LootFrame_OnEvent`'s branch
+    // does arithmetic on `arg1` in its second line, so an event fired with no
+    // argument fails there. This probe reported that when these three names
+    // were added to `FIRED`.
     push(&crate::interface::events::LootSlotCleared { row: 1 });
-    // **The roll frame's three, and the first of them needs both arguments.**
-    // `UIParent_OnEvent` hands them straight to `GroupLootFrame_OpenNewFrame`,
-    // whose third line is `SetMinMaxValues(0, rollTime)` — a bare fire dies
-    // there. The id is 0 because that is a real roll id: the counter starts at
-    // zero, and it is the one [`Login`] answers for.
+    // The three loot roll events; the first needs both arguments.
+    // `UIParent_OnEvent` passes them to `GroupLootFrame_OpenNewFrame`, whose
+    // third line is `SetMinMaxValues(0, rollTime)`, where firing without
+    // arguments fails. The id is 0 because roll ids count from zero and 0 is
+    // the id [`Login`] answers for.
     push(&crate::interface::events::StartLootRoll {
         id: 0,
         countdown_ms: 60_000,
@@ -3772,60 +3722,60 @@ fn fire_everything(host: &mut LuaHost) {
         id: 0,
         vote: vale_protocol::play::lootroll::RollVote::Need,
     });
-    // **Both point deltas, and the *second* is the one that matters.**
+    // Both point deltas; the second is the one the chat frame reads.
     // `ChatFrame_OnEvent` tests `arg2 > 0` and then prints how many new skill
-    // points there are; fired bare it dies comparing a number with nil, which
-    // is what this probe reported the first time this event was raised. See
-    // [`crate::interface::events::CharacterPointsChanged`], where the push order
-    // is.
+    // points there are; fired without arguments it fails comparing a number
+    // with nil, which this probe reported the first time this event was
+    // raised. See [`crate::interface::events::CharacterPointsChanged`] for the
+    // argument order.
     push(&crate::interface::events::CharacterPointsChanged {
         talent: 1,
         profession: 1,
     });
     push(&UnitHealthChanged(UnitId::Player));
-    // **…and a party token, which is a different body in the same file.**
+    // A party token, which reaches a different body in the same file.
     // `PartyMemberFrame<n>HealthBar` registers `UNIT_HEALTH` on the bar itself
     // and its `OnEvent` is `UnitFrameHealthBar_Update(this, arg1)`, so this is
-    // the one route a party frame's bar has — and the reads it makes
+    // the only way a party frame's bar updates. Its reads
     // (`UnitHealth("party1")`, `UnitIsConnected`) go through the roster
-    // fallback rather than through an entity, which nothing else here fires.
+    // fallback rather than an entity, which nothing else here exercises.
     push(&UnitHealthChanged(UnitId::Party(1)));
-    // **…and a party *pet*, which is a third body again.**
+    // A party pet token, which reaches a third body.
     // `PartyMemberFrame<n>PetFrame`'s bars are initialised with
-    // `UnitFrame_Initialize("partypet"..id, …)`, so they open on their own
-    // token and on nothing else.
+    // `UnitFrame_Initialize("partypet"..id, …)`, so they respond only to
+    // their own token.
     push(&UnitHealthChanged(UnitId::PartyPet(1)));
     push(&UnitHealthChanged(UnitId::Pet));
-    // **A token per aura body.** `PartyMemberFrame_OnEvent`'s `UNIT_AURA` arm
-    // is a two-way branch — the member's own token calls `RefreshBuffs` and
-    // `partypet<n>` calls `PartyMemberFrame_RefreshPetBuffs` — and
-    // `PetFrame_OnEvent`'s opens on `"pet"`. Firing one token checks one third
-    // of that.
+    // One token per aura handler. `PartyMemberFrame_OnEvent`'s `UNIT_AURA`
+    // branch splits two ways (the member's own token calls `RefreshBuffs` and
+    // `partypet<n>` calls `PartyMemberFrame_RefreshPetBuffs`), and
+    // `PetFrame_OnEvent`'s responds to `"pet"`. Firing one token checks one
+    // third of that.
     push(&UnitAuraChanged(UnitId::Target));
     push(&UnitAuraChanged(UnitId::Party(1)));
     push(&UnitAuraChanged(UnitId::PartyPet(1)));
     push(&UnitAuraChanged(UnitId::Pet));
-    // **`UNIT_PET`'s `arg1` is the owner's**, so these two reach different
-    // files: `player` is `PetFrame_Update` and `party1` is
-    // `PartyMemberFrame_UpdatePet`, which also *moves* the member's frame.
+    // `UNIT_PET`'s `arg1` is the owner's token, so these two reach different
+    // files: `player` reaches `PetFrame_Update` and `party1` reaches
+    // `PartyMemberFrame_UpdatePet`, which also moves the member's frame.
     push(&crate::interface::events::UnitPetChanged(UnitId::Player));
     push(&crate::interface::events::UnitPetChanged(UnitId::Party(1)));
-    // …and `UNIT_FACTION`'s two: the target plate's tint and the party frame's
-    // PvP icon.
+    // `UNIT_FACTION`'s two handlers: the target frame's tint and the party
+    // frame's PvP icon.
     push(&crate::interface::events::UnitFactionChanged(UnitId::Target));
     push(&crate::interface::events::UnitFactionChanged(UnitId::Party(1)));
-    // **`UNIT_LEVEL` had no sample at all and fired bare**, which nothing
-    // noticed until `Blizzard_RaidUI` arrived: `RaidGroupFrame_OnEvent`'s arm
-    // is `gsub(arg1, "raid([0-9]+)", "%1")` and a nil there is an error rather
-    // than a miss. The raid token is the one that reaches that body; the
-    // target's reaches `TargetFrame_CheckLevel`.
+    // `UNIT_LEVEL` needs a unit token. Fired without one, it failed once
+    // `Blizzard_RaidUI` was loaded: `RaidGroupFrame_OnEvent`'s branch is
+    // `gsub(arg1, "raid([0-9]+)", "%1")`, and a nil there is an error rather
+    // than a non-match. The raid token reaches that body; the target's reaches
+    // `TargetFrame_CheckLevel`.
     push(&crate::interface::events::UnitLevelChanged(UnitId::Target));
     push(&crate::interface::events::UnitLevelChanged(UnitId::Raid(1)));
-    // …and the raid's own health, which is the other half of the same body.
+    // The raid member's health, which reaches the other half of the same body.
     push(&UnitHealthChanged(UnitId::Raid(1)));
-    // **Nine arguments, and the sample has to carry all nine**: the level-up
-    // branch of `ChatFrame_OnEvent` formats `arg1` and `arg2` and then compares
-    // `arg3`..`arg9` with `> 0`, so a sample short of the full shape reports as
+    // Nine arguments, and the sample must carry all nine: the level-up branch
+    // of `ChatFrame_OnEvent` formats `arg1` and `arg2` and then compares
+    // `arg3`..`arg9` with `> 0`, so a sample with fewer arguments fails with
     // "bad argument #2 to 'format'" rather than as a missing argument.
     push(&PlayerLevelUp(vale_protocol::play::spells::LevelUp {
         level: 12,
@@ -3842,18 +3792,18 @@ fn fire_everything(host: &mut LuaHost) {
             });
         }
     }
-    // Every chat kind, which is what this mode was built alongside: 26 names,
-    // each of them a body in `ChatFrame_OnEvent` that nothing had ever run.
+    // Every chat type: 26 event names, each a branch of `ChatFrame_OnEvent`
+    // that no other probe runs.
     for code in 0..=0x1Au8 {
         let Some(kind) = vale_protocol::play::chat::ChatType::from_code(code) else {
             continue;
         };
-        // **A channel line carries the channel**, or the handler returns
-        // before the branch this probe exists to run: `ChatFrame_OnEvent`
-        // declines a channel line whose `arg4` is empty as a channel the
-        // window is not registered for, which is what let the notice
-        // branch's `arg10 > 0` go untested through a whole round. The words
-        // are the ones the session raises for a join and a kick.
+        // A channel line carries the channel name, or the handler returns
+        // before the branch this probe runs: `ChatFrame_OnEvent` ignores a
+        // channel line whose `arg4` is empty, as a channel the window is not
+        // registered for. Without it the notice branch's `arg10 > 0` went
+        // untested. The texts are the ones the session raises for a join and
+        // a kick.
         use vale_protocol::play::chat::ChatType;
         let on_channel = matches!(
             kind,
@@ -3885,17 +3835,15 @@ fn fire_everything(host: &mut LuaHost) {
         }
         push(&line);
     }
-    // **…and the forty-five the combat log raises**, which are the same
-    // message type with a different producer: `interface::log` composes the
-    // sentence and there is no author, no flag and no channel.
+    // The forty-five combat log events. They are the same message type with a
+    // different producer: `interface::log` composes the sentence, and there is
+    // no author, no flag and no channel.
     //
-    // Without a sample here every one of them fires with **no arguments at
-    // all**, and `ChatFrame_OnEvent`'s first line is `strlen(arg4)` — so the
-    // probe reported forty-five identical failures the round the names were
-    // added, all of them its own. That is the shape the panel probe's own note
-    // warns about, and the reason this is a sample rather than an excuse: with
-    // one, the probe runs every combat branch of `ChatFrame_OnEvent` for real,
-    // which nothing in this client had ever done.
+    // Without a sample every one of them fires with no arguments, and
+    // `ChatFrame_OnEvent`'s first line is `strlen(arg4)`, so the probe
+    // reported forty-five identical failures of its own when the names were
+    // added. With a sample, the probe runs every combat branch of
+    // `ChatFrame_OnEvent`, which nothing else in this client does.
     for id in 0..vale_assets::interface::chattype::NONE {
         let name = vale_assets::interface::chattype::TYPES[id as usize].name;
         if !(name.starts_with("COMBAT_") || name.starts_with("SPELL_")) {
@@ -3917,11 +3865,11 @@ fn fire_everything(host: &mut LuaHost) {
         });
     }
 
-    // **`UPDATE_CHAT_COLOR` is not a message type**, so it has no `GameEvent`
-    // to take a sample from — the host raises it directly at load, ninety-four
-    // times. Its shape is `(type, r, g, b)` and the body's first line is
-    // `strupper(arg1)`, so firing it bare dies there; this probe found exactly
-    // that the round the raise was added, which is what it is for.
+    // `UPDATE_CHAT_COLOR` is not a message type, so it has no `GameEvent` to
+    // take a sample from; the host raises it directly at load, ninety-four
+    // times. Its arguments are `(type, r, g, b)` and the body's first line is
+    // `strupper(arg1)`, so firing it without arguments fails there. This probe
+    // reported that when the raise was added.
     samples.push((
         "UPDATE_CHAT_COLOR",
         vec![
@@ -3932,11 +3880,11 @@ fn fire_everything(host: &mut LuaHost) {
         ],
     ));
     let mut fired = 0usize;
-    // **A snapshot, not a length.** `missing()` is a `BTreeSet`, so the failures
-    // are in alphabetical order and "skip the first N" skips whichever N sort
-    // first rather than whichever N were already there — which reported the
-    // load's own remaining failure as a handler failure, because its name sorts
-    // late.
+    // A copy of the set, not its length. `missing()` is a `BTreeSet`, so the
+    // failures are in alphabetical order, and skipping the first N skips the N
+    // that sort first rather than the N that were already there. Counting by
+    // length reported a load failure whose name sorts late as a handler
+    // failure.
     let before: std::collections::BTreeSet<String> = host.missing().clone();
     for name in crate::interface::events::FIRED {
         let args = samples
@@ -3944,14 +3892,14 @@ fn fire_everything(host: &mut LuaHost) {
             .find(|(sample, _)| *sample == name)
             .map(|(_, args)| args.clone())
             .unwrap_or_default();
-        // **One name has a precondition and the probe has to establish it**,
-        // which is the shape `--audit --panels` took the day it learned to
-        // raise a panel's own prerequisite event. `ShowReadyCheck` walks the
-        // roster for the row whose rank is 2 and then `format`s that row's
-        // name, so `READY_CHECK` fired at a character who is not in a raid dies
-        // on a nil — and it cannot arrive at one, because vmangos broadcasts
-        // `MSG_RAID_READY_CHECK` through the group. Restored afterwards so the
-        // remaining names still see the harness's stated world.
+        // One event has a precondition the probe must set up, as
+        // `--audit --panels` does with [`PANEL_PREREQUISITES`].
+        // `ShowReadyCheck` searches the roster for the row whose rank is 2 and
+        // then `format`s that row's name, so `READY_CHECK` fired at a character
+        // not in a raid fails on a nil. A real session never delivers it
+        // outside a raid, because vmangos broadcasts `MSG_RAID_READY_CHECK`
+        // through the group. The raid size is restored afterwards so the
+        // remaining names see the harness's normal world.
         let raid_was = raid_size();
         if name == <crate::interface::events::ReadyCheck as events::GameEvent>::EVENT {
             RAID.store(raid_was.max(2), std::sync::atomic::Ordering::Relaxed);
@@ -3959,11 +3907,12 @@ fn fire_everything(host: &mut LuaHost) {
         host.fire_event(name, &args, &Login);
         RAID.store(raid_was, std::sync::atomic::Ordering::Relaxed);
         fired += 1;
-        // **…and its second branch, which is a different dialog.** `arg2 >= 3`
-        // opens `DELETE_GOOD_ITEM` instead — the one with an edit box you have
-        // to type "DELETE" into — so the sample above reaches only half of what
-        // this name does. Fired here rather than as a second sample because the
-        // table is keyed by name and `fired` counts *names*, not raises.
+        // The item-delete event's second branch, which is a different dialog.
+        // `arg2 >= 3` opens `DELETE_GOOD_ITEM` instead, the dialog with an
+        // edit box the player must type "DELETE" into, so the sample above
+        // reaches only half of this event. It is fired here rather than as a
+        // second sample because the sample table is keyed by name and `fired`
+        // counts names, not raises.
         if name == <crate::interface::events::DeleteItemConfirm as events::GameEvent>::EVENT {
             let good = crate::interface::events::DeleteItemConfirm {
                 name: "Thunderfury".to_string(),
@@ -3973,7 +3922,7 @@ fn fire_everything(host: &mut LuaHost) {
         }
     }
     // `fire_event` records into the same set the load reports from, so what is
-    // new since the load began is exactly what the handlers broke on.
+    // new since `before` is what the handlers failed on.
     let new: Vec<String> = host
         .missing()
         .difference(&before)
@@ -3983,23 +3932,21 @@ fn fire_everything(host: &mut LuaHost) {
         "\n  events: {fired} names fired at {} the interface registered for",
         host.registered_events()
     );
-    // **What the handlers actually produced**, which is the half "nothing
-    // failed" does not cover: a body that runs to the end and writes nothing is
-    // indistinguishable from one that was never called. The chat frame is the
-    // one place in the interface where the output of an `OnEvent` is countable
-    // without a window, and it is the reason this mode was written — 26 of the
-    // names above are `CHAT_MSG_*`, every one of them a `ChatFrame_OnEvent`
-    // branch that had never run in this client.
+    // What the handlers produced. "No handler failed" does not cover this: a
+    // body that runs to the end and writes nothing looks the same as one that
+    // was never called. The chat frame is the one place in the interface where
+    // an `OnEvent`'s output can be counted without a window. 26 of the names
+    // above are `CHAT_MSG_*`, each a `ChatFrame_OnEvent` branch.
     let held = host.run(&Login, |lua| {
         let frame: Option<mlua::Table> = lua.globals().get("DEFAULT_CHAT_FRAME")?;
         let Some(frame) = frame else {
             return Ok((0, None));
         };
         let lines = super::widgets::messages::lines(&frame, 0.0);
-        // The **oldest**, which under [`crate::interface::events::FIRED`]'s order is
-        // `CHAT_MSG_SAY` — the branch that composes a sentence, rather than one
-        // of the several that pass `arg1` through untouched and would prove
-        // nothing about the formatting.
+        // The oldest line, which in [`crate::interface::events::FIRED`]'s
+        // order is `CHAT_MSG_SAY`: a branch that composes a sentence, rather
+        // than one of those that pass `arg1` through unchanged and show nothing
+        // about the formatting.
         Ok((lines.len(), lines.first().map(|line| line.text.clone())))
     });
     match held {
@@ -4008,11 +3955,11 @@ fn fire_everything(host: &mut LuaHost) {
         }
         Ok((lines, sample)) => {
             println!("  the default chat frame is holding {lines} lines");
-            // **One of them in full**, because a count says the path is open
-            // and the text says the *wording* is the game's. It is composed by
-            // `ChatFrame_OnEvent` out of `GlobalStrings.lua`'s `CHAT_*_GET`,
-            // and it is where a `|Hplayer:…|h` that this client cannot strip
-            // would be visible — see [`super::widgets::text`].
+            // One line in full: the count shows that lines arrive, and the
+            // text shows that the wording is the game's. `ChatFrame_OnEvent`
+            // composes it from `GlobalStrings.lua`'s `CHAT_*_GET`, and a
+            // `|Hplayer:…|h` link this client fails to strip would show here;
+            // see [`super::widgets::text`].
             if let Some(text) = sample {
                 println!("    oldest: {text:?}");
                 println!("    drawn as: {:?}", super::widgets::text::plain(&text));
@@ -4058,9 +4005,9 @@ impl<T: crate::interface::events::GameEvent> GameEvent2 for T {
     }
 }
 
-/// [`Login`] with a clock that moves — the spin's world. Every answer is the
-/// login stub's; only `GetTime()` advances, because the `OnUpdate` bodies and
-/// the message-frame expiries are all written against it.
+/// [`Login`] with a clock that advances, used by the spin. Every answer is
+/// [`Login`]'s except `GetTime()`, which advances because the `OnUpdate`
+/// bodies and the message-frame expiries are all timed against it.
 struct Ticking(Cell<f64>);
 
 impl super::panels::container::ContainerAnswers for Ticking {
@@ -4545,10 +4492,11 @@ impl super::panels::loot::LootAnswers for Ticking {
     }
 }
 
-/// …and the roll frame's three, which the `--events` probe drives through a
-/// real `START_LOOT_ROLL`. **The clock is [`Login`]'s constant** rather than
-/// this stub's own tick: `GroupLootFrame_OnUpdate` only reads it to fill a bar,
-/// and a bar that empties over a headless run would end the probe's frame.
+/// The loot roll's three answers, which the `--events` probe reaches through a
+/// real `START_LOOT_ROLL`. The time left is [`Login`]'s constant rather than
+/// this double's advancing clock: `GroupLootFrame_OnUpdate` reads it only to
+/// fill a bar, and a bar that empties during a headless run would close the
+/// probe's roll frame.
 impl super::panels::lootroll::LootRollAnswers for Ticking {
     fn loot_roll_item(&self, id: u32) -> Option<super::panels::lootroll::RollItem> {
         Login.loot_roll_item(id)
@@ -4978,44 +4926,14 @@ impl super::api::UnitAnswers for Ticking {
     }
 }
 
-/// **`--spin N`: the live client's per-frame interface work, N times, timed.**
+/// The unit tokens one tick's batch of unit events is about: the subset of
+/// [`crate::interface::vitals`]' eleven at which this double has a unit.
 ///
-/// Each simulated frame is the three things a real frame pays the interpreter
-/// for — the mouse pass (a scope, the hit-test walk and the crossing handlers),
-/// the `OnUpdate` tick (a scope and every visible ticking frame), and the draw
-/// walk (`LuaHost::drawn`, the whole visible tree into items) — at 60 fps
-/// timestamps, with the pointer parked mid-screen the way a watching player's
-/// is.
-///
-/// What it prints is the *shape*, not just the average, because the complaint
-/// this exists for is an oscillation: median, p90/p99, the spike frames with
-/// the heap's move across each one, and the gaps between spikes. A heap that
-/// **drops** across a slow frame is the collector's cycle ending — the one
-/// cause a headless run can prove outright — and a regular gap is a period to
-/// hunt whatever else runs on it.
-/// **…and the interface's own clock is in it**, because a probe that runs a
-/// pass the client no longer runs every frame reports a number nobody pays.
-///
-/// `OnUpdate`, the model tick and the draw walk are on
-/// [`super::api::update::InterfaceClock`] in the live client, so they are here — the
-/// same accumulator and the same constant, since two answers to "is this frame
-/// a tick" is the shape of disagreement this file exists to catch. The mouse
-/// pass is deliberately *not*: a press is not an animation and one skipped
-/// frame of input is a lost click.
-///
-/// Two consequences for reading the output. The **frame total** is what a real
-/// frame costs, so it drops with the rate; the **phase medians** are still per
-/// *run* of that phase, over the ticks it actually ran, so they stay comparable
-/// with every earlier round's numbers. The tick count is printed beside them so
-/// the two cannot be confused.
-/// **The tokens a tick's worth of news is about** — the subset of
-/// [`crate::interface::vitals`]' eleven that this double has somebody at.
-///
-/// A party in a fight moves every one of them on the same tick, and each move is
-/// one `UNIT_HEALTH` whose `arg1` is the token — which is what
-/// `UnitFrameHealthBar_OnEvent` filters on. So the batch size is
-/// `2 + party + partypets`, and it is the number `--party <n>` moves: that is
-/// the whole of why the events phase is where a group is felt.
+/// In a party fight every one of them changes on the same tick, and each
+/// change is one `UNIT_HEALTH` whose `arg1` is the token, which
+/// `UnitFrameHealthBar_OnEvent` filters on. The batch size is therefore
+/// `2 + party + partypets`, and `--party <n>` changes it; this is why the
+/// events phase is where the cost of a group shows.
 fn news_tokens() -> Vec<String> {
     let mut out = vec!["player".to_string(), "target".to_string()];
     for index in 1..=party_size() {
@@ -5027,50 +4945,87 @@ fn news_tokens() -> Vec<String> {
     out
 }
 
+/// `--spin N`: run the live client's per-frame interface work N times and
+/// time it.
+///
+/// Each simulated frame runs the three things a real frame asks of the
+/// interpreter: the mouse pass (a scope, the hit-test walk and the crossing
+/// handlers), the `OnUpdate` tick (a scope and every visible ticking frame),
+/// and the draw walk. Frames are stamped at 60 fps, with the pointer held
+/// mid-screen as a player's is while watching. The draw walk goes through
+/// `LuaHost::drawn_if_changed`, as the live paint pass does, so it runs only
+/// when the layout, pile or paint generation has changed; the report prints
+/// "draw walks: N of M ticks".
+///
+/// It prints the distribution, not only the average, because it exists to
+/// investigate an oscillating frame rate: median, p90/p99, the spike frames
+/// with the heap's change across each one, and the gaps between spikes. A heap
+/// that drops across a slow frame is a garbage collection cycle ending, the one
+/// cause a headless run can show directly; a regular gap is a period at which
+/// to look for anything else that runs.
+///
+/// ## The interface clock
+///
+/// The spin uses the interface's own clock, because a probe that runs a pass
+/// the client does not run every frame reports a cost no frame pays.
+///
+/// `OnUpdate`, the model tick and the draw walk run on
+/// [`super::api::update::InterfaceClock`] in the live client, so they do here,
+/// with the same accumulator and the same constant: two answers to "is this
+/// frame a tick" are the kind of disagreement this file exists to catch. The
+/// mouse pass does not use the clock: input is not animation, and a skipped
+/// frame of input is a lost click.
+///
+/// Two consequences for reading the output. The frame total is what a real
+/// frame costs, so it drops with the tick rate. The phase medians are per run
+/// of that phase, over the ticks on which it ran, so they stay comparable with
+/// earlier measurements. The tick count is printed beside them so the two are
+/// not confused.
 fn spin_frames(host: &mut LuaHost, frames: usize, gamedata_dir: &str) {
     const DT: f64 = 1.0 / 60.0;
-    /// Mid-screen, in the game's units — over the world, not over a panel, which
-    /// is where a pointer spends most of a session.
+    /// Mid-screen, in the game's units: over the world rather than a panel,
+    /// which is where a pointer spends most of a session.
     const POINTER: (f64, f64) = (683.0, 384.0);
 
     let clock = Ticking(Cell::new(0.0));
     let mut times = Vec::with_capacity(frames);
     let mut heaps = Vec::with_capacity(frames);
     let generations_at_start = super::widgets::layout::generation(host.state());
-    // The frame, in its phases — so a fix lands on the phase that costs, rather
-    // than on the one that is easiest to reach.
+    // The frame's cost by phase, so a fix goes to the phase that costs most
+    // rather than the one easiest to reach. Slots: 0 mouse, 1 `OnUpdate`,
+    // 2 draw, 3 gc pace, 4 api scope, 5 events.
     //
-    // **The fifth is a scope opened and closed with nothing inside it**, which is
-    // not a phase of the frame at all: it is the *floor* under three of the four
-    // above. Every one of `mouse`, `OnUpdate` and an event goes through
-    // `LuaHost::run`, which re-installs the whole scoped read API before the body
-    // sees a single frame — so whatever this line says is paid at least twice a
-    // frame by definition, and any phase whose cost is near it has nothing else
-    // in it worth chasing. It is charged and timed *after* the frame's own total
-    // is taken, so measuring it does not move the number it explains. This file
-    // claimed it for two rounds and did not take it.
+    // Slot 4 is a scope opened and closed with nothing inside it. It is not a
+    // phase of the frame but the minimum cost under three of the others:
+    // `mouse`, `OnUpdate` and an event each go through `LuaHost::run`, which
+    // re-installs the whole scoped read API before the body runs. That cost is
+    // paid at least twice a frame, and a phase whose cost is close to it has
+    // nothing else worth reducing. It is charged and timed after the frame's
+    // total is taken, so measuring it does not change the number it explains.
     let mut phases = [(); 6].map(|()| Vec::with_capacity(frames));
-    // What each phase *allocates*, summed over the run — the number that says
-    // whose garbage the collector's spikes are. Positive deltas only, because a
-    // collection landing mid-phase would otherwise be counted as negative
-    // allocation.
+    // What each phase allocates, summed over the run, which shows which phase
+    // produces the garbage behind the collector's spikes. Positive deltas
+    // only, because a collection during a phase would otherwise count as
+    // negative allocation.
     let mut allocated = [0i64; 6];
-    // **The painter, if the archives are there.** `PaintProbe` needs the real
-    // art — an icon that will not decode is a quad that is never emitted, so a
-    // stand-in would measure the wrong picture — and it is `None` for a run with
-    // no `Data/`, which is the same condition the rest of this file skips
-    // itself under.
+    // The painter, if the archives are present. `PaintProbe` needs the real
+    // art: an icon that does not decode produces no quad, so stand-in art
+    // would measure a different picture. It is `None` for a run with no
+    // `Data/`, the same condition under which the rest of this file skips
+    // itself.
     let mut painter = std::path::Path::new(gamedata_dir)
         .is_dir()
         .then(|| crate::ui::framexml::PaintProbe::new(gamedata_dir));
     let mut painted: ((usize, usize), Vec<f64>) = ((0, 0), Vec::with_capacity(frames));
-    // The interface's clock, and the item list it hands to the frames between
-    // its ticks — both of them exactly what the live client does; see
+    // The interface's clock, and the item list reused by the frames between
+    // its ticks, both as in the live client; see
     // [`super::api::update::InterfaceClock`] and [`crate::ui::framexml`].
     let mut interface = super::api::update::InterfaceClock::default();
     let models = super::widgets::model::UiModels::default();
     let mut items: Vec<super::widgets::draw::Item> = Vec::new();
     let mut ticks = 0usize;
+    // Ticks on which `drawn_if_changed` walked, against those it skipped.
+    let mut walks = 0usize;
     for i in 0..frames {
         clock.0.set(i as f64 * DT);
         let due = interface.advance(DT);
@@ -5082,16 +5037,16 @@ fn spin_frames(host: &mut LuaHost, frames: usize, gamedata_dir: &str) {
             mark = now;
         };
         let started = std::time::Instant::now();
-        // **The world's news, which is the phase a party pays for and the one
-        // no earlier round measured.** `crate::lua::api::events::dispatch` is
-        // what this stands in for, and the batch is a real one: a party in a
-        // fight moves every watched unit's health on the same tick, so it is
-        // one `UNIT_HEALTH` per token in `interface::vitals::WATCHED` that
-        // the double actually has somebody at. See [`NEWS`].
+        // The unit events, which is the phase whose cost grows with the party.
+        // This stands in for `crate::lua::api::events::dispatch`, with a
+        // realistic batch: in a party fight every watched unit's health
+        // changes on the same tick, so it is one `UNIT_HEALTH` per token in
+        // `interface::vitals::WATCHED` at which the double has a unit. See
+        // [`news_tokens`].
         if due {
-            // **One call with the whole batch**, which is what
-            // `crate::lua::api::events::dispatch` does — a probe that fired them
-            // one at a time would measure a cost the client no longer pays.
+            // One call with the whole batch, as
+            // `crate::lua::api::events::dispatch` makes; firing them one at a
+            // time would measure a cost the client does not pay.
             let args: Vec<Vec<crate::interface::events::EventArg>> = news_tokens()
                 .into_iter()
                 .map(|token| vec![crate::interface::events::EventArg::Text(token)])
@@ -5116,18 +5071,26 @@ fn spin_frames(host: &mut LuaHost, frames: usize, gamedata_dir: &str) {
         let after_mouse = std::time::Instant::now();
         charge(0, host, &mut allocated);
         if due {
-            // **One call for both walks**, which is what `api::update::tick`
-            // does — see [`LuaHost::fire_tick`]. The `<Model>` half needs a
-            // `UiModels` and this harness has none, so it is handed an empty
-            // one: no model frame in `Interface\FrameXML\` has a file loaded
-            // without an archive read, so the walk is over an empty list either
-            // way and what is measured is the scope and the `OnUpdate` handlers.
+            // One call for both walks, as `api::update::tick` makes; see
+            // [`LuaHost::fire_tick`]. The `<Model>` half needs a `UiModels`,
+            // and this harness passes an empty one: no model frame in
+            // `Interface\FrameXML\` has a file loaded without an archive read,
+            // so that walk is over an empty list either way, and what is
+            // measured is the scope and the `OnUpdate` handlers.
             host.fire_tick(interface.elapsed(), &clock, &models);
         }
         let after_updates = std::time::Instant::now();
         charge(1, host, &mut allocated);
         if due {
-            items = host.drawn((SCREEN.0 as f32, SCREEN.1 as f32), clock.0.get());
+            // The gated walk the live paint pass uses; see
+            // `LuaHost::drawn_if_changed`. With `VALE_PAINT_VERIFY` set, a
+            // skipped walk is checked against a fresh one.
+            if let Some(fresh) =
+                host.drawn_if_changed((SCREEN.0 as f32, SCREEN.1 as f32), clock.0.get(), &items)
+            {
+                items = fresh;
+                walks += 1;
+            }
         }
         std::hint::black_box(items.len());
         let after_drawn = std::time::Instant::now();
@@ -5140,9 +5103,9 @@ fn spin_frames(host: &mut LuaHost, frames: usize, gamedata_dir: &str) {
         if due {
             phases[5].push((after_events - started).as_secs_f64() * 1000.0);
         }
-        // **Only the frames the phase ran on**, so its median stays the cost of
-        // one tick rather than being dragged to zero by the frames that skip it
-        // — the frame total above already carries the saving.
+        // Only the frames on which the phase ran, so its median stays the cost
+        // of one tick rather than being pulled toward zero by the frames that
+        // skip it. The frame total above already reflects the saving.
         if due {
             phases[1].push((after_updates - after_mouse).as_secs_f64() * 1000.0);
             phases[2].push((after_drawn - after_updates).as_secs_f64() * 1000.0);
@@ -5154,13 +5117,11 @@ fn spin_frames(host: &mut LuaHost, frames: usize, gamedata_dir: &str) {
         phases[4].push(before_scope.elapsed().as_secs_f64() * 1000.0);
         charge(4, host, &mut allocated);
         heaps.push(host.state().used_memory());
-        // **…and the paint, which is not the interpreter's at all** — see
-        // [`crate::ui::framexml::PaintProbe`]. Outside the four phases and their
-        // total on purpose: those numbers are what every earlier round in this
-        // file reported, and a `spin` that quietly started counting a fifth
-        // thing would make the whole series incomparable. It is nonetheless the
-        // *same frame's* work, and adding it to the median above is what a real
-        // frame pays.
+        // The paint, which is not interpreter work; see
+        // [`crate::ui::framexml::PaintProbe`]. It is kept out of the phases
+        // and their total so those stay comparable with earlier measurements.
+        // It is still part of the same frame's work, and a real frame costs
+        // the median above plus this.
         if let Some(probe) = painter.as_mut() {
             let before = std::time::Instant::now();
             painted.0 = probe.frame(&items, (SCREEN.0 as f32, SCREEN.1 as f32));
@@ -5185,15 +5146,16 @@ fn spin_frames(host: &mut LuaHost, frames: usize, gamedata_dir: &str) {
         at(0.99),
         at(1.0)
     );
-    // **The number the `OnUpdate` phase is about.** It is the frames carrying a
-    // handler at run time rather than the 63 `<OnUpdate>` elements in the
-    // markup — a template's script comes with every instance of it — and nearly
-    // all of them are in panels nobody has opened, which is why the walk tests
-    // visibility before it looks a script up.
+    // The number of frames with an `OnUpdate` handler at run time, which is
+    // what the `OnUpdate` phase walks. It is larger than the 63 `<OnUpdate>`
+    // elements in the markup, because a template's script comes with every
+    // instance of it. Nearly all of these frames are in closed panels, which is
+    // why the walk tests visibility before it looks up a script.
     println!(
         "  {} frames carry an OnUpdate; the walk runs the visible ones",
         host.ticking()
     );
+    println!("  draw walks: {walks} of {ticks} ticks; the rest found nothing changed");
     for ((name, series), lua_alloc) in
         ["mouse", "OnUpdate", "draw", "gc pace", "api scope", "events"]
         .iter()
@@ -5269,25 +5231,25 @@ fn spin_frames(host: &mut LuaHost, frames: usize, gamedata_dir: &str) {
     }
 }
 
-/// The screen the dump solves against, **in the game's own virtual units** —
-/// which is now the only screen there is, at any window size, and so is taken
-/// from the authority rather than restated as a rounded 1365 here. See
-/// [`super::widgets::layout::VIRTUAL_WIDTH`]. Stated on the output so two dumps
-/// are known to be comparable.
+/// The screen the dump solves against, in the game's virtual units. The
+/// interface uses this one screen size at every window size, so it is taken
+/// from `layout::UI_SIZE` rather than restated here as a rounded 1365. See
+/// [`super::widgets::layout::VIRTUAL_WIDTH`]. It is printed in the output so
+/// two dumps can be checked as comparable.
 const SCREEN: (f64, f64) = super::widgets::layout::UI_SIZE;
 
-/// **Every visible object, named, with its solved rectangle and its paint** —
-/// the headless answer to "what is this quad". The draw pass itself stays
-/// nameless (an `Item` carries no `String` on purpose, per the walk-cost round);
-/// this walks the same tree the slow way, which a probe can afford.
+/// Prints every visible object, named, with its solved rectangle and its
+/// paint, to identify an unexplained quad headlessly. The draw pass carries no
+/// names (an `Item` holds no `String`, to keep the walk cheap); this walks the
+/// same tree more slowly, which a probe can afford.
 fn dump(host: &LuaHost) {
     let lua = host.state();
     let _ = super::widgets::layout::set_screen(lua, SCREEN.0, SCREEN.1);
     let items = super::widgets::draw::collect(lua);
-    // **…and what came out for a `<Model>` frame**, which is the half the tree
-    // below cannot say: a model frame and an empty one look identical in a walk
-    // over *objects*, and the whole of "is the cooldown swirl drawn" is whether
-    // an item came out for it at all.
+    // The draw items produced for `<Model>` frames, which the object tree
+    // below cannot show: a model frame and an empty one look the same in a
+    // walk over objects, and whether the cooldown model is drawn depends only
+    // on whether an item was produced for it.
     let models: Vec<&super::widgets::draw::Item> = items
         .iter()
         .filter(|item| matches!(item.content, super::widgets::draw::Content::Model(_)))
@@ -5324,20 +5286,20 @@ fn dump(host: &LuaHost) {
     }
 }
 
-/// **Every bar that is drawn, at the rectangle it is drawn at** — which the
-/// tree below cannot say and which is the number a bar report is about.
+/// Prints every drawn status bar fill at the rectangle it is drawn at, which
+/// the object tree cannot show.
 ///
-/// The tree prints each widget's *own* rectangle, off `layout::rect`. A status
+/// The tree prints each widget's own rectangle, from `layout::rect`. A status
 /// bar paints something else: `draw::collect` crops that rectangle to the
-/// fraction and pushes *that* as the item, and the texture is cropped with it.
-/// So a bar drawn at the wrong size is invisible to the tree — it prints the
-/// rail, which is right, while the fill is what is wrong. That is the whole of
-/// why "the player's bars clip out of the frame" survived two rounds of a probe
-/// that reported the correct 119x12: nothing was printing the fill.
+/// fraction and pushes the cropped rectangle as the item, with the texture
+/// cropped to match. A fill drawn at the wrong size is therefore invisible in
+/// the tree, which prints the correct outer rectangle. A report that the
+/// player's bars extended outside the frame went unexplained while the probe
+/// printed the correct 119x12, because nothing printed the fill.
 ///
-/// Sorted by paint order, so a bar drawn over another is the later line — and
-/// the frame level is printed beside each, because two bars at one level are
-/// separated only by their sequence.
+/// Sorted by paint order, so a bar drawn over another is the later line. The
+/// frame level is printed beside each, because two bars at one level are
+/// ordered only by their sequence.
 fn bars(items: &[super::widgets::draw::Item]) {
     let bars: Vec<&super::widgets::draw::Item> = items
         .iter()
@@ -5348,11 +5310,10 @@ fn bars(items: &[super::widgets::draw::Item]) {
         let super::widgets::draw::Content::Bar(bar) = &item.content else {
             continue;
         };
-        // **…and what is painted over it**, which for a unit frame's bar is
-        // the answer to the other half of every bar report: the rail is art
-        // *above* the fill, and a fill that nothing covers is one that has come
-        // to the foreground. The first later item that contains the whole
-        // rectangle, by the same relation [`buried_text`] uses.
+        // What is painted over the fill. On a unit frame the border art is
+        // above the fill, so a fill that nothing covers has been drawn in
+        // front of it. This is the first later item that contains the whole
+        // rectangle, by the same test [`buried_text`] uses.
         let over = items
             .iter()
             .skip_while(|other| !std::ptr::eq(*other, *item))
@@ -5387,27 +5348,23 @@ fn bars(items: &[super::widgets::draw::Item]) {
     }
 }
 
-/// **Text with art painted over it** — the half of the dump the tree below
-/// cannot express.
+/// Reports text with art painted over it, which the object tree cannot show.
 ///
-/// The walk under this prints every visible object with its rectangle, and that
-/// is what "what is on the screen" meant here until a report proved it was only
-/// half the question: `ReputationDetailFrame` drew its faction name *and* the
-/// 256x128 parchment declared after it on the same layer, so the dump showed
-/// both, reported success, and the panel was blank. A tree says what exists; it
-/// says nothing about what covers what.
+/// The object walk prints every visible object with its rectangle, but not
+/// what covers what. `ReputationDetailFrame` drew its faction name and also
+/// the 256x128 parchment declared after it on the same layer; the dump listed
+/// both and the panel appeared blank.
 ///
-/// So this walks the sorted list and reports a text item that a **later** item
-/// with a texture completely contains. It is a warning rather than a failure —
-/// a later texture may be translucent, may be an `ADD` blend, or may have an
-/// alpha channel where the text is — and the alpha and blend are printed so the
+/// This walks the sorted item list and reports a text item that a later item
+/// with a texture completely contains. It is a warning rather than a failure:
+/// a later texture may be translucent, may use an `ADD` blend, or may be
+/// transparent where the text is. The alpha and blend are printed so the
 /// reader can tell.
 ///
-/// **Containment is not coverage**, and the standing entries say so: a panel's
-/// 256x256 corner art contains the frame title's rectangle and is transparent
-/// where the words are, and an `ADD` highlight over a bar's label brightens it
-/// rather than hiding it. So this is a list to read rather than a number to
-/// drive to zero — what it is for is a *new* line appearing in it.
+/// Containment is not coverage. A panel's 256x256 corner art contains the
+/// frame title's rectangle and is transparent where the words are, and an
+/// `ADD` highlight over a bar's label brightens it rather than hiding it. The
+/// list is to be read, not driven to zero; a new line in it is what matters.
 fn buried_text(items: &[super::widgets::draw::Item]) {
     let covers = |over: &super::widgets::draw::Item, under: &super::widgets::draw::Item| {
         let (a, b) = (&over.rect, &under.rect);
@@ -5475,10 +5432,10 @@ fn dump_object(lua: &mlua::Lua, this: &mlua::Table, depth: usize) {
         }
         None => line += "  (no rect)",
     }
-    // **A `<SimpleHTML>`'s page of words has no region to carry it**, so the
-    // walk below would print the frame and none of its text — which is exactly
-    // how "the book opens blank" looked in the dump while the words were
-    // stored. See `widgets::draw::simple_html`.
+    // A `<SimpleHTML>`'s page text has no region, so the walk below would
+    // print the frame and none of its text. A book that opened blank looked
+    // like that in the dump while the words were stored. See
+    // `widgets::draw::simple_html`.
     if super::widgets::widget::is_simple_html(this) {
         if let Some(text) = super::widgets::regions::text_of(this).filter(|t| !t.is_empty()) {
             let short: String = text.chars().take(40).collect();
@@ -5493,22 +5450,21 @@ fn dump_object(lua: &mlua::Lua, this: &mlua::Table, depth: usize) {
             let short: String = text.chars().take(40).collect();
             line += &format!("  text={short:?}");
         }
-        // **What it is set in**, which is what decides whether it fits: a face
-        // that did not resolve reads as the standard one and is 20% wider than
-        // the chat's own Arial Narrow, which is eight lines of chat against
-        // seven and a word over the edge of a tooltip.
+        // The font face and size, which decide whether the text fits. A face
+        // that did not resolve falls back to the standard one, which is 20%
+        // wider than the chat's Arial Narrow: seven lines of chat instead of
+        // eight, and words past the edge of a tooltip.
         if paint.is_font {
             line += &format!(
                 "  font={}@{:.0}{}",
                 vale_assets::interface::font::face_of(paint.font.as_deref()),
                 paint.font_height,
-                // `MasterFont`'s, so its *absence* is the thing worth seeing:
-                // a string with no edge under it on the game's own gold art.
+                // `MasterFont` has a shadow, so its absence is what to look
+                // for: text with no shadow over the game's gold art.
                 if paint.shadow.is_some() { "+shadow" } else { "" },
             );
-            // …and the outline, which is the other half of a face and the one
-            // that decides whether a word reads bold. Named rather than
-            // flagged, because `NORMAL` and `THICK` are visibly different.
+            // The outline, which decides whether text looks bold. Named rather
+            // than a flag, because `NORMAL` and `THICK` look different.
             match paint.outline {
                 super::widgets::regions::Outline::None => {}
                 super::widgets::regions::Outline::Normal => line += "+outline",
@@ -5531,24 +5487,23 @@ fn dump_object(lua: &mlua::Lua, this: &mlua::Table, depth: usize) {
         );
     }
     println!("{line}");
-    // **The lines a message frame is holding are on the screen and have no
-    // widgets**, so a dump that walked only the tree named everything visible
-    // except the chat and the errors — which are the two surfaces made of
-    // words. `draw::messages` emits them as ordinary text items; this is the
-    // same set, named.
+    // The lines a message frame holds are drawn but have no widgets, so a
+    // dump that walked only the tree would name everything visible except the
+    // chat and the error messages. `draw::messages` emits them as ordinary
+    // text items; this prints the same set, named.
     //
-    // …and the same *window*: what a frame shows is what fits in it, so a dump
-    // of everything it holds would report thirty lines where eight are drawn —
-    // which is precisely the failure this instrument exists to catch, and did
-    // not, for as long as the draw pass had the same bug.
+    // It also uses the same window: a frame shows only what fits in it, so a
+    // dump of everything it holds would report thirty lines where eight are
+    // drawn. While the draw pass had that bug, this dump had it too and did
+    // not show it.
     let held = super::widgets::messages::lines(this, 0.0);
     if let Some(shown) = super::widgets::messages::window(lua, held, this) {
         for row in shown.lines {
             let drawn = super::widgets::text::plain(&row.line.text);
-            // **…and how many rows it folds into**, which is the second half of
-            // the same claim: a line that wraps takes three of the frame's seven
-            // and a dump that reported it as one would agree with a draw pass
-            // that had run off the bottom of the screen.
+            // How many rows the line wraps into. A line that wraps can take
+            // three of the frame's seven rows, and a dump that counted it as
+            // one would agree with a draw pass that ran off the bottom of the
+            // frame.
             let fold = if row.rows > 1 {
                 format!("  ({} rows)", row.rows)
             } else {
@@ -5564,12 +5519,11 @@ fn dump_object(lua: &mlua::Lua, this: &mlua::Table, depth: usize) {
     let Ok(children) = super::widgets::widget::children(this) else {
         return;
     };
-    // **The same two suppressions the draw walk makes**, or this instrument
-    // reports objects that are not on the screen — which is the one thing it
-    // exists not to do. A button's unselected faces and a bar's own
-    // `<BarTexture>` are both children that never draw as themselves; listing
-    // them cost a session an hour chasing a white bar that the draw pass had
-    // already stopped emitting.
+    // The same two exclusions the draw walk makes, or this dump lists objects
+    // that are not on the screen. A button's unselected state textures and a
+    // bar's own `<BarTexture>` are children that never draw as themselves.
+    // Listing them once sent a debugging session after a white bar that the
+    // draw pass had already stopped emitting.
     let slots = (super::widgets::widget::class(this) == super::widgets::widget::Class::Button)
         .then(|| super::widgets::button::selected_slots(lua, this));
     let fill = super::widgets::statusbar::read(this).and_then(|_| super::widgets::statusbar::fill_region(this));
@@ -5584,9 +5538,9 @@ fn dump_object(lua: &mlua::Lua, this: &mlua::Table, depth: usize) {
 /// The name Lua blamed, out of `attempt to call global 'Foo' (a nil value)` and
 /// its `method 'Foo'` / `field 'Foo'` siblings.
 ///
-/// `None` for anything else, which is the interesting bucket rather than the
-/// noise: a body that failed for a *reason* rather than for an absence is a bug
-/// in this client rather than a gap in it.
+/// `None` for any other error. Those matter most: a body that failed for a
+/// reason other than a missing name points to a bug in this client rather than
+/// a missing feature.
 fn blamed(error: &str) -> Option<String> {
     let (kind, rest) = ["global", "method", "field", "upvalue"]
         .iter()
@@ -5605,7 +5559,8 @@ fn blamed(error: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// The three shapes Lua's own message takes, and the one that is not a name.
+    /// The three forms of Lua's missing-name message, and one error that names
+    /// nothing.
     #[test]
     fn the_blamed_name_comes_out_of_the_message() {
         assert_eq!(

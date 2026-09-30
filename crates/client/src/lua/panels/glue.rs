@@ -1,83 +1,82 @@
-//! **The C functions `Interface\GlueXML\` calls** — the login screen's and the
-//! character screen's half of the boundary, on the same terms as every other
-//! file here: the reads answer during the call, the writes record.
+//! The C functions `Interface\GlueXML\` calls for the login screen and the
+//! character-select screen. As in the other files here, the reads answer
+//! during the call and the writes are recorded.
 //!
 //! ```text
 //! GetBuildInfo()                      the version line at the bottom left
-//! GetServerName()                     …and the realm name at the right
-//! GetSavedAccountName() / Set…        what the account box opens with
+//! GetServerName()                     the realm name at the right
+//! GetSavedAccountName() / Set…        the account box's initial text
 //! DefaultServerLogin(account, pass)   the Login button
 //! IsConnectedToServer()
 //! GetNumCharacters()                  how many rows the list has
-//! GetCharacterInfo(i)                 …and what is in one: 8 return values
-//! SelectCharacter(i)                  the highlight, which moves the model
-//! DeleteCharacter(i)                  …and the delete dialog's own OKAY
+//! GetCharacterInfo(i)                 the contents of row i: 8 return values
+//! SelectCharacter(i)                  the highlight, which changes the model
+//! DeleteCharacter(i)                  the delete dialog's OKAY button
 //! EnterWorld()                        the Enter World button
-//! DisconnectFromServer()              …and Back
+//! DisconnectFromServer()              the Back button
 //! GetCharacterSelectFacing() / Set…   the drag that spins the character
 //! QuitGame()                          Quit
-//! SetCurrentScreen(name)              which screen the *client* thinks it is on
-//! StatusDialogClick()                 the connecting dialog's own button
+//! SetCurrentScreen(name)              the glue screen the client records as current
+//! StatusDialogClick()                 the connecting dialog's button
 //! PlayGlueMusic / StopGlueMusic       the main theme
 //! ```
 //!
-//! ## Why this is not `super::super::api` and not `super::super::api::stubs`
+//! ## Why this is not in `super::super::api` or `super::super::api::stubs`
 //!
-//! The glue's reads are about a **session that has not started yet** — a
-//! handshake held open with a character list in it, which is
-//! [`crate::world::session::Handshake`] and lives outside everything
-//! [`super::super::api::Answers`] was built to describe. They are still scoped reads
-//! for the same reason as the rest: `GetCharacterInfo` has to produce eight
-//! values in the middle of an expression, and it has to be *this* frame's
-//! character list rather than a copy made when the screen opened.
+//! The glue's reads describe a session that has not started yet: a handshake
+//! held open with a character list in it, which is
+//! [`crate::world::session::Handshake`] and is outside what
+//! [`super::super::api::Answers`] describes. They are still scoped reads for
+//! the same reason as the rest: `GetCharacterInfo` has to produce eight values
+//! in the middle of an expression, from the current frame's character list
+//! rather than a copy made when the screen opened.
 //!
-//! The writes are the ordinary queue shape ([`super::worldmap`],
-//! [`super::super::api::sound`]): a handler cannot log in, because logging in owns a socket
-//! and the world is borrowed for the length of the call. So
+//! The writes use the usual queue ([`super::worldmap`],
+//! [`super::super::api::sound`]): a handler cannot log in, because logging in
+//! needs the socket and the world is borrowed for the length of the call. So
 //! `AccountLogin_Login()` pushes a [`GlueRequest`] and `crate::glue::glue`
 //! drives the session with it.
 //!
-//! ## The agreements are accepted and that is a measurement, not a policy
+//! ## Why the four agreements answer accepted
 //!
 //! `AccountLogin_ShowUserAgreements` is the first thing the login screen's
-//! `OnShow` runs, and it **hides `AccountLoginUI` outright** unless
-//! `EULAAccepted()`, `TOSAccepted()`, `ScanningAccepted()` and
-//! `ContestAccepted()` all answer true — so a client that answers nil to any of
-//! them opens on a scroll pane and no login box at all. The real client's
-//! answers come out of `WTF\Config.wtf`'s `readTOS`/`readEULA`, which this
-//! client does not write; answering accepted is the state of an account that has
-//! played before, which is every account this client can reach. The four
-//! `Accept*` writes are no-ops for the same reason: there is nowhere to persist
-//! them to.
+//! `OnShow` runs, and it hides `AccountLoginUI` unless `EULAAccepted()`,
+//! `TOSAccepted()`, `ScanningAccepted()` and `ContestAccepted()` all return
+//! true. If any returns nil, the screen shows a scroll pane and no login box.
+//! The 1.12.1 client takes the answers from `readTOS`/`readEULA` in
+//! `WTF\Config.wtf`, which this client does not write. Accepted is the state of
+//! an account that has played before, which is every account this client can
+//! reach. The four `Accept*` writes are no-ops because there is nowhere to
+//! store them.
 //!
-//! ## `GetCharacterInfo`'s eighth value, and the one that is a guess
+//! ## `GetCharacterInfo`'s return values and `fileString`
 //!
 //! ```lua
 //! local name, race, class, level, zone, fileString, gender, ghost
 //!     = GetCharacterInfo(i);
 //! ```
 //!
-//! Seven of the eight come straight off `CMSG_CHAR_ENUM`'s reply. `fileString`
-//! is the odd one: it is the **race's model directory name** (`"Human"`,
-//! `"NightElf"`, `"Scourge"`) and `CharacterSelect_SelectCharacter` builds
-//! `Interface\Glues\Models\UI_<fileString>\UI_<fileString>.mdx` out of it, so a
-//! wrong string is a character-select screen with no backdrop. `SetBackgroundModel`
-//! then maps three of them onward itself — gnome to dwarf, troll to orc, blood
-//! elf to night elf — which is 1.12's own `-- HACK!!!` comment and is why only
-//! six directories exist. The strings here are `ChrRaces.dbc`'s own
-//! `clientFileString` column; see [`RACE_FILE_STRINGS`].
+//! Seven of the eight come directly from the reply to `CMSG_CHAR_ENUM`.
+//! `fileString` is the race's model directory name (`"Human"`, `"NightElf"`,
+//! `"Scourge"`); `CharacterSelect_SelectCharacter` builds
+//! `Interface\Glues\Models\UI_<fileString>\UI_<fileString>.mdx` from it, so a
+//! wrong string gives a character-select screen with no backdrop.
+//! `SetBackgroundModel` then maps three of them itself (gnome to dwarf, troll
+//! to orc, blood elf to night elf), under 1.12's `-- HACK!!!` comment, which is
+//! why only six directories exist. The strings here are the `clientFileString`
+//! column of `ChrRaces.dbc`; see [`RACE_FILE_STRINGS`].
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::super::api::{one_or_nil, Answers};
 
-/// **The scoped reads this file registers**, sorted — the same list
-/// [`super::super::api::READS`] is for the rest of the client.
+/// The scoped reads this file registers, sorted. It serves the same purpose as
+/// [`super::super::api::READS`] does for the rest of the client.
 ///
-/// Seven, and every one of them answers off a session that has not started. The
-/// realm and addon getters are *not* here: they answer constants and are
-/// registered unscoped, in [`WRITES`], where the count stays honest.
+/// Every one of them answers from a session that has not started. The realm
+/// and addon getters are not here: they return constants and are registered
+/// unscoped, and listed in [`WRITES`].
 pub const READS: [&str; 8] = [
     "GetCharacterInfo",
     "GetCharacterSelectFacing",
@@ -89,15 +88,16 @@ pub const READS: [&str; 8] = [
     "SetCharacterSelectFacing",
 ];
 
-/// …and the **unscoped writes and constants**, sorted. These are registered once
-/// at host construction, because none of them borrows anything.
+/// The unscoped writes and constants, sorted. These are registered once at host
+/// construction, because none of them borrows anything.
 ///
-/// Deliberately one list rather than two, and the module comment says which of
-/// them are which: about a third are real writes (`DefaultServerLogin`,
-/// `EnterWorld`, `DeleteCharacter`), a third are the constants that turn a
-/// screen's dead branches off (the agreements, the billing plan, the addon
-/// count), and a third are the one subsystem this client refuses outright — the
-/// realm list. `the_registered_set_is_the_list` is what keeps this honest.
+/// They are kept in one list. About a third are real writes
+/// (`DefaultServerLogin`, `EnterWorld`, `DeleteCharacter`), a third are
+/// constants that switch off branches a screen does not use (the agreements,
+/// the billing plan, the addon count), and a third belong to the realm list,
+/// which this client does not implement. The test
+/// `the_registered_set_is_the_list` checks this list against what is
+/// registered.
 pub const WRITES: [&str; 52] = [
     "AcceptContest",
     "AcceptEULA",
@@ -153,74 +153,74 @@ pub const WRITES: [&str; 52] = [
     "UpdateSelectionCustomizationScene",
 ];
 
-/// **What the glue asked the client to do**, drained by [`crate::glue::glue`].
+/// A request from the glue screens, drained by [`crate::glue::glue`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum GlueRequest {
-    /// `DefaultServerLogin(account, password)` — the Login button, and the only
-    /// request here that carries a secret. It is moved straight into the logon
-    /// task and never stored; see [`crate::world::session::start_login`].
+    /// `DefaultServerLogin(account, password)`, the Login button. This is the
+    /// only request here that carries a secret. It is moved directly into the
+    /// logon task and never stored; see [`crate::world::session::start_login`].
     Login { account: String, password: String },
-    /// `SelectCharacter(i)`, one-based — moves the highlight, which is what
-    /// changes the model on the plinth.
+    /// `SelectCharacter(i)`, one-based. Moves the highlight, which changes the
+    /// model on the plinth.
     Select(usize),
-    /// `DeleteCharacter(i)`, one-based — the OKAY button on
-    /// `CharacterDeleteDialog`, which the interface enables only once the word
-    /// `DELETE_CONFIRM_STRING` has been typed into the box beside it. That guard
-    /// is the shipped file's and is deliberately not repeated here: this arrives
-    /// already confirmed.
+    /// `DeleteCharacter(i)`, one-based: the OKAY button on
+    /// `CharacterDeleteDialog`, which the interface enables only once
+    /// `DELETE_CONFIRM_STRING` has been typed into the box beside it. That
+    /// check is in the interface file and is not repeated here: the request
+    /// arrives already confirmed.
     Delete(usize),
-    /// `EnterWorld()` — enter with whichever character is selected.
+    /// `EnterWorld()`: enter the world with the selected character.
     EnterWorld,
-    /// `DisconnectFromServer()` — Back, from character select to login.
+    /// `DisconnectFromServer()`: Back, from character select to login.
     Disconnect,
-    /// `StatusDialogClick()` — **stop trying to log on**, which is the whole of
-    /// what the connecting dialog's one button does.
+    /// `StatusDialogClick()`: stop the logon attempt. This is all the
+    /// connecting dialog's one button does.
     ///
-    /// Reached from three places in `GlueDialog.lua` and all three are the same
-    /// intent: `GlueDialogTypes["CANCEL"].OnAccept` (the button), and
-    /// `["OKAY"]`'s own `OnShow` and `OnAccept` — which run with nothing
-    /// pending, because an `OKAY` box is what a *finished* attempt ends on. So
-    /// this has to be harmless when there is nothing to cancel; see
+    /// `GlueDialog.lua` calls it from three places, all with the same intent:
+    /// `GlueDialogTypes["CANCEL"].OnAccept` (the button), and the `OnShow` and
+    /// `OnAccept` of `["OKAY"]`. The last two run with no attempt pending,
+    /// because an `OKAY` box is shown when an attempt has finished, so this
+    /// must be harmless when there is nothing to cancel; see
     /// [`crate::world::session::Session::cancel_login`].
     CancelLogin,
-    /// `QuitGame()` — the Quit button, which really does close the window.
+    /// `QuitGame()`: the Quit button, which closes the window.
     Quit,
-    /// `GetCharacterListUpdate()` — "re-read the list", which for this client is
-    /// "raise `CHARACTER_LIST_UPDATE` at whoever asked" rather than a packet:
-    /// the list arrived with the handshake and nothing changes it until a
-    /// character is created or deleted.
+    /// `GetCharacterListUpdate()`: "re-read the list". This client raises
+    /// `CHARACTER_LIST_UPDATE` instead of sending a packet: the list arrived
+    /// with the handshake and does not change until a character is created or
+    /// deleted.
     RefreshCharacters,
-    /// `SetSavedAccountName(name)` — the Remember Account Name box. Kept for the
+    /// `SetSavedAccountName(name)`: the Remember Account Name box. Kept for the
     /// session and not written to disk; see [`crate::glue::glue::GlueState`].
     SaveAccountName(String),
-    /// `SetCharacterSelectFacing(degrees)` — the drag that spins the character.
+    /// `SetCharacterSelectFacing(degrees)`: the drag that spins the character.
     Facing(f32),
-    /// `SetCurrentScreen(name)` — the client's own record of which glue screen
-    /// is up, which the real client uses to decide what to render.
+    /// `SetCurrentScreen(name)`: the client's record of which glue screen is
+    /// shown, which the 1.12.1 client uses to decide what to render.
     Screen(String),
 }
 
 pub type GlueQueue = Rc<RefCell<Vec<GlueRequest>>>;
 
-/// Registry keys holding the frame each background setter writes to — see
-/// [`register`], where the two pairs are wired.
+/// Registry keys holding the frame each background setter writes to; see
+/// [`register`], where the two pairs are set up.
 const SELECT_FRAME_KEY: &str = "vale.glue.selectFrame";
 const CREATE_FRAME_KEY: &str = "vale.glue.customizeFrame";
 
-/// **`ChrRaces.dbc`'s `clientFileString` column**, by race id.
+/// The `clientFileString` column of `ChrRaces.dbc`, by race id.
 ///
-/// The string `CharacterSelect_SelectCharacter` builds a path out of, and the
-/// key `CharModelFogInfo` is indexed by once `strupper`'d. Hard-coded here
-/// rather than read for the same reason `Screen`'s race names were: it is eight
-/// rows that have not changed since 2004, and a character list has to be
-/// nameable before an archive is necessarily open — the glue runs before the
-/// world does.
+/// `CharacterSelect_SelectCharacter` builds a path from this string, and
+/// `CharModelFogInfo` is indexed by it after `strupper`. It is hard-coded
+/// rather than read, for the same reason as `Screen`'s race names: the eight
+/// rows have not changed since 2004, and the character list has to be named
+/// before an archive is necessarily open, because the glue runs before the
+/// world.
 ///
-/// **`Scourge`, not `Undead`.** The directory is
-/// `Interface\Glues\Models\UI_Scourge\`, `CharModelFogInfo["SCOURGE"]` is the
-/// fog entry, and "Undead" is only what the interface *prints*. Getting this one
-/// wrong is a black character-select screen for every forsaken character and
-/// nothing else.
+/// `Scourge`, not `Undead`: the directory is
+/// `Interface\Glues\Models\UI_Scourge\`, the fog entry is
+/// `CharModelFogInfo["SCOURGE"]`, and "Undead" is only the printed name. A
+/// wrong string here gives a black character-select screen for every Forsaken
+/// character.
 const RACE_FILE_STRINGS: [(u8, &str); 8] = [
     (1, "Human"),
     (2, "Orc"),
@@ -235,7 +235,7 @@ const RACE_FILE_STRINGS: [(u8, &str); 8] = [
 /// The race's model directory name, or `""` for an id 1.12 does not have.
 ///
 /// Empty rather than a guess: `SetBackgroundModel` falls back to `Orc` for a nil
-/// race, which is the client's own behaviour for one it cannot resolve.
+/// race, which is what the 1.12.1 client does for a race it cannot resolve.
 pub fn race_file_string(race: u8) -> &'static str {
     RACE_FILE_STRINGS
         .iter()
@@ -247,18 +247,18 @@ pub fn race_file_string(race: u8) -> &'static str {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CharacterRow {
     pub name: String,
-    /// The race and class in the interface's own words — `"Human"`, `"Mage"`.
+    /// The race and class as the interface prints them: `"Human"`, `"Mage"`.
     pub race: String,
     pub class: String,
     pub level: u32,
     /// The zone name, or empty; `UpdateCharacterList` substitutes `""` itself
-    /// for a nil, so either is safe and empty is the honest one.
+    /// for a nil, so either is safe; this uses empty.
     pub zone: String,
-    /// [`race_file_string`] — see the module comment.
+    /// [`race_file_string`]; see the module comment.
     pub file_string: String,
     /// 0 male, 1 female, which is what `UpdateCharacterList` compares against.
     pub gender: u8,
-    /// Whether the character is dead — the `(Ghost)` suffix on the row.
+    /// Whether the character is dead: the `(Ghost)` suffix on the row.
     pub ghost: bool,
 }
 
@@ -279,10 +279,10 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &GlueQueue) -> mlua::Resu
         }};
     }
 
-    // **The login itself.** `AccountLogin_Login` reads both edit boxes and hands
-    // them over; a blank account records nothing rather than starting a logon
-    // that realmd will refuse, which is what the real client's greyed-out button
-    // means one layer up.
+    // The login. `AccountLogin_Login` reads both edit boxes and passes them
+    // here. A blank account records nothing rather than starting a logon that
+    // realmd will refuse; the 1.12.1 client prevents the same case by greying
+    // out the button.
     push!(
         "DefaultServerLogin",
         (Option<String>, Option<String>),
@@ -294,16 +294,16 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &GlueQueue) -> mlua::Resu
             })
         }
     );
-    // **One-based, and a 0 is not a selection.** `UpdateCharacterList` sets
-    // `selectedIndex = 0` for an account with no characters and the C side is
-    // never asked to select it.
+    // One-based; 0 is not a selection. `UpdateCharacterList` sets
+    // `selectedIndex = 0` for an account with no characters, and 0 is not
+    // passed on as a selection.
     push!("SelectCharacter", Option<usize>, |index| index
         .filter(|i| *i > 0)
         .map(GlueRequest::Select));
-    // **One-based, and a 0 is not a row** — the same guard `SelectCharacter`
-    // keeps, and for the same reason: `CharacterSelect.selectedIndex` is 0 for
-    // an account with no characters, and `CharacterSelect_Delete` only checks
-    // that before showing the dialog rather than before the button fires.
+    // One-based; 0 is not a row. This is the same check as `SelectCharacter`,
+    // for the same reason: `CharacterSelect.selectedIndex` is 0 for an account
+    // with no characters, and `CharacterSelect_Delete` checks it only before
+    // showing the dialog, not when the button fires.
     push!("DeleteCharacter", Option<usize>, |index| index
         .filter(|i| *i > 0)
         .map(GlueRequest::Delete));
@@ -319,17 +319,18 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &GlueQueue) -> mlua::Resu
     ));
     push!("SetCurrentScreen", Option<String>, |name| name
         .map(GlueRequest::Screen));
-    // **The two background setters really do change the scene**, and until they
-    // did every race stood in front of the orc's backdrop — see
-    // [`super::super::widgets::model::set_file_on`], which is where that whole finding is.
-    // `SetBackgroundModel` hands the widget its sequence, its camera and its fog
-    // directly and the *path* through here, so this is the only route the file
-    // has.
+    // The two background setters change the scene's model. When they were
+    // no-ops, every race was shown in front of the orc's backdrop; see
+    // [`super::super::widgets::model::set_file_on`] for the details.
+    // `SetBackgroundModel` passes the widget its sequence, camera and fog
+    // directly, and the model path only through these setters, so this is the
+    // only way the file reaches the widget.
     //
-    // Which frame each one lands on is the frame the interface named at load —
-    // `SetCharSelectModelFrame("CharacterSelect")` and
-    // `SetCharCustomizeFrame("CharacterCreate")` — recorded rather than assumed,
-    // because that pairing is a fact about the markup and not about this client.
+    // Each setter acts on the frame the interface named at load
+    // (`SetCharSelectModelFrame("CharacterSelect")` and
+    // `SetCharCustomizeFrame("CharacterCreate")`). The name is recorded rather
+    // than hard-coded, because the pairing is defined by the markup, not by
+    // this client.
     for (setter, namer, key) in [
         (
             "SetCharSelectBackground",
@@ -349,9 +350,9 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &GlueQueue) -> mlua::Resu
             let frame: Option<String> = lua.named_registry_value(key)?;
             match frame {
                 Some(frame) => super::super::widgets::model::set_file_on(lua, &frame, &file),
-                // Nothing has named a frame yet, which cannot happen from the
-                // shipped files — both `OnLoad`s name theirs — and would
-                // otherwise be a silently unchanged backdrop.
+                // No frame has been named yet. The shipped files cannot cause
+                // this, because both `OnLoad`s name theirs; the backdrop is
+                // left unchanged.
                 None => Ok(()),
             }
         })?;
@@ -362,28 +363,27 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &GlueQueue) -> mlua::Resu
         })?;
         globals.set(namer, f)?;
     }
-    // …and the C side's own "redraw the character standing on the plinth", which
-    // `CharacterSelect_UpdateModel` calls every frame from `OnUpdate`. The
-    // renderer redraws unconditionally, so there is nothing to ask for.
+    // "Redraw the character on the plinth", which `CharacterSelect_UpdateModel`
+    // calls every frame from `OnUpdate`. The renderer redraws every frame
+    // regardless, so this is a no-op.
     globals.set(
         "UpdateSelectionCustomizationScene",
         lua.create_function(|_, _: mlua::MultiValue| Ok(()))?,
     )?;
 
-    // **The version line, and it is the client's own identity rather than a
-    // stub.** `AccountLoginVersion:SetText(format(VERSION_TEMPLATE, versionType,
-    // version, internalVersion, buildType, date))` is what puts
+    // The version line, from the same values the logon sends.
+    // `AccountLoginVersion:SetText(format(VERSION_TEMPLATE, versionType,
+    // version, internalVersion, buildType, date))` puts
     // "Version 1.12.1 (5875) (Release) / Sep 19 2006" in the bottom-left corner
-    // of the screenshot this round is against — five values, in that order, and
-    // every one of them is already pinned by `vale_protocol::version`,
-    // because it is what the *logon* proves to realmd. Answering anything else
-    // here would put a version on screen that the handshake contradicts.
+    // of the login screen: five values, in that order. Each is defined in
+    // `vale_protocol::version`, because the logon sends them to realmd. Any
+    // other answer here would show a version that the handshake contradicts.
     {
         use vale_protocol::version;
         let f = lua.create_function(move |_, ()| {
             Ok((
-                // `versionType` — 1.12's own word for a shipped build. The
-                // template prints it before the number: "Version 1.12.1".
+                // `versionType`: 1.12's word for a shipped build. The template
+                // prints it before the number: "Version 1.12.1".
                 "Version",
                 version::BUILD_TYPE,
                 version::VERSION_STRING,
@@ -394,13 +394,13 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &GlueQueue) -> mlua::Resu
         globals.set("GetBuildInfo", f)?;
     }
 
-    // **The four agreements, accepted** — see the module comment, which is where
-    // the argument for that is. The `Accept*` writes have nowhere to persist to.
+    // The four agreements answer accepted; the module comment gives the reason.
+    // The `Accept*` writes have nowhere to store their value.
     for name in ["EULAAccepted", "TOSAccepted", "ScanningAccepted", "ContestAccepted"] {
         globals.set(name, lua.create_function(|_, ()| Ok(1))?)?;
     }
-    // …and the four "should the notice be shown", which are nil because the
-    // agreement they annotate is already accepted.
+    // The four "should the notice be shown" functions return nil, because the
+    // agreement each notice belongs to is already accepted.
     for name in [
         "ShowEULANotice",
         "ShowTOSNotice",
@@ -423,18 +423,19 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &GlueQueue) -> mlua::Resu
         globals.set(name, lua.create_function(|_, _: mlua::MultiValue| Ok(()))?)?;
     }
 
-    // **`PlayGlueMusic(file)` is `PlayMusic(file)` under another name**, and the
-    // glue calls it on every screen change. Routed to the same queue the four
-    // in-game sound verbs use, so a theme started here is stopped by the same
-    // channel that stops a zone's — see [`super::super::api::sound`], which owns the door.
+    // `PlayGlueMusic(file)` is `PlayMusic(file)` under another name, and the
+    // glue calls it on every screen change. It goes to the same queue as the
+    // four in-game sound functions, so a theme started here is stopped by the
+    // same channel that stops a zone's music; see [`super::super::api::sound`].
     //
-    // Registered *here* rather than there because these three names exist only
-    // in `Interface\GlueXML\`, and a name registered for a directory that is not
-    // loaded is a name in the census that nothing ever calls.
+    // These three are registered here rather than in `sound` because the names
+    // exist only in `Interface\GlueXML\`; registered with the in-game
+    // functions, they would appear in the census list while nothing in the
+    // loaded directory calls them.
     //
-    // `PlayCreditsMusic` takes no argument: 1.12's credits track is chosen by
-    // the C side. Nothing plays it here, and it is registered so
-    // `AccountLogin_Credits` gets past it.
+    // `PlayCreditsMusic` takes no argument: in 1.12 the client, not the
+    // interface, chooses the credits track. Nothing is played here; it is
+    // registered so `AccountLogin_Credits` does not fail on a nil call.
     globals.set(
         "StopGlueMusic",
         lua.create_function(|lua, ()| {
@@ -461,13 +462,12 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &GlueQueue) -> mlua::Resu
         lua.create_function(|_, _: mlua::MultiValue| Ok(()))?,
     )?;
 
-    // **The realm list, which is refused rather than answered.** This client
-    // takes the first realm the logon returned and has no way to be pointed at
-    // another, so there is no realm
-    // *screen* — `RequestRealmList` records nothing and `GetNumRealms` answers
-    // 0, which is a `RealmList` frame that opens empty rather than one that
-    // opens onto a list this client would not act on. Stated rather than
-    // dressed up: it is the one glue screen of the four that is absent.
+    // The realm list is not implemented. This client takes the first realm the
+    // logon returned and cannot switch to another, so there is no realm
+    // screen: `RequestRealmList` records nothing and `GetNumRealms` returns 0,
+    // so the `RealmList` frame opens empty rather than showing a list this
+    // client would not act on. It is the only one of the four glue screens
+    // that is absent.
     for name in ["RequestRealmList", "CancelRealmListQuery", "ChangeRealm", "SetPreferredInfo",
                  "SortRealms", "RealmListUpdateRate"] {
         globals.set(name, lua.create_function(|_, _: mlua::MultiValue| Ok(()))?)?;
@@ -476,39 +476,39 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &GlueQueue) -> mlua::Resu
         globals.set(name, lua.create_function(|_, _: mlua::MultiValue| Ok(0))?)?;
     }
 
-    // **The addon list is `super::addons`'**, over the board the session
-    // seeds. What stays here is the one call with nothing behind it: 1.12 has
-    // no `## X-Website` field to launch, so the button never shows.
+    // The addon list is implemented in `super::addons`, over the board the
+    // session seeds. What stays here are calls with no effect: 1.12 has no
+    // `## X-Website` field to launch, so the website button never shows.
     for name in ["LaunchAddOnURL", "SetScriptMemory"] {
         globals.set(name, lua.create_function(|_, _: mlua::MultiValue| Ok(()))?)?;
     }
     globals.set("GetScriptMemory", lua.create_function(|_, ()| Ok(0))?)?;
 
-    // **`GetBillingPlan` answers 0 and that turns the whole gameroom block
-    // off.** `CharacterSelect_OnShow` runs 60 lines of billing arithmetic
-    // otherwise, all of it against a Korean/Chinese payment API no vmangos
-    // server speaks. Zero is "no payment plan", which is `GameRoomBillingFrame:Hide()`.
+    // `GetBillingPlan` returns 0, which switches off the whole game-room
+    // block. Otherwise `CharacterSelect_OnShow` runs 60 lines of billing
+    // arithmetic for a Korean/Chinese payment API that no vmangos server
+    // implements. Zero means "no payment plan", which runs
+    // `GameRoomBillingFrame:Hide()`.
     globals.set(
         "GetBillingPlan",
         lua.create_function(|_, ()| Ok((0, 0, 0)))?,
     )?;
     globals.set("GetBillingTimeRemaining", lua.create_function(|_, ()| Ok(0))?)?;
 
-    // **`LaunchURL` opens nothing, deliberately.** Manage Account, Community
-    // Site and Tech Support are three buttons whose whole effect is to hand a
-    // URL to the shell — and a client that opens a browser because a Lua file
-    // asked it to is a client whose interface can open a browser. The three
-    // buttons draw and press and do nothing, which is stated here rather than
-    // being a silent absence.
+    // `LaunchURL` opens nothing. Manage Account, Community Site and Tech
+    // Support are three buttons whose only effect is to pass a URL to the
+    // shell, and opening a browser on request from a Lua file would let any
+    // interface code open a browser. The three buttons draw and can be pressed,
+    // and do nothing.
     globals.set("LaunchURL", lua.create_function(|_, _: mlua::MultiValue| Ok(()))?)?;
 
-    // **The character-list writes this client still refuses**, and the refusal
-    // is the honest answer rather than a gap: `CMSG_CHAR_RENAME` is not sent
-    // anywhere in this client, so a Rename that recorded a request nothing
-    // served would leave the dialog waiting for a `CHARACTER_LIST_UPDATE` that
-    // never comes. `GetRandomName` wants a name table nothing here reads, and
-    // nil is what leaves the dice button doing nothing rather than clearing the
-    // box. `DeleteCharacter` used to be in this list; it is a `push!` above.
+    // Character-list functions this client does not implement.
+    // `CMSG_CHAR_RENAME` is not sent anywhere in this client, so a Rename that
+    // recorded a request nobody handles would leave the dialog waiting for a
+    // `CHARACTER_LIST_UPDATE` that never comes. `GetRandomName` needs a name
+    // table this client does not read; returning nil leaves the dice button
+    // doing nothing rather than clearing the box. `DeleteCharacter` is
+    // implemented by a `push!` above.
     for name in ["RenameCharacter", "GetRandomName"] {
         globals.set(name, lua.create_function(|_, _: mlua::MultiValue| Ok(mlua::Value::Nil))?)?;
     }
@@ -528,10 +528,10 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         scope.create_function(move |_, ()| Ok(answers.character_count()))?,
     )?;
 
-    // **Eight values, and `UpdateCharacterList` unpacks all eight in one line.**
-    // A row this client has nothing for answers a single nil, which is the
-    // branch that writes `"ERROR - Tell Jeremy"` into the button — Blizzard's
-    // own, and worth reaching rather than papering over: it means the interface
+    // Eight values; `UpdateCharacterList` unpacks all eight in one line. A row
+    // this client does not have returns a single nil, which takes the branch
+    // in Blizzard's file that writes `"ERROR - Tell Jeremy"` into the button.
+    // That branch is left reachable on purpose: it shows that the interface
     // asked for a row the client said it had.
     globals.set(
         "GetCharacterInfo",
@@ -552,8 +552,8 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         })?,
     )?;
 
-    // **`(name, isPVP, isRP)`, and a nil name *hides* the label** — which is the
-    // branch a client with no realm takes, rather than drawing an empty plate.
+    // `(name, isPVP, isRP)`. A nil name hides the label, so a client with no
+    // realm draws no label rather than an empty plate.
     globals.set(
         "GetServerName",
         scope.create_function(move |_, ()| {
@@ -566,19 +566,20 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         })?,
     )?;
 
-    // **`GetRealmName()` is the same name in the world**, which is where an
-    // addon asks it: every per-realm saved table an addon keeps is keyed by
-    // it. `""` when there is no realm, which no session in the world has.
+    // `GetRealmName()` returns the same name in the world, where addons call
+    // it: every per-realm saved table an addon keeps is keyed by it. It
+    // returns `""` when there is no realm, which cannot happen for a session in
+    // the world.
     globals.set(
         "GetRealmName",
         scope.create_function(move |_, ()| Ok(answers.realm().0.unwrap_or_default()))?,
     )?;
 
-    // **`IsConnectedToServer` decides whether character select talks to the
-    // server at all**: connected takes `GetCharacterListUpdate()`, not connected
-    // takes `UpdateCharacterList()` straight and appends `(Server Down)` to the
-    // realm name. For this client "connected" is "the handshake socket is still
-    // open", which is exactly what the question means.
+    // `IsConnectedToServer` decides whether character select contacts the
+    // server: when connected it calls `GetCharacterListUpdate()`; when not, it
+    // calls `UpdateCharacterList()` directly and appends `(Server Down)` to the
+    // realm name. For this client "connected" means "the handshake socket is
+    // still open".
     globals.set(
         "IsConnectedToServer",
         scope.create_function(move |_, ()| Ok(one_or_nil(answers.connected())))?,
@@ -589,21 +590,20 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         scope.create_function(move |_, ()| Ok(answers.saved_account_name()))?,
     )?;
 
-    // **The facing pair, which is a read and a write and is registered as two
-    // reads.** `CharacterSelectFrame_OnUpdate` does
-    // `SetCharacterSelectFacing(GetCharacterSelectFacing() + diff)` — so the
-    // write has to be visible to the *next* read within the same frame, and a
-    // queued write would be one frame behind on every drag. It lands on the
-    // interface's own model frame ([`super::super::widgets::model`]) rather than on the world,
-    // which is the one place both calls can agree immediately.
+    // The facing pair: a read and a write, both registered as scoped reads.
+    // `CharacterSelectFrame_OnUpdate` calls
+    // `SetCharacterSelectFacing(GetCharacterSelectFacing() + diff)`, so the
+    // write has to be visible to the next read within the same frame; a queued
+    // write would lag one frame behind on every drag. The value is stored on
+    // the interface's model frame ([`super::super::widgets::model`]) rather
+    // than in the world, where both calls see it immediately.
     //
-    // **What it must not land on is the frame's own `SetFacing`**, which is what
-    // it used to do: that turns the *scene* — the Dark Portal, the braziers, the
-    // valley and the sky — and leaves the character where it was, which is
-    // exactly backwards. The two are different C functions in 1.12 and the
-    // widget's method table carries only the first. See
-    // [`super::super::widgets::model::Scene::character_facing`], which also says why the number
-    // travelling here is in degrees.
+    // It must not use the frame's `SetFacing` method. That rotates the scene
+    // (the Dark Portal, the braziers, the valley and the sky) and leaves the
+    // character where it was. In 1.12 the two are separate functions, and the
+    // widget's method table has only `SetFacing`. See
+    // [`super::super::widgets::model::Scene::character_facing`], which also
+    // explains why the value is in degrees.
     globals.set(
         "GetCharacterSelectFacing",
         scope.create_function(move |lua, ()| {
@@ -617,7 +617,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
             let Some(held) = lua.globals().get::<Option<mlua::Table>>("CharacterSelect")? else {
                 return Ok(());
             };
-            super::super::widgets::model::set_character_facing(&held, degrees.unwrap_or(0.0))
+            super::super::widgets::model::set_character_facing(lua, &held, degrees.unwrap_or(0.0))
         })?,
     )?;
     Ok(())
@@ -636,8 +636,8 @@ mod tests {
         taken
     }
 
-    /// **`AccountLogin_Login`'s own body, minus the edit boxes.** The password
-    /// travels; a blank account records nothing.
+    /// The body of `AccountLogin_Login`, without the edit boxes. The password
+    /// is passed on; a blank account records nothing.
     #[test]
     fn the_login_button_records_the_credentials_and_a_blank_account_does_not() {
         assert_eq!(
@@ -652,9 +652,8 @@ mod tests {
         assert!(queued("DefaultServerLogin(nil, nil)").is_empty());
     }
 
-    /// **`CharacterSelect_SelectCharacter`'s two ends**: one-based, and a zero —
-    /// which is what `selectedIndex` is for an account with no characters — is
-    /// not a selection at all.
+    /// `CharacterSelect_SelectCharacter` passes a one-based index. Zero, the
+    /// `selectedIndex` of an account with no characters, is not a selection.
     #[test]
     fn selecting_a_character_is_one_based_and_zero_is_not_a_selection() {
         assert_eq!(
@@ -663,14 +662,14 @@ mod tests {
         );
     }
 
-    /// **`CharacterDeleteButton1`'s own body**, which is
-    /// `DeleteCharacter(CharacterSelect.selectedIndex)` and nothing else — so it
-    /// carries the same one-based row number `SelectCharacter` does and needs
-    /// the same guard, because `CharacterSelect_Delete`'s `selectedIndex > 0`
-    /// check is on the *dialog* rather than on the button inside it.
+    /// The body of `CharacterDeleteButton1` is only
+    /// `DeleteCharacter(CharacterSelect.selectedIndex)`, so it carries the same
+    /// one-based row number as `SelectCharacter` and needs the same check:
+    /// `CharacterSelect_Delete` checks `selectedIndex > 0` before showing the
+    /// dialog, not in the button inside it.
     ///
-    /// It used to answer nil and record nothing at all; that is the whole of
-    /// what "character delete does nothing" was.
+    /// When `DeleteCharacter` returned nil and recorded nothing, character
+    /// delete did nothing.
     #[test]
     fn deleting_a_character_is_the_same_one_based_row_the_highlight_is() {
         assert_eq!(
@@ -679,10 +678,10 @@ mod tests {
         );
     }
 
-    /// **`GetBuildInfo` is the client's own identity**, in the order
-    /// `VERSION_TEMPLATE` consumes it — and it has to agree with what the logon
-    /// proves to realmd, which is why it comes from `vale_protocol::version`
-    /// rather than from a string here.
+    /// `GetBuildInfo` returns the client's version, in the order
+    /// `VERSION_TEMPLATE` uses. It has to agree with what the logon sends to
+    /// realmd, so it comes from `vale_protocol::version` rather than from a
+    /// string here.
     #[test]
     fn the_version_line_is_the_build_the_handshake_claims() {
         let lua = mlua::Lua::new();
@@ -698,8 +697,8 @@ mod tests {
         assert_eq!(line, "1.12.1|5875|Release");
     }
 
-    /// **The four agreements answer accepted**, which is the whole of whether
-    /// `AccountLoginUI` is shown at all — see the module comment.
+    /// The four agreements answer accepted, which decides whether
+    /// `AccountLoginUI` is shown; see the module comment.
     #[test]
     fn the_agreements_are_accepted_so_the_login_box_is_the_visible_branch() {
         let lua = mlua::Lua::new();
@@ -715,14 +714,14 @@ mod tests {
         assert!(shown, "a nil in any of the four hides the login box");
     }
 
-    /// **[`WRITES`] is what [`register`] really installs**, which is the check
-    /// that stops the census being a wish.
+    /// [`WRITES`] is exactly the set [`register`] installs.
     ///
-    /// The same shape `api`'s `the_list_and_the_registration_are_the_same_set`
-    /// has one file over, and it exists for the same reason: `vale glue`
-    /// counts what this client owes the glue by subtracting these lists from the
-    /// names the directory calls, and a list that has drifted from the code
-    /// reports work that was never done.
+    /// This is the same check as `api`'s
+    /// `the_list_and_the_registration_are_the_same_set`, for the same reason:
+    /// `vale glue` counts the glue functions this client still lacks by
+    /// subtracting these lists from the names the directory calls, so a list
+    /// that differs from the code reports functions as implemented that are
+    /// not.
     #[test]
     fn the_registered_set_is_the_list() {
         let lua = mlua::Lua::new();
@@ -754,26 +753,25 @@ mod tests {
         assert_eq!(reads, READS, "READS is kept sorted");
     }
 
-    /// **The background setters really change the scene, and each lands on its
-    /// own screen's frame.**
+    /// The background setters change the scene's model, and each acts on its
+    /// own screen's frame.
     ///
-    /// This is the fix for a bug that had been on screen since character select
-    /// existed: `SetBackgroundModel` hands the *widget* its sequence, its camera
-    /// and its fog and hands the **path** to a C function, so a client that
-    /// records those two calls and does nothing with them leaves whatever the
-    /// markup declared — and `CharacterSelect.lua` line 26 declares
-    /// `UI_Orc.mdx`. Every race stood in front of the orc's backdrop.
+    /// `SetBackgroundModel` passes the widget its sequence, camera and fog, and
+    /// passes the model path to a C function. A client that ignores those two
+    /// calls keeps the model the markup declared, and `CharacterSelect.lua`
+    /// line 26 declares `UI_Orc.mdx`, so every race was shown in front of the
+    /// orc's backdrop.
     ///
-    /// The two frames are checked together because the failure that replaces the
-    /// first one is writing both screens' backdrops onto whichever frame was
-    /// named last.
+    /// The two frames are checked together to catch the related bug of writing
+    /// both screens' backdrops onto whichever frame was named last.
     #[test]
     fn each_background_setter_lands_on_the_frame_its_screen_named() {
         let lua = mlua::Lua::new();
         crate::lua::widgets::frames::install(&lua).expect("the object model");
         let queue: GlueQueue = Rc::new(RefCell::new(Vec::new()));
         register(&lua, &queue).expect("registers");
-        // The two `OnLoad`s' own lines, then `SetBackgroundModel`'s own call.
+        // The lines from the two `OnLoad`s, then the calls `SetBackgroundModel`
+        // makes.
         lua.load(
             r#"CharacterSelect = CreateFrame("Model")
                CharacterCreate = CreateFrame("Model")
@@ -793,21 +791,21 @@ mod tests {
             file("CharacterSelect").as_deref(),
             Some(r"Interface\Glues\Models\UI_Human\UI_Human.mdx")
         );
-        // **Upper case, and that is the reference's own doing** rather than a
-        // fault here: `SetCharacterRace` does `fileString = strupper(fileString)`
-        // three lines before it calls `SetBackgroundModel`, so the create
-        // screen's path really is shouted. The archive lookup lowercases the lot
-        // — see `render::glue::archive_path` — so it resolves either way, and
-        // pinning it here is what stops somebody "fixing" the case.
+        // Upper case, as the interface file produces it: `SetCharacterRace`
+        // does `fileString = strupper(fileString)` three lines before it calls
+        // `SetBackgroundModel`, so the create screen's path is upper case. The
+        // archive lookup lowercases the whole path (see
+        // `render::glue::archive_path`), so it resolves either way. The
+        // assertion keeps the case as the interface passes it.
         assert_eq!(
             file("CharacterCreate").as_deref(),
             Some(r"Interface\Glues\Models\UI_TAUREN\UI_TAUREN.mdx")
         );
     }
 
-    /// **`Scourge`, not `Undead`** — the directory is
-    /// `Interface\Glues\Models\UI_Scourge\`, and getting it wrong is a black
-    /// character-select screen for every forsaken character.
+    /// `Scourge`, not `Undead`: the directory is
+    /// `Interface\Glues\Models\UI_Scourge\`, and a wrong string gives a black
+    /// character-select screen for every Forsaken character.
     #[test]
     fn the_race_file_strings_are_the_model_directories_and_not_the_printed_names() {
         assert_eq!(race_file_string(5), "Scourge");
@@ -818,43 +816,43 @@ mod tests {
 }
 
 
-/// **What the interface may ask about the screens before there is a world.**
+/// What the interface may ask about the glue screens before there is a world.
 ///
-/// Split out of `Answers`, which was one trait with **132 methods** covering
-/// fifteen unrelated subjects in a 4,454-line file. Here rather than in
-/// [`super::super::api`] so that a read's four pieces — this declaration, the answer
-/// below it, the registration further up this file and the name in [`READS`] —
-/// are all in the file the subject is named after.
+/// Split out of `Answers`, which was one trait with 132 methods covering
+/// fifteen unrelated subjects in a 4,454-line file. It is here rather than in
+/// [`super::super::api`] so that the four parts of a read (this declaration,
+/// the answer below it, the registration further up this file and the name in
+/// [`READS`]) are all in the file named after the subject.
 ///
-/// [`super::super::api::Answers`] is now the sum of the twelve of these rather than
-/// the place any of them live, so nothing that *consumes* the API changed:
-/// `&dyn Answers` still resolves every one of them.
+/// [`super::super::api::Answers`] is the combination of the twelve such traits,
+/// so code that consumes the API is unchanged: `&dyn Answers` still resolves
+/// every method.
 pub trait GlueAnswers {
 
-    // --- the screens *before* the world: `Interface\GlueXML\` ---
+    // --- the screens before the world: `Interface\GlueXML\` ---
     //
-    // These answer off a session that has not started — a handshake held open
-    // with a character list in it — rather than off the world, which is why they
-    // are a group of their own. Every one of them has an honest answer at every
-    // point in the client's life, including in the world, where the login screen
-    // is not up and the list is empty. See [`super::glue`].
+    // These answer from a session that has not started (a handshake held open
+    // with a character list in it) rather than from the world, which is why
+    // they are a separate group. Each has a valid answer at every point in the
+    // client's run, including in the world, where the login screen is not
+    // shown and the list is empty. See [`super::glue`].
 
-    /// `GetNumCharacters()` — how many rows the character list has, 0 before the
-    /// handshake and 0 in the world.
+    /// `GetNumCharacters()`: how many rows the character list has; 0 before
+    /// the handshake and 0 in the world.
     fn character_count(&self) -> usize;
-    /// `GetCharacterInfo(i)`, **one-based** — `None` for a row the client does
-    /// not have, which is the single nil the interface tests for.
+    /// `GetCharacterInfo(i)`, one-based. `None` for a row the client does not
+    /// have, which becomes the single nil the interface tests for.
     fn character_row(&self, index: usize) -> Option<super::glue::CharacterRow>;
-    /// `GetServerName()` — `(name, isPVP, isRP)`. A `None` name *hides* the
-    /// realm label rather than drawing an empty one.
+    /// `GetServerName()`: `(name, isPVP, isRP)`. A `None` name hides the realm
+    /// label rather than drawing an empty one.
     fn realm(&self) -> (Option<String>, bool, bool);
-    /// `IsConnectedToServer()` — whether the handshake socket is still open,
-    /// which is what decides whether character select asks the server for the
-    /// list or draws the one it has with `(Server Down)` on it.
+    /// `IsConnectedToServer()`: whether the handshake socket is still open.
+    /// This decides whether character select asks the server for the list or
+    /// draws the list it has with `(Server Down)` on it.
     fn connected(&self) -> bool;
-    /// `GetSavedAccountName()` — what the account box opens with. `""` rather
+    /// `GetSavedAccountName()`: the account box's initial text. `""` rather
     /// than nil: `AccountLogin_OnShow` compares it against `""` to decide which
-    /// of the two boxes gets the focus, and a nil is an error on that line.
+    /// of the two boxes gets the focus, and nil raises an error on that line.
     fn saved_account_name(&self) -> String;
 }
 
@@ -867,18 +865,17 @@ impl GlueAnswers for super::super::api::Live<'_, '_, '_> {
     }
 
     fn character_row(&self, index: usize) -> Option<super::glue::CharacterRow> {
-        // **One-based**, as the interface counts — `for i = 1, numChars`.
+        // One-based, as the interface counts: `for i = 1, numChars`.
         let entry = self.selection?.characters.get(index.checked_sub(1)?)?;
         Some(super::glue::CharacterRow {
             name: entry.name.clone(),
             race: vale_protocol::state::query::race_name(u32::from(entry.race)).to_string(),
             class: vale_protocol::state::query::class_name(u32::from(entry.class)).to_string(),
             level: u32::from(entry.level),
-            // **The zone's own name, out of `AreaTable.dbc`** — the same table
-            // `GetZoneText` answers from, so the character screen and the world
-            // cannot disagree about what a place is called. Empty before the
-            // archives are open, which is the value `UpdateCharacterList`
-            // substitutes for itself.
+            // The zone name from `AreaTable.dbc`, the same table `GetZoneText`
+            // answers from, so the character screen and the world use the same
+            // name for a place. Empty before the archives are open, which is
+            // also the value `UpdateCharacterList` substitutes for nil.
             zone: self
                 .tables
                 .as_ref()
@@ -886,29 +883,30 @@ impl GlueAnswers for super::super::api::Live<'_, '_, '_> {
                 .map_or_else(String::new, |areas| areas.zone_name(entry.zone)),
             file_string: super::glue::race_file_string(entry.race).to_string(),
             gender: entry.gender,
-            // `CHARACTER_FLAG_GHOST` (0x2000) off the per-character flag word,
-            // which the parser now keeps — it is what puts the `(Ghost)` suffix
-            // on a dead character's row, through
-            // `CHARACTER_SELECT_INFO_GHOST`. Read at last because the same pass
-            // over that block is what supplies the plinth its wardrobe.
+            // `CHARACTER_FLAG_GHOST` (0x2000) in the per-character flag word,
+            // which the parser keeps. It adds the `(Ghost)` suffix to a dead
+            // character's row, through `CHARACTER_SELECT_INFO_GHOST`. The parser
+            // reads the flags in the same pass over that block that supplies the
+            // plinth model's equipment.
             ghost: entry.is_ghost(),
         })
     }
 
     fn realm(&self) -> (Option<String>, bool, bool) {
-        // **The two flags are not read**, and answering false for both is the
-        // honest state rather than a guess: `Realm::flags` from the logon reply
-        // carries the PvP and RP bits and this client keeps only the name. What
-        // it costs is the `(PVP)` suffix beside the realm name — visible in the
-        // screenshot as "Testrealm PVP" — and nothing else.
+        // The two flags are not read and both answer false. `Realm::flags` in
+        // the logon reply carries the PvP and RP bits, but this client keeps
+        // only the name. The only visible effect is the missing `(PVP)` suffix
+        // beside the realm name, shown by the 1.12.1 client as
+        // "Testrealm PVP".
         (self.selection.map(|held| held.realm.clone()), false, false)
     }
 
     fn connected(&self) -> bool {
-        // Holding an authenticated socket *is* being connected: the handshake
-        // owns it from `CMSG_CHAR_ENUM` until `CMSG_PLAYER_LOGIN` consumes it,
-        // and `keep_selection_alive` is what stops it lapsing while a screen is
-        // open. In the world the glue is not loaded and nothing asks.
+        // Holding an authenticated socket is what "connected" means here: the
+        // handshake owns it from `CMSG_CHAR_ENUM` until `CMSG_PLAYER_LOGIN`
+        // consumes it, and `keep_selection_alive` stops it timing out while a
+        // screen is open. In the world the glue is not loaded and nothing calls
+        // this.
         self.selection.is_some()
     }
 

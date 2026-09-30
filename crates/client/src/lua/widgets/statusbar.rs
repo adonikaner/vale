@@ -1,59 +1,60 @@
-//! **The bar that fills**: health, mana, the cast, experience, reputation,
-//! casting, skill, and the loot roll.
+//! Status bars: health, mana, the cast, experience, reputation, casting, skill,
+//! and the loot roll.
 //!
-//! 51 `<StatusBar>` elements in the directory, plus 23 `<Slider>`s that carry the
-//! same value state, and between them `SetValue` is called **56 times**,
-//! `SetMinMaxValues` 25 and `SetStatusBarColor` 28 — the second, third and sixth
-//! most-called widget methods this client owed. Every unit frame in the game runs
-//! through four lines of it:
+//! The directory has 51 `<StatusBar>` elements, plus 23 `<Slider>`s that carry
+//! the same value state. Between them `SetValue` is called 56 times,
+//! `SetMinMaxValues` 25 and `SetStatusBarColor` 28: the second, third and sixth
+//! most-called widget methods this client had not implemented before this module. Every unit frame in the game
+//! runs these lines:
 //!
 //! ```lua
 //! statusbar:SetMinMaxValues(0, UnitHealthMax(unit));
 //! statusbar:SetValue(UnitHealth(unit));
 //! ```
 //!
-//! ## What the game does that a naive bar does not
+//! ## How the game draws and updates a bar
 //!
-//! **The fill is a crop, not a squash.** `UI-StatusBar` is a texture with a
-//! gradient across it, and a bar at 40% shows the left 40% of the *texture* at
-//! 40% of the width — not the whole texture squeezed into 40% of the width. That
-//! is one line in the draw pass and it is the difference between a health bar
-//! that looks right and one that looks subtly wrong at every value.
+//! The fill is a crop, not a squash. `UI-StatusBar` is a texture with a
+//! gradient across it, and a bar at 40% shows the left 40% of the texture at
+//! 40% of the width, not the whole texture squeezed into 40% of the width. The
+//! draw pass does this in one line; without it a health bar's gradient is
+//! wrong at every value below full.
 //!
-//! **`SetValue` fires `OnValueChanged`**, with the value in `arg1`. Eleven files
-//! declare one, and `UnitFrameHealthBar_OnValueChanged` is how the number over a
-//! health bar keeps up with the bar. A bar that stored the value silently would
-//! draw correctly and never update its text.
+//! `SetValue` fires `OnValueChanged`, with the value in `arg1`. Eleven files
+//! declare one, and `UnitFrameHealthBar_OnValueChanged` updates the number over
+//! a health bar from it. A bar that stored the value without firing the handler
+//! would draw correctly and never update its text.
 //!
-//! **The draw layer is the bar's own attribute.** `<StatusBar drawLayer="BORDER">`
-//! says where the fill sits among the frame's regions — seven elements say so, and
-//! the cast bar is one of them: its `<Layers>` hold a black backing on
-//! `BACKGROUND` and a spark on `OVERLAY`, and the fill has to land between them.
-//! `ARTWORK` is the default.
+//! The draw layer is the bar's own attribute. `<StatusBar drawLayer="BORDER">`
+//! sets where the fill sits among the frame's regions. Seven elements set it,
+//! including the cast bar: its `<Layers>` hold a black backing on `BACKGROUND`
+//! and a spark on `OVERLAY`, and the fill has to land between them. `ARTWORK`
+//! is the default.
 //!
-//! ## Where this state lives, and why it is on every frame
+//! ## Where the bar state is stored
 //!
-//! On the one shared frame method table, exactly as [`super::button`]'s is, for
-//! the reason that module gives: a frame is a Lua table and `__index` fires only
-//! on a miss, so a `Frame` carrying an unused `SetValue` costs nothing per object.
-//! What tells a bar from any other frame at draw time is [`read`] answering `None`
-//! when nothing has ever set a value or a texture on it.
+//! The bar methods are on the one shared frame method table, as
+//! [`super::button`]'s are, for the reason that module gives: a frame is a Lua
+//! table and `__index` fires only on a miss, so a `Frame` carrying an unused
+//! `SetValue` costs nothing per object. At draw time a frame is a bar when
+//! [`read`] answers `Some`; it answers `None` when nothing has set a range or a
+//! texture on the frame.
 //!
 //! ## What is not modelled
 //!
-//! * **`SetValueStep` applies to a `<Slider>` and not to a `<StatusBar>`**, and
-//!   nor do the clamp and the no-change guard beside it: those three are the
-//!   slider's `SetValue`'s, and the bar's own `SetValue` is a different C
-//!   function whose rule is not known. See
-//!   [`slider_value`].
-//! * **`VERTICAL` is recorded and drawn horizontally.** Three elements say
-//!   `orientation` at all and two of them are vertical — the two on the
-//!   `ColorPickerFrame`, which nothing reaches yet.
+//! * `SetValueStep` applies to a `<Slider>` and not to a `<StatusBar>`, and so
+//!   do the clamp and the no-change guard beside it. Those three are the
+//!   slider's `SetValue` behaviour; the status bar's `SetValue` rule is not
+//!   known. See [`slider_value`].
+//! * `VERTICAL` is recorded and drawn horizontally. Three elements set
+//!   `orientation`, and two of them are vertical: the two on the
+//!   `ColorPickerFrame`, which nothing opens yet.
 
 use super::widget;
 
-/// The methods a status bar carries. Sorted, and every one a name the shipped
-/// directory calls — the rule [`super::super::api::verbs::REGISTERED`] follows.
+/// The methods a status bar carries. Sorted, and each one a name the shipped
+/// directory calls, the rule [`super::super::api::verbs::REGISTERED`] also
+/// follows.
 pub const METHODS: [&str; 13] = [
     "GetMinMaxValues",
     "GetOrientation",
@@ -83,8 +84,8 @@ const LAYER_KEY: &str = "__barLayer";
 const ORIENTATION_KEY: &str = "__barOrientation";
 const STEP_KEY: &str = "__barStep";
 
-/// Everything a bar contributes to the picture, read in one pass — the same
-/// shape and the same argument as [`super::regions::Paint`].
+/// Everything a bar contributes to the drawn frame, read in one pass, for the
+/// same reason as [`super::regions::Paint`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bar {
     /// How full, 0..1, already clamped. The draw pass never sees the raw value.
@@ -100,9 +101,9 @@ pub struct Bar {
     pub vertical: bool,
 }
 
-/// **A bar's declared range**, for the one caller outside this module that
-/// needs it in Rust rather than through `GetMinMaxValues` — see
-/// [`super::slider::drag`], which turns a pointer position into a value.
+/// A bar's declared range, for the one caller outside this module that needs
+/// it in Rust rather than through `GetMinMaxValues`: [`super::slider::drag`],
+/// which turns a pointer position into a value.
 pub(super) fn range(frame: &mlua::Table) -> (f64, f64) {
     (
         frame.raw_get::<Option<f64>>(MIN_KEY).ok().flatten().unwrap_or(0.0),
@@ -110,9 +111,9 @@ pub(super) fn range(frame: &mlua::Table) -> (f64, f64) {
     )
 }
 
-/// …and set the value **through the widget's own method**, so `OnValueChanged`
-/// runs. The one caller is the slider drag, which exists to move a scroll
-/// frame, and the scroll frame moves from that handler and nowhere else.
+/// Set a bar's value through the widget's own `SetValue` method, so
+/// `OnValueChanged` runs. The one caller is the slider drag, which moves a
+/// scroll frame, and the scroll frame moves only from that handler.
 pub(super) fn set_value(lua: &mlua::Lua, frame: &mlua::Table, value: f64) {
     let called: mlua::Result<()> = (|| {
         let method: mlua::Function = frame.get::<mlua::Function>("SetValue")?;
@@ -124,9 +125,9 @@ pub(super) fn set_value(lua: &mlua::Lua, frame: &mlua::Table, value: f64) {
 
 /// Read a frame's bar state, or `None` if it is not acting as one.
 ///
-/// The test is **a texture or a non-default range**, not the widget kind: a
-/// `StatusBar` nothing has furnished draws nothing, and the draw pass asking the
-/// kind would mean a string comparison per frame per frame.
+/// The test is a texture or a set maximum, not the widget kind: a `StatusBar`
+/// with neither draws nothing, and testing the kind would cost the draw pass a
+/// string comparison per frame per draw.
 pub fn read(frame: &mlua::Table) -> Option<Bar> {
     let texture: Option<String> = frame.raw_get(TEXTURE_KEY).ok().flatten();
     let max: Option<f64> = frame.raw_get(MAX_KEY).ok().flatten();
@@ -136,9 +137,9 @@ pub fn read(frame: &mlua::Table) -> Option<Bar> {
     let min = frame.raw_get::<Option<f64>>(MIN_KEY).ok().flatten().unwrap_or(0.0);
     let max = max.unwrap_or(1.0);
     let value = frame.raw_get::<Option<f64>>(VALUE_KEY).ok().flatten().unwrap_or(0.0);
-    // **A zero-width range is empty, not full and not a division by zero.** It is
-    // the ordinary state of every unit frame before the first `UNIT_HEALTH`
-    // arrives, and `0/0` would put a NaN into the layout.
+    // A zero-width range is empty, not full and not a division by zero. Every
+    // unit frame is in this state before the first `UNIT_HEALTH` arrives, and
+    // `0/0` would put a NaN into the layout.
     let fraction = if max > min {
         ((value - min) / (max - min)).clamp(0.0, 1.0) as f32
     } else {
@@ -166,23 +167,23 @@ pub fn read(frame: &mlua::Table) -> Option<Bar> {
     })
 }
 
-/// **The `<BarTexture>` region, which is the fill and is not a picture of its
-/// own** — so the draw pass must not walk it as an ordinary child.
+/// The `<BarTexture>` region. It is the fill, not a separate picture, so the
+/// draw pass must not walk it as an ordinary child.
 ///
 /// The loader builds it as a real region (so `$parentTexture` resolves and the
 /// slot is reachable) and separately records the file on the bar, which is what
-/// [`read`] returns and what the crop is drawn from. For a long time that region
-/// contributed nothing, because it carries no `<Anchors>` in any of the nine
-/// elements that have one — and then the loader grew the rule that **an
-/// anchorless region fills its parent**, which is right for the rest of the
-/// directory's art and gave every `<BarTexture>` in the game the bar's whole
-/// rectangle. The consequence is not subtle and was on screen: a health bar
-/// drew its cropped green fill and then the *full-width, untinted* sheet on top
-/// of it, so every bar in the interface read as a flat white bar at 100%.
+/// [`read`] returns and what the crop is drawn from. The region carries no
+/// `<Anchors>` in any of the nine elements that have one, and the loader makes
+/// an anchorless region fill its parent, which is correct for the rest of the
+/// directory's art. Walked as a child, every `<BarTexture>` would therefore
+/// cover the bar's whole rectangle: a health bar would draw its cropped green
+/// fill and then the full-width, untinted texture on top of it, so every bar
+/// in the interface would show as a flat white bar at 100%.
 ///
-/// Suppressed at the walk rather than at the load, beside the button faces, for
-/// the same reason: what a widget's slots mean is the draw pass's business, and
-/// the region has to keep existing for the two lookups above.
+/// The region is skipped at the walk rather than at the load, beside the
+/// button faces, for the same reason: what a widget's slots mean is decided by
+/// the draw pass, and the region has to keep existing for the two lookups
+/// above.
 pub(in crate::lua) fn fill_region(frame: &mlua::Table) -> Option<mlua::Table> {
     frame.get::<Option<mlua::Table>>(FILL_SLOT).ok().flatten()
 }
@@ -190,10 +191,10 @@ pub(in crate::lua) fn fill_region(frame: &mlua::Table) -> Option<mlua::Table> {
 /// `<BarTexture file=…>`, `<BarColor r g b>`, `drawLayer`, `orientation`,
 /// `minValue`, `maxValue`, `defaultValue` and `valueStep` from the loader.
 ///
-/// The markup half of this widget, and it is *only* reachable from the markup:
-/// `<BarColor>` has no Lua equivalent that sets it at load, so a bar furnished
-/// through `SetStatusBarColor` alone would have been every `<BarColor>` element
-/// in the directory drawn white. Fourteen of them.
+/// The markup half of this widget, reachable only from the markup:
+/// `<BarColor>` has no Lua equivalent that sets it at load. Without this path
+/// the bar colour would be set only by `SetStatusBarColor`, and the fourteen
+/// `<BarColor>` elements in the directory would draw white.
 pub(in crate::lua) fn set_from_markup(
     lua: &mlua::Lua,
     frame: &mlua::Table,
@@ -201,15 +202,17 @@ pub(in crate::lua) fn set_from_markup(
     value: &str,
 ) -> mlua::Result<()> {
     match key {
-        "drawLayer" => frame.set(LAYER_KEY, value),
-        "orientation" => frame.set(ORIENTATION_KEY, value),
-        "minValue" => frame.set(MIN_KEY, value.parse::<f64>().unwrap_or(0.0)),
-        "maxValue" => frame.set(MAX_KEY, value.parse::<f64>().unwrap_or(1.0)),
-        // **`defaultValue` is the value**, which is what the eight elements
-        // carrying one mean by it.
-        "defaultValue" => frame.set(VALUE_KEY, value.parse::<f64>().unwrap_or(0.0)),
+        "drawLayer" => widget::set_paint(lua, frame, LAYER_KEY, value),
+        "orientation" => widget::set_paint(lua, frame, ORIENTATION_KEY, value),
+        "minValue" => widget::set_paint(lua, frame, MIN_KEY, value.parse::<f64>().unwrap_or(0.0)),
+        "maxValue" => widget::set_paint(lua, frame, MAX_KEY, value.parse::<f64>().unwrap_or(1.0)),
+        // `defaultValue` sets the value; that is its meaning on the eight
+        // elements that carry one.
+        "defaultValue" => {
+            widget::set_paint(lua, frame, VALUE_KEY, value.parse::<f64>().unwrap_or(0.0))
+        }
         "valueStep" => frame.set(STEP_KEY, value.parse::<f64>().unwrap_or(0.0)),
-        "barFile" => frame.set(TEXTURE_KEY, value),
+        "barFile" => widget::set_paint(lua, frame, TEXTURE_KEY, value),
         _ => Ok(()),
     }?;
     let _ = lua;
@@ -222,14 +225,16 @@ pub(in crate::lua) fn set_colour_from_markup(
     frame: &mlua::Table,
     rgba: [f32; 4],
 ) -> mlua::Result<()> {
-    frame.set(COLOUR_KEY, lua.create_sequence_from(rgba.map(f64::from))?)
+    frame.set(COLOUR_KEY, lua.create_sequence_from(rgba.map(f64::from))?)?;
+    widget::mark_paint(lua);
+    Ok(())
 }
 
 /// Whether this frame is a `<Slider>` rather than a `<StatusBar>`.
 ///
-/// The two carry the same value state and share this method table, but they are
-/// **two different C classes** in 5875 with two different `SetValue`s, and
-/// only the slider's rule is known. Only that one is applied; see
+/// The two carry the same value state and share this method table, but in the
+/// 1.12.1 client (build 5875) their `SetValue` behaves differently, and only
+/// the slider's rule is known. Only that one is applied; see
 /// [`slider_value`].
 fn is_slider(frame: &mlua::Table) -> bool {
     frame
@@ -239,43 +244,40 @@ fn is_slider(frame: &mlua::Table) -> bool {
         .is_some_and(|kind| kind == "Slider")
 }
 
-/// **What a slider's `SetValue` actually stores**, or `None` for a call that
-/// changes nothing and must therefore fire nothing.
+/// The value a slider's `SetValue` stores, or `None` for a call that changes
+/// nothing and therefore fires nothing.
 ///
-/// The slider's `SetValue`, in its own order:
+/// The 1.12.1 client's slider `SetValue` does the following, in this order:
 ///
-/// ```text
-/// has SetMinMaxValues been called?
-///   …if so, clamp up to min…
-///   …and down to min+range, which is max
-/// valueStep, zero meaning "no step"
-///   …/step, round, *step, +min          the quantisation
-/// has a value ever been stored?
-///   …if so and it is this one, return: no store, no call
-/// the OnValueChanged handler, called with the stored value
-/// ```
+/// 1. If `SetMinMaxValues` has been called, the value is clamped to
+///    `[min, max]`.
+/// 2. If `valueStep` is nonzero, the value is quantised to
+///    `min + round((value - min) / step) * step`. Zero means no step.
+/// 3. If a value has been stored before and it equals the result, nothing is
+///    stored and no handler runs.
+/// 4. Otherwise the value is stored and `OnValueChanged` is called with it.
 ///
-/// Two things this settles that nothing else could. **The clamp is why a quest
-/// can be scrolled to its end and no further**: `ScrollFrameTemplate_OnMouseWheel`
-/// adds half a bar height per notch with no bound of its own, and
-/// `ScrollFrame_OnScrollRangeChanged` is what put the bound on the *bar*
-/// (`SetMinMaxValues(0, scrollrange)`). Without it the wheel runs the text off
-/// the bottom of the window for ever. And **the guard is why the interface's own
-/// two-way bindings terminate** — the shipped `OnVerticalScroll` writes the bar
-/// and the bar's `OnValueChanged` writes the scroll frame back, and a sound
-/// option's slider writes a CVar whose `CVAR_UPDATE` re-loads the panel and
-/// writes the slider. Both are infinite without it.
+/// The clamp stops a quest text from scrolling past its end:
+/// `ScrollFrameTemplate_OnMouseWheel` adds half a bar height per notch with no
+/// bound of its own, and `ScrollFrame_OnScrollRangeChanged` puts the bound on
+/// the bar (`SetMinMaxValues(0, scrollrange)`). Without the clamp the wheel
+/// scrolls the text off the bottom of the window without limit. The
+/// no-change guard ends the interface's two-way bindings: the shipped
+/// `OnVerticalScroll` writes the bar and the bar's `OnValueChanged` writes the
+/// scroll frame back, and a sound option's slider writes a CVar whose
+/// `CVAR_UPDATE` reloads the panel and writes the slider. Both loop forever
+/// without the guard.
 ///
-/// The gates are the reference's own flags, not a simplification: an unbounded
-/// slider is not clamped to `[0, 0]`, and the first `SetValue(0)` on a fresh
+/// Both steps are conditional in the 1.12.1 client as well: a slider without
+/// a range is not clamped to `[0, 0]`, and the first `SetValue(0)` on a new
 /// slider still fires.
 fn slider_value(frame: &mlua::Table, mut value: f64) -> mlua::Result<Option<f64>> {
     let min = frame.raw_get::<Option<f64>>(MIN_KEY)?;
     let max = frame.raw_get::<Option<f64>>(MAX_KEY)?;
     if let (Some(min), Some(max)) = (min, max) {
         value = value.clamp(min, max.max(min));
-        // …and the step is measured from the minimum, which is what
-        // `min + round((v - min) / step) * step` says.
+        // The step is measured from the minimum:
+        // `min + round((v - min) / step) * step`.
         if let Some(step) = frame.raw_get::<Option<f64>>(STEP_KEY)?.filter(|s| *s != 0.0) {
             value = min + ((value - min) / step).round() * step;
         }
@@ -288,31 +290,33 @@ fn slider_value(frame: &mlua::Table, mut value: f64) -> mlua::Result<Option<f64>
 
 /// Install the bar methods onto the shared frame method table.
 pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
-    // `GetOrientation` — what `SetOrientation` or the markup said, or the
-    // default, which is horizontal.
+    // `GetOrientation`: the value `SetOrientation` or the markup set, or the
+    // default, `HORIZONTAL`.
     let get_orientation = lua.create_function(|_lua, this: mlua::Table| {
         Ok(this
             .raw_get::<Option<String>>(ORIENTATION_KEY)?
             .unwrap_or_else(|| "HORIZONTAL".to_string()))
     })?;
     methods.set("GetOrientation", get_orientation)?;
-    // **`SetThumbTexture(file)` is the script's `<ThumbTexture>`**: a slider
-    // made by `CreateFrame` has no markup to declare one, so the first call
-    // makes the region, puts it in the slot the loader would have, and hands
-    // the slider to [`super::slider`] to place it; every call names the file.
-    // `GetThumbTexture` answers the region, which is how an addon sizes it.
+    // `SetThumbTexture(file)` is the script equivalent of `<ThumbTexture>`. A
+    // slider made by `CreateFrame` has no markup to declare one, so the first
+    // call makes the region, puts it in the slot the loader would have used,
+    // and hands the slider to [`super::slider`] to place it; every call sets
+    // the file. `GetThumbTexture` answers the region, which an addon uses to
+    // size it.
     let set_thumb = lua.create_function(|lua, (this, path): (mlua::Table, Option<String>)| {
         let thumb = match this.raw_get::<Option<mlua::Table>>(super::slider::THUMB_SLOT)? {
             Some(thumb) => thumb,
             None => {
                 let made = super::regions::create(lua, "Texture", None, Some(this.clone()), Some("ARTWORK"))?;
                 this.set(super::slider::THUMB_SLOT, made.clone())?;
+                widget::mark_paint(lua);
                 super::slider::adopt(lua, &this)?;
                 made
             }
         };
         if let Some(path) = path {
-            super::regions::set_texture_path(&thumb, Some(&path))?;
+            super::regions::set_texture_path(lua, &thumb, Some(&path))?;
         }
         super::slider::place(lua, &this);
         Ok(())
@@ -323,13 +327,13 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     })?;
     methods.set("GetThumbTexture", get_thumb)?;
 
-    // **`SetValue` fires `OnValueChanged`.** See the module comment: this is the
-    // one method here that does more than record, and eleven files depend on it.
+    // `SetValue` fires `OnValueChanged`; see the module comment. It is the one
+    // method here that does more than record, and eleven files depend on it.
     let set_value = lua.create_function(|lua, (this, value): (mlua::Table, Option<f64>)| {
         let value = value.unwrap_or(0.0);
-        // **A slider's `SetValue` clamps, quantises, and does nothing at all
-        // when the value has not moved** — see [`slider_value`], which is the
-        // whole of the slider's own `SetValue`.
+        // A slider's `SetValue` clamps, quantises, and does nothing when the
+        // value has not changed. [`slider_value`] implements the whole of the
+        // slider's rule.
         let value = match is_slider(&this) {
             true => match slider_value(&this, value)? {
                 Some(value) => value,
@@ -337,14 +341,14 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
             },
             false => value,
         };
-        this.set(VALUE_KEY, value)?;
-        // **A handler that raises must not take the caller down with it.** The
-        // value is set either way, and 1.12's `SetValue` is a C function that
-        // does not fail because a script did — `ScrollFrame_OnLoad`'s three
-        // lines are `SetMinMaxValues`, `SetValue`, `this.offset = 0`, and
-        // propagating an `OnValueChanged` failure out of the middle one cost
-        // the third. The failure has already been through `pcall`; what is
-        // dropped here is a second report of it.
+        widget::set_paint(lua, &this, VALUE_KEY, value)?;
+        // An error in the handler is not returned to the caller. The value is
+        // set either way, and 1.12's `SetValue` does not fail when a handler
+        // script does. `ScrollFrame_OnLoad`'s three lines are
+        // `SetMinMaxValues`, `SetValue`, `this.offset = 0`; returning an
+        // `OnValueChanged` error from the middle one would skip the third. The
+        // error has already been reported through `pcall`; what is dropped
+        // here is a second report of it.
         let _ = super::frames::run_script(
             lua,
             &this,
@@ -371,14 +375,20 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
         .unwrap_or(0.0)));
     method!("SetValueStep", Option<f64>, |_lua, this, step| this
         .set(STEP_KEY, step.unwrap_or(0.0)));
-    method!("SetOrientation", Option<String>, |_lua, this, how| this
-        .set(ORIENTATION_KEY, how.unwrap_or_else(|| "HORIZONTAL".to_string())));
-    method!("SetStatusBarTexture", mlua::Value, |_lua, this, texture| {
-        // `SetStatusBarTexture` takes a path *or* a texture object, and the
+    method!("SetOrientation", Option<String>, |lua, this, how| widget::set_paint(
+        lua,
+        &this,
+        ORIENTATION_KEY,
+        how.unwrap_or_else(|| "HORIZONTAL".to_string())
+    ));
+    method!("SetStatusBarTexture", mlua::Value, |lua, this, texture| {
+        // `SetStatusBarTexture` takes a path or a texture object, and the
         // directory uses both. The object form is stored as-is and read as
         // nothing, which draws the colour alone rather than raising.
         match texture {
-            mlua::Value::String(path) => this.set(TEXTURE_KEY, path.to_string_lossy()),
+            mlua::Value::String(path) => {
+                widget::set_paint(lua, &this, TEXTURE_KEY, path.to_string_lossy())
+            }
             _ => Ok(()),
         }
     });
@@ -386,9 +396,9 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
         .raw_get::<mlua::Value>(TEXTURE_KEY));
 
     let set_min_max = lua.create_function(
-        |_lua, (this, min, max): (mlua::Table, Option<f64>, Option<f64>)| {
-            this.set(MIN_KEY, min.unwrap_or(0.0))?;
-            this.set(MAX_KEY, max.unwrap_or(0.0))
+        |lua, (this, min, max): (mlua::Table, Option<f64>, Option<f64>)| {
+            widget::set_paint(lua, &this, MIN_KEY, min.unwrap_or(0.0))?;
+            widget::set_paint(lua, &this, MAX_KEY, max.unwrap_or(0.0))
         },
     )?;
     methods.set("SetMinMaxValues", set_min_max)?;
@@ -401,10 +411,14 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
 
     let set_colour = lua.create_function(
         |lua, (this, r, g, b, a): (mlua::Table, f64, f64, f64, Option<f64>)| {
-            this.set(
-                COLOUR_KEY,
-                lua.create_sequence_from([r, g, b, a.unwrap_or(1.0)])?,
-            )
+            let colour = [r, g, b, a.unwrap_or(1.0)];
+            // Status bars are recoloured every tick, so only a different colour is stored.
+            let stored: Option<Vec<f64>> = this.raw_get(COLOUR_KEY).ok().flatten();
+            if stored.as_deref() != Some(&colour[..]) {
+                this.set(COLOUR_KEY, lua.create_sequence_from(colour)?)?;
+                widget::mark_paint(lua);
+            }
+            Ok(())
         },
     )?;
     methods.set("SetStatusBarColor", set_colour)?;
@@ -422,31 +436,23 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     Ok(())
 }
 
-/// **This module registers no globals**, and the empty list is the point.
+/// The globals this module registers: none.
 ///
-/// It held one for a round: `HealthBar_OnValueChanged`, transcribed into Rust
-/// under the belief that it is a C function 1.12 does not ship a body for —
-/// "nothing in the directory defines it, 78 of the 86 `.toc` files extracted and
-/// searched". The directory *does* define it. It is
-/// `Interface\FrameXML\HealthBar.lua`, 529 bytes, one function, and it was in
-/// the eight files the search did not reach.
+/// `HealthBar_OnValueChanged` is not registered here because the game defines
+/// it in Lua: `Interface\FrameXML\HealthBar.lua`, 529 bytes, one function. An
+/// earlier Rust closure for it was written on the belief that 1.12 ships no
+/// body (a search of 78 of the 86 `.toc` files found none; the file was in the
+/// eight not searched). It had two faults:
 ///
-/// Two things follow, and the second is the one that matters.
+/// * The loader runs after the host is built, so the file's definition
+///   replaced the closure at every login. `ActionButtonDown` had the same
+///   collision, and `vale framexml`'s collision count reports such cases.
+/// * The closure followed the 2.x `HealthBar.lua`, which ramps green through
+///   yellow to red as the bar drains. The 1.12 file takes `(value, smooth)`
+///   and colours the bar flat green unless `smooth` is passed; the gradient is
+///   the `smooth` branch, and 1.12's unit frames do not pass it.
 ///
-/// **The registration was dead code from the first login.** The loader runs
-/// after the host is built, so the file's definition overwrote the closure —
-/// the same trap `ActionButtonDown` fell into, and exactly what
-/// `vale framexml`'s collision count exists to catch. It reported this one
-/// and nothing acted on it.
-///
-/// **And the transcribed ramp was wrong for 5875.** It came from the 2.x
-/// `HealthBar.lua` and ran green through yellow to red as the bar drained. The
-/// 1.12 file takes `(value, smooth)` and is **flat green unless `smooth` is
-/// passed** — the gradient is the `smooth` branch, and 1.12's unit frames do not
-/// pass it. So a bar that should have stayed green would have reddened as its
-/// unit was hurt, which is a plausible-looking wrong picture of exactly the kind
-/// this project keeps paying for. Deleting the closure fixes the colour and the
-/// collision in the same stroke, and the authority is the archive's own text.
+/// The game's own file is therefore the only definition.
 pub const GLOBALS: [&str; 0] = [];
 
 #[cfg(test)]
@@ -463,10 +469,10 @@ mod tests {
         lua
     }
 
-    /// **A scroll bar cannot be pushed past its own maximum**, which is what
-    /// "quests scroll far below the bottom" was: `ScrollFrameTemplate_OnMouseWheel`
-    /// adds half a bar height a notch and bounds nothing, and the bound is the
-    /// slider's — `SetMinMaxValues(0, scrollrange)`, from
+    /// A scroll bar cannot be set past its own maximum. Without the clamp,
+    /// quests scrolled far below the bottom: `ScrollFrameTemplate_OnMouseWheel`
+    /// adds half a bar height per notch and bounds nothing, and the bound is
+    /// the slider's range, `SetMinMaxValues(0, scrollrange)`, set by
     /// `ScrollFrame_OnScrollRangeChanged`.
     #[test]
     fn a_slider_clamps_to_its_range_and_a_status_bar_does_not() {
@@ -478,14 +484,14 @@ mod tests {
         assert_eq!(lua.load("return Slide:GetValue()").eval::<f64>().unwrap(), 100.0);
         lua.load("Slide:SetValue(-40)").exec().expect("runs");
         assert_eq!(lua.load("return Slide:GetValue()").eval::<f64>().unwrap(), 0.0);
-        // …and the shipped `OnVerticalScroll`'s `(GetValue() - max) == 0` test,
-        // which only ever disables the down arrow because of the clamp above.
+        // The shipped `OnVerticalScroll` disables the down arrow on
+        // `(GetValue() - max) == 0`, which holds only because of the clamp.
         lua.load("Slide:SetValue(1e6)").exec().expect("runs");
         assert_eq!(lua.load("return Slide:GetValue() - 100").eval::<f64>().unwrap(), 0.0);
 
-        // The bar's own `SetValue` is a different C function whose rule is not known;
-        // it still stores whatever it is handed. The *fill* is clamped either
-        // way, which is what the picture depends on.
+        // The status bar's `SetValue` rule is not known, so it stores whatever
+        // it is handed. The fill is clamped either way, and the drawn bar
+        // depends only on the fill.
         lua.load("bar:SetMinMaxValues(0, 100); bar:SetValue(1000);").exec().expect("runs");
         assert_eq!(lua.load("return Bar:GetValue()").eval::<f64>().unwrap(), 1000.0);
         assert_eq!(
@@ -494,8 +500,8 @@ mod tests {
         );
     }
 
-    /// **A slider quantises to its step**, measured from the minimum — the
-    /// sound options' four volume sliders are `0..1` by `0.1`.
+    /// A slider quantises to its step, measured from the minimum. The sound
+    /// options' four volume sliders are `0..1` by `0.1`.
     #[test]
     fn a_slider_snaps_to_its_step() {
         let lua = state();
@@ -507,14 +513,14 @@ mod tests {
         assert!((value - 0.6).abs() < 1e-9, "{value}");
     }
 
-    /// **A slider set to the value it already holds does nothing at all** —
-    /// no store and, crucially, no `OnValueChanged`.
+    /// A slider set to the value it already holds does nothing: no store and
+    /// no `OnValueChanged`.
     ///
-    /// It is what terminates two of the interface's own loops: the scroll
-    /// bar writing the scroll frame that writes the bar, and a sound slider
-    /// writing a CVar whose `CVAR_UPDATE` re-loads the panel that writes the
-    /// slider. A fresh slider still fires on its first `SetValue(0)`, because
-    /// the reference gates the guard on having stored a value before.
+    /// This ends two of the interface's own loops: the scroll bar writing the
+    /// scroll frame that writes the bar, and a sound slider writing a CVar
+    /// whose `CVAR_UPDATE` reloads the panel that writes the slider. A new
+    /// slider still fires on its first `SetValue(0)`, because the 1.12.1
+    /// client applies the guard only after a value has been stored.
     #[test]
     fn a_slider_set_to_what_it_holds_fires_nothing() {
         let lua = state();
@@ -535,7 +541,8 @@ mod tests {
         assert_eq!(lua.load("return fired").eval::<f64>().unwrap(), 2.0);
     }
 
-    /// **The four lines every unit frame in the game runs.**
+    /// The `SetStatusBarTexture`, `SetMinMaxValues` and `SetValue` calls every
+    /// unit frame in the game makes.
     #[test]
     fn a_bar_fills_to_the_fraction_the_unit_frame_sets() {
         let lua = state();
@@ -555,23 +562,22 @@ mod tests {
         assert_eq!(bar.layer, 2);
     }
 
-    /// **The archive's own `HealthBar_OnValueChanged`, run verbatim** — because
-    /// this module used to carry a Rust copy of it and the copy was wrong. See
-    /// [`GLOBALS`]: `Interface\FrameXML\HealthBar.lua` really does ship, the
-    /// registered closure was overwritten by it at every login, and the body
-    /// below is that file's text with nothing removed.
+    /// The archive's own `HealthBar_OnValueChanged`, run verbatim. This module
+    /// once carried a wrong Rust copy of it; see [`GLOBALS`]:
+    /// `Interface\FrameXML\HealthBar.lua` ships in 1.12, it replaced the
+    /// registered closure at every login, and the body below is that file's
+    /// full text.
     ///
-    /// What it pins is the difference the transcription got backwards: **1.12
-    /// is flat green unless `smooth` is passed**, where the 2.x version it was
-    /// copied from always ramps. A unit frame does not pass `smooth`, so a
-    /// healthy bar and a nearly-dead one are the same green.
+    /// The test checks that 1.12 colours the bar flat green unless `smooth` is
+    /// passed, where the 2.x version always ramps. A unit frame does not pass
+    /// `smooth`, so a full bar and a nearly empty one are the same green.
     #[test]
     fn the_archives_own_health_colour_is_flat_green_unless_smoothed() {
         let lua = state();
-        // `Interface\FrameXML\HealthBar.lua`, verbatim — the whole file. The
-        // same move `button::tests` makes with `ActionButtonDown`: the check is
-        // that *the game's own text* behaves as claimed, so a paraphrase would
-        // be checking the paraphrase.
+        // `Interface\FrameXML\HealthBar.lua`, verbatim: the whole file.
+        // `button::tests` does the same with `ActionButtonDown`. The test checks
+        // that the game's own text behaves as described, which a paraphrase
+        // could not show.
         lua.load(
             r#"
             function HealthBar_OnValueChanged(value, smooth)
@@ -618,18 +624,19 @@ mod tests {
         assert_eq!(colour(&lua), [0.0, 1.0, 0.0, 1.0]);
         lua.load("HealthBar_OnValueChanged(10)").exec().expect("runs");
         assert_eq!(colour(&lua), [0.0, 1.0, 0.0, 1.0], "still green at 10%");
-        // …and the ramp is there, behind the second argument nothing passes.
+        // The ramp runs only when the second argument is passed, which no
+        // unit frame does.
         lua.load("HealthBar_OnValueChanged(10, 1)").exec().expect("runs");
         let low = colour(&lua);
         assert_eq!(low[0], 1.0);
         assert!((low[1] - 0.2).abs() < 1e-9, "{low:?}");
-        // Out of range is a no-op — the body's own second test.
+        // A value out of range changes nothing: the body's second test.
         lua.load("HealthBar_OnValueChanged(101, 1)").exec().expect("runs");
         assert_eq!(colour(&lua), low);
     }
 
-    /// **An empty range is empty**, which is every unit frame before its first
-    /// `UNIT_HEALTH` — and `0/0` would put a NaN into the layout.
+    /// A zero-width range draws an empty bar. Every unit frame has one before
+    /// its first `UNIT_HEALTH`, and `0/0` would put a NaN into the layout.
     #[test]
     fn a_zero_range_is_empty_rather_than_full() {
         let lua = state();
@@ -637,16 +644,17 @@ mod tests {
             .exec()
             .expect("runs");
         assert_eq!(read(&lua.globals().get("Bar").unwrap()).unwrap().fraction, 0.0);
-        // …and a value past the top is the top rather than a bar over its own
-        // frame: `UnitHealth` can exceed `UnitHealthMax` for a frame after a heal.
+        // A value past the maximum draws a full bar rather than one that
+        // overruns its frame: `UnitHealth` can exceed `UnitHealthMax` for a
+        // frame after a heal.
         lua.load("bar:SetMinMaxValues(0, 100); bar:SetValue(150);")
             .exec()
             .expect("runs");
         assert_eq!(read(&lua.globals().get("Bar").unwrap()).unwrap().fraction, 1.0);
     }
 
-    /// **`SetValue` fires `OnValueChanged` with the value in `arg1`** — which is
-    /// how the number over a health bar keeps up with it.
+    /// `SetValue` fires `OnValueChanged` with the value in `arg1`; the number
+    /// over a health bar is updated from that handler.
     #[test]
     fn setting_a_value_fires_the_handler_the_text_hangs_off() {
         let lua = state();
@@ -674,8 +682,8 @@ mod tests {
         assert!(read(&lua.globals().get("Bar").unwrap()).is_none());
     }
 
-    /// Every name in [`METHODS`] is really installed, and the list is sorted —
-    /// the check every method list in this directory carries.
+    /// Every name in [`METHODS`] is installed, and the list is sorted. Every
+    /// method list in this directory has this check.
     #[test]
     fn the_list_and_the_installation_are_the_same_set() {
         let lua = state();

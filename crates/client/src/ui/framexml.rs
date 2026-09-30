@@ -759,8 +759,17 @@ pub(super) fn paint(
     if clock.walk_due() || drawn.solved_for != Some(solved_for) {
         // The time is on `GetTime()`'s base, so that a line the interface
         // stamped from Lua and the expiry this pass applies use one clock.
-        drawn.items = host.drawn(solved_for, crate::interface::api::get_time(&time));
-        drawn.solved_for = Some(solved_for);
+        //
+        // `None` means nothing the walk reads has changed since the last walk
+        // (see `LuaHost::drawn_if_changed`), and `Drawn` is left untouched so
+        // that the painters see no change either.
+        let now = crate::interface::api::get_time(&time);
+        if let Some(items) = host.drawn_if_changed(solved_for, now, &drawn.items) {
+            drawn.items = items;
+        }
+        if drawn.solved_for != Some(solved_for) {
+            drawn.solved_for = Some(solved_for);
+        }
     }
     let items = &drawn.items;
 

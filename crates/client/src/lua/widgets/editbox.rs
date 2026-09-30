@@ -1,13 +1,12 @@
-//! **The one widget that takes the keyboard**: `EditBox`.
+//! `EditBox`, the widget that takes keyboard input.
 //!
-//! Sixteen of them in the shipped directory, and the one that matters is
-//! `ChatFrameEditBox` — the line at the bottom of the screen that everything a
-//! player *says* goes through, `.tele` and `/script` included. Until this file
-//! the client had a stand-in for it in egui, because an edit box is the one
-//! widget whose state cannot be derived from the world: it is a string, a caret
-//! and a focus flag that only the keyboard writes.
+//! The shipped directory has sixteen of them. The most used is
+//! `ChatFrameEditBox`, the line at the bottom of the screen that carries
+//! everything a player says, `.tele` and `/script` included. An edit box's
+//! state cannot be derived from the world: it is a string, a caret and a focus
+//! flag that only the keyboard writes.
 //!
-//! ## The whole chain is the game's own, and this is the bottom of it
+//! ## The chat input chain
 //!
 //! ```text
 //! Enter                     the key table, this client's half
@@ -16,94 +15,84 @@
 //!   -> editBox:Show()  -> OnShow -> ChatEdit_OnShow -> this:SetFocus()
 //!   … typing …             lua::keyboard, the strokes -> this file
 //!   -> Enter -> OnEnterPressed -> ChatEdit_SendText   ChatFrame.lua:1940
-//!   -> ChatEdit_ParseText decides the *kind* off SLASH_* and SlashCmdList
+//!   -> ChatEdit_ParseText decides the kind from SLASH_* and SlashCmdList
 //!   -> SendChatMessage(text, "SAY")      lua::verbs, a registered closure
 //! ```
 //!
-//! Every line of that except the first and the last is the archive's. That is
-//! the point of the round it arrived in: the deleted egui pane had its own
-//! slash-command table, its own `/script` check and its own idea of what a `.`
-//! meant, and all three are decisions `ChatFrame.lua` already makes — one of
-//! them differently. (`SLASH_SCRIPT2 = "/run"`: 1.12 ships `/run` as a synonym,
-//! where the stand-in refused it as "a later client's".)
+//! Every line of that except the first and the last comes from the game's
+//! interface archive. Slash-command parsing, the `/script` check and the meaning of a leading `.`
+//! are decisions `ChatFrame.lua` makes, so this module does not make them.
+//! `SLASH_SCRIPT2 = "/run"`: 1.12 ships `/run` as a synonym for `/script`.
 //!
-//! ## The text lives where every other widget's text lives
+//! ## Where the text is stored
 //!
-//! `SetText` and `GetText` are [`super::regions`]' already — a frame with no
-//! font string keeps its string on itself — so an edit box needed no store of
-//! its own and does not have one. What is here is the state around it: the
-//! **caret**, the **focus**, the insets the header pushes the text past, the
-//! letter cap and the history. See [`text_was_set`], which is the hook that
-//! makes the shared `SetText` fire `OnTextSet` for the one kind that has one.
+//! `SetText` and `GetText` are implemented in [`super::regions`]: a frame with
+//! no font string keeps its string on itself, so an edit box has no text store
+//! of its own. This module holds the state around the text: the caret, the
+//! focus, the insets that push the text right of the header, the letter cap and
+//! the history. [`text_was_set`] is the hook that makes the shared `SetText`
+//! fire `OnTextSet` on an edit box, the only kind that has that script.
 //!
 //! ## Focus is a single registry slot, and hiding drops it
 //!
-//! There is exactly one keyboard focus in the client, so it is one registry
-//! key rather than a flag per frame — the same shape [`super::super::api::mouse`] uses for
-//! the pointer's. `Hide()` clears it if it was ours, which is not a nicety:
+//! There is one keyboard focus in the client, so it is one registry key rather
+//! than a flag per frame, the same shape [`super::super::api::mouse`] uses for
+//! the pointer. `Hide()` clears the focus if the hidden box held it.
 //! `ChatEdit_OnEscapePressed` ends with `editBox:Hide()` and nothing else, so
-//! without that line every keystroke after the first message would still be
-//! swallowed by an invisible box.
+//! without this every keystroke after the first message would go to an
+//! invisible box.
 //!
-//! ## A selection is two indices, and every one of its rules is the client's
+//! ## Selection rules
 //!
-//! An edit box keeps `selStart` and `selEnd`, and **`start == end` is how it
-//! says "nothing is selected"**. Everything else follows from that pair:
+//! An edit box's selection is a start index and an end index; equal indices
+//! mean nothing is selected. The 1.12.1 client applies these rules:
 //!
-//! * **an insert deletes the selection first** — it is the third thing
-//!   the insert path does, before the letter cap and before the numeric filter,
-//!   so a select-all-then-type *replaces*, and so does a paste.
-//! * **a paste is inserted a character at a time** through that same path,
-//!   which is why the letter cap **truncates** a paste rather than
-//!   refusing it.
-//! * **copy and cut do nothing at all with an empty selection** — each returns
-//!   before the clipboard is opened. Not "copy the whole line": nothing.
-//! * **every caret move takes "is Shift held" as its extend flag** — each
-//!   reads modifier 0 and pushes it into the move. There is no separate
-//!   select-mode.
-//! * **`SetSelection` treats an end below the start as "to the end of the
-//!   text"**, which is the whole of why `HighlightText(0, -1)` — what Ctrl-A
-//!   does — selects everything.
+//! * An insert deletes the selection first, before the letter cap and the
+//!   numeric filter apply, so typing or pasting over a selection replaces it.
+//! * A paste is inserted one character at a time through the same path, so the
+//!   letter cap truncates a paste rather than refusing it.
+//! * Copy and cut do nothing with an empty selection. The clipboard is not
+//!   touched; the whole line is not copied.
+//! * Every caret move extends the selection when Shift is held. There is no
+//!   separate select mode.
+//! * `SetSelection` treats an end below the start as the end of the text, so
+//!   `HighlightText(0, -1)`, which Ctrl-A calls, selects everything.
 //!
-//! [`Mods`] is the two modifiers a box reads, and no more: modifier 0 (Shift)
-//! extends, modifier 1 (Ctrl) is the chord, and modifier 2 is the one that lets
-//! an arrow past `ignoreArrows` — see [`ignores_arrows`].
+//! [`Mods`] holds the modifiers a box reads: Shift extends the selection, and
+//! Alt lets an arrow past `ignoreArrows` (see [`ignores_arrows`]). A Ctrl chord
+//! arrives as its own [`Stroke`] variant.
 //!
-//! ## What is not modelled, each of them visible
+//! ## Differences from the 1.12.1 client
 //!
-//! * **the caret is not an endpoint of the selection in the reference.** It
-//!   keeps a third index, so `HighlightText(start, end)` there
-//!   selects without moving it. This holds an **anchor and the caret**, which is
-//!   the same thing for every path a keystroke can take and differs only for a
-//!   `HighlightText` followed by a Shift-move. A reconstruction, and the only
-//!   one in the selection.
-//! * **the readline family is measured and not implemented.** The same key
-//!   table carries Ctrl-B/F (move), Ctrl-P/N (history), Ctrl-K/U/W (kill) and
-//!   Ctrl-D (delete forward) — and nothing in the
-//!   shipped directory or its bindings mentions any of them.
-//! * **the caret's x is measured now**, in the box's own face, off the game's
-//!   own `.TTF` — see [`super::text::width`]. It was an estimate of half the
-//!   font height per character, which drifted a character's width every eight
-//!   capitals; what it took was not the painter answering back but the files
-//!   themselves, which say the same thing the painter's layout does.
-//! * **`ignoreArrows` is honoured and its other half is not.** The chat box
-//!   declares it, so the arrows do not move this caret — but in the real client
-//!   they then reach the *game* and turn the character, and here they reach
-//!   nothing, because [`super::super::api::keyboard`] suppresses the whole key table while
-//!   an edit box has focus.
-//! * **no IME and no `numeric`/`multiLine`.** `GetInputLanguage` answers the
-//!   Roman keyboard, which is what `INPUT_ROMAN = "A"` in `GlobalStrings.lua`
-//!   is the label for.
+//! * In the 1.12.1 client the caret is independent of the selection, so
+//!   `HighlightText(start, end)` selects without moving the caret. This module
+//!   stores an anchor and the caret instead. The two models agree for every
+//!   keystroke and differ only for a `HighlightText` followed by a Shift-move.
+//!   This is the only reconstructed part of the selection.
+//! * The 1.12.1 client also accepts Ctrl-B/F (move), Ctrl-P/N (history),
+//!   Ctrl-K/U/W (kill) and Ctrl-D (delete forward) in an edit box. These are
+//!   not implemented; nothing in the shipped directory or its bindings mentions
+//!   them.
+//! * The caret's x is measured in the box's own face from the game's own
+//!   `.TTF`; see [`super::text::width`]. An earlier estimate of half the font
+//!   height per character drifted by one character width every eight capitals.
+//! * `ignoreArrows` is honoured for the caret only. The chat box declares it,
+//!   so the arrows do not move its caret. In the 1.12.1 client the arrows then
+//!   reach the game and turn the character; here they reach nothing, because
+//!   [`super::super::api::keyboard`] suppresses the whole key table while an
+//!   edit box has focus.
+//! * There is no IME and no `numeric` or `multiLine`. `GetInputLanguage`
+//!   answers the Roman keyboard, which `INPUT_ROMAN = "A"` in
+//!   `GlobalStrings.lua` labels.
 
 use super::widget;
 use crate::interface::events::EventArg;
 
-/// The methods an edit box carries beyond the ones every frame has. Sorted, and
-/// every one of them a name the shipped directory calls.
+/// The methods an edit box carries beyond the ones every frame has. Sorted;
+/// the shipped directory calls every one of them.
 ///
-/// `SetText`/`GetText` are deliberately absent: they are [`super::button`]'s
-/// forwarding pair on the shared method table, and an edit box wants exactly
-/// what they already do.
+/// `SetText`/`GetText` are absent: they are [`super::button`]'s forwarding
+/// pair on the shared method table, and an edit box uses them unchanged.
 pub const METHODS: [&str; 20] = [
     "AddHistoryLine",
     "ClearFocus",
@@ -127,40 +116,39 @@ pub const METHODS: [&str; 20] = [
     "SetTextInsets",
 ];
 
-/// `SetAutoFocus` — recorded and read by nothing: this client gives a box the
-/// keyboard on a click, and takes it on `ClearFocus`, whatever the flag. An
-/// addon's search box sets it false on every screen it builds.
+/// `SetAutoFocus`: recorded and read by nothing. This client gives a box the
+/// keyboard on a click and takes it away on `ClearFocus`, whatever the flag.
+/// An addon's search box sets it false on every screen it builds.
 const AUTO_FOCUS_KEY: &str = "__autoFocus";
 
-/// Where the caret sits, as a **character** index into the text — 0 is before
-/// the first character and `len` is after the last.
+/// Where the caret sits, as a character index into the text: 0 is before the
+/// first character and `len` is after the last.
 ///
-/// Characters rather than bytes because everything that reads it is either
-/// counting glyphs (the drawn x) or splitting the string (an insert), and a
-/// byte index into a UTF-8 string is a panic waiting for the first accented
-/// name typed into a whisper.
+/// Characters rather than bytes, because every reader either counts glyphs
+/// (the drawn x) or splits the string (an insert), and a byte index into a
+/// UTF-8 string panics on the first accented name typed into a whisper.
 const CARET_KEY: &str = "__caret";
-/// **The other end of the selection**, on the same terms as [`CARET_KEY`], or
+/// The other end of the selection, on the same terms as [`CARET_KEY`], or
 /// absent when nothing is selected.
 ///
-/// The reference stores the pair outright (`selStart`, `selEnd`) and says
-/// "empty" by making them equal; this stores one of them and
-/// says it by leaving the key off. Same states, one fewer way to be
-/// inconsistent — and [`selection`] is the only reader, so the difference does
-/// not leak.
+/// The 1.12.1 client keeps a start and an end and marks an empty selection by
+/// making them equal. This module stores one end and marks an empty selection
+/// by leaving the key off. The states are the same, with one fewer way to be
+/// inconsistent, and [`selection`] is the only reader, so the difference does
+/// not reach callers.
 const ANCHOR_KEY: &str = "__anchor";
-/// `password="1"` — `AccountLoginPasswordEdit` is the one box in either
-/// directory that declares it. One of the reference's edit-box flags.
+/// `password="1"`. `AccountLoginPasswordEdit` is the one box in either
+/// directory that declares it.
 const PASSWORD_KEY: &str = "__password";
-/// `letters="255"` on the chat template, or `SetMaxLetters`. 0 is "no cap",
-/// which is the game's own meaning for it.
+/// `letters="255"` on the chat template, or `SetMaxLetters`. 0 means no cap,
+/// as it does in the game.
 const MAX_LETTERS_KEY: &str = "__maxLetters";
-/// `SetTextInsets(left, right, top, bottom)` — what `ChatEdit_UpdateHeader`
+/// `SetTextInsets(left, right, top, bottom)`, which `ChatEdit_UpdateHeader`
 /// calls with `15 + header:GetWidth()` so the typed text starts after `Say:`.
 const INSETS_KEY: &str = "__textInsets";
 /// The colour of the typed text, which the same function sets to the chat
-/// type's own. Kept here rather than on a region because an edit box's text has
-/// no region — see the module comment.
+/// type's colour. Kept on the frame rather than on a region because an edit
+/// box's text has no region; see the module comment.
 const COLOUR_KEY: &str = "__textColour";
 /// Lines `AddHistoryLine` has been given, oldest first, and where an arrow walk
 /// currently is inside them.
@@ -168,8 +156,8 @@ const HISTORY_KEY: &str = "__history";
 const HISTORY_AT_KEY: &str = "__historyAt";
 /// `historyLines="32"`, the cap on the list above.
 const HISTORY_LINES_KEY: &str = "__historyLines";
-/// `ignoreArrows="true"` — the chat box declares it. See the module comment for
-/// the half of it this client does not do.
+/// `ignoreArrows="true"`, which the chat box declares. The module comment
+/// states the part of its behaviour this client does not implement.
 const IGNORE_ARROWS_KEY: &str = "__ignoreArrows";
 
 /// The one focused edit box, or nothing. In the registry rather than a global
@@ -177,26 +165,25 @@ const IGNORE_ARROWS_KEY: &str = "__ignoreArrows";
 /// name must not be able to break the keyboard.
 const REG_FOCUS: &str = "vale.keyboardFocus";
 
-/// How many history lines a box that declares none keeps. The chat template's
-/// own `historyLines="32"` is what every box in the directory that has a
-/// history says, so this is a bound rather than a measured default.
+/// How many history lines a box that declares none keeps. Every box in the
+/// directory that has a history declares the chat template's
+/// `historyLines="32"`, so this is a bound rather than a measured default.
 const DEFAULT_HISTORY_LINES: usize = 32;
 
-/// **A flag rather than the kind string**, set at creation for the sixteen
-/// objects that are edit boxes and absent on the other 3,730 frames.
+/// A flag marking an edit box, set at creation on the sixteen objects that are
+/// edit boxes and absent on the other 3,730 frames.
 ///
-/// [`widget::KIND_KEY`] already says `"EditBox"` and reading it would need no
-/// second key — but this is asked once per visible frame per *frame of video*
-/// by the draw walk, and `get::<mlua::String>` hands back a Lua string that has
-/// to be rooted and dropped. A `bool` is a hash lookup that misses. Measured at
-/// one framing: the string form put **0.6 ms** on the interface's median frame,
-/// which on a 60 Hz budget is not a rounding error. Same argument, same shape,
-/// as [`widget::CLASS_KEY`] next door.
+/// [`widget::KIND_KEY`] already holds `"EditBox"`, but the draw walk asks this
+/// once per visible frame per video frame, and `get::<mlua::String>` returns a
+/// Lua string that has to be rooted and dropped. A `bool` is a hash lookup
+/// that misses. Measured at one framing, the string form added 0.6 ms to the
+/// interface's median frame, a significant share of a 60 Hz budget.
+/// [`widget::CLASS_KEY`] uses the same shape for the same reason.
 const IS_EDIT_BOX_KEY: &str = "__isEditBox";
 
-/// Give a fresh frame the state this module owns — which for every kind but one
-/// is nothing at all. Called from [`super::frames::create_frame`], beside the
-/// pointer's own.
+/// Give a fresh frame the state this module owns, which is nothing for every
+/// kind except `EditBox`. Called from [`super::frames::create_frame`], beside
+/// the pointer's initialisation.
 pub(in crate::lua) fn init(frame: &mlua::Table, kind: &str) -> mlua::Result<()> {
     if kind != "EditBox" {
         return Ok(());
@@ -204,61 +191,61 @@ pub(in crate::lua) fn init(frame: &mlua::Table, kind: &str) -> mlua::Result<()> 
     frame.set(IS_EDIT_BOX_KEY, true)
 }
 
-/// **The five regions an `<EditBox>` is born with**, before a line of its markup
-/// is read — one `FontString` and four `Texture`s.
+/// Create the five regions an `<EditBox>` has before any of its markup is
+/// read: one `FontString` and four `Texture`s.
 ///
-/// Measured in the reference, twice. A bare
-/// `CreateFrame("EditBox", nil, UIParent)` answers
+/// In the 1.12.1 client a bare `CreateFrame("EditBox", nil, UIParent)`
+/// returns from `GetRegions()`
 ///
 /// ```text
 /// 5 | 1:FontString 2:Texture 3:Texture 4:Texture 5:Texture
 /// ```
 ///
 /// and `GuildControlPopupFrameEditBox`, which declares two `<Texture>`s and two
-/// `<FontString>`s of its own, answers **8** — those five, then the declared
-/// pair of textures at 6 and 7, then the label at 8. The trailing
+/// `<FontString>`s of its own, returns 8: those five, then the declared pair of
+/// textures at 6 and 7, then the label at 8. The trailing
 /// `<FontString inherits="ChatFontNormal"/>` adds nothing to the count, because
-/// it *configures* the string the widget already made rather than making a
-/// second; see [`crate::lua::xml::Loader::object_for`], which is the half that
-/// binds them.
+/// it configures the string the widget already made rather than making a
+/// second; [`crate::lua::xml::Loader::object_for`] binds the two.
 ///
-/// **The count and the order are the measurement; what the four textures are for
-/// is a reading.** `GetTexture()` answers `"Solid Texture"` on all four — they
-/// are colour-set with no file — which fits the selection highlight and the
-/// caret of a widget that supports `SetMultiLine` (three quads for a selection
-/// that wraps, and one for the caret) and nothing else in the file suggests
-/// otherwise. This client draws neither from these regions: the text and the
-/// caret are emitted by [`super::draw::edit_box`] off the frame itself.
+/// The count and the order are measured; the purpose of the four textures is
+/// inferred. `GetTexture()` returns `"Solid Texture"` on all four (they are
+/// colour-set with no file), which fits the selection highlight and the caret
+/// of a widget that supports `SetMultiLine`: three quads for a selection that
+/// wraps, and one for the caret. This client draws neither from these regions:
+/// [`super::draw::edit_box`] emits the text and the caret from the frame
+/// itself.
 ///
-/// So why make them at all? Because **interface code indexes `GetRegions()`
-/// positionally**, and it is not obscure: pfUI's friends skin is
+/// The regions exist because interface code indexes `GetRegions()` by
+/// position. pfUI's friends skin does
 ///
 /// ```lua
 /// local _,_,_,_,_,left,right = GuildControlPopupFrameEditBox:GetRegions()
 /// left:Hide() right:Hide()
 /// ```
 ///
-/// — the two border textures at 6 and 7. Answering four regions put a nil there,
-/// and the raise aborted the `for` loop in pfUI's one `ADDON_LOADED` handler
-/// that runs every skin, so **31 of its 36 skins never ran**: the tooltip,
-/// questlog, merchant, gossip, mail, options and taxi skins among them.
+/// to reach the two border textures at 6 and 7. With four regions, those
+/// positions were nil, and the error aborted the `for` loop in pfUI's one
+/// `ADDON_LOADED` handler that runs every skin, so 31 of its 36 skins never
+/// ran, including the tooltip, questlog, merchant, gossip, mail, options and
+/// taxi skins.
 ///
 /// They are made with no anchors, so they solve to no rectangle and draw
-/// nothing — which is what a caret nobody has put anywhere should do.
+/// nothing.
 pub(in crate::lua) fn furnish(lua: &mlua::Lua, frame: &mlua::Table) -> mlua::Result<()> {
     let text = super::regions::create(lua, "FontString", None, Some(frame.clone()), None)?;
-    // **Under a key of this module's own, and deliberately not
-    // `regions::TEXT_REGION_KEY`.** That key means "the region this frame's
-    // `SetText` writes into", which is a button's `<ButtonText>` — and an edit
-    // box's typed line is *not* held in a region: it lives on the frame and is
-    // laid out by [`super::draw::edit_box`], because it needs a caret and an
-    // inset that no font string models.
+    // Stored under this module's own key, not `regions::TEXT_REGION_KEY`. That
+    // key names the region this frame's `SetText` writes into, which is a
+    // button's `<ButtonText>`. An edit box's typed line is not held in a
+    // region: it lives on the frame and is laid out by
+    // [`super::draw::edit_box`], because it needs a caret and an inset that no
+    // font string models.
     //
-    // Putting the string there instead diverted every `SetText` on every edit
-    // box in the game into this region, which took the text off the frame the
-    // draw reads and — since `regions::own_font` wants the font string with *no*
-    // text — left the box with no style either. Measured on the login screen:
-    // the account name drew centred, in the wrong face, with no caret.
+    // Under `TEXT_REGION_KEY`, every `SetText` on an edit box went into this
+    // region, which took the text off the frame the draw reads, and, since
+    // `regions::own_font` wants the font string with no text, left the box
+    // with no style either. On the login screen the account name drew
+    // centred, in the wrong face, with no caret.
     frame.set(OWN_STRING_KEY, text)?;
     for _ in 0..4 {
         super::regions::create(lua, "Texture", None, Some(frame.clone()), None)?;
@@ -266,18 +253,19 @@ pub(in crate::lua) fn furnish(lua: &mlua::Lua, frame: &mlua::Table) -> mlua::Res
     Ok(())
 }
 
-/// **The font string an edit box was born with** — see [`furnish`]. The
-/// loader binds the element's own `<FontString>` to it, and
-/// `regions::own_font` finds it in the children like any other.
+/// The font string an edit box is created with; see [`furnish`]. The loader
+/// binds the element's own `<FontString>` to it, and `regions::own_font` finds
+/// it among the children like any other.
 pub(in crate::lua) const OWN_STRING_KEY: &str = "__editString";
 
-/// …and the one reader outside this file: [`crate::lua::xml::Loader::object_for`].
+/// The font string under [`OWN_STRING_KEY`]. The one reader outside this file
+/// is [`crate::lua::xml::Loader::object_for`].
 pub(in crate::lua) fn own_string(frame: &mlua::Table) -> Option<mlua::Table> {
     frame.raw_get::<Option<mlua::Table>>(OWN_STRING_KEY).ok().flatten()
 }
 
-/// Is this object an edit box? One table read, and the gate on every hook in
-/// this file that hangs off a method every frame shares.
+/// Whether this object is an edit box. One table read; every hook in this file
+/// that is called from a method all frames share checks it first.
 pub(in crate::lua) fn is_edit_box(object: &mlua::Table) -> bool {
     object
         .raw_get::<Option<bool>>(IS_EDIT_BOX_KEY)
@@ -286,9 +274,9 @@ pub(in crate::lua) fn is_edit_box(object: &mlua::Table) -> bool {
         .unwrap_or(false)
 }
 
-/// The four `<EditBox>` attributes this client acts on, from the loader — and
-/// the loader's own list has to name them, which is what `password` went
-/// several rounds without. See [`crate::lua::xml`].
+/// Apply the four `<EditBox>` attributes this client acts on, from the loader.
+/// The loader's own attribute list must also name each of them; see
+/// [`crate::lua::xml`].
 pub(in crate::lua) fn set_from_markup(
     object: &mlua::Table,
     key: &str,
@@ -297,8 +285,8 @@ pub(in crate::lua) fn set_from_markup(
     match key {
         "letters" => object.set(MAX_LETTERS_KEY, value.parse::<i64>().unwrap_or(0)),
         "historyLines" => object.set(HISTORY_LINES_KEY, value.parse::<i64>().unwrap_or(0)),
-        // **`password="1"`, not `"true"`** — the glue's own spelling, which is
-        // why this takes anything but a zero rather than testing for a word.
+        // The glue spells it `password="1"`, not `"true"`, so any value other
+        // than `"0"` sets the flag.
         "password" => object.set(PASSWORD_KEY, value != "0"),
         // A tri-state for the same reason `enableMouse` is one: a template may
         // turn its parent template's flag back off.
@@ -307,14 +295,15 @@ pub(in crate::lua) fn set_from_markup(
     }
 }
 
-/// **The focused edit box**, if the keyboard is going to one.
+/// The focused edit box, if the keyboard is going to one.
 pub fn focused(lua: &mlua::Lua) -> Option<mlua::Table> {
     lua.named_registry_value::<Option<mlua::Table>>(REG_FOCUS)
         .ok()
         .flatten()
 }
 
-/// Its name, for the HUD and for [`super::super::api::keyboard::KeyboardFocus`].
+/// The focused edit box's name, for the HUD and for
+/// [`super::super::api::keyboard::KeyboardFocus`].
 pub(in crate::lua) fn focused_name(lua: &mlua::Lua) -> Option<String> {
     focused(lua)?.raw_get::<Option<String>>(widget::NAME_KEY).ok().flatten()
 }
@@ -322,36 +311,38 @@ pub(in crate::lua) fn focused_name(lua: &mlua::Lua) -> Option<String> {
 /// Take the focus, firing `OnEditFocusLost` on whoever had it and
 /// `OnEditFocusGained` on this one.
 ///
-/// **Both, and in that order**, because the two are how a box knows to stop
-/// drawing its caret — and because 1.12's own `SetFocus` moves the focus rather
-/// than adding one. Errors from the handlers come back to be reported; the
-/// focus is moved either way, since a raising handler must not leave the
-/// keyboard pointing at a frame that thinks it lost it.
+/// Both fire, in that order, because they are how a box knows to start or stop
+/// drawing its caret, and because 1.12's `SetFocus` moves the focus rather
+/// than adding one. Errors from the handlers are returned to be reported. The
+/// focus moves either way, so that a handler that raises cannot leave the
+/// keyboard pointing at a frame that believes it lost it.
 fn take_focus(lua: &mlua::Lua, frame: &mlua::Table) -> mlua::Result<()> {
     if let Some(previous) = focused(lua) {
         if previous == *frame {
             return Ok(());
         }
         lua.set_named_registry_value(REG_FOCUS, mlua::Value::Nil)?;
+        widget::mark_paint(lua);
         let _ = super::frames::run_script(lua, &previous, "OnEditFocusLost", &[]);
     }
     lua.set_named_registry_value(REG_FOCUS, frame.clone())?;
+    widget::mark_paint(lua);
     super::frames::run_script(lua, frame, "OnEditFocusGained", &[])
 }
 
-/// **A click on a text field takes the keyboard**, which is the edit box's
-/// own doing and not a handler's.
+/// Give the keyboard to a clicked edit box. The widget does this itself, not a
+/// script handler.
 ///
-/// The whole directory contains no `OnMouseDown` on an `<EditBox>` at all, and
-/// the glue's only two `SetFocus` calls are in `AccountLogin_OnShow` — so
-/// without this the one box an `OnShow` happens to focus works and every other
-/// text field in the game is dead, `CharacterCreateNameEdit` among them. Called
-/// from [`super::super::api::mouse::dispatch`] on the left press, beside the slider's grab,
-/// because both are the same kind of fact: a widget 1.12 gives its own mouse to.
+/// The directory has no `OnMouseDown` on any `<EditBox>`, and the glue's only
+/// two `SetFocus` calls are in `AccountLogin_OnShow`. Without this, only a box
+/// that an `OnShow` focuses would take input, and every other text field,
+/// `CharacterCreateNameEdit` among them, would not. Called from
+/// [`super::super::api::mouse::dispatch`] on the left press, beside the
+/// slider's grab: in 1.12 both widgets handle their own mouse press.
 ///
-/// A press on anything that is **not** a text field is deliberately *not* a
-/// release — the chat line survives a click on the world in the reference, and
-/// `ChatEdit_OnEditFocusLost` is what would close it.
+/// A press on anything that is not a text field does not release the focus.
+/// In the 1.12.1 client the chat line stays open after a click on the world;
+/// `ChatEdit_OnEditFocusLost` would close it.
 pub(in crate::lua) fn clicked(lua: &mlua::Lua, frame: &mlua::Table) -> mlua::Result<()> {
     if !is_edit_box(frame) {
         return Ok(());
@@ -368,12 +359,13 @@ fn release_focus(lua: &mlua::Lua, frame: &mlua::Table) -> mlua::Result<()> {
         return Ok(());
     }
     lua.set_named_registry_value(REG_FOCUS, mlua::Value::Nil)?;
+    widget::mark_paint(lua);
     super::frames::run_script(lua, frame, "OnEditFocusLost", &[])
 }
 
-/// **A hidden edit box does not hold the keyboard.** Called from `Hide`, beside
-/// the tooltip's own release, and the reason typing works twice in a row —
-/// `ChatEdit_OnEscapePressed` hides and never clears.
+/// Release the focus when an edit box is hidden. Called from `Hide`, beside
+/// the tooltip's release. `ChatEdit_OnEscapePressed` hides the box and never
+/// clears the focus, so without this a second message could not be typed.
 pub(super) fn hidden(lua: &mlua::Lua, frame: &mlua::Table) -> mlua::Result<()> {
     if !is_edit_box(frame) {
         return Ok(());
@@ -381,25 +373,24 @@ pub(super) fn hidden(lua: &mlua::Lua, frame: &mlua::Table) -> mlua::Result<()> {
     release_focus(lua, frame)
 }
 
-/// **`SetText` landed on an edit box** — reset the caret and fire the two
-/// scripts the game fires.
+/// After `SetText` on an edit box: move the caret to the end, clear the
+/// selection and fire `OnTextSet` and `OnTextChanged`, as the game does.
 ///
-/// Called from the shared `SetText` in [`super::button`], which is where the
-/// forwarding lives; a no-op for every other kind, at the cost of one table
-/// read. `OnTextSet` is what runs `ChatEdit_ParseText`, which is what turns a
-/// typed `/s hello` into a `SAY` with the command cut off — so the chat line
-/// does not work at all without this hook.
+/// Called from the shared `SetText` in [`super::button`], where the forwarding
+/// lives; for every other kind it is a no-op costing one table read.
+/// `OnTextSet` runs `ChatEdit_ParseText`, which turns a typed `/s hello` into a
+/// `SAY` with the command cut off, so the chat line needs this hook.
 ///
-/// **It re-enters and that is not a hazard**: `ChatEdit_OnTextSet` parses the
-/// text and calls `SetText` with the command *removed*, so each round is
-/// strictly shorter and the second one takes the "does not start with /" exit.
+/// It re-enters safely: `ChatEdit_OnTextSet` parses the text and calls
+/// `SetText` with the command removed, so each round is strictly shorter and
+/// the second one takes the "does not start with /" exit.
 pub(super) fn text_was_set(lua: &mlua::Lua, frame: &mlua::Table) -> mlua::Result<()> {
     if !is_edit_box(frame) {
         return Ok(());
     }
     let text = text(frame);
-    frame.set(CARET_KEY, text.chars().count() as i64)?;
-    frame.set(ANCHOR_KEY, mlua::Value::Nil)?;
+    widget::set_paint(lua, frame, CARET_KEY, text.chars().count() as i64)?;
+    widget::set_paint(lua, frame, ANCHOR_KEY, mlua::Value::Nil)?;
     let _ = super::frames::run_script(lua, frame, "OnTextSet", &[]);
     let _ = super::frames::run_script(lua, frame, "OnTextChanged", &[]);
     Ok(())
@@ -410,7 +401,7 @@ pub fn text(frame: &mlua::Table) -> String {
     super::regions::text_of(frame).unwrap_or_default()
 }
 
-/// Where the caret is, clamped into the text — a body that calls `SetText`
+/// Where the caret is, clamped into the text. A script that sets the text
 /// through a path this file does not see would otherwise leave it past the end.
 pub fn caret(frame: &mlua::Table) -> usize {
     let letters = text(frame).chars().count();
@@ -422,11 +413,10 @@ pub fn caret(frame: &mlua::Table) -> usize {
         .clamp(0, letters as i64) as usize
 }
 
-/// **What is selected**, as a half-open character range, or nothing.
+/// What is selected, as a half-open character range, or `None`.
 ///
 /// Ordered, so a selection dragged backwards reads the same as one dragged
-/// forwards — the reference orders it inside `SetSelection` itself, which is
-/// the same place it clamps.
+/// forwards. The 1.12.1 client orders and clamps the range when it is set.
 pub fn selection(frame: &mlua::Table) -> Option<(usize, usize)> {
     let letters = text(frame).chars().count() as i64;
     let anchor = frame.raw_get::<Option<i64>>(ANCHOR_KEY).ok().flatten()?;
@@ -437,10 +427,9 @@ pub fn selection(frame: &mlua::Table) -> Option<(usize, usize)> {
 
 /// The selected text, or `None` when nothing is.
 ///
-/// **A password box answers the empty string rather than its contents**, which
-/// is the reference's own refusal and not a policy invented here: a password
-/// box puts an empty string on the clipboard instead of the buffer. It still *has* a selection, so
-/// the cut half of Ctrl-X still deletes.
+/// A password box returns the empty string rather than its contents, as the
+/// 1.12.1 client does: it puts an empty string on the clipboard instead of the
+/// text. The box still has a selection, so Ctrl-X still deletes it.
 fn selected_text(frame: &mlua::Table) -> Option<String> {
     let (start, end) = selection(frame)?;
     if is_password(frame) {
@@ -449,47 +438,48 @@ fn selected_text(frame: &mlua::Table) -> Option<String> {
     Some(text(frame).chars().skip(start).take(end - start).collect())
 }
 
-/// Is this box drawn as dots and copied as nothing? See [`selected_text`].
+/// Whether this box is drawn as dots and copies as the empty string; see
+/// [`selected_text`].
 pub fn is_password(frame: &mlua::Table) -> bool {
     frame.raw_get::<Option<bool>>(PASSWORD_KEY).ok().flatten().unwrap_or(false)
 }
 
-/// **Select `start..end`**, in the reference's own two clamps.
+/// Select `start..end`, clamped as the 1.12.1 client clamps it.
 ///
-/// An `end` below the `start` means *to the end of the text* — the rule that
-/// makes `HighlightText(0, -1)` select everything, which is what Ctrl-A sends.
-/// An empty range clears the selection outright.
-fn select(frame: &mlua::Table, start: i64, end: i64) -> mlua::Result<()> {
+/// An `end` below the `start` means the end of the text, which makes
+/// `HighlightText(0, -1)`, what Ctrl-A sends, select everything. An empty
+/// range clears the selection.
+fn select(lua: &mlua::Lua, frame: &mlua::Table, start: i64, end: i64) -> mlua::Result<()> {
     let letters = text(frame).chars().count() as i64;
     let start = start.clamp(0, letters);
     let end = if end < start { letters } else { end.min(letters) };
     if start == end {
-        return clear_selection(frame);
+        return clear_selection(lua, frame);
     }
-    frame.set(ANCHOR_KEY, start)?;
-    frame.set(CARET_KEY, end)
+    widget::set_paint(lua, frame, ANCHOR_KEY, start)?;
+    widget::set_paint(lua, frame, CARET_KEY, end)
 }
 
 /// Nothing is selected any more. The caret stays where it is.
-fn clear_selection(frame: &mlua::Table) -> mlua::Result<()> {
-    frame.set(ANCHOR_KEY, mlua::Value::Nil)
+fn clear_selection(lua: &mlua::Lua, frame: &mlua::Table) -> mlua::Result<()> {
+    widget::set_paint(lua, frame, ANCHOR_KEY, mlua::Value::Nil)
 }
 
 /// Put the caret somewhere, extending the selection or dropping it.
 ///
-/// The one door for all six moving keys, because "Shift decides" is a property
-/// of the *move* in the reference rather than of any one key — see the module
-/// comment.
-fn move_caret(frame: &mlua::Table, to: i64, extend: bool) -> mlua::Result<()> {
+/// All six caret-moving keys go through this function, because in the 1.12.1
+/// client Shift extends the selection on every caret move, not on particular
+/// keys; see the module comment.
+fn move_caret(lua: &mlua::Lua, frame: &mlua::Table, to: i64, extend: bool) -> mlua::Result<()> {
     let letters = text(frame).chars().count() as i64;
     let to = to.clamp(0, letters);
     if !extend {
-        clear_selection(frame)?;
+        clear_selection(lua, frame)?;
     } else if frame.raw_get::<Option<i64>>(ANCHOR_KEY)?.is_none() {
         // The first Shift-move drops the anchor where the caret was standing.
-        frame.set(ANCHOR_KEY, caret(frame) as i64)?;
+        widget::set_paint(lua, frame, ANCHOR_KEY, caret(frame) as i64)?;
     }
-    frame.set(CARET_KEY, to)
+    widget::set_paint(lua, frame, CARET_KEY, to)
 }
 
 /// The string with `start..end` taken out of it.
@@ -501,32 +491,30 @@ fn without(text: &str, start: usize, end: usize) -> String {
         .collect()
 }
 
-/// `SetTextInsets(left, right, top, bottom)`, or — **failing that, the box's own
-/// backdrop insets**.
+/// `SetTextInsets(left, right, top, bottom)`, or, when that was never called,
+/// the box's own backdrop insets.
 ///
-/// The fallback is the half that matters on screen, and it is a statement the
-/// file makes rather than a margin chosen here. `AccountLoginAccountEdit` calls
-/// `SetTextInsets` nowhere, and its `<Backdrop>` says
+/// The fallback comes from the markup rather than a margin chosen here.
+/// Nothing calls `SetTextInsets` on `AccountLoginAccountEdit`, and its
+/// `<Backdrop>` says
 ///
 /// ```xml
 /// <BackgroundInsets><AbsInset left="10" right="5" top="4" bottom="9"/></BackgroundInsets>
 /// <EdgeSize><AbsValue val="16"/></EdgeSize>
 /// ```
 ///
-/// — which is the *interior of the plate*, the only thing in the markup that
-/// says where the inside of this box is. With zero insets the typed line starts
-/// at the frame's own left edge, which is **under the sixteen-unit border
-/// piece**: the account name came out with its first letter cut in half and the
-/// password caret drawn entirely outside the box.
+/// which is the interior of the plate, the only thing in the markup that says
+/// where the inside of this box is. With zero insets the typed line starts at
+/// the frame's own left edge, under the sixteen-unit border piece: the account
+/// name drew with its first letter cut in half and the password caret outside
+/// the box.
 ///
-/// `ChatFrameEditBox` is unaffected either way — `ChatEdit_UpdateHeader` calls
-/// `SetTextInsets(15 + header:GetWidth(), 13, 0, 0)` on every open, so the
-/// explicit value wins there and this fallback is never reached.
+/// `ChatFrameEditBox` does not reach the fallback: `ChatEdit_UpdateHeader`
+/// calls `SetTextInsets(15 + header:GetWidth(), 13, 0, 0)` on every open.
 ///
-/// **An inference from the markup rather than a reading of the client**, and
-/// marked as one: what 1.12's C side defaults an unstated text inset to is not
-/// established here. What is established is that zero is wrong, because zero
-/// draws the text under art the same file positions.
+/// This fallback is inferred from the markup. The default text inset of the
+/// 1.12.1 client is not established here; zero is known to be wrong, because
+/// it draws the text under art the same file positions.
 pub fn insets(frame: &mlua::Table) -> [f32; 4] {
     let Ok(Some(table)) = frame.raw_get::<Option<mlua::Table>>(INSETS_KEY) else {
         return super::backdrop::read(frame).map_or([0.0; 4], |backdrop| backdrop.insets);
@@ -545,12 +533,12 @@ pub fn colour(frame: &mlua::Table) -> Option<[f32; 4]> {
     }
 }
 
-/// **Everything one keystroke can be**, once the modifiers and the layout have
-/// been applied — see [`super::super::api::keyboard`], which is the only producer.
+/// One keystroke, after the modifiers and the keyboard layout have been
+/// applied. [`super::super::api::keyboard`] is the only producer.
 ///
-/// A character rather than a key code, because the whole point of the text
-/// field is that it takes what the *layout* produced: a French keyboard's `A`
-/// arrives here as `"q"` on a US mapping and this file must not care.
+/// A typed key arrives as a character rather than a key code, because a text
+/// field takes what the layout produced: a French keyboard's `A` arrives here
+/// as `"q"` on a US mapping, and this file does not depend on the layout.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stroke {
     /// One typed character, as the window system produced it.
@@ -561,39 +549,38 @@ pub enum Stroke {
     Right(Mods),
     Home(Mods),
     End(Mods),
-    /// The three the game gives a script of its own, rather than an edit.
+    /// Enter, Escape and Tab each run a script of their own rather than edit
+    /// the text.
     Enter,
     Escape,
     Tab,
-    /// History, oldest and newest — the two arrows a box that does not ignore
-    /// them walks its `AddHistoryLine` list with.
+    /// Up and Down walk the `AddHistoryLine` list towards older and newer
+    /// lines, in a box that does not ignore arrows.
     Up(Mods),
     Down(Mods),
-    /// Ctrl-A — `HighlightText(0, -1)`, which is what the client sends.
+    /// Ctrl-A, which the client handles as `HighlightText(0, -1)`.
     SelectAll,
     /// Ctrl-C and Ctrl-Insert. The text to put on the clipboard comes back out
     /// of [`dispatch`]; this file never touches the OS.
     Copy,
     /// Ctrl-X and Shift-Delete: [`Stroke::Copy`] and then the deletion.
     Cut,
-    /// Ctrl-V and Shift-Insert, with the clipboard **already read** — see
-    /// [`super::super::api::keyboard`], which is where the window system lives.
+    /// Ctrl-V and Shift-Insert, carrying the clipboard text already read by
+    /// [`super::super::api::keyboard`], which talks to the window system.
     Paste(String),
 }
 
-/// **The modifiers an edit box reads, and it reads exactly these two.**
+/// The two modifiers an edit box reads.
 ///
-/// Shift is the extend flag every move takes (modifier 0 in the reference's own
-/// numbering, established by the Ctrl chords beside it reading modifier 1).
-/// Alt is the one that lets an arrow past `ignoreArrows` — the client gates
-/// the four arrow keys on modifier 2, and
-/// **that identification is an inference**: 0 and 1 are pinned by what they
-/// guard, 2 is the remaining modifier and the behaviour it produces is the one
+/// Shift extends the selection on every caret move. Alt lets the four arrow
+/// keys reach a box that declares `ignoreArrows`. That Alt is the modifier for
+/// this is an inference: Shift and Ctrl are identified by what they do
+/// elsewhere, Alt is the remaining modifier, and the behaviour matches what
 /// later clients call `SetAltArrowKeyMode`.
 ///
-/// Ctrl is deliberately not here: a Ctrl chord arrives as its own variant
-/// already decided, because which chord a key is depends on the *layout* and
-/// that is [`super::super::api::keyboard`]'s business.
+/// Ctrl is not here: a Ctrl chord arrives as its own [`Stroke`] variant,
+/// because which chord a key forms depends on the keyboard layout, which
+/// [`super::super::api::keyboard`] handles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Mods {
     /// Extend the selection rather than dropping it.
@@ -602,17 +589,16 @@ pub struct Mods {
     pub alt: bool,
 }
 
-/// **Apply a run of keystrokes to whichever box has the focus**, and say what
-/// broke.
+/// Apply a run of keystrokes to the focused box, and return the errors raised.
 ///
-/// Nothing at all when nothing is focused, which is the ordinary case and the
-/// one the caller checks first — the whole world's keyboard passes through here
-/// otherwise.
-/// The second half of the answer is **what to put on the clipboard**, if a
-/// stroke asked: this file decides *what* is copied and [`super::super::api::keyboard`] does
-/// the copying, on the same split as every other piece of the outside world in
-/// this directory. `None` is "leave the clipboard alone", which is what an empty
-/// selection means.
+/// Does nothing when no box is focused, which is the ordinary case and the one
+/// the caller checks first.
+///
+/// The second value is the text to put on the clipboard, if a stroke asked for
+/// a copy. This file decides what is copied and [`super::super::api::keyboard`]
+/// does the copying, the same split this directory uses for every other
+/// outside resource. `None` means leave the clipboard unchanged, which is what
+/// an empty selection produces.
 pub(in crate::lua) fn dispatch(
     lua: &mlua::Lua,
     strokes: &[Stroke],
@@ -620,11 +606,11 @@ pub(in crate::lua) fn dispatch(
     let mut errors = Vec::new();
     let mut copied = None;
     for stroke in strokes {
-        // **Re-read per stroke.** `OnEnterPressed` hides the box and drops the
-        // focus, so the keystroke after it in the same frame belongs to nobody.
+        // Re-read per stroke: `OnEnterPressed` hides the box and drops the
+        // focus, so a later keystroke in the same frame goes to no box.
         let Some(frame) = focused(lua) else { break };
         match apply(lua, &frame, stroke) {
-            // The last copy in a frame wins, which is every real frame's only.
+            // The last copy in a frame wins; in practice a frame has at most one.
             Ok(Some(text)) => copied = Some(text),
             Ok(None) => {}
             Err(e) => errors.push(format!("{}: {}", stroke_name(stroke), first_line(&e))),
@@ -651,9 +637,10 @@ pub(in crate::lua) fn apply(
 ) -> mlua::Result<Option<String>> {
     let nothing = |result: mlua::Result<()>| result.map(|()| None);
     match stroke {
-        // **The space bar is a character *and* a script.** `ChatEdit_OnSpacePressed`
-        // re-parses the line, which is what turns `/s ` into a `SAY` header the
-        // moment the command is finished rather than when it is sent.
+        // The space bar inserts a character and also runs `OnSpacePressed`.
+        // `ChatEdit_OnSpacePressed` re-parses the line, which turns `/s ` into
+        // a `SAY` header as soon as the command is typed rather than when the
+        // line is sent.
         Stroke::Char(text) => {
             insert(lua, frame, text)?;
             let _ = super::frames::run_script(lua, frame, "OnChar", &[EventArg::Text(text.clone())]);
@@ -664,23 +651,22 @@ pub(in crate::lua) fn apply(
         }
         Stroke::Backspace => nothing(remove(lua, frame, -1)),
         Stroke::Delete => nothing(remove(lua, frame, 1)),
-        Stroke::Left(mods) => nothing(step(frame, -1, *mods)),
-        Stroke::Right(mods) => nothing(step(frame, 1, *mods)),
-        // **Home and End are never gated by `ignoreArrows`** — the reference's
-        // gate names four key codes and these are not among them,
-        // so the chat line, which declares the attribute, can still be selected
-        // end to end. That is what makes Shift-Home the usable gesture there.
-        Stroke::Home(mods) => nothing(move_caret(frame, 0, mods.shift)),
+        Stroke::Left(mods) => nothing(step(lua, frame, -1, *mods)),
+        Stroke::Right(mods) => nothing(step(lua, frame, 1, *mods)),
+        // `ignoreArrows` does not affect Home and End; in the 1.12.1 client it
+        // applies to the four arrow keys only. The chat line, which declares
+        // the attribute, can therefore still be selected end to end with
+        // Shift-Home.
+        Stroke::Home(mods) => nothing(move_caret(lua, frame, 0, mods.shift)),
         Stroke::End(mods) => {
             let letters = text(frame).chars().count() as i64;
-            nothing(move_caret(frame, letters, mods.shift))
+            nothing(move_caret(lua, frame, letters, mods.shift))
         }
         Stroke::Up(mods) => nothing(history(lua, frame, -1, *mods)),
         Stroke::Down(mods) => nothing(history(lua, frame, 1, *mods)),
-        Stroke::SelectAll => nothing(select(frame, 0, -1)),
-        // **Nothing selected is nothing copied**, and the clipboard is left
-        // holding whatever it held — three sites in the reference return before
-        // it is even opened.
+        Stroke::SelectAll => nothing(select(lua, frame, 0, -1)),
+        // With nothing selected nothing is copied, and the clipboard keeps
+        // what it held, as in the 1.12.1 client.
         Stroke::Copy => Ok(selected_text(frame)),
         Stroke::Cut => {
             let copied = selected_text(frame);
@@ -693,10 +679,10 @@ pub(in crate::lua) fn apply(
             insert(lua, frame, text)?;
             Ok(None)
         }
-        // **These three do nothing themselves.** The whole of what Enter means
-        // is `ChatEdit_OnEnterPressed`, in the archive — send, remember the
-        // sticky type, hide. A client that also cleared the box here would be
-        // guessing at a body it is running two lines later.
+        // These three only run their scripts. `ChatEdit_OnEnterPressed`, in
+        // the archive, defines what Enter does: send, remember the sticky
+        // type, hide. Clearing the box here as well would duplicate that
+        // script's work.
         Stroke::Enter => nothing(super::frames::run_script(lua, frame, "OnEnterPressed", &[])),
         Stroke::Escape => nothing(super::frames::run_script(lua, frame, "OnEscapePressed", &[])),
         Stroke::Tab => nothing(super::frames::run_script(lua, frame, "OnTabPressed", &[])),
@@ -705,9 +691,9 @@ pub(in crate::lua) fn apply(
 
 /// Put text in at the caret, respecting the letter cap.
 ///
-/// **A selection is deleted first** — the reference does it before the cap
-/// and before the numeric filter, and it is what makes both a typed character
-/// and a paste *replace* what is highlighted.
+/// A selection is deleted first. The 1.12.1 client does this before the cap
+/// and the numeric filter apply, so a typed character and a paste both replace
+/// what is highlighted.
 fn insert(lua: &mlua::Lua, frame: &mlua::Table, typed: &str) -> mlua::Result<()> {
     let selected = selection(frame);
     let (current, at) = match selected {
@@ -721,12 +707,12 @@ fn insert(lua: &mlua::Lua, frame: &mlua::Table, typed: &str) -> mlua::Result<()>
         .flatten()
         .unwrap_or(0)
         .max(0) as usize;
-    // **A full box drops what does not fit silently**, which is what the real
-    // one does — there is no beep and no message, and `letters="255"` on the
-    // chat line is the server's own `CMSG_MESSAGECHAT` limit seen from this
-    // side. For one keystroke that is the whole keystroke; for a paste it is
-    // the tail, because the reference pastes a character at a time through this
-    // same path and each one meets the cap on its own.
+    // A full box drops what does not fit, with no sound and no message, as
+    // the 1.12.1 client does. `letters="255"` on the chat line matches the
+    // server's `CMSG_MESSAGECHAT` limit. For one keystroke the whole keystroke
+    // is dropped; for a paste the tail is, because the 1.12.1 client pastes
+    // one character at a time through this path and each meets the cap on its
+    // own.
     let room = if cap == 0 { usize::MAX } else { cap.saturating_sub(letters) };
     let typed: String = typed.chars().take(room).collect();
     if typed.is_empty() && selected.is_none() {
@@ -739,9 +725,8 @@ fn insert(lua: &mlua::Lua, frame: &mlua::Table, typed: &str) -> mlua::Result<()>
     write(lua, frame, &next, at + typed.chars().count())
 }
 
-/// Backspace (`-1`) or Delete (`+1`) — **or the selection, if there is one**,
-/// in which case the direction does not matter and neither key takes a
-/// character beyond it.
+/// Backspace (`-1`) or Delete (`+1`). If there is a selection, it is removed
+/// instead, whatever the direction, and no character beyond it is removed.
 fn remove(lua: &mlua::Lua, frame: &mlua::Table, direction: i64) -> mlua::Result<()> {
     let current = text(frame);
     if let Some((start, end)) = selection(frame) {
@@ -757,18 +742,17 @@ fn remove(lua: &mlua::Lua, frame: &mlua::Table, direction: i64) -> mlua::Result<
 
 /// Move the caret one character, unless the box declares `ignoreArrows` and Alt
 /// is not held to override it.
-fn step(frame: &mlua::Table, direction: i64, mods: Mods) -> mlua::Result<()> {
+fn step(lua: &mlua::Lua, frame: &mlua::Table, direction: i64, mods: Mods) -> mlua::Result<()> {
     if ignores_arrows(frame, mods) {
         return Ok(());
     }
-    move_caret(frame, caret(frame) as i64 + direction, mods.shift)
+    move_caret(lua, frame, caret(frame) as i64 + direction, mods.shift)
 }
 
-/// **`ignoreArrows` is a gate with a key in it.** The reference's flag sends
-/// the four arrow codes back unhandled — which is how the chat line lets you
-/// turn your character while typing — *unless* modifier 2 is held, in which
-/// case the box takes them after all. See [`Mods`] on how firmly that
-/// modifier is identified.
+/// Whether this box ignores an arrow key. In the 1.12.1 client `ignoreArrows`
+/// leaves the four arrow keys unhandled, which lets the character turn while
+/// the chat line is open, unless Alt is held, in which case the box takes
+/// them. [`Mods`] states how the modifier was identified.
 fn ignores_arrows(frame: &mlua::Table, mods: Mods) -> bool {
     !mods.alt
         && frame
@@ -809,19 +793,19 @@ fn history(
     write(lua, frame, &line, letters)
 }
 
-/// **The one place the text changes**, so `OnTextChanged` cannot be forgotten
-/// by one of the five edits above.
+/// The one place an edit changes the text, so each of the five edits above
+/// fires `OnTextChanged`.
 ///
-/// `SetText` is deliberately *not* used: that fires `OnTextSet` too, and 1.12
-/// raises that one only when something *set* the text rather than when it was
-/// typed into — `ChatEdit_OnTextSet` re-parses the line, so a client that fired
-/// it per keystroke would eat the `/` of a command as it was being typed.
+/// `SetText` is not used here because it also fires `OnTextSet`, which 1.12
+/// fires only when the text is set, not when it is typed.
+/// `ChatEdit_OnTextSet` re-parses the line, so firing it per keystroke would
+/// remove the `/` of a command while it is being typed.
 fn write(lua: &mlua::Lua, frame: &mlua::Table, next: &str, caret: usize) -> mlua::Result<()> {
     super::regions::set_text_value(lua, frame, mlua::Value::String(lua.create_string(next)?))?;
-    frame.set(CARET_KEY, caret as i64)?;
-    // **An edit ends the selection**, every time and whichever path made it —
-    // the range it named does not survive the string it named it in.
-    clear_selection(frame)?;
+    widget::set_paint(lua, frame, CARET_KEY, caret as i64)?;
+    // Every edit ends the selection, because the range no longer refers to
+    // the same text.
+    clear_selection(lua, frame)?;
     let _ = super::frames::run_script(lua, frame, "OnTextChanged", &[]);
     Ok(())
 }
@@ -831,9 +815,9 @@ fn first_line(e: &mlua::Error) -> String {
     text.lines().next().unwrap_or_default().to_string()
 }
 
-/// Install [`METHODS`] onto the shared frame method table — see
-/// [`super::frames::register_methods`], and [`super::button`] for why one table
-/// serves every kind.
+/// Install [`METHODS`] onto the shared frame method table. See
+/// [`super::frames::register_methods`], and [`super::button`] for why one
+/// table serves every kind.
 pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
     let set_focus = lua.create_function(|lua, this: mlua::Table| take_focus(lua, &this))?;
     methods.set("SetFocus", set_focus)?;
@@ -844,16 +828,16 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     })?;
     methods.set("HasFocus", has_focus)?;
 
-    // `editBox:Insert(text)` — 1.12 pastes an item link into the chat line with
-    // it, and `ChatEdit_ParseText` never sees the difference from typing.
+    // `editBox:Insert(text)`: 1.12 pastes an item link into the chat line with
+    // it, and to `ChatEdit_ParseText` the result is the same as typing.
     let insert_method =
         lua.create_function(|lua, (this, text): (mlua::Table, Option<String>)| {
             insert(lua, &this, &text.unwrap_or_default())
         })?;
     methods.set("Insert", insert_method)?;
 
-    // **`HighlightText([start, end])` — and both call shapes are in the shipped
-    // directory**, on the same two lines of `InputBoxTemplate`:
+    // `HighlightText([start, end])`. The shipped directory uses both call
+    // shapes, on two adjacent lines of `InputBoxTemplate`:
     //
     // ```xml
     // <OnEditFocusGained>this:HighlightText();</OnEditFocusGained>
@@ -861,27 +845,28 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     // ```
     //
     // So a click into a money field or a stack-split box selects everything it
-    // holds and the first digit typed replaces it — which is the visible half
-    // of this whole subject, and which did nothing at all while this was a
-    // stub. The bare call is `(0, -1)`, because that is what Ctrl-A sends
-    // and what [`select`] reads as "to the end".
+    // holds and the first digit typed replaces it. The bare call is
+    // `(0, -1)`, because that is what Ctrl-A sends and what [`select`] reads
+    // as "to the end".
     let highlight = lua.create_function(
-        |_lua, (this, start, end): (mlua::Table, Option<i64>, Option<i64>)| {
-            select(&this, start.unwrap_or(0), end.unwrap_or(-1))
+        |lua, (this, start, end): (mlua::Table, Option<i64>, Option<i64>)| {
+            select(lua, &this, start.unwrap_or(0), end.unwrap_or(-1))
         },
     )?;
     methods.set("HighlightText", highlight)?;
 
-    // `SetTextInsets(15 + header:GetWidth(), 13, 0, 0)` — a nil argument is a
-    // zero rather than a raise, for the reason [`super::widget`]'s `SetID`
-    // gives: the raise costs the rest of `ChatEdit_UpdateHeader`.
+    // `SetTextInsets(15 + header:GetWidth(), 13, 0, 0)`. A nil argument is
+    // read as zero rather than raising, for the reason [`super::widget`]'s
+    // `SetID` gives: an error would abort the rest of `ChatEdit_UpdateHeader`.
     let set_insets = lua.create_function(
         |lua, (this, l, r, t, b): (mlua::Table, Option<f64>, Option<f64>, Option<f64>, Option<f64>)| {
             let table = lua.create_table()?;
             for (name, value) in ["left", "right", "top", "bottom"].into_iter().zip([l, r, t, b]) {
                 table.set(name, value.unwrap_or(0.0))?;
             }
-            this.set(INSETS_KEY, table)
+            this.set(INSETS_KEY, table)?;
+            widget::mark_paint(lua);
+            Ok(())
         },
     )?;
     methods.set("SetTextInsets", set_insets)?;
@@ -893,9 +878,9 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
         )
     })?;
     methods.set("SetAutoFocus", set_auto_focus)?;
-    // `SetAltArrowKeyMode` — whether the arrow keys walk the history only
-    // with Alt held. Recorded; this client's history walk is `AddHistoryLine`'s
-    // and reads no flag. Every chat-frame addon sets it on the edit box.
+    // `SetAltArrowKeyMode`: whether the arrow keys walk the history only with
+    // Alt held. Recorded only; this client's history walk reads no flag.
+    // Every chat-frame addon sets it on the edit box.
     let set_alt_arrow = lua.create_function(|_lua, (this, on): (mlua::Table, Option<mlua::Value>)| {
         this.set(
             "__altArrowKeyMode",
@@ -903,8 +888,8 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
         )
     })?;
     methods.set("SetAltArrowKeyMode", set_alt_arrow)?;
-    // `SetMultiLine` — recorded; the box draws one line whatever it is told,
-    // which the module note states under what is not modelled.
+    // `SetMultiLine`: recorded only. The box draws one line whatever the flag;
+    // the module comment lists this under the differences from 1.12.1.
     let set_multi_line = lua.create_function(|_lua, (this, on): (mlua::Table, Option<mlua::Value>)| {
         this.set(
             "__multiLine",
@@ -913,52 +898,61 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     })?;
     methods.set("SetMultiLine", set_multi_line)?;
 
-    // **`SetJustifyH` on a frame is its own string's**, as `SetTextColor` is:
-    // a button's label, or the box's typed text, which this client draws
-    // left-aligned whatever it is told.
+    // `SetJustifyH` on a frame applies to the frame's own string, as
+    // `SetTextColor` does: a button's label, or the box's typed text, which
+    // this client draws left-aligned whatever the setting.
     for (name, key) in [("SetJustifyH", "justifyH"), ("SetJustifyV", "justifyV")] {
-        let set = lua.create_function(move |_lua, (this, how): (mlua::Table, Option<String>)| {
+        let set = lua.create_function(move |lua, (this, how): (mlua::Table, Option<String>)| {
             let target = super::regions::text_region(&this).unwrap_or_else(|| this.clone());
-            super::regions::set_justify(&target, key, how.as_deref().unwrap_or("CENTER"))
+            super::regions::set_justify(lua, &target, key, how.as_deref().unwrap_or("CENTER"))
         })?;
         methods.set(name, set)?;
     }
 
-    // **`SetTextColor` is two different things and both are real.** On an edit
-    // box it is the typed text's colour, which is what tints the chat line by
-    // the type being spoken; on anything else it is the frame's own font
-    // string's, which is how a button greys its label. It was a stub for both.
+    // `SetTextColor` has two meanings. On an edit box it sets the typed text's
+    // colour, which tints the chat line by the chat type. On any other frame
+    // it sets the frame's own font string's colour, which is how a button
+    // greys its label.
     let set_colour = lua.create_function(
-        |_lua, (this, r, g, b, a): (mlua::Table, Option<f64>, Option<f64>, Option<f64>, Option<f64>)| {
+        |lua, (this, r, g, b, a): (mlua::Table, Option<f64>, Option<f64>, Option<f64>, Option<f64>)| {
             let rgba = vec![
                 r.unwrap_or(1.0),
                 g.unwrap_or(1.0),
                 b.unwrap_or(1.0),
                 a.unwrap_or(1.0),
             ];
-            // **Sticky on the way through**, which is the half that was
-            // missing: a forwarded colour that does not mark the string as
-            // carrying its own is erased by the next face the button wears.
-            // See [`super::regions::set_text_colour`].
+            // The forwarded colour marks the string as carrying its own
+            // colour; otherwise the next face the button switches to would
+            // erase it. See [`super::regions::set_text_colour`].
             match super::regions::text_region(&this) {
                 Some(region) => super::regions::set_text_colour(
+                    lua,
                     &region,
                     [rgba[0], rgba[1], rgba[2], rgba[3]],
                 ),
-                None => this.set(COLOUR_KEY, rgba),
+                None => {
+                    // Handlers set the same colour every tick, so an unchanged one is not a repaint.
+                    let stored: Option<Vec<f64>> = this.raw_get(COLOUR_KEY).ok().flatten();
+                    if stored.as_deref() == Some(rgba.as_slice()) {
+                        return Ok(());
+                    }
+                    this.set(COLOUR_KEY, rgba)?;
+                    widget::mark_paint(lua);
+                    Ok(())
+                }
             }
         },
     )?;
     methods.set("SetTextColor", set_colour)?;
 
-    // **`SetFont` and `SetFontObject` on a frame are the same forward.** A
-    // button's, a message frame's or an edit box's face is its own string's
-    // when it has one, and the frame's own keys otherwise, which is where the
-    // edit box and the message frame keep theirs.
+    // `SetFont` and `SetFontObject` on a frame forward the same way. The face
+    // of a button, message frame or edit box is set on its own string when it
+    // has one, and on the frame's own keys otherwise, which is where the edit
+    // box and the message frame keep theirs.
     let set_font = lua.create_function(
-        |_lua, (this, path, height, flags): (mlua::Table, Option<String>, Option<f64>, Option<String>)| {
+        |lua, (this, path, height, flags): (mlua::Table, Option<String>, Option<f64>, Option<String>)| {
             let target = super::regions::text_region(&this).unwrap_or_else(|| this.clone());
-            super::regions::set_font_triplet(&target, path.as_deref(), height, flags.as_deref())
+            super::regions::set_font_triplet(lua, &target, path.as_deref(), height, flags.as_deref())
         },
     )?;
     methods.set("SetFont", set_font)?;
@@ -967,7 +961,7 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
             return Ok(());
         };
         let target = super::regions::text_region(&this).unwrap_or_else(|| this.clone());
-        super::regions::apply_font_style(&target, &font)?;
+        super::regions::apply_font_style(lua, &target, &font)?;
         target.set("__fontObject", font)
     })?;
     methods.set("SetFontObject", set_font_object)?;
@@ -982,12 +976,12 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     })?;
     methods.set("SetMaxLetters", set_max)?;
 
-    // `SetNumber`/`GetNumber` are the numeric face of the same string — the
-    // stack-split and money entry boxes are written entirely against them.
+    // `SetNumber`/`GetNumber` read and write the same string as a number. The
+    // stack-split and money entry boxes use only these.
     let set_number = lua.create_function(|lua, (this, value): (mlua::Table, Option<f64>)| {
         let value = value.unwrap_or(0.0);
-        // Integers print without a decimal point, which is what a stack size
-        // has to look like; 1.12 has one number type and formats the same way.
+        // Integers print without a decimal point, as a stack size must; 1.12
+        // has one number type and formats it the same way.
         let text = if value.fract() == 0.0 {
             format!("{}", value as i64)
         } else {
@@ -1030,9 +1024,10 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     })?;
     methods.set("AddHistoryLine", add_history)?;
 
-    // **The keyboard's own language, not the spoken one.** `INPUT_ROMAN = "A"`
-    // is the label `ChatEdit_OnInputLanguageChanged` puts on the button beside
-    // the line; the other three are the CJK input methods 1.12 shipped for.
+    // The keyboard input language, not the in-game spoken language.
+    // `INPUT_ROMAN = "A"` is the label `ChatEdit_OnInputLanguageChanged` puts
+    // on the button beside the line; the other three values are the CJK input
+    // methods 1.12 shipped for.
     let input_language = lua.create_function(|_lua, _this: mlua::Table| Ok("ROMAN"))?;
     methods.set("GetInputLanguage", input_language)?;
     Ok(())
@@ -1078,8 +1073,7 @@ mod tests {
         press(lua, &strokes);
     }
 
-    /// Apply strokes and insist none of them raised; the clipboard half is
-    /// [`copied`]'s.
+    /// Apply strokes, assert none of them raised, and return the text to copy.
     fn press(lua: &mlua::Lua, strokes: &[Stroke]) -> Option<String> {
         let (errors, copied) = dispatch(lua, strokes).expect("the strokes apply");
         assert!(errors.is_empty(), "{errors:?}");
@@ -1090,16 +1084,15 @@ mod tests {
     const SHIFT: Mods = Mods { shift: true, alt: false };
     const PLAIN: Mods = Mods { shift: false, alt: false };
 
-    /// **A key reaches the box that has the focus and nothing else does.** The
-    /// property the whole file exists for: without a focus there is no typing,
-    /// which is what stops WASD becoming text.
+    /// A key reaches only the box that has the focus. Without a focus there is
+    /// no typing, which keeps WASD from becoming text.
     #[test]
     fn only_a_focused_box_takes_the_keyboard() {
         let lua = boxed("");
         type_in(&lua, "hello");
-        // **`""` and not nil** — an edit box holds an empty buffer where a font
-        // string holds no pointer, which is 1.12's own distinction and is what
-        // `MoneyInputFrame_GetCopper` is written against. See
+        // `""`, not nil: in 1.12 an empty edit box returns an empty string
+        // where an empty font string returns nil, and
+        // `MoneyInputFrame_GetCopper` depends on that. See
         // [`super::regions::empty_text`].
         assert_eq!(
             eval(&lua, "return edit:GetText()"),
@@ -1124,19 +1117,18 @@ mod tests {
         type_in(&lua, "helo");
         press(&lua, &[Stroke::Left(PLAIN), Stroke::Char("l".to_string())]);
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("hello")"#);
-        // …and backspace takes the character *before* it, delete the one after.
+        // Backspace removes the character before the caret, Delete the one after.
         press(&lua, &[Stroke::Home(PLAIN), Stroke::Delete]);
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("ello")"#);
         press(&lua, &[Stroke::End(PLAIN), Stroke::Backspace]);
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("ell")"#);
-        // …and neither runs off the end of the string.
+        // Neither goes past the end of the string.
         press(&lua, &[Stroke::Home(PLAIN), Stroke::Backspace, Stroke::Backspace]);
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("ell")"#);
     }
 
-    /// **`ignoreArrows` is the chat line's own attribute**, and it is what stops
-    /// the caret moving there — so that the arrows reach the game and turn the
-    /// character instead.
+    /// `ignoreArrows`, declared by the chat line, stops the arrows moving the
+    /// caret, so that in the 1.12.1 client they turn the character instead.
     #[test]
     fn a_box_that_ignores_arrows_does_not_move_its_caret() {
         let lua = boxed("");
@@ -1149,21 +1141,19 @@ mod tests {
         );
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("abcX")"#);
 
-        // **…and Alt is the key that gets past it**: the same two
-        // arrows with Alt held move the caret after all.
+        // With Alt held, the same two arrows move the caret.
         let alt = Mods { shift: false, alt: true };
         press(&lua, &[Stroke::Left(alt), Stroke::Left(alt), Stroke::Char("Y".to_string())]);
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("abYcX")"#);
 
-        // **…and Home and End are not gated at all**, which is what leaves the
-        // chat line selectable end to end. Four key codes are gated and these
-        // are not among them.
+        // Home and End are not affected, so the chat line can be selected end
+        // to end. Only the four arrow keys are.
         press(&lua, &[Stroke::Home(PLAIN), Stroke::Char("Z".to_string())]);
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("ZabYcX")"#);
     }
 
-    /// **A selection is two indices and Shift is what grows it**, which is the
-    /// property every other test in this group rests on.
+    /// A selection is two indices and Shift extends it. The other selection
+    /// tests depend on this.
     #[test]
     fn shift_extends_and_a_bare_move_drops_it() {
         let lua = boxed("");
@@ -1175,20 +1165,20 @@ mod tests {
         // though it was gathered backwards.
         press(&lua, &[Stroke::Home(SHIFT)]);
         assert_eq!(selection(&edit(&lua)), Some((0, 5)));
-        // …and a plain move drops it rather than shrinking it.
+        // A plain move drops the selection rather than shrinking it.
         press(&lua, &[Stroke::End(PLAIN)]);
         assert_eq!(selection(&edit(&lua)), None);
-        // …and one Shift-Left is one character, from wherever the caret stood.
+        // One Shift-Left selects one character from the caret.
         press(&lua, &[Stroke::Left(SHIFT)]);
         assert_eq!(selection(&edit(&lua)), Some((4, 5)));
-        // …and shrinking back to the anchor is no selection at all, which is
-        // the reference's own `start == end`.
+        // Shrinking back to the anchor leaves no selection, the equivalent of
+        // equal start and end in the 1.12.1 client.
         press(&lua, &[Stroke::Right(SHIFT)]);
         assert_eq!(selection(&edit(&lua)), None);
     }
 
-    /// **Typing over a selection replaces it** — among the first things the
-    /// insert path does — and so does a paste, and so does one Backspace.
+    /// Typing over a selection replaces it, and so does a paste; one Backspace
+    /// removes it.
     #[test]
     fn an_edit_replaces_what_is_selected() {
         let lua = boxed("");
@@ -1205,19 +1195,18 @@ mod tests {
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("H world")"#);
         assert_eq!(selection(&edit(&lua)), None, "the edit ended the selection");
 
-        // …and a paste replaces one too, with no regard to which way it was
-        // gathered.
+        // A paste replaces a selection too, whichever direction it was made in.
         press(&lua, &[Stroke::SelectAll, Stroke::Paste("goodbye".to_string())]);
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("goodbye")"#);
 
-        // …and Backspace with a selection takes the selection and **not** a
-        // character beyond it.
+        // Backspace with a selection removes the selection and no character
+        // beyond it.
         press(&lua, &[Stroke::SelectAll, Stroke::Backspace]);
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("")"#);
     }
 
-    /// **Ctrl-C, Ctrl-X and Ctrl-A**, and the rule that an empty selection
-    /// copies *nothing* rather than the line.
+    /// Ctrl-C, Ctrl-X and Ctrl-A. An empty selection copies nothing, not the
+    /// whole line.
     #[test]
     fn copy_and_cut_answer_only_what_is_selected() {
         let lua = boxed("");
@@ -1238,7 +1227,7 @@ mod tests {
             "a copy is not an edit"
         );
 
-        // …and a cut is the copy *and* the deletion.
+        // A cut copies and then deletes.
         press(&lua, &[Stroke::Home(PLAIN)]);
         for _ in 0..2 {
             press(&lua, &[Stroke::Right(SHIFT)]);
@@ -1247,8 +1236,8 @@ mod tests {
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("llo")"#);
     }
 
-    /// **`HighlightText` is the directory's own two calls**, and the bare one
-    /// selects everything — `InputBoxTemplate` makes both on focus.
+    /// The two `HighlightText` call shapes `InputBoxTemplate` makes on focus
+    /// gain and loss; the bare call selects everything.
     #[test]
     fn highlight_text_takes_the_directorys_two_shapes() {
         let lua = boxed("");
@@ -1259,14 +1248,13 @@ mod tests {
         assert_eq!(selection(&edit(&lua)), Some((0, 4)));
         lua.load("edit:HighlightText(0, 0)").exec().expect("runs");
         assert_eq!(selection(&edit(&lua)), None);
-        // …and a range, clamped to the text rather than raising.
+        // A range past the end is clamped to the text rather than raising.
         lua.load("edit:HighlightText(1, 99)").exec().expect("runs");
         assert_eq!(selection(&edit(&lua)), Some((1, 4)));
     }
 
-    /// **A password box copies the empty string**, which is the reference's own
-    /// refusal and not a policy invented here. The cut still
-    /// deletes: only the clipboard is denied.
+    /// A password box copies the empty string, as in the 1.12.1 client. A cut
+    /// still deletes; only the clipboard gets nothing.
     #[test]
     fn a_password_box_copies_nothing() {
         let lua = boxed("");
@@ -1283,9 +1271,9 @@ mod tests {
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("")"#);
     }
 
-    /// **The letter cap truncates a paste rather than refusing it**, because
-    /// the reference pastes one character at a time through the insert path
-    /// and each one meets the cap on its own.
+    /// The letter cap truncates a paste rather than refusing it, because the
+    /// 1.12.1 client pastes one character at a time through the insert path
+    /// and each character meets the cap on its own.
     #[test]
     fn the_cap_takes_as_much_of_a_paste_as_fits() {
         let lua = boxed("");
@@ -1293,15 +1281,15 @@ mod tests {
         lua.load("edit:SetFocus()").exec().expect("runs");
         press(&lua, &[Stroke::Paste("abcdefgh".to_string())]);
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("abcde")"#);
-        // …and the replaced selection frees its own room first, which is what
-        // makes a select-all-then-paste work in a full box.
+        // The replaced selection frees its room first, so select-all then
+        // paste works in a full box.
         press(&lua, &[Stroke::SelectAll, Stroke::Paste("xyz".to_string())]);
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("xyz")"#);
     }
 
-    /// **`SetText` fires `OnTextSet` and typing does not**, which is the whole
-    /// of how `ChatEdit_ParseText` gets to cut `/s ` off a line without eating
-    /// the slash as it is typed.
+    /// `SetText` fires `OnTextSet` and typing does not. This lets
+    /// `ChatEdit_ParseText` cut `/s ` off a line without removing the slash as
+    /// it is typed.
     #[test]
     fn setting_the_text_and_typing_it_fire_different_scripts() {
         let lua = boxed("");
@@ -1314,12 +1302,12 @@ mod tests {
         type_in(&lua, "!");
         assert_eq!(eval(&lua, "return set"), "Integer(1)", "typing does not set");
         assert_eq!(eval(&lua, "return changed"), "Integer(2)");
-        // …and the caret went to the end of what was set, so the typing appended.
+        // The caret moved to the end of the set text, so the typing appended.
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("hi!")"#);
     }
 
-    /// Enter and Escape are **scripts, not edits** — everything they mean is in
-    /// the archive's own `ChatEdit_*` bodies.
+    /// Enter and Escape run scripts and do not edit the text; their behaviour
+    /// is in the archive's `ChatEdit_*` handlers.
     #[test]
     fn enter_and_escape_run_the_games_own_bodies() {
         let lua = boxed("");
@@ -1336,7 +1324,7 @@ mod tests {
         assert_eq!(eval(&lua, "return escaped"), "Integer(1)");
     }
 
-    /// **Hiding drops the focus.** `ChatEdit_OnEscapePressed` ends in `Hide()`
+    /// Hiding drops the focus. `ChatEdit_OnEscapePressed` ends in `Hide()`
     /// and nothing else, so without this every keystroke after the first sent
     /// message goes into an invisible box.
     #[test]
@@ -1378,16 +1366,16 @@ mod tests {
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("third")"#);
         press(&lua, &[Stroke::Up(PLAIN)]);
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("second")"#);
-        // …"first" fell off the end of a two-line history.
+        // "first" was dropped from the two-line history.
         press(&lua, &[Stroke::Up(PLAIN)]);
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("second")"#);
         press(&lua, &[Stroke::Down(PLAIN), Stroke::Down(PLAIN)]);
         assert_eq!(eval(&lua, "return edit:GetText()"), r#"String("")"#);
     }
 
-    /// Every name [`METHODS`] claims is installed, and the list is sorted — the
-    /// rule every claimed list in this directory follows, because
-    /// `vale framexml` counts the interface gap against them.
+    /// Every name in [`METHODS`] is installed, and the list is sorted. Every
+    /// such list in this directory follows this rule, because `vale framexml`
+    /// measures the interface's missing methods against them.
     #[test]
     fn every_method_the_list_claims_is_installed() {
         let lua = boxed("");
@@ -1403,8 +1391,8 @@ mod tests {
         assert_eq!(sorted, METHODS, "METHODS is kept sorted");
     }
 
-    /// **A second `SetFocus` moves the focus rather than adding one**, and both
-    /// boxes hear about it.
+    /// A second `SetFocus` moves the focus rather than adding one, and both
+    /// boxes receive their focus script.
     #[test]
     fn the_focus_moves_and_says_so() {
         let lua = boxed(

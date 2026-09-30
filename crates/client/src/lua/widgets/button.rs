@@ -1,14 +1,11 @@
-//! **What a button is on top of a frame**: a pressed state, a checked state, an
+//! The button state on top of a frame: a pressed state, a checked state, an
 //! enabled state, and the five textures those three choose between.
 //!
-//! This module exists because of a bug rather than because of a plan, and the bug
-//! is worth stating at the top of it. `Bindings.xml` declares `ACTIONBUTTON1` and
-//! its body calls `ActionButtonDown(1)` / `ActionButtonUp(1)`, which look exactly
-//! like C functions from there — so this client registered two closures by those
-//! names. They are not C functions. They are twenty lines of ordinary Lua in
-//! `ActionButton.lua`, and the moment the interface started loading, the file's
-//! versions replaced the closures. The keys still resolved, the bodies still ran,
-//! and they ran into
+//! `Bindings.xml` declares `ACTIONBUTTON1`, and its body calls
+//! `ActionButtonDown(1)` / `ActionButtonUp(1)`, which look like C functions.
+//! They are twenty lines of Lua in `ActionButton.lua`, and when the interface
+//! loads, that file's versions replace any C closure registered under the same
+//! names. The bodies run into
 //!
 //! ```lua
 //! local button = getglobal("ActionButton"..id);
@@ -17,36 +14,36 @@
 //! end
 //! ```
 //!
-//! — four widget methods this client did not have. Every action key raised, the
-//! failure was recorded once and suppressed, and **casting stopped working** with
-//! nothing on screen to say so. See [`super::super::api::verbs`], where the two verbs were
-//! deleted, and `vale framexml`, which now measures the collision.
+//! which needs four widget methods. Without them every action key raised an
+//! error, the failure was recorded once and suppressed, and casting stopped
+//! working with nothing on screen to show why. See
+//! [`super::super::api::verbs`], from which the two closures were removed, and
+//! `vale framexml`, which detects this kind of name collision.
 //!
-//! So what is here is the rest of that path: the methods the game's own body
-//! needs between a key going down and `UseAction` going out.
+//! This module provides the methods the game's own body needs between a key
+//! going down and `UseAction` being sent.
 //!
 //! ## One method table, as the regions have one
 //!
 //! These install onto the same table [`super::frames`] builds, so a plain
-//! `<Frame>` answers `Disable` too. That is [`super::regions`]'s precedent taken
-//! deliberately — a widget's kind is a field here rather than a type — and the
-//! cost is the same: a capability test of the shape `if ( frame.SetChecked )`
-//! would answer yes where the game answers no. Nothing in the shipped directory
-//! writes one. The day that stops being true, the split is this list moved onto
-//! a metatable chosen by [`vale_assets::interface::widgets::FRAME_KINDS`].
+//! `<Frame>` answers `Disable` too. This follows [`super::regions`]: a widget's
+//! kind is a field here rather than a type. The cost is the same: a capability
+//! test of the form `if ( frame.SetChecked )` would answer yes where the game
+//! answers no. Nothing in the shipped directory writes one. If something does,
+//! the fix is to move this list onto a metatable chosen by
+//! [`vale_assets::interface::widgets::FRAME_KINDS`].
 //!
-//! ## What is state and what is a decision
+//! ## Which methods store state and which act
 //!
-//! Every setter here is a **record**, exactly as [`super::regions`]'s are, and for
-//! the same reason: nothing draws yet. The one that is not is
-//! [`the texture slots`](install) — `SetNormalTexture` reaches the region
-//! `<NormalTexture>` already made and sets *its* path, so the button and the
-//! loader cannot end up with two different ideas of what a button's face is.
+//! Every setter here stores state, as [`super::regions`]'s do, and the draw
+//! walk reads it. The exception is [`the texture slots`](install):
+//! `SetNormalTexture` finds the region `<NormalTexture>` already created and
+//! sets that region's path, so the button and the loader agree on what the
+//! button's face is.
 //!
-//! `Click()` is the exception in the other direction: it is not a record at all,
-//! it calls the frame's own `OnClick` under 1.12's convention, because that is
-//! what it does in the game and a version that recorded something would be a
-//! second, wrong way to press a button.
+//! `Click()` stores nothing: it calls the frame's own `OnClick` under 1.12's
+//! convention, which is what it does in the game, so there is one way to press
+//! a button.
 
 use super::super::api::one_or_nil;
 
@@ -80,36 +77,35 @@ pub const METHODS: [&str; 20] = [
     "SetPushedTexture",
 ];
 
-/// Where a button keeps what this module owns — underscored, the interface's own
+/// Where a button keeps what this module owns: underscored, the interface's
 /// convention for "the C side owns this". See [`super::widget`].
 ///
-/// **`__button`-prefixed, and that is not tidiness.** The first draft called the
-/// checked flag `__checked`, which is exactly the key the loader writes a
-/// `<CheckedTexture>` into — so a `CheckButton` with one had its boolean state
-/// replaced by a texture table on load, `GetChecked()` answered truthy for ever
-/// after, and every such button drew permanently checked. The slot names come
-/// from [`vale_assets::interface::widgets::REGION_ELEMENTS`] and are not this module's to
-/// choose; the prefix is what keeps the two sets apart.
+/// The keys are `__button`-prefixed to keep them apart from the region slot
+/// names. `__checked` is the key the loader writes a `<CheckedTexture>` into;
+/// a checked flag stored under it was replaced by a texture table on load, so
+/// `GetChecked()` always returned a true value and every such button drew as
+/// checked. The slot names come from
+/// [`vale_assets::interface::widgets::REGION_ELEMENTS`] and cannot be changed
+/// here.
 const STATE_KEY: &str = "__buttonState";
 const CHECKED_KEY: &str = "__buttonChecked";
 const ENABLED_KEY: &str = "__buttonEnabled";
 const HIGHLIGHT_LOCKED_KEY: &str = "__buttonHighlightLocked";
 const CLICKS_KEY: &str = "__buttonClicks";
 
-/// **The three faces a button declares and the one it is wearing.**
+/// The three font faces a button declares, and the one currently applied.
 ///
-/// `<NormalFont>`, `<HighlightFont>` and `<DisabledFont>` are three *font
-/// objects* on the button in 1.12, and the client picks one every time the
-/// state or
-/// the pointer moves: disabled → the disabled face, under the mouse → the
-/// highlight face, otherwise the normal one. This client keeps a face *on* the
-/// region instead, so the three declarations are snapshotted here
+/// `<NormalFont>`, `<HighlightFont>` and `<DisabledFont>` are three font
+/// objects on the button in 1.12, and the client picks one every time the
+/// state or the pointer changes: disabled → the disabled face, under the
+/// mouse → the highlight face, otherwise the normal one. This client keeps a
+/// face on the region instead, so the three declarations are copied here
 /// ([`super::regions::capture_font_style`]) and the chosen one is written back.
 ///
-/// [`APPLIED_FONT_KEY`] records which, so the write happens **on the change**
-/// rather than every frame: a script that calls `SetTextColor` on a button's
-/// own label keeps it until the button's state moves, which is exactly as long
-/// as the real widget keeps it.
+/// [`APPLIED_FONT_KEY`] records which face is applied, so the write happens
+/// only when the choice changes rather than every frame. A script that calls
+/// `SetTextColor` on a button's own label keeps that colour until the button's
+/// state changes, which matches the 1.12.1 client.
 const NORMAL_FONT_KEY: &str = "__fontNormal";
 const HIGHLIGHT_FONT_KEY: &str = "__fontHighlight";
 const DISABLED_FONT_KEY: &str = "__fontDisabled";
@@ -122,8 +118,8 @@ const APPLIED_FONT_KEY: &str = "__buttonFontApplied";
 
 /// Record a `<NormalFont>` / `<HighlightFont>` / `<DisabledFont>` declaration.
 ///
-/// Returns whether the element was one — the loader uses that to decide whether
-/// it has anything else to do with it.
+/// Returns whether the element was one of the three; the loader uses that to
+/// decide whether to process the element further.
 pub(in crate::lua) fn set_state_font(
     frame: &mlua::Table,
     element: &str,
@@ -136,28 +132,28 @@ pub(in crate::lua) fn set_state_font(
     Ok(true)
 }
 
-/// The button state a fresh button is in. `"NORMAL"`, `"PUSHED"` and
-/// `"DISABLED"` are the game's own three, and `ActionButtonDown`'s whole body is
-/// a test against the first of them — so the default is load-bearing rather than
-/// cosmetic: a button that started `nil` would never take a press.
+/// The button state a new button starts in. `"NORMAL"`, `"PUSHED"` and
+/// `"DISABLED"` are the game's three states, and `ActionButtonDown`'s body is a
+/// test against the first of them, so the default matters: a button that
+/// started as `nil` would never take a press.
 const NORMAL: &str = "NORMAL";
 
 /// The texture slots a button chooses between, and the accessor pair each one
 /// gets.
 ///
-/// The names are [`vale_assets::interface::widgets::REGION_ELEMENTS`]' own slots — the
-/// same strings the loader writes when it builds a `<NormalTexture>` — so
-/// `button:GetNormalTexture()` and `getglobal(name.."NormalTexture")` are
-/// guaranteed to be the same object rather than two that happen to agree.
+/// The names are [`vale_assets::interface::widgets::REGION_ELEMENTS`]' own
+/// slots, the same strings the loader writes when it builds a
+/// `<NormalTexture>`, so `button:GetNormalTexture()` and
+/// `getglobal(name.."NormalTexture")` return the same object.
 const SLOTS: [&str; 4] = ["Normal", "Pushed", "Highlight", "Disabled"];
 
 /// Give a fresh frame the state a button has.
 ///
-/// Called for **every** frame rather than for the button kinds only, which
-/// follows from the one-method-table decision above: a method installed on
-/// everything has to find its field on everything, or `Frame:GetButtonState()`
-/// answers nil where `Button:GetButtonState()` answers a string, and the
-/// difference shows up as an intermittent nil compare rather than as an error.
+/// Called for every frame rather than for the button kinds only, which follows
+/// from the one-method-table decision above: a method installed on every frame
+/// must find its field on every frame. Otherwise `Frame:GetButtonState()`
+/// returns nil where `Button:GetButtonState()` returns a string, and the
+/// difference appears as an intermittent nil comparison rather than an error.
 pub(in crate::lua) fn init(frame: &mlua::Table) -> mlua::Result<()> {
     frame.set(STATE_KEY, NORMAL)?;
     frame.set(CHECKED_KEY, false)?;
@@ -178,50 +174,61 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
         }};
     }
 
-    // **The pressed state, which is what an action key is made of.**
-    // `SetButtonState(state, lock)` — the second argument keeps the state
-    // through a mouse-up and no caller in the directory passes it, so it is
-    // recorded and otherwise unused rather than silently dropped.
-    method!("SetButtonState", (String, Option<mlua::Value>), |_lua,
+    // The pressed state, which an action key sets and tests.
+    // `SetButtonState(state, lock)`: the second argument keeps the state
+    // through a mouse-up. No caller in the directory passes it, so it is
+    // accepted and ignored.
+    method!("SetButtonState", (String, Option<mlua::Value>), |lua,
                                                               this,
                                                               args| {
         let (state, _lock) = args;
-        this.set(STATE_KEY, state)
+        super::widget::set_paint(lua, &this, STATE_KEY, state)
     });
     method!("GetButtonState", |_lua, this| this
         .raw_get::<Option<String>>(STATE_KEY)?
         .map_or_else(|| Ok(NORMAL.to_string()), Ok));
 
-    // **`SetChecked` takes the *client's* boolean, not Lua's.** The directory
-    // calls it as `SetChecked(1)`/`SetChecked(0)` in `ActionButton.lua` and as
-    // `SetChecked("true")`/`SetChecked("false")` in `SpellBookFrame.lua`, and
-    // both zero and a non-empty string are **true** under Lua's own rule — so a
-    // host that used `lua_toboolean` here draws the `<CheckedTexture>` over every
-    // action button and every spell in the book, permanently. See
-    // [`super::super::api::to_boolean`], which is the client's own coercion
-    // and reads both of those as false. `GetChecked` answers 1 or nil,
-    // which is what `if ( button:GetChecked() )` is written against.
-    method!("SetChecked", Option<mlua::Value>, |_lua, this, checked| this
-        .set(CHECKED_KEY, super::super::api::to_boolean(checked.as_ref(), true)));
+    // `SetChecked` uses the game client's boolean coercion, not Lua's. The
+    // directory calls it as `SetChecked(1)`/`SetChecked(0)` in
+    // `ActionButton.lua` and as `SetChecked("true")`/`SetChecked("false")` in
+    // `SpellBookFrame.lua`, and both zero and a non-empty string are true under
+    // Lua's rule. A host that used `lua_toboolean` here would draw the
+    // `<CheckedTexture>` over every action button and every spell in the book.
+    // See [`super::super::api::to_boolean`], which implements the game
+    // client's coercion and reads both as false. `GetChecked` returns 1 or
+    // nil, which is what `if ( button:GetChecked() )` expects.
+    method!("SetChecked", Option<mlua::Value>, |lua, this, checked| super::widget::set_paint(
+        lua,
+        &this,
+        CHECKED_KEY,
+        super::super::api::to_boolean(checked.as_ref(), true)
+    ));
     method!("GetChecked", |_lua, this| Ok(one_or_nil(
         this.raw_get::<Option<bool>>(CHECKED_KEY)?.unwrap_or(false)
     )));
 
-    method!("Enable", |_lua, this| this.set(ENABLED_KEY, true));
-    method!("Disable", |_lua, this| this.set(ENABLED_KEY, false));
+    method!("Enable", |lua, this| super::widget::set_paint(lua, &this, ENABLED_KEY, true));
+    method!("Disable", |lua, this| super::widget::set_paint(lua, &this, ENABLED_KEY, false));
     method!("IsEnabled", |_lua, this| Ok(one_or_nil(
         this.raw_get::<Option<bool>>(ENABLED_KEY)?.unwrap_or(true)
     )));
 
-    // A locked highlight is a button drawn as if the mouse were over it — which
-    // is a state a script asks for and the pointer now also produces.
-    method!("LockHighlight", |_lua, this| this
-        .set(HIGHLIGHT_LOCKED_KEY, true));
-    method!("UnlockHighlight", |_lua, this| this
-        .set(HIGHLIGHT_LOCKED_KEY, false));
-    // `RegisterForClicks("LeftButtonUp", "RightButtonUp")` — which mouse edges a
-    // button answers, and now the whole of what decides it: see
-    // [`answers_click`].
+    // A locked highlight draws the button as if the mouse were over it. A
+    // script sets it; the pointer produces the same highlight.
+    method!("LockHighlight", |lua, this| super::widget::set_paint(
+        lua,
+        &this,
+        HIGHLIGHT_LOCKED_KEY,
+        true
+    ));
+    method!("UnlockHighlight", |lua, this| super::widget::set_paint(
+        lua,
+        &this,
+        HIGHLIGHT_LOCKED_KEY,
+        false
+    ));
+    // `RegisterForClicks("LeftButtonUp", "RightButtonUp")`: which mouse edges
+    // a button answers. This alone decides it; see [`answers_click`].
     method!(
         "RegisterForClicks",
         mlua::Variadic<String>,
@@ -235,11 +242,11 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
 
 /// `GetNormalTexture` / `SetNormalTexture` and their three siblings.
 ///
-/// **`Set…` reaches the region the loader already made**, and creates one only
-/// if there is none. A version that made a second object every time would leave
-/// `<NormalTexture>`'s copy holding the global and the change on something
-/// unreachable — the same failure [`super::super::xml::Loader::object_for`] exists to
-/// avoid, one layer up.
+/// `Set…` uses the region the loader already created, and creates one only if
+/// there is none. Creating a second object every time would leave
+/// `<NormalTexture>`'s region holding the global and the change on an object
+/// nothing can reach. [`super::super::xml::Loader::object_for`] avoids the same
+/// failure in the loader.
 fn slots(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
     for slot in SLOTS {
         let key = format!("__{}", slot.to_lowercase());
@@ -255,7 +262,9 @@ fn slots(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
             lua.create_function(move |lua, (this, value): (mlua::Table, Option<mlua::Value>)| {
                 match value {
                     // `SetNormalTexture(someTexture)` hands the slot an object.
-                    Some(mlua::Value::Table(region)) => this.set(setter_key.as_str(), region),
+                    Some(mlua::Value::Table(region)) => {
+                        super::widget::set_paint(lua, &this, setter_key.as_str(), region)
+                    }
                     Some(mlua::Value::String(path)) => {
                         let region = match this.get::<Option<mlua::Table>>(setter_key.as_str())? {
                             Some(existing) => existing,
@@ -267,24 +276,24 @@ fn slots(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
                                     Some(this.clone()),
                                     None,
                                 )?;
-                                // **A face made from a path fills the button**,
-                                // which is the same default the loader gives a
-                                // `<NormalTexture>` that carries no `<Anchors>`
-                                // — and the directory relies on it in the Lua
-                                // form just as heavily. `LoadMicroButtonTextures`
-                                // is four `Set*Texture` calls with a string and
-                                // no anchoring anywhere, and it is every one of
-                                // the nine buttons on the main bar: without this
-                                // they solved to no rectangle at all and the
-                                // whole micro-button row drew nothing.
+                                // A face made from a path fills the button, the
+                                // same default the loader gives a
+                                // `<NormalTexture>` with no `<Anchors>`, and the
+                                // directory relies on it in Lua as well.
+                                // `LoadMicroButtonTextures` is four
+                                // `Set*Texture` calls with a string and no
+                                // anchoring, and it sets up all nine buttons on
+                                // the main bar. Without this default they
+                                // solved to no rectangle and the micro-button
+                                // row drew nothing.
                                 super::widget::default_all_points(lua, &made)?;
-                                this.set(setter_key.as_str(), made.clone())?;
+                                super::widget::set_paint(lua, &this, setter_key.as_str(), made.clone())?;
                                 made
                             }
                         };
-                        super::regions::set_file(&region, &path.to_string_lossy())
+                        super::regions::set_file(lua, &region, &path.to_string_lossy())
                     }
-                    _ => this.set(setter_key.as_str(), mlua::Value::Nil),
+                    _ => super::widget::set_paint(lua, &this, setter_key.as_str(), mlua::Value::Nil),
                 }
             })?;
         methods.set(format!("Set{slot}Texture"), setter)?;
@@ -292,35 +301,34 @@ fn slots(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
     Ok(())
 }
 
-/// `button:SetText(…)` is **the button's font string's text**, not a field on the
-/// button.
+/// `button:SetText(…)` sets the text of the button's font string, not a field
+/// on the button.
 ///
-/// 664 call sites over the directory, and most of them are on a `FontString` or
-/// an `EditBox` — which [`super::regions`] already answers. What is left is the
+/// There are 664 call sites over the directory, and most are on a `FontString`
+/// or an `EditBox`, which [`super::regions`] already handles. This covers the
 /// button, where `<ButtonText>` made a font string in the `Text` slot and 1.12
-/// forwards to it. A button with no text region drops the call, which is what
-/// the game does with one.
+/// forwards the call to it. A button with no text region drops the call, as
+/// the game does.
 fn text(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
-    // **A button's text is its font string's**, and a button that has not been
-    // given one yet keeps it itself — 1.12's `SetText` does nothing at all in
-    // that case, but this client's loader can reach a `text=` attribute before
-    // the `<ButtonText>` that will carry it, so dropping it here would lose the
-    // label of every button whose slot arrives second. See
-    // [`super::regions::adopt_pending_text`], which is the other end of it.
-    // **…and this registration is shadowed**, by [`super::tooltip`]'s own
-    // `SetText` — which is installed after it and whose "not a tooltip" branch
-    // calls the same shared body. Both go through
-    // [`super::regions::set_frame_text`] precisely so that the shadowing cannot
-    // make them differ; see that function.
+    // A button's text belongs to its font string. A button that has no font
+    // string yet stores the text itself. 1.12's `SetText` does nothing in that
+    // case, but this client's loader can reach a `text=` attribute before the
+    // `<ButtonText>` that will hold it, so dropping it here would lose the
+    // label of every button whose slot is read second. See
+    // [`super::regions::adopt_pending_text`], which applies the stored text.
+    // This registration is shadowed by [`super::tooltip`]'s own `SetText`,
+    // which is installed after it and whose "not a tooltip" branch calls the
+    // same shared body. Both go through [`super::regions::set_frame_text`] so
+    // that the shadowing cannot make them differ; see that function.
     let set = lua.create_function(|lua, (this, value): (mlua::Table, mlua::Value)| {
         super::regions::set_frame_text(lua, &this, value)
     })?;
     methods.set("SetText", set)?;
 
-    // **This registration shadows [`super::regions`]' `GetText` for every
-    // frame**, one method table down — so the *empty edit box* rule has to be
-    // here too, and it is one call rather than a second copy. See
-    // [`super::regions::empty_text`], where the reason it exists is written out.
+    // This registration shadows [`super::regions`]' `GetText` for every frame,
+    // one method table down, so the empty-edit-box rule is applied here too,
+    // by calling the same function rather than copying it. See
+    // [`super::regions::empty_text`] for the reason the rule exists.
     let get = lua.create_function(|lua, this: mlua::Table| {
         Ok(match super::regions::text_of(&this) {
             Some(text) => mlua::Value::String(lua.create_string(text)?),
@@ -328,9 +336,9 @@ fn text(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
         })
     })?;
     methods.set("GetText", get)?;
-    // `GetFontString` — the label region itself, which an addon re-anchors or
-    // re-faces (`pfUI` skins every button's through it). Nil for a button with
-    // no `<ButtonText>` and no text set.
+    // `GetFontString`: the label region itself, which an addon re-anchors or
+    // restyles (`pfUI` skins every button's label through it). Nil for a
+    // button with no `<ButtonText>` and no text set.
     let get_font_string = lua.create_function(|_lua, this: mlua::Table| {
         Ok(super::regions::text_region(&this))
     })?;
@@ -338,28 +346,30 @@ fn text(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
     Ok(())
 }
 
-/// `button:Click()` — **run the button's own `OnClick`**, under 1.12's calling
+/// `button:Click()`: run the button's own `OnClick`, under 1.12's calling
 /// convention.
 ///
-/// Not a record: this is the interface pressing one of its own buttons, and it
-/// has to reach the same handler a mouse would. `arg1` is the mouse button, which
-/// is what an `OnClick` body reads (`if ( arg1 == "RightButton" )`); the default
-/// is `LeftButton`, which is what the game passes for a scripted click.
+/// This stores nothing: it is the interface pressing one of its own buttons,
+/// and it must reach the same handler a mouse would. `arg1` is the mouse
+/// button, which is what an `OnClick` body reads (`if ( arg1 == "RightButton" )`);
+/// the default is `LeftButton`, which is what the game passes for a scripted
+/// click.
 ///
-/// A disabled button does not answer, which is the one rule about `Click` that is
-/// not obvious and is the reason a greyed-out button cannot be fired by a script.
+/// A disabled button does not respond, so a greyed-out button cannot be
+/// pressed by a script.
 fn click(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
     let f = lua.create_function(|lua, (this, button): (mlua::Table, Option<String>)| {
         if !this.raw_get::<Option<bool>>(ENABLED_KEY)?.unwrap_or(true) {
             return Ok(());
         }
-        // **The C widget's own behaviour, before the script's.** A `LootButton`
-        // takes its row when it is pressed and `LootFrameItem_OnClick` does not
-        // do it — see [`super::super::panels::loot`], where the whole of why that is a trap is.
-        // Before the handler because the reference's order is C then Lua, and
+        // The widget's built-in behaviour runs before the script. A
+        // `LootButton` takes its row when it is pressed, and
+        // `LootFrameItem_OnClick` does not; see [`super::super::panels::loot`]
+        // for why that is easy to get wrong. It runs before the handler because
+        // the 1.12.1 client runs the widget's behaviour before the script, and
         // because `LootFrameItem_OnClick` can hide the frame.
         super::super::panels::loot::clicked(lua, &this)?;
-        toggle_if_check_button(&this)?;
+        toggle_if_check_button(lua, &this)?;
         let handler = this
             .raw_get::<mlua::Table>(super::frames::SCRIPTS_KEY)?
             .get::<Option<mlua::Function>>("OnClick")?;
@@ -374,11 +384,11 @@ fn click(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
     methods.set("Click", f)
 }
 
-/// **A `CheckButton` toggles itself before its `OnClick` runs**, and that is the
-/// C widget's job rather than the handler's.
+/// A `CheckButton` toggles itself before its `OnClick` runs; the widget does
+/// this, not the handler.
 ///
-/// The proof is a body that cannot be read any other way.
-/// `CharacterCreate.lua`'s `CharacterRace_OnClick` opens:
+/// `CharacterCreate.lua`'s `CharacterRace_OnClick` only works under this rule.
+/// It opens:
 ///
 /// ```lua
 /// if ( not this:GetChecked() ) then
@@ -388,47 +398,45 @@ fn click(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
 /// SetSelectedRace(id);
 /// ```
 ///
-/// If the state were untouched at entry, the *first* press of an unchecked race
-/// button would always take that early return and no press would ever select
-/// anything — which is exactly the "you have to click a race twice" report. With
-/// the toggle first, the press of an unchecked button enters checked and falls
-/// through, and a press of the **already-checked** one enters unchecked, which is
-/// what the guard is for: it puts the tick back and refuses to let the player
-/// deselect the race they are on.
+/// If the state were unchanged at entry, the first press of an unchecked race
+/// button would take that early return, and a race would need two clicks to
+/// select. With the toggle first, a press of an unchecked button enters
+/// checked and falls through, and a press of the already-checked one enters
+/// unchecked, which is what the guard handles: it sets the check again and
+/// does not let the player deselect the current race.
 ///
-/// Harmless where the handler has an opinion of its own, which is most of them:
+/// It has no effect where the handler sets the state itself, which most do:
 /// `ActionButton_OnClick` and `SpellButton_OnClick` both end in an update that
-/// writes the checked state outright, so the toggle is overwritten in the same
-/// call.
-fn toggle_if_check_button(this: &mlua::Table) -> mlua::Result<()> {
+/// writes the checked state, so the toggle is overwritten in the same call.
+fn toggle_if_check_button(lua: &mlua::Lua, this: &mlua::Table) -> mlua::Result<()> {
     let kind: Option<String> = this.raw_get(super::widget::KIND_KEY)?;
     if kind.as_deref() != Some("CheckButton") {
         return Ok(());
     }
     let checked = this.raw_get::<Option<bool>>(CHECKED_KEY)?.unwrap_or(false);
-    this.set(CHECKED_KEY, !checked)
+    super::widget::set_paint(lua, this, CHECKED_KEY, !checked)
 }
 
-/// **The pushed face, set by the mouse rather than by a handler.**
+/// The pushed face, set by the mouse rather than by a handler.
 ///
-/// Nothing in any `OnMouseDown` body in the directory touches the button state —
-/// the C side does it, between the press and the handler — so this is the client's
-/// half of a click and not a convenience. See [`super::super::api::mouse`].
-pub(in crate::lua) fn set_pressed(frame: &mlua::Table, pushed: bool) -> mlua::Result<()> {
-    frame.set(STATE_KEY, if pushed { "PUSHED" } else { NORMAL })
+/// No `OnMouseDown` body in the directory changes the button state; the widget
+/// does it, between the press and the handler, so this client must do it here.
+/// See [`super::super::api::mouse`].
+pub(in crate::lua) fn set_pressed(lua: &mlua::Lua, frame: &mlua::Table, pushed: bool) -> mlua::Result<()> {
+    super::widget::set_paint(lua, frame, STATE_KEY, if pushed { "PUSHED" } else { NORMAL })
 }
 
-/// **Does this button click on that edge?** `RegisterForClicks` is the whole of
-/// what decides it, and the default is the left button's *release*.
+/// Whether this button clicks on that edge. Only `RegisterForClicks` decides
+/// it, and the default is the left button's release.
 ///
 /// ```lua
 /// b:RegisterForClicks("LeftButtonUp", "RightButtonUp");   -- 41 call sites
 /// ```
 ///
 /// A client that clicked on both edges would fire every action twice per press,
-/// and one that only ever clicked on the release would lose the eleven buttons in
-/// the directory that ask for the press. `AnyUp`/`AnyDown` are in the set too and
-/// are how a bar answers the middle button.
+/// and one that only clicked on the release would break the eleven buttons in
+/// the directory that register for the press. `AnyUp`/`AnyDown` are in the set
+/// too, and are how a bar responds to the middle button.
 pub(in crate::lua) fn answers_click(frame: &mlua::Table, name: &str, down: bool) -> mlua::Result<bool> {
     let edge = if down { "Down" } else { "Up" };
     let Some(registered) = frame.raw_get::<Option<Vec<String>>>(CLICKS_KEY)? else {
@@ -442,15 +450,14 @@ pub(in crate::lua) fn answers_click(frame: &mlua::Table, name: &str, down: bool)
         .any(|asked| *asked == wanted || *asked == any))
 }
 
-/// **Which of a button's faces the state has selected**, for the draw pass.
+/// Which of a button's faces the state has selected, for the draw pass.
 ///
-/// This is the one place a button's state turns into pixels, and without it
-/// every button in the game draws all five of its textures stacked — normal,
-/// pushed, highlighted, disabled and checked at once. That is not a subtle
-/// failure: `ActionButtonTemplate` alone declares four, so a bar of twelve
-/// buttons would be forty-eight quads of overlapping art.
+/// This is the only place a button's state affects drawing. Without it every
+/// button draws all five of its textures stacked: normal, pushed, highlighted,
+/// disabled and checked at once. `ActionButtonTemplate` alone declares four,
+/// so a bar of twelve buttons would draw forty-eight overlapping quads.
 ///
-/// The rules are 1.12's own and each is one line:
+/// The rules are 1.12's:
 ///
 /// ```text
 /// Normal      the default face, unless the button is pushed or disabled
@@ -460,44 +467,44 @@ pub(in crate::lua) fn answers_click(frame: &mlua::Table, name: &str, down: bool)
 /// Checked     over the face, while GetChecked() — a toggled ability
 /// ```
 ///
-/// `Highlight` is drawn under the pointer now — [`super::super::api::mouse`] marks the frame
-/// the pointer is on and this is what reads it — as well as while a script holds
-/// it with `LockHighlight`.
+/// `Highlight` is drawn under the pointer ([`super::super::api::mouse`] marks
+/// the frame the pointer is on and this reads it) and while a script holds it
+/// with `LockHighlight`.
 pub(in crate::lua) struct Slots {
     hidden: Vec<mlua::Table>,
 }
 
 impl Slots {
-    /// Is this child one of the faces the state did **not** select?
+    /// Whether this child is one of the faces the state did not select.
     pub(in crate::lua) fn suppresses(&self, child: &mlua::Table) -> bool {
         self.hidden.iter().any(|hidden| hidden == child)
     }
 }
 
-/// **…and which of the three typefaces the same three answers choose**, written
-/// onto the button's own label when it changes.
+/// Which of the three font faces the same state chooses, written onto the
+/// button's own label when the choice changes.
 ///
-/// The client's own order: the disabled face when the state is `DISABLED`,
-/// the highlight face while the pointer is on it — including while pushed —
-/// and the normal face otherwise. A
-/// state the button declares nothing for falls back to the normal face, which is
-/// most of the interface: 43 buttons in `Interface\FrameXML\` declare a
-/// `<NormalFont>` and only 25 a `<DisabledFont>`.
+/// The 1.12.1 client's order: the disabled face when the state is `DISABLED`,
+/// the highlight face while the pointer is on the button (including while
+/// pushed), and the normal face otherwise. A state the button declares no face
+/// for falls back to the normal face, which covers most of the interface: 43
+/// buttons in `Interface\FrameXML\` declare a `<NormalFont>` and only 25 a
+/// `<DisabledFont>`.
 ///
-/// The normal snapshot can also be taken **on first use** rather than at load,
-/// because a button's face can arrive on the `<ButtonText>` itself
-/// (`UIPanelButtonTemplate` is `inherits="GameFontNormal"` on the region) where
-/// no `<NormalFont>` element is read at all — so what "normal" means is simply
-/// whatever the loader left on the label.
+/// The normal face can also be captured on first use rather than at load,
+/// because a button's face can be set on the `<ButtonText>` itself
+/// (`UIPanelButtonTemplate` is `inherits="GameFontNormal"` on the region),
+/// where no `<NormalFont>` element is read. "Normal" then means whatever the
+/// loader left on the label.
 ///
-/// **A button that declares nothing for the state it is entering is left
-/// alone**, rather than having the normal face pushed back onto it. That is the
-/// difference between this and the widget, and it is deliberate: 1.12 keeps the
-/// per-string colour `SetTextColor` writes *separately* from the font object, so
-/// the two do not overwrite each other, and this client keeps one set of keys
-/// for both. `MoneyFrame_UpdateMoney` reddens its three buttons that way and
-/// they declare only a `<NormalFont>`, so touching them on a hover would put the
-/// money back to white. Nothing in either directory both declares a second face
+/// A button that declares no face for the state it is entering is left
+/// unchanged, rather than having the normal face applied again. This differs
+/// from the 1.12.1 widget on purpose: 1.12 keeps the per-string colour
+/// `SetTextColor` writes separately from the font object, so the two do not
+/// overwrite each other, while this client keeps one set of keys for both.
+/// `MoneyFrame_UpdateMoney` colours its three buttons red that way, and they
+/// declare only a `<NormalFont>`, so reapplying it on hover would turn the
+/// money white again. Nothing in either directory both declares a second face
 /// and recolours its own label.
 fn wear_font(lua: &mlua::Lua, frame: &mlua::Table, state: &str) -> mlua::Result<()> {
     let Some(region) = super::regions::text_region(frame) else {
@@ -509,8 +516,8 @@ fn wear_font(lua: &mlua::Lua, frame: &mlua::Table, state: &str) -> mlua::Result<
     }
     let declared = frame.raw_get::<Option<mlua::Table>>(state)?;
     if declared.is_none() && applied.is_none() {
-        // Never worn anything else and nothing to wear: the face the loader left
-        // is the face, and this button costs one table read a frame.
+        // No face was ever applied and none is declared: the face the loader
+        // left stays, and this button costs one table read a frame.
         return Ok(());
     }
     if frame.raw_get::<Option<mlua::Table>>(NORMAL_FONT_KEY)?.is_none() {
@@ -521,14 +528,15 @@ fn wear_font(lua: &mlua::Lua, frame: &mlua::Table, state: &str) -> mlua::Result<
         None => (frame.raw_get::<Option<mlua::Table>>(NORMAL_FONT_KEY)?, NORMAL_FONT_KEY),
     };
     if let Some(style) = style {
-        super::regions::apply_font_style(&region, &style)?;
+        super::regions::apply_font_style(lua, &region, &style)?;
         frame.set(APPLIED_FONT_KEY, worn)?;
     }
     Ok(())
 }
 
-/// Work out which faces are off, once per frame per button — and put the face
-/// the same three answers choose on the button's own label (see [`wear_font`]).
+/// Work out which faces are hidden, once per frame per button, and apply the
+/// font face the same state chooses to the button's own label (see
+/// [`wear_font`]).
 pub(in crate::lua) fn selected_slots(lua: &mlua::Lua, frame: &mlua::Table) -> Slots {
     let state = frame
         .raw_get::<Option<String>>(STATE_KEY)
@@ -537,18 +545,15 @@ pub(in crate::lua) fn selected_slots(lua: &mlua::Lua, frame: &mlua::Table) -> Sl
         .unwrap_or_else(|| NORMAL.to_string());
     let enabled = frame.raw_get::<Option<bool>>(ENABLED_KEY).ok().flatten().unwrap_or(true);
     let checked = frame.raw_get::<Option<bool>>(CHECKED_KEY).ok().flatten().unwrap_or(false);
-    // **Under the mouse, or locked** — and the pointer half is the button's own
-    // state to refuse. A button's enter handling opens with a test of its
-    // state (0 DISABLED, 1 NORMAL, 2 PUSHED): disabled means no highlight and
-    // no font swap — and `SetEnabled(false)` calls `OnLeave` outright when the
-    // button it is disabling is the one the pointer is on, so a greyed-out
-    // button cannot be lit by hovering it. The *script* still runs: the skip
-    // ends before the `OnEnter` handler is fired, which is why a disabled button
-    // still shows its tooltip.
+    // Highlighted when under the mouse or locked. The pointer highlight
+    // depends on the button's state: in the 1.12.1 client a disabled button
+    // gets no highlight and no font change when the pointer enters it, and
+    // disabling the button under the pointer removes its highlight, so a
+    // greyed-out button cannot be lit by hovering it. The `OnEnter` script
+    // still runs, which is why a disabled button still shows its tooltip.
     //
-    // `LockHighlight` is deliberately not gated with it — that is a script
-    // asking for the sheet through a different door, and nothing in the client
-    // routes it through the state test above.
+    // `LockHighlight` is not gated on the state: in the 1.12.1 client a locked
+    // highlight shows on a disabled button too.
     let highlighted = frame
         .raw_get::<Option<bool>>(HIGHLIGHT_LOCKED_KEY)
         .ok()
@@ -557,8 +562,8 @@ pub(in crate::lua) fn selected_slots(lua: &mlua::Lua, frame: &mlua::Table) -> Sl
         || (enabled && super::super::api::mouse::is_over(frame));
     let pushed = state == "PUSHED";
 
-    // …and the same three answers pick the typeface. Disabled wins over the
-    // pointer, which is `UpdateFont`'s own order and follows anyway from the
+    // The same state picks the font face. Disabled takes precedence over the
+    // pointer, which is the 1.12.1 client's order and also follows from the
     // highlight above being gated on `enabled`.
     let _ = wear_font(
         lua,
@@ -613,16 +618,15 @@ mod tests {
         format!("{value:?}")
     }
 
-    /// **`ActionButtonDown` and `ActionButtonUp`, verbatim from
-    /// `ActionButton.lua`, run for real** — the regression this module is here
-    /// to close, end to end.
+    /// `ActionButtonDown` and `ActionButtonUp`, verbatim from
+    /// `ActionButton.lua`, run end to end: the regression described in the
+    /// module comment.
     ///
-    /// Everything below the `UseAction` call is stubbed because it is the *C*
-    /// side, which is [`crate::lua::api::verbs`]'s; everything above it is the
-    /// archive's own text, reduced only by the bonus-bar branch (which needs
-    /// `BonusActionBarFrame`, a frame from a different file). What is being
-    /// asserted is that a key press reaches `UseAction` at all — which for two
-    /// rounds it did not.
+    /// Everything below the `UseAction` call is stubbed because it is the C
+    /// side, which belongs to [`crate::lua::api::verbs`]; everything above it
+    /// is the archive's own text, without the bonus-bar branch (which needs
+    /// `BonusActionBarFrame`, a frame from a different file). The test asserts
+    /// that a key press reaches `UseAction`.
     #[test]
     fn the_games_own_action_button_bodies_reach_use_action() {
         let lua = lua();
@@ -663,7 +667,7 @@ mod tests {
         .exec()
         .expect("the bodies load");
 
-        // A fresh button is NORMAL — without which the press branch never runs.
+        // A new button is NORMAL; otherwise the press branch never runs.
         assert_eq!(
             eval(&lua, r#"return ActionButton3:GetButtonState()"#),
             r#"String("NORMAL")"#
@@ -680,7 +684,7 @@ mod tests {
             r#"String("NORMAL")"#
         );
 
-        // **A release with no press does nothing**, which is what the state test
+        // A release with no press does nothing, which is what the state test
         // in the file is for: an Alt-1 whose press went to the plain binding must
         // not cast twice.
         lua.load("used = nil; ActionButtonUp(3);")
@@ -688,23 +692,22 @@ mod tests {
             .expect("runs");
         assert_eq!(eval(&lua, "return used"), "Nil");
 
-        // …and `SELFACTIONBUTTON3`'s own shape: the flag rides the release.
+        // `SELFACTIONBUTTON3`'s form: the self-cast flag is passed with the
+        // release.
         lua.load("ActionButtonDown(3); ActionButtonUp(3, 1);")
             .exec()
             .expect("runs");
         assert_eq!(eval(&lua, "return self"), "Integer(1)");
     }
 
-    /// **`SetChecked(0)` and `SetChecked("false")` both *un*check**, which is the
-    /// client's own coercion and not Lua's — and the whole reason
-    /// this test exists is that it used to assert the opposite.
+    /// `SetChecked(0)` and `SetChecked("false")` both uncheck, which is the game
+    /// client's coercion and not Lua's.
     ///
     /// Both forms are in the shipped directory: `ActionButton_UpdateState` writes
     /// `SetChecked(0)` and `SpellButton_UpdateSelection` writes
-    /// `SetChecked("false")`. Under Lua's truthiness both are *true*, so every
+    /// `SetChecked("false")`. Under Lua's truthiness both are true, so every
     /// action button and every spell in the book drew `CheckButtonHilight`
-    /// additively over its icon at all times — which is what a screenshot
-    /// reported. See
+    /// additively over its icon at all times. See
     /// [`crate::lua::api::to_boolean`].
     #[test]
     fn checked_is_the_clients_own_coercion_and_answers_one_or_nil() {
@@ -723,22 +726,20 @@ mod tests {
             lua.load(format!("b:SetChecked({off})")).exec().expect("runs");
             assert_eq!(eval(&lua, "return b:GetChecked()"), "Nil", "{off}");
         }
-        // …and a kind the switch has no case for takes the caller's default,
-        // which every widget setter in the client pushes as true.
+        // A value of a type the coercion does not handle takes the caller's
+        // default, which is true for every widget setter.
         lua.load("b:SetChecked(nil); b:SetChecked({})").exec().expect("runs");
         assert_eq!(eval(&lua, "return b:GetChecked()"), "Integer(1)");
     }
 
-    /// **A `CheckButton` is toggled by the click before its `OnClick` sees it**,
-    /// and a plain `Button` is not.
+    /// A `CheckButton` is toggled by the click before its `OnClick` runs, and a
+    /// plain `Button` is not.
     ///
-    /// Written against `CharacterCreate.lua`'s own `CharacterRace_OnClick`, which
-    /// is unreadable under any other rule and which is where the "you have to
-    /// click a race twice to switch to it" report came from: with no toggle, the
-    /// first press of an unchecked race button always takes the early return and
-    /// **no press ever selects anything**. With it, the first press selects and a
-    /// press of the race you are *already* on is the one that takes the return —
-    /// which is what the guard is for.
+    /// Written against `CharacterCreate.lua`'s `CharacterRace_OnClick`, which
+    /// only works under this rule. Without the toggle, the first press of an
+    /// unchecked race button takes the early return, and a race needs two
+    /// clicks to select. With it, the first press selects, and a press of the
+    /// race already selected takes the return, which is what the guard is for.
     #[test]
     fn a_check_button_is_toggled_before_its_handler_runs() {
         let lua = lua();
@@ -761,8 +762,8 @@ mod tests {
         assert_eq!(eval(&lua, "return picked"), "Integer(1)", "the first press selects");
         assert_eq!(eval(&lua, "return b:GetChecked()"), "Integer(1)");
 
-        // …and pressing the one you are on does not select again, and does not
-        // leave it unticked either.
+        // Pressing the selected button does not select again and does not
+        // leave it unchecked.
         lua.load("b:Click()").exec().expect("runs");
         assert_eq!(eval(&lua, "return picked"), "Integer(1)", "no second selection");
         assert_eq!(
@@ -782,9 +783,9 @@ mod tests {
         assert_eq!(eval(&lua, "return plain:GetChecked()"), "Nil");
     }
 
-    /// **A slot setter reaches the region the loader made**, rather than making a
-    /// second one. Two objects of one name is the failure that draws as "the
-    /// change did nothing".
+    /// A slot setter changes the region the loader made, rather than making a
+    /// second one. With two objects for one name, the change has no visible
+    /// effect.
     #[test]
     fn setting_a_slot_texture_changes_the_region_that_is_already_there() {
         let lua = lua();
@@ -808,7 +809,7 @@ mod tests {
             r#"String("Interface\\Buttons\\UI-Quickslot2")"#
         );
 
-        // …and a button with no region yet gets one rather than dropping the call.
+        // A button with no region yet gets one rather than dropping the call.
         lua.load(r#"bare = CreateFrame("Button"); bare:SetHighlightTexture("Interface\\X");"#)
             .exec()
             .expect("runs");
@@ -818,14 +819,14 @@ mod tests {
         );
     }
 
-    /// **`button:SetText` is its font string's text.** `<ButtonText>` puts the
+    /// `button:SetText` sets its font string's text. `<ButtonText>` puts the
     /// region in the `Text` slot and 1.12 forwards to it; a button that kept the
-    /// string on itself would show nothing and read back correctly, which is the
-    /// worst of both.
+    /// string on itself would show nothing yet read back correctly, which hides
+    /// the fault.
     ///
-    /// The slot is `__textRegion` and **not** `__text`, which is where a region
-    /// keeps its own string — see [`super::regions::TEXT_REGION_KEY`] for what
-    /// one key holding both cost.
+    /// The slot is `__textRegion` and not `__text`, which is where a region
+    /// keeps its own string. See [`super::regions::TEXT_REGION_KEY`] for the bug
+    /// caused by one key holding both.
     #[test]
     fn a_buttons_text_is_its_font_strings() {
         let lua = lua();
@@ -841,11 +842,11 @@ mod tests {
         .expect("loads");
         assert_eq!(eval(&lua, "return label:GetText()"), r#"String("Accept")"#);
         assert_eq!(eval(&lua, "return b:GetText()"), r#"String("Accept")"#);
-        // **A button with no text region keeps the label itself** and reads it
+        // A button with no text region stores the label itself and reads it
         // back, because the loader can reach a `text=` attribute before the
-        // `<ButtonText>` that will carry it — see
+        // `<ButtonText>` that will hold it. See
         // [`super::regions::adopt_pending_text`], which moves it when the slot
-        // turns up.
+        // is created.
         lua.load(r#"bare = CreateFrame("Button", "Bare"); bare:SetText("x");"#)
             .exec()
             .expect("runs");
@@ -857,8 +858,8 @@ mod tests {
         assert_eq!(eval(&lua, "return BareText:GetText()"), r#"String("y")"#);
     }
 
-    /// **`Click()` runs the real `OnClick`**, with `this` and `arg1` set — and a
-    /// disabled button does not answer, which is the whole point of `Disable`.
+    /// `Click()` runs the button's `OnClick`, with `this` and `arg1` set, and a
+    /// disabled button does not respond, which is what `Disable` is for.
     #[test]
     fn a_scripted_click_reaches_the_handler_and_a_disabled_one_does_not() {
         let lua = lua();
@@ -886,16 +887,16 @@ mod tests {
         assert_eq!(eval(&lua, "return b:IsEnabled()"), "Integer(1)");
     }
 
-    /// **A greyed-out button does not light up under the pointer**, which is the
-    /// widget's own refusal and not the pointer's.
+    /// A disabled button does not highlight under the pointer. The widget
+    /// suppresses it, not the pointer handling.
     ///
-    /// It reads as a bug the moment a disabled button has a highlight sheet
-    /// worth looking at: `StaticPopupButtonTemplate`'s is
-    /// `UI-DialogBox-Button-Highlight`, a 128x32 DXT1 with **no alpha channel**
-    /// that is essentially pure red, drawn `alphaMode="ADD"` — so hovering the
-    /// disabled Accept on the corpse-recovery box painted a solid red bar across
-    /// it. `LockHighlight` is untouched: that is a script asking, through a door
-    /// the state test is not on.
+    /// The difference is visible when a disabled button has a strong highlight
+    /// texture: `StaticPopupButtonTemplate`'s is
+    /// `UI-DialogBox-Button-Highlight`, a 128x32 DXT1 with no alpha channel that
+    /// is almost pure red, drawn `alphaMode="ADD"`, so hovering the disabled
+    /// Accept on the corpse-recovery box painted a solid red bar across it.
+    /// `LockHighlight` is not affected: it is a script request and does not
+    /// pass through the state test.
     #[test]
     fn a_disabled_button_does_not_highlight_under_the_pointer() {
         let lua = lua();
@@ -920,25 +921,25 @@ mod tests {
             selected_slots(&lua, &button).suppresses(&glow),
             "hovered and disabled: off — this is the red bar on the resurrect box"
         );
-        // …and the disabled plate is what shows instead.
+        // The disabled texture shows instead.
         lua.load("b:SetDisabledTexture([[Interface\\X]])").exec().expect("runs");
         let plate: mlua::Table = button.get("__disabled").expect("the plate");
         assert!(!selected_slots(&lua, &button).suppresses(&plate));
 
-        // A script that asks for the sheet outright still gets it.
+        // A script that locks the highlight still gets it.
         lua.load("b:LockHighlight()").exec().expect("runs");
         assert!(!selected_slots(&lua, &button).suppresses(&glow));
     }
 
-    /// **No state key of this module's is also a texture slot's**, which is a
-    /// bug that cost a working feature in miniature: `__checked` was both the
-    /// CheckButton's boolean and the key the loader writes `<CheckedTexture>`
-    /// into, so loading the art overwrote the state and every such button read
-    /// as checked for the rest of the session — with nothing raised anywhere.
+    /// No state key of this module is also a texture slot key. `__checked` was
+    /// both the CheckButton's boolean and the key the loader writes
+    /// `<CheckedTexture>` into, so loading the art overwrote the state and
+    /// every such button read as checked for the rest of the session, with no
+    /// error raised.
     ///
-    /// The slot names are [`vale_assets::interface::widgets::REGION_ELEMENTS`]' and are
-    /// not this module's to choose, so the check is against them rather than
-    /// against a copy.
+    /// The slot names come from
+    /// [`vale_assets::interface::widgets::REGION_ELEMENTS`] and cannot be
+    /// changed here, so the check is against that list rather than a copy.
     #[test]
     fn no_state_key_collides_with_a_texture_slot() {
         let state = [
@@ -958,8 +959,8 @@ mod tests {
         }
     }
 
-    /// Every name [`METHODS`] claims is installed, and the list is sorted — the
-    /// rule every claimed list in this directory follows, because `vale
+    /// Every name in [`METHODS`] is installed, and the list is sorted. Every
+    /// method list in this directory follows this rule, because `vale
     /// framexml` counts the interface gap against them.
     #[test]
     fn every_method_the_list_claims_is_installed() {
@@ -977,9 +978,9 @@ mod tests {
         let mut sorted = METHODS;
         sorted.sort_unstable();
         assert_eq!(sorted, METHODS, "METHODS is kept sorted");
-        // `UnlockHighlight` is installed beside `LockHighlight` and is not in the
-        // list on purpose — see the note there. Assert it anyway, since a claimed
-        // list that quietly omits a sibling is the same failure in miniature.
+        // `UnlockHighlight` is installed beside `LockHighlight` but is not in
+        // the list. It is asserted here too, because a missing counterpart
+        // method is the same kind of gap the list check guards against.
         assert_eq!(
             eval(&lua, "return type(probe.UnlockHighlight)"),
             r#"String("function")"#

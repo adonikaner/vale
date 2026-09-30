@@ -709,6 +709,8 @@ pub(in crate::lua) fn dispatch(lua: &mlua::Lua, pointer: &Pointer) -> mlua::Resu
             let _ = set_over(new, true);
             call(lua, new, "OnEnter", &[], &mut errors);
         }
+        // The hover flag selects a button's highlight face, which the draw walk reads.
+        widget::mark_paint(lua);
         lua.set_named_registry_value(REG_FOCUS, focus.clone())?;
     }
 
@@ -744,7 +746,7 @@ pub(in crate::lua) fn dispatch(lua: &mlua::Lua, pointer: &Pointer) -> mlua::Resu
         // The C side sets the pushed face, not the handler: no `OnMouseDown`
         // body in the directory sets it.
         if widget::class(frame) == widget::Class::Button {
-            let _ = button::set_pressed(frame, true);
+            let _ = button::set_pressed(lua, frame, true);
         }
         if button::answers_click(frame, name, true).unwrap_or(false) {
             click(frame, name, &mut errors);
@@ -770,7 +772,7 @@ pub(in crate::lua) fn dispatch(lua: &mlua::Lua, pointer: &Pointer) -> mlua::Resu
         let args = [EventArg::Text((*name).to_string())];
         call(lua, &frame, "OnMouseUp", &args, &mut errors);
         if widget::class(&frame) == widget::Class::Button {
-            let _ = button::set_pressed(&frame, false);
+            let _ = button::set_pressed(lua, &frame, false);
         }
         // A release that ends a started drag is a drag, not a click. The
         // source gets `OnDragStop`, the frame under the pointer gets

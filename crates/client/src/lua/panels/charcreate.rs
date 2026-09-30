@@ -1,68 +1,70 @@
-//! **The C functions `Interface\GlueXML\CharacterCreate.lua` calls** — the third
-//! glue screen, and the first one with a decision in it.
+//! The C functions `Interface\GlueXML\CharacterCreate.lua` calls. Character
+//! create is the third glue screen.
 //!
 //! ```text
 //! GetAvailableRaces()        (name, fileString) x 8, Alliance then Horde
 //! GetClassesForRace()        (name, FILENAME) x n, for the selected race
-//! GetSelectedRace/Sex/Class  …and which of them is chosen, one-based
+//! GetSelectedRace/Sex/Class  which of them is chosen, one-based
 //! SetSelectedRace/Sex/Class
 //! GetNameForRace()           (name, fileString) for the selected race
 //! GetFactionForRace()        (name, "Alliance") for the selected race
-//! GetHairCustomization()     "NORMAL" / "HORNS" — a word, not a number
-//! GetFacialHairCustomization()   …and its per-gender twin
+//! GetHairCustomization()     "NORMAL" / "HORNS", a word, not a number
+//! GetFacialHairCustomization()   the facial-hair label, per gender
 //! HasCharCustomization(i)    whether axis i has more than one option
-//! CycleCharCustomization(i, d)   …and the arrows that walk it
+//! CycleCharCustomization(i, d)   the arrows that step axis i
 //! RandomizeCharCustomization()
 //! ResetCharCustomize()
 //! Get/SetCharacterCreateFacing   the drag and the two rotate buttons
-//! UpdateCustomizationScene()     "redraw", which this renderer does anyway
+//! UpdateCustomizationScene()     "redraw"; this renderer redraws every frame
 //! CreateCharacter(name)      the Accept button
 //! ```
 //!
-//! ## Why the state is here and not queued
+//! ## Why the selection state is shared and not queued
 //!
-//! `CharacterRace_OnClick` is four lines and the third and fourth are
-//! `SetSelectedRace(id)` followed by `SetCharacterRace(id)` — which immediately
+//! `CharacterRace_OnClick` is four lines; the third and fourth are
+//! `SetSelectedRace(id)` followed by `SetCharacterRace(id)`, which immediately
 //! asks `GetFactionForRace()`, `GetNameForRace()` and `GetClassesForRace()` and
-//! expects all three to describe the race just chosen. A write recorded and
-//! drained a system later answers the *previous* race to all three, which draws
-//! the right button highlighted with the wrong description under it and the
-//! wrong class buttons beside it. So [`Board`] is `Rc<RefCell<…>>` held by
-//! [`crate::lua::host::LuaHost`] and every one of these is unscoped: none of
-//! them needs the world, because **none of this is on the wire** — see
-//! [`vale_assets::tables::charcreate`], which is the whole rule.
+//! expects all three to describe the race just chosen. If the write were
+//! recorded and drained by a later system, all three would answer for the
+//! previous race: the new race button is highlighted, but the description and
+//! the class buttons belong to the old one. So [`Board`] is `Rc<RefCell<…>>`
+//! held by [`crate::lua::host::LuaHost`] and every one of these functions is
+//! unscoped. None of them needs the world, because none of this state is sent
+//! to the server until `CreateCharacter`; see
+//! [`vale_assets::tables::charcreate`] for the rules.
 //!
-//! The one exception is `CreateCharacter`, which owns a socket for a round trip
-//! and therefore records, exactly as `DefaultServerLogin` does.
+//! The exception is `CreateCharacter`, which needs the socket for a round trip
+//! and therefore records a request, as `DefaultServerLogin` does.
 //!
-//! ## One-based everywhere, and three different things are counted
+//! ## Three one-based numberings
 //!
-//! `GetSelectedRace()` is an index into the **race list**, `GetSelectedClass`'s
-//! partner `SetSelectedClass(id)` an index into *that race's* class list, and
-//! `GetSelectedSex()` is 1 for male and 2 for female. None of the three is a
-//! `ChrRaces`, `ChrClasses` or `PLAYER_BYTES` value, and the wire wants all
-//! three of those — [`Board::race_id`] and its neighbours are the one place the
-//! two numberings cross. Getting it wrong makes a night elf when the player
-//! picked a dwarf, which the server accepts.
+//! `GetSelectedRace()` is an index into the race list, `SetSelectedClass(id)`
+//! (the partner of `GetSelectedClass`) an index into the selected race's class
+//! list, and `GetSelectedSex()` is 1 for male and 2 for female. None of the
+//! three is a `ChrRaces`, `ChrClasses` or `PLAYER_BYTES` value, and the packet
+//! needs those values. [`Board::race_id`] and the methods next to it are the
+//! only place the two numberings are converted. A wrong conversion creates a
+//! night elf when the player picked a dwarf, and the server accepts it.
 //!
-//! ## The random is a counter and that is deliberate
+//! ## Why the random choice uses a fixed seed
 //!
-//! `ResetCharCustomize()` is `CharacterCreate_OnShow`'s first line and its own
-//! comment says "randomly selects a combination". A client with a real entropy
-//! source there is a client whose `--audit --glue` run differs every time, so
-//! this walks a fixed-seed [`Board::rng`] instead: different every press, the
-//! same on every run. Nothing downstream can tell, and the probe can.
+//! `ResetCharCustomize()` is the first line of `CharacterCreate_OnShow`, and its
+//! comment says "randomly selects a combination". A real entropy source would
+//! make every `--audit --glue` run differ, so this uses a fixed-seed
+//! [`Board::rng`] instead: each press gives a different result, and every run
+//! gives the same sequence. The interface cannot tell the difference; the audit
+//! run can compare results.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use vale_assets::tables::charcreate::CharCreate;
 
-/// **The globals this file registers**, sorted — the same census list
-/// [`super::glue::WRITES`] is for the two screens before it.
+/// The globals this file registers, sorted. It serves the same purpose as
+/// [`super::glue::WRITES`] does for the two screens before this one.
 ///
-/// All of them, reads included: none is a scoped read, because none of them
-/// touches the world. See the module comment.
+/// It lists every function, reads included: none is a scoped read, because
+/// none of them touches the world. See the module comment.
 pub const GLOBALS: [&str; 17] = [
     "CreateCharacter",
     "CycleCharCustomization",
@@ -82,36 +84,36 @@ pub const GLOBALS: [&str; 17] = [
     "SetSelectedClass",
     "SetSelectedRace",
     // `ResetCharCustomize`, `SetSelectedSex` and `UpdateCustomizationScene`
-    // bring it to twenty; see `the_registered_set_is_the_list`, which is what
-    // keeps this honest rather than the count in this comment.
+    // bring it to twenty; the test `the_registered_set_is_the_list` checks the
+    // registered set against both lists.
 ];
 
-/// …and the three whose names do not fit the array above without making it
-/// unreadable. Kept apart only so the sorted list stays sorted; the test walks
-/// both.
+/// The remaining three globals, kept in a second array so `GLOBALS` stays
+/// short and sorted. The test walks both.
 pub const MORE_GLOBALS: [&str; 3] = [
     "ResetCharCustomize",
     "SetSelectedSex",
     "UpdateCustomizationScene",
 ];
 
-/// **What the character-create screen has chosen**, and the tables it is
-/// choosing out of.
+/// The character-create screen's current selection, and the tables it selects
+/// from.
 ///
-/// One value rather than a resource because the reads have to answer *during* a
-/// handler — see the module comment — and because it is small, plain data that
-/// `crate::glue::charcreate` copies out once a frame to build the plinth.
+/// A shared value rather than a resource because the reads have to answer
+/// during a handler (see the module comment), and because it is small, plain
+/// data that `crate::glue::charcreate` copies out once a frame to build the
+/// plinth.
 #[derive(Default)]
 pub struct Board {
     /// `ChrRaces` + `CharBaseInfo` + the rest, loaded when the glue loads.
-    /// `None` before the archives are open, which answers an empty screen
-    /// rather than a wrong one.
+    /// `None` before the archives are open; the screen is then empty rather
+    /// than wrong.
     pub tables: Option<std::sync::Arc<CharCreate>>,
-    /// **Zero-based index into [`CharCreate::races`]**, not a race id.
+    /// Zero-based index into [`CharCreate::races`], not a race id.
     pub race: usize,
-    /// …and into that race's own class list.
+    /// Zero-based index into the selected race's class list.
     pub class: usize,
-    /// 0 male, 1 female — the `PLAYER_BYTES` value, which is
+    /// 0 male, 1 female: the `PLAYER_BYTES` value, which is
     /// `GetSelectedSex() - 1`.
     pub gender: u8,
     /// One index into each of the five customization axes, in
@@ -119,7 +121,7 @@ pub struct Board {
     /// colour, facial hair.
     pub picks: [usize; 5],
     /// The fixed-seed walk `ResetCharCustomize` and `RandomizeCharCustomization`
-    /// use — see the module comment for why it is not entropy.
+    /// use. See the module comment for why it is not real entropy.
     rng: u32,
 }
 
@@ -127,13 +129,13 @@ pub struct Board {
 const AXES: usize = 5;
 
 impl Board {
-    /// The `ChrRaces` id of the chosen race — **the number that goes on the
-    /// wire**, which the interface never sees.
+    /// The `ChrRaces` id of the chosen race. This is the number sent in the
+    /// packet; the interface never sees it.
     pub fn race_id(&self) -> u8 {
         self.chosen_race().map_or(0, |r| r.id)
     }
 
-    /// …and the `ChrClasses` id, the same way.
+    /// The `ChrClasses` id of the chosen class, sent in the packet the same way.
     pub fn class_id(&self) -> u8 {
         self.tables
             .as_ref()
@@ -149,10 +151,10 @@ impl Board {
         self.tables.as_ref()?.looks(self.race_id(), self.gender)
     }
 
-    /// **The five appearance bytes, in `PLAYER_BYTES` order** — which is the
-    /// order `CMSG_CHAR_CREATE` wants them in and the order `SMSG_CHAR_ENUM`
-    /// answers them in, so the character that is created and the one that then
-    /// stands on the character-select plinth are described the same way.
+    /// The five appearance bytes, in `PLAYER_BYTES` order. `CMSG_CHAR_CREATE`
+    /// sends them and `SMSG_CHAR_ENUM` returns them in this order, so the
+    /// character that is created and the one shown on the character-select
+    /// plinth are described the same way.
     ///
     /// An axis with nothing in it answers 0, which is the value every one of
     /// these fields has for a character the tables cannot describe.
@@ -166,14 +168,14 @@ impl Board {
         out
     }
 
-    /// **What the character being made is wearing** — its starting outfit, out
-    /// of `CharStartOutfit.dbc`.
+    /// The starting outfit of the character being created, from
+    /// `CharStartOutfit.dbc`.
     ///
-    /// Not underwear: the client clears the twelve visible slots and both hands
-    /// and then equips the row for this exact `(race, class, gender)`, so the
-    /// create screen shows a warrior in a Recruit's shirt with a Worn Shortsword
-    /// in hand. An empty answer is the honest degradation and looks like the
-    /// underwear the composite paints under it.
+    /// The client clears the twelve visible slots and both hands and then
+    /// equips the row for this exact `(race, class, gender)`, so the create
+    /// screen shows a warrior in a Recruit's shirt with a Worn Shortsword in
+    /// hand, not in underwear. When no row matches, the answer is empty and
+    /// the model shows the underwear the composite paints under the outfit.
     pub fn outfit(&self) -> Vec<vale_assets::tables::charcreate::OutfitPiece> {
         self.tables.as_ref().map_or_else(Vec::new, |t| {
             t.outfit(self.race_id(), self.class_id(), self.gender).to_vec()
@@ -195,7 +197,7 @@ impl Board {
         }
     }
 
-    /// Move one axis by `delta`, **wrapping**, which is what the two arrows do:
+    /// Move one axis by `delta`, wrapping at both ends, as the two arrows do:
     /// `CharacterCustomization_Left` at index 0 goes to the last option rather
     /// than stopping.
     fn cycle(&mut self, axis: usize, delta: i32) {
@@ -213,8 +215,9 @@ impl Board {
         Some(self.looks()?.axis(axis).len())
     }
 
-    /// A new look for the current body, and the whole of both
-    /// `RandomizeCharCustomization` and `ResetCharCustomize`.
+    /// Pick a new random value on every axis for the current race and gender.
+    /// This is the whole of both `RandomizeCharCustomization` and
+    /// `ResetCharCustomize`.
     fn randomize(&mut self) {
         for axis in 1..=AXES {
             let len = self.axis_len(axis).unwrap_or(0);
@@ -222,11 +225,10 @@ impl Board {
         }
     }
 
-    /// A 32-bit xorshift, seeded once. See the module comment: the point is that
-    /// it *varies* within a session and does not vary between runs.
+    /// A 32-bit xorshift, seeded once. See the module comment: it varies within
+    /// a session and gives the same sequence on every run.
     fn next_random(&mut self) -> usize {
-        // The seed matters only in that it is not zero, which xorshift cannot
-        // leave.
+        // Any non-zero seed works; xorshift stays at zero forever once there.
         if self.rng == 0 {
             self.rng = 0x9e37_79b9;
         }
@@ -236,14 +238,13 @@ impl Board {
         self.rng as usize
     }
 
-    /// **Put every index back inside its list**, after a change of race or
-    /// gender.
+    /// Put every index back inside its list after a change of race or gender.
     ///
     /// A tauren male has 19 skins and a gnome 5, so a player who picked skin 12
-    /// and then pressed Gnome is pointing past the end of the list — and the
-    /// appearance byte that comes out of that is 0, silently. Clamping rather
-    /// than zeroing keeps the two ends of the range: pick the last option, which
-    /// is what the reference's own index does when its list shortens.
+    /// and then pressed Gnome has an index past the end of the list, and the
+    /// appearance byte for it is silently 0. An index past the end is clamped
+    /// to the last option rather than reset to zero, which is what the 1.12.1
+    /// client does when the list shortens.
     fn clamp(&mut self) {
         let classes = self
             .tables
@@ -261,26 +262,24 @@ impl Board {
 
 pub type Held = Rc<RefCell<Board>>;
 
-/// **The one thing here that needs a socket** — drained by
-/// `crate::glue::charcreate`, on the same terms as [`super::glue::GlueRequest`].
+/// The request from this screen that needs the socket. Drained by
+/// `crate::glue::charcreate`, in the same way as [`super::glue::GlueRequest`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CreateRequest {
-    /// `CreateCharacter(name)` — the Accept button. Carries only the name,
-    /// because everything else about the character is [`Board`]'s and the
-    /// draining system reads it there rather than being handed a copy that
-    /// could disagree.
+    /// `CreateCharacter(name)`, the Accept button. Carries only the name: the
+    /// rest of the character is in [`Board`], and the draining system reads it
+    /// there so there is no second copy that could disagree.
     Create(String),
 }
 
 pub type Queue = Rc<RefCell<Vec<CreateRequest>>>;
 
-/// Register the lot. Unscoped: see the module comment.
+/// Register every function in this file. Unscoped: see the module comment.
 pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> mlua::Result<()> {
     let globals = lua.globals();
 
-    /// Both list getters have the same shape — a flat `(name, fileString)`
-    /// sequence whose length the caller divides by two — so they are built by
-    /// one macro rather than written twice.
+    /// Both list getters return a flat `(name, fileString)` sequence whose
+    /// length the caller divides by two, so one macro builds both.
     macro_rules! pairs {
         ($name:expr, |$board:ident| $rows:expr) => {{
             let held = Rc::clone(board);
@@ -298,10 +297,10 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> 
         }};
     }
 
-    // **`(localised name, fileString)` per race, in the order the buttons are
-    // drawn.** `CharacterCreateEnumerateRaces` reads `arg.n/2` as the count and
+    // `(localised name, fileString)` per race, in the order the buttons are
+    // drawn. `CharacterCreateEnumerateRaces` reads `arg.n/2` as the count and
     // `strupper(arg[i+1].."_"..gender)` as the icon's key, so the second of each
-    // pair has to be `clientFileString` and not the printed name — "NightElf",
+    // pair has to be `clientFileString` and not the printed name: "NightElf" as
     // one word, and "Scourge" rather than "Undead".
     pairs!("GetAvailableRaces", |board| board
         .tables
@@ -313,7 +312,7 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> 
             .collect())
         .unwrap_or_default());
 
-    // …and the classes of whichever race is chosen. `CLASS_ICON_TCOORDS` is
+    // `(name, fileName)` per class of the chosen race. `CLASS_ICON_TCOORDS` is
     // keyed by the second without `strupper`, because `ChrClasses.filename` is
     // already upper case.
     pairs!("GetClassesForRace", |board| board
@@ -326,7 +325,7 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> 
             .collect())
         .unwrap_or_default());
 
-    /// One number in, nothing out — the three `SetSelected*` writes.
+    /// The three `SetSelected*` writes: one number in, nothing returned.
     macro_rules! setter {
         ($name:expr, |$board:ident, $value:ident| $body:expr) => {{
             let held = Rc::clone(board);
@@ -340,16 +339,15 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> 
         }};
     }
 
-    // **One-based, and out of range is ignored rather than clamped.** The
-    // interface only ever passes a button's own id, so a value outside the list
-    // is a bug somewhere else and silently moving the selection to the nearest
-    // race would hide it.
+    // One-based. A value out of range is ignored rather than clamped: the
+    // interface only passes a button's own id, so a value outside the list is a
+    // bug elsewhere, and moving the selection to the nearest race would hide it.
     setter!("SetSelectedRace", |board, index| {
         let count = board.tables.as_ref().map_or(0, |t| t.races().len());
         if let Some(at) = usize::try_from(index - 1).ok().filter(|i| *i < count) {
             board.race = at;
-            // **A race change is a new body**, so both the class list and all
-            // five axes may have shortened under the indices pointing into them.
+            // A race change can shorten the class list and all five axes, so
+            // the indices into them are clamped.
             board.clamp();
         }
     });
@@ -362,9 +360,9 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> 
             board.class = at;
         }
     });
-    // **1 is male and 2 is female**, which is the one place in this client those
-    // two numbers appear: everywhere else a gender is `PLAYER_BYTES`' 0 and 1.
-    // `SetCharacterGender`'s own branch is `if ( sex == 1 )`.
+    // 1 is male and 2 is female. This is the only place in this client that
+    // numbering appears; everywhere else a gender is the `PLAYER_BYTES` value,
+    // 0 or 1. `SetCharacterGender` tests `if ( sex == 1 )`.
     setter!("SetSelectedSex", |board, sex| {
         if (1..=2).contains(&sex) {
             board.gender = (sex - 1) as u8;
@@ -372,7 +370,7 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> 
         }
     });
 
-    /// …and the reads that answer one number.
+    /// The reads that return one number.
     macro_rules! number {
         ($name:expr, |$board:ident| $body:expr) => {{
             let held = Rc::clone(board);
@@ -387,11 +385,11 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> 
     number!("GetSelectedRace", |board| board.race as i64 + 1);
     number!("GetSelectedSex", |board| i64::from(board.gender) + 1);
 
-    // **`GetSelectedClass` answers a *pair*, unlike its two neighbours** —
-    // `(className, classFileName)` — because `SetCharacterClass` uses the second
-    // as a texture-coordinate key and the first as the label. A race with no
-    // classes answers two nils, which is the same shape `GetCharacterInfo` uses
-    // for a row that is not there.
+    // `GetSelectedClass` returns a pair, `(className, classFileName)`, unlike
+    // `GetSelectedRace` and `GetSelectedSex`, because `SetCharacterClass` uses
+    // the second as a texture-coordinate key and the first as the label. A race
+    // with no classes returns two nils, the same shape `GetCharacterInfo` uses
+    // for a missing row.
     {
         let held = Rc::clone(board);
         let f = lua.create_function(move |_, ()| {
@@ -408,7 +406,7 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> 
         globals.set("GetSelectedClass", f)?;
     }
 
-    /// The three reads that answer a pair of strings off the chosen race.
+    /// The reads that return a pair of strings from the chosen race.
     macro_rules! race_pair {
         ($name:expr, |$race:ident| $body:expr) => {{
             let held = Rc::clone(board);
@@ -423,27 +421,27 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> 
         }};
     }
 
-    // `(race, fileString)` — `SetCharacterRace` puts the first in the label and
-    // `strupper`s the second into `RACE_INFO_*`, `ABILITY_INFO_*` and the icon's
-    // own coordinates.
+    // `(race, fileString)`: `SetCharacterRace` puts the first in the label and
+    // passes the second through `strupper` to build the `RACE_INFO_*` and
+    // `ABILITY_INFO_*` keys and the icon's coordinates key.
     race_pair!("GetNameForRace", |race| (
         Some(race.name.clone()),
         Some(race.file_string.clone())
     ));
-    // `(name, faction)` — the second is compared against the literal
-    // `"Alliance"` and is `strupper`'d into `FACTION_INFO_*`, so it has to be
-    // `FactionGroup.internalName` and not the localised label.
+    // `(name, faction)`: the second is compared against the literal
+    // `"Alliance"` and passed through `strupper` to build `FACTION_INFO_*`, so
+    // it has to be `FactionGroup.internalName` and not the localised label.
     race_pair!("GetFactionForRace", |race| (
         Some(race.side_name.clone()),
         Some(race.side.clone())
     ));
 
-    // **Two words rather than two numbers**, and each is pasted into a
+    // Both return a word rather than a number, and each word is inserted into a
     // `GlueStrings.lua` key: `HAIR_<word>_STYLE` / `_COLOR` and
-    // `FACIAL_HAIR_<word>`. A race the tables do not describe answers `"NONE"`,
-    // which is the client's own fallback string and which
+    // `FACIAL_HAIR_<word>`. A race the tables do not describe returns `"NONE"`,
+    // the fallback string the 1.12.1 client uses, which
     // `CharacterCreate_UpdateFacialHairCustomization` reads as "hide the fifth
-    // customization outright".
+    // customization entirely".
     {
         let held = Rc::clone(board);
         let f = lua.create_function(move |_, ()| {
@@ -474,9 +472,9 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> 
         globals.set("GetFacialHairCustomization", f)?;
     }
 
-    // **`HasCharCustomization(i)` is "more than one option", not "any"** —
-    // one choice or fewer answers nil, so an axis with exactly one choice
-    // hides its arrows rather than drawing two that do nothing.
+    // `HasCharCustomization(i)` means "more than one option", not "any": one
+    // choice or fewer returns nil, so an axis with exactly one choice hides its
+    // arrows rather than drawing two that do nothing.
     {
         let held = Rc::clone(board);
         let f = lua.create_function(move |_, axis: Option<usize>| {
@@ -505,22 +503,22 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> 
         globals.set(name, f)?;
     }
 
-    // **`UpdateCustomizationScene()` is "redraw the character"**, which this
-    // renderer does every frame off [`Board`] itself — see
-    // `crate::glue::charcreate`. Registered rather than absent because
-    // `CharacterCreate_UpdateModel` calls it before `AdvanceTime` on every one
-    // of the model frame's ticks, and a nil there would stop the scene's clock.
+    // `UpdateCustomizationScene()` means "redraw the character". This renderer
+    // redraws every frame from [`Board`]; see `crate::glue::charcreate`. It is
+    // registered as a no-op because `CharacterCreate_UpdateModel` calls it
+    // before `AdvanceTime` on every tick of the model frame, and calling nil
+    // there would raise an error and stop the scene's clock.
     globals.set(
         "UpdateCustomizationScene",
         lua.create_function(|_, _: mlua::MultiValue| Ok(()))?,
     )?;
 
-    // **The facing pair, on the frame** — the same shape and the same reason as
-    // `Get`/`SetCharacterSelectFacing` one file over:
-    // `CharacterCreateFrame_OnUpdate` is
+    // The facing pair, stored on the frame, for the same reason as
+    // `Get`/`SetCharacterSelectFacing` in `glue.rs`:
+    // `CharacterCreateFrame_OnUpdate` calls
     // `SetCharacterCreateFacing(GetCharacterCreateFacing() + diff)`, so the
-    // write has to be visible to the next read inside one handler. Degrees, and
-    // `CharacterCreate_OnShow` opens on **-15** of them.
+    // write has to be visible to the next read inside one handler. The unit is
+    // degrees, and `CharacterCreate_OnShow` starts at -15.
     globals.set(
         "GetCharacterCreateFacing",
         lua.create_function(|lua, ()| {
@@ -534,19 +532,19 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> 
             let Some(held) = lua.globals().get::<Option<mlua::Table>>(CREATE_FRAME)? else {
                 return Ok(());
             };
-            super::super::widgets::model::set_character_facing(&held, degrees.unwrap_or(0.0))
+            super::super::widgets::model::set_character_facing(lua, &held, degrees.unwrap_or(0.0))
         })?,
     )?;
 
-    // …and the Accept button, which is the only thing here that owns a socket.
+    // The Accept button, the only function here that needs the socket.
     {
         let queue = Rc::clone(queue);
         let f = lua.create_function(move |_, name: Option<String>| {
             let name = name.unwrap_or_default();
-            // **A blank name records nothing.** The server answers
-            // `CHAR_NAME_NO_NAME` for one, which is a round trip to be told what
-            // the empty box already said — and 1.12's own Accept is pressable
-            // with nothing typed, so this really is reachable.
+            // A blank name records nothing. The server would answer
+            // `CHAR_NAME_NO_NAME`, a round trip that reports what the empty box
+            // already shows. The 1.12 Accept button can be pressed with nothing
+            // typed, so this case occurs.
             if !name.trim().is_empty() {
                 queue.borrow_mut().push(CreateRequest::Create(name));
             }
@@ -557,13 +555,13 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> 
     Ok(())
 }
 
-/// The frame the two facing functions land on. `CharacterCreate` is the
-/// `<ModelFFX>` itself — `SetCharCustomizeFrame("CharacterCreate")` is
-/// `CharacterCreate_OnLoad`'s own line 60 saying so.
+/// The frame the two facing functions act on. `CharacterCreate` is the
+/// `<ModelFFX>` itself: line 60 of `CharacterCreate_OnLoad` is
+/// `SetCharCustomizeFrame("CharacterCreate")`.
 const CREATE_FRAME: &str = "CharacterCreate";
 
-/// What `GetHairCustomization` answers for a race the tables cannot describe —
-/// the client's own fallback, and the string
+/// What `GetHairCustomization` returns for a race the tables cannot describe:
+/// the 1.12.1 client's fallback, and the string
 /// `CharacterCreate_UpdateFacialHairCustomization` tests against to hide the
 /// fifth axis.
 const NONE: &str = "NONE";
@@ -582,10 +580,9 @@ mod tests {
         }
     }
 
-    /// A board over a three-race stand-in **with unequal axis lengths**, which
-    /// is the whole point: the bugs here are about an index surviving a change
-    /// of body, and a fixture where every race has the same number of skins
-    /// cannot show one.
+    /// A board over a three-race stand-in with unequal axis lengths. The bugs
+    /// tested here are an index that survives a change of race or gender, and
+    /// a fixture where every race has the same number of skins cannot show one.
     fn board() -> Held {
         let race = |id: u8, name: &str, side: &str| RaceChoice {
             id,
@@ -625,8 +622,8 @@ mod tests {
             hair_colours: vec![5, 6],
             facial_hairs: vec![0, 1],
         };
-        // …and a body with exactly one of everything, which is what a held index
-        // has to survive being moved onto.
+        // A race with exactly one option on every axis, to test an index that
+        // is moved onto a shorter list.
         let spare = Looks {
             skins: vec![7],
             faces: vec![0],
@@ -643,9 +640,9 @@ mod tests {
             ((3, 1), spare),
         ]);
         Rc::new(RefCell::new(Board {
-            // …and a starting outfit for the one combination the wearing test
-            // uses: a shirt, a sword and a shield, which is the shape every real
-            // row has — something worn, something in each hand.
+            // A starting outfit for the one combination the outfit test uses: a
+            // shirt, a sword and a shield. Every real row has this shape: an
+            // item worn and an item in each hand.
             tables: Some(std::sync::Arc::new(CharCreate::from_parts(
                 races,
                 classes,
@@ -674,9 +671,9 @@ mod tests {
         Rc::new(RefCell::new(Vec::new()))
     }
 
-    /// **The two enumerators hand back flat pairs**, which is what
-    /// `CharacterCreateEnumerateRaces`' `arg.n/2` counts — and the second of
-    /// each pair is the *file* string, which is the icon's key.
+    /// The two enumerators return flat pairs, which
+    /// `CharacterCreateEnumerateRaces` counts with `arg.n/2`, and the second of
+    /// each pair is the file string, which is the icon's key.
     #[test]
     fn the_race_list_is_name_and_file_string_in_button_order() {
         let (board, queue) = (board(), queue());
@@ -688,14 +685,13 @@ mod tests {
         assert_eq!(flat.len() % 2, 0, "arg.n/2 is the race count");
         assert_eq!(flat[0], "Human");
         assert_eq!(flat[1], "Human", "the file string, not the printed name");
-        // Alliance before Horde, which is `assets::charcreate`'s rule reaching
-        // the screen in the right order.
+        // Alliance before Horde, the order `assets::charcreate` sets.
         assert_eq!(flat[flat.len() - 1], "Orc");
     }
 
-    /// **`SetSelectedRace` moves everything the next line asks about**, which is
-    /// the ordering `CharacterRace_OnClick` depends on: the class list, the
-    /// faction and the name all describe the race just chosen, in the same call.
+    /// After `SetSelectedRace`, the class list, the faction and the name all
+    /// describe the race just chosen within the same call.
+    /// `CharacterRace_OnClick` depends on this ordering.
     #[test]
     fn choosing_a_race_is_visible_to_the_very_next_read() {
         let (board, queue) = (board(), queue());
@@ -716,9 +712,9 @@ mod tests {
         assert_eq!(board.borrow().race_id(), 2, "…and the wire's own number");
     }
 
-    /// **The three selections are one-based and none of them is a wire value.**
-    /// A client that sent `GetSelectedRace()` straight would make a dwarf when
-    /// the player picked an orc — accepted by the server, and wrong.
+    /// The three selections are one-based and none of them is a packet value.
+    /// A client that sent `GetSelectedRace()` unconverted would create a dwarf
+    /// when the player picked an orc, and the server would accept it.
     #[test]
     fn the_interfaces_indices_and_the_wires_ids_are_different_numbers() {
         let (board, queue) = (board(), queue());
@@ -733,9 +729,9 @@ mod tests {
         assert_eq!(held.gender, 1, "…and the wire's gender is zero-based");
     }
 
-    /// **A shorter list under a held index is clamped rather than left
-    /// dangling** — the failure it prevents is silent, because an index past the
-    /// end answers appearance byte 0 and draws a perfectly plausible character.
+    /// An index into a list that becomes shorter is clamped. Without the clamp
+    /// the failure is silent: an index past the end gives appearance byte 0,
+    /// which draws a valid-looking character.
     #[test]
     fn changing_race_pulls_every_index_back_inside_its_list() {
         let (board, queue) = (board(), queue());
@@ -750,9 +746,9 @@ mod tests {
         assert_eq!(board.borrow().appearance()[0], 7, "…and its own id");
     }
 
-    /// **Cycling wraps in both directions**, which is what the two arrows do —
-    /// and `HasCharCustomization` is "more than one", so a single-option axis
-    /// draws no arrows at all.
+    /// Cycling wraps in both directions, as the two arrows do.
+    /// `HasCharCustomization` means "more than one", so a single-option axis
+    /// draws no arrows.
     #[test]
     fn an_axis_wraps_and_a_single_option_axis_says_it_has_none() {
         let (board, queue) = (board(), queue());
@@ -777,9 +773,9 @@ mod tests {
         assert_eq!(board.borrow().picks[0], 0, "…and round again");
     }
 
-    /// **The appearance leaves in `PLAYER_BYTES` order**, which is the order the
-    /// packet and the character list both use. A transposition here is a
-    /// character who looks like somebody else and is refused by nothing.
+    /// The appearance bytes are in `PLAYER_BYTES` order, the order the packet
+    /// and the character list both use. Two swapped bytes would create a
+    /// character with a different appearance, and nothing would reject it.
     #[test]
     fn the_five_axes_become_the_five_bytes_in_the_wires_order() {
         let (board, queue) = (board(), queue());
@@ -803,8 +799,8 @@ mod tests {
         assert_eq!(look.facial_hair, 1);
     }
 
-    /// **A word, not a number** — and the fallback is the client's own `"NONE"`,
-    /// which is what hides the fifth axis rather than drawing it blank.
+    /// The labels are words, not numbers. The fallback is `"NONE"`, as in the
+    /// 1.12.1 client, which hides the fifth axis rather than drawing it blank.
     #[test]
     fn the_two_customization_labels_are_the_races_own_words() {
         let (board, queue) = (board(), queue());
@@ -822,17 +818,16 @@ mod tests {
         assert_eq!(male, "NORMAL");
         assert_eq!(female, "PIERCINGS", "the gender indexes the pair");
 
-        // …and a board with no tables at all, which is the state before the
-        // archives are open.
+        // A board with no tables, the state before the archives are open.
         let empty: Held = Rc::new(RefCell::new(Board::default()));
         let lua = state(&empty, &queue);
         let word: String = lua.load("return GetHairCustomization()").eval().unwrap();
         assert_eq!(word, "NONE");
     }
 
-    /// **Accept records the name and a blank one records nothing**, on the same
-    /// terms as `DefaultServerLogin` — the server's answer to an empty name is a
-    /// round trip to be told what the empty box already said.
+    /// Accept records the name, and a blank name records nothing, as with
+    /// `DefaultServerLogin`: the server's answer to an empty name would only
+    /// report what the empty box already shows.
     #[test]
     fn the_accept_button_records_a_name_and_only_a_name() {
         let (board, queue) = (board(), queue());
@@ -846,10 +841,11 @@ mod tests {
         );
     }
 
-    /// **[`GLOBALS`] plus [`MORE_GLOBALS`] is what [`register`] really
-    /// installs** — the same check `lua::glue` keeps, and for the same reason:
-    /// `vale framexml` subtracts these names from the ones the directory
-    /// calls, and a list that has drifted reports work nobody did.
+    /// [`GLOBALS`] plus [`MORE_GLOBALS`] is exactly the set [`register`]
+    /// installs. `lua::glue` keeps the same check for the same reason:
+    /// `vale framexml` subtracts these names from the ones the interface
+    /// directory calls, so a stale list reports functions as implemented that
+    /// are not.
     #[test]
     fn the_registered_set_is_the_list() {
         let lua = mlua::Lua::new();

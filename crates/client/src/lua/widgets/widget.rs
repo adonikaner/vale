@@ -1,105 +1,100 @@
-//! **What every object in the interface has**, whatever kind it is: a name, a
+//! The state every object in the interface has, whatever its kind: a name, a
 //! parent, a shown flag, and a shape.
 //!
-//! 1.12's own hierarchy is `UIObject` → `Region` → `LayeredRegion` → the
-//! textures and font strings, with `Frame` branching off `Region` and the twenty
-//! widget kinds branching off `Frame`. This module is the part of that stack the
-//! branches share, so that [`super::frames`] can be about events and children and
-//! [`super::regions`] can be about pixels, and neither has to restate what a name
-//! is.
+//! 1.12's hierarchy is `UIObject` → `Region` → `LayeredRegion` → the textures
+//! and font strings, with `Frame` branching off `Region` and the twenty widget
+//! kinds branching off `Frame`. This module is the part of that hierarchy the
+//! branches share, so that [`super::frames`] handles events and children,
+//! [`super::regions`] handles drawing, and neither restates the shared state.
 //!
-//! ## The geometry is stored here and solved next door
+//! ## Geometry is recorded here and solved in `layout`
 //!
-//! `SetPoint`, `SetWidth` and `SetAllPoints` are here and they are **records** —
-//! every anchor the ninety files declare, captured in the game's own five-tuple.
-//! What *reads* them is [`super::layout`], which turns the graph they form into
-//! rectangles, and which is why the readers moved:
+//! `SetPoint`, `SetWidth` and `SetAllPoints` are here, and they only record:
+//! every anchor the ninety files declare, stored in the game's five-tuple.
+//! [`super::layout`] reads the records and turns the graph they form into
+//! rectangles, so the methods that read geometry are installed there:
 //!
-//! * `GetLeft`, `GetRight`, `GetTop`, `GetBottom` and `GetCenter` are installed
-//!   by that module. They were **deliberately absent** for a round rather than
-//!   answering 0, and the directory calls them 41 times between them.
-//! * `GetWidth` and `GetHeight` are installed by that module too, and they now
-//!   answer the **resolved** size: a widget sized only by `<Anchors>` — `TOPLEFT`
-//!   to one thing and `BOTTOMRIGHT` to another — read `0` here and reads its true
-//!   width there. `UIParent`'s children are mostly this shape.
+//! * `GetLeft`, `GetRight`, `GetTop`, `GetBottom` and `GetCenter`. The
+//!   directory calls them 41 times between them.
+//! * `GetWidth` and `GetHeight`, which return the resolved size. A widget sized
+//!   only by `<Anchors>` (`TOPLEFT` to one frame and `BOTTOMRIGHT` to another)
+//!   has a recorded size of `0` and a resolved size that is its true width.
+//!   Most of `UIParent`'s children are sized this way.
 //!
-//! So what is left in this file is the write side and the two flags every object
-//! has. The split is worth keeping: a record is a Lua table write and a solve is
-//! a walk over the whole tree, and the day one of them is wrong it matters a
-//! great deal which.
+//! This file holds the write side and the two flags every object has. The two
+//! are kept apart because a record is a Lua table write and a solve is a walk
+//! over the whole tree, and a bug is easier to locate when it is known which of
+//! the two is wrong.
 //!
-//! **Every geometry write invalidates the solved layout**, wholesale. See
-//! [`super::layout`] for why that is the right trade and not a lazy one.
+//! Every geometry write invalidates the whole solved layout. See
+//! [`super::layout`] for why.
 //!
-//! ## Both `SetPoint` arities are real
+//! ## Both `SetPoint` arities are used
 //!
 //! ```lua
 //! this:SetPoint("TOPLEFT", parent, "BOTTOMLEFT", 4, -2)   -- 26 call sites
 //! this:SetPoint("CENTER", 0, 32)                          --  3 call sites
 //! ```
 //!
-//! Measured over the directory, and the short form is not a convenience: it means
-//! "against my parent, at the same point". A host that took only the long form
-//! would misread the second argument as a frame and anchor three of FrameXML's
-//! own widgets to nothing.
+//! Measured over the directory. The short form means "against my parent, at
+//! the same point". A host that took only the long form would read the second
+//! argument as a frame and anchor three of FrameXML's own widgets to nothing.
 //!
-//! ## A `__` field is read with `raw_get`, and it is not a style preference
+//! ## Why a `__` field is read with `raw_get`
 //!
-//! **Every widget in this client carries a metatable** — one shared table, whose
+//! Every widget in this client carries a metatable: one shared table, whose
 //! `__index` is the methods, which is what makes `frame:Show()` work. `mlua`'s
-//! `Table::get` has a fast path for a table with *no* metatable and otherwise
-//! goes through `protect_lua_call`, which does **two `lua_pushcfunction`s**
-//! before the read — and Lua 5.1's `lua_pushcfunction` allocates a `CClosure`
-//! every time, there being no light-C-function form before 5.2.
+//! `Table::get` has a fast path for a table with no metatable and otherwise
+//! goes through `protect_lua_call`, which does two `lua_pushcfunction`s before
+//! the read. Lua 5.1's `lua_pushcfunction` allocates a `CClosure` every time,
+//! because there is no light C function before 5.2.
 //!
-//! So an ordinary `object.get(SHOWN_KEY)` allocated ~70 bytes of Lua heap. Over
-//! the three per-frame walks that is what the interface's whole garbage rate
-//! was: **583 KB a frame, of which the interface's own Lua produced 29** —
-//! measured by `--audit --spin`, phase by phase, and it is why a fixed 1.2 ms
-//! of collector was needed every frame to hold the heap down.
+//! So an ordinary `object.get(SHOWN_KEY)` allocated about 70 bytes of Lua heap.
+//! Over the three per-frame walks that was most of the interface's garbage:
+//! 583 KB a frame, of which the interface's own Lua produced 29, measured by
+//! `--audit --spin` phase by phase. It required a fixed 1.2 ms of collector
+//! every frame to hold the heap down.
 //!
-//! None of these fields is ever on the metatable — it holds functions and
-//! nothing else — so `raw_get` returns the same answer and skips all of it.
-//! Converting the 165 field reads in this directory took the frame from
-//! **5.11 ms median to 3.30**, and then the collector budget could follow the
-//! garbage instead of a constant: **2.26 ms**. The rule is therefore: **a `__`
-//! field is `raw_get`; `get` is for a name a *script* might have put behind a
-//! metamethod**, which in this client is none of them.
+//! None of these fields is ever on the metatable (it holds only functions), so
+//! `raw_get` returns the same value without that cost. Converting the 165 field
+//! reads in this directory took the frame from 5.11 ms median to 3.30, and the
+//! collector budget could then follow the garbage instead of a constant:
+//! 2.26 ms. The rule: a `__` field is read with `raw_get`; `get` is for a name
+//! a script might have put behind a metamethod, which in this client is none
+//! of them.
 
 use super::super::api::one_or_nil;
 
 /// Where an object keeps what this module owns. Underscored, which is the 1.12
-/// interface's own convention for "the C side owns this" — a widget is an
-/// ordinary Lua table and a script writes its own fields on it.
+/// interface's convention for "the C side owns this": a widget is an ordinary
+/// Lua table and a script writes its own fields on it.
 pub(in crate::lua) const NAME_KEY: &str = "__name";
 pub(in crate::lua) const KIND_KEY: &str = "__kind";
 pub(in crate::lua) const SHOWN_KEY: &str = "__shown";
 pub(super) const ALPHA_KEY: &str = "__alpha";
 pub(in crate::lua) const PARENT_KEY: &str = "__parent";
 pub(in crate::lua) const ID_KEY: &str = "__id";
-/// **Every object this one owns, in creation order** — which is both the order
-/// the game draws siblings in and the only way to reach the tree at all.
+/// Every object this one owns, in creation order. That is the order the game
+/// draws siblings in, and this list is the only way to walk down the tree.
 ///
-/// A frame used to know its parent and not its children, which was enough while
-/// nothing walked the interface. A draw pass walks it *down*: that is what lets
-/// a hidden container cost one test instead of costing a test per region inside
-/// it, and with 11,636 regions against a few hundred visible ones the difference
-/// is the whole affordability of the pass.
+/// A draw pass walks the tree downward, so a hidden container costs one test
+/// instead of one test per region inside it. With 11,636 regions against a few
+/// hundred visible ones, that is what keeps the pass affordable.
 pub(super) const CHILDREN_KEY: &str = "__children";
-/// **What kind of thing this is, as one integer** — see [`Class`].
+/// The object's [`Class`], as one integer.
 ///
-/// [`KIND_KEY`] already holds the game's own word for it (`"CheckButton"`), and
-/// that is what `GetObjectType` answers. This is the same fact in the form the
-/// draw walk needs it: reading the string costs a `String` allocation, and the
-/// walk asks 15,382 times a frame.
+/// [`KIND_KEY`] holds the game's name for the kind (`"CheckButton"`), which is
+/// what `GetObjectType` returns. This is the same fact in the form the draw
+/// walk needs: reading the string costs a `String` allocation, and the walk
+/// reads it 15,382 times a frame.
 pub(super) const CLASS_KEY: &str = "__class";
 
-/// The three things the draw walk has to tell apart, and nothing finer.
+/// The three categories of object the draw walk distinguishes.
 ///
-/// A **region** is a leaf that paints; a **button** is a frame whose state picks
-/// one of its faces; a **frame** is everything else. The distinction exists for
-/// speed rather than for meaning — [`KIND_KEY`] is the meaning — and it is an
-/// integer because a Lua string comparison from Rust allocates.
+/// A region is a leaf that paints; a button is a frame whose state selects one
+/// of its faces; a frame is everything else. The distinction exists for speed
+/// ([`KIND_KEY`] holds the full kind), and it is an integer because a Lua
+/// string comparison from Rust allocates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Class {
     Frame = 0,
@@ -108,9 +103,9 @@ pub enum Class {
 }
 
 impl Class {
-    /// Which class a widget kind is. The three button kinds are the game's own —
-    /// `Button`, `CheckButton` and `LootButton`, which is a `Button` in all but
-    /// name (5 instances, one per loot slot).
+    /// Which class a widget kind is. The three button kinds are the game's:
+    /// `Button`, `CheckButton` and `LootButton`, which behaves as a `Button`
+    /// (5 instances, one per loot slot).
     fn of(kind: &str) -> Class {
         match kind {
             "Texture" | "FontString" => Class::Region,
@@ -120,12 +115,12 @@ impl Class {
     }
 }
 
-/// **The widget type tree, as `(kind, what it derives from)`.**
+/// The widget type tree, as `(kind, what it derives from)`.
 ///
 /// `IsObjectType` and `IsFrameType` are not equality tests in 1.12: a
 /// `CheckButton` answers `1` to `Button` and to `Frame`, and every frame kind
-/// answers `1` to `Frame`. Interface code relies on it — pfUI's addon-button
-/// scanner is
+/// answers `1` to `Frame`. Interface code relies on it. pfUI's addon-button
+/// scanner runs
 ///
 /// ```lua
 /// if not frame:IsFrameType("Button") and not frame:IsFrameType("Frame") then return false end
@@ -136,8 +131,8 @@ impl Class {
 ///
 /// Only the kinds this client's loader creates are listed, plus `Font`, which
 /// is the one object that is not a frame or a region. A kind absent from the
-/// table is its own root, which is the right answer for a kind nothing derives
-/// from and a harmless one for a kind nobody asks about.
+/// table is its own root, which is correct for a kind nothing derives from and
+/// has no effect for a kind no code asks about.
 const DERIVES: [(&str, &str); 21] = [
     ("CheckButton", "Button"),
     ("LootButton", "Button"),
@@ -162,18 +157,17 @@ const DERIVES: [(&str, &str); 21] = [
     ("Texture", "Region"),
 ];
 
-/// **Is `kind` a `wanted`, or anything derived from one?** — the answer both
-/// `IsObjectType` and `IsFrameType` give, and the walk is [`DERIVES`].
+/// Whether `kind` is `wanted` or derives from it: the answer both
+/// `IsObjectType` and `IsFrameType` give, walking [`DERIVES`].
 ///
 /// Case-insensitive, because `UIParent_ManageFramePosition` asks
 /// `IsObjectType("frame")` in lower case and the game answers it.
 ///
-/// **`FontString` is deliberately not in the table.** 1.12 puts it under
-/// `LayeredRegion` beside `Texture`, and nothing in either directory or in the
-/// four addons measured asks about that level; what they ask is
-/// `IsObjectType("FontString")`, which the first comparison answers. `Texture`
-/// is in the table only because `Region` is the answer `UIParent`'s own walk
-/// wants for one.
+/// `FontString` is not in the table. 1.12 puts it under `LayeredRegion` beside
+/// `Texture`, and nothing in either directory or in the four addons measured
+/// asks about that level; they ask `IsObjectType("FontString")`, which the
+/// first comparison answers. `Texture` is in the table only because `UIParent`'s
+/// own walk asks whether a texture is a `Region`.
 pub(in crate::lua) fn derives_from(kind: &str, wanted: &str) -> bool {
     let mut kind = kind;
     // Bounded rather than loop-detected: the table above is a literal and its
@@ -191,25 +185,25 @@ pub(in crate::lua) fn derives_from(kind: &str, wanted: &str) -> bool {
     false
 }
 
-/// What kind of object this is, for the draw walk.
-/// **How many times the *pile* has changed** — what is shown, where it sits in
-/// the strata, and what will take a click.
+/// How many times the pile has changed: what is shown, where it sits in the
+/// strata, and what will take a click.
 ///
-/// The layout memo already has a generation ([`super::layout::generation`]) and
-/// it answers a different question: *has any rectangle moved*. That is not the
-/// question the mouse pass asks. A `Show()` moves nothing at all — every
-/// rectangle in the interface is exactly where it was — and yet it can put a
-/// whole panel under the pointer; so can a `SetFrameStrata`, a `SetParent`, an
-/// `EnableMouse` or a `SetHitRectInsets`.
+/// The layout memo has its own generation ([`super::layout::generation`]),
+/// which counts rectangle moves. That is not enough for the mouse pass. A
+/// `Show()` moves no rectangle, yet it can put a whole panel under the pointer;
+/// so can a `SetFrameStrata`, a `SetParent`, an `EnableMouse` or a
+/// `SetHitRectInsets`.
 ///
-/// So this is the second counter, and the two together are the whole gate: with
-/// both stamps unchanged and the pointer and the buttons still, **what is under
-/// the pointer cannot have changed**, and the tree walk can be skipped. See
-/// [`crate::lua::api::mouse::dispatch`], which is the only reader.
+/// This counter and the layout generation together form the mouse pass's gate:
+/// with both unchanged and the pointer and the buttons still, the object under
+/// the pointer cannot have changed, and the tree walk is skipped. See
+/// [`crate::lua::api::mouse::dispatch`]. The draw-walk gate,
+/// `LuaHost::drawn_if_changed`, also reads it, alongside the paint generation
+/// ([`paint_generation`]).
 ///
-/// A `Cell` in `app_data`, exactly as the layout counter is, and bumped by the
-/// same kind of over-invalidation: showing anything at all turns it, which
-/// costs one walk on a frame that was going to be busy anyway.
+/// A `Cell` in `app_data`, as the layout counter is, and bumped with the same
+/// kind of over-invalidation: showing anything bumps it, which costs one walk
+/// on a frame that was going to be busy anyway.
 #[derive(Default)]
 struct Pile(std::cell::Cell<i64>);
 
@@ -221,21 +215,119 @@ pub(in crate::lua) fn disturb_pile(lua: &mlua::Lua) {
     }
 }
 
-/// The current pile generation — see [`disturb_pile`].
+/// The current pile generation; see [`disturb_pile`].
 pub(in crate::lua) fn pile_generation(lua: &mlua::Lua) -> i64 {
     lua.app_data_ref::<Pile>().map_or(0, |counter| counter.0.get())
 }
 
-/// **Is this a `<SimpleHTML>`?** — set once at creation and read as one bool.
+/// How many times something the draw walk reads has changed, other than a
+/// rectangle ([`super::layout::generation`]) or the pile ([`pile_generation`]):
+/// a texture, a colour, an alpha, a text style, a bar value, a backdrop, a
+/// button state, a model field, a message list, an edit box's caret or focus.
+///
+/// Together the three counters let `LuaHost::drawn_if_changed` skip the walk:
+/// with all three unchanged, the screen unchanged, and nothing on screen
+/// animating (see [`mark_animating`]), the walk would return the list it
+/// returned last time. Every write of a field the walk reads goes through
+/// [`set_paint`] or is followed by [`mark_paint`]; the `VALE_PAINT_VERIFY`
+/// mode checks that claim by walking anyway and comparing.
+#[derive(Default)]
+struct Paint(std::cell::Cell<i64>);
+
+/// Something the draw walk reads has changed.
+pub(in crate::lua) fn mark_paint(lua: &mlua::Lua) {
+    match lua.app_data_ref::<Paint>() {
+        Some(counter) => counter.0.set(counter.0.get().wrapping_add(1)),
+        None => drop(lua.try_set_app_data(Paint(std::cell::Cell::new(1)))),
+    }
+}
+
+/// The current paint generation; see [`mark_paint`].
+pub(in crate::lua) fn paint_generation(lua: &mlua::Lua) -> i64 {
+    lua.app_data_ref::<Paint>().map_or(0, |counter| counter.0.get())
+}
+
+/// Write `key` on `object`, and bump the paint generation if the stored value
+/// changed.
+///
+/// Numbers, strings, booleans and nil compare by value; tables, functions and
+/// userdata by identity, so storing a new table always counts as a change.
+/// Handlers that write the same value every tick (`SetText`, `SetValue`,
+/// `SetAlpha`, `SetVertexColor` with the same numbers) therefore leave the
+/// generation alone, which is what lets an idle tick skip the walk.
+///
+/// A raw write: widget tables carry only an `__index` metamethod, so this is
+/// the same write `set` makes.
+pub(in crate::lua) fn set_paint(
+    lua: &mlua::Lua,
+    object: &mlua::Table,
+    key: &str,
+    value: impl mlua::IntoLua,
+) -> mlua::Result<()> {
+    let value = value.into_lua(lua)?;
+    let old: mlua::Value = object.raw_get(key)?;
+    if old != value {
+        object.raw_set(key, value)?;
+        mark_paint_on(lua, object);
+    }
+    Ok(())
+}
+
+/// [`mark_paint`] for a change to `object`, skipped when `object` or an
+/// ancestor is hidden.
+///
+/// A hidden object is not drawn, so a change to it cannot change the walk's
+/// output. Showing it, or an ancestor, bumps the pile generation, and the walk
+/// after that reads the changed field. Handlers that animate hidden frames (a
+/// party member's status glow pulses its alpha every tick while the party
+/// frames are hidden) therefore leave the generation alone.
+pub(in crate::lua) fn mark_paint_on(lua: &mlua::Lua, object: &mlua::Table) {
+    let shown = object.raw_get::<bool>(SHOWN_KEY).unwrap_or(true)
+        && ancestors_shown(object).unwrap_or(true);
+    if shown {
+        mark_paint(lua);
+    }
+}
+
+/// Whether the last draw walk drew something that changes with time alone: a
+/// message line that has not finished fading, or an edit box's blinking
+/// caret. Reset at the start of each walk and set by the walk itself.
+#[derive(Default)]
+struct Animating(std::cell::Cell<bool>);
+
+/// The walk drew something that changes with time; the next tick must walk
+/// even if no counter moved.
+pub(in crate::lua) fn mark_animating(lua: &mlua::Lua) {
+    match lua.app_data_ref::<Animating>() {
+        Some(flag) => flag.0.set(true),
+        None => drop(lua.try_set_app_data(Animating(std::cell::Cell::new(true)))),
+    }
+}
+
+/// Clear the animating flag before a walk.
+pub(in crate::lua) fn clear_animating(lua: &mlua::Lua) {
+    if let Some(flag) = lua.app_data_ref::<Animating>() {
+        flag.0.set(false);
+    }
+}
+
+/// Whether the last walk drew anything that changes with time; see
+/// [`mark_animating`].
+pub(in crate::lua) fn animating(lua: &mlua::Lua) -> bool {
+    lua.app_data_ref::<Animating>().is_some_and(|flag| flag.0.get())
+}
+
+/// Whether the object is a `<SimpleHTML>`: set once at creation and read as
+/// one bool.
 ///
 /// A `bool` rather than a comparison against [`KIND_KEY`]'s string for the same
 /// reason [`CLASS_KEY`] is an integer: the draw walk asks per object per frame,
-/// and a Lua string comparison from Rust allocates. The same shape
-/// `editbox::is_edit_box` takes, one file over.
+/// and a Lua string comparison from Rust allocates. `editbox::is_edit_box`
+/// works the same way.
 ///
-/// There is exactly **one** in `Interface\FrameXML\` — `ItemTextPageText`,
-/// the body of every sign and book — which is why this is a flag for one kind
-/// rather than a general kind test.
+/// There is one in `Interface\FrameXML\`, `ItemTextPageText`, the body of
+/// every sign and book, so this is a flag for one kind rather than a general
+/// kind test.
 const IS_SIMPLE_HTML_KEY: &str = "__isSimpleHtml";
 
 pub(in crate::lua) fn is_simple_html(object: &mlua::Table) -> bool {
@@ -246,6 +338,7 @@ pub(in crate::lua) fn is_simple_html(object: &mlua::Table) -> bool {
         .unwrap_or(false)
 }
 
+/// What kind of object this is, for the draw walk.
 pub(in crate::lua) fn class(object: &mlua::Table) -> Class {
     match object.raw_get::<Option<i64>>(CLASS_KEY) {
         Ok(Some(1)) => Class::Region,
@@ -261,9 +354,9 @@ pub(in crate::lua) const HEIGHT_KEY: &str = "__height";
 /// The methods every UI object carries, sorted. Counted by `vale framexml`
 /// against what the directory calls.
 ///
-/// `GetWidth` and `GetHeight` are claimed here and *installed* by
-/// [`super::layout`] — one name, one entry, whichever file writes the closure.
-/// [`super::layout::METHODS`] is the five that only exist because of it.
+/// `GetWidth` and `GetHeight` are listed here and installed by
+/// [`super::layout`]: each name has one entry, whichever file writes the
+/// closure. [`super::layout::METHODS`] lists the five that exist only there.
 pub const METHODS: [&str; 24] = [
     "ClearAllPoints",
     "GetAlpha",
@@ -293,10 +386,10 @@ pub const METHODS: [&str; 24] = [
 
 /// Give a fresh table the state every UI object has.
 ///
-/// **Created shown**, which is the game's default: an XML element with no
+/// Created shown, which is the game's default: an XML element with no
 /// `hidden="true"` is visible as soon as it exists, and `ActionButton_Update`
-/// calls `this:Hide()` to take an empty button away rather than `Show()` to bring
-/// a filled one back.
+/// calls `this:Hide()` to remove an empty button rather than `Show()` to bring
+/// back a filled one.
 pub(in crate::lua) fn init(
     lua: &mlua::Lua,
     object: &mlua::Table,
@@ -319,26 +412,25 @@ pub(in crate::lua) fn init(
     object.set(WIDTH_KEY, 0.0_f64)?;
     object.set(HEIGHT_KEY, 0.0_f64)?;
 
-    // **Into the tree, at the end of whoever owns it.** A parentless object is a
-    // root — `UIParent` and `WorldFrame` are the two that matter, and the login
-    // screen's own frames are the rest — and the roots live in the registry
-    // rather than in a global, so that interface code cannot unlink the whole
-    // interface by assigning to a name.
+    // Add the object to the tree, at the end of its parent's children. A
+    // parentless object is a root (`UIParent` and `WorldFrame` are the main
+    // two; the login screen's own frames are the rest). The roots are kept in
+    // the registry rather than in a global, so that interface code cannot
+    // unlink the whole interface by assigning to a name.
     match parent {
         Some(parent) => parent.raw_get::<mlua::Table>(CHILDREN_KEY)?.push(object.clone())?,
         None => roots(lua)?.push(object.clone())?,
     }
-    // **A new object in the tree is a changed pile**, and it is the case the
-    // gate would otherwise miss most quietly: a `CreateFrame` inside an
-    // `OnUpdate` puts something the walk has never seen under the pointer
-    // without touching a rectangle or a visibility flag. Bumped here rather
-    // than at every constructor, because every one of them comes through this.
+    // A new object in the tree changes the pile. Without this bump the gate
+    // would miss it: a `CreateFrame` inside an `OnUpdate` puts a new object
+    // under the pointer without changing a rectangle or a visibility flag.
+    // Bumped here rather than in each constructor, because every constructor
+    // calls this function.
     disturb_pile(lua);
 
-    // **A named object is a global.** Not a convenience: FrameXML addresses
-    // widgets by name throughout, and the XML loader *builds* those names by
-    // concatenation (`$parentIcon`), which is the whole reason `getglobal`
-    // exists.
+    // A named object is a global. FrameXML addresses widgets by name
+    // throughout, and the XML loader builds those names by concatenation
+    // (`$parentIcon`), which is why `getglobal` exists.
     if let Some(name) = name {
         lua.globals().set(name, object.clone())?;
     }
@@ -348,8 +440,8 @@ pub(in crate::lua) fn init(
 /// The registry key the top-level objects live under.
 const REG_ROOTS: &str = "vale.roots";
 
-/// **Every parentless object, in creation order** — the top of the tree a draw
-/// pass walks down from.
+/// Every parentless object, in creation order: the top of the tree a draw pass
+/// walks down from.
 ///
 /// In the registry rather than in a global for the same reason the event table
 /// is: `_G.__roots = nil` from a script would otherwise blank the interface.
@@ -369,12 +461,12 @@ pub fn children(object: &mlua::Table) -> mlua::Result<mlua::Table> {
     object.raw_get(CHILDREN_KEY)
 }
 
-/// Whether every ancestor of an object is shown — the other half of
-/// `IsVisible`, asked without the object's own flag.
+/// Whether every ancestor of an object is shown: `IsVisible` without the
+/// object's own flag.
 ///
-/// What it decides is whether flipping that flag changes anything anybody can
-/// see: a `Show()` on a frame inside a hidden container fires no handler, in
-/// this client and in the real one.
+/// It decides whether changing that flag changes what is visible: a `Show()` on
+/// a frame inside a hidden container fires no handler, in this client and in
+/// the 1.12.1 client.
 fn ancestors_shown(object: &mlua::Table) -> mlua::Result<bool> {
     let mut at = object.raw_get::<Option<mlua::Table>>(PARENT_KEY)?;
     while let Some(parent) = at {
@@ -387,35 +479,35 @@ fn ancestors_shown(object: &mlua::Table) -> mlua::Result<bool> {
 }
 
 /// Fire `OnShow`/`OnHide` down a subtree that has just become visible or
-/// invisible — the object first, then each child whose *own* flag agrees.
+/// invisible: the object first, then each child whose own flag is set.
 ///
-/// A child with its flag clear is skipped **with its whole subtree**: it was
+/// A child with its flag clear is skipped with its whole subtree: it was
 /// invisible before and is invisible after, so nothing about it changed.
 fn announce_visibility(lua: &mlua::Lua, object: &mlua::Table, shown: bool) -> mlua::Result<()> {
-    // Swallowed for the reason `SetValue` swallows its own: the flag is set
-    // either way, and a handler that raises must not make `Show()` itself fail
-    // in the middle of whatever called it. **Recorded, though** — see
-    // [`super::frames::swallowed`], which exists because this line being silent
-    // is what let a panel open blank with every check green.
+    // The error is discarded for the reason `SetValue` discards its own: the
+    // flag is set either way, and a handler that raises must not make `Show()`
+    // fail partway through its caller. It is still recorded; see
+    // [`super::frames::swallowed`]. Without the record, a panel opened blank
+    // while every check reported success.
     let script = if shown { "OnShow" } else { "OnHide" };
     if let Err(e) = super::frames::run_script(lua, object, script, &[]) {
         let name: Option<String> = object.raw_get(NAME_KEY).ok().flatten();
         let where_it_was = name.unwrap_or_else(|| "(anonymous)".to_string());
         super::frames::swallowed(lua, &format!("{where_it_was}:{script}"), &e);
     }
-    // A hidden tooltip lets go of its owner and its lines, and a hidden edit
-    // box lets go of the keyboard — the kind gate is inside each, so every
-    // other frame pays two reads. `ChatEdit_OnEscapePressed` ends in `Hide()`
-    // and nothing else, so the second of these is the whole of how typing works
-    // twice in a row.
+    // A hidden tooltip releases its owner and its lines, and a hidden edit box
+    // releases the keyboard. The kind check is inside each, so every other
+    // frame pays two reads. `ChatEdit_OnEscapePressed` ends in `Hide()` and
+    // nothing else, so the second call is the only thing that releases chat
+    // focus before the next message can be typed.
     if !shown {
         let _ = super::tooltip::dropped(lua, object);
         let _ = super::editbox::hidden(lua, object);
     } else {
-        // …and the mirror of the first of those: a frame brought back is a
-        // frame that is not going anywhere, so a fade left running on it stops
-        // and its alpha goes back to 1. Gated inside on one raw read of a key
-        // almost no frame carries — see [`super::tooltip::unfade`].
+        // The reverse of the tooltip case: a frame shown again should stay, so
+        // a fade left running on it stops and its alpha returns to 1. Checked
+        // inside with one raw read of a key almost no frame carries; see
+        // [`super::tooltip::unfade`].
         let _ = super::tooltip::unfade(lua, object);
     }
     for child in children(object)?.sequence_values::<mlua::Table>() {
@@ -427,7 +519,7 @@ fn announce_visibility(lua: &mlua::Lua, object: &mlua::Table, shown: bool) -> ml
     Ok(())
 }
 
-/// Install [`METHODS`] onto a methods table — the one used as `__index` by
+/// Install [`METHODS`] onto a methods table: the one used as `__index` by
 /// whichever kind of object is being built.
 pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
     macro_rules! method {
@@ -443,10 +535,11 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
 
     method!("GetName", |_lua, this| this.raw_get::<mlua::Value>(NAME_KEY));
     method!("GetParent", |_lua, this| this.raw_get::<mlua::Value>(PARENT_KEY));
-    // **`SetParent(frame | "name" | nil)`** moves an object in the tree: out of
-    // whoever's children it was in (or the roots), into the new parent's (or
-    // the roots). Addons re-home the game's own frames this way — pfUI hangs
-    // the gryphons off its own bar. The pile is disturbed, as at a creation.
+    // `SetParent(frame | "name" | nil)` moves an object in the tree: out of its
+    // old parent's children (or the roots), into the new parent's (or the
+    // roots). Addons re-parent the game's own frames this way; pfUI parents
+    // the gryphons to its own bar. The pile generation is bumped, as at a
+    // creation.
     let set_parent = lua.create_function(|lua, (this, parent): (mlua::Table, mlua::Value)| {
         let parent = match parent {
             mlua::Value::Table(table) => Some(table),
@@ -473,13 +566,14 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
             None => roots(lua)?.push(this.clone())?,
         }
         disturb_pile(lua);
-        Ok(())
+        // The parent is the default anchor target, so rectangles may move.
+        super::layout::invalidate(lua)
     })?;
     methods.set("SetParent", set_parent)?;
-    // **`GetChildren` is the child frames and `GetRegions` the textures and
-    // strings**, both as a variadic in creation order, and the two counts
-    // beside them. The reference keeps the two populations apart; this
-    // client keeps one list and splits it by kind here.
+    // `GetChildren` returns the child frames and `GetRegions` the textures and
+    // font strings, both as a variadic in creation order, plus the two counts.
+    // The 1.12.1 client answers them as two separate sets; this client keeps
+    // one list and splits it by kind here.
     for (name, regions, count) in [
         ("GetChildren", false, false),
         ("GetRegions", true, false),
@@ -502,24 +596,26 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
         })?;
         methods.set(name, f)?;
     }
-    // **A missing argument is not an error.** 1.12's C functions coerce or
-    // ignore; `mlua`'s `i64` and `f64` extractors *raise*, and a raise here is
-    // not a wrong number, it is the rest of the `OnLoad` not running. 24 of
-    // `PaperDollFrame`'s slot buttons died on `this:SetID(nil)` — where the nil
-    // came from an API this client has not written, so the strictness turned one
-    // gap into two.
+    // A missing argument is not an error. 1.12's C functions coerce or ignore
+    // it; `mlua`'s `i64` and `f64` extractors raise an error, which stops the
+    // rest of the `OnLoad`. 24 of `PaperDollFrame`'s slot buttons failed on
+    // `this:SetID(nil)`, where the nil came from an API this client does not
+    // implement, so one missing API caused a second failure.
     method!("SetID", Option<i64>, |_lua, this, id| this
         .set(ID_KEY, id.unwrap_or(0)));
     method!("GetID", |_lua, this| this.raw_get::<i64>(ID_KEY));
-    method!("SetAlpha", Option<f64>, |_lua, this, alpha| this
-        .set(ALPHA_KEY, alpha.unwrap_or(1.0).clamp(0.0, 1.0)));
+    method!("SetAlpha", Option<f64>, |lua, this, alpha| set_paint(
+        lua,
+        &this,
+        ALPHA_KEY,
+        alpha.unwrap_or(1.0).clamp(0.0, 1.0)
+    ));
     method!("GetAlpha", |_lua, this| this.raw_get::<f64>(ALPHA_KEY));
-    // **`OnShow` and `OnHide` fire on *visibility* changing, which cascades.**
+    // `OnShow` and `OnHide` fire when visibility changes, and the change
+    // cascades to descendants.
     //
-    // This was the narrower rule for four rounds — "the flag changed, on the
-    // frame the call was made on" — and it was recorded as the deliberate
-    // choice because nothing in the directory *appeared* to distinguish the
-    // two. The character sheet distinguishes them, and it settles it outright:
+    // The alternative rule, "fire when the flag changes, on the frame the call
+    // was made on", is ruled out by the character sheet:
     //
     // ```lua
     // function CharacterFrame_ShowSubFrame(frameName)   -- CharacterFrame.lua
@@ -527,40 +623,37 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     //         if ( value == frameName ) then getglobal(value):Show()
     // ```
     //
-    // `PaperDollFrame` carries no `hidden` attribute, so it is shown from the
-    // moment it loads and only its *parent* is hidden — that `Show()` changes
-    // no flag at all. And `PaperDollFrame_OnShow` is the only thing in 1.12
-    // that fills the character sheet: nothing else calls `SetStats`,
-    // `SetResistances`, `SetArmor` or any of the other nine. Under the narrow
-    // rule the sheet opens **blank**, which is exactly how it opened, and no
-    // arrangement of the shipped files can make it fill. So the real client
-    // fires on becoming visible, and the cascade is not an invention.
+    // `PaperDollFrame` has no `hidden` attribute, so it is shown from the
+    // moment it loads and only its parent is hidden; that `Show()` changes no
+    // flag. `PaperDollFrame_OnShow` is the only code in 1.12 that fills the
+    // character sheet: nothing else calls `SetStats`, `SetResistances`,
+    // `SetArmor` or any of the other nine. Under the flag-change rule the sheet
+    // opens blank, and no arrangement of the shipped files can make it fill.
+    // So the 1.12.1 client fires on becoming visible, including the cascade.
     //
-    // The three consequences, each of which is the rule and not an
-    // approximation of it: a `Show()` inside a hidden container fires nothing
-    // (nothing became visible); showing the container fires on it **and** on
-    // every descendant whose own flag is set, parent first; and a descendant
-    // whose own flag is clear stops the walk, because its subtree was already
-    // invisible and stays so.
+    // The three consequences: a `Show()` inside a hidden container fires
+    // nothing (nothing became visible); showing the container fires on it and
+    // on every descendant whose own flag is set, parent first; and a
+    // descendant whose own flag is clear stops the walk, because its subtree
+    // was already invisible and stays so.
     //
     // A region has no scripts table and takes the same path, which costs it one
-    // failed lookup on a show — see [`super::frames::run_script`].
+    // failed lookup on a show; see [`super::frames::run_script`].
     for (name, shown) in [("Show", true), ("Hide", false)] {
         let f = lua.create_function(move |lua, this: mlua::Table| {
             if this.raw_get::<Option<bool>>(SHOWN_KEY)?.unwrap_or(true) == shown {
                 return Ok(());
             }
             this.set(SHOWN_KEY, shown)?;
-            // **The pile has changed even though nothing moved**, which is the
-            // whole reason [`disturb_pile`] is a second counter rather than a
-            // call to `layout::invalidate`: no rectangle in the interface is
-            // any different and the memo must go on holding, but what the
-            // pointer is over may be completely different.
+            // The pile has changed although nothing moved. This is why
+            // [`disturb_pile`] is a separate counter rather than a call to
+            // `layout::invalidate`: no rectangle changed and the layout memo
+            // stays valid, but the object under the pointer may be different.
             disturb_pile(lua);
-            // **The flag is written before anything is fired**, because a body
-            // asks: `PaperDollFrame_OnEvent` opens with `this:IsVisible()` and
-            // `CharacterFrame_ShowSubFrame` shows one subframe while hiding
-            // four others.
+            // The flag is written before any handler fires, because handler
+            // bodies read it: `PaperDollFrame_OnEvent` opens with
+            // `this:IsVisible()`, and `CharacterFrame_ShowSubFrame` shows one
+            // subframe while hiding four others.
             if ancestors_shown(&this)? {
                 announce_visibility(lua, &this, shown)?;
             }
@@ -571,10 +664,10 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     method!("IsShown", |_lua, this| Ok(one_or_nil(
         this.raw_get::<bool>(SHOWN_KEY)?
     )));
-    // **`IsVisible` is not `IsShown`.** Shown is this object's own flag; visible
-    // is that flag *and* every parent's, which is how hiding a container hides
-    // its contents — and `CastingBarFrame_OnEvent`'s first branch tests the two
-    // separately on adjacent lines.
+    // `IsVisible` differs from `IsShown`. Shown is this object's own flag;
+    // visible is that flag and every parent's, which is how hiding a container
+    // hides its contents. `CastingBarFrame_OnEvent`'s first branch tests the
+    // two separately on adjacent lines.
     method!("IsVisible", |_lua, this| {
         let mut object = this;
         loop {
@@ -588,18 +681,18 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
         }
     });
 
-    // **Every one of these five invalidates the solved layout**, which is one
-    // integer and the whole state's worth of rectangles. See [`super::layout`]:
-    // over-invalidating is deliberate, because the alternative is tracking which
-    // object depends on which and a stale rectangle is a widget drawn in the
-    // wrong place with nothing in any log.
+    // Each of these five setters invalidates the whole solved layout, by
+    // bumping one integer. See [`super::layout`]: over-invalidating is
+    // deliberate, because the alternative is tracking which object depends on
+    // which, and a stale rectangle draws a widget in the wrong place without
+    // any log entry.
     //
-    // **…and a write that changes nothing invalidates nothing.** The shipped
-    // `OnUpdate` bodies re-assert geometry every tick with values that almost
-    // never move, and each one was throwing away the whole memo — measured at
-    // ~84 generations per *frame* at an idle login, which is a memo that never
-    // once survived to be read. The equality test is exact, which is right for
-    // a value the same chunk computed the same way a tick earlier.
+    // A write that changes nothing invalidates nothing. The shipped `OnUpdate`
+    // bodies set geometry every tick with values that almost never change, and
+    // each write discarded the whole memo: about 84 generations per frame at an
+    // idle login, so the memo was never read before being discarded. The
+    // equality test is exact, which is correct for a value the same chunk
+    // computed the same way a tick earlier.
     method!("SetWidth", Option<f64>, |lua, this, width| {
         let width = width.unwrap_or(0.0);
         if this.raw_get::<Option<f64>>(WIDTH_KEY)? == Some(width) {
@@ -616,14 +709,15 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
         this.set(HEIGHT_KEY, height)?;
         super::layout::invalidate(lua)
     });
-    // `GetWidth`, `GetHeight`, `GetLeft` and their neighbours are installed by
-    // [`super::layout`], because what they answer is the solve rather than the
-    // record — see this module's own comment.
+    // `GetWidth`, `GetHeight`, `GetLeft` and the related getters are installed
+    // by [`super::layout`], because they return the solved geometry rather than
+    // the record; see this module's comment.
     super::layout::install(lua, methods)?;
 
-    // In place rather than a fresh table, and a no-op on an already-empty list:
-    // `ClearAllPoints` is the first line of the directory's favourite per-tick
-    // idiom, and a new table per call is garbage at frame rate.
+    // Cleared in place rather than replaced with a new table, and a no-op on
+    // an already-empty list: `ClearAllPoints` is the first line of the
+    // directory's most common per-tick pattern, and a new table per call is
+    // garbage at frame rate.
     method!("ClearAllPoints", |lua, this| {
         let points = this.raw_get::<mlua::Table>(POINTS_KEY)?;
         let len = points.raw_len();
@@ -635,16 +729,16 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
         }
         super::layout::invalidate(lua)
     });
-    // **`GetNumPoints` counts what `GetPoint` will answer**, which for a fill is
-    // the two corners the reference keeps rather than the one entry this client
-    // stores. See [`point_at`], where that translation is and why it matters.
+    // `GetNumPoints` counts what `GetPoint` will return, which for a fill is
+    // the two corners the 1.12.1 client reports rather than the one entry this
+    // client stores. See [`point_at`] for the translation and the reason.
     method!("GetNumPoints", |_lua, this| point_count(&this));
-    // **`SetAllPoints` is not four `SetPoint`s here.** It is recorded as itself,
-    // because "fill my parent" survives the parent being resized and four
-    // captured corners would not. 61 XML elements say it as an attribute.
+    // `SetAllPoints` is recorded as one fill entry, not as `SetPoint` calls,
+    // because "fill my parent" must follow the parent when it is resized and
+    // four captured corners would not. 61 XML elements set it as an attribute.
     method!("SetAllPoints", Option<mlua::Value>, |lua, this, target| {
-        // Already exactly this fill? Then nothing changed and the memo holds —
-        // the same no-op rule every setter above applies.
+        // If the object already has exactly this fill, nothing changed and the
+        // memo stays valid: the same no-op rule every setter above applies.
         let points = this.raw_get::<mlua::Table>(POINTS_KEY)?;
         if points.raw_len() == 1 {
             if let Some(only) = points.raw_get::<Option<mlua::Table>>(1)? {
@@ -667,8 +761,8 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     });
 
     // `SetPoint(point, relativeTo, relativePoint, x, y)` and the short
-    // `SetPoint(point, x, y)`, told apart by the type of the second argument —
-    // see the module comment on why both are real.
+    // `SetPoint(point, x, y)`, told apart by the type of the second argument.
+    // See the module comment on why both are needed.
     let set_point = lua.create_function(
         |lua,
          (this, point, second, third, fourth, fifth): (
@@ -700,8 +794,8 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     )?;
     methods.set("SetPoint", set_point)?;
 
-    // `GetPoint(n)` answers the game's own five values, in the game's own order
-    // — see [`point_at`], which is where the implicit halves are filled in.
+    // `GetPoint(n)` returns the game's five values, in the game's order. See
+    // [`point_at`], which fills in the implicit values.
     let get_point = lua.create_function(|lua, (this, index): (mlua::Table, Option<usize>)| {
         point_at(lua, &this, index.unwrap_or(1))
     })?;
@@ -709,44 +803,43 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     Ok(())
 }
 
-/// **What `GetPoint(n)` answers**, which is not what this client stores.
+/// What `GetPoint(n)` returns, which differs from what this client stores.
 ///
-/// The reference keeps every anchor in one shape — point, the frame it is
-/// against, that frame's point, and the two offsets — and fills in whatever the
-/// caller left out. This client stores what was *said*: the short
+/// The 1.12.1 client returns every anchor in one form (point, the frame it is
+/// against, that frame's point, and the two offsets), with whatever the caller
+/// left out filled in. This client stores the arguments as given: the short
 /// `SetPoint("BOTTOM", 0, 4)` records a point and two numbers and nothing else,
-/// and `SetAllPoints` records itself rather than corners (see the setter, which
-/// argues for that). Answering those back verbatim gives a `relativeTo` of nil
-/// for a short-form anchor and a `point` of nil for a fill.
+/// and `SetAllPoints` records one fill entry rather than corners (see the
+/// setter for the reason). Returning those as stored gives a `relativeTo` of
+/// nil for a short-form anchor and a `point` of nil for a fill.
 ///
-/// **Both are values the reference never returns, and interface code tests
-/// them.** pfUI's `LoadMovable` saves a frame's anchors, clears them and puts
-/// them back with
+/// The 1.12.1 client never returns either value, and interface code tests
+/// them. pfUI's `LoadMovable` saves a frame's anchors, clears them and restores
+/// them with
 ///
 /// ```lua
 /// local a, b, c, d, e = unpack(point)
 /// if a and b then frame:SetPoint(a,b,c,d,e) end
 /// ```
 ///
-/// so an anchor this client described with a nil in either slot is an anchor
-/// that is dropped and never restored. The frame keeps its width and its height
-/// and loses its rectangle: it is shown, it is in the tree, and it is nowhere.
-/// That is an action bar, a minimap and a chat frame missing from a login with
-/// no error anywhere — measured on pfUI 5.5.4, where every bar is positioned
-/// with the short form and the one frame that survived was the one written the
-/// long way.
+/// so an anchor returned with a nil in either slot is dropped and never
+/// restored. The frame keeps its width and height and loses its position: it
+/// is shown and in the tree but has no rectangle. On pfUI 5.5.4 that removed an
+/// action bar, the minimap and a chat frame from the login screen with no
+/// error; every bar there is positioned with the short form, and the one frame
+/// that kept its place was the one written in the long form.
 ///
-/// So the implicit halves are filled here rather than at the setter: the
-/// solver reads the stored entry and wants to know what was said, while the
-/// interface asks this and wants to know where the frame is.
+/// So the implicit values are filled in here rather than at the setter: the
+/// solver reads the stored entry and needs the arguments as given, while the
+/// interface calls this and needs where the frame is.
 fn point_at(lua: &mlua::Lua, object: &mlua::Table, index: usize) -> mlua::Result<mlua::MultiValue> {
     let points = object.raw_get::<mlua::Table>(POINTS_KEY)?;
     let Some(entry) = points.get::<Option<mlua::Table>>(1)? else {
         return Ok(mlua::MultiValue::new());
     };
-    // **A fill is two anchors**, `TOPLEFT` and `BOTTOMRIGHT` against the same
-    // frame, which is how the reference stores `SetAllPoints` and therefore what
-    // it hands back. Both corners of the target, no offsets.
+    // A fill is returned as two anchors, `TOPLEFT` and `BOTTOMRIGHT` against
+    // the same frame, which is what the 1.12.1 client returns after
+    // `SetAllPoints`. Both corners of the target, no offsets.
     if entry.get::<Option<bool>>("all")?.unwrap_or(false) {
         let corner = match index {
             1 => "TOPLEFT",
@@ -775,8 +868,8 @@ fn point_at(lua: &mlua::Lua, object: &mlua::Table, index: usize) -> mlua::Result
         mlua::Value::Nil => object.raw_get::<mlua::Value>(PARENT_KEY)?,
         named => named,
     };
-    // …and that frame's own point, which an omitted `relativePoint` mirrors
-    // from this one.
+    // That frame's point; an omitted `relativePoint` is the same as this
+    // object's point.
     let against_point = match entry.get::<mlua::Value>("relativePoint")? {
         mlua::Value::Nil => point.clone(),
         named => named,
@@ -790,8 +883,8 @@ fn point_at(lua: &mlua::Lua, object: &mlua::Table, index: usize) -> mlua::Result
     ]))
 }
 
-/// …and how many of those there are. Two for a fill, for the reason
-/// [`point_at`] gives; otherwise the entries as stored.
+/// How many anchors [`point_at`] returns: two for a fill, for the reason
+/// [`point_at`] gives; otherwise the number of entries stored.
 fn point_count(object: &mlua::Table) -> mlua::Result<usize> {
     let points = object.raw_get::<mlua::Table>(POINTS_KEY)?;
     let filled = points
@@ -804,33 +897,31 @@ fn point_count(object: &mlua::Table) -> mlua::Result<usize> {
     }
 }
 
-/// **One metatable per kind, not one per object.**
+/// One metatable per kind, not one per object.
 ///
 /// A metatable whose only entry is `__index = methods` carries no per-object
-/// state, so every frame in the game can share one — and a full FrameXML load
-/// builds **15,382 objects**, so building one each was 15,382 tables that did
-/// nothing but hold the same pointer. They stay reachable for the life of the
-/// session and Lua's collector marks the whole graph, so it is a cost paid over
-/// and over rather than once.
+/// state, so every frame in the game can share one. A full FrameXML load builds
+/// 15,382 objects, and one metatable each would be 15,382 tables holding the
+/// same pointer. They stay reachable for the whole session and Lua's collector
+/// marks the whole graph, so the cost recurs on every collection cycle.
 ///
-/// Stated precisely, because it is easy to over-claim: this is 15,382 fewer
-/// tables, which is arithmetic. It was changed *while* chasing a 13.2 s load and
-/// it is **not** what fixed that — see [`super::frames::protected`], which is —
-/// and A/B'd on its own it does not move the load time out of run noise.
+/// The saving is 15,382 tables. It did not fix the 13.2 s load time;
+/// [`super::frames::protected`] did. Measured on its own, this change does not
+/// move the load time beyond run-to-run noise.
 pub(super) fn metatable(lua: &mlua::Lua, methods: mlua::Table) -> mlua::Result<mlua::Table> {
     let meta = lua.create_table()?;
     meta.set("__index", methods)?;
     Ok(meta)
 }
 
-/// **A Lua number, however `mlua` is representing it.**
+/// A Lua number, whichever variant `mlua` uses to represent it.
 ///
-/// One home for it because it is a trap rather than a convenience:
-/// `mlua::Value::as_f64` answers `None` for `Value::Integer`, and Lua 5.1 has
-/// **one** number type, so which of the two variants arrives depends on how the
-/// caller spelled the literal. `SetPoint("CENTER", 0, 32)` came through as two
-/// integers and silently anchored at (0, 0) — no error, no warning, a widget in
-/// the wrong place. The same trap sits under `SetTexture(0, 0, 0, 0.5)`.
+/// Kept in one function because the difference is easy to miss:
+/// `mlua::Value::as_f64` returns `None` for `Value::Integer`, and Lua 5.1 has
+/// one number type, so which variant arrives depends on how the caller wrote
+/// the literal. `SetPoint("CENTER", 0, 32)` arrived as two integers and was
+/// anchored at (0, 0), with no error or warning. `SetTexture(0, 0, 0, 0.5)`
+/// has the same issue.
 pub(super) fn number(value: &mlua::Value) -> Option<f64> {
     match value {
         mlua::Value::Integer(n) => Some(*n as f64),
@@ -842,9 +933,9 @@ pub(super) fn number(value: &mlua::Value) -> Option<f64> {
 /// Record one anchor from the loader, in the same slot `SetPoint` writes to.
 ///
 /// The loader has an `<Anchor>` element rather than a Lua call, and going
-/// through Lua to store it would mean building an argument list to take apart
-/// again. Same shape, same key — which is what makes `GetPoint` answer for an
-/// XML-declared anchor exactly as it does for a scripted one.
+/// through Lua to store it would mean building an argument list only to take it
+/// apart again. The entry has the same shape and key, so `GetPoint` answers for
+/// an XML-declared anchor exactly as it does for a scripted one.
 pub(in crate::lua) fn add_point(
     lua: &mlua::Lua,
     object: &mlua::Table,
@@ -862,23 +953,23 @@ pub(in crate::lua) fn add_point(
     push_point(lua, object, entry)
 }
 
-/// **Replace an object's whole anchor list with one entry** — clear and set as
-/// a single decision, so that re-asserting the anchor it already has is free.
+/// Replace an object's whole anchor list with one entry: clear and set as one
+/// operation, so that setting the anchor it already has writes nothing.
 ///
-/// `ClearAllPoints` followed by `SetPoint` is two writes and the first of them
-/// always changes something, so the pair invalidates the memo whatever the
-/// second one says. That is fine at the rate the directory *usually* re-anchors
-/// and ruinous at the rate `GameTooltip:SetOwner` does:
-/// `ContainerFrameItemButton_OnUpdate` calls `OnEnter` **every frame** while the
-/// pointer is over a bag square (Blizzard's own comment there reads "Might hurt
-/// performance, but need to always update the cursor now"), and `OnEnter`'s
-/// first act is a `SetOwner` — so hovering one item in one bag threw away every
+/// `ClearAllPoints` followed by `SetPoint` is two writes, and the first always
+/// changes something, so the pair invalidates the memo whatever the second
+/// writes. That is acceptable at the rate the directory usually re-anchors, but
+/// not at the rate `GameTooltip:SetOwner` does:
+/// `ContainerFrameItemButton_OnUpdate` calls `OnEnter` every frame while the
+/// pointer is over a bag slot (Blizzard's comment there reads "Might hurt
+/// performance, but need to always update the cursor now"), and `OnEnter`
+/// starts with a `SetOwner`. Hovering one item in one bag discarded every
 /// solved rectangle in the interface sixty times a second. Measured with five
-/// full bags open: **8.4 ms of interpreter per frame against 6.2** and a layout
-/// generation burned on all but one frame of a 300-frame run.
+/// full bags open: 8.4 ms of interpreter per frame against 6.2, and a new
+/// layout generation on all but one frame of a 300-frame run.
 ///
-/// So this is [`push_point`]'s no-op rule applied to the pair rather than to
-/// half of it: same single anchor in, nothing written, memo intact.
+/// So this applies [`push_point`]'s no-op rule to the pair: if the single
+/// anchor is unchanged, nothing is written and the memo stays valid.
 pub(super) fn set_only_point(
     lua: &mlua::Lua,
     object: &mlua::Table,
@@ -909,14 +1000,11 @@ pub(super) fn set_only_point(
     super::layout::invalidate(lua)
 }
 
-/// **Let go of every anchor**, and cost the memo only if there was one to let go
-/// of.
+/// Remove every anchor, and invalidate the memo only if there was one.
 ///
-/// `ClearAllPoints`' own body, reachable from Rust — `SetOwner("ANCHOR_NONE")`
-/// used to write a fresh empty table straight over [`POINTS_KEY`] and *not*
-/// invalidate, which is the opposite mistake to the one above and a worse one:
-/// a rectangle solved from the anchors that were there stayed cached after they
-/// were gone.
+/// `ClearAllPoints`' body, callable from Rust. `SetOwner("ANCHOR_NONE")` must
+/// use it: writing an empty table over [`POINTS_KEY`] without invalidating
+/// left a rectangle solved from the removed anchors in the cache.
 pub(super) fn clear_points(lua: &mlua::Lua, object: &mlua::Table) -> mlua::Result<()> {
     let points = object.raw_get::<mlua::Table>(POINTS_KEY)?;
     let len = points.raw_len();
@@ -929,22 +1017,21 @@ pub(super) fn clear_points(lua: &mlua::Lua, object: &mlua::Table) -> mlua::Resul
     super::layout::invalidate(lua)
 }
 
-/// Record one anchor entry — the one door [`add_point`] and the Lua `SetPoint`
-/// both go through, because both must apply the same displacement rules.
+/// Record one anchor entry. Both [`add_point`] and the Lua `SetPoint` go
+/// through this function, because both must apply the same replacement rules.
 ///
-/// **An explicit anchor displaces the synthetic fill** — see
-/// [`default_all_points`]. The default stands in for "the file said nothing";
-/// the moment something says anything, it must go, or the object is
-/// over-constrained by an anchor nobody wrote.
+/// An explicit anchor replaces the synthetic fill; see [`default_all_points`].
+/// The default stands for "the file gave no anchor"; once any anchor is set it
+/// must be removed, or the object is over-constrained by an anchor no file
+/// declared.
 ///
-/// **And one point name holds one anchor**, which is the game's own rule:
+/// One point name holds one anchor, which is the game's rule:
 /// `SetPoint("TOP", …)` on a frame that already has a `TOP` moves that anchor
-/// rather than adding a second. Appending was not only wrong, it was a leak
-/// with frame-rate interest on it — a body re-anchoring per tick grew its
-/// points list by one entry per frame for the life of the session, each solve
-/// reading all of them. And **re-anchoring to the same place is a no-op**: the
-/// per-tick idiom re-asserts the same anchor almost every tick, and an
-/// identical entry must not cost the layout memo.
+/// rather than adding a second. Appending was also a leak: a body re-anchoring
+/// per tick grew its points list by one entry per frame for the whole session,
+/// and each solve read all of them. Re-anchoring to the same place is a no-op:
+/// the per-tick pattern sets the same anchor almost every tick, and an
+/// identical entry must not invalidate the layout memo.
 fn push_point(lua: &mlua::Lua, object: &mlua::Table, entry: mlua::Table) -> mlua::Result<()> {
     let points = object.raw_get::<mlua::Table>(POINTS_KEY)?;
     if points.raw_len() == 1
@@ -960,7 +1047,7 @@ fn push_point(lua: &mlua::Lua, object: &mlua::Table, entry: mlua::Table) -> mlua
             continue;
         };
         // `SetAllPoints` entries carry no point name and are never matched by a
-        // named anchor — `name` is always `Some` for one of those.
+        // named anchor, because `name` is always `Some` for one of those.
         if existing.get::<Option<mlua::String>>("point")? != name {
             continue;
         }
@@ -975,8 +1062,8 @@ fn push_point(lua: &mlua::Lua, object: &mlua::Table, entry: mlua::Table) -> mlua
 }
 
 /// Whether two anchor entries say the same thing. `relativeTo` compares by
-/// table identity (or by name, when a lazy name is what was recorded), which is
-/// exactly what "the same anchor" means.
+/// table identity (or by name, when a name was recorded to be resolved later),
+/// which is what "the same anchor" means.
 fn same_anchor(a: &mlua::Table, b: &mlua::Table) -> mlua::Result<bool> {
     for key in ["relativeTo", "relativePoint", "x", "y"] {
         if a.get::<mlua::Value>(key)? != b.get::<mlua::Value>(key)? {
@@ -986,10 +1073,10 @@ fn same_anchor(a: &mlua::Table, b: &mlua::Table) -> mlua::Result<bool> {
     Ok(true)
 }
 
-/// **A region the files gave no anchor at all fills its parent.** The loader's
-/// default, not Lua's — see the caller in [`super::super::xml`], where the rule and
-/// its evidence are; the entry is marked so the first explicit anchor
-/// ([`add_point`]) or `SetAllPoints` can displace it.
+/// A region the files gave no anchor fills its parent. This is the loader's
+/// default, not Lua's; see the caller in [`super::super::xml`] for the rule and
+/// its evidence. The entry is marked so the first explicit anchor
+/// ([`add_point`]) or `SetAllPoints` replaces it.
 pub(in crate::lua) fn default_all_points(lua: &mlua::Lua, object: &mlua::Table) -> mlua::Result<()> {
     let points = lua.create_table()?;
     let entry = lua.create_table()?;
@@ -1002,10 +1089,9 @@ pub(in crate::lua) fn default_all_points(lua: &mlua::Lua, object: &mlua::Table) 
 
 /// Set a size from the loader, in the same slot `SetWidth` writes to.
 ///
-/// The loader used to write [`WIDTH_KEY`] itself, which was fine while the size
-/// was only a record — and stopped being fine the moment something cached a
-/// rectangle derived from it. One place that writes a size, one place that
-/// clears the layout.
+/// The loader must not write [`WIDTH_KEY`] itself, because the solved layout
+/// caches rectangles derived from the size. Writing a size through this
+/// function also invalidates the layout.
 pub(in crate::lua) fn set_size(
     lua: &mlua::Lua,
     object: &mlua::Table,
@@ -1021,8 +1107,8 @@ pub(in crate::lua) fn set_size(
     super::layout::invalidate(lua)
 }
 
-/// `setAllPoints="true"` from the loader — 61 elements say it as an attribute,
-/// and `UIParent` is one of them.
+/// `setAllPoints="true"` from the loader. 61 elements set it as an attribute,
+/// `UIParent` among them.
 pub(in crate::lua) fn set_all_points(lua: &mlua::Lua, object: &mlua::Table) -> mlua::Result<()> {
     let points = lua.create_table()?;
     let entry = lua.create_table()?;
@@ -1036,7 +1122,7 @@ pub(in crate::lua) fn set_all_points(lua: &mlua::Lua, object: &mlua::Table) -> m
 pub(super) mod tests {
     use super::*;
 
-    /// A bare object with the base methods on it — enough to test this module
+    /// A bare object with the base methods on it, enough to test this module
     /// without a frame or a region.
     pub(super) fn object(lua: &mlua::Lua, name: &str) -> mlua::Table {
         let methods = lua.create_table().expect("table");
@@ -1054,11 +1140,11 @@ pub(super) mod tests {
         format!("{value:?}")
     }
 
-    /// **`OnShow` and `OnHide` fire on the flag changing, and only then.**
+    /// `OnShow` and `OnHide` fire when visibility changes, and only then.
     ///
-    /// The "only then" is the half worth a test: `UIParent`'s panels call
-    /// `Show()` on something already shown constantly, and a handler that fired
-    /// every time would run `PlaySound` and a full refresh on each of them.
+    /// The "only then" part is what this tests: `UIParent`'s panels often call
+    /// `Show()` on something already shown, and a handler that fired every time
+    /// would run `PlaySound` and a full refresh on each call.
     #[test]
     fn showing_and_hiding_fire_once_each_way() {
         let lua = mlua::Lua::new();
@@ -1080,21 +1166,22 @@ pub(super) mod tests {
         assert_eq!(eval(&lua, "return hides"), "Integer(1)");
         lua.load("panel:Show()").exec().expect("runs");
         assert_eq!(eval(&lua, "return shows"), "Integer(1)");
-        // …and a handler that raises does not make `Show()` itself fail.
+        // A handler that raises an error does not make `Show()` or `Hide()`
+        // fail.
         lua.load(r#"panel:SetScript("OnHide", function() error("boom"); end); panel:Hide();"#)
             .exec()
             .expect("the failure is swallowed");
         assert_eq!(eval(&lua, "return panel:IsShown()"), "Nil");
     }
 
-    /// **A container becoming visible fires its children's `OnShow` too**, and
-    /// a `Show()` inside a hidden container fires nothing at all.
+    /// A container becoming visible fires its children's `OnShow` too, and a
+    /// `Show()` inside a hidden container fires nothing.
     ///
-    /// This is the character sheet, in miniature. `PaperDollFrame` is shown
-    /// from load and its parent is not, so `CharacterFrame_ShowSubFrame`'s
-    /// `getglobal(value):Show()` changes no flag — and `PaperDollFrame_OnShow`
-    /// is the only thing in 1.12 that fills the sheet. Without the cascade the
-    /// panel opens blank, which is how it opened.
+    /// This reproduces the character sheet's structure. `PaperDollFrame` is
+    /// shown from load and its parent is not, so `CharacterFrame_ShowSubFrame`'s
+    /// `getglobal(value):Show()` changes no flag, and `PaperDollFrame_OnShow`
+    /// is the only code in 1.12 that fills the sheet. Without the cascade the
+    /// panel opens blank.
     #[test]
     fn becoming_visible_cascades_to_the_children_that_are_shown() {
         let lua = mlua::Lua::new();
@@ -1117,29 +1204,29 @@ pub(super) mod tests {
         .exec()
         .expect("runs");
         // Hiding the container: the container and the two descendants whose own
-        // flag is set, parent first. `Aside` was already invisible and is not
-        // told twice — its own `Hide()` above is the one line before it.
+        // flag is set, parent first. `Aside` was already hidden and is not
+        // notified twice; the entry before `Outer-` is from its own `Hide()`.
         assert_eq!(eval(&lua, "return log"), r#"String("Aside- Outer- Inner- Deep- ")"#);
 
-        // A show inside a hidden container changes nothing anybody can see.
+        // A show inside a hidden container changes nothing visible.
         lua.load("log = ''; deep:Hide(); deep:Show()").exec().expect("runs");
         assert_eq!(eval(&lua, "return log"), r#"String("")"#);
 
-        // …and showing the container fires on it and on the whole subtree that
-        // is flagged shown — `Deep` included, since the pair of calls above put
-        // its own flag back. `Aside` stays quiet: its flag is clear.
+        // Showing the container fires on it and on the whole subtree that is
+        // flagged shown, `Deep` included, since the pair of calls above set its
+        // flag again. `Aside` does not fire: its flag is clear.
         lua.load("log = ''; outer:Show()").exec().expect("runs");
         assert_eq!(eval(&lua, "return log"), r#"String("Outer+ Inner+ Deep+ ")"#);
 
-        // A descendant whose own flag *is* clear stops the walk there, with its
-        // subtree — it was invisible before the container moved and after.
+        // A descendant whose own flag is clear stops the walk there, with its
+        // subtree: it was invisible before the container was shown and after.
         lua.load("outer:Hide(); inner:Hide(); log = ''; outer:Show()")
             .exec()
             .expect("runs");
         assert_eq!(eval(&lua, "return log"), r#"String("Outer+ ")"#);
     }
 
-    /// **Both `SetPoint` arities**, told apart by the second argument's type.
+    /// Both `SetPoint` arities, told apart by the second argument's type.
     /// The short form means "my parent, same point" and three of FrameXML's own
     /// widgets use it; reading its `x` as a frame would anchor them to nothing.
     #[test]
@@ -1159,14 +1246,14 @@ pub(super) mod tests {
             "the 0 was an offset, not a relativeTo — and this probe has no parent \
              for the answer to fall back to"
         );
-        // **All five, spelled out.** Asserting on one of them is what let the
-        // real bug through: `mlua::Value::as_f64` answers `None` for an integer
-        // literal, so both offsets came back 0 and the widget silently anchored
-        // at the centre of its parent. See [`number`].
+        // All five values are asserted. Asserting on only one missed a bug:
+        // `mlua::Value::as_f64` returns `None` for an integer literal, so both
+        // offsets came back 0 and the widget was anchored at the centre of its
+        // parent. See [`number`].
         //
-        // **`relativePoint` mirrors the point**, which is what an omitted one
-        // means — see [`point_at`], and note that answering nil there is what
-        // made an addon drop the anchor entirely.
+        // `relativePoint` equals the point, which is what an omitted one
+        // means. See [`point_at`]: returning nil there made an addon drop the
+        // anchor entirely.
         assert_eq!(
             eval(
                 &lua,
@@ -1176,7 +1263,7 @@ pub(super) mod tests {
             r#"String("CENTER/nil/CENTER/0/32")"#
         );
 
-        // …and the long form keeps all five.
+        // The long form keeps all five.
         let anchor = object(&lua, "Anchor");
         lua.globals().set("anchor", anchor).expect("global");
         lua.load(r#"probe:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 4, -2)"#)
@@ -1189,16 +1276,16 @@ pub(super) mod tests {
         );
     }
 
-    /// **The implicit halves of an anchor are answered, not left nil** — the
-    /// parent for a `relativeTo` nobody named, and the point itself for a
-    /// `relativePoint` nobody named.
+    /// The implicit values of an anchor are returned, not left nil: the parent
+    /// for an omitted `relativeTo`, and the point itself for an omitted
+    /// `relativePoint`.
     ///
-    /// The reference fills both in and interface code tests them. pfUI's
+    /// The 1.12.1 client fills both in, and interface code tests them. pfUI's
     /// `LoadMovable` saves every anchor, clears them and restores each one
-    /// `if a and b` — so a short-form anchor answered with a nil `relativeTo` is
-    /// an anchor dropped on the floor, and the frame is shown, sized and
-    /// nowhere. That was its action bar, its minimap and both chat windows
-    /// missing from a login. See [`point_at`].
+    /// `if a and b`, so a short-form anchor returned with a nil `relativeTo` is
+    /// dropped, and the frame is shown and sized but has no position. That
+    /// removed pfUI's action bar, minimap and both chat windows from the login.
+    /// See [`point_at`].
     #[test]
     fn a_short_anchor_answers_the_parent_and_its_own_point() {
         let lua = mlua::Lua::new();
@@ -1222,8 +1309,8 @@ pub(super) mod tests {
             ),
             r#"String("BOTTOM/Parent/BOTTOM/0/4")"#
         );
-        // …and the round trip an addon makes: read the anchor back, clear, and
-        // put it on again through the five values it was given.
+        // The round trip an addon makes: read the anchor back, clear, and set
+        // it again from the five values returned.
         lua.load(
             r#"local a, b, c, d, e = child:GetPoint(1)
                child:ClearAllPoints()
@@ -1238,10 +1325,10 @@ pub(super) mod tests {
         );
     }
 
-    /// **A fill is two anchors when it is asked about**, which is how the
-    /// reference stores `SetAllPoints` — `TOPLEFT` and `BOTTOMRIGHT` against the
-    /// same frame. This client keeps it as one entry, for the reason the setter
-    /// gives; what it *answers* is the pair. See [`point_at`].
+    /// A fill is returned as two anchors, `TOPLEFT` and `BOTTOMRIGHT` against
+    /// the same frame, which is what the 1.12.1 client returns after
+    /// `SetAllPoints`. This client stores it as one entry, for the reason the
+    /// setter gives, and returns the pair. See [`point_at`].
     #[test]
     fn a_fill_answers_as_two_corners() {
         let lua = mlua::Lua::new();
@@ -1270,8 +1357,9 @@ pub(super) mod tests {
         assert_eq!(eval(&lua, "return probe:GetPoint(3)"), "Nil", "and no third");
     }
 
-    /// `GetPoint` on an object with no points answers nothing rather than
-    /// raising — `if ( frame:GetPoint(1) ) then` is how FrameXML asks.
+    /// `GetPoint` on an object with no points returns nothing rather than
+    /// raising an error; FrameXML tests for anchors with
+    /// `if ( frame:GetPoint(1) ) then`.
     #[test]
     fn an_unanchored_object_answers_nothing() {
         let lua = mlua::Lua::new();
@@ -1285,10 +1373,10 @@ pub(super) mod tests {
         assert_eq!(eval(&lua, "return probe:GetNumPoints()"), "Integer(0)");
     }
 
-    /// **The set size is what an unanchored object reports**, and it is all this
-    /// module owns: the moment there are anchors, [`super::layout`] answers
-    /// instead. Both halves are asserted here because the handover between them
-    /// is invisible from Lua — one method name, two sources.
+    /// An unanchored object reports the size that was set, which is all this
+    /// module owns: once there are anchors, [`super::layout`] answers instead.
+    /// Both cases are asserted here because Lua cannot tell which source
+    /// answered: one method name, two sources.
     #[test]
     fn the_size_is_a_record_until_the_anchors_say_otherwise() {
         let lua = mlua::Lua::new();
@@ -1300,15 +1388,15 @@ pub(super) mod tests {
             .expect("runs");
         assert_eq!(eval(&lua, "return probe:GetWidth() == 195"), "Boolean(true)");
         assert_eq!(eval(&lua, "return probe:GetHeight() == 13"), "Boolean(true)");
-        // …and with no anchors there is no rectangle, so the resolved readers
-        // answer nil rather than 0. See [`super::layout`].
+        // With no anchors there is no rectangle, so the resolved getters
+        // return nil rather than 0. See [`super::layout`].
         assert_eq!(eval(&lua, "return probe:GetLeft()"), "Nil");
     }
 
-    /// Every name [`METHODS`] claims is really installed, and the list is
-    /// sorted — the rule every claimed list in this directory follows, because
-    /// `vale framexml` counts the interface gap against them and a name
-    /// claimed and not installed makes the client look further along than it is.
+    /// Every name in [`METHODS`] is installed, and the list is sorted. Every
+    /// method list in this directory follows this rule, because
+    /// `vale framexml` counts the interface gap against them and a name listed
+    /// but not installed makes the count too low.
     #[test]
     fn every_method_the_list_claims_is_installed() {
         let lua = mlua::Lua::new();
