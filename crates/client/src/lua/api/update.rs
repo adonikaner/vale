@@ -1,10 +1,10 @@
-//! **`OnUpdate`** — the interface's own clock, and the last of the four script
-//! kinds that was never fired.
+//! `OnUpdate`: the handler the interface runs on every tick of its clock, and
+//! the clock itself.
 //!
-//! `OnLoad` runs at the load, `OnEvent` when the world says something, `OnClick`
-//! when the mouse arrives — and `OnUpdate` runs *every frame*, which is how the
-//! interface animates anything at all. 63 of them in the shipped directory, and
-//! the one that matters most is `UIParent`'s own eight lines:
+//! `OnLoad` runs at load, `OnEvent` when the world reports something, `OnClick`
+//! when the mouse clicks, and `OnUpdate` runs every frame, which is how the
+//! interface animates. The shipped directory has 63 of them, and the most
+//! important is `UIParent`'s eight lines:
 //!
 //! ```lua
 //! <OnUpdate>
@@ -15,70 +15,71 @@
 //! </OnUpdate>
 //! ```
 //!
-//! So **every fade in the interface is on this handler**, along with the cast
+//! Every fade in the interface runs from this handler, along with the cast
 //! bar's spark, the flashing buttons, the chat frame's fade-out and the group
-//! loot timers. Without it those are not slow — they never start.
+//! loot timers. Without it those do not run at all.
 //!
-//! ## `arg1` is the elapsed time and it is the only argument
+//! ## `arg1` is the elapsed time and the only argument
 //!
-//! 1.12's convention, the same as everywhere else in [`super::super::widgets::frames`]: the
-//! handler takes **no parameters** and reads `arg1`, which is the seconds since
-//! this frame's last update. Every body in the directory passes it straight on
-//! (`UIFrameFadeUpdate(arg1)`), so a client that fired the handler with nothing in
-//! `arg1` would run every fade at zero speed and look exactly like one that did
-//! not fire it at all.
+//! This is 1.12's convention, as everywhere else in
+//! [`super::super::widgets::frames`]: the handler takes no parameters and reads
+//! `arg1`, the seconds since this frame's last update. Every body in the
+//! directory passes it on (`UIFrameFadeUpdate(arg1)`), so firing the handler
+//! with nothing in `arg1` would run every fade at zero speed, which looks the
+//! same as not firing it.
 //!
-//! ## A list, not a walk
+//! ## A registered list, not a tree walk
 //!
-//! The obvious implementation is the draw pass's: walk the tree from the roots,
-//! skipping hidden subtrees. That is the wrong shape here and the arithmetic says
-//! so — the draw walk exists because *every visible region* draws, where
-//! **63 `<OnUpdate>` bodies over 42 files** are the whole of what this has to
-//! call. So this keeps a registry, in the same place and for the same reason
-//! [`super::super::widgets::frames`] keeps one for `RegisterEvent`, and the per-frame cost is one
-//! visibility walk per *candidate* rather than a sweep of the interface.
+//! The draw pass walks the tree from the roots, skipping hidden subtrees,
+//! because every visible region draws. Here only 63 `<OnUpdate>` bodies over 42
+//! files need calling. So this keeps a registry, in the same place and for the
+//! same reason [`super::super::widgets::frames`] keeps one for `RegisterEvent`,
+//! and the per-tick cost is one visibility check per candidate rather than a
+//! sweep of the interface.
 //!
-//! **Every one of the 63 is markup.** Measured: `SetScript("OnUpdate", …)` has
-//! zero call sites in the shipped directory — 1.12 does its fades through a
-//! `FADEFRAMES` table that `UIParent`'s single handler walks, rather than by
-//! attaching a handler per fading frame. So the list is really built at load and
-//! never changes; it is maintained through `SetScript` anyway because that is the
-//! door an *addon* comes through, and because a second door is a second chance
-//! for the two to disagree.
+//! All 63 are in markup. `SetScript("OnUpdate", …)` has no call sites in the
+//! shipped directory: 1.12 does its fades through a `FADEFRAMES` table that
+//! `UIParent`'s single handler walks, rather than by attaching a handler per
+//! fading frame. So in practice the list is built at load and does not change.
+//! It is still maintained through `SetScript`, because addons attach handlers
+//! that way, and because one path for both the loader and `SetScript` keeps the
+//! two from disagreeing.
 //!
-//! **Visible, not shown.** A handler on a frame inside a hidden panel must not
-//! run — that is the game's rule and it is load-bearing rather than an
-//! optimisation, since `FCF_OnUpdate` and its neighbours assume they are on
-//! screen. [`super::super::widgets::layout::visible`] is the walk, and it is re-checked
-//! immediately before each call, so a handler that hides a later frame is
-//! honoured in the same tick.
+//! ## Only visible frames run
 //!
-//! ## …and the clock is the interface's own, not the renderer's
+//! The test is visibility, not the frame's own shown flag. A handler on a frame
+//! inside a hidden panel must not run: that is the game's rule, and it is
+//! needed for correctness, not only speed, because `FCF_OnUpdate` and its
+//! neighbours assume they are on screen. [`super::super::widgets::layout::visible`]
+//! is the check, and it is repeated immediately before each call, so a handler
+//! that hides a later frame takes effect in the same tick.
 //!
-//! "Every frame" is the *reference's* every frame, and the reference does not
-//! run at 140. [`InterfaceClock`] paces this pass, [`super::super::widgets::model::tick_models`]
-//! and the draw walk in [`crate::ui::framexml`] at [`TICK_HZ`], and the three
-//! are on one accumulator because they are one clock: an `OnUpdate` body that
-//! moves a bar and a walk that does not re-read it would draw the bar where it
-//! was, which is a stutter rather than a saving.
+//! ## The interface clock is separate from the renderer's
 //!
-//! The arithmetic is the whole argument. At a 7 ms frame this pass, the model
-//! tick and the walk cost about 2.9 ms of it — a third of the budget spent
-//! re-running fades and re-solving anchors 140 times a second for an interface
-//! whose own animation is authored against `GetTime()`. Nothing here is
-//! sampled: every body in the directory integrates `arg1`, so a fade covers the
-//! same ground in the same wall-clock time at any rate.
+//! 1.12's "every frame" was the frame rate of the hardware it shipped for, not
+//! 140 Hz. [`InterfaceClock`] paces this pass,
+//! [`super::super::widgets::model::tick_models`] and the draw walk in
+//! [`crate::ui::framexml`] at [`TICK_HZ`]. The three share one accumulator
+//! because they are one clock: if an `OnUpdate` body moves a bar and the walk
+//! does not re-read it, the bar is drawn where it was, which is a stutter
+//! rather than a saving.
 //!
-//! **`arg1` is the accumulated delta and not the frame's**, which is the one
-//! thing this change can get wrong and the reason the accumulator is *drained*
-//! rather than decremented — see [`InterfaceClock::advance`]. Handing a body
-//! the renderer's delta while calling it every fifth frame runs every animation
-//! in the game at a fifth speed, and it looks like a slow machine rather than
-//! like a bug.
+//! At a 7 ms frame, this pass, the model tick and the walk cost about 2.9 ms,
+//! a third of the budget, spent re-running fades and re-solving anchors 140
+//! times a second for an interface whose animation is authored against
+//! `GetTime()`. Nothing here is sampled: every body in the directory integrates
+//! `arg1`, so a fade covers the same distance in the same wall-clock time at
+//! any rate.
 //!
-//! **Below the rate this costs nothing at all**: a frame longer than the
-//! interval is due on arrival, so a client at 25 fps ticks exactly as it did
-//! before, with the frame's own delta in `arg1`.
+//! `arg1` is the accumulated delta, not the frame's. For this reason the
+//! accumulator is drained rather than decremented; see
+//! [`InterfaceClock::advance`]. Passing the renderer's delta while calling a
+//! body every fifth frame runs every animation in the game at a fifth speed,
+//! which looks like a slow machine rather than a bug.
+//!
+//! Below the rate the clock changes nothing: a frame longer than the interval
+//! is due on arrival, so a client at 25 fps ticks every frame, with the
+//! frame's own delta in `arg1`.
 
 use bevy::prelude::*;
 
@@ -91,15 +92,15 @@ use crate::interface::events::EventArg;
 pub(super) const ON_UPDATE: &str = "OnUpdate";
 
 /// Where the candidates live. In the registry rather than in a global, so that
-/// interface code cannot silence every animation in the game with one assignment
-/// — the same call [`super::super::widgets::frames`] makes for its event table.
+/// interface code cannot stop every animation in the game with one assignment;
+/// [`super::super::widgets::frames`] does the same for its event table.
 const REG_UPDATE_FRAMES: &str = "vale.updateFrames";
 
-/// **Remember, or forget, a frame that carries an `OnUpdate`.**
+/// Add or remove a frame that has an `OnUpdate`.
 ///
-/// Called from the one place a script is attached — see
-/// [`super::super::widgets::frames::set_script`], which is why the loader and `SetScript` cannot
-/// disagree about what is in this list.
+/// Called from the one place a script is attached,
+/// [`super::super::widgets::frames::set_script`], so the loader and `SetScript`
+/// cannot disagree about what is in this list.
 pub(in crate::lua) fn track(
     lua: &mlua::Lua,
     frame: &mlua::Table,
@@ -112,8 +113,8 @@ pub(in crate::lua) fn track(
     let list = candidates(lua)?;
     let present = position(&list, frame)?;
     match (handler, present) {
-        // A frame may be given an `OnUpdate` twice — an instance overriding a
-        // template's `<Scripts>` furnishes the same object twice — and a list
+        // A frame may be given an `OnUpdate` twice (an instance overriding a
+        // template's `<Scripts>` sets it on the same object twice), and a list
         // that grew each time would run the body once per attachment.
         (mlua::Value::Function(_), None) => list.push(frame.clone()),
         // `SetScript("OnUpdate", nil)` is how an animation is stopped. Nothing in
@@ -145,43 +146,44 @@ fn position(list: &mlua::Table, frame: &mlua::Table) -> mlua::Result<Option<usiz
     Ok(None)
 }
 
-/// How many frames are carrying an `OnUpdate` — the HUD's number, and the one
+/// How many frames have an `OnUpdate`: the number the HUD shows, and the one
 /// that says whether this pass has anything to do.
 pub(in crate::lua) fn tracked(lua: &mlua::Lua) -> usize {
     candidates(lua).map_or(0, |list| list.raw_len())
 }
 
-/// **Run every visible frame's `OnUpdate`**, oldest attachment first.
+/// Run every visible frame's `OnUpdate`, oldest attachment first.
 ///
-/// Errors come back rather than propagating, exactly as [`super::super::widgets::frames::fire`]'s
-/// do: one frame's broken body must not stop the rest of the interface animating,
-/// and at sixty calls a second the reporting has to be deduplicated by the caller.
+/// Errors are returned rather than propagated, as
+/// [`super::super::widgets::frames::fire`]'s are: one frame's broken body must
+/// not stop the rest of the interface animating, and because this runs on
+/// every tick the caller has to deduplicate the reports.
 pub(in crate::lua) fn fire(lua: &mlua::Lua, elapsed: f64) -> mlua::Result<Vec<String>> {
-    // **The scroll frames' range announcements ride this tick** — the stand-in
-    // for the reference's layout engine noticing a child resize; see
-    // [`super::super::widgets::scrollframe::sweep`]. Before the `OnUpdate` early-out, because a
-    // scroll frame with a range to announce needs no `OnUpdate` anywhere.
+    // The scroll frames' range announcements run on this tick, so that a
+    // scroll frame reports a new range after a child resizes, as in the 1.12.1
+    // client; see [`super::super::widgets::scrollframe::sweep`]. Before the
+    // `OnUpdate` early-out, because a scroll frame with a range to announce
+    // needs no `OnUpdate` anywhere.
     //
     // The spans are Tracy's (any `bevy/trace*` build) and cost a name lookup
-    // otherwise: this tick is the interface's largest per-frame cost, and
-    // which of its three parts is the fat one is a measurement, not a guess.
+    // otherwise: this tick is the interface's largest per-frame cost, and the
+    // spans measure which of its parts costs most.
     {
         let _span = bevy::log::info_span!("scrollframe_sweep").entered();
         super::super::widgets::scrollframe::sweep(lua);
     }
-    // …and the scroll *bars'* knobs, which are placed from a value rather than
-    // by anchors — see [`super::super::widgets::slider`], and note that this rides the same
-    // early-out for the same reason: a slider with a knob to move needs no
-    // `OnUpdate` anywhere.
+    // The scroll bars' knobs, which are placed from a value rather than by
+    // anchors; see [`super::super::widgets::slider`]. Also before the early-out,
+    // for the same reason: a slider with a knob to move needs no `OnUpdate`
+    // anywhere.
     {
         let _span = bevy::log::info_span!("slider_sweep").entered();
         super::super::widgets::slider::sweep(lua);
     }
-    // …and the tooltip's own fade, which is the third of these and the closest
-    // to what this tick is *for*: `UIParent`'s own handler walks `FADEFRAMES`
-    // from right here, so a plate dissolving on any other clock would dissolve
-    // at a different speed from the chat frame beside it. Same early-out for
-    // the same reason — a fading tooltip needs no `OnUpdate` anywhere.
+    // The tooltip's fade. `UIParent`'s handler walks `FADEFRAMES` on this same
+    // tick, so a tooltip fading on any other clock would fade at a different
+    // speed from the chat frame beside it. Also before the early-out: a fading
+    // tooltip needs no `OnUpdate` anywhere.
     {
         let _span = bevy::log::info_span!("tooltip_fade").entered();
         super::super::widgets::tooltip::fade_sweep(lua, elapsed);
@@ -191,10 +193,9 @@ pub(in crate::lua) fn fire(lua: &mlua::Lua, elapsed: f64) -> mlua::Result<Vec<St
     if list.raw_len() == 0 {
         return Ok(Vec::new());
     }
-    // **A snapshot**, because a body may attach or detach an `OnUpdate` while
-    // this is walking. The same reasoning and the same choice as the event
-    // dispatch's — see [`super::super::widgets::frames::fire`], where both halves are written
-    // out.
+    // A snapshot, because a body may attach or detach an `OnUpdate` while
+    // this loop runs. The event dispatch makes the same choice for the same
+    // reason; see [`super::super::widgets::frames::fire`], where it is explained.
     let frames: Vec<mlua::Table> = list
         .sequence_values::<mlua::Table>()
         .collect::<mlua::Result<_>>()?;
@@ -203,22 +204,23 @@ pub(in crate::lua) fn fire(lua: &mlua::Lua, elapsed: f64) -> mlua::Result<Vec<St
     let timing = timing_wanted();
     let mut spent: Vec<(f64, String, bool)> = Vec::new();
     for frame in frames {
-        // **Visibility first, and the order is the whole cost of this walk.**
+        // Visibility is tested first, because the order sets the cost of this
+        // loop.
         //
-        // Both tests are re-read rather than trusted from the snapshot — a body
+        // Both tests are re-read rather than taken from the snapshot (a body
         // that hides a panel takes its children out of this tick, and one that
-        // clears its own script must not still be called — so which comes first
-        // changes nothing about *which* handlers run. It changes what the
-        // rejected ones cost, and nearly all of them are rejected: the shipped
-        // directory registers **745 `OnUpdate` bodies** and about 38 of them are
-        // on screen at once, the rest being inside panels nobody has opened.
+        // clears its own script must not still be called), so the order does
+        // not change which handlers run. It changes what the rejected ones
+        // cost, and nearly all are rejected: the shipped directory registers
+        // 745 `OnUpdate` bodies and about 38 of them are on screen at once, the
+        // rest being inside panels that are not open.
         //
         // The script lookup is two table reads and the second walks a metatable
-        // (a template's scripts are inherited); `visible` is a short climb that
+        // (a template's scripts are inherited); `visible` climbs the parents and
         // stops at the first hidden ancestor, which for a frame in a closed
         // panel is one step. Measured over 750 ticks with `--audit --spin`:
-        // **0.43 ms a tick on the lookup against 0.14 on the visibility**, for
-        // 0.22 ms of handler. Testing the cheap one first is 0.4 ms a tick.
+        // 0.43 ms a tick on the lookup against 0.14 on the visibility, for
+        // 0.22 ms of handler. Testing the cheaper one first saves 0.4 ms a tick.
         if !super::super::widgets::layout::visible(&frame) {
             continue;
         }
@@ -251,37 +253,33 @@ pub(in crate::lua) fn fire(lua: &mlua::Lua, elapsed: f64) -> mlua::Result<Vec<St
     Ok(errors)
 }
 
-/// **`VALE_TIME_ONUPDATE=1` — which handler is the tick.**
+/// `VALE_TIME_ONUPDATE=1`: time each `OnUpdate` handler and print the slowest.
 ///
-/// This walk is the interface's largest per-frame cost, and when it goes wrong
-/// it goes wrong by two orders of magnitude: the addon round measured a tick of
-/// **464 ms against a budget of 33**, and every phase number this client keeps
-/// said only that it was `OnUpdate`. Which of a thousand handlers was a
-/// different question, and nothing could answer it.
-///
-/// One run answers it now, and the answer is a name and a millisecond:
+/// This loop is the interface's largest per-frame cost, and when it goes wrong
+/// it can be off by two orders of magnitude: with addons loaded, one tick was
+/// measured at 464 ms against a budget of 33, and the per-phase timings could
+/// only say that the time was in `OnUpdate`, not which of about a thousand
+/// handlers. With this set, each tick prints the handler names and times:
 ///
 /// ```text
 /// ONUPDATE 398.40 ms over 47 handlers, 6 raised — worst:
 ///   pfGroup2 84.46!, pfPartyPet1 84.24!, pfPlayer 79.05!, pfPet 66.36!, UIParent 0.05, …
 /// ```
 ///
-/// **The `!` is the whole of that report.** Every expensive handler there was
-/// one that *raised*, which said in one line that the cost was not the work but
-/// the failure — and the failure was a captured C function, which is
-/// [`crate::lua::scoped`]. A slow handler and a failing handler look identical
-/// in a phase total.
+/// `!` marks a handler that raised an error. In that report every expensive
+/// handler had raised, which showed that the cost was the failure and not the
+/// work; the failure was a captured C function (see [`crate::lua::scoped`]). A
+/// slow handler and a failing handler look identical in a phase total.
 ///
-/// Read once: a `std::env::var` per interface tick is a lookup nobody asked
-/// for, and this is off in every run that has not asked for it.
+/// The variable is read once, so runs that do not set it pay no
+/// `std::env::var` lookup per interface tick.
 fn timing_wanted() -> bool {
     static WANTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *WANTED.get_or_init(|| std::env::var("VALE_TIME_ONUPDATE").is_ok())
 }
 
-/// …and what it prints: the total, how many raised, and the dozen slowest by
-/// name. Sorted here rather than by the reader, because the point of it is the
-/// first line.
+/// Print the timing report: the total, how many raised, and the twelve slowest
+/// by name. Sorted here, so the slowest handlers are first on the line.
 fn report_timing(spent: &mut [(f64, String, bool)]) {
     if spent.is_empty() {
         return;
@@ -306,58 +304,60 @@ fn first_line(e: &mlua::Error) -> String {
     e.to_string().lines().next().unwrap_or_default().to_string()
 }
 
-/// **How often the interface animates**, in ticks a second.
+/// How often the interface animates, in ticks a second.
 ///
-/// 30, which is what 1.12 ran its own `OnUpdate` bodies at on the hardware it
-/// shipped for — and, more to the point, what every fade, spark and flash in
-/// `Interface\FrameXML\` was authored to look right at. It is deliberately not
-/// the frame rate: see the module comment, where the arithmetic is.
+/// 30: the rate 1.12 ran its `OnUpdate` bodies at on the hardware it shipped
+/// for, and the rate every fade, spark and flash in `Interface\FrameXML\` was
+/// authored for. It is not the frame rate; the module comment gives the costs.
 pub const TICK_HZ: f64 = 30.0;
 
-/// …and the interval that is.
+/// The interval between ticks, in seconds.
 ///
 /// `pub(crate)` rather than private, because the headless spin
-/// (`--audit --spin`) paces itself with it: an instrument measuring a rate this
-/// file no longer runs at is an instrument reporting a number nobody pays.
+/// (`--audit --spin`) paces itself with it, so that it measures the rate the
+/// interface actually runs at.
 pub(crate) const TICK_INTERVAL: f64 = 1.0 / TICK_HZ;
 
-/// **The interface's own clock**, which is not the renderer's.
+/// The interface's clock, separate from the renderer's.
 ///
 /// One accumulator, read by the three passes that make up a frame of interface:
-/// this module's [`tick`], [`super::super::widgets::model::tick_models`] and the draw walk in
-/// [`crate::ui::framexml::paint`]. They share it rather than each keeping their
-/// own, because a tick whose result nothing re-reads is a tick that did not
-/// happen — and because two accumulators are two answers to "is this frame a
-/// tick", which is exactly the shape of disagreement this project keeps paying
-/// for.
+/// this module's [`tick`], [`super::super::widgets::model::tick_models`] and the
+/// draw walk in [`crate::ui::framexml::paint`]. They share it rather than each
+/// keeping their own, because a tick whose result nothing re-reads has no
+/// effect, and because two accumulators could give two different answers to
+/// "is this frame a tick".
 #[derive(Resource, Default)]
 pub struct InterfaceClock {
     /// Seconds since the last tick, not yet spent.
     owed: f64,
-    /// …and what the last tick was paid, which is what a body reads as `arg1`.
+    /// The seconds the last tick covered, which a body reads as `arg1`.
     elapsed: f64,
-    /// Whether *this* rendered frame is a tick. Written once, read by three
-    /// passes across two schedules — the paint is in `PostUpdate`, so it must
-    /// still be standing when that runs.
+    /// Whether this rendered frame is a tick. Written once, read by three
+    /// passes across two schedules; the paint is in `PostUpdate`, so the value
+    /// must still hold when that runs.
     due: bool,
+    /// Whether the previous rendered frame was a tick. The paint walk runs on
+    /// this frame rather than on the tick frame; see [`Self::walk_due`].
+    walk: bool,
 }
 
 impl InterfaceClock {
-    /// **Take one rendered frame's delta**, and answer whether this frame is a
+    /// Add one rendered frame's delta, and return whether this frame is a
     /// tick.
     ///
-    /// **Drained rather than decremented**, which is the difference between an
-    /// `arg1` that is exact and one that drifts: `elapsed` is the real wall
-    /// time since the last tick, whatever the frame rate did in between, so a
-    /// fade integrating it covers the same ground it always did. Subtracting
-    /// the interval instead would hand a body a fixed 33 ms while the ticks
-    /// themselves land on frame boundaries, and every animation in the game
-    /// would run slow by whatever the remainder was.
+    /// The accumulator is drained rather than decremented, so `arg1` is exact
+    /// and does not drift: `elapsed` is the real wall time since the last
+    /// tick, whatever the frame rate did in between, so a fade integrating it
+    /// covers the same distance at any rate. Subtracting the interval instead
+    /// would pass a fixed 33 ms while the ticks land on frame boundaries, and
+    /// every animation in the game would run slow by the remainder.
     ///
-    /// The cost of draining is that the *rate* is the frame rate rounded down
-    /// to a divisor — 28 Hz at 140 fps, 30 at 60 — which is a difference no
-    /// animation can see, since none of them is sampled.
+    /// The cost of draining is that the tick rate is the frame rate divided by
+    /// the smallest whole number that brings it to [`TICK_HZ`] or below: 28 Hz
+    /// at 140 fps, 30 at 60. No animation shows the difference, since none of
+    /// them is sampled.
     pub(crate) fn advance(&mut self, delta: f64) -> bool {
+        self.walk = self.due;
         self.owed += delta.max(0.0);
         self.due = self.owed >= TICK_INTERVAL;
         if self.due {
@@ -372,14 +372,27 @@ impl InterfaceClock {
         self.due
     }
 
-    /// The seconds the current tick is paid — `arg1`, and the same number the
-    /// model tick scrubs by.
+    /// Whether the paint walk runs this frame: the frame after a tick.
+    ///
+    /// A tick frame runs the `OnUpdate` handlers and the `<Model>` tick; the
+    /// walk that reads their results runs on the next frame. Together the three
+    /// cost 3–5 ms at 3440x1440, enough to push a tick frame past the 6.25 ms
+    /// of a 160 Hz refresh; split, each frame carries about half. The walk is
+    /// one frame later than the tick, on top of the up-to-one-tick latency it
+    /// already has. When every frame is a tick (30 fps or less), every frame
+    /// walks too.
+    pub fn walk_due(&self) -> bool {
+        self.walk
+    }
+
+    /// The seconds the current tick covers: `arg1`, and the amount the model
+    /// tick advances animations by.
     pub fn elapsed(&self) -> f64 {
         self.elapsed
     }
 }
 
-/// Wind the clock on, once a frame, before anything reads it.
+/// Advance the clock, once a frame, before anything reads it.
 fn advance(time: Res<Time>, mut clock: ResMut<InterfaceClock>) {
     clock.advance(time.delta_secs_f64());
 }
@@ -388,53 +401,63 @@ pub struct UpdatePlugin;
 
 impl Plugin for UpdatePlugin {
     fn build(&self, app: &mut App) {
-        // **After the event dispatch**, so that a frame told about the world this
-        // frame animates from the state that news left it in rather than from the
-        // state before it. Both are after the whole of `GameSet`; see
-        // [`super::events`], where the ordering argument is.
+        // After the event dispatch, so that a frame that received a world
+        // event this frame animates from the state the event left it in, not
+        // from the state before. Both run after all of `GameSet`; see
+        // [`super::events`] for the ordering.
         //
-        // …and the clock before both, stated rather than inherited: `advance`
-        // and `tick` share the resource mutably and immutably, which Bevy would
-        // sequence either way, and a clock wound *after* the pass that reads it
-        // would leave the interface one frame stale for ever with nothing
-        // failing.
+        // The clock advances before `tick`, stated explicitly: `advance` and
+        // `tick` use the resource mutably and immutably, which Bevy would
+        // order one way or the other, and a clock advanced after the pass that
+        // reads it would leave the interface one frame behind permanently with
+        // nothing failing.
         app.init_resource::<InterfaceClock>().add_systems(
             Update,
-            (advance, tick.after(super::events::dispatch))
+            (
+                advance,
+                // The clock's test as a run condition: on a frame the clock is
+                // not due, the system does not run, so its parameters,
+                // including `LuaWorld`, are not fetched.
+                tick.after(super::events::dispatch)
+                    .run_if(|clock: Res<InterfaceClock>| clock.due()),
+            )
                 .chain(),
         );
     }
 }
 
-/// One tick of the interface's clock.
+/// One tick of the interface's clock. The plugin runs it only on frames where
+/// [`InterfaceClock::due`] holds.
 ///
-/// `pub(super)` so [`super::super::widgets::model`] can order its own tick after this one:
-/// a `<Model>`'s clock is part of the same frame's animation.
+/// Visible within `crate::lua` so [`super::super::widgets::model`] can order
+/// its own tick after this one: a `<Model>`'s clock is part of the same frame's
+/// animation.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lua) fn tick(
     host: Option<NonSendMut<LuaHost>>,
     world: LuaWorld,
     clock: Res<InterfaceClock>,
-    // **The `<Model>` frames' own clock rides this one**, in the same scope —
-    // see [`LuaHost::fire_tick`]. Read-only here; the loading half stays in
-    // [`super::super::widgets::model`], which owns the archive read and wants
+    // The `<Model>` frames' clock advances with this one, in the same scope;
+    // see [`LuaHost::fire_tick`]. Read-only here; loading stays in
+    // [`super::super::widgets::model`], which owns the archive read and needs
     // the resource mutably.
     models: Res<super::super::widgets::model::UiModels>,
     mut pressed: MessageWriter<BindingPressed>,
 ) {
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::Interface);
     let Some(mut host) = host else { return };
-    // **Not gated on `has_updates` any more.** A frame with no `OnUpdate`
-    // anywhere may still have a `<Model>` playing a sequence, and the three
-    // sweeps `fire` runs before the handler walk have their own early-outs.
+    // Not gated on `has_updates`: an interface with no `OnUpdate` anywhere may
+    // still have a `<Model>` playing a sequence, and the three sweeps `fire`
+    // runs before the handler loop have their own early-outs. The `due` check
+    // repeats the run condition for schedules that add `tick` without it.
     if !clock.due() {
         return;
     }
     let live = world.live();
-    // **The time since the last tick**, which is what `arg1` means — not the
-    // rendered frame's delta, and not the interval either. See
-    // [`InterfaceClock::advance`], which is where the two are the same number
-    // and where they are not.
+    // The time since the last tick, which is what `arg1` means: not the
+    // rendered frame's delta, and not the interval. See
+    // [`InterfaceClock::advance`] for when those are the same number and when
+    // they are not.
     for binding in host.fire_tick(clock.elapsed(), &live, &models) {
         pressed.write(BindingPressed(binding));
     }
@@ -449,9 +472,8 @@ mod tests {
         LuaHost::new().expect("the interpreter starts")
     }
 
-    /// **`UIParent`'s own handler, run for real**, with `arg1` carrying the
-    /// elapsed time — which is the argument every body in the directory passes
-    /// straight on.
+    /// A handler shaped like `UIParent`'s runs with `arg1` carrying the elapsed
+    /// time, the argument every body in the directory passes on.
     #[test]
     fn a_frames_on_update_runs_every_tick_with_the_elapsed_time_in_arg1() {
         let mut host = host();
@@ -491,8 +513,8 @@ mod tests {
         assert!(host.missing().is_empty(), "{:?}", host.missing());
     }
 
-    /// **A hidden frame does not tick, and neither does one inside a hidden
-    /// panel** — the game's own rule, and the reason the check is `IsVisible`
+    /// A hidden frame does not tick, and neither does one inside a hidden
+    /// panel. This is the game's rule, and the reason the check is `IsVisible`
     /// rather than `IsShown`.
     #[test]
     fn only_a_visible_frame_ticks() {
@@ -514,7 +536,7 @@ mod tests {
         host.fire_updates(0.016, &world);
         assert_eq!(ticks(&host, &world), 1);
 
-        // The *parent* is hidden and the child's own flag is untouched.
+        // The parent is hidden and the child's own flag is unchanged.
         host.script("Panel:Hide();", &world).expect("hides");
         host.fire_updates(0.016, &world);
         assert_eq!(ticks(&host, &world), 1, "a hidden panel takes its contents with it");
@@ -528,12 +550,11 @@ mod tests {
         assert_eq!(ticks(&host, &world), 2);
     }
 
-    /// **Clearing the script stops the ticking, and setting it twice does not
-    /// double it.** Nothing in the shipped directory clears one — see the module
-    /// comment — but an addon that animates anything ends with
+    /// Clearing the script stops the ticking, and setting it twice does not
+    /// double it. Nothing in the shipped directory clears one (see the module
+    /// comment), but an addon that animates anything ends with
     /// `SetScript("OnUpdate", nil)`, and a list that never shrank would keep
-    /// running finished animations for the rest of the session at sixty calls a
-    /// second each.
+    /// running finished animations on every tick for the rest of the session.
     #[test]
     fn the_candidate_list_grows_and_shrinks_with_the_script() {
         let mut host = host();
@@ -561,8 +582,8 @@ mod tests {
         assert_eq!(ticks(&host, &world), 1);
     }
 
-    /// **One broken body does not stop the ones behind it**, and the failure is
-    /// recorded once rather than sixty times a second.
+    /// One broken body does not stop the ones after it, and the failure is
+    /// recorded once rather than on every tick.
     #[test]
     fn a_raising_body_is_reported_once_and_the_next_frame_still_ticks() {
         let mut host = host();
@@ -587,35 +608,35 @@ mod tests {
         assert_eq!(host.missing().len(), 1, "{:?}", host.missing());
     }
 
-    /// **The system schedules with the world it borrows.** Bevy validates a
-    /// system's parameters at init rather than at compile time, so a conflicting
-    /// one is a panic on the first frame after login — which costs a run of the
-    /// client to find and a millisecond to check. The same trap
+    /// The system can be scheduled with the world it borrows. Bevy validates a
+    /// system's parameters at init rather than at compile time, so a
+    /// conflicting one panics on the first frame after login, which takes a run
+    /// of the client to find and a millisecond to check here.
     /// `host::tests::the_loader_can_be_scheduled_with_the_world_it_now_borrows`
-    /// exists for.
+    /// checks the same for the loader.
     #[test]
     fn the_tick_can_be_scheduled_with_the_world_it_borrows() {
         let mut app = App::new();
         crate::lua::api::LuaWorld::init(&mut app);
         app.insert_non_send(host())
             .init_resource::<InterfaceClock>()
-            // …and the `<Model>` frames' own store, which the tick now reads in
-            // the same scope — see [`crate::lua::host::LuaHost::fire_tick`].
+            // The `<Model>` frames' store, which the tick reads in the same
+            // scope; see [`crate::lua::host::LuaHost::fire_tick`].
             .init_resource::<crate::lua::widgets::model::UiModels>()
             .add_message::<BindingPressed>()
             .add_systems(Update, (advance, tick).chain());
         app.update();
     }
 
-    /// **The rate is a rate, and `arg1` is the wall clock rather than the
-    /// interval.**
+    /// The clock ticks at [`TICK_HZ`], not every frame, and `arg1` is the wall
+    /// time elapsed rather than the interval.
     ///
-    /// Both halves are asserted because both are silently wrong in the same
-    /// way: a tick that fires every frame saves nothing and a tick paid the
-    /// interval instead of the elapsed time runs every fade in the game slow —
-    /// and neither fails, logs or moves a count. Ten 7 ms frames is 70 ms,
-    /// which is two ticks' worth, and the two ticks between them must add up to
-    /// the 70 rather than to 66.
+    /// Both are asserted because either can be wrong without any visible
+    /// failure: a tick that fires every frame saves nothing, and a tick given
+    /// the interval instead of the elapsed time runs every fade in the game
+    /// slow, and neither fails, logs or changes a count. Ten 7 ms frames are
+    /// 70 ms, two ticks' worth, and the two ticks together plus what is still
+    /// owed must add up to 70 ms rather than 66.
     #[test]
     fn the_clock_ticks_at_the_interface_rate_and_pays_the_whole_elapsed_time() {
         let mut clock = InterfaceClock::default();
@@ -627,8 +648,9 @@ mod tests {
             }
         }
         assert_eq!(ticks, 2, "70 ms at 30 Hz is two ticks");
-        // Every millisecond the renderer spent is in some tick's `arg1` bar
-        // what is still owed — which is what stops an animation drifting slow.
+        // Every millisecond the renderer spent is in some tick's `arg1`, except
+        // what is still owed; this is what keeps an animation from drifting
+        // slow.
         assert!(
             (paid - (0.07 - clock.owed)).abs() < 1e-9,
             "paid {paid}, owed {}",
@@ -636,9 +658,31 @@ mod tests {
         );
     }
 
-    /// **A slow frame is due on arrival**, which is what makes this change cost
+    /// The paint walk is due on the frame after each tick and on no other frame
+    /// at a high frame rate, and on every frame when every frame is a tick.
+    #[test]
+    fn the_walk_is_due_on_the_frame_after_a_tick() {
+        let mut clock = InterfaceClock::default();
+        let (mut ticks, mut walks, mut last_due) = (0, 0, false);
+        for _ in 0..100 {
+            let due = clock.advance(0.007);
+            assert_eq!(clock.walk_due(), last_due, "the walk follows the tick by one frame");
+            assert!(!(due && clock.walk_due()), "no frame both ticks and walks at 140 fps");
+            ticks += usize::from(due);
+            walks += usize::from(clock.walk_due());
+            last_due = due;
+        }
+        assert_eq!(walks, ticks - usize::from(last_due), "one walk per tick");
+
+        let mut slow = InterfaceClock::default();
+        slow.advance(0.04);
+        slow.advance(0.04);
+        assert!(slow.due() && slow.walk_due(), "at 25 fps every frame ticks and walks");
+    }
+
+    /// A frame longer than the interval is due on arrival, so the clock changes
     /// nothing below the rate: a client at 25 fps ticks every frame with the
-    /// frame's own delta, exactly as it did before there was a clock at all.
+    /// frame's own delta, as it would with no clock.
     #[test]
     fn a_frame_longer_than_the_interval_ticks_immediately() {
         let mut clock = InterfaceClock::default();

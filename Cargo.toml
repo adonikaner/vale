@@ -14,6 +14,10 @@ members = [
 # `cargo run` / `cargo build` from the repo root act on the CLI, so the common
 # case stays a bare `cargo run` rather than `cargo run -p vale-cli`.
 default-members = ["crates/cli"]
+# Patched third-party crates, used through `[patch.crates-io]` at the end of
+# this file. Excluded so that `cargo test --workspace` does not build their
+# tests as this workspace's own.
+exclude = ["vendor"]
 
 # Shared metadata and dependency versions. Member crates refer to these with
 # `x.workspace = true` so a version bump happens in exactly one place.
@@ -46,80 +50,74 @@ rand = "0.8"
 flate2 = "1"
 
 # --- assets ---
-# MPQ container handling (encryption, hash/block tables, PKWARE implode) is a
-# solved, tedious problem, so we lean on a crate for it. The WoW-specific file
-# formats layered on top (WDT/ADT/DBC) are hand-written in `crates/assets` —
-# that is the part worth understanding and owning.
+# MPQ container handling (encryption, hash/block tables, PKWARE implode) comes
+# from a crate. The WoW-specific formats layered on top (WDT/ADT/DBC) are
+# written in `crates/assets`.
 wow-mpq = "0.7"
-# The game ships its four typefaces as plain TrueType and the interface is laid
-# out in them, so `crates/assets` measures a word the same way the painter draws
-# one. Already in the tree under the renderer; parsing `hmtx` by hand would be
-# the `wow-mpq` argument in reverse.
+# The game ships its four typefaces as plain TrueType and lays the interface out
+# in them, so `crates/assets` measures a word with the same font data the
+# painter draws with. The crate is already in the dependency tree under the
+# renderer, so parsing `hmtx` by hand would duplicate it.
 ttf-parser = "0.25"
-# **The rasteriser behind the world-space labels**, and it is already in the
-# tree: `epaint` — which the interface painter is — depends on the same 0.2, so
-# this is a name in a manifest rather than a build. `ttf-parser` above measures
-# outlines and cannot fill them; a name drawn *in* the world needs an actual
-# texture, once per name, and hand-rolling a scanline fill over quadratic and
-# cubic beziers is the kind of thing that looks right until a glyph with a
-# self-intersecting contour arrives. See `client::render::labels`.
+# The rasteriser behind the world-space labels. `epaint` depends on the same
+# 0.2, so this adds no new build. `ttf-parser` above measures outlines but
+# cannot fill them; a name drawn in the world needs a texture per name, and a
+# hand-written scanline fill over quadratic and cubic curves would have to
+# handle self-intersecting contours. See `client::render::labels`.
 ab_glyph = "0.2"
 
 # --- client (Bevy renderer) ---
-# The renderer runs in-process with the asset and protocol crates, which is the
-# whole point of it: the pose maths, the vertex arrays and the world snapshot
-# stop crossing an IPC boundary. See crates/client/src/lib.rs.
+# The renderer runs in-process with the asset and protocol crates, so the pose
+# maths, the vertex arrays and the world snapshot do not cross an IPC boundary.
+# See crates/client/src/lib.rs.
 # `wav` and `mp3` on top of the defaults, because those are the two formats the
-# 1.12 archives hold — `vale sound` measured 8,668 WAVs (every readable one
+# 1.12 archives hold: `vale sound` measured 8,668 WAVs (every readable one
 # plain PCM) and 291 MP3s (the music).
 bevy = { version = "0.19", features = ["wav", "mp3"] }
 # The same decoder Bevy plays through, decode-only (no `playback`, so the CLI
-# builds no audio backend). It exists here because **`bevy_audio` unwraps its
-# decoder**: a file rodio cannot eat panics the whole app from inside
-# `play_queued_audio_system`, so the mixer probes every file before Bevy sees
-# it and `vale sound` probes all 8,961 — a 20-year-old archive is exactly
-# where a malformed MP3 lives. Version-pinned to bevy_audio's own, so the
-# probe's verdict and the player's cannot drift apart.
+# builds no audio backend). `bevy_audio` unwraps its decoder: a file rodio
+# cannot decode panics the whole app from inside `play_queued_audio_system`.
+# So the mixer probes every file before Bevy sees it, and `vale sound` probes
+# all 8,961 in the archives. Pinned to bevy_audio's own version, so the probe
+# and the player decode the same way.
 rodio = { version = "0.22.2", default-features = false, features = ["wav", "mp3"] }
-# **The world database**, for `crates/mangos`: a spell edit becomes a row in
-# vmangos' `spell_template`, and applying it is the last link between editing
-# and playing what you edited. Pure Rust — no MySQL client library on the
-# machine — and default features minus the TLS stack and the compression, which
-# a connection to a dev server on this same machine wants nothing to do with.
-# It is not behind a Cargo feature on purpose: a second build configuration is a
-# second thing to keep working, and whether there is a database to talk to is a
-# question answered at run time, not at compile time.
+# The world database, for `crates/mangos`: a spell edit becomes a row in
+# vmangos' `spell_template`. Pure Rust, so no MySQL client library is needed
+# on the machine, with the default features minus the TLS stack and the
+# compression, which a connection to a local dev server does not use. It is
+# not behind a Cargo feature: a second build configuration would be a second
+# thing to keep working, and whether a database is reachable is decided at run
+# time.
 mysql = { version = "26", default-features = false, features = ["minimal"] }
 # 0.41 is the release that targets Bevy 0.19; the two are versioned in lockstep,
 # so bumping one means bumping the other.
 # `default-features = false`: the defaults pull `bevy_ui` and `picking`, and
-# through them `bevy_ui_render`, `bevy_ui_widgets` and `bevy_text` — five
-# plugin families this client never uses (its interface is FrameXML painted
-# through egui, and its picking is `game::combat::target`'s own). The 2026-08
-# system census counted ~75 of the frame's ~757 system runs riding on them.
-# What is kept is exactly what the client touches: the renderer, the clipboard
-# (the chat line pastes), `open_url` and egui's own fonts.
+# through them `bevy_ui_render`, `bevy_ui_widgets` and `bevy_text`, five plugin
+# families this client does not use (its interface is FrameXML drawn by its own
+# mesh painter, with egui kept for the debug window, and its picking is
+# `game::combat::target`'s own). The 2026-08 system census counted ~75 of the
+# frame's ~757 system runs in them. What is kept is what the client uses: the
+# renderer, the clipboard (the chat line pastes), `open_url` and egui's own
+# fonts.
 bevy_egui = { version = "0.41", default-features = false, features = [
     "manage_clipboard",
     "open_url",
     "default_fonts",
     "render",
 ] }
-# The window system's clipboard, for the one widget that has ever wanted it —
-# `Interface\FrameXML\`'s edit boxes. Already in the tree (egui-winit pulls the
-# same 3.x for its own text fields), so this is a name in a manifest rather than
-# a build, and the alternative is `OpenClipboard`/`GlobalLock` by hand on three
-# platforms. See `crates/client/src/lua/keyboard.rs`, which is the only caller.
+# The window system's clipboard, for `Interface\FrameXML\`'s edit boxes.
+# egui-winit already pulls the same 3.x for its own text fields, so this adds
+# no new build; the alternative is `OpenClipboard`/`GlobalLock` by hand on three
+# platforms. See `crates/client/src/lua/keyboard.rs`, the only caller.
 arboard = "3"
-# **Lua 5.1, which is the version 1.12 embeds** — not 5.2, not LuaJIT. That is
-# not a preference: FrameXML and every 1.12 addon are written against 5.1's
-# semantics (`setfenv`, `arg`, `table.getn`, integer-less numbers), and a 5.2+
-# host runs most of them and silently breaks the rest.
+# Lua 5.1, the version 1.12 embeds, not 5.2 and not LuaJIT. FrameXML and every
+# 1.12 addon are written against 5.1's semantics (`setfenv`, `arg`,
+# `table.getn`, numbers without an integer type), and a 5.2+ host runs most of
+# them and silently breaks the rest.
 #
-# `vendored` builds the interpreter from source with `cc` rather than looking
-# for a system Lua, which is what makes this a normal `cargo build` on a machine
-# that has never heard of Lua. The whole thing is ~20k lines of C and adds a few
-# seconds to a cold build.
+# `vendored` builds the interpreter from source with `cc` instead of looking
+# for a system Lua, so a machine with no Lua installed builds it with a normal
+# `cargo build`. It is ~20k lines of C and adds a few seconds to a cold build.
 mlua = { version = "0.11", features = ["lua51", "vendored"] }
 
 # --- shared ---
@@ -129,73 +127,78 @@ thiserror = "2"
 opt-level = 3
 
 # Bevy pulls in ~500 crates, and a debug build with full DWARF over that many
-# produces a `target/debug` in the tens of gigabytes — enough to fill a disk and
-# fail the build with `no space on device`, which reads as a compiler bug rather
-# than a housekeeping one. Line tables keep panic backtraces and profiler symbols
-# (the two things this project actually reads) while dropping the variable and
-# type debug info that is nearly all of the bulk.
+# produces a `target/debug` in the tens of gigabytes, enough to fill a disk and
+# fail the build with `no space on device`. Line tables keep panic backtraces
+# and profiler symbols, the two things this project reads, and drop the
+# variable and type debug info that is nearly all of the size.
 #
-# Raise this to `true` if you need to step through Bevy internals in a debugger.
+# Raise this to `true` to step through Bevy internals in a debugger.
 [profile.dev]
 debug = "line-tables-only"
 
-# Terrain parsing in a debug build is unpleasantly slow (thousands of chunks per
-# tile), so optimise dependencies even when the workspace itself is unoptimised.
+# Dependencies are optimised even in a debug build: terrain parsing (thousands
+# of chunks per tile) is too slow otherwise.
 #
-# **And they run without debug assertions or overflow checks, which `opt-level`
-# alone does not turn off.** The dev profile sets both to `true` for everything
-# it builds, so ~500 dependency crates — Bevy, wgpu, naga, glam — were carrying
-# a bounds/overflow check on every arithmetic operation and every `debug_assert!`
-# Bevy ships, in the code that runs sixty times a second. That is not the same
-# knob as `opt-level`: `opt-level = 2` was already set here and these were still
-# on underneath it.
+# They also run without debug assertions or overflow checks, which `opt-level`
+# does not turn off. The dev profile enables both for everything it builds, so
+# with only `opt-level = 2` the ~500 dependency crates (Bevy, wgpu, naga, glam)
+# still checked every arithmetic operation for overflow and ran every
+# `debug_assert!` Bevy ships, in code that runs every frame.
 #
-# This is a *dependency* override and deliberately not a workspace-wide one.
-# Bevy's debug assertions check Bevy's own invariants against Bevy's own calls,
-# and nothing in this repo has ever been debugged by one firing; `vale-assets`
-# and `vale-protocol` keep theirs, because those are the crates whose
-# arithmetic this project actually writes and whose overflow would be a real bug
-# rather than a library's internal accounting.
+# This override is for dependencies only. Bevy's debug assertions check Bevy's
+# own invariants, and none has fired against this repository's use of Bevy;
+# `vale-assets` and `vale-protocol` keep theirs, because their arithmetic is
+# this project's own and an overflow there would be a real bug.
 #
-# Turn them back on (delete the two lines) when chasing a fault that looks like
-# it is *inside* Bevy or wgpu rather than in this client's use of them — that is
-# exactly what they are for, and a panic from one of them is worth far more than
-# the milliseconds.
+# Turn them back on (delete the two lines) when a fault looks like it is inside
+# Bevy or wgpu rather than in this client's use of them.
 [profile.dev.package."*"]
 opt-level = 2
 debug-assertions = false
 overflow-checks = false
 
-# …and the same for the two crates that do this project's own arithmetic.
+# The same optimisation for the two crates that do this project's own
+# arithmetic.
 #
-# **The renderer is meant to be run in debug, so debug is what has to be fast
-# enough to judge it by.** These two carry the whole per-frame cost that is not
-# Bevy's — `M2Skeleton::pose` samples three tracks per bone per entity per frame,
-# and everything a tile load touches (ADT meshing, BLP decode, M2 parsing) is
-# here too. Measured: `vale anim` parses and poses the whole bestiary — 411
-# models, 768 animations at four phases each — in **13.2 s unoptimised against
-# 3.7 s at 2**, and that run includes the archive reads, which were already
-# optimised. The pose maths on its own is further ahead than 3.6x, and it is the
-# same code the renderer runs for every entity sixty times a second.
+# The renderer is run as a debug build, so the debug build is the one whose
+# speed matters. These two crates carry the per-frame cost that is not Bevy's
+# (`M2Skeleton::pose` samples three tracks per bone per entity per frame) and
+# everything a tile load does (ADT meshing, BLP decode, M2 parsing). Measured:
+# `vale anim` parses and poses the whole bestiary, 411 models and 768
+# animations at four phases each, in 13.2 s unoptimised against 3.7 s at 2,
+# including the archive reads, which were already optimised; the pose maths on
+# its own gains more than 3.6x.
 #
-# `vale-client` is deliberately *not* in this list. It is the crate a
-# developer actually steps through, it holds no inner loops of its own — the
-# expensive things it calls are all in `vale-assets` — and leaving it
-# unoptimised keeps a breakpoint useful.
+# `vale-client` is not in this list; see its own section below.
 [profile.dev.package.vale-assets]
 opt-level = 2
 
 [profile.dev.package.vale-protocol]
 opt-level = 2
 
-# `vale-client` used to be left at 0 on the argument that it holds no inner
-# loops and is the crate a breakpoint goes in. The first half stopped being
-# true — the HUD scans every mesh in the world (eleven thousand and counting)
-# every frame, and the screenshot dump does it again — and the frame is
-# CPU-bound on a 60 Hz budget, where 2.5 ms is the difference between making
-# vsync and halving to 30 fps. Measured 2026-07 at one framing: 17.0 ms at 0
-# against 14.5 ms at 2 (one run each; run-to-run wander is ±2.5 ms, so treat
-# the size as approximate and the direction as real). Comment this out when
-# stepping through client code in a debugger.
+# `vale-client` at opt-level 2. It was at 0 so that a debugger could step
+# through it, on the grounds that it had no inner loops; it now has some (the
+# HUD's scan of every mesh in the world, the screenshot dump's), and the frame
+# is CPU-bound. Measured 2026-07 at one framing: 17.0 ms at 0 against 14.5 ms
+# at 2 (one run each, with ±2.5 ms run-to-run variation, so the size is
+# approximate and the direction is reliable). Comment this out to use a
+# debugger on the `vale-client` crate.
 [profile.dev.package.vale-client]
 opt-level = 2
+
+# `wgpu-hal` 29.0.4, unmodified except for one change in
+# `src/vulkan/swapchain/native.rs` (search for "Vale patch").
+#
+# After `vkAcquireNextImageKHR`, upstream waits on a CPU fence until the
+# acquired image is fully released (gfx-rs/wgpu#8310, #8354). On Windows with a
+# DXGI-backed Vulkan swapchain that blocks the render thread until the GPU has
+# finished the previous frame, so the render thread's work and the GPU's add
+# instead of overlapping. The patch skips that wait unless `VALE_ACQUIRE_WAIT`
+# is set. Measured on an RX 6900 XT at 3440x1440, vsync on: 93 fps with the
+# wait, about 139 without; with vsync off, 11.0 ms median frames against 6.9.
+#
+# The copy must track the `wgpu-hal` version Bevy uses: on a Bevy or wgpu
+# upgrade, re-copy the new version from the registry and re-apply the change,
+# or delete this section if upstream has made the wait optional.
+[patch.crates-io]
+wgpu-hal = { path = "vendor/wgpu-hal" }

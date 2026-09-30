@@ -337,6 +337,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     let texel = textureSample(base_texture, base_sampler, transformed_uv(params, in.uv));
 #endif  // BINDLESS
+    // An early copy of the alpha test at the end of this function, for the
+    // fragments it would discard in any case. Off a liquid, the final alpha is
+    // `texel.a` times factors in 0..1 (the particle ramp, the vertex alpha, the
+    // tint), so a texel under the cutoff fails the late test too. Discarding
+    // here skips the lighting, the overlays and the tint for those fragments,
+    // which in a forest are most of the leaf cards' area. The late test stays,
+    // because only it sees the fades.
+    if params.liquid < 0.5 && texel.a < params.alpha_cutoff {
+        discard;
+    }
     // The instance's own light, from the mesh tag: a room colour and a sun
     // scale. For a `MODD` doodad (a chair, a barrel, a mug) and for an entity
     // standing in a room, the room's colour is per spawn, so it is carried in

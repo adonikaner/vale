@@ -1,11 +1,15 @@
-//! **The interface, on the screen.** The game's own art, the game's own fonts,
-//! the game's own layout — drawn from the widget tree [`crate::lua`] loads and
-//! [`crate::lua::widgets::draw`] sorts.
+//! The interface drawn with egui: the game's own art, fonts and layout, from
+//! the widget tree [`crate::lua`] loads and [`crate::lua::widgets::draw`]
+//! sorts.
 //!
-//! Three rounds have been building to one sentence: *nothing draws*. The tree was
-//! parsed, instantiated, scripted, evented and measured, and every texture path,
-//! colour, blend mode, layer, anchor and size sat on an object nothing read. This
-//! is the pass that reads them.
+//! This file also runs the draw walk for both painters. [`paint`] calls
+//! `LuaHost::drawn` on the frame after an interface tick, and on a frame where
+//! the interface's coordinate space changed, and keeps the result in
+//! [`Drawn`]. The mesh painter ([`crate::ui::mesh`]) is the default and draws
+//! that list; the egui painter in this file draws it only when
+//! `VALE_UI_PAINTER=egui` is set. The mesh painter also calls the decode and
+//! alpha functions here ([`decode_rgba`], [`byte_space_alpha`],
+//! [`coloured_alpha`]).
 //!
 //! ```text
 //! lua::draw::collect   what is visible, where, in what order   <- no window
@@ -13,60 +17,56 @@
 //! paint                a quad per item, in the game's own pile <- egui
 //! ```
 //!
-//! It is deliberately thin. Everything that could be decided without a window is
-//! decided without one — which is the `assets/dress.rs` precedent, and it is why
-//! the interesting assertions about the interface are unit tests in `lua/draw.rs`
-//! rather than screenshots.
+//! Everything that can be decided without a window is decided in `lua::draw`,
+//! as `assets/dress.rs` does for its subject, so the assertions about what the
+//! interface draws are unit tests in `lua/draw.rs` rather than screenshots.
+//! This file only turns the list into shapes.
 //!
-//! ## The fonts are the game's four, out of the archives
+//! ## Fonts
 //!
 //! `Fonts\FRIZQT__.TTF`, `ARIALN`, `MORPHEUS` and `SKURRI` are in the MPQs as
-//! plain TrueType, and egui takes a font from bytes — so the interface is set in
-//! its own typefaces rather than in a stand-in. `<Font name="GameFontNormal"
+//! plain TrueType, and egui takes a font from bytes, so the interface is set in
+//! the game's own typefaces. `<Font name="GameFontNormal"
 //! font="Fonts\FRIZQT__.TTF"><FontHeight><AbsValue val="12"/>` reaches a font
-//! string through `inherits`, so the face and the size come off the game's own
-//! `Fonts.xml` and not off a table here.
+//! string through `inherits`, so the face and the size come from the game's
+//! `Fonts.xml`, not from a table here.
 //!
-//! ## One blend mode, and the deviation is stated rather than hidden
+//! ## Blend modes in the egui painter
 //!
-//! 1.12 draws a texture in one of five modes and `ADD` is 136 elements of the
-//! directory — the cast bar's spark, every button flash, every glow. **egui has
-//! alpha blending and nothing else**, so an additive texture is approximated: its
-//! alpha is taken as its own luminance, which over a dark background lands close
-//! and over a light one is too dark.
+//! 1.12 draws a texture in one of five modes. `ADD` is used by 136 elements of
+//! the directory: the cast bar's spark, every button flash, every glow. egui
+//! has alpha blending only, so this painter approximates an additive texture:
+//! its alpha is set to its own luminance. Over a dark background the result is
+//! close; over a light one it is too dark.
 //!
-//! That is a **guess about how it looks**, not a measurement, and it is the class
-//! of thing this project has been bitten by — so it is worth being precise about
-//! what would fix it. The world already solves this exactly: `render::present`
-//! exists because the frame has to be in the game's own byte space for the
-//! hardware blend to add the way 1.12's fixed-function back buffer did. The
-//! interface wants the same treatment and a real ROP, which means drawing it as
-//! geometry rather than through egui — a whole pass, and the right next step for
-//! this subject rather than a tweak to this one.
+//! The approximation has not been measured against the 1.12.1 client. Drawing
+//! the modes exactly needs the interface drawn as geometry with the pipeline's
+//! blend state set per mode, which is what the mesh painter does (see
+//! `crate::ui::mesh::material`).
 //!
-//! `ALPHAKEY`, `MOD` and `DISABLE` are drawn as `BLEND` for the same reason,
-//! and they are 3, 1 and 1 elements respectively.
+//! `ALPHAKEY`, `MOD` and `DISABLE` are drawn as `BLEND` in this painter for the
+//! same reason. They are used by 3, 1 and 1 elements.
 //!
-//! ## …and the *space* the one mode it has blends in is not the game's
+//! ## Blend colour space
 //!
-//! The mode is only half of a blend. The other half is what the numbers being
-//! mixed **mean**, and 1.12 is fixed-function: a plain `X8R8G8B8` back buffer
-//! with no `D3DRS_SRGBWRITEENABLE`, so `SRCALPHA, INVSRCALPHA` mixes the bytes
-//! its files state. That is the whole argument [`crate::render::present`] makes
-//! for the world, and the interface is the one surface it could not reach —
-//! `bevy_egui`'s pipeline format is a hard-coded `Rgba8UnormSrgb`, so the ROP
-//! decodes the destination to linear, mixes, and re-encodes.
+//! A blend also depends on the space the mixed values are in. 1.12 is
+//! fixed-function: a plain `X8R8G8B8` back buffer with no
+//! `D3DRS_SRGBWRITEENABLE`, so `SRCALPHA, INVSRCALPHA` mixes the bytes its
+//! files state. [`crate::render::present`] puts the world in that byte space;
+//! the interface is not in it. `bevy_egui`'s pipeline format is a hard-coded
+//! `Rgba8UnormSrgb`, so the ROP decodes the destination to linear, mixes, and
+//! re-encodes.
 //!
-//! **A dark scrim is what that costs, and both of the ones a player looks at
-//! were reported as "too transparent"** — the spell tooltip's plate and the
-//! cooldown swirl. `Interface\Tooltips\UI-Tooltip-Background` is a flat grey
-//! 148 at a uniform alpha of 187/255 (64x64 DXT3, every nibble `0xB`), tinted
-//! by `GameTooltip_OnLoad` to `TOOLTIP_DEFAULT_BACKGROUND_COLOR` — 0.09, 0.09,
-//! 0.19 — so the source is `13, 13, 28`. Over the spellbook's parchment at
-//! about `150, 110, 55` that mixes, **in bytes**, to `50, 39, 35`.
+//! The effect is that a dark translucent fill lets through more of what is
+//! behind it. The spell tooltip's plate and the cooldown swirl were both
+//! reported as too transparent. `Interface\Tooltips\UI-Tooltip-Background` is
+//! a flat grey 148 at a uniform alpha of 187/255 (64x64 DXT3, every nibble
+//! `0xB`), tinted by `GameTooltip_OnLoad` to `TOOLTIP_DEFAULT_BACKGROUND_COLOR`
+//! (0.09, 0.09, 0.19), so the source is `13, 13, 28`. Over the spellbook's
+//! parchment at about `150, 110, 55` that mixes, in bytes, to `50, 39, 35`.
 //!
-//! Both halves of that are measured off the two screenshots the report came
-//! with, which is what makes this a diagnosis rather than a candidate:
+//! Values measured from a screenshot of each client, against the two
+//! predictions:
 //!
 //! ```text
 //!   1.12, between two glyphs inside the plate      47, 36, 35
@@ -75,49 +75,50 @@
 //!   what a linear mix predicts                     89, 61, 36
 //! ```
 //!
-//! Nothing about the art, the tint or the alpha was wrong: the linear
-//! prediction is the picture, to within a byte on all three channels.
+//! The linear prediction matches this client's picture to within a byte on
+//! all three channels, so the art, the tint and the alpha were correct and the
+//! difference is the blend space.
 //!
-//! So the alpha is **pre-compensated**: `1 - a` is the fraction of the
-//! destination that survives, and the fraction that survives a *linear* mix by
-//! the same visible amount is `srgb_to_linear(1 - a)` — the same piecewise
-//! curve `gamma.wgsl` uses, because `Color::srgb` is what the rest of this
-//! renderer agrees with. See [`byte_space_alpha`], which is the one door. The
-//! same plate over the same parchment comes out **40, 30, 30** against 1.12's
-//! 47, 36, 35 — six bytes rather than forty — and what is left of the gap is
-//! the second bullet below. Note what it is and is not:
+//! The alpha is therefore pre-compensated. `1 - a` is the fraction of the
+//! destination that survives a mix, and the fraction that survives a linear
+//! mix by the same visible amount is `srgb_to_linear(1 - a)`. That is the same
+//! piecewise curve `gamma.wgsl` uses, because `Color::srgb` uses it too.
+//! [`byte_space_alpha`] is the function every texture goes through. The same
+//! plate over the same parchment comes out `40, 30, 30` against 1.12's
+//! `47, 36, 35`: six bytes off rather than forty. The remaining gap is the
+//! second limit below. The compensation:
 //!
-//! * it is **exact for a black source** over any destination — a scrim, a
-//!   cooldown swirl and, near enough, a tooltip plate;
-//! * it corrects **the destination term and not the source term**, and the two
-//!   want different numbers: the destination survives `1 - a` of a byte-space
-//!   mix and the source contributes `a` of one, where this hands the ROP a
-//!   single alpha. What is left is a source encoded before the mix instead of
-//!   after it, which lands a dark source a few bytes low (the 40 against 47
-//!   above) and a bright one a few bytes high. One number cannot be both;
-//! * a texture's own alpha and an inherited `SetAlpha` are compensated
-//!   **separately** and multiply on the GPU, so a partly-transparent texture
-//!   inside a fading frame is a little too opaque mid-fade. Both are 1.0 in
+//! * is exact for a black source over any destination: a scrim, a cooldown
+//!   swirl and, close to it, a tooltip plate;
+//! * corrects the destination term and not the source term. The two need
+//!   different numbers: the destination survives `1 - a` of a byte-space mix
+//!   and the source contributes `a` of one, but the ROP takes a single alpha.
+//!   The source is encoded before the mix instead of after it, which lands a
+//!   dark source a few bytes low (the 40 against 47 above) and a bright one a
+//!   few bytes high;
+//! * compensates a texture's own alpha and an inherited `SetAlpha`
+//!   separately, and the GPU multiplies them, so a partly transparent texture
+//!   inside a fading frame is slightly too opaque mid-fade. Both are 1.0 in
 //!   almost every draw the interface makes.
 //!
-//! The exact fix is the same one the mode wants and it is the same pass: the
-//! interface drawn as geometry into a byte-space target, where the hardware
-//! mixes bytes and no compensation is needed at all.
+//! The exact fix is to draw the interface into a byte-space target, where the
+//! hardware mixes bytes and no compensation is needed. Neither painter does
+//! that yet; the mesh painter uses the same compensation.
 //!
-//! ## The backdrop is the one thing here a *frame* draws
+//! ## Backdrops
 //!
 //! Everything else on the screen is a region with a rectangle of its own. A
-//! `<Backdrop>` has no object at all — it is a record on the frame, painted at the
+//! `<Backdrop>` has no object: it is a record on the frame, painted at the
 //! frame's rectangle as a tiled fill and eight border pieces. The layout of the
-//! `edgeFile` is [`vale_assets::interface::backdrop`]'s and the geometry is
-//! [`crate::lua::widgets::backdrop`]'s; what is here is the two draws.
+//! `edgeFile` is in [`vale_assets::interface::backdrop`] and the geometry in
+//! [`crate::lua::widgets::backdrop`]; this file does the two draws.
 //!
-//! ## What is not drawn, and each of them is visible
+//! ## Not drawn
 //!
-//! * **the tile *phase* of a stretched backdrop.** A `tile="false"` fill is
-//!   stretched over the inset rectangle, which is what the attribute means; what
-//!   is not modelled is `<TileSize>` on a fill smaller than one tile, where the
-//!   real client's sampling and this one's may disagree at the last row.
+//! * The tile phase of a stretched backdrop. A `tile="false"` fill is
+//!   stretched over the inset rectangle, which is what the attribute means.
+//!   `<TileSize>` on a fill smaller than one tile is not modelled, and the
+//!   1.12.1 client's sampling and this one's may differ at the last row.
 
 use std::collections::HashMap;
 
@@ -132,163 +133,162 @@ use crate::lua::widgets::regions::Paint;
 #[cfg(feature = "diagnostics")]
 use crate::ui::report::{HudReport, Slot};
 
-/// The HUD line this file writes — see [`crate::ui::report`]. 31, immediately
-/// under the host's own `lua:` lines at 30, because the three are read together:
-/// what loaded, what it asked for and did not get, and what came out the far end
-/// as pixels.
+/// The HUD line this file writes; see [`crate::ui::report`]. Slot 31, directly
+/// under the host's `lua:` lines at 30, because the three are read together:
+/// what loaded, what it asked for and did not get, and what was drawn.
 #[cfg(feature = "diagnostics")]
 const REPORT: Slot = Slot(31);
 
 /// The game's four typefaces, the one everything falls back to, and the size a
 /// font string with no height of its own is set in.
 ///
-/// **[`vale_assets::interface::font`]'s, not this file's.** The set and the path rule
-/// are facts about the game's files rather than about egui — and the same three
-/// constants decide how wide a word is *measured* on the other side of the
-/// `lua`/`ui` split. Two copies of "which face is this" is two answers to
-/// "does this text fit", which is the bug this round is about.
+/// Defined in [`vale_assets::interface::font`], not here. The set and the path
+/// rule are facts about the game's files rather than about egui, and the same
+/// three constants decide how wide a word is measured on the `lua` side of the
+/// `lua`/`ui` split. One definition keeps the face used to measure text and
+/// the face used to draw it the same, so a string measured to fit also fits
+/// when drawn.
 use vale_assets::interface::font::{
     face_of as face, DEFAULT_FACE as DEFAULT_FONT, DEFAULT_HEIGHT as DEFAULT_FONT_HEIGHT,
     FACES as FONTS,
 };
 
-/// **The interface is laid out in the game's own virtual units, not in pixels:
-/// a screen is `768 / uiScale` units tall and as many across as the window's
-/// ratio asks for** — see [`crate::lua::widgets::layout::ui_height`] and
-/// [`crate::lua::widgets::layout::units_wide`], which are the authority, and
-/// [`Viewport`], which is where that space lands in the window and which the
-/// pointer runs backwards so a hit-test hits what was drawn. What is this
-/// file's own is *what* scales on the way out: every rectangle, every font
-/// height, a backdrop's insets, tile period and border edge. Laying out in raw
-/// pixels drew every panel a third too small on a 1048-high window, with the
-/// action bar floating mid-screen and the world map's 1024x768 `BlackoutWorld`
-/// parked in the corner.
+/// The interface is laid out in the game's virtual units, not in pixels: a
+/// screen is `768 / uiScale` units tall and as many across as the window's
+/// ratio gives. [`crate::lua::widgets::layout::ui_height`] and
+/// [`crate::lua::widgets::layout::units_wide`] define the space; [`Viewport`]
+/// places it in the window, and the pointer uses its inverse so a hit-test
+/// hits what was drawn. This file decides what scales on the way out: every
+/// rectangle, every font height, and a backdrop's insets, tile period and
+/// border edge. Laid out in raw pixels, every panel on a 1048-high window was
+/// a third too small, the action bar sat mid-screen and the world map's
+/// 1024x768 `BlackoutWorld` sat in the corner.
 use crate::lua::widgets::layout::Viewport;
 
-/// **The subtraction.** `VALE_NO_INTERFACE=1` loads the whole widget tree and
-/// draws none of it.
+/// Kill switch: `VALE_NO_INTERFACE=1` loads the whole widget tree and draws
+/// none of it.
 ///
-/// The same kill-switch `render::particles` carries, for the same reason: this
-/// pass walks a tree and paints a few hundred quads every frame, and the only
-/// honest way to say what that costs is two runs differing in one line. It is
-/// *not* a way to turn the interface off — the tree still loads, the events
-/// still fire, the scripts still run — so what it subtracts is the walk and the
-/// paint and nothing else.
+/// `render::particles` has the same kind of switch, for the same reason: this
+/// pass walks a tree and paints a few hundred quads, and comparing two runs
+/// that differ only in this variable measures what that costs. It does not
+/// turn the interface off: the tree still loads, the events still fire and the
+/// scripts still run. It removes the walk and the paint and nothing else.
 const KILL_SWITCH: &str = "VALE_NO_INTERFACE";
 
 /// Decoded `Interface\` art, kept as egui textures.
 ///
-/// **A failure is remembered too.** The value is an `Option`, so a path the
-/// archives do not have is decoded once and skipped for the rest of the session
-/// rather than re-read sixty times a second — which for a half-written interface
-/// is the common case, not the rare one.
+/// Failures are cached too. The value is an `Option`, so a path the archives
+/// do not have is tried once and skipped for the rest of the session rather
+/// than re-read every frame. For a partly working interface a missing path is
+/// common.
 #[derive(Resource, Default)]
 pub struct Art {
     loaded: HashMap<String, Option<egui::TextureHandle>>,
-    /// A backdrop's `edgeFile`, already cut into its eight upright pieces — see
-    /// [`vale_assets::interface::backdrop`]. One decode per file rather than per frame
-    /// per piece, which for `UI-Tooltip-Border` is the difference between 8
-    /// uploads and 8 per panel that uses it.
+    /// A backdrop's `edgeFile`, already cut into its eight upright pieces; see
+    /// [`vale_assets::interface::backdrop`]. One decode per file rather than
+    /// per frame per piece: for `UI-Tooltip-Border` that is 8 uploads in total
+    /// instead of 8 per panel that uses it.
     edges: HashMap<String, Option<Vec<egui::TextureHandle>>>,
-    /// Whether the game's own fonts have been handed to the egui context. Once,
-    /// and only after the archives are open.
+    /// Whether the game's fonts have been handed to the egui context. Done
+    /// once, and only after the archives are open.
     ///
-    /// **Handed over is not the same as usable**, which is what [`Self::faces`]
-    /// is for.
+    /// A font handed to the context is not usable until egui rebuilds its
+    /// families; [`Self::faces`] tracks which are usable.
     fonts: bool,
-    /// Which of [`FONTS`] the context can actually set text in *this frame*.
+    /// Which of [`FONTS`] the context can set text in this frame.
     ///
-    /// `Context::set_fonts` is **deferred** — egui rebuilds its families at the
-    /// start of the next pass — so between the call and that rebuild the family
-    /// this file asks for does not exist, and epaint's answer to a family it does
-    /// not have is a `panic!` rather than a fallback. Asking the context what it
-    /// holds, every frame, is the only reading that cannot go stale: it covers
-    /// the frame the fonts are installed on, a font the archives did not have,
-    /// and a context egui rebuilt underneath us.
+    /// `Context::set_fonts` is deferred: egui rebuilds its families at the
+    /// start of the next pass. Between the call and that rebuild the family
+    /// this file asks for does not exist, and epaint panics on a family it does
+    /// not have instead of falling back. Asking the context what it holds,
+    /// every frame, cannot go stale: it covers the frame the fonts are
+    /// installed on, a font the archives did not have, and a context egui
+    /// rebuilt.
     faces: [bool; FONTS.len()],
     /// Whether the first-frame count has been logged.
     reported: bool,
-    /// …and the same one-shot **per model file** this pass is asked for.
+    /// The same one-time log, per model file this pass is asked for.
     ///
-    /// Per file rather than one flag, because the two things worth hearing are
-    /// "this one drew" and "this one could not", and a session has both: the
-    /// glue screens' backdrops are 3D scenes `render::glue` draws and this pass
-    /// deliberately cannot, so a single flag is spent on `UI_Orc.mdx` before
-    /// the first cooldown of the session is ever asked for. "Did that path ever
-    /// run?" is the question this whole subject kept failing to answer — an
-    /// interface model that is never loaded, never ticked or never emitted all
-    /// look identical, which is nothing.
+    /// Per file rather than one flag, because a session has models that draw
+    /// and models that cannot: the glue screens' backdrops are 3D scenes that
+    /// `render::glue` draws and this pass does not, so a single flag would be
+    /// used up on `UI_Orc.mdx` before the first cooldown of the session. An
+    /// interface model that is never loaded, never ticked or never emitted
+    /// draws nothing in all three cases, and this log tells them apart.
     reported_models: std::collections::HashSet<String>,
-    /// **The world's own minimap pictures, kept apart from [`Self::loaded`] and
-    /// deliberately *bounded*.**
+    /// The world's minimap pictures, kept apart from [`Self::loaded`] in a
+    /// bounded cache.
     ///
-    /// Every other texture in this cache is an `Interface\` file: there are a few
-    /// hundred of them, each is small, and a session touches most of them in its
-    /// first minute — so never evicting is right. Minimap tiles are the opposite.
-    /// Each is 256x256 RGBA (256 KB resident), and the population is **the map**:
-    /// a character who crosses Azeroth would pull all 687 of its tiles through
-    /// here, and a `.tele` tour would do it in a couple of minutes. Sharing the
-    /// unbounded map would make this pass leak 176 MB of texture at walking pace.
+    /// Every other texture in this cache is an `Interface\` file: there are a
+    /// few hundred, each is small, and a session touches most of them in its
+    /// first minute, so they are never evicted. Minimap tiles differ. Each is
+    /// 256x256 RGBA (256 KB resident), and there is one per map tile: a
+    /// character who crosses Azeroth would load all 687 of its tiles, and a
+    /// `.tele` tour would do it in a couple of minutes. In the unbounded map
+    /// that would hold 176 MB of texture.
     ///
-    /// So it is a small LRU: the value carries the tick it was last drawn on,
-    /// and [`Art::minimap_texture`] trims to [`MINIMAP_CACHE`] most-recent after
-    /// each frame's fetches. Four are visible at the very widest zoom, so the cap
-    /// is mostly hysteresis — a character walking back and forth across a tile
-    /// seam re-uses rather than re-decodes.
+    /// The cache is a small LRU: the value carries the tick it was last drawn
+    /// on, and [`Art::minimap_texture`] trims to the [`MINIMAP_CACHE`] most
+    /// recent after each frame's fetches. Four tiles are visible at the widest
+    /// zoom, so the rest of the cap is hysteresis: a character walking back and
+    /// forth across a tile seam reuses tiles rather than decoding them again.
     minimap: HashMap<String, (egui::TextureHandle, u64)>,
-    /// …and the tick that orders them, bumped once per minimap draw.
+    /// The tick that orders the minimap cache, incremented once per minimap
+    /// draw.
     minimap_tick: u64,
     /// How many quads the last walk produced, or `None` while there is no
-    /// interface. Written by [`paint`] and read by [`report`], which is the
-    /// only way the draw pass can say something on the HUD without holding a
-    /// `HudReport` — see that function.
+    /// interface. Written by [`paint`] and read by [`report`], so the draw
+    /// pass can put a number on the HUD without holding a `HudReport`; see
+    /// that function.
     drawn: Option<usize>,
 }
 
-/// **The last draw walk, held between the interface's own ticks.**
+/// The result of the last draw walk, held between walks.
 ///
-/// The walk is the expensive half of this pass — measured at four times the
-/// painter for the same content, 1.11 ms against 0.18 — and it answers a
-/// question about the *interface* rather than about the frame: where every
-/// visible object is, in what order, in what paint. So it runs on
-/// [`crate::lua::api::update::InterfaceClock`] with the two handler passes that
-/// mostly move it, and every frame in between re-paints the list it produced.
+/// The walk is the expensive half of this pass: measured at 1.11 ms against
+/// the egui painter's 0.18 ms for the same content. It depends on the
+/// interface, not on the frame: where every visible object is, in what order,
+/// with what paint. [`paint`] therefore runs it on the frame after each
+/// [`crate::lua::api::update::InterfaceClock`] tick (the tick frame runs the
+/// `OnUpdate` handlers and the `<Model>` tick, which change most of what it
+/// reads), and on a frame where the interface's coordinate space changed. The
+/// frames in between paint the stored list again.
 ///
-/// **The cache is against a clock and not against a generation**, which is the
-/// thing worth reading twice. The obvious shape — a validity counter bumped by
-/// every setter — was costed and priced as a round of its
-/// own, because the invalidation surface is every texture, text, colour,
-/// tex-coord, layer, blend, alpha, strata, level, bar value, backdrop and shown
-/// write, and a miss draws a stale picture with nothing failing. A clock has no
-/// invalidation surface at all: the walk always re-reads the live tree, so the
-/// worst a write between ticks can do is be drawn one tick late.
+/// The cache is refreshed by the clock, not invalidated by a generation
+/// counter. A counter incremented by every setter would have to cover every
+/// write of a texture, text, colour, tex-coord, layer, blend, alpha, strata,
+/// level, bar value, backdrop and shown state, and a missed one draws a stale
+/// picture with no error. The clock has no such list: the walk always re-reads
+/// the live tree, so a write between ticks is drawn at most one tick and one
+/// frame late.
 ///
-/// Its own resource rather than a field of [`Art`], so that [`paint`] can
-/// iterate the items while handing [`one`] the `&mut Art` it needs for the
-/// texture cache — two resources, one borrow each, instead of a `mem::take`
-/// and a put-back that a `return` in the middle would lose.
+/// A resource of its own rather than a field of [`Art`], so that [`paint`] can
+/// iterate the items while passing [`one`] the `&mut Art` it needs for the
+/// texture cache: two resources with one borrow each, instead of a `mem::take`
+/// and a put-back that an early `return` would skip.
 #[derive(Resource, Default)]
 pub(super) struct Drawn {
-    /// Read by [`super::mesh`] as well as this painter — the two draw the same
-    /// list, and the walk that fills it runs exactly once.
+    /// Read by [`super::mesh`] as well as by this painter. Both draw the same
+    /// list, and the walk that fills it runs once.
     pub(super) items: Vec<Item>,
-    /// The screen the items were solved against, in the game's own units.
+    /// The interface's coordinate space the items were solved in, as
+    /// `(width, height)` in the game's units.
     ///
-    /// A resize has to re-solve **on the frame it happens** rather than at the
-    /// next tick: every rectangle in the interface is measured from `UIParent`,
-    /// so a window dragged wider would otherwise paint the old layout stretched
-    /// across the new one for up to a tick, which is the one artefact of this
-    /// change a person would actually see.
+    /// When it changes, [`paint`] walks on that frame instead of waiting for
+    /// the next tick. Every rectangle in the interface is measured from
+    /// `UIParent`, so without this the old layout would be drawn scaled into
+    /// the new space for up to a tick.
     solved_for: Option<(f32, f32)>,
 }
 
 impl Art {
     /// The eight pieces of an edge strip, decoded and cut on first use.
     ///
-    /// **The four runs wrap and the four corners clamp.** A run tiles along its
-    /// own side at the cell's period, so it has to repeat; a corner maps `[0, 1]`
-    /// exactly once, and sampling it with wrapping bleeds the opposite edge in
-    /// under linear filtering — a one-texel seam at every corner of every panel.
+    /// The four runs wrap and the four corners clamp. A run tiles along its own
+    /// side at the cell's period, so it has to repeat. A corner maps `[0, 1]`
+    /// exactly once; sampled with wrapping, linear filtering bleeds the
+    /// opposite edge in and leaves a one-texel seam at every corner of every
+    /// panel.
     fn edge_pieces(
         &mut self,
         ctx: &egui::Context,
@@ -335,7 +335,7 @@ impl Art {
     }
 
     /// One minimap tile picture, decoded on first use and held in the bounded
-    /// cache — see [`Art::minimap`], which says why this is not [`Art::texture`].
+    /// cache. [`Art::minimap`] says why this is not [`Art::texture`].
     fn minimap_texture(
         &mut self,
         ctx: &egui::Context,
@@ -346,10 +346,10 @@ impl Art {
             *tick = self.minimap_tick;
             return Some(handle.clone());
         }
-        // A path the index named and the archive does not have is *not* cached
+        // A path the index named and the archive does not have is not cached
         // as an absence: the index resolves 2,356 of 2,356 in the shipped
-        // chain, so a miss here is a broken install rather than the ordinary
-        // case `Art::texture`'s negative caching exists for.
+        // chain, so a miss here means a broken install, not the common case
+        // that `Art::texture`'s negative caching is for.
         let (width, height, mut rgba) = decode_rgba(assets, path)?;
         let image = image([width as usize, height as usize], &mut rgba);
         let handle = ctx.load_texture(path, image, egui::TextureOptions::LINEAR);
@@ -358,14 +358,14 @@ impl Art {
         Some(handle)
     }
 
-    /// **Forget one minimap picture**, so the next draw reads its path again —
-    /// the same seam `UiTextures::forget_minimap` is, for the same host and
-    /// the same reason.
+    /// Forget one minimap picture, so the next draw reads its path again. The
+    /// egui counterpart of `UiTextures::forget_minimap`, called by the same
+    /// host for the same reason.
     pub fn forget_minimap(&mut self, path: &str) {
         self.minimap.retain(|key, _| !key.eq_ignore_ascii_case(path));
     }
 
-    /// …and all of them.
+    /// Forget every minimap picture.
     pub fn forget_all_minimaps(&mut self) {
         self.minimap.clear();
     }
@@ -373,7 +373,7 @@ impl Art {
     /// Drop all but the [`MINIMAP_CACHE`] most recently drawn tiles.
     ///
     /// Called once at the end of a minimap draw rather than per fetch, so that
-    /// the four pictures of *this* frame cannot evict each other.
+    /// the four pictures of the current frame cannot evict each other.
     fn trim_minimap(&mut self) {
         if self.minimap.len() <= MINIMAP_CACHE {
             return;
@@ -384,7 +384,7 @@ impl Art {
         self.minimap.retain(|_, (_, tick)| *tick >= cut);
     }
 
-    /// A texture that **repeats**, for a backdrop's tiled fill.
+    /// A texture that repeats, for a backdrop's tiled fill.
     ///
     /// Keyed apart from the clamped copy of the same path, because the wrap mode
     /// is a property of the upload rather than of the draw.
@@ -416,10 +416,10 @@ impl Art {
     /// The texture for a path the interface named, decoding it if this is the
     /// first time.
     ///
-    /// **`Interface\Buttons\UI-Quickslot2` has no extension**, because the files
-    /// do not write one — the client appends `.blp`. A path that already carries
-    /// one is left alone, which is what `SetTexture` from a script sometimes
-    /// passes.
+    /// A path such as `Interface\Buttons\UI-Quickslot2` has no extension,
+    /// because the files do not write one; the client appends `.blp`. A path
+    /// that already has one, as `SetTexture` from a script sometimes passes,
+    /// is left alone.
     pub(super) fn texture(
         &mut self,
         ctx: &egui::Context,
@@ -446,16 +446,16 @@ impl Art {
     }
 }
 
-/// One `Interface\` path, decoded — the archive read every texture here starts
-/// with.
+/// One `Interface\` path, decoded to RGBA8: the archive read every texture
+/// here starts with.
 ///
-/// **`Interface\Buttons\UI-Quickslot2` has no extension**, because the files do
-/// not write one; the client appends `.blp`. A path that already carries one is
-/// left alone, which is what `SetTexture` from a script sometimes passes.
+/// A path such as `Interface\Buttons\UI-Quickslot2` has no extension, because
+/// the files do not write one; the client appends `.blp`. A path that already
+/// has one, as `SetTexture` from a script sometimes passes, is left alone.
 pub(super) fn decode_rgba(assets: &GameAssets, path: &str) -> Option<(u32, u32, Vec<u8>)> {
-    // **`.blp` first, then `.tga`**, which is the order the reference tries a
-    // bare path in. Every texture in the archives is BLP; an addon's art is
-    // almost always TGA (45 of pfUI's 46), and a path that names its own
+    // `.blp` first, then `.tga`: the order the 1.12.1 client tries for a path
+    // without an extension. Every texture in the archives is BLP; an addon's
+    // art is almost always TGA (45 of pfUI's 46). A path that names its own
     // extension is read as written.
     let lower = path.to_ascii_lowercase();
     let candidates: Vec<String> = if lower.ends_with(".blp") || lower.ends_with(".tga") {
@@ -491,15 +491,14 @@ fn decode(
 ) -> Option<egui::TextureHandle> {
     let (width, height, mut pixels) = decode_rgba(assets, path)?;
     if additive {
-        // **The approximation, in one loop.** See the module comment: additive
-        // over a dark background is close to alpha-blending at the source's own
-        // luminance, and egui offers no second blend mode to do it properly.
+        // The additive approximation; see the module comment. Additive over a
+        // dark background is close to alpha blending at the source's own
+        // luminance, and egui has no additive blend mode.
         //
-        // **Before the space compensation and not after**, which is the order
-        // the two corrections have to be applied in: this one decides what the
-        // alpha *is* and [`byte_space_alpha`] decides what number expresses it
-        // to a linear ROP. Compensating first would have this `min` compare a
-        // luminance against an already-lifted alpha.
+        // This runs before the colour-space compensation, not after: this step
+        // decides what the alpha is, and [`byte_space_alpha`] decides what
+        // number expresses it to a linear ROP. Compensating first would make
+        // this `min` compare a luminance against an already raised alpha.
         for texel in pixels.chunks_exact_mut(4) {
             let luminance = texel[0].max(texel[1]).max(texel[2]);
             texel[3] = texel[3].min(luminance);
@@ -509,14 +508,14 @@ fn decode(
     Some(ctx.load_texture(path, image, egui::TextureOptions::LINEAR))
 }
 
-/// **The one door every texture in the interface goes through**, and the only
-/// thing it does beyond handing egui the bytes is [`byte_space_alpha`].
+/// Builds the egui image for every texture in the interface. Beyond handing
+/// egui the bytes, it applies [`byte_space_alpha`] to each texel.
 ///
-/// A function rather than three copies of `from_rgba_unmultiplied` because the
-/// compensation has to be on all three — the clamped upload, the tiled one and
-/// the eight border cells — or a panel's fill and its own border disagree about
-/// how solid they are, which is the kind of difference that reads as art rather
-/// than as a bug.
+/// One function rather than three copies of `from_rgba_unmultiplied`, because
+/// the compensation has to be applied to all three uploads (the clamped one,
+/// the tiled one and the eight border cells). Otherwise a panel's fill and its
+/// border differ in opacity, which looks like a property of the art rather
+/// than a bug.
 pub(super) fn image(size: [usize; 2], pixels: &mut [u8]) -> egui::ColorImage {
     for texel in pixels.chunks_exact_mut(4) {
         texel[3] = byte(byte_space_alpha(f32::from(texel[3]) / 255.0));
@@ -524,37 +523,37 @@ pub(super) fn image(size: [usize; 2], pixels: &mut [u8]) -> egui::ColorImage {
     egui::ColorImage::from_rgba_unmultiplied(size, pixels)
 }
 
-/// **The alpha that makes a linear ROP mix the way 1.12's byte-space one did.**
+/// The alpha that makes a linear ROP mix the way 1.12's byte-space one did.
 ///
-/// `1 - a` is the fraction of the destination a mix leaves standing. egui hands
-/// its quads to an `Rgba8UnormSrgb` target, so that fraction is applied to the
-/// *decoded* destination — which for a dark source is the whole of the visible
-/// difference. The fraction that scales a linear value by the same visible
-/// amount that `1 - a` scales a byte is `srgb_to_linear(1 - a)`, so that is what
-/// the compensated alpha leaves standing.
+/// `1 - a` is the fraction of the destination a mix leaves. egui draws its
+/// quads to an `Rgba8UnormSrgb` target, so that fraction is applied to the
+/// decoded (linear) destination, which for a dark source is the whole of the
+/// visible difference. The fraction that scales a linear value by the same
+/// visible amount that `1 - a` scales a byte is `srgb_to_linear(1 - a)`, so
+/// the compensated alpha leaves that fraction.
 ///
-/// Exact for a black source over any destination; see the module comment for
-/// the two cases where it is an approximation, and for why the real fix is a
-/// pass rather than a function.
+/// Exact for a black source over any destination. The module comment lists
+/// the two cases where it is an approximation, and why the exact fix is a
+/// byte-space render target rather than a function.
 pub(super) fn byte_space_alpha(alpha: f32) -> f32 {
     1.0 - srgb_to_linear(1.0 - alpha.clamp(0.0, 1.0))
 }
 
-/// **The same emulation for a *coloured* translucent fill**, matched where a
-/// coloured fill actually sits: over a dark destination.
+/// The byte-space emulation for a coloured translucent fill, matched for the
+/// case where such a fill usually sits: over a dark destination.
 ///
-/// [`byte_space_alpha`] is exact for a black source and *over-opaque* for a
-/// bright one — for the skill bars' `[0, 0, 0.75, 0.5]` background it answers
-/// an effective 0.79, which is why every rank bar in the first live session
-/// read as a solid saturated block rather than the reference's translucent
-/// navy. This solves the other end point instead: choose the linear alpha
-/// that reproduces the byte-space result against a black destination,
-/// `a' = lin(a·m) / lin(m)` with `m` the brightest channel — 0.22 for that
-/// background, 0.21 for the fill. Exact at alpha 0 and 1 and at a black
-/// destination; an approximation over a bright one, in the *under* direction
-/// where [`byte_space_alpha`] misses over. A black source falls back to the
-/// sibling, so the backdrops that function was measured for do not move. The
-/// real fix is still the pass the module comment describes.
+/// [`byte_space_alpha`] is exact for a black source and too opaque for a
+/// bright one. For the skill bars' `[0, 0, 0.75, 0.5]` background it gives an
+/// effective 0.79, so every rank bar drew as a solid saturated block instead
+/// of the translucent navy the 1.12.1 client shows. This function instead
+/// picks the linear alpha that reproduces the byte-space result against a
+/// black destination: `a' = lin(a·m) / lin(m)`, with `m` the brightest
+/// channel. That gives 0.22 for the skill bar background and 0.21 for the
+/// fill. It is exact at alpha 0 and 1 and over a black destination; over a
+/// bright destination it is too transparent, where [`byte_space_alpha`] is
+/// too opaque. A black source uses [`byte_space_alpha`], so the backdrops that
+/// function was measured on are unchanged. The exact fix is still the
+/// byte-space target the module comment describes.
 pub(super) fn coloured_alpha(rgba: [f32; 4], alpha: f32) -> f32 {
     let a = (rgba[3] * alpha).clamp(0.0, 1.0);
     let m = rgba[0].max(rgba[1]).max(rgba[2]).clamp(0.0, 1.0);
@@ -564,9 +563,9 @@ pub(super) fn coloured_alpha(rgba: [f32; 4], alpha: f32) -> f32 {
     (srgb_to_linear(a * m) / srgb_to_linear(m)).clamp(0.0, 1.0)
 }
 
-/// [`colour`] with [`coloured_alpha`] in place of the black-source fold — the
-/// tint for a solid fill and a status bar, which are the two places a
-/// saturated colour carries its own translucency.
+/// [`colour`] with [`coloured_alpha`] in place of [`byte_space_alpha`]: the
+/// tint for a solid fill and a status bar, the two places where a saturated
+/// colour carries its own translucency.
 fn solid_colour(rgba: [f32; 4], alpha: f32) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(
         byte(rgba[0]),
@@ -576,10 +575,9 @@ fn solid_colour(rgba: [f32; 4], alpha: f32) -> egui::Color32 {
     )
 }
 
-/// The piecewise IEC 61966-2-1 curve, **not a 2.2 power** — the same one
-/// `render/shaders/gamma.wgsl` and `Color::srgb` use, because a second opinion
-/// about the transfer function is how two halves of one picture end up a few
-/// bytes apart for ever.
+/// The piecewise IEC 61966-2-1 curve, not a 2.2 power: the same one
+/// `render/shaders/gamma.wgsl` and `Color::srgb` use. A different transfer
+/// function here would leave the interface and the world a few bytes apart.
 fn srgb_to_linear(value: f32) -> f32 {
     if value <= 0.040_45 {
         value / 12.92
@@ -610,9 +608,9 @@ impl Plugin for FrameXmlPlugin {
 /// This pass's own HUD line: how many quads the last walk produced and how much
 /// of the archives' art is decoded behind them.
 ///
-/// Its own system rather than three lines inside [`paint`], so that the draw
-/// pass does not hold a `HudReport` — see [`super::debug`] for what the
-/// `diagnostics` feature removes and why it has to remove it completely.
+/// A system of its own rather than three lines inside [`paint`], so that the
+/// draw pass does not hold a `HudReport`. [`super::debug`] says what the
+/// `diagnostics` feature removes and why it removes it completely.
 #[cfg(feature = "diagnostics")]
 fn report(art: Res<Art>, mut hud: ResMut<HudReport>) {
     let Some(quads) = art.drawn else {
@@ -626,8 +624,8 @@ fn report(art: Res<Art>, mut hud: ResMut<HudReport>) {
         format!(
             "interface: {quads} quads, {} textures held",
             art.loaded.values().filter(|t| t.is_some()).count()
-                // …and the eight pieces each edge strip was cut into, which are
-                // uploads like any other and would otherwise be invisible here.
+                // Plus the eight pieces each edge strip was cut into, which are
+                // uploads like any other and are not in `loaded`.
                 + art
                     .edges
                     .values()
@@ -638,60 +636,69 @@ fn report(art: Res<Art>, mut hud: ResMut<HudReport>) {
     );
 }
 
-/// Walk this frame's draw list and put every item on the screen.
+/// Refresh the draw list in [`Drawn`] when it is due, then draw it with egui
+/// unless the mesh painter is active.
 ///
-/// **Behind everything else egui draws**, on its own background layer, because
-/// the HUD and the throwaway `ui/frames.rs` stand-in are diagnostics over the
-/// interface rather than part of it — and because the day the stand-in is
-/// deleted, nothing about this pass changes.
+/// The walk runs on the frame after an interface tick
+/// (`InterfaceClock::walk_due`) and on a frame where the interface's
+/// coordinate space changed; other frames reuse the stored list. The mesh
+/// painter ([`super::mesh`]) is the default and draws the list itself, so this
+/// system then stops after the walk. With `VALE_UI_PAINTER=egui` it paints
+/// every item.
+///
+/// The egui painter draws behind everything else egui draws, on its own
+/// background layer, because the HUD and the temporary `ui/frames.rs`
+/// stand-in are diagnostics over the interface rather than part of it. Deleting
+/// the stand-in therefore needs no change here.
 pub(super) fn paint(
     mut contexts: EguiContexts,
     host: Option<NonSendMut<LuaHost>>,
     assets: Res<GameAssets>,
     mut art: ResMut<Art>,
-    // The list the walk produced, and the clock that says whether to walk again
-    // — see [`Drawn`] and [`crate::lua::api::update::InterfaceClock`].
+    // The list the walk produced, and the clock that says whether to walk again;
+    // see [`Drawn`] and [`crate::lua::api::update::InterfaceClock`].
     mut drawn: ResMut<Drawn>,
     clock: Res<crate::lua::api::update::InterfaceClock>,
     // The `<Model>` files the interface holds, parsed by `crate::lua::widgets::model`'s
-    // own tick — read here and never loaded, so this pass never touches an
+    // own tick. Read here and never loaded, so this pass never reads an
     // archive in the middle of a frame.
     models: Res<crate::lua::widgets::model::UiModels>,
     time: Res<Time>,
-    // **The same subtraction [`KILL_SWITCH`] makes, without the relaunch.** The
-    // tree still loads, the events still fire, the scripts still run — what
-    // stops is the walk and the paint. See [`crate::render::tuning`], which is
-    // where the argument for a runtime switch is.
+    // The same effect as [`KILL_SWITCH`], switchable at run time. The tree
+    // still loads, the events still fire and the scripts still run; the walk
+    // and the paint stop. [`crate::render::tuning`] gives the reason for a
+    // runtime switch.
     tuning: Res<crate::render::tuning::WorldTuning>,
-    // …and what the pointer is carrying, which is the one thing this pass draws
-    // that is not in the widget tree at all — see [`carried`].
+    // What the pointer is carrying, the one thing this pass draws that is not
+    // in the widget tree; see [`carried`].
     cursor: Res<crate::interface::cursor::Cursor>,
-    // …and the unit frames' faces, which this pass draws and does not take —
+    // The unit frames' portraits, which this pass draws but does not render;
     // see [`crate::render::portraits`].
     portraits: Res<crate::render::portraits::Portraits>,
-    // …and the bodies, which are the same thing at the other framing — see
-    // [`crate::render::paperdoll`].
+    // The paper-doll pictures, rendered the same way at a full-body framing;
+    // see [`crate::render::paperdoll`].
     dolls: Res<crate::render::paperdoll::Dolls>,
-    // …and where the little round map is looking, which is the only widget in
-    // the interface whose contents are the world — see [`minimap`].
+    // Where the minimap is looking. The minimap is the only widget whose
+    // contents are the world; see [`minimap`].
     place: Res<crate::interface::minimap::MinimapView>,
-    // …and how big all of it is drawn — see [`crate::ui::scale`], which is one
-    // value so that this pass and the pointer cannot disagree about it.
+    // The interface scale; see [`crate::ui::scale`]. It is one value so that
+    // this pass and the pointer use the same scale.
     ui_scale: Res<crate::ui::scale::InterfaceScale>,
 ) -> Result {
-    // The whole pass — the 30 Hz walk on its tick frames, and the shape
-    // emission every frame. [`carried`] runs inside this scope, so it must not
-    // open a zone of its own: nested zones on one slot charge the inner span
-    // twice.
+    // The whole pass: the walk on the frame after each 30 Hz tick, and the
+    // egui shape emission on every frame when the egui painter is selected.
+    // [`carried`] runs inside this scope, so it
+    // must not open a zone of its own: nested zones on one slot count the
+    // inner span twice.
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::Interface);
     let Some(host) = host else { return Ok(()) };
     if !tuning.interface || host.interface().is_none() {
         art.drawn = None;
-        // **Dropped, not held.** The switch and the logout both come through
-        // here, and a list left standing would be re-painted the moment either
-        // came back — the old world's action bar over the new one's, for one
-        // tick, which is exactly the class of stale-picture bug this cache can
-        // introduce and the only place it can.
+        // The list is cleared, not kept. The switch and the logout both reach
+        // this branch, and a kept list would be painted again as soon as
+        // either came back: the old world's action bar over the new one's,
+        // for one tick. This is the one place the cache can show a stale
+        // picture.
         drawn.items.clear();
         drawn.solved_for = None;
         return Ok(());
@@ -706,84 +713,85 @@ pub(super) fn paint(
     // `viewport_rect` rather than `content_rect`: the interface is fitted to the
     // window and 1.12 has no notion of a safe area to keep out of.
     let screen = ctx.viewport_rect();
-    // **The game's own coordinate space** — `768 / uiScale` units tall and as
-    // many across as the window's own ratio asks for, at one uniform scale. See
-    // [`crate::lua::widgets::layout::units_wide`]: the window is held to 16:9 in
-    // the one mode it can be dragged in, so the *shape* is constant for every
-    // windowed size and differs only where the ratio is the monitor's —
-    // fullscreen, and maximised, which are the two the window lock bows out of.
+    // The game's coordinate space: `768 / uiScale` units tall and as many
+    // across as the window's ratio gives, at one uniform scale. See
+    // [`crate::lua::widgets::layout::units_wide`]. The window is held to 16:9
+    // in windowed mode, the only mode in which it can be dragged, so the
+    // shape is the same for every windowed size. It differs only where the
+    // ratio is the monitor's: fullscreen and maximised, the two modes the
+    // window lock does not apply to.
     let view = Viewport::of(
         f64::from(screen.width()),
         f64::from(screen.height()),
         ui_scale.get(),
     );
     let scale = view.scale as f32;
-    // **The walk, on the interface's own clock** — see [`Drawn`].
+    // The walk, on the interface's own clock; see [`Drawn`]. It runs on the
+    // frame after a tick (`InterfaceClock::walk_due`), so that the tick's
+    // `OnUpdate` handlers and this walk do not land in the same frame.
     //
-    // What that costs is stated rather than assumed: an event, a click and a
-    // keystroke all land at frame rate and all write widget state, so a health
-    // bar that moved between ticks is **drawn at the next one** — up to a tick
-    // of display latency, never a lost update, since the walk re-reads the live
-    // tree rather than replaying a diff. The whole visible interface refreshes
-    // 30 times a second, which is what the reference did.
+    // An event, a click and a keystroke all arrive at frame rate and all write
+    // widget state, so a health bar that moved between ticks is drawn after the
+    // next one: up to a tick and a frame of display latency, never a lost
+    // update, since the walk re-reads the live tree rather than replaying a
+    // diff. The whole visible interface refreshes 30 times a second, as in the
+    // 1.12.1 client.
     //
-    // **A resize is still nearly free**: the space is a constant *shape* while
-    // the window can be dragged, because the window is held to it — see
-    // [`crate::lua::widgets::layout::units_wide`] — so dragging re-solves no
-    // rectangle and invalidates no memo, and only [`Viewport::scale`] moves.
-    // What changes this is a *mode* change, which alters the space's width and
-    // is what this test then catches: one re-walk on the frame the window goes
-    // fullscreen, and none after it. The other thing it catches is the
-    // *unload*, which sets it to `None` to force one walk when the interface
-    // comes back.
+    // A resize by dragging costs almost nothing: the window is held to the
+    // space's shape while it can be dragged (see
+    // [`crate::lua::widgets::layout::units_wide`]), so dragging re-solves no
+    // rectangle and invalidates no memo; only [`Viewport::scale`] changes. A
+    // mode change alters the space's width, and the `solved_for` comparison
+    // below then walks once, on the frame the window goes fullscreen. An
+    // unload sets `solved_for` to `None`, which forces one walk when the
+    // interface comes back.
     let solved_for = (
         crate::lua::widgets::layout::units_wide(
             f64::from(screen.width()),
             f64::from(screen.height()),
             ui_scale.get(),
         ) as f32,
-        // …and the height, which is no longer a constant: moving the UI Scale
-        // slider changes it and every rectangle in the interface with it, so it
-        // is half of what the re-walk latch is keyed on.
+        // The height is not constant: the UI Scale slider changes it, and
+        // every rectangle in the interface with it, so it is the other half of
+        // the key the re-walk is compared on.
         crate::lua::widgets::layout::ui_height(ui_scale.get()) as f32,
     );
-    if clock.due() || drawn.solved_for != Some(solved_for) {
-        // **`GetTime()`'s own base**, so that a line the interface stamped from
-        // Lua and the expiry this pass applies are on one clock rather than two.
+    if clock.walk_due() || drawn.solved_for != Some(solved_for) {
+        // The time is on `GetTime()`'s base, so that a line the interface
+        // stamped from Lua and the expiry this pass applies use one clock.
         drawn.items = host.drawn(solved_for, crate::interface::api::get_time(&time));
         drawn.solved_for = Some(solved_for);
     }
     let items = &drawn.items;
 
-    // **The number that says whether this pass is doing anything**, and the one
-    // to watch when it is doing too much: a walk over a tree whose `OnLoad`s
-    // mostly failed can leave a great deal shown that the real client would have
-    // hidden. Recorded here and *reported* by [`report`], which is behind the
-    // `diagnostics` feature — this pass draws the game's interface and is not
-    // an instrument, so it must not hold a `HudReport` at all.
+    // The item count shows whether this pass draws anything, and whether it
+    // draws too much: a walk over a tree whose `OnLoad`s mostly failed can
+    // leave shown a great deal that the 1.12.1 client would have hidden.
+    // Recorded here and reported by [`report`], which is behind the
+    // `diagnostics` feature; this pass draws the game's interface and is not an
+    // instrument, so it must not hold a `HudReport`.
     art.drawn = Some(items.len());
     if items.is_empty() {
-        // **Not before the held item.** A cursor carrying something with an
-        // empty tree is not a state a session reaches, but a return here would
-        // make it one where the item is invisible and still moves on the next
-        // click — and an invisible carry is the one failure mode the whole
-        // subsystem is about.
+        // The held item is still drawn. A cursor carrying something over an
+        // empty tree is not a state a session reaches, but returning without
+        // drawing it would make the item invisible while it still moves on
+        // the next click.
         carried(&ctx, &assets, &mut art, &cursor, scale);
         return Ok(());
     }
-    // Once, when the pass first has something — the same shape as the font
-    // line above, and the number a log is worth having for: the HUD's copy
-    // scrolls off a small window and this one is in the transcript of every run.
+    // Logged once, when the pass first has items, like the font line. The
+    // HUD's copy scrolls off a small window; the log is kept for every run.
     if !art.reported {
         art.reported = true;
         info!("interface: first frame drawn — {} quads", items.len());
     }
 
-    // **The mesh painter draws this list instead** when it is on — see
-    // [`super::mesh`]. The walk above still ran (it is the one producer of
-    // `Drawn`, whichever painter consumes it); what is skipped is the whole
-    // egui emission, the held cursor item included — `build::carried_batch`
-    // is its mesh form, in its own per-frame group above every strata.
+    // The mesh painter ([`super::mesh`]) is the default and draws this list
+    // itself; the egui emission below runs only with `VALE_UI_PAINTER=egui`.
+    // The walk above runs either way, because it is the only producer of
+    // `Drawn`. With the mesh painter the whole egui emission is skipped,
+    // including the held cursor item: `build::carried_batch` is its mesh
+    // form, in its own per-frame group above every strata.
     if super::mesh::active() {
         return Ok(());
     }
@@ -799,18 +807,17 @@ pub(super) fn paint(
     Ok(())
 }
 
-/// **What the pointer is carrying**, drawn over everything.
+/// What the pointer is carrying, drawn over everything.
 ///
 /// The one thing this pass paints that is not a widget: 1.12 draws a held item
-/// as the *cursor* rather than as a frame, so there is nothing in the tree to
-/// walk and nothing in `lua::draw` to sort. It goes last and in its own layer
-/// for the same reason — a held item that a panel could cover would look
-/// dropped.
+/// as the cursor rather than as a frame, so there is nothing in the tree to
+/// walk and nothing in `lua::draw` to sort. It is drawn last and in its own
+/// layer, because a held item that a panel covered would look dropped.
 ///
-/// **A 32-unit square centred on the pointer**, in the interface's own space, so
-/// it scales with the rest of the interface rather than with the window: that is
-/// `Interface\Icons\` art at its own size, which is the size every action button
-/// and bag square draws it at.
+/// A 32-unit square centred on the pointer, in the interface's space, so it
+/// scales with the rest of the interface rather than with the window. That is
+/// `Interface\Icons\` art at its own size, the size every action button and
+/// bag square draws it at.
 fn carried(
     ctx: &egui::Context,
     assets: &GameAssets,
@@ -818,14 +825,14 @@ fn carried(
     cursor: &crate::interface::cursor::Cursor,
     scale: f32,
 ) {
-    // No zone: [`paint`]'s covers this scope — see the note there.
+    // No zone: [`paint`]'s covers this scope; see the note there.
     let Some(held) = cursor.held.as_ref() else {
         return;
     };
-    // An item whose template has not arrived has no icon, and drawing a blank
-    // square would be worse than drawing nothing — the pointer is the only
-    // evidence the item was picked up, so it is better to see the source slot
-    // desaturated than a grey box following the mouse.
+    // An item whose template has not arrived has no icon. Nothing is drawn
+    // rather than a blank square: the source slot is already shown
+    // desaturated, which marks the item as picked up, and a grey box
+    // following the mouse would add nothing.
     let Some(path) = held.texture() else {
         return;
     };
@@ -850,8 +857,8 @@ fn carried(
     painter.add(egui::Shape::mesh(mesh));
 }
 
-/// How big a held item draws, in the interface's own units — the size of a bag
-/// square's icon, which is what it was just lifted out of.
+/// The size a held item is drawn at, in the interface's units: the size of a
+/// bag square's icon.
 pub(super) const CARRIED_ICON: f32 = 32.0;
 
 /// One item: a textured quad, a solid fill, a line of text, or a frame's own
@@ -863,27 +870,28 @@ fn one(
     assets: &GameAssets,
     art: &mut Art,
     models: &crate::lua::widgets::model::UiModels,
-    // **The faces**, which are the one thing this pass draws that was rendered
-    // rather than decoded — see [`crate::render::portraits`]. Empty in the
-    // headless [`PaintProbe`], where every portrait falls back to its region's
-    // own path exactly as one whose model is still loading does.
+    // The portraits, which with the paper dolls are the pictures this pass
+    // draws that were rendered rather than decoded; see
+    // [`crate::render::portraits`]. Empty in the headless [`PaintProbe`], where
+    // every portrait falls back to its region's own path, as one whose model
+    // is still loading does.
     portraits: &crate::render::portraits::Portraits,
     dolls: &crate::render::paperdoll::Dolls,
-    // …and where the little map is looking, which is the one widget whose
-    // contents are the world — see [`minimap`]. Default (and so blank) at a
+    // Where the minimap is looking; the minimap is the one widget whose
+    // contents are the world. See [`minimap`]. Default, and so blank, at a
     // character screen and in the headless [`PaintProbe`].
     place: &crate::interface::minimap::MinimapView,
     item: &Item,
     view: Viewport,
 ) {
-    // Positions come off the [`Viewport`] and *sizes* off its scale alone —
-    // a border edge or a font height is a length and has no corner to be
+    // Positions come from the [`Viewport`] and sizes from its scale alone: a
+    // border edge or a font height is a length and has no corner to be
     // offset from.
     let scale = view.scale as f32;
     let rect = to_screen(item, view);
-    // **A scroll frame's window bounds everything under it** — see
-    // [`Item::clip`]. egui clips per shape, so the painter is narrowed here and
-    // every arm below draws through it unchanged.
+    // A scroll frame's window clips everything under it; see [`Item::clip`].
+    // egui clips per shape, so the painter is narrowed here and every arm
+    // below draws through it unchanged.
     let clipped;
     let painter = match item.clip {
         Some(clip) => {
@@ -921,22 +929,23 @@ fn one(
         label(painter, rect, paint, text, tint, art.faces, scale);
         return;
     }
-    // A `FontString` paints text or nothing — its colour belongs to the glyphs,
-    // and letting it reach the solid-fill fallback below drew every empty
-    // `MessageFrame`'s font declaration as a gold bar. See [`Paint::is_font`].
+    // A `FontString` paints text or nothing. Its colour belongs to the glyphs;
+    // when it reached the solid-fill fallback below, every empty
+    // `MessageFrame`'s font declaration was drawn as a gold bar. See
+    // [`Paint::is_font`].
     if paint.is_font {
         return;
     }
-    // **A portrait before a path**, because a region can carry both:
+    // A portrait is checked before a path, because a region can have both:
     // `TargetPortrait` is declared with art in the XML and filled by
-    // `SetPortraitTexture` at run time, so the picture has to win — and the path
-    // stays underneath as the fallback for a unit whose model has not loaded.
+    // `SetPortraitTexture` at run time, so the picture takes precedence and
+    // the path stays as the fallback for a unit whose model has not loaded.
     //
-    // The **tint is the same one every other texture takes**, which is not
-    // incidental: `TargetFrame.lua` greys the portrait to `0.35` for a tapped
-    // mob, tints it blue for a friendly one out of range and red for a hostile
-    // one, and fades it with the whole frame when the target dies. Painting a
-    // portrait through its own path would silently drop all four.
+    // The portrait takes the same tint as every other texture. `TargetFrame.lua`
+    // greys the portrait to `0.35` for a tapped mob, tints it blue for a
+    // friendly one out of range and red for a hostile one, and fades it with
+    // the whole frame when the target dies. Painting a portrait through a
+    // separate path without the tint would drop all four.
     if let Some(id) = paint
         .portrait
         .as_deref()
@@ -951,11 +960,11 @@ fn one(
             let Some(handle) = art.texture(ctx, assets, path, additive) else {
                 return;
             };
-            // **A turned texture takes the quad that can turn**, which is the
-            // world map's player arrow and nothing else in either shipped
-            // directory — see [`crate::lua::widgets::regions::set_rotation`]. It ignores
-            // `SetTexCoord`, which no rotated region sets and which would want
-            // the uv threaded through [`turned_quad`] for no caller.
+            // A rotated texture is drawn with the quad that can rotate. The
+            // world map's player arrow is the only one in either shipped
+            // directory; see [`crate::lua::widgets::regions::set_rotation`]. It ignores
+            // `SetTexCoord`, which no rotated region sets and which would need
+            // the uv passed through [`turned_quad`] for no caller.
             if paint.rotation != 0.0 {
                 painter.add(egui::Shape::mesh(turned_quad(
                     handle.id(),
@@ -966,12 +975,12 @@ fn one(
                 )));
                 return;
             }
-            // **…and a quad whose four corners each carry their own uv**, which
-            // is the eight-argument `SetTexCoord` — see
-            // [`crate::lua::widgets::regions::Paint::corners`]. It is the whole of how a
-            // flight path is drawn: `DrawRouteLine` gives the texture a bounding
-            // box and rotates the line *inside* it with these numbers, so
-            // ignoring them draws every route as a rectangle.
+            // A quad whose four corners each have their own uv: the
+            // eight-argument `SetTexCoord`; see
+            // [`crate::lua::widgets::regions::Paint::corners`]. Flight paths are drawn this
+            // way: `DrawRouteLine` gives the texture a bounding box and rotates
+            // the line inside it with these numbers, so ignoring them draws
+            // every route as a rectangle.
             if let Some(corners) = paint.corners {
                 painter.add(egui::Shape::mesh(corner_quad(handle.id(), rect, corners, tint)));
                 return;
@@ -989,34 +998,33 @@ fn one(
         // A colour with no path is a solid fill — every backdrop in the
         // directory, and `SetTexture(0, 0, 0, 0.5)` is how they are written.
         None => {
-            // …except a **portrait still waiting for its picture**: a portrait
-            // region's colour is the *picture's* tint, and painting it alone
-            // drew a white square through every round portrait hole while the
-            // studio was loading — or for ever, for a unit refused one. The
-            // frame's own art shows through instead, which is the honest cold
-            // state.
+            // Except a portrait still waiting for its picture: a portrait
+            // region's colour is the picture's tint, and painting it alone
+            // drew a white square in every round portrait hole while the
+            // portrait was rendering, or permanently for a unit that gets no
+            // portrait. Nothing is drawn, so the frame's own art shows
+            // through.
             if paint.portrait.is_some() {
                 return;
             }
-            // The coloured fold, not `tint`: a solid fill is where a
-            // saturated colour carries its own translucency — see
-            // [`coloured_alpha`], and the rank bars it was measured on.
+            // [`coloured_alpha`], not `tint`: a solid fill is where a
+            // saturated colour carries its own translucency. The rank bars
+            // it was measured on are described there.
             painter.rect_filled(rect, 0.0, solid_colour(paint.colour, item.alpha));
         }
     }
 }
 
-/// **The portrait, cut to the circle the game cuts it to.**
+/// The portrait, cut to the same circle the game cuts it to.
 ///
-/// A portrait render target is a square and every portrait hole in the
-/// interface is round, so something has to remove the corners. The reference
-/// does it with an alpha mask:
+/// A portrait render target is square and every portrait hole in the
+/// interface is round, so the corners have to be removed. The 1.12.1 client
+/// uses an alpha mask for this:
 /// `Interface\CharacterFrame\TempPortraitAlphaMask.blp` (and a `Small`
 /// sibling for the party frames).
 ///
-/// **That mask is a hard disc, measured rather than assumed.** Decoded from the
-/// archive it is 128x128 DXT3, and its alpha bucketed by radius from the centre
-/// reads
+/// The mask is a hard disc. Decoded from the archive it is 128x128 DXT3, and
+/// its alpha grouped by radius from the centre is
 ///
 /// ```text
 /// r <= 63   255      (every pixel, no exception)
@@ -1024,19 +1032,19 @@ fn one(
 /// r >= 65   0
 /// ```
 ///
-/// — a circle inscribed in the square, touching the edges at the midpoints,
-/// with a single texel of rim and no feathering. So cutting the quad into a
-/// disc is not an approximation of the mask; it is the same shape, and it
-/// costs no second texture in a pipeline that binds one.
+/// That is a circle inscribed in the square, touching the edges at the
+/// midpoints, with a one-texel rim and no feathering. Cutting the quad into a
+/// disc therefore gives the same shape as the mask, and needs no second
+/// texture in a pipeline that binds one.
 ///
 /// The rim is given half a pixel of fade because egui's mesh has no
-/// antialiasing of its own, where the game's rasteriser had the mask's own
-/// texel doing that job. Everything else — the tint, which four different
-/// `TargetFrame` states write, and the UVs — is what the plain quad had.
+/// antialiasing of its own; in the game the mask's rim texel does that. The
+/// tint, which four `TargetFrame` states write, and the UVs are the same as
+/// the plain quad's.
 fn portrait_disc(id: egui::TextureId, rect: egui::Rect, tint: egui::Color32) -> egui::Mesh {
-    // The texture's own square maps onto the rectangle, so a rim vertex takes
-    // the uv of the point it sits over — which is what keeps the picture still
-    // while the outline changes.
+    // The texture's square maps onto the rectangle, so a rim vertex takes the
+    // uv of the point it sits over. The picture therefore stays in place and
+    // only the outline changes.
     disc(id, rect, tint, |p| {
         egui::pos2(
             (p.x - rect.left()) / rect.width().max(f32::EPSILON),
@@ -1045,25 +1053,25 @@ fn portrait_disc(id: egui::TextureId, rect: egui::Rect, tint: egui::Color32) -> 
     })
 }
 
-/// **A textured disc inscribed in a rectangle**, with the caller saying where in
-/// its texture each point lands.
+/// A textured disc inscribed in a rectangle, with the caller giving the
+/// texture coordinate of each point.
 ///
-/// Two callers and two different mappings, which is the whole reason the uv is a
-/// closure: a portrait's texture *is* the rectangle, and a minimap draws one
-/// 533-yard tile at a time through the same outline, so its mapping is the tile's
-/// own affine rather than the widget's. The geometry — an inscribed circle with a
-/// half-pixel rim — is the mask both of them are cut by; see [`portrait_disc`]
-/// and `vale_assets::tables::minimap`, which measure the two masks and find the same
-/// shape.
+/// The uv is a closure because the two callers map differently: a portrait's
+/// texture covers the rectangle, and a minimap draws one 533-yard tile at a
+/// time through the same outline, so its mapping is the tile's own affine
+/// rather than the widget's. The geometry, an inscribed circle with a
+/// half-pixel rim, matches the mask both are cut by in the game; see
+/// [`portrait_disc`] and `vale_assets::tables::minimap`, which measure the two
+/// masks and find the same shape.
 fn disc(
     id: egui::TextureId,
     rect: egui::Rect,
     tint: egui::Color32,
     uv_at: impl Fn(egui::Pos2) -> egui::Pos2,
 ) -> egui::Mesh {
-    /// Enough that the rim reads as round at the largest portrait in the
-    /// interface (the character sheet's, at 60-odd pixels) and cheap enough
-    /// that fourteen of them cost nothing.
+    /// Enough for the rim to look round at the largest portrait in the
+    /// interface (the character sheet's, at about 60 pixels), and few enough
+    /// that fourteen discs have negligible cost.
     const SEGMENTS: usize = 48;
     let centre = rect.center();
     let radius = (rect.width().min(rect.height()) / 2.0).max(0.0);
@@ -1089,46 +1097,44 @@ fn disc(
     for step in 0..SEGMENTS {
         let inner = 1 + step as u32 * 2;
         let next_inner = inner + 2;
-        // The disc itself…
+        // The disc.
         mesh.add_triangle(0, inner, next_inner);
-        // …and the half-pixel rim that stands in for the mask's own texel.
+        // The half-pixel rim, in place of the mask's rim texel.
         mesh.add_triangle(inner, inner + 1, next_inner);
         mesh.add_triangle(inner + 1, next_inner + 1, next_inner);
     }
     mesh
 }
 
-/// **A `<Minimap>` frame's contents**: the ground the character is standing on,
-/// cut to the circle, with the arrow that says which way they are looking.
+/// A `<Minimap>` frame's contents: the ground around the character, cut to
+/// the circle, with the arrow that shows which way the character faces.
 ///
 /// ```text
-/// radius_yards(zoom, indoors)   how far it sees        the client's own table
+/// radius_yards(zoom, indoors)   how far it sees        one radius per zoom level
 /// tiles_in_view(x, y, radius)   which pictures, where  north up, west left
 /// md5translate.trs              …and what each is called
 /// disc()                        the shape Textures\MinimapMask is
 /// ```
 ///
-/// **Nothing here is composed and nothing is uploaded per frame**, which is the
-/// whole design and is worth stating because the obvious implementation is the
-/// other one. A minimap is naturally written as "resample the world into a small
-/// image and hand it over", and that is a texture upload every time the character
-/// moves a texel — several megabytes a second, for ever. Instead each 256x256
-/// tile is uploaded **once** into the same cache every other texture in the
-/// interface uses ([`Art::texture`]), and a frame draws at most four small meshes
-/// over it: the tile boundaries are axis-aligned because the map does not rotate,
-/// so a rectangular clip per tile is exact, and the disc outline is the same
-/// hundred vertices each time with only its uv mapping changing.
+/// Nothing is composited and nothing is uploaded per frame. Resampling the
+/// world into a small image each frame would upload a texture every time the
+/// character moves a texel, several megabytes a second. Instead each 256x256
+/// tile is uploaded once into a cache ([`Art::minimap_texture`]), and a frame
+/// draws at most four small meshes over it. The tile boundaries are
+/// axis-aligned because the map does not rotate, so a rectangular clip per
+/// tile is exact, and the disc outline is the same hundred vertices each time
+/// with only its uv mapping changing.
 ///
-/// Two stated approximations:
+/// Two approximations:
 ///
-/// * **A one-texel seam between tiles.** Each tile is sampled clamped to its own
+/// * A one-texel seam between tiles. Each tile is sampled clamped to its own
 ///   edge, so linear filtering does not reach across the join. At the default
-///   zoom a texel is about a yard and the frame is 140 units across, so the join
-///   is a sub-pixel discontinuity rather than a line.
-/// * **The tiles are drawn in whatever order [`vale_assets::tables::minimap::
-///   tiles_in_view`] lists them**, which is fine only because they do not
-///   overlap. They cannot: a tile is exactly `TILE_SIZE` and the placements come
-///   straight off the grid.
+///   zoom a texel is about a yard and the frame is 140 units across, so the
+///   join is a sub-pixel discontinuity rather than a visible line.
+/// * The tiles are drawn in the order [`vale_assets::tables::minimap::
+///   tiles_in_view`] lists them, which is correct only because they do not
+///   overlap. They cannot overlap: a tile is exactly `TILE_SIZE` and the
+///   placements come straight from the grid.
 #[allow(clippy::too_many_arguments)]
 fn minimap(
     painter: &egui::Painter,
@@ -1140,9 +1146,9 @@ fn minimap(
     rect: egui::Rect,
     alpha: f32,
 ) {
-    // **Nothing at all before there is a world**, rather than a black disc: the
-    // two glue screens and `--audit` are both this state, and the frame is
-    // hidden behind its own border art there in the reference too.
+    // Nothing is drawn before there is a world, rather than a black disc. The
+    // two glue screens and `--audit` are in this state, and in the 1.12.1
+    // client the frame there shows only its own border art too.
     if !view.in_world || rect.width() <= 0.0 || rect.height() <= 0.0 {
         return;
     }
@@ -1152,9 +1158,9 @@ fn minimap(
     let radius = vale_assets::tables::minimap::radius_yards(widget.zoom, view.indoors);
     for tile in vale_assets::tables::minimap::tiles_in_view(view.position.0, view.position.1, radius) {
         let Some(path) = index.texture(&view.directory, tile.tile.0, tile.tile.1) else {
-            // A tile the index does not carry is black, which is the client's
-            // own `MINIMAPCHUNKNOTFOUND` and not a gap here — the index is
-            // sparse by construction.
+            // A tile the index does not list is black, which is what the
+            // 1.12.1 client shows for a tile with no picture; it is not a gap
+            // in this code. The index is sparse by construction.
             continue;
         };
         let Some(handle) = art.minimap_texture(ctx, assets, &path) else {
@@ -1168,9 +1174,9 @@ fn minimap(
             )
         };
         let tile_rect = egui::Rect::from_min_max(at(left, top), at(right, bottom));
-        // **The clip is what cuts one tile off the next**, and it is exact
-        // because the map is north-up: a tile boundary is a horizontal or a
-        // vertical line on the screen. See the module comment on rotation.
+        // The clip separates one tile from the next. It is exact because the
+        // map is north-up: a tile boundary is a horizontal or a vertical line
+        // on the screen.
         let clipped = painter.with_clip_rect(painter.clip_rect().intersect(tile_rect));
         let mesh = disc(handle.id(), rect, tint, |p| {
             egui::pos2(
@@ -1185,11 +1191,11 @@ fn minimap(
     // The dots and the markers, over the tiles and under the arrow.
     blips(painter, ctx, assets, art, view, rect, radius, tint);
 
-    // **The arrow in the middle**, which is the widget's own
-    // `minimapPlayerModel="Interface\Minimap\MinimapArrow.mdx"` — a model in
-    // 1.12 and a turned quad here, because the file is a flat sheet either way
-    // and this pass has no depth. It goes over the terrain and under everything
-    // parented to the frame, which is where the reference puts it.
+    // The arrow in the middle is the widget's
+    // `minimapPlayerModel="Interface\Minimap\MinimapArrow.mdx"`: a model in
+    // 1.12 and a rotated quad here, because the file is a flat sheet either
+    // way and this pass has no depth. It is drawn over the terrain and under
+    // everything parented to the frame, as in the 1.12.1 client.
     let Some(handle) = art.texture(ctx, assets, PLAYER_ARROW, false) else {
         return;
     };
@@ -1203,8 +1209,8 @@ fn minimap(
     )));
 }
 
-/// **The dots, and the two markers** — the egui form of `mesh::build::blips`,
-/// which carries the notes. A dot is a cell of `ObjectIcons` at its projected
+/// The dots and the two markers: the egui form of `mesh::build::blips`, whose
+/// comments explain the rules. A dot is a cell of `ObjectIcons` at its projected
 /// place inside the disc; a marker inside the disc is its `POIIcons` cell, and
 /// beyond the rim an arrow at the rim turned to point the way.
 #[allow(clippy::too_many_arguments)]
@@ -1284,30 +1290,30 @@ fn blips(
     }
 }
 
-/// **How many minimap tile pictures to keep.** Four are visible at the widest
-/// zoom, so the rest is hysteresis for a character walking a seam — and the cap
-/// is what stops the whole of a continent's 687 tiles accumulating over a
-/// session. Sixteen is 4 MB resident. See [`Art::minimap`].
+/// How many minimap tile pictures to keep. Four are visible at the widest
+/// zoom, so the rest is hysteresis for a character walking along a seam. The
+/// cap stops a continent's 687 tiles accumulating over a session. Sixteen is
+/// 4 MB resident. See [`Art::minimap`].
 const MINIMAP_CACHE: usize = 16;
 
-/// The arrow standing in the middle of the minimap — the widget's own
-/// `minimapPlayerModel`, with `.mdx` swapped for the sheet it is made of.
+/// The arrow in the middle of the minimap: the widget's
+/// `minimapPlayerModel`, with `.mdx` replaced by the texture the model uses.
 pub(super) const PLAYER_ARROW: &str = r"Interface\Minimap\MinimapArrow";
 
-/// …drawn at this fraction of the frame's width.
+/// The size of [`PLAYER_ARROW`], as a fraction of the frame's width.
 ///
-/// The art is 32x32 and the frame is 140, which is 0.229 — so this is the
-/// reference's own ratio only if its model is drawn at the texture's size, which
-/// is not established. It is the one number on this widget that is taste.
+/// The art is 32x32 and the frame is 140, which is 0.229. This matches the
+/// 1.12.1 client only if it draws the model at the texture's size, which has
+/// not been checked. It is the one value on this widget chosen by eye.
 pub(super) const PLAYER_ARROW_FRACTION: f32 = 32.0 / 140.0;
 
-/// **A quad turned about its own centre**, clockwise on the screen.
+/// A quad rotated about its own centre, clockwise on the screen.
 ///
-/// egui's y runs *down*, which is what makes the ordinary positive rotation
-/// (`x cos - y sin`, `x sin + y cos`) come out clockwise here with no extra
-/// negation — the one place that is easy to get backwards, and the reason
-/// [`crate::lua::panels::worldmap::arrow_angle`] carries the derivation and the test
-/// rather than this function.
+/// egui's y axis points down, so the ordinary positive rotation
+/// (`x cos - y sin`, `x sin + y cos`) is clockwise here with no extra
+/// negation. This is easy to get backwards;
+/// [`crate::lua::panels::worldmap::arrow_angle`] holds the derivation and the
+/// test rather than this function.
 fn turned_quad(
     id: egui::TextureId,
     centre: egui::Pos2,
@@ -1317,8 +1323,8 @@ fn turned_quad(
 ) -> egui::Mesh {
     let (sin, cos) = radians.sin_cos();
     let mut mesh = egui::Mesh::with_texture(id);
-    // Top left, top right, bottom right, bottom left — the uv order a quad
-    // takes, so the picture's own top stays its top before the turn.
+    // Top left, top right, bottom right, bottom left: the uv order of a quad,
+    // so the picture's top is at the quad's top before the rotation.
     for (dx, dy, u, v) in [
         (-half.x, -half.y, 0.0, 0.0),
         (half.x, -half.y, 1.0, 0.0),
@@ -1339,20 +1345,19 @@ fn turned_quad(
     mesh
 }
 
-/// **A quad whose four corners each carry their own texture coordinate** — the
+/// A quad whose four corners each have their own texture coordinate: the
 /// eight-argument `SetTexCoord`.
 ///
-/// The rectangle is the region's own; what the eight numbers do is turn the
-/// picture *inside* it. `TaxiFrame.lua`'s `DrawRouteLine` is the one caller in
-/// either shipped directory and it is worth reading once, because it explains
-/// the shape: it anchors the texture to the bounding box of the line it wants,
-/// then solves the eight uvs so that the horizontal line art crosses that box at
-/// the right angle. So the corners are the whole drawing and the box alone is
-/// meaningless.
+/// The rectangle is the region's own; the eight numbers rotate the picture
+/// inside it. `TaxiFrame.lua`'s `DrawRouteLine` is the only caller in either
+/// shipped directory. It anchors the texture to the bounding box of the line
+/// it wants, then solves the eight uvs so that the horizontal line art
+/// crosses that box at the right angle. The corners therefore define the
+/// drawing, and the box alone does not.
 ///
-/// **The argument order is the game's, and it is not the corner order of a
-/// quad**: `(ULx, ULy, LLx, LLy, URx, URy, LRx, LRy)` — upper-left,
-/// *lower*-left, upper-right, lower-right. Walking them in the order they arrive
+/// The argument order is the game's, and it is not the corner order of a
+/// quad: `(ULx, ULy, LLx, LLy, URx, URy, LRx, LRy)`, that is upper-left,
+/// lower-left, upper-right, lower-right. Taking them in the order they arrive
 /// draws an hourglass.
 fn corner_quad(
     id: egui::TextureId,
@@ -1362,8 +1367,8 @@ fn corner_quad(
 ) -> egui::Mesh {
     let [ul_x, ul_y, ll_x, ll_y, ur_x, ur_y, lr_x, lr_y] = corners;
     let mut mesh = egui::Mesh::with_texture(id);
-    // Top left, top right, bottom right, bottom left — the winding
-    // [`turned_quad`] uses, so both meshes here are built the same way round.
+    // Top left, top right, bottom right, bottom left: the winding
+    // [`turned_quad`] uses, so both meshes here have the same winding.
     for (pos, u, v) in [
         (rect.left_top(), ul_x, ul_y),
         (rect.right_top(), ur_x, ur_y),
@@ -1381,18 +1386,18 @@ fn corner_quad(
     mesh
 }
 
-/// **A `<Model>` frame's contents**: the file's own triangles, laid into the
+/// A `<Model>` frame's contents: the file's own triangles, placed in the
 /// frame's rectangle.
 ///
-/// The whole of what this pass adds to `vale_assets::interface::uimodel::flatten` is the
-/// mapping from that function's `0..1` box to the rectangle on the screen — and
-/// the **y flip**, because the game's models and rectangles are y-up and egui is
-/// y-down, which is the same flip [`to_screen`] makes for every other item here.
+/// This pass adds two things to `vale_assets::interface::uimodel::flatten`:
+/// the mapping from that function's `0..1` box to the rectangle on the screen,
+/// and the y flip, because the game's models and rectangles are y-up and egui
+/// is y-down. [`to_screen`] makes the same flip for every other item here.
 ///
-/// Two stated approximations, both the same ones the rest of this file makes:
-/// an additive batch is drawn through the luminance-as-alpha trick (the
-/// cooldown's finish flash is one), and nothing is clipped to the rectangle —
-/// which for the swirl does not matter, since its own quads *are* the
+/// Two approximations, both also made elsewhere in this file: an additive
+/// batch (the cooldown's finish flash is one) is drawn with its luminance as
+/// its alpha, and nothing is clipped to the rectangle. For the cooldown swirl
+/// the missing clip does not matter, since its quads cover exactly the
 /// rectangle.
 #[allow(clippy::too_many_arguments)]
 fn model(
@@ -1406,17 +1411,17 @@ fn model(
     rect: egui::Rect,
     alpha: f32,
 ) {
-    // **A paper doll before a file**, and the two are exclusive rather than
-    // layered: a `<Model>` frame either holds a picture of a *file* — the
-    // cooldown swirl, the login backdrop, flattened into triangles here — or it
-    // holds a *unit*, which is a render target [`crate::render::paperdoll`]
-    // drew and this only has to place. None of the five `<PlayerModel>` frames
-    // ever gets a file, so the branch is on which of the two the scene has.
+    // A paper doll is checked before a file, and the two are exclusive rather
+    // than layered. A `<Model>` frame holds either a file (the cooldown swirl,
+    // the login backdrop), flattened into triangles here, or a unit, which is
+    // a render target [`crate::render::paperdoll`] drew and this only places.
+    // None of the five `<PlayerModel>` frames is given a file, so the branch
+    // is on which of the two the scene has.
     if scene.unit.is_some() {
-        // The picture may not be ready — the frame a panel is opened on, and
-        // any frame the character's model is still loading. Nothing is drawn
-        // meanwhile rather than a fill, which is the portrait pass's own
-        // white-square rule: the rectangle belongs to the picture.
+        // The picture may not be ready: on the frame a panel is opened, and on
+        // any frame while the character's model is loading. Nothing is drawn
+        // meanwhile rather than a fill, for the same reason as for portraits:
+        // a fill in the picture's rectangle shows as a white square.
         if let Some(id) = dolls.texture(&scene.frame) {
             let tint = egui::Color32::from_white_alpha((alpha.clamp(0.0, 1.0) * 255.0) as u8);
             painter.image(
@@ -1428,8 +1433,8 @@ fn model(
         }
         return;
     }
-    // **Read, never loaded here.** The parse belongs to [`tick_models`], which
-    // runs before this and is the system that may touch the archives; a paint
+    // Read here, never loaded. The parse belongs to [`tick_models`], which
+    // runs before this and is the system allowed to read the archives; a paint
     // pass that loaded on demand would do it in the middle of a frame.
     let Some(m2) = models.get(&scene.file) else {
         if art.reported_models.insert(scene.file.clone()) {
@@ -1458,8 +1463,8 @@ fn model(
         if batch.is_invisible() {
             continue;
         }
-        // 3 and 4 are the additive pair — see the module comment on the one
-        // blend mode this pass has.
+        // Blend modes 3 and 4 are the additive pair; see the module comment on
+        // blend modes in the egui painter.
         let additive = batch.blend == 3 || batch.blend == 4;
         let Some(handle) = art.texture(ctx, assets, &batch.texture, additive) else {
             continue;
@@ -1482,14 +1487,13 @@ fn model(
     }
 }
 
-/// **A backdrop's fill**: the frame's rectangle, pulled in by the backdrop's own
-/// insets, tiled at its own period.
+/// A backdrop's fill: the frame's rectangle, shrunk by the backdrop's insets,
+/// tiled at its own period.
 ///
-/// The insets are why this is not simply a texture at the frame's rectangle: they
-/// are cut so the fill butts up against the bright line *inside* each border
-/// piece, so a fill drawn to the frame's edge shows through the border's
-/// semi-transparent outer texels and reads as a halo. The tooltip's edge is 16
-/// and its insets are 5.
+/// The insets place the fill's edge at the bright line inside each border
+/// piece. A fill drawn to the frame's edge would show through the border's
+/// semi-transparent outer texels as a halo. The tooltip's edge is 16 and its
+/// insets are 5.
 fn background(
     painter: &egui::Painter,
     ctx: &egui::Context,
@@ -1537,15 +1541,15 @@ fn background(
     painter.add(egui::Shape::mesh(mesh));
 }
 
-/// **A backdrop's border**: eight pieces, inside the frame and flush with its
+/// A backdrop's border: eight pieces, inside the frame and flush with its
 /// edges.
 ///
-/// Four `edgeSize` squares at the corners and four runs between them, and the
-/// runs **tile** at the same period rather than stretching — see
-/// [`vale_assets::interface::backdrop`], where the strip's own layout is, and
-/// [`crate::lua::widgets::backdrop`], where the geometry and its source are. A frame too
-/// small for its own two corners gets no runs at all and the corners overlap,
-/// which is what the client's own `side / e - 2` does when it goes negative.
+/// Four `edgeSize` squares at the corners and four runs between them. The
+/// runs tile at the same period rather than stretching; see
+/// [`vale_assets::interface::backdrop`] for the strip's layout and
+/// [`crate::lua::widgets::backdrop`] for the geometry and its source. A frame
+/// too small for its two corners gets no runs and the corners overlap, as in
+/// the 1.12.1 client.
 fn border(
     painter: &egui::Painter,
     ctx: &egui::Context,
@@ -1602,17 +1606,16 @@ fn border(
     }
 }
 
-/// **A status bar's fill, cropped rather than squashed.**
+/// A status bar's fill, cropped rather than squashed.
 ///
-/// The rectangle has already been cut to the fraction by [`crate::lua::widgets::draw`];
-/// what is here is the other half of the same rule — the *texture* is cropped by
-/// the same amount, so a bar at 40% shows the left 40% of `UI-StatusBar` at its
-/// own scale. Squashing the whole gradient into 40% of the width draws something
-/// that looks like a bar and is wrong at every value, which is the failure mode
-/// this project keeps naming: plausible rather than absent.
+/// [`crate::lua::widgets::draw`] has already cut the rectangle to the fraction.
+/// Here the texture is cropped by the same amount, so a bar at 40% shows the
+/// left 40% of `UI-StatusBar` at its own scale. Squashing the whole gradient
+/// into 40% of the width draws something that looks like a bar but is wrong
+/// at every value.
 ///
 /// A bar with a colour and no texture is a solid fill, which is what
-/// `SetStatusBarColor` alone leaves — the loot-roll bars and the two colour
+/// `SetStatusBarColor` alone leaves: the loot-roll bars and the two colour
 /// pickers.
 fn fill(
     painter: &egui::Painter,
@@ -1623,8 +1626,8 @@ fn fill(
     rect: egui::Rect,
     alpha: f32,
 ) {
-    // The coloured fold — a bar's fill is a saturated colour at half alpha in
-    // nearly every element that has one; see [`coloured_alpha`].
+    // [`coloured_alpha`], because a bar's fill is a saturated colour at half
+    // alpha in nearly every element that has one.
     let tint = solid_colour(bar.colour, alpha);
     let Some(path) = bar.texture.as_deref() else {
         painter.rect_filled(rect, 0.0, tint);
@@ -1634,8 +1637,8 @@ fn fill(
         return;
     };
     // The crop runs the same way the rectangle was cut: from the left, or from
-    // the bottom for a vertical bar — which in egui's y-down space is the
-    // *bottom* of the uv rectangle held and the top moved down.
+    // the bottom for a vertical bar. In egui's y-down space that keeps the
+    // bottom of the uv rectangle fixed and moves the top down.
     let uv = if bar.vertical {
         egui::Rect::from_min_max(egui::pos2(0.0, 1.0 - bar.fraction), egui::pos2(1.0, 1.0))
     } else {
@@ -1665,25 +1668,25 @@ fn label(
     } * scale;
     let family = family(paint.font.as_deref(), bound);
     let font = egui::FontId::new(size, family);
-    // **The escapes**: a line is one or more coloured runs, and `|Hplayer:…|h`
-    // is markup rather than words. See [`crate::lua::widgets::text`] — until it existed
-    // every chat line reached the screen with its link syntax spelled out.
-    // `marked` is a byte scan and all but a handful of the interface's strings
-    // fail it, so the ordinary label still takes one section and no allocation.
+    // Escape sequences: a line is one or more coloured runs, and `|Hplayer:…|h`
+    // is markup rather than text. See [`crate::lua::widgets::text`]; without
+    // it every chat line is drawn with its link syntax spelled out. `marked`
+    // is a byte scan that all but a few of the interface's strings fail, so
+    // an ordinary label still takes one section and no allocation.
     let mut job = egui::text::LayoutJob {
-        // The fold width, or none: a wrapping font string folds at its own
-        // rectangle — the tooltip's `wrap=1` lines, whose rectangle the lua
-        // side already capped at its stated width.
+        // The wrap width, or none: a wrapping font string wraps at its own
+        // rectangle's width, for example the tooltip's `wrap=1` lines, whose
+        // rectangle the lua side already capped at its stated width.
         wrap: egui::text::TextWrapping {
             max_width: if paint.wrap && rect.width() > 0.0 {
                 rect.width()
             } else {
                 f32::INFINITY
             },
-            // `<FontString maxLines="3">` — the same cap the layout reserved
-            // height for, so a name that would fold four ways is truncated
-            // rather than drawn over the row beneath it. Zero is egui's own
-            // "no limit", which is also what an undeclared `maxLines` means.
+            // `<FontString maxLines="3">`: the same cap the layout reserved
+            // height for, so a name that would wrap to four lines is truncated
+            // rather than drawn over the row beneath it. An undeclared
+            // `maxLines` (zero) means no limit, which is `usize::MAX` here.
             max_rows: if paint.max_rows > 0 {
                 paint.max_rows
             } else {
@@ -1691,12 +1694,12 @@ fn label(
             },
             ..Default::default()
         },
-        // **How the rows sit inside the fold**, which is a layout-time decision
-        // in egui rather than a paint-time one: a wrapped `justifyH="CENTER"`
-        // string centres each row over the block, and a `RIGHT` one hangs them
-        // off its right edge. It also moves the galley's own origin — `Center`
-        // lays the rows out over `-w/2..w/2` — which is why the position below
-        // is taken from `galley.rect` and not from `galley.size()` alone.
+        // The horizontal alignment of the rows, which egui decides at layout
+        // time rather than at paint time: a wrapped `justifyH="CENTER"` string
+        // centres each row over the block, and a `RIGHT` one aligns them to its
+        // right edge. It also moves the galley's origin (`Center` lays the rows
+        // out over `-w/2..w/2`), which is why the position below is taken from
+        // `galley.rect` and not from `galley.size()` alone.
         halign: match paint.justify_h {
             "LEFT" => egui::Align::LEFT,
             "RIGHT" => egui::Align::RIGHT,
@@ -1713,29 +1716,28 @@ fn label(
             0.0,
             egui::TextFormat {
                 font_id: font.clone(),
-                // A run with no `|c` over it wears the region's own colour,
-                // which is what `|r` returns to.
+                // A run with no `|c` takes the region's own colour, which is
+                // also what `|r` returns to.
                 color: run.colour.map_or(tint, rgba),
                 ..Default::default()
             },
         );
     }
     let galley = painter.layout_job(job);
-    // **`<Shadow>` first, because it goes under.** One offset copy in the
-    // shadow's own colour — `MasterFont`'s is `(1, -1)` black and
-    // `GameFontNormal` inherits it, so this is on nearly every word the
-    // interface draws rather than on the six elements that declare one. The
-    // game's y is up and egui's is down, hence the negation. Painted as a
-    // solid galley (`Color32` override) rather than a second layout, so a
-    // coloured run's shadow is still the shadow's colour.
+    // `<Shadow>`: one offset copy in the shadow's colour, drawn under the
+    // text. `MasterFont`'s shadow is `(1, -1)` black and `GameFontNormal`
+    // inherits it, so it applies to nearly every word the interface draws,
+    // not only to the six elements that declare one. The game's y is up and
+    // egui's is down, hence the negation. It is painted as a solid galley
+    // (`Color32` override) rather than a second layout, so a coloured run's
+    // shadow is still the shadow's colour.
     //
-    // **`galley_with_override_text_color`, never `galley`.** egui's plain
-    // `galley` takes a *fallback* — it recolours only the sections laid out as
-    // `Color32::PLACEHOLDER`, and every section in this job carries an explicit
-    // colour, so the shadow drew the text a second time in the text's own
-    // colour. On screen that is every word in the interface doubled and offset
-    // by a unit, which reads as a rendering fault rather than as a missing
-    // shadow.
+    // It must use `galley_with_override_text_color`, not `galley`. egui's
+    // plain `galley` takes a fallback colour that applies only to sections
+    // laid out as `Color32::PLACEHOLDER`; every section in this job has an
+    // explicit colour, so the shadow drew the text a second time in the
+    // text's own colour, and every word appeared doubled and offset by a
+    // unit.
     let shadow = paint.shadow.map(|(offset, colour)| {
         (
             egui::vec2(offset[0] * scale, -offset[1] * scale),
@@ -1754,29 +1756,28 @@ fn label(
         _ => egui::Align2::CENTER_CENTER,
     };
     let at = anchor.pos_in_rect(&rect);
-    // **A folded string is placed by the same rule as one that fits**, and it is
-    // this line that was wrong. The fold used to hang the galley from
-    // `rect.min` — correct while [`Paint::wrap`] meant only the tooltip's own
-    // computed lines, wrong from the round that made it mean *any `FontString`
-    // with a declared width*, since almost every centred label in the game has
-    // one: `PlayerName`, the status-bar values, the panel titles, the zone text.
-    // All of them jumped into the top-left corner of their own rectangle at
-    // once, which is what "the text has shifted" looked like on screen.
+    // A wrapped string is placed by the same anchor rule as one that fits.
+    // Placing a wrapped galley at `rect.min` was correct while
+    // [`Paint::wrap`] meant only the tooltip's computed lines, and wrong once
+    // it meant any `FontString` with a declared width, which almost every
+    // centred label in the game has: `PlayerName`, the status-bar values, the
+    // panel titles, the zone text. All of them were drawn in the top-left
+    // corner of their own rectangle.
     //
-    // Offset by `galley.rect.min` rather than positioned bare, because `halign`
-    // above lays the rows out around their own origin: zero for `LEFT`, `-w/2`
-    // for `Center`, `-w` for `RIGHT`. For a left-justified string the two are
-    // the same and this is the position it always had.
+    // Offset by `galley.rect.min` rather than positioned directly, because
+    // `halign` above lays the rows out around their own origin: zero for
+    // `LEFT`, `-w/2` for `Center`, `-w` for `RIGHT`. For a left-justified
+    // string the offset is zero.
     let min = anchor.anchor_size(at, galley.size()).min - galley.rect.min.to_vec2();
-    // **The outline first, then the shadow, then the glyphs** — the game's own
-    // order, and the only one that leaves the outline *around* the text rather
-    // than over it.
+    // The outline first, then the shadow, then the glyphs: the game's order,
+    // and the only one that leaves the outline around the text rather than
+    // over it.
     //
-    // Eight copies in black at the face's own radius, which is what an outlined
-    // glyph is at these sizes: 1.12 rasterises it in `CGxFont` and this draws
-    // the same shape a ring of offsets makes. Four would leave the diagonals
-    // open, which reads as a jagged edge rather than a thin one. It is skipped
-    // entirely for a face that declares none, which is most of the interface.
+    // Eight copies in black at the face's outline radius. At these sizes an
+    // outlined glyph in the 1.12.1 client has the same shape a ring of
+    // offsets makes. Four copies would leave the diagonals open and the edge
+    // would look jagged. The outline is skipped for a face that declares
+    // none, which is most of the interface.
     let radius = paint.outline.radius() * scale;
     if radius > 0.0 {
         for (dx, dy) in [
@@ -1787,11 +1788,11 @@ fn label(
             painter.galley_with_override_text_color(
                 min + egui::vec2(dx * radius, dy * radius),
                 galley.clone(),
-                // **Black, and the alpha is the text's.** An outline round a
-                // string being faded out has to fade with it, or a panel on its
-                // way off screen leaves eight black copies of itself behind —
-                // which is what `GlueFrameFadeOut` does to the login box on
-                // every trip to character select.
+                // Black, with the text's alpha. An outline around a string
+                // being faded out has to fade with it; otherwise a panel
+                // fading out leaves eight black copies of its text behind.
+                // `GlueFrameFadeOut` fades the login box this way on every
+                // move to character select.
                 egui::Color32::from_black_alpha(tint.a()),
             );
         }
@@ -1802,8 +1803,8 @@ fn label(
     painter.galley(min, galley, tint);
 }
 
-/// A `|c` escape's four floats as egui's colour. **Not** premultiplied: these
-/// are the bytes the file wrote.
+/// A `|c` escape's four floats as egui's colour. Not premultiplied: these are
+/// the values the file wrote.
 fn rgba(c: [f32; 4]) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(
         byte(c[0]),
@@ -1813,21 +1814,20 @@ fn rgba(c: [f32; 4]) -> egui::Color32 {
     )
 }
 
-/// `Fonts\FRIZQT__.TTF` -> the family name it was installed under.
+/// The egui family to draw a font path in, such as `Fonts\FRIZQT__.TTF`: the
+/// family the face was installed under, but only if the context holds it.
 ///
-/// A face this client did not install falls back to the standard one, which is
-/// what the game does with a font file it cannot open — and is why an addon
-/// shipping its own `.ttf` will read in Friz Quadrata rather than not at all.
-/// …and the family to actually draw it in, which is that face **only if the
-/// context is holding it**.
+/// A face this client did not install falls back to the standard one, which
+/// is what the game does with a font file it cannot open. An addon that ships
+/// its own `.ttf` is therefore drawn in Friz Quadrata.
 ///
-/// `egui::FontFamily::Name` is not a request, it is an assertion: epaint looks
-/// the name up and `panic!`s when it is absent, so a family this pass has not
-/// confirmed takes the whole client down mid-frame. That is not hypothetical —
-/// it is what the deferred `set_fonts` did on the first frame the interface had
-/// a font string on it. `Proportional` always exists, and [`install_fonts`] puts
-/// the game's own face at the head of it, so the fallback is the right typeface
-/// as soon as there is one and a readable one before that.
+/// `egui::FontFamily::Name` is an assertion, not a request: epaint looks the
+/// name up and panics when it is absent, so naming a family this pass has not
+/// confirmed crashes the client mid-frame. The deferred `set_fonts` caused
+/// that crash on the first frame the interface had a font string.
+/// `Proportional` always exists, and [`install_fonts`] puts the game's face
+/// first in it, so the fallback is the game's typeface once it is bound and a
+/// readable one before that.
 pub(super) fn family(path: Option<&str>, bound: [bool; FONTS.len()]) -> egui::FontFamily {
     let name = face(path);
     match FONTS.iter().position(|(n, _)| *n == name) {
@@ -1838,9 +1838,9 @@ pub(super) fn family(path: Option<&str>, bound: [bool; FONTS.len()]) -> egui::Fo
 
 /// Which of the game's four faces the context can set text in right now.
 ///
-/// The definitions rather than a flag of our own: see [`Art::faces`]. No
-/// allocation — the keys are compared in place, over a map of half a dozen
-/// entries, once a frame.
+/// Read from the context's definitions rather than from a flag of this
+/// file's; see [`Art::faces`]. No allocation: the keys are compared in place,
+/// over a map of about six entries, once a frame.
 pub(super) fn bound_faces(ctx: &egui::Context) -> [bool; FONTS.len()] {
     ctx.fonts(|fonts| {
         let families = &fonts.definitions().families;
@@ -1852,20 +1852,23 @@ pub(super) fn bound_faces(ctx: &egui::Context) -> [bool; FONTS.len()] {
     })
 }
 
-/// **The game's space is y-up from the bottom left; egui's is y-down from the
-/// top left.** One subtraction, in one place, so that nothing else in this file
-/// has to remember which way up it is.
-/// …and the game's units are not pixels: everything scales by [`Viewport`] on
-/// the way out, and lands where the fixed-aspect box sits inside the window.
+/// An item's rectangle in screen pixels.
+///
+/// The game's space is y-up from the bottom left; egui's is y-down from the
+/// top left. The flip is done here and in [`rect_to_screen`] only, so nothing
+/// else in this file has to handle it. The game's units are not pixels:
+/// everything is scaled by [`Viewport`] and placed where the interface's space
+/// sits inside the window.
 fn to_screen(item: &Item, view: Viewport) -> egui::Rect {
     rect_to_screen(item.rect, view)
 }
 
-/// The same flip for a bare rectangle — [`Item::clip`] takes it too.
+/// The same conversion for a bare rectangle; [`Item::clip`] uses it too.
 ///
-/// **The one place in this file that turns a unit into an absolute pixel.**
-/// Every other rectangle here is derived from one of these, which is what makes
-/// the pillarbox a change to [`Viewport::to_pixels`] and to nothing else.
+/// The only place in this file that turns game units into absolute pixels.
+/// Every other rectangle here is derived from one of these, so a change to
+/// where the space sits in the window (such as a pillarbox) is a change to
+/// [`Viewport::to_pixels`] alone.
 pub(super) fn rect_to_screen(r: crate::lua::widgets::layout::Rect, view: Viewport) -> egui::Rect {
     let (left, top) = view.to_pixels(r.left, r.top());
     let (right, bottom) = view.to_pixels(r.right(), r.bottom);
@@ -1881,10 +1884,10 @@ pub(super) fn rect_to_screen(r: crate::lua::widgets::layout::Rect, view: Viewpor
 /// premultiplied read would darken every tinted texture in the interface by its
 /// own transparency.
 ///
-/// **The alpha goes through [`byte_space_alpha`] and the three colours do not**,
-/// which is the whole shape of that correction: the mix happens in the wrong
-/// space and the colours are what is being mixed. A `<Color a="0.5">` scrim and
-/// a `SetAlpha(0.5)` fade are both this call.
+/// The alpha goes through [`byte_space_alpha`] and the three colour channels
+/// do not: the correction adjusts how much is mixed, not the colours being
+/// mixed. A `<Color a="0.5">` scrim and a `SetAlpha(0.5)` fade both go
+/// through this function.
 fn colour(rgba: [f32; 4], alpha: f32) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(
         byte(rgba[0]),
@@ -1901,16 +1904,15 @@ fn byte(value: f32) -> u8 {
 
 /// Install the game's four typefaces into egui, once.
 ///
-/// A font that will not load is a **documented degradation and not an error**:
-/// egui's own default face is a perfectly readable stand-in, and refusing to
-/// draw the interface over a missing `.ttf` would trade the whole screen for a
-/// cosmetic. The same call this file's neighbour [`super::cursor`] makes about a
-/// missing pointer.
+/// A font that will not load is logged as a warning, not treated as an error:
+/// egui's default face is readable, and not drawing the interface because of
+/// a missing `.ttf` would lose the whole screen for a cosmetic difference.
+/// [`super::cursor`] handles a missing pointer the same way.
 ///
-/// **And it does not take effect on the frame it is called on.** `set_fonts`
-/// records the definitions and egui rebuilds its families at the start of the
-/// *next* pass, so nothing here may be assumed bound by the caller — which is
-/// why [`family`] asks the context instead of trusting this function's return.
+/// It does not take effect on the frame it is called on. `set_fonts` records
+/// the definitions and egui rebuilds its families at the start of the next
+/// pass, so the caller may not assume any face is bound; [`family`] asks the
+/// context instead.
 fn install_fonts(ctx: &egui::Context, assets: &GameAssets) {
     let mut definitions = egui::FontDefinitions::default();
     let mut installed = 0;
@@ -1931,9 +1933,8 @@ fn install_fonts(ctx: &egui::Context, assets: &GameAssets) {
     if installed == 0 {
         return;
     }
-    // The proportional family too, so that anything asking for egui's default —
-    // including this client's own HUD — is set in the game's face rather than
-    // sitting beside it in a different one.
+    // The proportional family too, so that anything asking for egui's
+    // default, including this client's HUD, is set in the game's face.
     if let Some(list) = definitions
         .families
         .get_mut(&egui::FontFamily::Proportional)
@@ -1944,22 +1945,22 @@ fn install_fonts(ctx: &egui::Context, assets: &GameAssets) {
     info!("interface: {installed} of {} game fonts installed", FONTS.len());
 }
 
-/// **`--audit --spin`'s missing half: what the *painter* costs, with no window.**
+/// Measures what the egui painter costs, with no window, for `--audit --spin`.
 ///
-/// The spin measured the interpreter — the mouse pass, `OnUpdate` and the draw
-/// walk — and stopped at the `lua`/`ui` boundary, which for two rounds made it
-/// look as though the whole per-frame cost of the interface was Lua's. It is
-/// not: everything past `LuaHost::drawn` happens here, and this is the same code
+/// The spin measures the interpreter (the mouse pass, `OnUpdate` and the draw
+/// walk) and stops at the `lua`/`ui` boundary, so on its own it attributes
+/// the whole per-frame cost of the interface to Lua. Everything after
+/// `LuaHost::drawn` happens in this file, and this probe runs the same code
 /// path [`paint`] runs, over a real `egui::Context` and the real archives.
 ///
-/// Two numbers come out and the second is the one nobody was watching:
+/// It reports two numbers:
 ///
-/// * **the time** to turn N items into shapes and tessellate them;
-/// * **the primitive count**, which is the number of draw calls the GPU is
-///   handed. epaint merges consecutive meshes that share a texture and cannot
-///   merge two that do not — so a panel of art on one sheet is one primitive and
-///   eighty item icons are eighty, and a bag full of *distinct* icons costs a
-///   draw call each however cheap each one is.
+/// * the time to turn N items into shapes and tessellate them;
+/// * the primitive count, which is the number of draw calls the GPU is given.
+///   epaint merges consecutive meshes that share a texture and cannot merge
+///   two that do not, so a panel of art on one sheet is one primitive and
+///   eighty item icons are eighty. A bag of distinct icons costs one draw
+///   call per icon.
 ///
 /// It builds nothing Bevy owns: an `egui::Context` runs headlessly and
 /// [`GameAssets`] opens the archives on first use, so this needs no window, no
@@ -1969,11 +1970,10 @@ pub(crate) struct PaintProbe {
     art: Art,
     assets: GameAssets,
     models: crate::lua::widgets::model::UiModels,
-    /// **Always empty**, and deliberately: a picture of a unit needs a camera,
-    /// a model and a GPU, and this probe has none of the three. Every portrait
-    /// it meets falls through to its region's own path — which is the same
-    /// path a real client takes on the frame before the model has loaded, so
-    /// the probe measures a real state rather than a made-up one.
+    /// Always empty: a picture of a unit needs a camera, a model and a GPU, and
+    /// this probe has none of them. Every portrait falls through to its
+    /// region's own path, as it does in the running client before the model
+    /// has loaded, so the probe measures a state the client can be in.
     portraits: crate::render::portraits::Portraits,
 }
 
@@ -1993,8 +1993,8 @@ impl PaintProbe {
 
     /// One frame of painting, answering `(shapes, primitives)`.
     pub(crate) fn frame(&mut self, items: &[Item], screen: (f32, f32)) -> (usize, usize) {
-        // Scale 1.0: the probe states its own screen in units, so the space is
-        // exactly what it asked for. See [`crate::ui::scale`].
+        // Scale 1.0: the probe gives its screen in units, so the space is
+        // exactly that size. See [`crate::ui::scale`].
         let view = Viewport::of(f64::from(screen.0), f64::from(screen.1), 1.0);
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -2004,14 +2004,14 @@ impl PaintProbe {
             ..Default::default()
         };
         // `begin_pass`/`end_pass` rather than `run_ui`, because this pass adds
-        // no `Ui` at all — the interface is painted straight onto a layer, which
-        // is what [`paint`] does inside Bevy's own egui pass.
+        // no `Ui`: the interface is painted straight onto a layer, as [`paint`]
+        // does inside Bevy's egui pass.
         let ctx = self.ctx.clone();
         ctx.begin_pass(input);
-        // **Inside the pass**, which is not a detail: `Context::fonts` panics
-        // with "No fonts available until first call to Context::run()" before
-        // one has begun. In the real client this is asked from inside Bevy's own
-        // egui pass, so the ordering is the same one [`paint`] has.
+        // Called inside the pass, because `Context::fonts` panics with "No
+        // fonts available until first call to Context::run()" before one has
+        // begun. In the running client [`paint`] calls it inside Bevy's egui
+        // pass, so the order is the same.
         self.art.faces = bound_faces(&ctx);
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Background,
@@ -2025,13 +2025,13 @@ impl PaintProbe {
                 &mut self.art,
                 &self.models,
                 &self.portraits,
-                // …and no paper dolls either, for the same reason and with the
-                // same consequence: a `<PlayerModel>` frame contributes its
-                // rectangle to the draw list and no picture, which is what a
-                // panel opened before its model has loaded looks like anyway.
+                // No paper dolls either, for the same reason: a
+                // `<PlayerModel>` frame contributes its rectangle to the draw
+                // list and no picture, as a panel opened before its model has
+                // loaded does.
                 &crate::render::paperdoll::Dolls::default(),
-                // **No world**, which is what the headless probe is: the
-                // minimap draws nothing, exactly as it does at a glue screen.
+                // No world: the minimap draws nothing, as it does at a glue
+                // screen.
                 &crate::interface::minimap::MinimapView::default(),
                 item,
                 view,
@@ -2047,10 +2047,10 @@ impl PaintProbe {
 
 #[cfg(test)]
 mod tests {
-    /// [`super::coloured_alpha`]'s three fixed points: exact at 0 and 1, the
-    /// black-source fallback unchanged, and the skill bars' own background —
-    /// the measurement the function was written from — landing near the
-    /// byte-space 0.5 rather than the 0.79 the black fold gave it.
+    /// [`super::coloured_alpha`]'s fixed points: exact at 0 and 1, the
+    /// black-source fallback unchanged, and the skill bars' background (the
+    /// case the function was written for) near its byte-space weight rather
+    /// than the effective 0.79 [`super::byte_space_alpha`] gave it.
     #[test]
     fn the_coloured_fold_keeps_its_end_points() {
         let bar_background = [0.0, 0.0, 0.75, 0.5];
@@ -2061,7 +2061,7 @@ mod tests {
             (0.15..0.30).contains(&folded),
             "the translucent blue lands near its byte-space weight, got {folded}"
         );
-        // Black keeps the sibling's fold — the backdrops must not move.
+        // Black uses `byte_space_alpha`, so the backdrops are unchanged.
         assert_eq!(
             super::coloured_alpha([0.0, 0.0, 0.0, 0.5], 1.0),
             super::byte_space_alpha(0.5)
@@ -2070,14 +2070,14 @@ mod tests {
 
     use super::*;
 
-    /// **The player arrow points where the character is looking**, on both maps
-    /// — the one thing about either map that a picture cannot settle, because a
-    /// mirrored arrow is right at north and at south and wrong everywhere else.
+    /// The player arrow points where the character is looking, on both maps. A
+    /// screenshot does not show this reliably, because a mirrored arrow is
+    /// correct at north and south and wrong everywhere else.
     ///
-    /// The chain under test is the whole of it: the world's `o` through
-    /// [`crate::lua::panels::worldmap::arrow_angle`] into [`turned_quad`], with the
-    /// art's own tip — measured at row 7 of `MinimapArrow.blp`, so uv `(0.5, 0)`
-    /// — coming out at the four compass points.
+    /// The test covers the whole chain: the world's `o` through
+    /// [`crate::lua::panels::worldmap::arrow_angle`] into [`turned_quad`], with
+    /// the art's tip (measured at row 7 of `MinimapArrow.blp`, so uv
+    /// `(0.5, 0)`) checked at the four compass points.
     #[test]
     fn the_arrow_points_where_the_character_looks() {
         use std::f32::consts::{FRAC_PI_2, PI};
@@ -2094,11 +2094,11 @@ mod tests {
             let (a, b) = (mesh.vertices[0].pos, mesh.vertices[1].pos);
             egui::pos2((a.x + b.x) / 2.0, (a.y + b.y) / 2.0)
         };
-        // egui is y-down, so "up" is a *smaller* y.
+        // egui is y-down, so "up" is a smaller y.
         let north = tip(0.0);
         assert!(north.y < centre.y - 9.0, "facing north draws the tip up: {north:?}");
         assert!((north.x - centre.x).abs() < 0.01);
-        // `o` grows towards +y, which is **west**, and west is left.
+        // `o` grows towards +y, which is west, and west is left.
         let west = tip(FRAC_PI_2);
         assert!(west.x < centre.x - 9.0, "facing west draws the tip left: {west:?}");
         let south = tip(PI);
@@ -2107,11 +2107,10 @@ mod tests {
         assert!(east.x > centre.x + 9.0, "facing east draws the tip right: {east:?}");
     }
 
-    /// **The two coordinate spaces, converted in one place** — the game's is
-    /// y-up from the bottom left and egui's is y-down from the top left. Getting
-    /// this backwards flips the whole interface top to bottom, which looks
-    /// plausible for anything centred and absurd for a bar at the bottom of the
-    /// screen.
+    /// The conversion between the two coordinate spaces: the game's is y-up
+    /// from the bottom left and egui's is y-down from the top left. Getting it
+    /// backwards flips the whole interface top to bottom, which is hard to see
+    /// for centred elements and obvious for a bar at the bottom of the screen.
     #[test]
     fn the_game_space_is_flipped_into_the_screens() {
         let item = Item {
@@ -2132,14 +2131,13 @@ mod tests {
             },
             clip: None,
         };
-        // A window that is exactly the interface's own shape: scale 1.0, no
-        // bars, and units are pixels.
+        // A window that is exactly the interface's shape: scale 1.0, no bars,
+        // and units are pixels.
         //
-        // **Rounded, because a window is whole pixels and so is the space** —
-        // see [`crate::lua::widgets::layout::units_wide`]. 1365⅓ is the exact
-        // 16:9 width and no window is ever that wide, so asking for one here
-        // would measure a third of a pixel of rounding rather than the flip
-        // this test is about.
+        // Rounded, because a window is a whole number of pixels and so is the
+        // space; see [`crate::lua::widgets::layout::units_wide`]. 1365⅓ is the
+        // exact 16:9 width and no window is that wide, so using it here would
+        // test a third of a pixel of rounding rather than the flip.
         let exact = Viewport::of(
             crate::lua::widgets::layout::VIRTUAL_WIDTH.round(),
             crate::lua::widgets::layout::VIRTUAL_HEIGHT,
@@ -2148,12 +2146,12 @@ mod tests {
         let rect = to_screen(&item, exact);
         assert_eq!(rect.min.x, 10.0);
         assert_eq!(rect.max.x, 205.0);
-        // The game's *top* (68) is 700 from the top of a 768-high screen.
+        // The game's top (68) is 700 from the top of a 768-high screen.
         assert_eq!(rect.min.y, 700.0);
         assert_eq!(rect.max.y, 713.0);
         assert_eq!(rect.height(), 13.0);
-        // …and a window twice the size doubles every coordinate — the game's
-        // units are virtual, not pixels (see `VIRTUAL_HEIGHT`).
+        // A window twice the size doubles every coordinate: the game's units
+        // are virtual, not pixels (see `VIRTUAL_HEIGHT`).
         let doubled = to_screen(
             &item,
             Viewport::of(
@@ -2167,16 +2165,15 @@ mod tests {
         assert_eq!(doubled.height(), 26.0);
     }
 
-    /// **A window wider than 16:9 gives the interface the extra width rather
-    /// than boxing it** — which is what a fullscreen or maximised client is,
-    /// and the report this changed for.
+    /// A window wider than 16:9 gives the interface the extra width rather than
+    /// a bar down each side. A fullscreen or maximised client on a wide monitor
+    /// is such a window.
     ///
-    /// The failure on the *other* side is still pinned, and it is the older
-    /// one: a widget's rectangle used to be multiplied by a scale alone, so the
-    /// interface spread with the window and every declared size came out wrong.
-    /// One uniform scale off the height is what stops that; what changed is
-    /// that the leftover width is now *space the interface has* rather than a
-    /// bar down each side of it.
+    /// The test also checks the opposite error: when a widget's rectangle was
+    /// multiplied by a scale alone, the interface spread with the window
+    /// and every declared size came out wrong. One uniform scale taken from the
+    /// height prevents that, and the leftover width is part of the interface's
+    /// space.
     #[test]
     fn a_wider_window_gives_the_interface_the_width() {
         let item = Item {
@@ -2198,8 +2195,8 @@ mod tests {
             clip: None,
         };
         // 2:1 at 768 tall: the space is 1536 units across, the scale is 1 and
-        // there is no bar at all — the item, which is the whole 16:9 space,
-        // starts hard against the left edge and simply does not reach the right.
+        // there is no bar. The item, which covers the 16:9 space, starts at the
+        // left edge and does not reach the right.
         let wide = Viewport::of(1536.0, 768.0, 1.0);
         assert!((wide.scale - 1.0).abs() < 1e-9);
         assert!(wide.left.abs() < 1e-9, "{wide:?}");
@@ -2209,7 +2206,7 @@ mod tests {
             (rect.max.x - crate::lua::widgets::layout::VIRTUAL_WIDTH as f32).abs() < 0.01,
             "{rect:?}"
         );
-        // …and nothing happens vertically: the space is as tall as the window.
+        // Vertically nothing changes: the space is as tall as the window.
         assert_eq!(rect.min.y, 0.0);
         assert_eq!(rect.max.y, 768.0);
     }
@@ -2224,13 +2221,13 @@ mod tests {
         assert_eq!(face(None), DEFAULT_FONT);
     }
 
-    /// **A face the context is not holding is never named to egui.**
+    /// A face the context does not hold is never named to egui.
     ///
-    /// `FontFamily::Name` is an assertion rather than a request — epaint panics
-    /// on a family it does not have — and `set_fonts` is deferred by a pass, so
-    /// there is always at least one frame where the game's faces are installed
-    /// and not yet bound. Naming one there took the whole client down; the
-    /// fallback is a typeface, not a crash.
+    /// `FontFamily::Name` is an assertion rather than a request (epaint panics
+    /// on a family it does not have), and `set_fonts` takes effect one pass
+    /// later, so there is always at least one frame where the game's faces are
+    /// installed and not yet bound. Naming one on that frame crashed the
+    /// client; the fallback family is used instead.
     #[test]
     fn an_unbound_face_falls_back_instead_of_panicking() {
         let none = [false; FONTS.len()];
@@ -2243,17 +2240,17 @@ mod tests {
             family(Some(r"Fonts\MORPHEUS.TTF"), all),
             egui::FontFamily::Name("MORPHEUS".into())
         );
-        // …and one bound face does not vouch for another: `MORPHEUS` present
-        // says nothing about `SKURRI`, which is exactly the state a half-read
-        // `Fonts\` directory leaves.
+        // One bound face says nothing about another: `MORPHEUS` bound does not
+        // mean `SKURRI` is, which is the state a partly read `Fonts\`
+        // directory leaves.
         let mut some = [false; FONTS.len()];
         some[2] = true;
         assert_eq!(
             family(Some(r"Fonts\SKURRI.TTF"), some),
             egui::FontFamily::Proportional
         );
-        // An unrecognised path resolves to the standard face, and *that* is
-        // subject to the same rule.
+        // An unrecognised path resolves to the standard face, and the standard
+        // face is subject to the same rule.
         assert_eq!(family(None, none), egui::FontFamily::Proportional);
         assert_eq!(
             family(None, all),
@@ -2261,37 +2258,37 @@ mod tests {
         );
     }
 
-    /// **The file's numbers are straight alpha, and the inherited fade
-    /// multiplies into the alpha alone.**
+    /// The file's numbers are straight alpha, and the inherited fade multiplies
+    /// into the alpha alone.
     ///
-    /// `from_rgba_unmultiplied` is the constructor that says so — egui stores
-    /// premultiplied internally, which is why the round trip is the assertion
-    /// and the stored bytes are not. Handing the file's `r, g, b` to
+    /// `from_rgba_unmultiplied` is the constructor for straight alpha. egui
+    /// stores premultiplied values internally, so the test checks the round
+    /// trip rather than the stored bytes. Handing the file's `r, g, b` to
     /// `from_rgba_premultiplied` instead would darken every tinted texture in
-    /// the interface by its own transparency, which reads as "the art is too
-    /// dark" rather than as a bug.
+    /// the interface by its own transparency, which looks like dark art rather
+    /// than a bug.
     #[test]
     fn a_colour_carries_the_inherited_alpha() {
         let c = colour([1.0, 0.82, 0.0, 1.0], 0.5);
-        // The three colours are the file's bytes, untouched; the alpha is the
-        // inherited fade through `byte_space_alpha` — 0.5 of the destination
-        // left standing in the game's space is 0.214 of it in egui's.
+        // The three colours are the file's values, unchanged; the alpha is the
+        // inherited fade through `byte_space_alpha`: 0.5 of the destination
+        // left in the game's space is 0.214 of it in egui's.
         assert_eq!(&c.to_srgba_unmultiplied()[..3], &[255, 209, 0]);
         assert_eq!(c.to_srgba_unmultiplied()[3], byte(byte_space_alpha(0.5)));
-        // …and a component outside 0..1 is clamped rather than wrapping, which
-        // is what a `SetVertexColor(2, 2, 2)` in an addon would otherwise do.
+        // A component outside 0..1 is clamped rather than wrapped, which is
+        // what a `SetVertexColor(2, 2, 2)` in an addon would otherwise cause.
         let clamped = colour([2.0, -1.0, 0.5, 1.0], 1.0).to_srgba_unmultiplied();
         assert_eq!(clamped[0], 255);
         assert_eq!(clamped[1], 0);
     }
 
-    /// **The two ends are fixed points, and everything between them is more
-    /// opaque than it was.**
+    /// Alpha 0 and 1 are unchanged, and every value between them becomes more
+    /// opaque.
     ///
-    /// Opaque and clear have to survive exactly: an alpha of 1 that came back
-    /// as 0.999 would put a seam between two abutting opaque quads, and an
-    /// alpha of 0 that came back as anything would make every hidden texture in
-    /// the directory faintly visible.
+    /// Opaque and clear must stay exact: an alpha of 1 that came back as 0.999
+    /// would put a seam between two adjacent opaque quads, and an alpha of 0
+    /// that came back as anything else would make every hidden texture in the
+    /// directory faintly visible.
     #[test]
     fn the_blend_compensation_pins_both_ends() {
         assert_eq!(byte_space_alpha(1.0), 1.0);
@@ -2307,20 +2304,21 @@ mod tests {
         assert_eq!(byte_space_alpha(2.0), 1.0);
     }
 
-    /// **The two artefacts this correction was written for, in numbers.**
+    /// The two cases this correction was written for: the tooltip plate and
+    /// the cooldown swirl.
     ///
     /// `UI-Tooltip-Background` is a flat grey at 187/255 tinted to
     /// `TOOLTIP_DEFAULT_BACKGROUND_COLOR`, and `cooldown.blp`'s dark half is
-    /// black at about 0.6 — both of them near-black sources, which is the case
-    /// the compensation is exact for. What is checked is the whole round trip:
-    /// what a linear ROP leaves of the destination, against what 1.12's
-    /// byte-space one leaves of it.
+    /// black at about 0.6. Both are near-black sources, the case the
+    /// compensation is exact for. The test checks the whole round trip: what a
+    /// linear ROP leaves of the destination, against what 1.12's byte-space
+    /// one leaves of it.
     #[test]
     fn a_dark_scrim_lands_where_the_games_own_blend_would() {
-        // What survives a mix, as a fraction of the destination *byte*.
+        // What survives a mix, as a fraction of the destination byte.
         let survives = |alpha: f32, destination: f32| {
             let linear = srgb_to_linear(destination) * (1.0 - byte_space_alpha(alpha));
-            // …back to a byte, which is what the sRGB target stores.
+            // Encoded back to a byte, which is what the sRGB target stores.
             let encoded = if linear <= 0.003_130_8 {
                 linear * 12.92
             } else {
@@ -2330,17 +2328,18 @@ mod tests {
         };
         for (alpha, destination) in [(187.0 / 255.0, 200.0 / 255.0), (0.6, 150.0 / 255.0)] {
             let got = survives(alpha, destination);
-            // 1.12 leaves exactly `1 - a` of the destination standing. The
-            // compensation is exact under a *power* transfer function and the
-            // sRGB curve has a linear toe, so it lands two or three percent
-            // short — against the 60% too much it lands without.
+            // 1.12 leaves exactly `1 - a` of the destination. The compensation
+            // is exact under a power transfer function, and the sRGB curve has
+            // a linear toe, so the result is two or three percent short;
+            // without the compensation it is 60% too much.
             assert!(
                 (got - (1.0 - alpha)).abs() < 0.03,
                 "alpha {alpha} over {destination}: {got} against {}",
                 1.0 - alpha
             );
-            // …and that is the number the reports were about: uncompensated,
-            // the destination survives half as much again as it should.
+            // Uncompensated, the destination survives at least 1.4 times as
+            // much as it should; this is the too-transparent result that was
+            // reported.
             let raw = {
                 let linear = srgb_to_linear(destination) * (1.0 - alpha);
                 let encoded = 1.055 * linear.powf(1.0 / 2.4) - 0.055;

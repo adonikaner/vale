@@ -1,12 +1,10 @@
-//! **The pointer, over the interface.** Which frame is under it, and the five
-//! handlers that follow from that.
+//! Mouse input over the interface: which frame is under the pointer, and the
+//! five handlers that follow from that.
 //!
-//! Everything else in this directory has been reachable from a key or from the
-//! world; this is the half a player actually uses. `OnClick` is **285** bodies in
-//! the shipped directory, `OnEnter` 160 and `OnLeave` 152 — more than `OnEvent`
-//! and `OnLoad` together — so a client that never fires them has an interface
-//! whose buttons work from the keyboard and not from the mouse, which is the
-//! state this one was in.
+//! The shipped directory has 285 `OnClick` bodies, 160 `OnEnter` and 152
+//! `OnLeave`, more than `OnEvent` and `OnLoad` together. A client that does not
+//! fire them has an interface whose buttons work from the keyboard and not from
+//! the mouse.
 //!
 //! ```text
 //! the pointer moves    -> focus_at, the topmost mouse-enabled frame under it
@@ -17,93 +15,87 @@
 //!   -> …and if it is still under the pointer, OnClick
 //! ```
 //!
-//! ## Which frame: the pile, read from the top
+//! ## Hit testing: the topmost mouse-enabled frame
 //!
-//! The same three keys [`super::super::widgets::draw`] sorts by — strata, then frame level, then
-//! creation order — and the **greatest** wins, because the thing drawn last is the
-//! thing you are pointing at. Only a frame with `enableMouse` is a candidate: 83
-//! elements say `enableMouse="true"` and one says `"false"`, which is a template
-//! turning its parent template's flag back off and is the reason the attribute is
-//! read as a tri-state rather than as "present means yes".
+//! The pick uses the three keys [`super::super::widgets::draw`] sorts by
+//! (strata, then frame level, then creation order), and the greatest wins,
+//! because the frame drawn last is the one under the pointer. Only a frame with
+//! `enableMouse` is a candidate. 83 elements say `enableMouse="true"` and one
+//! says `"false"`: a template turning its parent template's flag back off. For
+//! that reason the attribute is read as a tri-state, not as "present means
+//! yes".
 //!
-//! **A parent does not clip its children.** A child sticking out of its
-//! container is still clickable where it sticks out, so the walk descends into
-//! every shown frame rather than only into those under the pointer — which is the
-//! game's behaviour and also the only one that works, since most containers are
-//! smaller than the buttons anchored beside them.
+//! A parent does not clip its children. A child that extends outside its
+//! container is clickable where it extends, so the walk descends into every
+//! shown frame, not only into those under the pointer. The game behaves the
+//! same way, and most containers are smaller than the buttons anchored beside
+//! them.
 //!
-//! **The hit rectangle is not the frame's rectangle.** `<HitRectInsets>` shrinks
-//! it, and 44 elements carry one — the action bar's own two among them, because
+//! The hit rectangle can differ from the frame's rectangle. `<HitRectInsets>`
+//! shrinks it; 44 elements carry one, including the action bar's two, because
 //! the art is bigger than the button.
 //!
-//! ## The drag: arm, start, resolve
+//! ## Dragging: arm, start, resolve
 //!
-//! A press on a frame that `RegisterForDrag`ed that button **arms** a gesture;
-//! the pointer moving past [`DRAG_THRESHOLD`] **starts** it (`OnDragStart`,
-//! once, with `arg1` the button); the release **resolves** it — a started
-//! gesture fires `OnDragStop` on the source and `OnReceiveDrag` on whatever
-//! the release landed on, and **suppresses `OnClick`** for that release, while
-//! an un-started one leaves the ordinary click path untouched. That split is
-//! why a sloppy click on an action button still casts and a deliberate pull
-//! does not.
+//! A press on a frame that called `RegisterForDrag` for that button arms a
+//! gesture. The pointer moving past [`DRAG_THRESHOLD`] starts it
+//! (`OnDragStart`, once, with `arg1` the button). The release resolves it: a
+//! started gesture fires `OnDragStop` on the source and `OnReceiveDrag` on the
+//! frame under the release, and suppresses `OnClick` for that release; a
+//! gesture that did not start leaves the ordinary click path unchanged. As a
+//! result a click that moves slightly on an action button still casts, and a
+//! drag does not.
 //!
-//! `StartMoving`/`StopMovingOrSizing` ride on top exactly as the directory
-//! uses them — an `OnDragStart` body calls the first, an `OnDragStop` body the
-//! second — and are the C side here: the frame is re-anchored to the pointer
-//! every tick until it is let go, then pinned where it stands and marked
-//! **user-placed**, which is what `UIParent_ManageFramePosition` tests before
-//! it re-anchors anything. Two stated gaps: the threshold is a small
-//! screen-space slop rather than the client's own number, and a
-//! user-placed position is not *saved* — the real client writes it to
-//! `WTF\Account\<account>\<realm>\<character>\layout-cache.txt` (as
-//! `Frame:`/`FrameLevel:`/`X:`/`Y:`/`W:`/`H:` lines), which
-//! nothing here reads or writes yet. It is emphatically **not** `Config.wtf`,
-//! which is read and written as of the settings round — that one is per
-//! install, this one is per character. See [`vale_assets::interface::wtf`].
+//! `StartMoving` and `StopMovingOrSizing` are implemented here, and the
+//! directory calls them from an `OnDragStart` body and an `OnDragStop` body.
+//! While moving, the frame is re-anchored to the pointer every tick; when it is
+//! let go it is pinned where it stands and marked user-placed, which
+//! `UIParent_ManageFramePosition` tests before it re-anchors anything. Two
+//! known gaps: the threshold is a small screen-space distance, not the 1.12.1
+//! client's value; and a user-placed position is not saved. The 1.12.1 client
+//! writes it to `WTF\Account\<account>\<realm>\<character>\layout-cache.txt`
+//! (as `Frame:`/`FrameLevel:`/`X:`/`Y:`/`W:`/`H:` lines), which nothing here
+//! reads or writes yet. That file is not `Config.wtf`, which this client does
+//! read and write: `Config.wtf` is per install, `layout-cache.txt` is per
+//! character. See [`vale_assets::interface::wtf`].
 //!
-//! ## The wheel is a **second device with its own flag**, and that is the whole
-//! of "the quest text will not scroll"
+//! ## The mouse wheel is a separate input device with its own flag
 //!
-//! 5875 keeps *four* input registrations per frame, not one: a frame is
-//! flagged per input type and filed into one of thirty-six lists, **four
-//! types over nine strata**. Type 0 is
-//! `OnChar`, 1 is `OnKeyDown`/`OnKeyUp`, 2 is the mouse, and **3 is the
-//! wheel**. So the wheel is hit-tested over its *own* population, and
-//! [`WHEEL_KEY`] is that population here.
+//! The 1.12.1 client enables four input devices on a frame independently:
+//! character input (`OnChar`), keys (`OnKeyDown`/`OnKeyUp`), the mouse, and
+//! the wheel. The wheel is therefore hit-tested over its own set of frames, and
+//! [`WHEEL_KEY`] marks that set here.
 //!
-//! **A frame joins it by declaring the handler.** The XML `<Scripts>` walker
-//! case-insensitively matches each element name and enables the device it
-//! belongs to: `OnLeave`/`OnMouseDown`/`OnMouseUp`/`OnDragStart` → type 2,
-//! `OnMouseWheel` → type 3. That is why nothing in the
-//! ninety files ever calls `EnableMouseWheel` and the scroll frames still
-//! scroll — and it is why a `<ScrollFrame>`, which declares **no**
-//! `enableMouse`, is not in the mouse population at all.
+//! A frame joins a device's set by declaring a handler for it in `<Scripts>`,
+//! matched case-insensitively: the names in [`MOUSE_SCRIPTS`] enable the mouse,
+//! and `OnMouseWheel` enables the wheel. For that reason nothing in the ninety
+//! files calls `EnableMouseWheel` and the scroll frames still scroll, and a
+//! `<ScrollFrame>`, which declares no `enableMouse`, is not in the mouse set at
+//! all.
 //!
-//! Which is exactly what was broken. The wheel used to be delivered to the
-//! *mouse* focus and then climbed to the first ancestor with an
-//! `OnMouseWheel`; over a quest description there is no mouse-enabled frame
-//! but `QuestLogFrame` itself, whose `<OnMouseWheel>` is `return;` — so the
-//! climb found the **stop** before it ever reached the scroll frame nested
-//! inside it, and the only way down a quest was the two arrow buttons.
-//! Eleven of the twelve `OnMouseWheel` bodies in the directory are that bare
-//! `return;`, one per top-level panel; they are only meaningful as stops if
-//! the wheel lands on the innermost wheel-enabled frame under the pointer,
-//! which is what [`wheel_at`] does.
+//! The wheel is therefore not delivered to the mouse focus. Delivering it to
+//! the mouse focus and climbing to the first ancestor with an `OnMouseWheel`
+//! fails over a quest description: the only mouse-enabled frame there is
+//! `QuestLogFrame`, whose `<OnMouseWheel>` is `return;`, so the climb stops
+//! there before it reaches the scroll frame nested inside, and the quest text
+//! can only be scrolled with the two arrow buttons. Eleven of the twelve
+//! `OnMouseWheel` bodies in the directory are that bare `return;`, one per
+//! top-level panel. They work as stops only if the wheel is delivered to the
+//! innermost wheel-enabled frame under the pointer, which is what [`wheel_at`]
+//! does.
 //!
-//! ## What this does not model, and each of them is one-sided
+//! ## Clicks and wheel turns that land on no frame
 //!
-//! * **the world is not a frame here.** 1.12 routes a click that lands on no
-//!   interface frame to `WorldFrame`, which is a real widget in `WorldFrame.xml`
-//!   with the world drawn behind it. This client keeps the world pick where it
-//!   was and simply *declines* it when a mouse-enabled frame is under the
-//!   pointer — see [`MouseFocus`], which is what `interface::target` reads.
-//! * **a wheel nobody answers falls through to the camera**, which is 5875's
-//!   own arrangement rather than a divergence: `WorldFrame.xml` declares no
-//!   `<OnMouseWheel>` at all, so an unclaimed wheel is left to the
-//!   `MOUSEWHEELUP`/`MOUSEWHEELDOWN` bindings. (This note used to say the
-//!   opposite — that the reference routed it to `WorldFrame` — and the file
-//!   settles it.) `world::camera::orbit` refuses the zoom when
-//!   [`MouseFocus::wheel_taken`] says a frame had it.
+//! * The world is not a frame here. 1.12 routes a click that lands on no
+//!   interface frame to `WorldFrame`, a widget in `WorldFrame.xml` with the
+//!   world drawn behind it. This client keeps a separate world pick and skips
+//!   it when a mouse-enabled frame is under the pointer; see [`MouseFocus`],
+//!   which `interface::target` reads.
+//! * A wheel turn that no frame takes goes to the camera. This matches 1.12:
+//!   `WorldFrame.xml` declares no `<OnMouseWheel>`, so an unclaimed wheel turn
+//!   is left to the `MOUSEWHEELUP`/`MOUSEWHEELDOWN` bindings.
+//!   `world::camera::orbit` refuses the zoom when
+//!   [`MouseFocus::wheel_taken`] says a frame took it.
 
 use bevy::prelude::*;
 
@@ -117,11 +109,11 @@ use crate::interface::events::EventArg;
 
 /// The methods this module installs, sorted.
 ///
-/// **The markup is where the mouse is configured, not the script.** Measured
-/// over the whole directory: `EnableMouse(` is 10 call sites against 84
-/// `enableMouse` attributes, and `SetHitRectInsets(` is *none* against 44
-/// `<HitRectInsets>` elements. So the two setters are here for the loader and for
-/// addons, and the tri-state read of the attribute is the part that matters.
+/// The directory configures the mouse in markup, not in script. Over the whole
+/// directory, `EnableMouse(` has 10 call sites against 84 `enableMouse`
+/// attributes, and `SetHitRectInsets(` has none against 44 `<HitRectInsets>`
+/// elements. The two setters exist for the loader and for addons; the
+/// tri-state read of the attribute is the part the directory depends on.
 pub const METHODS: [&str; 24] = [
     "DisableDrawLayer",
     "EnableDrawLayer",
@@ -149,48 +141,44 @@ pub const METHODS: [&str; 24] = [
     "StopMovingOrSizing",
 ];
 
-/// …and the one global.
+/// The globals this module installs.
 ///
-/// **`GetMouseFocus()` has zero call sites in 5875's FrameXML** and is registered
-/// anyway, which is the one place this module goes past what the directory asks
-/// for. The justification is the rule [`super::verbs`] states: it is a function
-/// the real client implements in C, so nothing can ever define it over the top —
-/// and it is what an addon asks with. It does not move the API gap, because a
-/// name nothing calls was never in the count.
-/// **`MouseIsOver` is deliberately not here**, and the comment that used to
-/// justify registering it was true and beside the point. It is a 1.12 C
-/// function, so no *addon* can define it — but `UIParent.lua` does, and the
-/// directory loads after the host is built, so the registration was overwritten
-/// on the first login and had been dead code ever since. `vale framexml`
-/// counted it as the one collision, and that count must be zero.
+/// `GetMouseFocus()` has no call sites in 5875's FrameXML and is registered
+/// anyway; it is the one name in this module the directory does not use. The
+/// reason is the rule [`super::verbs`] states: the 1.12.1 client implements it
+/// in C, so no script defines it, and addons call it. It does not change the
+/// API gap, because a name nothing calls is not in that count.
 ///
-/// Nothing is lost: the directory's own body is the same test through
+/// `MouseIsOver` is not registered. It is a 1.12 C function, so no addon
+/// defines it, but `UIParent.lua` does, and the directory loads after the host
+/// is built, so a registration here is overwritten at the first login.
+/// `vale framexml` counts such a name as a collision, and that count must be
+/// zero. The directory's own definition performs the same test through
 /// `frame:IsMouseOver()`, which this client answers.
 pub const GLOBALS: [&str; 2] = ["GetCursorPosition", "GetMouseFocus"];
 
 /// What a frame owns here. Underscored, as everything the C side owns is.
 const ENABLED_KEY: &str = "__mouseEnabled";
-/// …and the wheel's own flag, which is a **different** device — see the module
-/// note. Its own bit in 5875, and the only thing [`wheel_at`] hit-tests.
+/// The wheel's flag, separate from the mouse's because the wheel is a separate
+/// device (see the module note). It is the only flag [`wheel_at`] hit-tests.
 const WHEEL_KEY: &str = "__mouseWheelEnabled";
 const INSETS_KEY: &str = "__hitInsets";
 /// The buttons `RegisterForDrag` named, `movable="true"`, and the flag
-/// `StopMovingOrSizing` leaves behind — which `IsUserPlaced` answers and
-/// `UIParent_ManageFramePosition` branches on.
+/// `StopMovingOrSizing` sets, which `IsUserPlaced` returns and
+/// `UIParent_ManageFramePosition` tests.
 const DRAG_KEY: &str = "__dragButtons";
 const MOVABLE_KEY: &str = "__movable";
 const USER_PLACED_KEY: &str = "__userPlaced";
-/// `SetClampedToScreen` — recorded, and read by nothing yet: a frame dragged
-/// past the edge is not pushed back. Addons set it on every movable window
-/// (five bodies in a real folder's four addons stopped on it being nil).
+/// `SetClampedToScreen`: recorded, and read by nothing yet, so a frame dragged
+/// past the edge is not pushed back. Addons set it on every movable window; in
+/// one installed set of four addons, five bodies failed while it was nil.
 const CLAMPED_KEY: &str = "__clamped";
-/// `SetResizable` and its two bounds. **The flag gates [`StartSizing`]**, which
-/// is the frame's own refusal in the reference: a window nobody marked resizable
-/// cannot be dragged bigger.
+/// `SetResizable` and its two bounds. The flag gates [`StartSizing`]: the
+/// 1.12.1 client does not let a frame that was not marked resizable be sized.
 const RESIZABLE_KEY: &str = "__resizable";
 const MIN_RESIZE_KEY: &str = "__minResize";
 const MAX_RESIZE_KEY: &str = "__maxResize";
-/// Whether the pointer is on **this** frame, rather than on one of its children.
+/// Whether the pointer is on this frame, not on one of its children.
 /// Read by [`super::super::widgets::button::selected_slots`], which is what makes a button
 /// highlight under the mouse.
 const OVER_KEY: &str = "__mouseOver";
@@ -200,23 +188,22 @@ const OVER_KEY: &str = "__mouseOver";
 /// global must not be able to break the mouse.
 const REG_FOCUS: &str = "vale.mouseFocus";
 const REG_PRESSED: &str = "vale.mousePressed";
-/// …plus the drag gesture, the frame being carried, and where the pointer
-/// last was — the last one because `StartMoving` is called from inside an
-/// `OnDragStart` body and has to know where the hand is *now*.
+/// The drag gesture, the frame being carried, and the last pointer position.
+/// The position is kept because `StartMoving` is called from inside an
+/// `OnDragStart` body and needs the current pointer position.
 const REG_DRAG: &str = "vale.mouseDrag";
 const REG_MOVING: &str = "vale.mouseMoving";
-/// …and the corner or edge a `StartSizing` gripped, which is the other half of
-/// the same gesture. A second key rather than a flag on the first, because
-/// `StopMovingOrSizing` ends whichever is in flight and the two can never both
-/// be: 1.12's own name for the call says so.
+/// The corner or edge a `StartSizing` gripped. A separate key rather than a
+/// flag on [`REG_MOVING`], because `StopMovingOrSizing` ends whichever of the
+/// two is in progress, and only one can be in progress at a time.
 const REG_SIZING: &str = "vale.mouseSizing";
 const REG_POINTER_X: &str = "vale.mousePointerX";
 const REG_POINTER_Y: &str = "vale.mousePointerY";
 
 /// How far the pointer travels before an armed press becomes a drag, strictly
-/// exceeded. **A small screen-space slop, not the client's own number** —
-/// what matters is the split it enforces: under it a release is a
-/// click, over it a release is a drag and never both.
+/// exceeded. A small screen-space distance, not the 1.12.1 client's value. It
+/// separates the two outcomes: below it a release is a click, above it a
+/// release is a drag, never both.
 const DRAG_THRESHOLD: f64 = 4.0;
 
 /// The buttons this client reports, in the game's own words.
@@ -228,41 +215,37 @@ const LEFT: &str = "LeftButton";
 const RIGHT: &str = "RightButton";
 const MIDDLE: &str = "MiddleButton";
 
-/// **Is the pointer on the interface?** Read by [`crate::interface::target`], which
-/// declines the world pick when it is.
+/// Whether the pointer is on the interface. Read by
+/// [`crate::interface::target`], which skips the world pick when it is.
 ///
-/// A resource written from here and read one directory down, which is the same
-/// shape [`super::keyboard::KeyboardFocus`] has for the other input device: the
-/// thing that *knows* is up here, and the thing that has to not act on it is
-/// down there.
+/// Written here and read in `interface`, the same arrangement
+/// [`super::keyboard::KeyboardFocus`] has for the keyboard: this module knows
+/// what is under the pointer, and `interface` must not act when a frame is.
 #[derive(Resource, Default)]
 pub struct MouseFocus {
     /// Whether a mouse-enabled interface frame is under the pointer.
     pub over_interface: bool,
     /// Its name, for the HUD. `None` for an unnamed frame, which is legal.
     pub name: Option<String>,
-    /// **Whether a frame answered the wheel this frame** — see
-    /// [`wheel_was_taken`]. `world::camera::orbit` refuses the zoom when it did,
-    /// so scrolling a trainer's list or a quest log does not also pull the
-    /// camera in.
+    /// Whether a frame took the wheel turn this frame; see
+    /// [`wheel_was_taken`]. `world::camera::orbit` refuses the zoom when one
+    /// did, so scrolling a trainer's list or a quest log does not also move the
+    /// camera.
     pub wheel_taken: bool,
 }
 
-/// **Something that is not the game's interface has the pointer** — today,
-/// exactly one thing: the debug panel.
+/// Set while something other than the game's interface has the pointer. At
+/// present that is only the debug panel.
 ///
-/// The pointer twin of [`super::keyboard::ExternalKeyboard`], and it exists for
-/// the same reason and prevents the same class of bug one device over. egui
-/// does not consume Bevy's input, so with the pointer over the debug window the
-/// wheel still reached `world::camera::orbit` and a click still reached the
-/// world pick: **the camera zoomed while you dragged the collision-radius
-/// slider, and pressing a checkbox targeted whatever was behind it.** Both are
-/// disorienting rather than subtly wrong, which is the only reason they were
-/// noticed straight away where the keyboard's twin was not.
+/// The pointer counterpart of [`super::keyboard::ExternalKeyboard`], for the
+/// same reason. egui does not consume Bevy's input, so with the pointer over
+/// the debug window the wheel still reached `world::camera::orbit` and a click
+/// still reached the world pick: the camera zoomed while the collision-radius
+/// slider was dragged, and clicking a checkbox targeted whatever was behind it.
 ///
-/// A separate resource rather than a field on [`MouseFocus`] because [`poll`]
-/// rewrites the whole of that every frame off the widget tree, and the tree
-/// knows nothing about an egui window drawn over it. Always compiled, though
+/// A separate resource rather than a field on [`MouseFocus`], because [`poll`]
+/// rewrites all of [`MouseFocus`] from the widget tree on each mouse pass, and
+/// the tree knows nothing about an egui window drawn over it. Always compiled, though
 /// only the `diagnostics` build ever writes it: one `bool` costs nothing, and
 /// the alternative is a `#[cfg]` on a system parameter in a file that is not
 /// about the panel.
@@ -277,81 +260,76 @@ const PANEL: &str = "the debug panel";
 
 /// Give a fresh frame the state this module owns.
 ///
-/// **A button is mouse-enabled and a plain frame is not**, which is 1.12's own
-/// default: `<Button>` exists to be clicked and `<Frame>` exists to hold things.
-/// Getting this backwards makes every container in the interface swallow the
-/// clicks meant for the world.
+/// A button is mouse-enabled by default and a plain frame is not, as in 1.12:
+/// `<Button>` exists to be clicked and `<Frame>` exists to hold things. With
+/// the defaults reversed, every container in the interface takes the clicks
+/// meant for the world.
 ///
-/// **A `<Slider>` is in the first group and that is the whole of a scroll bar
-/// working.** `UIPanelScrollBarTemplate` — every scroll bar in the game —
-/// declares no `enableMouse` at all, because a slider takes its own
-/// mouse; [`super::super::widgets::slider`]'s own module note says so and the pick did not
-/// agree with it, so the knob was drawn, placed, and unreachable. That is the
-/// "there is no scroll bar available to view them" report: the trainer's list
-/// and the quest log's are eleven and six rows tall against lists three times
-/// that, and the only way down either of them was the two arrow buttons.
+/// A `<Slider>` is mouse-enabled by default too, which is what makes scroll
+/// bars usable. `UIPanelScrollBarTemplate`, used by every scroll bar in the
+/// game, declares no `enableMouse`, because a slider takes the mouse by its
+/// kind, as [`super::super::widgets::slider`]'s module note says. Without this
+/// default the knob is drawn and placed but cannot be reached, and the
+/// trainer's list and the quest log's (eleven and six rows tall, against lists
+/// three times that long) can only be scrolled with the two arrow buttons.
 ///
-/// **And an `<EditBox>` is in it for exactly the same reason**, found the same
-/// way one round later: `<EditBox name="CharacterCreateNameEdit" letters="12">`
-/// declares no `enableMouse` either, because an edit box takes its own
-/// mouse too. Nothing in the whole of `Interface\GlueXML\` or
-/// `Interface\FrameXML\` gives a text field an `OnMouseDown` — the only
-/// `SetFocus` calls in the glue are `AccountLogin_OnShow`'s two — so a client
-/// that leaves a text field unclickable has one box that works (the one an
-/// `OnShow` focused) and every other box in the game dead, including the
-/// character's name. See [`focus_edit_box`].
+/// An `<EditBox>` is mouse-enabled by default for the same reason:
+/// `<EditBox name="CharacterCreateNameEdit" letters="12">` declares no
+/// `enableMouse` either, because an edit box also takes the mouse by its kind.
+/// Nothing in `Interface\GlueXML\` or `Interface\FrameXML\` gives a text field
+/// an `OnMouseDown`, and the only `SetFocus` calls in the glue are
+/// `AccountLogin_OnShow`'s two. A client that leaves text fields unclickable
+/// has one working box (the one an `OnShow` focused) and every other box in
+/// the game unusable, including the character name. See [`focus_edit_box`].
 pub(in crate::lua) fn init(frame: &mlua::Table, kind: &str) -> mlua::Result<()> {
     let clickable = matches!(
         kind,
         "Button" | "CheckButton" | "LootButton" | "Slider" | "EditBox"
     );
     frame.set(ENABLED_KEY, clickable)?;
-    // **Nothing is wheel-enabled by default**, not even a slider: 5875 has no
-    // per-kind default for type 3 at all, and the only way into that population
-    // is declaring the handler. See [`set_wheel_enabled`].
+    // Nothing is wheel-enabled by default, not even a slider: the 1.12.1 client
+    // has no per-kind default for the wheel, and a frame is wheel-enabled only
+    // by declaring the handler or calling `EnableMouseWheel`. See
+    // [`set_wheel_enabled`].
     frame.set(WHEEL_KEY, false)?;
     frame.set(OVER_KEY, false)
 }
 
-/// `enableMouse="true"`, from the loader — **and a declared mouse handler**,
-/// which is the same act by the reference's own reckoning. See
-/// [`MOUSE_SCRIPTS`].
+/// `enableMouse="true"`, from the loader, and a declared mouse handler, which
+/// the 1.12.1 client treats the same way. See [`MOUSE_SCRIPTS`].
 pub(in crate::lua) fn set_enabled(frame: &mlua::Table, enabled: bool) -> mlua::Result<()> {
     frame.set(ENABLED_KEY, enabled)
 }
 
 
-/// **The five `<Scripts>` element names that make a frame a mouse receiver**,
-/// whatever it said — or did not say — in `enableMouse`.
+/// The five `<Scripts>` element names that make a frame a mouse receiver,
+/// whatever its `enableMouse` says or omits.
 ///
-/// The reference walks the children of a `<Scripts>` element and enables each
-/// device the names it finds belong to. Four devices, and this client had only
-/// ever enabled the last of them:
+/// The 1.12.1 client enables an input device on a frame whose `<Scripts>`
+/// element declares a handler belonging to that device. There are four
+/// devices:
 ///
 /// ```text
-/// OnChar                       -> input type 0
-/// OnKeyDown, OnKeyUp           -> input type 1
-/// the five names below         -> input type 2
-/// OnMouseWheel                 -> input type 3
+/// OnChar                       -> character input
+/// OnKeyDown, OnKeyUp           -> keys
+/// the five names below         -> the mouse
+/// OnMouseWheel                 -> the wheel
 /// ```
 ///
-/// The walk is a chain of "if none of these matched, skip the enable" — so
-/// **any one** of them is enough.
+/// Any one of the names is enough.
 ///
-/// **`OnClick` is deliberately not among them**, and its absence is the proof
-/// the list is the whole rule rather than a sample: a `<Button>` is already a
-/// mouse receiver by its kind (see [`init`]), so the reference has no need to
-/// name the one handler only a button can have.
+/// `OnClick` is not among them: a `<Button>` is already a mouse receiver by its
+/// kind (see [`init`]), so the handler only a button can have does not need to
+/// enable anything.
 ///
-/// What it costs to be missing: `ReputationBarTemplate` is a `<StatusBar>` with
-/// `<OnEnter>`, `<OnLeave>` and `<OnMouseUp>`, negative `<HitRectInsets>`
-/// widening its hit box 126 pixels to the left to cover the faction's name —
-/// and no `enableMouse` anywhere in its chain. Every one of the fifteen bars
-/// was drawn, filled, highlighted on hover by a handler that could never
-/// run, and unclickable; `ReputationBar_OnClick` is what opens
-/// `ReputationDetailFrame`, so the panel's whole right-hand half was
-/// unreachable. It is not a one-off shape: it is how 1.12 writes any widget
-/// that is not a `<Button>` and is nevertheless meant to be pressed.
+/// Without this rule, `ReputationBarTemplate` is unclickable. It is a
+/// `<StatusBar>` with `<OnEnter>`, `<OnLeave>` and `<OnMouseUp>`, negative
+/// `<HitRectInsets>` widening its hit box 126 pixels to the left to cover the
+/// faction's name, and no `enableMouse` anywhere in its chain. Each of the
+/// fifteen bars is drawn and filled, but its hover highlight never runs and it
+/// cannot be clicked; `ReputationBar_OnClick` opens `ReputationDetailFrame`,
+/// so the right-hand half of the panel is unreachable. 1.12 writes every
+/// pressable widget that is not a `<Button>` this way.
 pub(in crate::lua) const MOUSE_SCRIPTS: [&str; 5] = [
     "OnEnter",
     "OnLeave",
@@ -368,14 +346,14 @@ pub(in crate::lua) fn is_mouse_script(name: &str) -> bool {
     MOUSE_SCRIPTS.iter().any(|n| name.eq_ignore_ascii_case(n))
 }
 
-/// **A `<Scripts>` element that names a device enables it**, which is the
-/// loader's half of the rule in the module note — the walker matching the
-/// element names and enabling the input type each belongs to.
+/// Set the wheel flag. A `<Scripts>` element that declares `OnMouseWheel`
+/// enables the wheel, as the module note describes; this is the loader's side
+/// of that rule.
 ///
 /// Called from [`super::super::xml`] for the markup, and by `EnableMouseWheel`
-/// for a script. It is deliberately *not* on `SetScript`: the reference enables
-/// from the XML walker and from the method, and a runtime `SetScript` on a
-/// frame the player cannot reach with the wheel is not the same act.
+/// for a script. `SetScript` does not call it: the 1.12.1 client enables the
+/// wheel from the markup and from `EnableMouseWheel` only, and a runtime
+/// `SetScript("OnMouseWheel", …)` leaves the frame out of the wheel's set.
 pub(in crate::lua) fn set_wheel_enabled(frame: &mlua::Table, enabled: bool) -> mlua::Result<()> {
     frame.set(WHEEL_KEY, enabled)
 }
@@ -399,8 +377,8 @@ pub(in crate::lua) fn set_hit_insets(
     frame.set(INSETS_KEY, table)
 }
 
-/// **A left press on a text field takes the keyboard** — see
-/// [`super::super::widgets::editbox::clicked`], which is where the argument for that is.
+/// A left press on a text field takes keyboard focus. The reason is given at
+/// [`super::super::widgets::editbox::clicked`].
 ///
 /// A handler error is recorded rather than propagated, on the same terms as
 /// every other script this dispatch fires: `OnEditFocusGained` is a body like
@@ -411,8 +389,8 @@ fn focus_edit_box(lua: &mlua::Lua, frame: &mlua::Table, errors: &mut Vec<String>
     }
 }
 
-/// **Would the pointer land on this frame at all?** The `enableMouse` flag
-/// itself, which is the first of the four tests [`walk`] makes.
+/// Whether the pointer can land on this frame at all: the `enableMouse` flag,
+/// one of the four tests [`walk`] makes.
 ///
 /// Read by [`super::super::audit`], whose click probe presses only what a person could
 /// have pressed: a button the interface drives itself is not one of them.
@@ -429,14 +407,14 @@ pub(in crate::lua) fn is_over(frame: &mlua::Table) -> bool {
     frame.raw_get::<Option<bool>>(OVER_KEY).ok().flatten().unwrap_or(false)
 }
 
-/// …and the write behind it, so the focus pass and a test cannot spell the key
-/// two ways.
+/// The write behind [`is_over`], so the focus pass and the tests use the same
+/// key.
 pub(in crate::lua) fn set_over(frame: &mlua::Table, over: bool) -> mlua::Result<()> {
     frame.set(OVER_KEY, over)
 }
 
-/// **The topmost mouse-enabled frame at a point**, in the game's own space:
-/// origin bottom left, y up.
+/// The topmost mouse-enabled frame at a point, in the game's space: origin
+/// bottom left, y up.
 ///
 /// `None` for a point over nothing, which is the ordinary case and is what makes
 /// the world clickable.
@@ -444,19 +422,19 @@ pub fn focus_at(lua: &mlua::Lua, x: f64, y: f64) -> Option<mlua::Table> {
     topmost(lua, x, y, ENABLED_KEY)
 }
 
-/// …and **the topmost wheel-enabled frame**, which is a different population
-/// over the same pile — see the module note, and [`WHEEL_KEY`].
+/// The topmost wheel-enabled frame at a point. Wheel-enabled frames are a
+/// different set over the same pile; see the module note and [`WHEEL_KEY`].
 ///
-/// The one place this client asks a hit-test question of anything but the
-/// mouse. It is a separate walk rather than a filter on [`focus_at`]'s answer
-/// because the two answers are usually *different frames*: over a quest
+/// The only hit test this client runs for a device other than the mouse. It
+/// is a separate walk rather than a filter on [`focus_at`]'s answer because
+/// the two answers are usually different frames: over a quest
 /// description the mouse focus is `QuestLogFrame` and the wheel's is
 /// `QuestLogDetailScrollFrame`, five levels inside it.
 pub fn wheel_at(lua: &mlua::Lua, x: f64, y: f64) -> Option<mlua::Table> {
     topmost(lua, x, y, WHEEL_KEY)
 }
 
-/// The walk both of the above are, over whichever flag decides candidacy.
+/// The walk behind both of the above, with the flag that decides candidacy.
 fn topmost(lua: &mlua::Lua, x: f64, y: f64, flag: &'static str) -> Option<mlua::Table> {
     let mut best: Option<(Key, mlua::Table)> = None;
     let mut sequence = 0usize;
@@ -476,11 +454,12 @@ fn topmost(lua: &mlua::Lua, x: f64, y: f64, flag: &'static str) -> Option<mlua::
     best.map(|(_, frame)| frame)
 }
 
-/// How deep the walk goes. The same bound on nonsense [`super::super::widgets::draw`] takes.
+/// How deep the walk goes: the same depth limit against malformed trees that
+/// [`super::super::widgets::draw`] uses.
 const MAX_DEPTH: u32 = 64;
 
-/// Where a candidate sits in the pile — ordered exactly as the tuple is, and the
-/// same three keys the draw pass sorts by.
+/// Where a candidate sits in the pile, ordered as the tuple is: the same three
+/// keys the draw pass sorts by.
 type Key = (usize, i64, usize);
 
 /// What a child inherits, so that neither key is chased up the parents once per
@@ -554,7 +533,8 @@ fn walk(
         }
     }
 
-    // **Descend regardless**, because a container does not clip its children.
+    // Descend whether or not this frame contains the point, because a
+    // container does not clip its children.
     let Ok(children) = widget::children(object) else {
         return;
     };
@@ -586,47 +566,43 @@ fn contains(lua: &mlua::Lua, frame: &mlua::Table, (x, y): (f64, f64)) -> bool {
 /// [`wheel_was_taken`].
 const REG_WHEEL_TAKEN: &str = "vale.mouse.wheelTaken";
 
-/// **Can the answer to "what is under the pointer" be reused from last tick?**
+/// Whether the answer to "what is under the pointer" can be reused from the
+/// last mouse pass.
 ///
 /// The hit test is a walk of 3,785 frames sorted by strata, level and creation
-/// order, and it ran **every frame whatever had happened** — 0.36 ms of a 60 Hz
-/// budget, which was the largest remaining per-frame interface cost that was not
-/// doing any work. A frame in which nobody moved the mouse, nothing was pressed,
-/// nothing was shown and nothing moved cannot possibly have a different answer
-/// from the frame before it.
+/// order. Run on every pass it cost 0.36 ms of a 60 Hz frame budget, the
+/// largest per-frame interface cost that did no useful work. If the pointer did
+/// not move, nothing was pressed, and nothing was shown or moved, the answer is
+/// the same as on the previous pass.
 ///
-/// Four things have to have stood still, and the fourth is the one that made
-/// this hard to write:
+/// Four inputs must be unchanged:
 ///
-/// * the **pointer**, to the exact pixel;
-/// * the **buttons and the wheel** — an edge is dispatched at the focus, so a
-///   press must always be preceded by a fresh test;
-/// * the **layout** ([`super::super::widgets::layout::generation`]) — anything
+/// * the pointer, to the exact pixel;
+/// * the buttons and the wheel: an edge is dispatched at the focus, so a
+///   press is always preceded by a fresh test;
+/// * the layout ([`super::super::widgets::layout::generation`]): anything
 ///   that moved a rectangle;
-/// * and the **pile** ([`super::super::widgets::widget::pile_generation`]) —
-///   anything that changed what is stacked over what, which is a *different*
-///   question and has no rectangle in it at all. `Show()` moves nothing and can
-///   put a whole panel under the hand; so can `Raise`, `SetFrameStrata`,
-///   `EnableMouse`, `SetHitRectInsets` and a `CreateFrame` in an `OnUpdate`.
-///   That second counter is the reason this could not be written the day the
-///   idea was had.
+/// * the pile ([`super::super::widgets::widget::pile_generation`]): anything
+///   that changed what is stacked over what, which involves no rectangle.
+///   `Show()` moves nothing and can put a whole panel under the pointer; so can
+///   `Raise`, `SetFrameStrata`, `EnableMouse`, `SetHitRectInsets` and a
+///   `CreateFrame` in an `OnUpdate`. The layout generation does not change for
+///   any of these, so the gate needs this second counter.
 ///
-/// **The failure mode of getting it wrong is a missed `OnEnter`**, which reads
-/// as "tooltips sometimes do not appear" and is exactly the kind of bug nobody
-/// can reproduce. So both counters over-invalidate on purpose: a bump that was
-/// not needed costs one walk on a frame that was already busy, and a bump that
-/// was needed and missing costs a bug with no symptom to chase.
+/// A wrong answer here shows up as a missed `OnEnter`: tooltips that sometimes
+/// do not appear, which is hard to reproduce. Both counters therefore
+/// over-invalidate: an unneeded bump costs one walk on a frame that was already
+/// busy, and a missing bump is a bug with no visible cause.
 ///
-/// The stamp is written here on **every** tick and not only on a walk, so a
-/// frame that opens the gate re-closes it immediately afterwards.
+/// The stamp is written on every call, not only after a walk, so the pass after
+/// a change stores the new state and the pass after that can reuse the answer.
 ///
-/// **Measured**, A/B at one framing over `--audit --spin 1200` with the gate
-/// short-circuited on one side: the mouse pass goes from **0.35 ms median
-/// (p99 0.58) to 0.12 (p99 0.21)**, and the interface's whole per-frame median
-/// from 2.31 ms to 1.93. The allocation is unchanged at 27.8 KB a frame,
-/// because that is the scoped read API's and not the walk's — see
-/// `super::events::dispatch`, which is where the other half of that number
-/// was fixed.
+/// Measured A/B at one framing over `--audit --spin 1200`, with the gate
+/// disabled on one side: the mouse pass goes from 0.35 ms median (p99 0.58) to
+/// 0.12 (p99 0.21), and the interface's whole per-frame median from 2.31 ms to
+/// 1.93. Allocation is unchanged at 27.8 KB a frame, because it comes from the
+/// scoped read API and not from the walk; see `super::events::dispatch`, where
+/// the other part of that number was fixed.
 fn settled(lua: &mlua::Lua, pointer: &Pointer) -> mlua::Result<bool> {
     let now = (
         pointer.at.map(|(x, y)| (x.to_bits(), y.to_bits())),
@@ -636,12 +612,32 @@ fn settled(lua: &mlua::Lua, pointer: &Pointer) -> mlua::Result<bool> {
     let before: Option<Stamp> = lua.app_data_ref::<Stamp>().map(|s| *s);
     let _ = lua.try_set_app_data(Stamp(now));
     // An edge always takes the walk: `OnMouseDown`, `OnMouseWheel` and the
-    // click are all aimed at the frame under the hand *at that instant*, and a
-    // stale focus there is a press landing on the wrong panel.
+    // click are all aimed at the frame under the pointer at that moment, and a
+    // stale focus would send the press to the wrong panel.
     if !pointer.pressed.is_empty() || !pointer.released.is_empty() || pointer.wheel != 0 {
         return Ok(false);
     }
     Ok(before.is_some_and(|Stamp(was)| was == now))
+}
+
+/// Whether a mouse pass now would find nothing to do: no button or wheel edge,
+/// and the pointer and both generations as [`settled`] last stamped them.
+///
+/// The same test as [`settled`], read without writing the stamp and without a
+/// scope, so that [`poll`] can skip opening one. With the pointer still, the
+/// carried, stretched and slider-held frames and an armed drag all stay where
+/// they are, and with both generations unchanged the frame under the pointer
+/// is the one already in [`MouseFocus`], so skipping the pass changes nothing.
+pub(in crate::lua) fn unchanged(lua: &mlua::Lua, pointer: &Pointer) -> bool {
+    if !pointer.pressed.is_empty() || !pointer.released.is_empty() || pointer.wheel != 0 {
+        return false;
+    }
+    let now = (
+        pointer.at.map(|(x, y)| (x.to_bits(), y.to_bits())),
+        super::super::widgets::layout::generation(lua),
+        super::super::widgets::widget::pile_generation(lua),
+    );
+    lua.app_data_ref::<Stamp>().is_some_and(|stamp| stamp.0 == now)
 }
 
 /// What [`settled`] compares: the pointer as raw bits (`f64` has no `Eq`, and
@@ -658,52 +654,52 @@ pub struct Pointer {
     /// Buttons that went down and came up this frame, in the game's own words.
     pub pressed: Vec<&'static str>,
     pub released: Vec<&'static str>,
-    /// **Notches the wheel turned this frame**, positive away from the hand.
+    /// Notches the wheel turned this frame, positive away from the user.
     ///
-    /// 1.12 passes `arg1` as **±1 and nothing else** — every one of the twelve
-    /// `OnMouseWheel` bodies in the two directories tests `if ( arg1 > 0 )` and
-    /// takes a fixed step, so the magnitude is a count of edges rather than a
-    /// distance. Bevy reports lines or pixels depending on the device; this is
-    /// the sign of whatever it reported, so a trackpad's fractional scroll is
-    /// one notch and not none.
+    /// 1.12 passes `arg1` as +1 or -1 only. Each of the twelve `OnMouseWheel`
+    /// bodies in the two directories tests `if ( arg1 > 0 )` and takes a fixed
+    /// step, so the value is a direction, not a distance. Bevy reports lines or
+    /// pixels depending on the device; this is the sign of whatever it
+    /// reported, so a trackpad's fractional scroll is one notch and not none.
     pub wheel: i32,
 }
 
-/// **One tick of the mouse**: the focus, the two crossing handlers, and whatever
-/// the buttons did. Errors come back to be recorded, as every other dispatch's do.
+/// One mouse pass: the focus, the two crossing handlers, and whatever the
+/// buttons and the wheel did. Handler errors are returned to be recorded, as
+/// every other dispatch's are.
 pub(in crate::lua) fn dispatch(lua: &mlua::Lua, pointer: &Pointer) -> mlua::Result<Vec<String>> {
     let mut errors = Vec::new();
     if let Some((x, y)) = pointer.at {
-        // Where the hand is now — `StartMoving`, called from inside an
-        // `OnDragStart` body, reads this to take its grip. Two numbers rather
-        // than a table, because this is written every frame the pointer is on
-        // the window and a table per frame is garbage.
+        // The current pointer position. `StartMoving`, called from inside an
+        // `OnDragStart` body, reads it to take its grip. Two numbers rather
+        // than a table, because this is written on every pass with the pointer
+        // on the window and a table each time would be garbage.
         lua.set_named_registry_value(REG_POINTER_X, x)?;
         lua.set_named_registry_value(REG_POINTER_Y, y)?;
-        // The frame being carried rides the pointer before anything is
-        // hit-tested, so the focus this tick sees it where it lands.
+        // The frame being carried follows the pointer before anything is
+        // hit-tested, so the focus this pass sees it where it lands.
         follow(lua, x, y)?;
-        // …and the frame being *stretched* does the same, for the same reason.
+        // The frame being sized is updated first for the same reason.
         stretch(lua, x, y)?;
-        // …and an armed gesture that has travelled past the slop starts.
+        // An armed gesture that has travelled past the threshold starts.
         advance_drag(lua, x, y, &mut errors)?;
-        // **A slider being held follows the pointer with no slop at all** —
-        // 1.12's slider takes its own mouse and there is no `OnDragStart`
-        // anywhere for one. See [`super::super::widgets::slider`].
+        // A slider being held follows the pointer with no threshold: 1.12's
+        // slider takes the mouse by its kind and has no `OnDragStart`. See
+        // [`super::super::widgets::slider`].
         super::super::widgets::slider::drag(lua, (x, y));
     }
     let previous: Option<mlua::Table> = lua.named_registry_value(REG_FOCUS)?;
-    // **The tree walk, or the answer it already gave** — see [`settled`], which
-    // is the whole of this pass's cost when nothing is happening.
+    // The tree walk, or the answer from the last pass; see [`settled`]. When
+    // nothing has changed, that test is this pass's whole cost.
     let focus = if settled(lua, pointer)? {
         previous.clone()
     } else {
         pointer.at.and_then(|(x, y)| focus_at(lua, x, y))
     };
 
-    // **`OnLeave` before `OnEnter`**, which is the order the game uses and the
-    // one a tooltip depends on: the leaving frame hides `GameTooltip` and the
-    // arriving one fills it, and the other order leaves it blank.
+    // `OnLeave` before `OnEnter`, the order the game uses and the one tooltips
+    // depend on: the leaving frame hides `GameTooltip` and the arriving one
+    // fills it, and the other order leaves it blank.
     if previous.as_ref() != focus.as_ref() {
         if let Some(old) = &previous {
             let _ = set_over(old, false);
@@ -716,9 +712,9 @@ pub(in crate::lua) fn dispatch(lua: &mlua::Lua, pointer: &Pointer) -> mlua::Resu
         lua.set_named_registry_value(REG_FOCUS, focus.clone())?;
     }
 
-    // **The wheel, before the buttons and on its own route.** It is the one edge
-    // here that is not aimed at `focus` at all: the wheel is its own device with
-    // its own population, so it gets its own hit-test. See the module note.
+    // The wheel, before the buttons, with its own hit test. It is the only edge
+    // here not delivered to `focus`: the wheel is a separate device with its
+    // own set of frames. See the module note.
     lua.set_named_registry_value(REG_WHEEL_TAKEN, false)?;
     if pointer.wheel != 0 {
         if let Some(frame) = pointer.at.and_then(|(x, y)| wheel_at(lua, x, y)) {
@@ -731,22 +727,22 @@ pub(in crate::lua) fn dispatch(lua: &mlua::Lua, pointer: &Pointer) -> mlua::Resu
     for name in &pointer.pressed {
         let Some(frame) = &focus else { continue };
         lua.set_named_registry_value(REG_PRESSED, frame.clone())?;
-        // **A press arms the drag gesture** — or clears a stale one, which is
-        // the one moment it is certain none should still be in flight.
+        // A press arms the drag gesture, or clears a stale one: at a press no
+        // gesture should still be in progress.
         arm_drag(lua, frame, name, pointer.at)?;
-        // …and a press on a scroll bar takes hold of it, which jumps the value
-        // to the pointer at once — click-to-page and thumb-drag are the same
-        // gesture in the reference.
+        // A press on a scroll bar takes hold of it and moves the value to the
+        // pointer at once: in the 1.12.1 client, click-to-page and dragging the
+        // thumb are the same gesture.
         if *name == LEFT {
             super::super::widgets::slider::grab(lua, frame, pointer.at);
-            // …and a press on a text field takes the keyboard, which is the
-            // other thing 1.12's C widgets do for themselves.
+            // A press on a text field takes keyboard focus, which 1.12's C
+            // widgets also do without a script.
             focus_edit_box(lua, frame, &mut errors);
         }
         let args = [EventArg::Text((*name).to_string())];
         call(lua, frame, "OnMouseDown", &args, &mut errors);
-        // The pushed face is the C side's rather than the handler's — nothing in
-        // any `OnMouseDown` body in the directory sets it.
+        // The C side sets the pushed face, not the handler: no `OnMouseDown`
+        // body in the directory sets it.
         if widget::class(frame) == widget::Class::Button {
             let _ = button::set_pressed(frame, true);
         }
@@ -757,16 +753,17 @@ pub(in crate::lua) fn dispatch(lua: &mlua::Lua, pointer: &Pointer) -> mlua::Resu
 
     for name in &pointer.released {
         // A release resolves the gesture whether or not anything was pressed,
-        // so a stale one cannot outlive its own button coming up. `Some` only
-        // for a gesture that *started* — an un-started one dissolves here and
-        // the ordinary click below proceeds untouched.
+        // so a stale one cannot outlive its own button's release. `Some` only
+        // for a gesture that started; one that did not start is discarded here
+        // and the ordinary click below proceeds unchanged.
         let dragged = resolve_drag(lua, name)?;
         if *name == LEFT {
             super::super::widgets::slider::release(lua);
         }
-        // **The frame that took the press**, not the one under the pointer: a
-        // button dragged off and released still un-pushes, which is how a
-        // mis-click is cancelled in every version of this interface.
+        // The frame that took the press, not the one under the pointer: a
+        // button pressed, dragged off and released still returns to normal,
+        // which is how a mis-click is cancelled in every version of this
+        // interface.
         let pressed: Option<mlua::Table> = lua.named_registry_value(REG_PRESSED)?;
         let Some(frame) = pressed else { continue };
         lua.set_named_registry_value(REG_PRESSED, mlua::Value::Nil)?;
@@ -775,10 +772,10 @@ pub(in crate::lua) fn dispatch(lua: &mlua::Lua, pointer: &Pointer) -> mlua::Resu
         if widget::class(&frame) == widget::Class::Button {
             let _ = button::set_pressed(&frame, false);
         }
-        // **A release that ends a started drag is a drag, not a click.** The
-        // source is told it stopped, whatever the pointer is over receives
-        // it, and `OnClick` is suppressed — the split that lets a sloppy
-        // click still cast while a deliberate pull does not.
+        // A release that ends a started drag is a drag, not a click. The
+        // source gets `OnDragStop`, the frame under the pointer gets
+        // `OnReceiveDrag`, and `OnClick` is suppressed. A click that moved
+        // less than the threshold still casts; a drag does not.
         if let Some(source) = dragged {
             call(lua, &source, "OnDragStop", &[], &mut errors);
             if let Some(target) = &focus {
@@ -786,7 +783,7 @@ pub(in crate::lua) fn dispatch(lua: &mlua::Lua, pointer: &Pointer) -> mlua::Resu
             }
             continue;
         }
-        // …and the click only lands if the pointer is still on it.
+        // The click lands only if the pointer is still on the pressed frame.
         if focus.as_ref() == Some(&frame)
             && button::answers_click(&frame, name, false).unwrap_or(false)
         {
@@ -825,8 +822,9 @@ fn arm_drag(
     }
 }
 
-/// Start the armed gesture once the pointer has travelled past the slop —
-/// `OnDragStart` fires exactly once, with `arg1` the button that is dragging.
+/// Start the armed gesture once the pointer has travelled past
+/// [`DRAG_THRESHOLD`]. `OnDragStart` fires once, with `arg1` the button that
+/// is dragging.
 fn advance_drag(
     lua: &mlua::Lua,
     x: f64,
@@ -878,14 +876,14 @@ fn follow(lua: &mlua::Lua, x: f64, y: f64) -> mlua::Result<()> {
     pin(lua, &frame, x + dx, y + dy)
 }
 
-/// **…and the frame a `StartSizing` gripped stretches under it**, one resize per
-/// tick, from the corner or edge the call named.
+/// The frame a `StartSizing` gripped is resized to the pointer, once per tick,
+/// from the corner or edge the call named.
 ///
-/// The grip holds the *opposite* corner in screen space, which is what makes the
-/// rest of the frame stay still: dragging `BOTTOMRIGHT` moves that corner to the
-/// pointer and leaves `TOPLEFT` where it was. `SetMinResize`/`SetMaxResize` are
-/// applied here, which is the reference's own place for them and the whole
-/// reason the two were recorded.
+/// The grip holds the opposite corner in screen space, so the rest of the frame
+/// stays still: dragging `BOTTOMRIGHT` moves that corner to the pointer and
+/// leaves `TOPLEFT` where it was. `SetMinResize`/`SetMaxResize` are applied
+/// here, during sizing, which is when the 1.12.1 client applies them; they are
+/// recorded for this use.
 ///
 /// A point naming only one axis (`LEFT`, `TOP`, …) sizes on that axis alone,
 /// which is how 1.12's chat frames are dragged by an edge.
@@ -915,7 +913,7 @@ fn stretch(lua: &mlua::Lua, x: f64, y: f64) -> mlua::Result<()> {
     };
     frame.set(widget::WIDTH_KEY, width)?;
     frame.set(widget::HEIGHT_KEY, height)?;
-    // The still corner stays still: the frame is re-pinned by its bottom-left,
+    // Keep the gripped corner fixed. The frame is re-pinned by its bottom-left,
     // which for a `TOPLEFT`/`TOP`/`LEFT` grip is the corner that moved.
     let left = if horizontal && point.contains("LEFT") {
         anchor_x - width
@@ -935,8 +933,8 @@ fn stretch(lua: &mlua::Lua, x: f64, y: f64) -> mlua::Result<()> {
     pin(lua, &frame, left, bottom)
 }
 
-/// `SetMinResize`/`SetMaxResize`, as two pairs — and an unset bound is no bound
-/// rather than zero, which would collapse every frame nobody gave one.
+/// `SetMinResize`/`SetMaxResize`, as two pairs. An unset bound is no bound, not
+/// zero; zero would collapse every frame that has no bound set.
 fn bounds(frame: &mlua::Table) -> ((f64, f64), (f64, f64)) {
     let pair = |key: &str, fallback: (f64, f64)| {
         frame
@@ -952,32 +950,30 @@ fn bounds(frame: &mlua::Table) -> ((f64, f64), (f64, f64)) {
     )
 }
 
-/// Anchor a frame at a screen position — expressed against its parent, because
-/// that is the shape a plain `SetPoint` records and the one that survives the
-/// parent moving.
+/// Anchor a frame at a screen position, expressed against its parent, because
+/// that is what a plain `SetPoint` records and it stays correct when the parent
+/// moves.
 ///
-/// **By `TOPLEFT`, and the point *name* is the load-bearing part.** This client
-/// replaces an anchor of the same name and adds one of a different name, which
-/// is 1.12's own rule — so the name a drag leaves behind decides what the next
-/// `SetPoint` does to it. The directory drops a moved frame and re-anchors it
-/// in the same breath, with no `ClearAllPoints` between:
-/// `FCF_ValidateChatFramePosition` is `StopMovingOrSizing()` and then
+/// The anchor is `TOPLEFT`, and the point name matters. This client replaces an
+/// anchor of the same name and adds one of a different name, as 1.12 does, so
+/// the name a drag leaves decides what the next `SetPoint` does. The directory
+/// drops a moved frame and re-anchors it immediately, with no `ClearAllPoints`
+/// between: `FCF_ValidateChatFramePosition` is `StopMovingOrSizing()` and then
 /// `chatFrame:SetPoint("TOPLEFT", "UIParent", "TOPLEFT", x, y)`, and
-/// `RaidGroupButton_OnDragStop` is the same shape onto a raid slot.
+/// `RaidGroupButton_OnDragStop` does the same onto a raid slot.
 ///
-/// Anchored `BOTTOMLEFT` — which is what this did — that second `SetPoint`
-/// **adds** a `TOPLEFT`, the frame is then pinned top *and* bottom, and the
-/// solve takes its height from the gap between the two. A raid member dragged
-/// out of the grid came back 446 pixels tall and stayed on the screen; the
-/// report called it "they expand". The position is identical either way, so
-/// only the name changes here.
+/// With a `BOTTOMLEFT` anchor, that second `SetPoint` adds a `TOPLEFT`, the
+/// frame is anchored at top and bottom, and the solve takes its height from
+/// the gap between the two: a raid member dragged out of the grid came back 446
+/// pixels tall. The position is identical either way, so only the name
+/// differs.
 fn pin(lua: &mlua::Lua, frame: &mlua::Table, left: f64, bottom: f64) -> mlua::Result<()> {
     let base = frame
         .raw_get::<Option<mlua::Table>>(widget::PARENT_KEY)?
         .and_then(|parent| layout::rect(lua, &parent))
         .map_or((0.0, 0.0), |r| (r.left, r.top()));
-    // **The top edge, because the anchor names it** — the caller measures a
-    // bottom-left corner, which is what the pointer and the rect both speak in.
+    // Convert to the top edge, because the anchor is `TOPLEFT`. The caller
+    // passes a bottom-left corner, the form the pointer and the rect both use.
     let height = layout::rect(lua, frame).map_or(0.0, |r| r.height);
     frame.set(widget::POINTS_KEY, lua.create_table()?)?;
     widget::add_point(
@@ -990,23 +986,22 @@ fn pin(lua: &mlua::Lua, frame: &mlua::Table, left: f64, bottom: f64) -> mlua::Re
     )
 }
 
-/// **Did the interface answer the wheel this tick?**, as the last [`dispatch`]
-/// left it — read by [`super::super::host::LuaHost::mouse`] and carried down to
-/// [`MouseFocus`], where `world::camera::orbit` reads it.
+/// Whether a frame took the wheel turn in the last [`dispatch`]. Read by
+/// [`super::super::host::LuaHost::mouse`] and copied to [`MouseFocus`], where
+/// `world::camera::orbit` reads it.
 ///
-/// The zoom is gated on this and **not** on the pointer merely being over the
-/// interface, which is the reference's own shape: a wheel over the chat frame
-/// or over an open bag reaches no `OnMouseWheel` and falls through to the
-/// world, exactly as it does in 1.12. Only a frame that actually took it stops
-/// the zoom.
+/// The zoom is gated on this, not on the pointer being over the interface, as
+/// in the 1.12.1 client: a wheel turn over the chat frame or over an open bag
+/// reaches no `OnMouseWheel` and goes to the world. Only a frame that took it
+/// stops the zoom.
 pub(in crate::lua) fn wheel_was_taken(lua: &mlua::Lua) -> mlua::Result<bool> {
     Ok(lua.named_registry_value::<Option<bool>>(REG_WHEEL_TAKEN)?.unwrap_or(false))
 }
 
-/// **The name of the frame under the pointer**, as the last [`dispatch`] left it.
+/// The name of the frame under the pointer, as the last [`dispatch`] left it.
 ///
-/// An unnamed frame answers `Some("")`: what the caller needs is that there *was*
-/// one, and 1,000 of the interface's frames have no name at all.
+/// An unnamed frame returns `Some("")`: the caller needs to know that there was
+/// a frame, and 1,000 of the interface's frames have no name.
 pub(in crate::lua) fn focused_name(lua: &mlua::Lua) -> mlua::Result<Option<String>> {
     let focus: Option<mlua::Table> = lua.named_registry_value(REG_FOCUS)?;
     match focus {
@@ -1034,16 +1029,15 @@ fn call(
     }
 }
 
-/// **A press and its release on one frame**, which is what a widget that is not
-/// a `<Button>` has instead of a click.
+/// A press and its release on one frame, which is what a widget that is not a
+/// `<Button>` has instead of a click.
 ///
 /// [`super::super::audit`]'s click probe is the only caller. It cannot go
-/// through [`walk`] — there is no pointer in a headless run and nothing to put
-/// one over a rectangle — so this is the same two calls [`dispatch`] makes for a
-/// press and the release that follows it, in the same order, with the same
-/// `arg1` and the same pushed face. A `<Button>` still goes through
-/// [`click`] there: a button's press is `OnClick` and this is the half the
-/// reference has no `OnClick` for.
+/// through [`walk`], because a headless run has no pointer to place over a
+/// rectangle, so this makes the same two calls [`dispatch`] makes for a press
+/// and the release that follows it, in the same order and with the same
+/// `arg1`. A `<Button>` still goes through [`click`] there: a button's press
+/// is `OnClick`, and this covers the widgets that have no `OnClick`.
 ///
 /// Returns whatever the two handlers raised, in the order they ran.
 pub(in crate::lua) fn press_and_release(
@@ -1058,11 +1052,11 @@ pub(in crate::lua) fn press_and_release(
     errors
 }
 
-/// `frame:Click(button)` — **through the installed method**, so that the
-/// disabled test, the `arg1` and the calling convention are the same ones a
-/// script's `ActionButton1:Click()` gets. A second path here would be a second
-/// way to press a button, which is exactly the shape of the bug that took
-/// casting out two rounds ago.
+/// `frame:Click(button)`, through the installed method, so that the disabled
+/// test, the `arg1` and the calling convention are the ones a script's
+/// `ActionButton1:Click()` gets. A second code path here would be a second way
+/// to press a button that could diverge from the first; an earlier divergence
+/// of that kind stopped spells from being cast.
 fn click(frame: &mlua::Table, name: &str, errors: &mut Vec<String>) {
     let method: mlua::Result<mlua::Function> = frame.get("Click");
     let Ok(method) = method else { return };
@@ -1075,15 +1069,15 @@ fn first_line(e: &mlua::Error) -> String {
     e.to_string().lines().next().unwrap_or_default().to_string()
 }
 
-/// Install the five methods and the one global.
+/// Install [`METHODS`] and [`GLOBALS`].
 pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
-    // `EnableMouse(true)` / `EnableMouse(nil)` — Lua truthiness, as everything
-    // else that takes a flag here is.
+    // `EnableMouse(true)` / `EnableMouse(nil)`: Lua truthiness, as for every
+    // other flag here.
     //
-    // **It disturbs the pile**, which the gate at the top of [`dispatch`]
-    // reads: whether a frame answers the pointer decides what is under it
-    // exactly as much as where the frame is does, and it moves no rectangle at
-    // all — so this is the second counter's business and not the layout memo's.
+    // It bumps the pile generation, which the gate at the top of [`dispatch`]
+    // reads. Whether a frame takes the pointer changes what is under it as much
+    // as the frame's position does, and it moves no rectangle, so it is the
+    // pile counter's concern and not the layout memo's.
     let enable = lua.create_function(|lua, (this, on): (mlua::Table, Option<mlua::Value>)| {
         super::super::widgets::widget::disturb_pile(lua);
         this.set(
@@ -1099,9 +1093,9 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     })?;
     methods.set("IsMouseEnabled", enabled)?;
 
-    // …and the wheel's own pair. Zero call sites in the ninety files — the
-    // markup enables it — but they are C functions in 5875's frame method
-    // table and an addon asks with them.
+    // The wheel's pair. No call sites in the ninety files, because the markup
+    // enables the wheel, but they are 1.12 frame methods implemented in C and
+    // addons call them.
     let enable_wheel =
         lua.create_function(|lua, (this, on): (mlua::Table, Option<mlua::Value>)| {
             super::super::widgets::widget::disturb_pile(lua);
@@ -1126,7 +1120,7 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
             }
             // The hit rectangle is what the pointer is tested against, so a
             // change to it changes what is under the pointer with nothing
-            // having moved — the pile's business, not the layout memo's.
+            // having moved; it bumps the pile generation, not the layout memo.
             super::super::widgets::widget::disturb_pile(lua);
             set_hit_insets(lua, &this, sides)
         },
@@ -1154,9 +1148,9 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     })?;
     methods.set("IsMouseOver", over)?;
 
-    // RegisterForDrag("LeftButton", …) — which buttons may start a gesture on
-    // this frame. Called with none, it clears the set, which is "this frame
-    // no longer drags".
+    // RegisterForDrag("LeftButton", …): which buttons may start a gesture on
+    // this frame. Called with none, it clears the set, so the frame no longer
+    // drags.
     let register_drag = lua.create_function(
         |lua, (this, buttons): (mlua::Table, mlua::Variadic<String>)| {
             let list = lua.create_table()?;
@@ -1168,8 +1162,8 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     )?;
     methods.set("RegisterForDrag", register_drag)?;
 
-    // The movable flag and the user-placed one — Lua truthiness for the
-    // setters, the game's 1/nil for the getters, like everything here.
+    // The movable, user-placed, clamped and resizable flags: Lua truthiness for
+    // the setters, the game's 1/nil for the getters, as elsewhere here.
     for (set_name, get_name, key) in [
         ("SetMovable", "IsMovable", MOVABLE_KEY),
         ("SetUserPlaced", "IsUserPlaced", USER_PLACED_KEY),
@@ -1191,15 +1185,15 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
         methods.set(get_name, get)?;
     }
 
-    // `SetClampRectInsets` — how far past the screen edge a clamped frame
+    // `SetClampRectInsets`: how far past the screen edge a clamped frame
     // may go. Recorded beside the flag it qualifies.
     let set_clamp_insets = lua.create_function(|_lua, (this, insets): (mlua::Table, mlua::Variadic<f64>)| {
         this.set("__clampInsets", insets.to_vec())
     })?;
     methods.set("SetClampRectInsets", set_clamp_insets)?;
-    // **`DisableDrawLayer(layer)` / `EnableDrawLayer(layer)`** — recorded on
-    // the frame as the set of layers turned off; the painter does not read
-    // it yet, so the regions still draw. pfUI turns `BACKGROUND` off on
+    // `DisableDrawLayer(layer)` / `EnableDrawLayer(layer)`: recorded on the
+    // frame as the set of layers turned off. The painter does not read it
+    // yet, so the regions still draw. pfUI turns `BACKGROUND` off on
     // every frame it skins (34 calls).
     for (name, on) in [("DisableDrawLayer", false), ("EnableDrawLayer", true)] {
         let set = lua.create_function(move |lua, (this, layer): (mlua::Table, Option<String>)| {
@@ -1225,10 +1219,10 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
         methods.set(name, set)?;
     }
 
-    // StartMoving — take a grip: the offset from the pointer to the frame's
-    // corner, held so the frame keeps its place under the hand rather than
-    // snapping its corner to it. Refused on a frame nothing marked movable,
-    // which is the real client's own gate.
+    // StartMoving: record the offset from the pointer to the frame's corner,
+    // so the frame keeps its position relative to the pointer rather than
+    // moving its corner to it. Ignored on a frame not marked movable, as in
+    // the 1.12.1 client.
     let start_moving = lua.create_function(|lua, this: mlua::Table| {
         if !this.raw_get::<Option<bool>>(MOVABLE_KEY)?.unwrap_or(false) {
             return Ok(());
@@ -1249,23 +1243,22 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     })?;
     methods.set("StartMoving", start_moving)?;
 
-    // **`StartSizing(point)` — the same gesture by a corner.**
+    // `StartSizing(point)`: sizing a frame by a corner or edge.
     //
     // Called from an `OnMouseDown` on a resize grip and ended by the
-    // `StopMovingOrSizing` below, exactly as `StartMoving` is. What is recorded
-    // is the corner the drag is *away* from, in screen space, so the rest of the
-    // frame stays where it is while the pointer moves — see [`stretch`].
+    // `StopMovingOrSizing` below, as `StartMoving` is. It records the corner
+    // opposite the named point, in screen space, so the rest of the frame
+    // stays where it is while the pointer moves; see [`stretch`].
     //
-    // Refused on a frame nothing marked resizable, which is the reference's own
-    // gate and the reason `SetResizable` was recorded a round before this.
+    // Ignored on a frame not marked resizable, as in the 1.12.1 client.
     //
-    // Nothing in either shipped directory calls it: 1.12's own resizable window
-    // is the chat frame, and `FCF_` drives that through `OnMouseDown` bodies
-    // that call this by name from `FloatingChatFrame.xml`'s resize buttons —
-    // which is markup this client loads, so those work through the same door.
-    // Every addon with a draggable corner uses it: ShaguDPS's window was **58
-    // of the 96 failures** `--audit --clicks` reported, all of them one nil
-    // method on one `OnMouseDown`.
+    // No `.lua` file in either shipped directory calls it: 1.12's resizable
+    // window is the chat frame, driven by the `FCF_` functions, and the only
+    // calls are in the `OnMouseDown` bodies of `FloatingChatFrame.xml`'s
+    // resize buttons. That markup is loaded here, so those buttons use this
+    // method too. Every addon with a draggable corner uses it: ShaguDPS's window
+    // accounted for 58 of the 96 failures `--audit --clicks` reported, all of
+    // them this one missing method in one `OnMouseDown`.
     let start_sizing = lua.create_function(|lua, (this, point): (mlua::Table, Option<String>)| {
         if !this.raw_get::<Option<bool>>(RESIZABLE_KEY)?.unwrap_or(false) {
             return Ok(());
@@ -1287,10 +1280,10 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     })?;
     methods.set("StartSizing", start_sizing)?;
 
-    // StopMovingOrSizing — let go where it stands, pinned there, and marked
-    // user-placed. The mark is not *saved*: the real client writes it to the
-    // per-character `layout-cache.txt`, which is a named gap in the module
-    // comment — and a different file from the settings this client does keep.
+    // StopMovingOrSizing: release the frame where it stands, pin it there, and
+    // mark it user-placed. The mark is not saved: the 1.12.1 client writes it
+    // to the per-character `layout-cache.txt`, a gap listed in the module
+    // comment, and a different file from the settings this client does keep.
     let stop_moving = lua.create_function(|lua, this: mlua::Table| {
         for key in [REG_MOVING, REG_SIZING] {
             if let Some(grip) = lua.named_registry_value::<Option<mlua::Table>>(key)? {
@@ -1306,42 +1299,40 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     })?;
     methods.set("StopMovingOrSizing", stop_moving)?;
 
-    // The globals. Not verbs and not scoped reads — they answer off the widget
-    // tree and the last tick's pointer, which is state this directory owns
-    // rather than the world's.
+    // The globals. Not verbs and not scoped reads: they answer from the widget
+    // tree and the pointer as the last mouse pass left it, which is state this
+    // directory owns rather than the world's.
     let focus = lua.create_function(|lua, ()| {
         lua.named_registry_value::<mlua::Value>(REG_FOCUS)
     })?;
     lua.globals().set("GetMouseFocus", focus)?;
 
-    // **`GetCursorPosition()` — where the pointer is, in the interface's own
-    // space**: origin bottom left, y up, and already divided by the UI scale
-    // (see [`crate::ui::framexml`], which is the one place that scale lives).
+    // `GetCursorPosition()`: where the pointer is, in the interface's space:
+    // origin bottom left, y up, and already divided by the UI scale (see
+    // [`crate::ui::framexml`], the one place that scale is kept).
     //
-    // That is why the directory's own callers immediately divide again by
-    // `frame:GetEffectiveScale()`: the game's number is in *screen* units and
-    // the frame's own scale is what turns it into the frame's. This client has
-    // one scale for the whole tree, so the two divisions cancel and the answer
-    // is already in frame space — a stated deviation that is invisible until
-    // something calls `SetScale` on a frame, which nothing in 5875 does.
+    // The directory's callers divide again by `frame:GetEffectiveScale()`:
+    // in the game the value is in screen units, and the frame's scale converts
+    // it to the frame's units. This client has one scale for the whole tree,
+    // so the value is already in frame units. This deviation has no visible
+    // effect unless something calls `SetScale` on a frame, which nothing in
+    // 5875 does.
     //
-    // Seven call sites and it was the top of the API gap for two rounds:
-    // `WorldMapButton_OnUpdate`'s **first line** is `local x, y =
-    // GetCursorPosition()`, so without it the whole world map body died before
-    // it reached the label — which is why the map's area name read "BLAH!", the
-    // placeholder its own `<FontString>` ships with.
+    // There are seven call sites. The first line of `WorldMapButton_OnUpdate`
+    // is `local x, y = GetCursorPosition()`, so without this function the
+    // world map body fails before it sets the label, and the map's area name
+    // shows "BLAH!", the placeholder its `<FontString>` ships with.
     let cursor = lua.create_function(|lua, ()| {
         let x: Option<f64> = lua.named_registry_value(REG_POINTER_X)?;
         let y: Option<f64> = lua.named_registry_value(REG_POINTER_Y)?;
-        // **Zero rather than nil for a pointer that has never moved.** Every
-        // caller does arithmetic on the pair without checking, so nil is
+        // Zero rather than nil for a pointer that has never moved. Every
+        // caller does arithmetic on the pair without checking, so nil raises
         // "attempt to perform arithmetic on a nil value" in a body that would
         // otherwise have run.
         Ok((x.unwrap_or(0.0), y.unwrap_or(0.0)))
     })?;
     lua.globals().set("GetCursorPosition", cursor)?;
-    // **`MouseIsOver` is not registered** — see [`GLOBALS`], which says why the
-    // registration was dead code and what took its place.
+    // `MouseIsOver` is not registered; [`GLOBALS`] gives the reason.
     Ok(())
 }
 
@@ -1351,9 +1342,9 @@ impl Plugin for MousePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MouseFocus>()
             .init_resource::<ExternalPointer>()
-            // **Before `GameSet`**, so that a click the interface takes is declined
-            // by the world pick in the *same* frame rather than the next one —
-            // otherwise pressing an action button also drops the target.
+            // Before `GameSet`, so that the world pick skips a click the
+            // interface took in the same frame, not the next one. Otherwise
+            // pressing an action button also clears the target.
             .add_systems(Update, poll.before(crate::interface::GameSet));
     }
 }
@@ -1368,31 +1359,32 @@ pub(crate) fn poll(
     mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
     world: LuaWorld,
     // `Option` for the harnesses that schedule this system without the
-    // interface clock; absent reads as "tick due", which never skips.
+    // interface clock; absent reads as "tick due", so the idle return below
+    // never applies.
     clock: Option<Res<super::update::InterfaceClock>>,
     mut focus: ResMut<MouseFocus>,
     external: Res<ExternalPointer>,
-    // How big the interface is drawn, which the pick has to run backwards
-    // through — see [`crate::ui::scale`]. The painter reads the same value in
-    // the same frame, which is what keeps the hit test on what is on screen.
+    // The scale the interface is drawn at, which the pick has to invert; see
+    // [`crate::ui::scale`]. The painter reads the same value in the same
+    // frame, so the hit test matches what is on screen.
     ui_scale: Res<crate::ui::scale::InterfaceScale>,
     mut pressed: MessageWriter<BindingPressed>,
     mut last_at: Local<Option<(f64, f64)>>,
-    // Whether the claim below is *ours*, so it can be dropped on the falling
-    // edge — see there.
+    // Whether this system made the claim below, so it can drop the claim on
+    // the falling edge; see there.
     mut claimed: Local<bool>,
 ) {
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::Pick);
-    // **The debug panel takes the pointer before the interface is even asked**,
-    // and before every early return below — the two after this line are "no
-    // interpreter" and "no interface loaded", and the camera has to stand down
-    // in both of those as much as in a live session.
+    // The debug panel takes the pointer before the interface is consulted,
+    // and before every early return below. The next two returns are "no
+    // interpreter" and "no interface loaded", and the camera must ignore the
+    // pointer in both cases as well as in a live session.
     //
-    // Claiming `wheel_taken` as well as `over_interface` is what stops the
-    // zoom: `orbit` gates the wheel on the wheel having been *answered* rather
-    // than on the pointer being over anything, which is the reference's own
-    // rule for the game's frames and the wrong one for a window drawn over the
-    // top of them. See [`ExternalPointer`].
+    // Setting `wheel_taken` as well as `over_interface` is what stops the
+    // zoom: `orbit` gates the wheel on a frame having taken it, not on the
+    // pointer being over anything. That is the 1.12.1 client's rule for the
+    // game's frames, and it does not cover a window drawn over them. See
+    // [`ExternalPointer`].
     if external.0 {
         focus.over_interface = true;
         focus.wheel_taken = true;
@@ -1400,11 +1392,12 @@ pub(crate) fn poll(
         *claimed = true;
         return;
     }
-    // **The falling edge is explicit and not left to the next walk.** The two
-    // early returns below and the idle fast path all leave `focus` saying
-    // whatever it last said, so a panel closed under a stationary pointer — or
-    // one closed at the glue screen, where there is no interface to walk at all
-    // — would leave the world deaf to the mouse for the rest of the session.
+    // The falling edge is handled here, not left to the next walk. The early
+    // returns below (no interpreter, no interface, the idle path and the
+    // unchanged-pass return) all leave `focus` as it was, so a panel closed
+    // under a stationary pointer, or closed at the glue screen where there is
+    // no interface to walk, would otherwise leave the world ignoring the mouse
+    // for the rest of the session.
     if std::mem::take(&mut *claimed) {
         *focus = MouseFocus::default();
     }
@@ -1413,13 +1406,13 @@ pub(crate) fn poll(
         return;
     }
     let Ok(window) = windows.single() else { return };
-    // **Flipped, then divided into the game's units**: egui's cursor is y-down
-    // from the top left in pixels; the interface's space is y-up from the
-    // bottom left in 768-virtual units, inside a fixed-aspect box that does not
-    // fill the window. [`Viewport::to_units`] is the exact inverse of the
-    // `to_pixels` the painter draws through, and it has to be — computing the
-    // two ends separately is a hit-test that misses what is on screen, which is
-    // why this reads the same type rather than re-deriving a scale.
+    // Flip y, then convert to the game's units. egui's cursor is y-down from
+    // the top left in pixels; the interface's space is y-up from the bottom
+    // left in 768-virtual units, inside a fixed-aspect box that does not fill
+    // the window. [`Viewport::to_units`] is the exact inverse of the
+    // `to_pixels` the painter draws through. Computing the two conversions
+    // separately would let the hit test drift from what is on screen, so this
+    // uses the same type rather than deriving a scale of its own.
     let view = super::super::widgets::layout::Viewport::of(
         f64::from(window.width()),
         f64::from(window.height()),
@@ -1440,22 +1433,22 @@ pub(crate) fn poll(
         .map(|(_, name)| name)
         .collect::<Vec<_>>()
     };
-    // **Summed over the frame and then reduced to a sign** — see
+    // Summed over the frame and then reduced to a sign; see
     // [`Pointer::wheel`]. A fast flick can deliver several events in one frame
-    // and the interface's own step is per notch, so the sum is what decides the
-    // direction and the handler runs once.
+    // and the interface steps once per notch, so the sum decides the direction
+    // and the handler runs once.
     let turned: f32 = wheel.read().map(|event| event.y).sum();
 
-    // **A still pointer between interface ticks asks nothing.** The hit test
-    // is a walk of the drawn tree through the interpreter, and it was run
-    // every rendered frame — while its two inputs only move on their own
-    // schedules: the pointer when the hand does, and the rectangles on the
-    // 30 Hz interface clock (the paint solves against the same tick). So the
-    // walk runs when either input moved or a button or the wheel has an event
-    // to deliver, and on every tick frame regardless, which is what catches a
-    // frame sliding under a stationary pointer. Between those,
-    // [`MouseFocus`] simply keeps saying what it said — the same answer the
-    // walk would have produced.
+    // A still pointer between interface ticks skips the mouse pass. The hit
+    // test is a walk of the drawn tree through the interpreter, and its two
+    // inputs change on their own schedules: the pointer when the user moves
+    // it, and the rectangles on the 30 Hz interface clock (the paint solves
+    // against the same tick). So the pass is considered only when the pointer
+    // moved, a button or the wheel has an event to deliver, or an interface
+    // tick is due, since a tick is when a frame can move under a stationary
+    // pointer. On a tick frame with no other input, [`unchanged`] below then
+    // decides whether the pass runs. Otherwise [`MouseFocus`] keeps its value,
+    // which is the answer the walk would have produced.
     let moved = *last_at != at;
     *last_at = at;
     let buttons_idle = buttons.get_just_pressed().next().is_none()
@@ -1463,9 +1456,8 @@ pub(crate) fn poll(
     let due = clock.as_deref().is_none_or(|clock| clock.due());
     let idle = !moved && !due && turned == 0.0 && buttons_idle;
     if idle {
-        // The modifiers still land every frame: a shift pressed between ticks
-        // must be down for the click that reads it in this same frame's
-        // bindings.
+        // The modifiers are still updated every frame: a shift pressed between
+        // ticks must be down for a click that this frame's bindings read.
         let held = |left: KeyCode, right: KeyCode| keys.pressed(left) || keys.pressed(right);
         host.set_modifiers(
             held(KeyCode::ShiftLeft, KeyCode::ShiftRight),
@@ -1485,10 +1477,11 @@ pub(crate) fn poll(
         }),
     };
 
-    // **The modifiers, in the same frame as the click that reads them.** 53 call
-    // sites between the three, and a shift-click was a click until this line —
-    // see [`super::stubs::set_modifiers`]. Either side of each pair, because the
-    // game asks "is shift down" and not "which shift".
+    // The modifiers, set in the same frame as the click that reads them. The
+    // three modifier queries have 53 call sites; without this a shift-click is
+    // read as a plain click. See [`super::stubs::set_modifiers`]. Either key of
+    // each pair counts, because the game asks "is shift down" and not "which
+    // shift".
     let held = |left: KeyCode, right: KeyCode| keys.pressed(left) || keys.pressed(right);
     host.set_modifiers(
         held(KeyCode::ShiftLeft, KeyCode::ShiftRight),
@@ -1496,6 +1489,12 @@ pub(crate) fn poll(
         held(KeyCode::AltLeft, KeyCode::AltRight),
     );
 
+    // On a tick frame with nothing moved, the pass inside the scope would reuse
+    // the focus it already has; see [`unchanged`]. Opening the scope costs
+    // ~0.12 ms and ~27 KB of Lua garbage, so it is skipped.
+    if host.mouse_unchanged(&pointer) {
+        return;
+    }
     let live = world.live();
     let (verbs, over, wheel_taken) = host.mouse(&pointer, &live);
     focus.over_interface = over.is_some();
@@ -1515,8 +1514,8 @@ mod tests {
         LuaHost::new().expect("the interpreter starts")
     }
 
-    /// A screen-filling `UIParent` with a button on it, which is the shape
-    /// everything clickable in the interface has.
+    /// A screen-filling `UIParent` plus the given script, which usually adds a
+    /// button: the arrangement everything clickable in the interface has.
     fn interface(host: &LuaHost, extra: &str) {
         let world = Stub::default();
         host.run(&world, |lua| {
@@ -1539,16 +1538,14 @@ mod tests {
         }
     }
 
-    /// **A still frame skips the tree walk, and everything that could change
-    /// the answer opens the gate again.**
+    /// A still frame skips the tree walk, and every change that could alter the
+    /// answer makes the next pass walk again.
     ///
-    /// The saving is invisible — the picture is identical either way — so what
-    /// is asserted is the *failure* mode instead, which is a missed `OnEnter`:
-    /// "tooltips sometimes do not appear", with nothing to reproduce it from.
-    /// Each of the four cases below is one thing that changes what is under a
-    /// pointer that has not moved, and three of them move no rectangle at all,
-    /// which is why [`super::super::widgets::widget::pile_generation`] had to
-    /// exist before this could be written.
+    /// The saving has no visible effect, so the test asserts the failure mode
+    /// instead: a missed `OnEnter`, seen as tooltips that sometimes do not
+    /// appear. Each of the four cases below changes what is under a pointer
+    /// that has not moved, and three of them move no rectangle, so they depend
+    /// on [`super::super::widgets::widget::pile_generation`].
     #[test]
     fn the_hit_test_is_skipped_only_while_nothing_can_have_changed() {
         let mut host = host();
@@ -1572,23 +1569,23 @@ mod tests {
         host.mouse(&at(50.0, 50.0), &world);
         assert_eq!(count(&host, &world, "enters"), 0);
 
-        // **`Show()` moves no rectangle**, and without the pile counter the gate
-        // would hold here and the button would never light up.
+        // `Show()` moves no rectangle; without the pile counter the gate would
+        // hold here and the button would never highlight.
         host.script("Probe:Show();", &world).expect("runs");
         host.mouse(&at(50.0, 50.0), &world);
         assert_eq!(count(&host, &world, "enters"), 1);
-        // …and the tick after it changes nothing, which is the saving.
+        // The pass after it changes nothing and fires nothing.
         host.mouse(&at(50.0, 50.0), &world);
         assert_eq!(count(&host, &world, "enters"), 1);
 
-        // **`Hide()` is the mirror**, and a missed one leaves a tooltip up over
+        // `Hide()` is the reverse case; a missed one leaves a tooltip up over
         // a panel that has closed.
         host.script("Probe:Hide();", &world).expect("runs");
         host.mouse(&at(50.0, 50.0), &world);
         assert_eq!(count(&host, &world, "leaves"), 1);
 
-        // **`EnableMouse` decides whether the pointer lands on a frame at all**,
-        // and moves nothing either.
+        // `EnableMouse` decides whether the pointer lands on a frame at all,
+        // and also moves no rectangle.
         host.script("Probe:Show(); Probe:EnableMouse(nil);", &world).expect("runs");
         host.mouse(&at(50.0, 50.0), &world);
         assert_eq!(count(&host, &world, "enters"), 1, "it takes no mouse");
@@ -1596,8 +1593,8 @@ mod tests {
         host.mouse(&at(50.0, 50.0), &world);
         assert_eq!(count(&host, &world, "enters"), 2);
 
-        // **And the layout counter is still the other half**: moving the frame
-        // out from under a pointer that has not moved is a leave.
+        // The layout counter covers the remaining case: moving the frame out
+        // from under a pointer that has not moved fires `OnLeave`.
         host.script(
             "Probe:SetPoint(\"BOTTOMLEFT\", UIParent, \"BOTTOMLEFT\", 400, 400);",
             &world,
@@ -1608,13 +1605,42 @@ mod tests {
         assert!(host.missing().is_empty(), "{:?}", host.missing());
     }
 
-    /// **A press always takes a fresh hit test**, whatever the gate thinks.
+    /// `unchanged`, which lets `poll` skip the scope, holds only where the
+    /// pass would have reused its focus: the same pointer, no edge, and no
+    /// layout or pile change since the last pass.
+    #[test]
+    fn the_scope_is_skipped_only_while_the_pass_would_change_nothing() {
+        let mut host = host();
+        interface(
+            &host,
+            r#"
+            b = CreateFrame("Button", "Probe", UIParent);
+            b:SetWidth(100); b:SetHeight(100);
+            b:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 0, 0);
+            b:Hide();
+            "#,
+        );
+        let world = Stub::default();
+        assert!(!host.mouse_unchanged(&at(50.0, 50.0)), "no pass has stamped anything yet");
+        host.mouse(&at(50.0, 50.0), &world);
+        assert!(host.mouse_unchanged(&at(50.0, 50.0)), "a still pointer over a still tree");
+        assert!(!host.mouse_unchanged(&at(51.0, 50.0)), "the pointer moved");
+        let mut press = at(50.0, 50.0);
+        press.pressed.push(LEFT);
+        assert!(!host.mouse_unchanged(&press), "a button edge");
+        host.script("Probe:Show();", &world).expect("runs");
+        assert!(!host.mouse_unchanged(&at(50.0, 50.0)), "a frame was shown");
+        host.mouse(&at(50.0, 50.0), &world);
+        host.script("Probe:SetWidth(120);", &world).expect("runs");
+        assert!(!host.mouse_unchanged(&at(50.0, 50.0)), "a rectangle changed");
+    }
+
+    /// A press always takes a fresh hit test, whatever the gate's state.
     ///
-    /// The edges are aimed at the frame under the hand *at that instant*, and
-    /// this is the one case where reusing a stale answer would not merely miss a
-    /// highlight — it would land a click on the wrong panel. It is also the case
-    /// a naive gate gets wrong for free, because a press moves no rectangle and
-    /// shows nothing.
+    /// The edges are aimed at the frame under the pointer at that moment, and
+    /// here a stale answer would not only miss a highlight but send the click to
+    /// the wrong panel. A gate that tracks only rectangles and visibility gets
+    /// this case wrong, because a press moves no rectangle and shows nothing.
     #[test]
     fn a_press_is_never_answered_from_the_cached_focus() {
         let mut host = host();
@@ -1634,9 +1660,9 @@ mod tests {
         host.mouse(&at(50.0, 50.0), &world);
         host.mouse(&at(50.0, 50.0), &world);
 
-        // The button appears and is pressed in the same tick the pointer does
-        // not move in. Both halves have to work: the pile bump from `Show`, and
-        // the edge's own refusal to reuse.
+        // The button appears and is pressed in one pass with the pointer still.
+        // Two mechanisms must both work: the pile bump from `Show`, and the
+        // rule that an edge never reuses the cached focus.
         host.script("Probe:Show();", &world).expect("runs");
         let mut press = at(50.0, 50.0);
         press.pressed.push(LEFT);
@@ -1647,8 +1673,8 @@ mod tests {
         assert_eq!(count(&host, &world, "clicks"), 1);
     }
 
-    /// **A click on a button reaches its `OnClick`**, through the whole path:
-    /// the hit test, the pushed face, the release, and the game's own `arg1`.
+    /// A click on a button reaches its `OnClick` through the whole path: the
+    /// hit test, the pushed face, the release, and the game's `arg1`.
     #[test]
     fn a_press_and_release_over_a_button_clicks_it() {
         let mut host = host();
@@ -1683,8 +1709,8 @@ mod tests {
         assert!(host.missing().is_empty(), "{:?}", host.missing());
     }
 
-    /// **A press dragged off the button un-pushes and does not click** — the way
-    /// every mis-click in this interface is cancelled.
+    /// A press dragged off the button returns it to normal and does not click,
+    /// which is how a mis-click is cancelled in this interface.
     #[test]
     fn a_release_away_from_the_button_does_not_click_it() {
         let mut host = host();
@@ -1714,9 +1740,9 @@ mod tests {
         );
     }
 
-    /// **`OnEnter` and `OnLeave` fire on the crossing, once each** — and the
-    /// leaving frame is told before the arriving one, which is what keeps a
-    /// tooltip from being cleared straight after it is filled.
+    /// `OnEnter` and `OnLeave` fire once each when the pointer crosses between
+    /// frames, the leaving frame first, so a tooltip is not cleared straight
+    /// after it is filled.
     #[test]
     fn crossing_between_two_frames_fires_leave_then_enter() {
         let mut host = host();
@@ -1736,7 +1762,7 @@ mod tests {
         );
         let world = Stub::default();
         host.mouse(&at(20.0, 20.0), &world);
-        // Standing still fires nothing a second time.
+        // Moving within the same frame fires nothing a second time.
         host.mouse(&at(21.0, 21.0), &world);
         host.mouse(&at(120.0, 20.0), &world);
         host.mouse(&at(500.0, 500.0), &world);
@@ -1750,8 +1776,8 @@ mod tests {
         );
     }
 
-    /// **The topmost frame takes the click**, by the same three keys the draw
-    /// pass sorts by — so a dialog over a bar is what you press.
+    /// The topmost frame takes the click, by the same three keys the draw pass
+    /// sorts by, so a dialog drawn over a bar is what gets pressed.
     #[test]
     fn the_frame_highest_in_the_pile_wins() {
         let mut host = host();
@@ -1769,14 +1795,14 @@ mod tests {
         host.mouse(&at(100.0, 100.0), &world);
         assert_eq!(state(&host, &world, "GetMouseFocus():GetName()"), "Over");
 
-        // …and hiding it hands the pointer back to what is underneath.
+        // Hiding it gives the pointer to the frame underneath.
         host.script("Over:Hide();", &world).expect("hides");
         host.mouse(&at(101.0, 100.0), &world);
         assert_eq!(state(&host, &world, "GetMouseFocus():GetName()"), "Under");
     }
 
-    /// **A frame that is not mouse-enabled is not under the pointer**, which is
-    /// what leaves the world clickable through the interface's own containers —
+    /// A frame that is not mouse-enabled is never the frame under the pointer,
+    /// which keeps the world clickable through the interface's containers:
     /// `UIParent` covers the whole screen and takes nothing.
     #[test]
     fn a_plain_frame_takes_no_clicks_and_a_button_does() {
@@ -1797,13 +1823,12 @@ mod tests {
         assert_eq!(over.as_deref(), Some("Panel"));
     }
 
-    /// **A `<Slider>` is mouse-enabled without saying so**, which is the whole
-    /// of a scroll bar being usable: `UIPanelScrollBarTemplate` — every scroll
-    /// bar in the game — declares no `enableMouse`, because a slider takes
-    /// its own mouse. With the pick disagreeing, the knob was drawn, was
-    /// placed from its value, and could not be grabbed; the trainer's list and
-    /// the quest log's showed eleven and six rows of a much longer list with no
-    /// way down either.
+    /// A `<Slider>` is mouse-enabled without declaring it, which is what makes
+    /// scroll bars usable: `UIPanelScrollBarTemplate`, used by every scroll bar
+    /// in the game, declares no `enableMouse`, because a slider takes the mouse
+    /// by its kind. Without this the knob is drawn and placed from its value
+    /// but cannot be grabbed, and the trainer's list and the quest log's show
+    /// eleven and six rows of a much longer list with no way to scroll it.
     #[test]
     fn a_slider_answers_the_pointer_with_no_enable_mouse_on_it() {
         let mut host = host();
@@ -1825,18 +1850,19 @@ mod tests {
         assert_eq!(over, None, "…and a plain Frame beside it still takes nothing");
     }
 
-    /// **…and so is an `<EditBox>`, which is why a click puts the caret in one.**
+    /// An `<EditBox>` is also mouse-enabled without declaring it, which is why
+    /// a click puts the caret in one.
     ///
-    /// The same finding one widget over and one round later:
     /// `<EditBox name="CharacterCreateNameEdit" letters="12">` declares no
-    /// `enableMouse` either, because an edit box takes its own mouse. There
-    /// is no `OnMouseDown` on a text field anywhere in either directory, and the
-    /// glue's only `SetFocus` calls are `AccountLogin_OnShow`'s two — so without
-    /// this the account box works, because an `OnShow` focused it, and **every
-    /// other text field in the game is dead**, the character's name among them.
+    /// `enableMouse`, because an edit box takes the mouse by its kind. There is
+    /// no `OnMouseDown` on a text field anywhere in either directory, and the
+    /// glue's only `SetFocus` calls are `AccountLogin_OnShow`'s two. Without
+    /// this the account box works, because an `OnShow` focused it, and every
+    /// other text field in the game is unusable, including the character name.
     ///
-    /// Both halves are checked here because either alone is still a dead box: the
-    /// press has to *land*, and landing has to take the keyboard.
+    /// Both parts are checked, because either alone leaves the box unusable:
+    /// the press has to land on the box, and landing has to take keyboard
+    /// focus.
     #[test]
     fn a_press_on_a_text_field_lands_on_it_and_takes_the_keyboard() {
         let mut host = host();
@@ -1851,35 +1877,33 @@ mod tests {
             "#,
         );
         let world = Stub::default();
-        // It is under the pointer at all, with nothing having enabled it.
+        // It is under the pointer, with nothing having enabled it.
         let (_, over, _) = host.mouse(&at(150.0, 120.0), &world);
         assert_eq!(over.as_deref(), Some("NameEdit"));
 
-        // …and the press focuses it, through the game's own handler.
+        // The press focuses it and fires its `OnEditFocusGained` handler.
         let mut press = at(150.0, 120.0);
         press.pressed.push(LEFT);
         host.mouse(&press, &world);
         assert_eq!(count(&host, &world, "gained"), 1);
         assert_eq!(state(&host, &world, "NameEdit:HasFocus() and 1 or 0"), "1");
 
-        // A second press on the same box does not re-fire the handler — 1.12's
-        // `SetFocus` on the frame that already holds it is a no-op.
+        // A second press on the same box does not fire the handler again: in
+        // 1.12, `SetFocus` on the frame that already has focus does nothing.
         host.mouse(&press, &world);
         assert_eq!(count(&host, &world, "gained"), 1);
         assert!(host.missing().is_empty(), "{:?}", host.missing());
     }
 
-    /// **The wheel lands on the innermost wheel-enabled frame under the
-    /// pointer**, and a mouse-enabled child that is not in that population does
-    /// not swallow it.
+    /// The wheel goes to the innermost wheel-enabled frame under the pointer,
+    /// and a mouse-enabled child that is not wheel-enabled does not take it.
     ///
-    /// This is the shape of every scrolling panel in the directory, and the one
-    /// that was broken: `QuestLogFrame` declares an `<OnMouseWheel>` whose whole
-    /// body is `return;` — a **stop**, so the wheel over the panel does not reach
-    /// the camera — and `QuestLogDetailScrollFrame`, nested five levels inside
-    /// it, declares the one that scrolls. Delivering to the mouse focus and then
-    /// climbing finds the stop first, which is why the quest text would not
-    /// scroll while the arrow buttons did.
+    /// Every scrolling panel in the directory is built this way.
+    /// `QuestLogFrame` declares an `<OnMouseWheel>` whose whole body is
+    /// `return;`, a stop that keeps the wheel over the panel from reaching the
+    /// camera, and `QuestLogDetailScrollFrame`, nested five levels inside it,
+    /// declares the one that scrolls. Delivering to the mouse focus and then
+    /// climbing reaches the stop first, and the quest text does not scroll.
     #[test]
     fn the_wheel_lands_on_the_innermost_frame_that_takes_it() {
         let mut host = host();
@@ -1908,8 +1932,8 @@ mod tests {
             wheel: n,
             ..Pointer::default()
         };
-        // The pointer is on a *mouse*-enabled row that takes no wheel; the
-        // scroll frame under it does, and its own parent's stop is not reached.
+        // The pointer is on a mouse-enabled row that takes no wheel; the
+        // scroll frame under it does, and its parent's stop is not reached.
         let (_, over, taken) = host.mouse(&wheel(20.0, 15.0, 1), &world);
         assert_eq!(over.as_deref(), Some("Row"), "the mouse focus is still the row");
         assert!(taken, "a frame answered, so the camera must not also zoom");
@@ -1918,16 +1942,16 @@ mod tests {
         host.mouse(&wheel(20.0, 15.0, -1), &world);
         assert_eq!(count(&host, &world, "turned"), 0, "…and -1 the other way");
 
-        // Outside the scroll frame but still on the panel: the stop takes it,
-        // which is the whole reason those eleven `return;` bodies exist.
+        // Outside the scroll frame but still on the panel, the stop takes it;
+        // that is what the eleven `return;` bodies are for.
         let (_, _, taken) = host.mouse(&wheel(600.0, 600.0, 1), &world);
         assert!(taken);
         assert_eq!(count(&host, &world, "stopped"), 1);
         assert_eq!(count(&host, &world, "turned"), 0);
     }
 
-    /// **Nothing is wheel-enabled by default, and the markup is what enables
-    /// it** — the rule that lets the shipped files scroll without ever calling
+    /// Nothing is wheel-enabled by default; the markup or `EnableMouseWheel`
+    /// enables it. This rule lets the shipped files scroll without calling
     /// `EnableMouseWheel`.
     #[test]
     fn a_declared_handler_puts_a_frame_in_the_wheel_population() {
@@ -1943,8 +1967,9 @@ mod tests {
             "#,
         );
         let world = Stub::default();
-        // `SetScript` alone does not enrol it: the reference enables from the
-        // XML walker and from `EnableMouseWheel`, and this is neither.
+        // `SetScript` alone does not enable the wheel: the 1.12.1 client
+        // enables it from the markup and from `EnableMouseWheel`, and this is
+        // neither.
         let (_, over, taken) = host.mouse(
             &Pointer { at: Some((100.0, 100.0)), wheel: 1, ..Pointer::default() },
             &world,
@@ -1963,8 +1988,8 @@ mod tests {
         assert_eq!(count(&host, &world, "turned"), 1);
     }
 
-    /// **`<HitRectInsets>` shrinks what is clickable**, which is why the action
-    /// bar's buttons do not answer at the edge of their own art.
+    /// `<HitRectInsets>` shrinks the clickable area, which is why the action
+    /// bar's buttons do not respond at the edge of their art.
     #[test]
     fn the_hit_rectangle_is_inset() {
         let mut host = host();
@@ -1984,7 +2009,7 @@ mod tests {
         assert_eq!(over.as_deref(), Some("Probe"));
     }
 
-    /// **`RegisterForClicks` decides which edge clicks**, and the default is the
+    /// `RegisterForClicks` decides which edge clicks, and the default is the
     /// left button's release. A client that clicked on every edge would fire an
     /// action twice per press.
     #[test]
@@ -2021,9 +2046,9 @@ mod tests {
         assert_eq!(state(&host, &world, "which"), RIGHT);
     }
 
-    /// **The pointer leaving the window is a leave**, not a frozen focus — a
-    /// button left highlighted because the mouse went to another program is a
-    /// small thing that reads as broken.
+    /// The pointer leaving the window fires `OnLeave` rather than keeping the
+    /// focus, so a button does not stay highlighted after the pointer moves to
+    /// another program.
     #[test]
     fn the_pointer_off_the_window_leaves_whatever_it_was_on() {
         let mut host = host();
@@ -2043,10 +2068,10 @@ mod tests {
         assert_eq!(count(&host, &world, "left"), 1);
     }
 
-    /// **A pull past the slop is a drag and not a click**: `OnDragStart` fires
-    /// once with the button in `arg1`, the release fires `OnDragStop` and
-    /// suppresses `OnClick` — while a press that never travels stays a click.
-    /// That split is the whole reason the gesture has a threshold.
+    /// A pull past the threshold is a drag and not a click: `OnDragStart` fires
+    /// once with the button in `arg1`, and the release fires `OnDragStop` and
+    /// suppresses `OnClick`. A press that stays within the threshold is still a
+    /// click. The threshold exists to separate the two.
     #[test]
     fn a_drag_past_the_slop_fires_the_trio_and_suppresses_the_click() {
         let mut host = host();
@@ -2065,14 +2090,14 @@ mod tests {
         );
         let world = Stub::default();
 
-        // Press, travel well past the slop, release: a drag, not a click.
+        // Press, travel well past the threshold, release: a drag, not a click.
         let mut press = at(20.0, 20.0);
         press.pressed.push(LEFT);
         host.mouse(&press, &world);
         host.mouse(&at(40.0, 20.0), &world);
         assert_eq!(count(&host, &world, "starts"), 1);
         assert_eq!(state(&host, &world, "dragged"), LEFT);
-        // …and only once, however far it travels on.
+        // It starts only once, however far the pointer travels.
         host.mouse(&at(60.0, 20.0), &world);
         assert_eq!(count(&host, &world, "starts"), 1);
         let mut release = at(20.0, 20.0);
@@ -2081,7 +2106,7 @@ mod tests {
         assert_eq!(count(&host, &world, "stops"), 1);
         assert_eq!(count(&host, &world, "clicks"), 0, "a drag's release is not a click");
 
-        // Press, wobble inside the slop, release: an ordinary click.
+        // Press, move within the threshold, release: an ordinary click.
         let mut press = at(20.0, 20.0);
         press.pressed.push(LEFT);
         host.mouse(&press, &world);
@@ -2093,10 +2118,10 @@ mod tests {
         assert_eq!(count(&host, &world, "starts"), 1, "the wobble armed and never started");
     }
 
-    /// **`StartMoving` carries the frame under the hand and
-    /// `StopMovingOrSizing` pins it where it lands, user-placed** — wired the
-    /// way the directory wires every movable panel: the two calls inside
-    /// `OnDragStart` and `OnDragStop`.
+    /// `StartMoving` moves the frame with the pointer and `StopMovingOrSizing`
+    /// pins it where it lands and marks it user-placed. The test calls them
+    /// from `OnDragStart` and `OnDragStop`, as the directory does for every
+    /// movable panel.
     #[test]
     fn start_moving_carries_the_frame_and_lands_it_user_placed() {
         let mut host = host();
@@ -2116,9 +2141,9 @@ mod tests {
         let world = Stub::default();
         assert_eq!(state(&host, &world, "tostring(Panel:IsUserPlaced())"), "nil");
 
-        // The press, then the travel that starts the drag — `StartMoving`
-        // grips where the hand is *then*, so the frame does not jump to the
-        // pointer; it follows the travel after the grip.
+        // The press, then the travel that starts the drag. `StartMoving`
+        // records the pointer position at that moment, so the frame does not
+        // jump to the pointer; it follows the movement after the grip.
         let mut press = at(20.0, 20.0);
         press.pressed.push(LEFT);
         host.mouse(&press, &world);
@@ -2134,23 +2159,22 @@ mod tests {
         assert_eq!(count(&host, &world, "Panel:GetLeft()"), 110, "pinned where it landed");
         assert_eq!(state(&host, &world, "tostring(Panel:IsUserPlaced())"), "1");
 
-        // …and the pointer moving on does not take the panel with it.
+        // Further pointer movement does not move the panel.
         host.mouse(&at(300.0, 300.0), &world);
         assert_eq!(count(&host, &world, "Panel:GetLeft()"), 110);
     }
 
-    /// **A dropped frame re-anchored `TOPLEFT` moves rather than stretches**,
-    /// which is the directory's own idiom and the whole reason the pin has a
-    /// point *name* rather than just a position.
+    /// A dropped frame re-anchored by `TOPLEFT` moves rather than stretches.
+    /// The directory re-anchors this way, and it is the reason the pin uses a
+    /// specific point name and not only a position.
     ///
     /// `FCF_ValidateChatFramePosition` is `StopMovingOrSizing()` and then
     /// `chatFrame:SetPoint("TOPLEFT", "UIParent", "TOPLEFT", x, y)` with no
-    /// `ClearAllPoints` between them; `RaidGroupButton_OnDragStop` is the same
-    /// shape onto a raid slot. This client replaces an anchor of the same name
-    /// and adds one of a different name — so a pin named `BOTTOMLEFT`, which is
-    /// what this used to write, left the frame anchored top *and* bottom and the
-    /// solve took its height from the gap. A raid member dragged out of the grid
-    /// came back 446 pixels tall.
+    /// `ClearAllPoints` between them; `RaidGroupButton_OnDragStop` does the
+    /// same onto a raid slot. This client replaces an anchor of the same name
+    /// and adds one of a different name, so a pin named `BOTTOMLEFT` leaves the
+    /// frame anchored at top and bottom and the solve takes its height from the
+    /// gap. A raid member dragged out of the grid came back 446 pixels tall.
     #[test]
     fn a_frame_dropped_and_re_anchored_keeps_its_size() {
         let mut host = host();
@@ -2198,9 +2222,9 @@ mod tests {
         );
     }
 
-    /// **An immovable frame refuses `StartMoving`** — the flag is the gate,
-    /// exactly as the real client refuses it, so a stray `StartMoving` in a
-    /// handler cannot carry a frame nothing declared movable.
+    /// A frame not marked movable ignores `StartMoving`, as in the 1.12.1
+    /// client, so a stray `StartMoving` in a handler cannot move a frame that
+    /// nothing declared movable.
     #[test]
     fn an_immovable_frame_stays_where_it_is() {
         let mut host = host();
@@ -2223,8 +2247,8 @@ mod tests {
         assert_eq!(count(&host, &world, "Fixed:GetLeft()"), 10);
     }
 
-    /// The system schedules with the world it borrows — see
-    /// [`super::super::update::tests`] for why this test exists at all.
+    /// The system can be scheduled with the world it borrows; see
+    /// [`super::super::update::tests`] for why this test exists.
     #[test]
     fn the_poll_can_be_scheduled_with_the_world_it_borrows() {
         let mut app = App::new();
@@ -2236,24 +2260,24 @@ mod tests {
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<ButtonInput<KeyCode>>()
             .add_message::<BindingPressed>()
-            // The wheel is a message and an app that never added it fails the
-            // parameter's own validation — which is the whole of what this test
-            // is for: `poll`'s signature is checked against a real schedule.
+            // The wheel is a message, and an app that never added it fails the
+            // parameter's validation. This test exists to check `poll`'s
+            // signature against a real schedule.
             .add_message::<bevy::input::mouse::MouseWheel>()
             .add_systems(Update, poll);
         app.update();
     }
 
-    /// **The debug panel takes the pointer, and gives it back.**
+    /// The debug panel takes the pointer and gives it back.
     ///
-    /// Both halves are the report this exists for: with the flag set, the wheel
-    /// and the click are claimed so `camera::orbit` will not zoom and
-    /// `combat::target` will not pick; with it cleared, the world gets them
-    /// back *immediately* rather than at the next interface tick.
+    /// With the flag set, the wheel and the click are claimed, so
+    /// `camera::orbit` does not zoom and `combat::target` does not pick. With
+    /// it cleared, the world gets them back immediately, not at the next
+    /// interface tick.
     ///
-    /// **No interface is loaded in this app**, deliberately — that is the case
-    /// `poll` returns from two lines in, and the one where a claim left behind
-    /// would deafen the world to the mouse for the rest of the session.
+    /// No interface is loaded in this app, on purpose: `poll` returns early in
+    /// that case, and a claim left behind there would make the world ignore
+    /// the mouse for the rest of the session.
     #[test]
     fn the_panel_claims_the_pointer_and_releases_it_with_no_interface_at_all() {
         let mut app = App::new();
@@ -2281,9 +2305,9 @@ mod tests {
         assert!(focus.wheel_taken, "…and the camera must not zoom");
         assert_eq!(focus.name.as_deref(), Some(PANEL));
 
-        // …and the falling edge, which is the half that would otherwise be
-        // permanent: there is no interface here, so nothing downstream of the
-        // early return would ever rewrite this.
+        // The falling edge. Without explicit handling the claim would be
+        // permanent: there is no interface here, so nothing after the early
+        // return would rewrite it.
         app.world_mut().resource_mut::<ExternalPointer>().0 = false;
         app.update();
         let focus = app.world().resource::<MouseFocus>();
