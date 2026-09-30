@@ -666,7 +666,8 @@ fn component(value: Option<&mlua::Value>) -> Option<f64> {
 /// The colour arguments apply only when the r argument is a number; otherwise
 /// all three are ignored and the line is the default gold. When r is a number,
 /// g and b are read unconditionally and default to 0. See the module comment:
-/// getting this wrong draws every zone tooltip white instead of gold.
+/// the zone tooltips pass `""` as r, so applying the colour regardless would
+/// draw them white instead of gold.
 fn colour_or_gold(args: &[mlua::Value], at: usize) -> [f64; 4] {
     match component(args.get(at)) {
         Some(r) => [
@@ -927,7 +928,7 @@ fn cancel_fade(lua: &mlua::Lua, this: &mlua::Table) -> mlua::Result<()> {
 /// again stops fading. Called from the shared `Show` for every object, so the
 /// check is one raw read of a key almost no frame has.
 ///
-/// It does not check `is_tooltip`:`FadeOut` is in the shared method table,
+/// It does not check `is_tooltip`: `FadeOut` is in the shared method table,
 /// so any frame can be told to fade, and any frame that fades must be able to
 /// stop.
 pub(super) fn unfade(lua: &mlua::Lua, this: &mlua::Table) -> mlua::Result<()> {
@@ -1273,8 +1274,8 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
     // SetPetAction(slot): the same plate, shown from the pet bar.
     //
     // This is `PetActionButton_OnEnter`'s whole body for a spell slot. Without
-    // this method the `OnEnter` raised an error on the call, so an
-    // autocastable pet ability had no tooltip. See
+    // this method the `OnEnter` raises an error on the call, and an
+    // autocastable pet ability has no tooltip. See
     // [`super::super::panels::pet::PetAnswers::pet_action_tooltip`], which
     // describes how the client treats spell slots and token slots. A token
     // slot never reaches this method, because the body takes its other branch
@@ -1448,8 +1449,10 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
         scope.create_function(move |lua, (this, link): (mlua::Table, Option<String>)| {
             let tip = link
                 .as_deref()
-                .and_then(super::super::panels::container::entry_of)
-                .and_then(|entry| answers.item_tip(entry));
+                .and_then(super::super::panels::container::link_fields)
+                .and_then(|(entry, enchant, random)| {
+                    answers.item_link_tip(entry, enchant, random)
+                });
             match tip {
                 Some(tip) => {
                     clear(lua, &this)?;
@@ -1540,9 +1543,9 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
     methods.set("SetUnitDebuff", scope.create_function(unit_aura(false))?)?;
 
     // The five populations the panels call on hover. Without them nothing on
-    // a trainer, vendor, corpse or quest page had a plate: the `OnEnter` that
-    // called one stopped on a nil method with the tooltip still hidden, which
-    // looked the same as hovering an empty slot and was not counted anywhere.
+    // a trainer, vendor, corpse or quest page has a plate: the `OnEnter` that
+    // calls one stops on a nil method with the tooltip still hidden. That
+    // looks the same as hovering an empty slot, and no count records it.
     //
     // Four of the five are the item plate, reached four ways, and all go
     // through the same [`item_lines`] as the bags, so a quest reward and the
@@ -1754,8 +1757,8 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
 
     // The reward spell button's two methods, which the same template calls
     // when `this.rewardType == "spell"`. Without them, hovering the button on
-    // a quest page that teaches a spell raised an error that stopped the
-    // whole `OnEnter`.
+    // a quest page that teaches a spell raises an error that stops the whole
+    // `OnEnter`.
     let set_quest_reward_spell =
         scope.create_function(move |lua, this: mlua::Table| {
             spell_plate(lua, &this, answers.quest_reward_spell_tip(false))
@@ -1994,7 +1997,10 @@ fn item_lines(
     for line in crate::interface::plate::item_plate(tip, &word) {
         let [r, g, b] = line.ink.rgb();
         let right = match line.right {
-            Some(right) => Some((text(lua, &right)?, WHITE)),
+            Some(right) => {
+                let [rr, rg, rb] = line.right_ink.rgb();
+                Some((text(lua, &right)?, [rr, rg, rb, 1.0]))
+            }
             None => None,
         };
         append(
@@ -2566,9 +2572,9 @@ mod tests {
             .exec()
             .expect("runs");
         assert_eq!(super::super::layout::generation(&lua), settled + 2);
-        // `ANCHOR_NONE` removes the anchors and invalidates the layout, which
-        // the earlier new-table write did not do: a rectangle solved from the
-        // removed anchors must not remain.
+        // `ANCHOR_NONE` removes the anchors and invalidates the layout, so no
+        // rectangle solved from the removed anchors remains. Writing a new
+        // points table did not invalidate in this case.
         lua.load(r#"GameTooltip:SetOwner(other, "ANCHOR_NONE");"#)
             .exec()
             .expect("runs");
@@ -2940,10 +2946,11 @@ mod tests {
 
     /// A requirement the character does not meet is drawn in red.
     ///
-    /// A potion did nothing when right-clicked: the character was below its
-    /// level, the server refused it with `EQUIP_ERR_CANT_EQUIP_LEVEL_I`, and
-    /// the plate showed "Requires Level 45" in the same white as every other
-    /// line, so nothing marked it as the reason.
+    /// The server refuses an item whose required level is above the
+    /// character's with `EQUIP_ERR_CANT_EQUIP_LEVEL_I`, and a right-click on
+    /// such a potion does nothing. Drawn in the same white as every other
+    /// line, "Requires Level 45" gives the player no sign that it is the
+    /// reason; the red colour does.
     #[test]
     fn an_unmet_requirement_is_drawn_in_red() {
         let lua = state();
@@ -3042,10 +3049,10 @@ mod tests {
     }
 
     /// Vendor items, loot rows and quest rewards all show a plate on hover.
-    /// Before this file's five panel populations existed, each method was
-    /// missing, so the `OnEnter` calling it stopped on a nil method with the
-    /// plate still hidden. On screen that looks the same as hovering an empty
-    /// slot; no count detected it and the panels themselves worked.
+    /// If one of this file's five panel populations is missing, the `OnEnter`
+    /// that calls it stops on a nil method with the plate still hidden. On
+    /// screen that looks the same as hovering an empty slot, no count detects
+    /// it, and the panels themselves still work, so this test checks it.
     ///
     /// All four item plates go through the same [`item_lines`] as the bags, so
     /// the same item hovered in two places always shows the same plate.

@@ -1,60 +1,53 @@
-//! **Every packet this client understands, in one match.**
+//! Dispatch of every received world packet this client handles, in one match.
 //!
-//! The dispatch used to be in two places. [`apply_packet`] took only an
-//! [`ObjectManager`], so it could neither answer the server nor move the local
-//! player — and the seven packets that need to do one of those were therefore
-//! intercepted by the live session loop *before* it, each ending in an early
-//! return. The split was real and the rule behind it was correct; it was also
-//! written down nowhere, so "does this client handle `SMSG_EMOTE`?" was a
-//! question you answered by grepping two files, and "why is this one over here?"
-//! was a question you answered by inferring it.
+//! [`apply_packet`] is the only place an opcode is mapped to a handler.
 //!
-//! What that cost, concretely: a `SMSG_FORCE_RUN_SPEED_CHANGE` about **another**
-//! unit was acknowledged and then returned from, so it never reached the world
-//! state at all. `Entity::speeds` is written only by an update block's movement
-//! section, so a hasted or slowed player nearby kept their old speed and
-//! [`ObjectManager::advance`] dead-reckoned them at it until the server happened
-//! to send them a full movement block. Nothing failed. They drifted, and were
-//! corrected — which arrives as a jump on a `MSG_MOVE_*` broadcast, i.e. as
-//! "mobs teleport around" for the third time.
+//! Earlier, [`apply_packet`] took only an [`ObjectManager`], so it could not
+//! reply to the server or move the local player. The seven packets that need
+//! one of those were handled by the live session loop before it, each ending in
+//! an early return, and nothing recorded which packets were handled where.
+//! One effect: a `SMSG_FORCE_RUN_SPEED_CHANGE` about another unit was
+//! acknowledged and then dropped, so it never reached the world state.
+//! `Entity::speeds` is written only by an update block's movement section, so a
+//! hasted or slowed player nearby kept their old speed, and
+//! [`ObjectManager::advance`] dead-reckoned them at it until the server sent a
+//! full movement block. The correction then arrived on a `MSG_MOVE_*` broadcast
+//! and showed as the unit jumping to a new position. The dispatch is now one
+//! match so that every packet reaches the world state.
 //!
-//! ## A handler answers by pushing, not by writing
+//! ## Replies are queued in `Replies`, not written to the socket
 //!
-//! Handlers run with the world lock held, and a socket write under that lock
-//! blocks every reader on network latency — the reason `resolve_names` copies
-//! its work list out before touching the socket. So a reply goes into
-//! [`Replies`] and the caller flushes it after unlocking. That also removes the
-//! asymmetry a socket handle would have introduced: `WorldSession::pump` has no
-//! session loop to answer with, but it *should* still acknowledge a teleport
-//! (until it does, the server holds the player on no map), and now it does.
+//! Handlers run with the world lock held. A socket write under that lock blocks
+//! every reader for the duration of the network round trip; `resolve_names`
+//! copies its work list out before touching the socket for the same reason. A
+//! handler therefore pushes its reply into [`Replies`], and the caller flushes
+//! it after releasing the lock. This also lets `WorldSession::pump`, which has
+//! no session loop, send replies. It acknowledges a far teleport, without which
+//! the server holds the player on no map.
 //!
-//! ## Local state is a parameter, not a reason to have a second dispatch
+//! ## `LocalState` is an optional parameter
 //!
 //! [`LocalState`] is the client's own player: the [`Mover`], the map it is on,
-//! the session clock that stamps `ctime`. `pump` passes `None` and the handlers
-//! that need it do the half they can — a snapshot has no simulation to resync,
-//! but the world state and the acknowledgement are the same either way.
+//! and the session clock that stamps `ctime`. `pump` passes `None`, and the
+//! handlers that need local state do the part that does not depend on it. A
+//! snapshot has no simulation to resync, but the world-state update and the
+//! acknowledgement are the same either way.
 //!
-//! ## The arm bodies live in child modules; the match does not
+//! ## Handler bodies live in child modules
 //!
-//! Each arm below is **one call** into a `pub(super) fn` in [`world`], [`query`],
-//! [`chat`] or [`acks`], and the match itself stays whole as the dispatch table.
-//! That distinction is the whole of it, and it is not the same change as
-//! splitting the dispatch — which is what this module already paid for once,
-//! above. There is still exactly one place an opcode becomes an action; what
-//! moved is only *what each arm does once it gets there*.
+//! Each arm of the match is one call into a `pub(super) fn` in [`world`],
+//! [`query`], [`chat`], [`player`] or [`acks`]. The match stays in this file as
+//! the dispatch table, so there is still one place where an opcode becomes an
+//! action. The child modules hold only what each arm does.
 //!
-//! The reason to move it is arithmetic. Twenty-one opcodes at fourteen lines an
-//! arm is a match you can read; this client is aiming at a faithful 1.12
-//! client, where the dispatched population is north of a hundred and fifty, and
-//! the same style would be a two-thousand-line match with the table buried in
-//! it. Bodies out, table in — the table stays one screen and grows by a line per
-//! packet.
+//! The reason is size. Twenty-one opcodes at about fourteen lines per arm is a
+//! readable match. A 1.12 client dispatches more than 150 opcodes, and the same
+//! style would give a match of about two thousand lines. With the bodies moved
+//! out, the table grows by one line per packet.
 //!
-//! It also puts the prose where rustdoc can see it. Every one of these arms
-//! carried a comment explaining what the packet costs when it is mishandled, and
-//! as `//` inside a match arm none of that was documentation. On a
-//! `pub(super) fn` it is.
+//! Each handler's notes on what a mishandled packet costs are also rustdoc
+//! documentation now: a `//` comment inside a match arm is not documented, and
+//! a doc comment on a `pub(super) fn` is.
 
 use crate::state::movement::{self, Mover};
 use crate::state::objects::ObjectManager;
@@ -70,9 +63,9 @@ mod player;
 mod query;
 mod world;
 
-/// How many parse warnings to keep. A systematically mis-read field would
-/// otherwise produce thousands of identical lines, and the tenth says nothing
-/// the first did not.
+/// How many parse warnings to keep. A field that is mis-read on every packet
+/// would otherwise produce thousands of identical lines, and later copies add
+/// no information.
 const MAX_WARNINGS: usize = 10;
 
 /// Replies a handler wants sent, collected rather than written.
@@ -100,14 +93,15 @@ impl Replies {
 /// The client's own player, as the packet handlers need to see it.
 ///
 /// Split out of the session loop so that the handlers which move the local
-/// character — a teleport, a far teleport, a forced speed change — are ordinary
+/// character (a teleport, a far teleport, a forced speed change) are ordinary
 /// arms of the one dispatch rather than a second one.
 pub struct LocalState {
-    /// The local simulation. A server correction always beats dead reckoning.
+    /// The local simulation. A server correction always overrides dead
+    /// reckoning.
     pub mover: Mover,
     /// Which map the character is on. `SMSG_NEW_WORLD` changes it, and the
-    /// ground lookup is bound to it — a lookup left pointing at the map just
-    /// left does not fail, it *answers*.
+    /// ground lookup is bound to it. A lookup left pointing at the previous map
+    /// does not fail; it returns heights from the wrong map.
     pub map_id: u32,
     /// Session clock, and the source of `MovementInfo::time`.
     pub started: Instant,
@@ -115,40 +109,42 @@ pub struct LocalState {
     pub latency_ms: u32,
     /// When the outstanding ping went out.
     pub ping_sent_at: Option<Instant>,
-    /// How many times a packet has **relocated** the player.
+    /// How many times a packet has relocated the player.
     ///
-    /// A counter for the same reason `Entity::position_updates` is one: the
-    /// caller re-baselines its own idea of where the server has us, and cannot
-    /// tell a relocation it did from one it did not by comparing positions —
-    /// the mover has already adopted it.
+    /// A counter for the same reason `Entity::position_updates` is one. The
+    /// caller re-baselines its own record of where the server has the player,
+    /// and it cannot tell a relocation it made from one it did not by comparing
+    /// positions, because the mover has already adopted the new position.
     pub relocations: u32,
-    /// **Whose body the movement packets are about** — the mover, and the guid
+    /// The guid the movement packets are about: the mover, and the guid
     /// `CMSG_SET_ACTIVE_MOVER` last named.
     ///
-    /// The character's own for the whole of an ordinary session, a possessed
-    /// unit while Eye of Kilrogg, Mind Control or Eyes of the Beast lasts, and
-    /// **zero** while the server has taken control away without giving it to
-    /// anybody — which is a fear or a confusion, and is a state the reference
-    /// can be in too (it writes a zero guid, and skips the send for one).
+    /// It is the character's own guid for an ordinary session, a possessed
+    /// unit's guid while Eye of Kilrogg, Mind Control or Eyes of the Beast
+    /// lasts, and zero while the server has taken control away without giving
+    /// it to another unit (a fear or a confusion). The 1.12.1 client also
+    /// enters the zero state: it records a zero guid and sends no
+    /// `CMSG_SET_ACTIVE_MOVER` for it.
     ///
-    /// Derived rather than latched from a packet: see
+    /// Derived each tick rather than latched from a packet: see
     /// [`crate::socket::session::SessionLoop::tick_view`], which follows the
-    /// client's per-frame view update. [`Self::mover`] simulates whatever this
-    /// names.
+    /// client's per-frame view update. [`Self::mover`] simulates whatever unit
+    /// this names.
     pub mover_guid: u64,
-    /// **The client has told the server it is looking through something** — the
-    /// latch the client's view update keeps, and what stops
-    /// `CMSG_FAR_SIGHT` going out on every tick of a far sight.
+    /// Whether the client has told the server it is looking through another
+    /// object. The client's view update keeps this latch, and it stops
+    /// `CMSG_FAR_SIGHT` being sent on every tick of a far sight.
     pub looking_through: bool,
-    /// **The transfer now in flight began on a boat**, as
-    /// `SMSG_TRANSFER_PENDING`'s two extra dwords say — `Player::ExecuteTeleportFar`
-    /// writes them only for a character standing on a transport.
+    /// Whether the transfer in flight began on a transport, as the two extra
+    /// dwords of `SMSG_TRANSFER_PENDING` say. vmangos'
+    /// `Player::ExecuteTeleportFar` writes them only for a character standing
+    /// on a transport.
     ///
-    /// Read by the `SMSG_NEW_WORLD` arm and by nothing else: it is what
-    /// separates a teleport that *leaves* a boat, after which the offset on
-    /// record means nothing, from `Transport::TeleportTransport`, which is the
-    /// boat taking the character with it and after which the offset is the only
-    /// half still true. See [`movement::Mover::transfer_aboard`].
+    /// Read only by the `SMSG_NEW_WORLD` arm. It separates two cases. A
+    /// teleport that leaves a boat makes the recorded transport offset
+    /// meaningless. `Transport::TeleportTransport` moves the boat with the
+    /// character on it, and afterwards the transport offset is the only part of
+    /// the position still valid. See [`movement::Mover::transfer_aboard`].
     pub transfer_on_transport: bool,
 }
 
@@ -169,10 +165,10 @@ impl LocalState {
 
     /// The movement block to send right now, stamped with the session clock.
     ///
-    /// `ctime` must be non-zero and must never decrease — zero is
-    /// `CHEAT_TYPE_NULL_CLIENT_TIME` and any decrease is `CHEAT_TYPE_TIME_BACK`
-    /// — so it is milliseconds since the session started, offset by one so the
-    /// very first packet is not zero.
+    /// `ctime` must be non-zero and must never decrease: zero is
+    /// `CHEAT_TYPE_NULL_CLIENT_TIME` and any decrease is `CHEAT_TYPE_TIME_BACK`.
+    /// It is therefore milliseconds since the session started, plus one so the
+    /// first packet is not zero.
     pub fn movement_info(&mut self) -> movement::MovementInfo {
         self.mover.info.time = self.started.elapsed().as_millis() as u32 + 1;
         self.mover.info
@@ -184,18 +180,19 @@ pub struct Incoming<'a> {
     pub world: &'a mut ObjectManager,
     pub stats: &'a mut PumpStats,
     pub replies: &'a mut Replies,
-    /// `None` for a caller with no simulation of its own — the CLI's snapshot
-    /// pump. The handlers degrade rather than branching into a second dispatch.
+    /// `None` for a caller with no simulation of its own, which is the CLI's
+    /// snapshot pump. The handlers then skip the local part of their work
+    /// rather than branching into a second dispatch.
     pub local: Option<&'a mut LocalState>,
 }
 
 /// Fold one received packet into the world state, and queue whatever it owes
 /// the server.
 ///
-/// **The one place an opcode is turned into an action.** Both the CLI's
-/// snapshot pump and the live session loop go through here, so a packet cannot
-/// be understood by one and not the other — a divergence that would surface as
-/// "the renderer is stale but the CLI is fine".
+/// This is the only place an opcode is turned into an action. Both the CLI's
+/// snapshot pump and the live session loop call it, so a packet cannot be
+/// handled by one and not the other. Such a divergence would show as the
+/// renderer being stale while the CLI output is correct.
 pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
     ctx.stats.packets += 1;
     ctx.stats.saw(pkt);
@@ -206,17 +203,17 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
     };
 
     match op {
-        // ---- the world ----------------------------------------------------
+        // ---- world state: objects, movement, combat, visuals ---------------
         Opcode::SMSG_UPDATE_OBJECT => world::update(ctx, pkt),
         Opcode::SMSG_COMPRESSED_UPDATE_OBJECT => world::compressed_update(ctx, pkt),
-        // **A bag of movement packets, and it is most of the movement on a busy
-        // realm** — see [`world::compressed_moves`], where the server's own
-        // rate switch and what dropping it costs are written down.
+        // A compressed bag of movement packets, which carries most of the
+        // movement on a busy realm. See [`world::compressed_moves`] for the
+        // server's rate threshold and the effect of dropping it.
         Opcode::SMSG_COMPRESSED_MOVES => world::compressed_moves(ctx, pkt),
         Opcode::SMSG_MONSTER_MOVE => world::monster_move(ctx, pkt),
-        // …and the same move on a moving floor, which is one extra packed guid
-        // and a path in that transport's frame rather than in the world's. Read
-        // as the plain one it places every passenger of every boat within a few
+        // The same move on a transport: one extra packed guid, and a path in
+        // the transport's frame rather than the world's. Read as a plain
+        // `SMSG_MONSTER_MOVE`, it places every boat passenger within a few
         // yards of the map's origin. See [`world::monster_move_transport`].
         Opcode::SMSG_MONSTER_MOVE_TRANSPORT => world::monster_move_transport(ctx, pkt),
         Opcode::SMSG_ATTACKERSTATEUPDATE => world::attack(ctx, pkt),
@@ -224,18 +221,20 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         Opcode::SMSG_SPELLHEALLOG => world::spell_heal(ctx, pkt),
         Opcode::SMSG_EMOTE => world::emote(ctx, pkt),
         Opcode::SMSG_AI_REACTION => world::ai_reaction(ctx, pkt),
-        // ---- …and the five the server plays *at* you ----------------------
+        // ---- sounds and spell visuals the server pushes --------------------
         //
-        // Nothing else on the wire implies any of them. A scripted noise, a
-        // music track, a noise at an object, and the two that put a
-        // `SpellVisualKit` on a unit — which between them are every boss line,
-        // every gate, and the whole of what eating and drinking look like. See
+        // Five opcodes, and no other packet implies any of them: a scripted
+        // sound, a music track, a sound at an object, and the two that put a
+        // `SpellVisualKit` on a unit. They carry every boss line, every gate
+        // sound, and the eating and drinking animations. See
         // [`crate::play::sound`].
         Opcode::SMSG_PLAY_SOUND | Opcode::SMSG_PLAY_MUSIC | Opcode::SMSG_PLAY_OBJECT_SOUND => {
             world::play_sound(ctx, pkt, op)
         }
         Opcode::SMSG_PLAY_SPELL_VISUAL => world::play_spell_visual(ctx, pkt, false),
         Opcode::SMSG_PLAY_SPELL_IMPACT => world::play_spell_visual(ctx, pkt, true),
+        // ---- casts, object removal, time, weather, bind point, duels, -----
+        // ---- summons, played time and fishing -----------------------------
         Opcode::SMSG_SPELL_START => world::cast(ctx, pkt, true),
         Opcode::SMSG_SPELL_GO => world::cast(ctx, pkt, false),
         Opcode::SMSG_DESTROY_OBJECT => world::destroy(ctx, pkt),
@@ -256,12 +255,11 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         Opcode::SMSG_FISH_NOT_HOOKED => player::fish(ctx, false),
         Opcode::SMSG_FISH_ESCAPED => player::fish(ctx, true),
 
-        // ---- …and the nine a fight is only *narrated* by --------------------
+        // ---- combat log only -----------------------------------------------
         //
-        // None of these moves anything on screen. Every one of them is a line
-        // in the combat log and nothing else, which is why they went unread for
-        // so long and why dropping any of them is silent: the fight looks
-        // identical and the window simply never mentions what happened.
+        // Nine opcodes that change nothing on screen. Each one is only a line
+        // in the combat log, so dropping one is silent: the fight looks the
+        // same and the combat log omits the event.
         Opcode::SMSG_LOG_XPGAIN => world::xp_gain(ctx, pkt),
         Opcode::SMSG_PARTYKILLLOG => world::party_kill(ctx, pkt),
         Opcode::SMSG_ENVIRONMENTALDAMAGELOG => world::environmental_damage(ctx, pkt),
@@ -272,11 +270,11 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         Opcode::SMSG_SPELLLOGEXECUTE => world::spell_execute_log(ctx, pkt),
         Opcode::SMSG_SPELLDISPELLOG => world::spell_dispel_log(ctx, pkt),
 
-        // ---- what *we* can do, and what came of trying ---------------------
-        // ---- and what is *with* us: the pet's own family --------------------
+        // ---- pet, then the player's spells, casts, attacks and items -------
         //
-        // Two of the nine classes are unplayable without these. The bar is
-        // state and the rest are edges; see `crate::play::pet`.
+        // The pet opcodes come first. Hunters and warlocks cannot be played
+        // without them. The pet bar (`SMSG_PET_SPELLS`) is state and the rest
+        // are one-off events; see `crate::play::pet`.
         Opcode::SMSG_PET_SPELLS => player::pet_spells(ctx, pkt),
         Opcode::SMSG_PET_MODE => player::pet_mode(ctx, pkt),
         Opcode::SMSG_PET_NAME_QUERY_RESPONSE => player::pet_name(ctx, pkt),
@@ -305,18 +303,24 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         Opcode::MSG_CHANNEL_UPDATE => player::channel_update(ctx, pkt),
         Opcode::SMSG_UPDATE_AURA_DURATION => player::aura_duration(ctx, pkt),
         Opcode::SMSG_LEVELUP_INFO => player::levelup(ctx, pkt),
-        // …and the refusal every *item* verb shares, which is the only thing on
-        // the wire that answers a right-click the server threw away.
+        // The refusal shared by every item action. It is the only packet that
+        // answers an item right-click the server rejected.
         Opcode::SMSG_INVENTORY_CHANGE_FAILURE => player::inventory_failed(ctx, pkt),
-        // …and the one that says something *arrived*, which no update field
-        // does: a stack growing by three says nothing about whether it was
-        // looted, bought, crafted, mailed or traded. See [`player::item_received`].
+        // An item arrived in a bag. No update field says this: a stack growing
+        // by three does not say whether the items were looted, bought,
+        // crafted, mailed or traded. See [`player::item_received`].
         Opcode::SMSG_ITEM_PUSH_RESULT => player::item_received(ctx, pkt),
+        // The two timers a carried item can have, which no update field counts
+        // down. See [`player::enchant_time`].
+        Opcode::SMSG_ITEM_ENCHANT_TIME_UPDATE => player::enchant_time(ctx, pkt),
+        Opcode::SMSG_ITEM_TIME_UPDATE => player::item_time(ctx, pkt),
 
         // ---- reputation -----------------------------------------------------
-        // Four packets about the 64 reputation-list slots. See
-        // [`crate::play::reputation`]: the standings on the wire are *deltas*
-        // from a `Faction.dbc` base, so none of these is drawable here.
+        // Four packets about the 64 reputation-list slots, then
+        // `SMSG_SET_FORCED_REACTIONS`. See
+        // [`crate::play::reputation`]: the standings on the wire are deltas
+        // from a `Faction.dbc` base value, so none of them can be drawn
+        // without that table.
         Opcode::SMSG_INITIALIZE_FACTIONS => player::initialize_factions(ctx, pkt),
         Opcode::SMSG_SET_FACTION_STANDING => player::faction_standing(ctx, pkt),
         Opcode::SMSG_SET_FACTION_VISIBLE => player::faction_visible(ctx, pkt),
@@ -324,10 +328,11 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         Opcode::SMSG_SET_FORCED_REACTIONS => player::forced_reactions(ctx, pkt),
 
         // ---- quests ---------------------------------------------------------
-        // Eleven packets and a conversation. See [`crate::play::quest`], which owns
-        // the log's packed six-bit counters and the top bit that makes an
-        // objective's target a game object — the two things in this family that
-        // read plausibly wrong rather than failing.
+        // The quest-giver conversation and the quest log. See
+        // [`crate::play::quest`], which handles the log's packed six-bit
+        // counters and the top bit that marks an objective's target as a game
+        // object. Misreading either gives wrong values rather than a parse
+        // failure.
         Opcode::SMSG_QUESTGIVER_STATUS => player::quest_status(ctx, pkt),
         Opcode::SMSG_QUESTGIVER_QUEST_LIST => player::quest_greeting(ctx, pkt),
         Opcode::SMSG_QUESTGIVER_QUEST_DETAILS => player::quest_details(ctx, pkt),
@@ -340,13 +345,13 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         Opcode::SMSG_QUESTUPDATE_COMPLETE => player::quest_objectives_done(ctx, pkt),
         Opcode::SMSG_QUESTUPDATE_FAILED => player::quest_failed(ctx, pkt, false),
         Opcode::SMSG_QUESTUPDATE_FAILEDTIMER => player::quest_failed(ctx, pkt, true),
-        // **A reason, not a quest id**, which is the one arm in the family whose
-        // body means something different from its neighbours'.
+        // The body is a reason code, not a quest id. It is the only packet in
+        // this group whose body is not about a quest.
         Opcode::SMSG_QUESTGIVER_QUEST_INVALID => player::quest_refused(ctx, pkt),
 
         // ---- talking to an NPC ----------------------------------------------
-        // The gossip menu (whose text is a round trip of its own), and the
-        // vendor window one click deeper. See [`crate::play::gossip`].
+        // The gossip menu, whose text needs a separate query round trip, and
+        // the vendor window opened from it. See [`crate::play::gossip`].
         Opcode::SMSG_GOSSIP_MESSAGE => player::gossip_show(ctx, pkt),
         Opcode::SMSG_GOSSIP_COMPLETE => player::gossip_closed(ctx),
         Opcode::SMSG_GOSSIP_POI => player::gossip_poi(ctx, pkt),
@@ -357,35 +362,38 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         Opcode::SMSG_BUY_ITEM => player::vendor_sold(ctx, pkt),
         Opcode::SMSG_BUY_FAILED => player::buy_failed(ctx, pkt),
         Opcode::SMSG_SELL_ITEM => player::sell_failed(ctx, pkt),
-        // …and the trainer window, which is the same shape one door along:
-        // a hello, a list, and a verb with two answers. See [`crate::play::trainer`].
+        // The trainer window has the same structure as the vendor: an opening
+        // request, a list, and one action with a success and a failure reply.
+        // See [`crate::play::trainer`].
         Opcode::SMSG_TRAINER_LIST => player::trainer_list(ctx, pkt),
         Opcode::SMSG_TRAINER_BUY_SUCCEEDED => player::trainer_bought(ctx, pkt),
         Opcode::SMSG_TRAINER_BUY_FAILED => player::trainer_buy_failed(ctx, pkt),
-        // …and the stable master, whose window is one packet and whose four
-        // verbs share one answer. The list opcode is an `MSG_` and travels both
-        // ways. See [`crate::play::stable`].
+        // The stable master. Its window is one packet, and its four actions
+        // share one reply opcode. The list opcode is an `MSG_` and is sent in
+        // both directions. See [`crate::play::stable`].
         Opcode::MSG_LIST_STABLED_PETS => player::stable_list(ctx, pkt),
         Opcode::SMSG_STABLE_RESULT => player::stable_result(ctx, pkt),
-        // …and the banker, whose window is a guid and whose one verb only
-        // ever answers with a refusal. See [`crate::play::bank`].
+        // The banker. Its window packet carries only a guid, and its one
+        // action (buying a bank slot) is answered only when refused. See
+        // [`crate::play::bank`].
         Opcode::SMSG_SHOW_BANK => player::bank_show(ctx, pkt),
         Opcode::SMSG_BUY_BANK_SLOT_RESULT => player::bank_slot_result(ctx, pkt),
-        // …and the flight master, which is the same shape again with one
-        // difference worth the line: what its verb buys arrives as
-        // `SMSG_MONSTER_MOVE`, three arms up, and nothing here knows about it.
-        // See [`crate::play::taxi`].
+        // The flight master has the same structure, with one difference: the
+        // flight it sells arrives as an ordinary `SMSG_MONSTER_MOVE`, handled
+        // above, and none of these arms is involved in it. See
+        // [`crate::play::taxi`].
         Opcode::SMSG_SHOWTAXINODES => player::taxi_show(ctx, pkt),
         Opcode::SMSG_TAXINODE_STATUS => player::taxi_node_status(ctx, pkt),
         Opcode::SMSG_NEW_TAXI_PATH => player::new_taxi_path(ctx),
         Opcode::SMSG_ACTIVATETAXIREPLY => player::taxi_reply(ctx, pkt),
 
         // ---- the party -------------------------------------------------------
-        // Eight packets and only one of them is state: `SMSG_GROUP_LIST` is the
-        // whole roster, re-sent to everybody whenever anything about the group
-        // moves, and it is what a client that reads no other one still gets
-        // right. The other six are edges. See [`crate::play::group`], which carries
-        // the conditional loot tail and why a destroyed group is its own packet.
+        // Eight packets, and only one of them is state. `SMSG_GROUP_LIST` is the
+        // whole roster, re-sent to every member whenever anything about the
+        // group changes, so a client that reads only it still has the correct
+        // roster. The other six are one-off events. See [`crate::play::group`],
+        // which handles the conditional loot tail and explains why a destroyed
+        // group has its own packet.
         Opcode::SMSG_GROUP_INVITE => player::group_invite(ctx, pkt),
         Opcode::SMSG_GROUP_DECLINE => player::group_decline(ctx, pkt),
         Opcode::SMSG_GROUP_LIST => player::group_list(ctx, pkt),
@@ -397,29 +405,31 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         }
         Opcode::MSG_RAID_READY_CHECK => player::raid_ready_check(ctx, pkt),
 
-        // ---- and who you know ------------------------------------------------
+        // ---- friends, ignore and /who ----------------------------------------
         // The friends list, the ignore list and the /who search. Both lists
-        // arrive once and are patched by `SMSG_FRIEND_STATUS`, which is also
-        // where every refusal comes back. See [`crate::play::social`], which
-        // carries the reason the two lists have no names in them.
+        // arrive once and are then patched by `SMSG_FRIEND_STATUS`, which also
+        // carries every refusal. See [`crate::play::social`], which explains
+        // why the two lists contain no names.
         Opcode::SMSG_FRIEND_LIST => player::friend_list(ctx, pkt),
         Opcode::SMSG_IGNORE_LIST => player::ignore_list(ctx, pkt),
         Opcode::SMSG_FRIEND_STATUS => player::friend_status(ctx, pkt),
         Opcode::SMSG_WHO => player::who_results(ctx, pkt),
 
-        // ---- and what they have been sent -------------------------------------
-        // Five packets and one of them answers seven different verbs. See
-        // [`crate::play::mail`], which carries the union in the header's sender
-        // field and why *opening* a mailbox crosses no wire at all.
+        // ---- mail ------------------------------------------------------------
+        // Five packets; one of them (`SMSG_SEND_MAIL_RESULT`) answers seven
+        // different actions. The other four arms follow the trade arms below.
+        // See [`crate::play::mail`], which handles the union in the header's
+        // sender field and explains why opening a mailbox sends no packet.
         Opcode::SMSG_MAIL_LIST_RESULT => player::mail_list(ctx, pkt),
 
-        // ---- and what they hand to each other ---------------------------------
-        // Two packets, and the second states *both* offers. See
+        // ---- trade (its two arms follow the block below) ----------------------
+        // Two packets, and the second states both players' offers. See
         // [`crate::play::trade`].
-        // ---- …and what the character may hold, and what a talent changes ----
-        // Three packets with nothing else in common but that each is a
-        // *statement* rather than an event: a class's whole proficiency mask, a
-        // modifier bit's running total, and an enchant landing or fading.
+        // ---- proficiencies, spell modifiers and enchantments ----------------
+        // Three kinds of packet that each state a value rather than report an
+        // event: a
+        // class's whole proficiency mask, a spell-modifier bit's running
+        // total, and an enchantment being applied or expiring.
         Opcode::SMSG_SET_PROFICIENCY => player::proficiency(ctx, pkt),
         Opcode::SMSG_SET_FLAT_SPELL_MODIFIER => player::spell_modifier(ctx, pkt, false),
         Opcode::SMSG_SET_PCT_SPELL_MODIFIER => player::spell_modifier(ctx, pkt, true),
@@ -432,67 +442,68 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         Opcode::MSG_QUERY_NEXT_MAIL_TIME => player::mail_next_time(ctx, pkt),
         Opcode::SMSG_ITEM_TEXT_QUERY_RESPONSE => player::item_text(ctx, pkt),
 
-        // ---- and where the character has been ---------------------------------
-        // The only thing on the wire that says a place was discovered. See
-        // [`crate::play::explored`] for the field it goes with.
+        // ---- exploration -----------------------------------------------------
+        // The only packet that says an area was discovered. See
+        // [`crate::play::explored`] for the update field that goes with it.
         Opcode::SMSG_EXPLORATION_EXPERIENCE => player::discovered(ctx, pkt),
 
-        // ---- what is on a body, and taking it -------------------------------
-        // Five packets and the first of them is two: `SMSG_LOOT_RESPONSE` is
-        // both the window and the refusal to open one, told apart by a loot
-        // type of zero. See [`crate::play::loot`], which also carries why the money
-        // is two packets and why the *release* is the server's to confirm.
+        // ---- loot -----------------------------------------------------------
+        // Five packets. `SMSG_LOOT_RESPONSE` is both the loot window and the
+        // refusal to open one; a loot type of zero marks the refusal. See
+        // [`crate::play::loot`], which also explains why money takes two
+        // packets and why the server confirms the release.
         Opcode::SMSG_LOOT_RESPONSE => player::loot_response(ctx, pkt),
         Opcode::SMSG_LOOT_RELEASE_RESPONSE => player::loot_released(ctx, pkt),
         Opcode::SMSG_LOOT_REMOVED => player::loot_removed(ctx, pkt),
         Opcode::SMSG_LOOT_CLEAR_MONEY => player::loot_money_cleared(ctx),
         Opcode::SMSG_LOOT_MONEY_NOTIFY => player::loot_money_gained(ctx, pkt),
 
-        // ---- …and, in a group, who gets it ----------------------------------
-        // Four more, and none of them names the roll the way the interface
-        // does: the wire says `(guid, item slot)` and the interface says a
-        // `rollID` the client invents. See [`crate::play::lootroll`], which also
-        // carries the rule with no packet behind it — the *end* of a roll is
-        // what makes a blocked row clickable, and nothing on the wire says so.
+        // ---- group loot rolls -----------------------------------------------
+        // Four packets. None of them identifies the roll the way the interface
+        // does: the packets use `(guid, item slot)` and the interface uses a
+        // `rollID` the client assigns. See [`crate::play::lootroll`], which
+        // also implements a rule no packet states: the end of a roll is what
+        // makes a blocked loot row clickable.
         Opcode::SMSG_LOOT_START_ROLL => player::loot_roll_started(ctx, pkt),
         Opcode::SMSG_LOOT_ROLL => player::loot_roll_cast(ctx, pkt),
         Opcode::SMSG_LOOT_ROLL_WON => player::loot_roll_won(ctx, pkt),
         Opcode::SMSG_LOOT_ALL_PASSED => player::loot_roll_all_passed(ctx, pkt),
 
-        // ---- the bars the server counts for us ------------------------------
+        // ---- mirror timers (breath, fatigue, feign death) -------------------
         // The breath meter, the fatigue meter and the feign-death bar. Three
-        // packets, no state and no clock of ours at all — see [`crate::play::timers`],
-        // and note that the *pause* is the one the shipped interface cannot act
-        // on, which is why vmangos resends a start instead.
+        // packets; this client keeps no state or clock of its own for them.
+        // See [`crate::play::timers`]. The shipped interface cannot act on the
+        // pause packet, which is why vmangos resends a start instead.
         Opcode::SMSG_START_MIRROR_TIMER => player::mirror_timer_start(ctx, pkt),
         Opcode::SMSG_STOP_MIRROR_TIMER => player::mirror_timer_stop(ctx, pkt),
         Opcode::SMSG_PAUSE_MIRROR_TIMER => player::mirror_timer_pause(ctx, pkt),
 
-        // ---- dying, and getting up again ------------------------------------
-        // **Nothing here announces the death itself** — that is health reaching
-        // zero, and it arrives inside an ordinary values block. These are the
-        // four the client can only learn by asking or by being offered. See
+        // ---- death and resurrection -----------------------------------------
+        // None of these announces the death itself. Death is health reaching
+        // zero, which arrives in an ordinary values block. These four carry
+        // what the client learns only by querying or by being offered it. See
         // [`crate::play::death`].
         Opcode::SMSG_CORPSE_RECLAIM_DELAY => player::corpse_reclaim_delay(ctx, pkt),
         Opcode::MSG_CORPSE_QUERY => player::corpse_located(ctx, pkt),
         Opcode::SMSG_RESURRECT_REQUEST => player::resurrect_offered(ctx, pkt),
         Opcode::SMSG_SPIRIT_HEALER_CONFIRM => player::spirit_healer_offered(ctx, pkt),
 
-        // ---- leaving --------------------------------------------------------
-        // Three of the four are bodiless; the server owns the twenty seconds.
+        // ---- logout ---------------------------------------------------------
+        // Three of the four logout packets have no body. The server runs the
+        // twenty-second logout timer.
         Opcode::SMSG_LOGOUT_RESPONSE => player::logout_response(ctx, pkt),
         Opcode::SMSG_LOGOUT_CANCEL_ACK => {
             player::logout_state(ctx, crate::play::logout::Logout::Cancelled)
         }
         Opcode::SMSG_LOGOUT_COMPLETE => player::logout_state(ctx, crate::play::logout::Logout::Complete),
 
-        // ---- what things are called ---------------------------------------
+        // ---- name and template query responses -----------------------------
         Opcode::SMSG_CREATURE_QUERY_RESPONSE => query::creature(ctx, pkt),
         Opcode::SMSG_NAME_QUERY_RESPONSE => query::name(ctx, pkt),
         Opcode::SMSG_GAMEOBJECT_QUERY_RESPONSE => query::gameobject(ctx, pkt),
         Opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE => query::item(ctx, pkt),
 
-        // ---- what people say ----------------------------------------------
+        // ---- chat, channels and text emotes --------------------------------
         Opcode::SMSG_MESSAGECHAT => chat::message(ctx, pkt),
         Opcode::SMSG_NOTIFICATION => chat::notification(ctx, pkt),
         Opcode::SMSG_CHANNEL_NOTIFY => chat::channel_notify(ctx, pkt),
@@ -503,53 +514,56 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         Opcode::SMSG_PONG => acks::pong(ctx),
         Opcode::MSG_MOVE_TELEPORT_ACK => acks::teleport(ctx, pkt),
         Opcode::SMSG_NEW_WORLD => acks::new_world(ctx, pkt),
-        // …and the map change that arrives with no teleport in front of it,
-        // which is a login. Answered with nothing; it is here because it is the
-        // only statement of which map the character is on that the server ever
-        // makes. See [`player::login_verify_world`].
+        // The map statement sent at login, with no teleport before it. It is
+        // not answered. It is handled because it is the only packet in which
+        // the server states which map the character is on. See
+        // [`player::login_verify_world`].
         Opcode::SMSG_LOGIN_VERIFY_WORLD => player::login_verify_world(ctx, pkt),
         Opcode::SMSG_MOVE_KNOCK_BACK => acks::knock_back(ctx, pkt),
-        // …and the packet that says which body the keys are pointed at, which
-        // is how a possess begins and ends. See [`acks::client_control`].
+        // Says which unit the player's input controls. A possess begins and
+        // ends with this packet. See [`acks::client_control`].
         Opcode::SMSG_CLIENT_CONTROL_UPDATE => acks::client_control(ctx, pkt),
-        // …and the transfer that does *not* happen. Nothing else says an
-        // instance portal was refused, so without this arm a full dungeon is
-        // indistinguishable from a client that never sent `CMSG_AREATRIGGER`.
+        // A refused transfer. No other packet says an instance portal was
+        // refused, so without this arm a full dungeon looks the same as a
+        // client that never sent `CMSG_AREATRIGGER`.
         Opcode::SMSG_TRANSFER_ABORTED => player::transfer_aborted(ctx, pkt),
-        // …and the transfer that *is* happening, announced one packet ahead of
-        // itself so that the loading screen is up before the old world is torn
-        // down. Answered with nothing; it is here for the picture.
+        // A transfer about to happen, sent one packet before `SMSG_NEW_WORLD`
+        // so the loading screen is shown before the old world is torn down.
+        // It is not answered; it is handled only to show the loading screen.
         Opcode::SMSG_TRANSFER_PENDING => player::transfer_pending(ctx, pkt),
 
-        // ---- the ones matched by a predicate rather than a constant --------
-        // A forced speed change, and a forced movement *flag* change — root,
-        // water walking, hover, feather fall. Both are a family of opcodes
-        // rather than one, which is why they are guards; both must be
-        // acknowledged with the counter they arrived with, or the change stays
-        // pending forever and then fires `OnFailedToAckChange`.
-        // A swing the server refused: five opcodes, no body on any of them, and
-        // the opcode itself is the message.
+        // ---- opcode families matched by a guard rather than a constant -----
+        // Among them are the forced speed change and the forced movement flag
+        // change (root, water walking, hover, feather fall). Each is a family
+        // of opcodes rather than one, which is why they are guards. Both must
+        // be acknowledged with the counter they arrived with, or the server
+        // keeps the change pending and then fires `OnFailedToAckChange`.
+        //
+        // A swing the server refused: five opcodes with no body, so the opcode
+        // itself is the message.
         op if crate::play::spells::AttackRefusal::of(op).is_some() => {
             player::attack_refused(ctx, crate::play::spells::AttackRefusal::of(op).expect("just matched"))
         }
-        // Learned and unlearned, which differ in the *width* of their one field.
+        // Spell learned and spell unlearned, whose single field differs in
+        // width.
         op if player::is_spell_change(op).is_some() => {
             player::spell_change(ctx, pkt, player::is_spell_change(op).expect("just matched"))
         }
         op if movement::speed_change_slot(op).is_some() => acks::speed_change(ctx, pkt, op),
-        // …and the *other two thirds* of `moveTypeToOpcode`: the same six speeds
-        // about a unit we do not control, which is every other unit in the game.
-        // Twelve opcodes, unacknowledged, and the only restatement of a speed
-        // that exists after the movement block an object was created with.
+        // The other two thirds of vmangos' `moveTypeToOpcode`: the same six
+        // speeds about a unit this client does not control, which is every
+        // other unit. Twelve opcodes, not acknowledged. They are the only
+        // restatement of a unit's speed after the movement block it was
+        // created with.
         op if movement::broadcast_speed_slot(op).is_some() => {
             world::speed_broadcast(ctx, pkt, op)
         }
         op if movement::FlagChange::of(op).is_some() => acks::flag_change(ctx, pkt, op),
-        // …and the *third* audience for the same subject: a movement flag about
-        // a unit **no player is moving**, which is every creature in the world.
-        // Twelve opcodes, a packed guid and no body, unacknowledged, and the
-        // only restatement of a server-controlled unit's flags that exists
-        // after its create block. See [`movement::SplineFlagChange`].
+        // Movement flag changes about a unit no player is moving, which is
+        // every creature. Twelve opcodes, each a packed guid with no further
+        // body, not acknowledged. They are the only restatement of a
+        // server-controlled unit's flags after its create block. See
+        // [`movement::SplineFlagChange`].
         op if movement::SplineFlagChange::of(op).is_some() => {
             world::spline_flag(ctx, pkt, op)
         }
@@ -562,12 +576,12 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
 
 /// A parsed body, or a warning that it could not be read.
 ///
-/// **A packet whose body will not parse is a length bug, and length bugs
-/// surface late.** Every one of these used to be dropped in silence: a mis-read
-/// `SMSG_MONSTER_MOVE` produced a frozen creature and no diagnostic at all,
-/// where a mis-read movement broadcast produced a warning, for no reason other
-/// than which call site happened to have one written. One channel now, and it
-/// reaches the HUD through `SessionStatus::warnings`.
+/// A packet whose body will not parse usually indicates a length bug, and
+/// length bugs show up late. Call sites used to decide individually whether to
+/// report a parse failure: a mis-read `SMSG_MONSTER_MOVE` produced a frozen
+/// creature and no diagnostic, while a mis-read movement broadcast produced a
+/// warning. Every handler now reports through this function, and the warnings
+/// reach the HUD through `SessionStatus::warnings`.
 fn read<T>(stats: &mut PumpStats, pkt: &Packet, parsed: Option<T>) -> Option<T> {
     if parsed.is_none() {
         stats.unreadable(pkt);
@@ -582,175 +596,172 @@ pub struct PumpStats {
     pub packets: u32,
     pub updates: u32,
     pub compressed: u32,
-    /// **`SMSG_COMPRESSED_MOVES` bags seen, and the packets taken out of
-    /// them.**
+    /// `SMSG_COMPRESSED_MOVES` bags seen, and the packets taken out of them.
     ///
-    /// Counted apart from [`Self::compressed`], which is the *update* stream's,
-    /// because they answer different questions and one is a diagnosis. The
-    /// server sends no bag at all until its own movement rate passes
-    /// `CONFIG_UINT32_COMPRESSION_MOVEMENT_COUNT` — so a session with zero here
-    /// has told you nothing, and a session with hundreds is one where **most of
-    /// the movement in the world arrived inside this opcode**. Before it was
-    /// handled that read as 428 unhandled packets and 35.7 KiB on the `F4` net
-    /// tab and as creatures standing still everywhere else.
+    /// Counted apart from [`Self::compressed`], which counts the update-object
+    /// stream, because the two answer different questions. The server sends no
+    /// bag until its movement rate passes
+    /// `CONFIG_UINT32_COMPRESSION_MOVEMENT_COUNT`. A session with zero here
+    /// therefore says nothing; a session with hundreds is one where most of
+    /// the world's movement arrived inside this opcode. Before the opcode was
+    /// handled, one session showed 428 unhandled packets and 35.7 KiB on the
+    /// `F4` net tab, and creatures stood still.
     ///
-    /// The inner count is the one to compare against
-    /// `traffic[SMSG_MONSTER_MOVE]`: they are the same packets and the ratio is
-    /// how much of the world's movement is being bagged.
+    /// Compare the inner count against `traffic[SMSG_MONSTER_MOVE]`: they are
+    /// the same packets, and the ratio is the share of the world's movement
+    /// that is being bagged.
     pub bagged_moves: u32,
     pub bagged_packets: u32,
     pub creatures_resolved: u32,
     pub gameobjects_resolved: u32,
     pub players_resolved: u32,
-    /// Item templates resolved — a player's equipment, which is the one thing
-    /// the archives cannot answer for.
+    /// Item templates resolved. These cover a player's equipment, which the
+    /// game archives do not describe.
     pub items_resolved: u32,
-    /// Queries answered out of the on-disk cache instead of being sent — see
-    /// [`crate::play::wdb`]. Each one is a round trip the session did not
-    /// make; the answer still went through this dispatch, so the `*_resolved`
-    /// counters include them.
+    /// Queries answered from the on-disk cache instead of being sent; see
+    /// [`crate::play::wdb`]. Each one saves a round trip. The answer still goes
+    /// through this dispatch, so the `*_resolved` counters include them.
     pub cache_answered: u32,
     pub monster_moves: u32,
-    /// `MSG_MOVE_*` broadcasts folded in — other players walking around.
+    /// `MSG_MOVE_*` broadcasts applied: other players moving.
     pub player_moves: u32,
-    /// `SMSG_ATTACKERSTATEUPDATE` — melee swings, both ends of them.
+    /// `SMSG_ATTACKERSTATEUPDATE`: melee swings, by or against anyone.
     pub attacks: u32,
-    /// Spell damage and heal logs. Beside [`Self::attacks`] and counted apart
-    /// from it, because "the weapon swings arrive and the spells do not" is a
-    /// state this client was in for a long time and is invisible in one total.
+    /// Spell damage and heal logs. Counted apart from [`Self::attacks`]
+    /// because a single total would hide the case where weapon swings arrive
+    /// and spell logs do not, which this client once had for a long time.
     pub spell_logs: u32,
-    /// `SMSG_EMOTE` — one-shot emotes played by anyone in sight.
+    /// `SMSG_EMOTE`: one-shot emotes played by any visible unit.
     pub emotes: u32,
-    /// `SMSG_AI_REACTION` — creatures noticing and engaging.
+    /// `SMSG_AI_REACTION`: creatures noticing and engaging.
     ///
-    /// Worth its own counter for the same reason `speed_broadcasts` is: it is
-    /// the *only* trace this packet leaves, since what it drives is a sound.
-    /// Zero in a session where anything attacked you means the aggro barks are
-    /// being dropped again, and no picture would show it.
+    /// Counted separately for the same reason as `speed_broadcasts`. The
+    /// packet only drives a sound, so this counter is its only trace. Zero in
+    /// a session where something attacked the player means the aggro sounds
+    /// are being dropped, which nothing on screen would show.
     pub ai_reactions: u32,
     /// `SMSG_SPELL_START` and `SMSG_SPELL_GO` together.
     pub casts: u32,
-    /// `SMSG_FORCE_*_SPEED_CHANGE` recorded and acknowledged — the six about a
-    /// unit **we** control.
+    /// `SMSG_FORCE_*_SPEED_CHANGE` recorded and acknowledged: the six opcodes
+    /// about a unit this client controls.
     pub speed_changes: u32,
-    /// …and the twelve about one we do not: `MSG_MOVE_SET_*_SPEED` and
-    /// `SMSG_SPLINE_SET_*`, recorded and deliberately *not* acknowledged.
+    /// The twelve speed opcodes about a unit this client does not control:
+    /// `MSG_MOVE_SET_*_SPEED` and `SMSG_SPLINE_SET_*`, recorded and
+    /// deliberately not acknowledged.
     ///
-    /// Counted apart because they are the answer to a different question. The
-    /// forced changes are about one character and are rare; these are every
-    /// mount, sprint, daze, enrage and flee within sight, and a zero here in a
-    /// session where anybody mounted means the family is being dropped again.
+    /// Counted apart from [`Self::speed_changes`] because they answer a
+    /// different question. The forced changes are about one character and are
+    /// rare. These cover every mount, sprint, daze, enrage and flee within
+    /// sight, so a zero here in a session where anyone mounted means the
+    /// family is being dropped.
     pub speed_broadcasts: u32,
-    /// …and the twelve `SMSG_SPLINE_MOVE_*` about a unit no player is moving —
-    /// root, water walking, feather fall, hover and walk/run mode.
+    /// The twelve `SMSG_SPLINE_MOVE_*` opcodes about a unit no player is
+    /// moving: root, water walking, feather fall, hover and walk/run mode.
     ///
-    /// A third counter for a third audience, on the same argument the second
-    /// one is here for. This family is the *only* restatement of a
-    /// server-controlled unit's movement flags that exists after its create
-    /// block, so a zero in a session where anything was rooted or told to walk
-    /// means it is being dropped — see
+    /// Counted separately for the same reason as [`Self::speed_broadcasts`].
+    /// This family is the only restatement of a server-controlled unit's
+    /// movement flags after its create block, so a zero in a session where
+    /// anything was rooted or set to walk means it is being dropped. See
     /// [`crate::state::movement::SplineFlagChange`].
     pub spline_flag_changes: u32,
-    /// **Sounds and visuals the server asked for outright** — the three
+    /// Sounds and visuals the server requested directly: the three
     /// `SMSG_PLAY_*` sound opcodes and the two `SMSG_PLAY_SPELL_*` ones.
     ///
-    /// Two counters because they fail differently. A dropped sound is silence
-    /// and leaves no other trace at all; a dropped visual is a character who
-    /// sits down to eat and does nothing. Both are families where **a zero is
-    /// the only evidence**, which is this whole table's argument.
+    /// Two counters because the two fail differently. A dropped sound is
+    /// silence and leaves no other trace. A dropped visual is a character who
+    /// sits down to eat and plays no animation. For both families a zero
+    /// counter is the only evidence of the fault.
     pub pushed_sounds: u32,
     pub pushed_visuals: u32,
-    /// **Intro cinematics offered and ended** — `SMSG_TRIGGER_CINEMATIC` in,
-    /// `CMSG_COMPLETE_CINEMATIC` straight back out. See
+    /// Intro cinematics offered and ended: `SMSG_TRIGGER_CINEMATIC` received,
+    /// `CMSG_COMPLETE_CINEMATIC` sent back immediately. See
     /// [`self::world::cinematic`].
     ///
-    /// One per character, on its first login and never again, and the whole
-    /// world hangs on the reply — so the useful reading is not the number but
-    /// where it is: a 1 here on a session whose world is populated is the fix
-    /// working, and a 1 on the unhandled list instead is the bug.
+    /// This happens once per character, on its first login, and the server
+    /// holds the world until the reply arrives. A 1 here in a session whose
+    /// world is populated means the reply worked. A 1 in the unhandled list
+    /// instead means the packet was dropped.
     pub cinematics: u32,
-    /// **Weather stated** — `SMSG_WEATHER`, once per zone change and once per
-    /// grade the server rolls. A zero after a zone change means the packet is
-    /// not arriving, which for a zone with a `game_weather` row is a fault.
+    /// `SMSG_WEATHER` packets received: one per zone change and one per
+    /// weather grade the server rolls. A zero after a zone change means the
+    /// packet is not arriving, which is a fault for a zone with a
+    /// `game_weather` row.
     pub weather: u32,
-    /// **Items that arrived in a bag** — `SMSG_ITEM_PUSH_RESULT`. Counted here
-    /// because the alternative reading of it is the inventory's own fields,
-    /// which move whether or not this packet is read: a zero over a session
-    /// that looted anything means the *event* is being dropped while the bag
-    /// still fills, which is exactly the failure that has no other symptom.
+    /// `SMSG_ITEM_PUSH_RESULT` packets: items that arrived in a bag. The
+    /// inventory's update fields change whether or not this packet is read, so
+    /// a zero over a session in which anything was looted means the event is
+    /// being dropped while the bag still fills. That failure has no other
+    /// symptom.
     pub items_received: u32,
-    /// **`CMSG_AREATRIGGER` sent** — the one packet this client volunteers.
+    /// `CMSG_AREATRIGGER` packets sent. This is the only packet this client
+    /// sends unprompted.
     ///
-    /// The instrument for a subject with no failure of its own: a portal that
-    /// does nothing looks identical whether the client never noticed the
-    /// trigger, noticed and latched, or sent it and the server declined. A zero
-    /// here after walking through a dungeon entrance says the fault is on this
-    /// side of the socket; a one says look at `SMSG_TRANSFER_ABORTED`.
+    /// A portal that does nothing looks the same whether the client never
+    /// detected the trigger, detected it and latched it, or sent it and the
+    /// server refused. A zero here after walking through a dungeon entrance
+    /// means the fault is in this client. A one means the next thing to check
+    /// is `SMSG_TRANSFER_ABORTED`.
     pub area_triggers: u32,
-    /// **`CMSG_MOVE_SPLINE_DONE` sent** — a server-driven ride of this character
-    /// begun, walked and handed back. A Charge.
+    /// `CMSG_MOVE_SPLINE_DONE` packets sent: a server-driven movement of this
+    /// character (a Charge) started, completed and acknowledged.
     ///
-    /// The instrument for the same kind of subject: nothing on the wire reports
-    /// a ride that was ignored, and the symptom of ignoring one is not a wrong
-    /// position but a session in which **every** subsequent movement packet is
-    /// discarded — see [`movement::Mover::ride`]. A zero here after a charge
-    /// says the packet was never ridden; a one says look at what came back.
+    /// No packet reports a server-driven movement that the client ignored. The
+    /// symptom of ignoring one is not a wrong position; it is that every later
+    /// movement packet from this client is discarded. See
+    /// [`movement::Mover::ride`]. A zero here after a charge means the spline
+    /// was never followed. A one means the next thing to check is the server's
+    /// response.
     pub rides: u32,
-    /// The forced *flag* changes and knockbacks, likewise.
+    /// Forced movement flag changes and knockbacks, recorded and acknowledged.
     ///
-    /// **An instrument for a failure that is otherwise silent by design.** Every
-    /// one of these went into the unhandled bucket until now, and the visible
-    /// consequence was a kick several seconds later naming a cheat the client
-    /// never attempted. A count answers "did that path ever run?", which is the
-    /// only question a session can be asked about it.
+    /// Before these were handled, every one went into the unhandled count, and
+    /// the only visible effect was a kick several seconds later for a cheat the
+    /// client never attempted. The count shows whether this code path ran at
+    /// all in a session.
     pub flag_changes: u32,
-    /// Chat lines and notifications folded in.
+    /// Chat lines and notifications applied.
     pub chat: u32,
-    /// How many spells `SMSG_INITIAL_SPELLS` named. **Zero is the failure this
-    /// exists to show**: the packet is sent once in the login burst and nothing
-    /// restates it, so a client that misread it has an empty action bar and no
-    /// other symptom at all.
+    /// How many spells `SMSG_INITIAL_SPELLS` named. The packet is sent once in
+    /// the login burst and never restated, so a client that misreads it has an
+    /// empty action bar and no other symptom. A zero here shows that failure.
     pub spells_known: u32,
-    /// …and how many action-bar slots were occupied.
+    /// How many action-bar slots `SMSG_ACTION_BUTTONS` filled.
     pub action_buttons: u32,
-    /// `SMSG_CAST_RESULT` seen, accepted and refused together — the instrument
-    /// for "did the server hear the cast?", which is otherwise unanswerable
-    /// from the world state.
+    /// `SMSG_CAST_RESULT` packets, accepted and refused together. This shows
+    /// whether the server received a cast, which the world state does not.
     pub cast_results: u32,
-    /// The five `SMSG_ATTACKSWING_*` refusals. Nonzero is ordinary — swinging
-    /// out of range is how every fight starts — and it is the *only* trace a
-    /// refused swing leaves.
+    /// The five `SMSG_ATTACKSWING_*` refusals. A nonzero count is normal,
+    /// because most fights start with a swing out of range. The count is the
+    /// only trace a refused swing leaves.
     pub attack_refusals: u32,
     /// Opcodes seen but not handled, with counts.
     pub other: BTreeMap<String, u32>,
-    /// **Every opcode the dispatch saw**, handled or not, with its packet count
-    /// and the bytes it cost.
+    /// Every opcode the dispatch saw, handled or not, with its packet count and
+    /// byte total.
     ///
-    /// [`Self::other`] is the unhandled *subset* of this and is kept separately
-    /// because it answers a different question — it is what the CLI's login
-    /// summary prints, and what "this client is deaf to N opcodes" is counted
-    /// off. This one is the traffic itself: which opcodes a session is actually
-    /// made of, in what proportion, and what share of the bytes each is. A
-    /// stream that is 90% `SMSG_MONSTER_MOVE` and a stream that is 90%
-    /// `SMSG_UPDATE_OBJECT` describe two completely different bugs, and no
-    /// counter here separated them before this one.
+    /// [`Self::other`] is the unhandled subset of this and is kept separately:
+    /// the CLI's login summary prints it, and the count of opcodes this client
+    /// does not handle is taken from it. This map records the traffic itself:
+    /// which opcodes a session contains, in what proportion, and each one's
+    /// share of the bytes. A stream that is 90% `SMSG_MONSTER_MOVE` and one
+    /// that is 90% `SMSG_UPDATE_OBJECT` point to different bugs, and no other
+    /// counter here separates them.
     ///
-    /// **Keyed by raw opcode, not by name.** `Packet::name` is a `format!` and
-    /// allocates; this is on the path every packet in the session takes, where
-    /// `other` above is only reached by the handful that have no handler and
-    /// can afford a `String`. See [`crate::socket::world::named`], which
-    /// resolves them on the way out, five times a second.
+    /// Keyed by raw opcode, not by name. `Packet::name` calls `format!` and
+    /// allocates, and this map is updated for every packet in the session.
+    /// `other` is only updated for the few packets with no handler, so it can
+    /// use a `String` key. See [`crate::socket::world::named`], which resolves
+    /// the names when the table is read, five times a second.
     pub traffic: BTreeMap<u32, OpcodeFlow>,
     pub warnings: Vec<String>,
-    /// **The map `SMSG_LOGIN_VERIFY_WORLD` named**, for a caller with no
+    /// The map `SMSG_LOGIN_VERIFY_WORLD` named, for a caller with no
     /// [`LocalState`] to write it into.
     ///
-    /// `None` in every run that did not contain a login, which is all of them
-    /// but the first. The session loop reads the map off `LocalState` and never
-    /// looks here; this exists for `vale login`, which pumps an
-    /// [`crate::state::objects::ObjectManager`] with no local state at all and
-    /// was printing the character list's map — the one value in this whole
-    /// subject that can be wrong. See
+    /// `None` in every run that did not contain a login, which is every run
+    /// except the first. The session loop reads the map from `LocalState` and
+    /// does not use this field. It exists for `vale login`, which pumps an
+    /// [`crate::state::objects::ObjectManager`] with no local state and had
+    /// been printing the character list's map, which can be wrong. See
     /// [`crate::state::movement::LoginVerifyWorld`].
     pub landed_on_map: Option<u32>,
 }
@@ -764,9 +775,9 @@ impl PumpStats {
 
     /// A packet this client knows about but could not read.
     ///
-    /// Named as what it is rather than as "parse failed": the block layouts here
-    /// are flag-gated with no length prefix, so the cause is almost always a
-    /// field being read at the wrong offset or at the wrong width.
+    /// The warning names the likely cause rather than saying "parse failed":
+    /// the block layouts here are flag-gated with no length prefix, so the
+    /// cause is almost always a field read at the wrong offset or width.
     fn unreadable(&mut self, pkt: &Packet) {
         self.warn(format!(
             "{} could not be read — a field is being taken at the wrong offset or width",
@@ -774,19 +785,19 @@ impl PumpStats {
         ));
     }
 
-    /// An opcode with no handler. **Data, not an error**: the server
-    /// legitimately sends opcodes this client does not implement, and turning
-    /// one into a failure would take the session down for no reason.
+    /// An opcode with no handler. This is recorded as data, not as an error:
+    /// the server legitimately sends opcodes this client does not implement,
+    /// and failing on one would end the session for no reason.
     fn unhandled(&mut self, pkt: &Packet) {
         *self.other.entry(pkt.name()).or_insert(0) += 1;
-        // …and mark the traffic row, which `apply_packet` created optimistically
-        // one line earlier. The two are one fact recorded twice on purpose: see
-        // the field's own note.
+        // Also mark the traffic row, which `apply_packet` created as handled
+        // just before dispatch. The fact is deliberately recorded in both
+        // maps; see the note on `traffic`.
         self.traffic.entry(pkt.code).or_default().handled = false;
     }
 
-    /// Record one packet against its opcode's row, assuming for now that
-    /// something will read it — [`Self::unhandled`] is what says otherwise.
+    /// Record one packet against its opcode's row, marked as handled until
+    /// [`Self::unhandled`] says otherwise.
     ///
     /// The four bytes are the framed header, which no body length includes, so
     /// this and [`crate::socket::world::WireCounts::bytes_in`] agree to the byte
@@ -848,12 +859,11 @@ mod tests {
         (stats, replies.take())
     }
 
-    /// **A bag of movement packets, built exactly as vmangos builds one.**
+    /// A bag of movement packets, built the same way vmangos builds one.
     ///
     /// `MovementData::AddPacket` writes `u8(body + 2); u16(opcode); body` into a
-    /// buffer, and `BuildPacket` prefixes the buffer's own length and deflates
-    /// it — see `world::compressed_moves`, where the whole of why this opcode
-    /// matters is written down.
+    /// buffer, and `BuildPacket` prefixes the buffer's length and deflates it.
+    /// See `world::compressed_moves` for why this opcode matters.
     fn bag(inner: &[(Opcode, Vec<u8>)]) -> Packet {
         use flate2::write::ZlibEncoder;
         use std::io::Write;
@@ -884,28 +894,18 @@ mod tests {
         body.buf
     }
 
-    /// **The desync, as a test.** `WorldSession::SendMovementPacket` batches
-    /// every movement packet into this one opcode once the rate passes
-    /// `CONFIG_UINT32_COMPRESSION_MOVEMENT_COUNT` — so a client that drops it
-    /// works against a quiet localhost server and loses every creature, every
-    /// other player and every speed change on a busy realm. Measured at **428
-    /// packets and 35.7 KiB in one session** before it was handled.
+    /// The intro cinematic is answered, and the answer needs no local player.
     ///
-    /// The assertion is that the packets *inside* it reached the world, which
-    /// is the only thing that matters: nothing about the bag itself is visible.
-    /// **The intro cinematic is answered, and the answer needs no local
-    /// player.**
-    ///
-    /// It arrives during the login burst, before `CMSG_SET_ACTIVE_MOVER` and
-    /// before anything has a mover, so a handler that reached for `ctx.local`
-    /// would drop exactly the packet the world depends on. See
-    /// [`self::world::cinematic`] for what dropping it costs.
+    /// `SMSG_TRIGGER_CINEMATIC` arrives during the login burst, before
+    /// `CMSG_SET_ACTIVE_MOVER` and before anything has a mover. A handler that
+    /// required `ctx.local` would drop it, and the server holds the world until
+    /// the reply arrives. See [`self::world::cinematic`] for the effect of dropping it.
     #[test]
     fn the_intro_cinematic_is_ended_at_once() {
         let mut world = ObjectManager::new();
         let packet = Packet {
             code: Opcode::SMSG_TRIGGER_CINEMATIC.code(),
-            // `ChrRaces.dbc`'s `CinematicSequence` — 81 is the human one.
+            // `ChrRaces.dbc`'s `CinematicSequence`; 81 is the human one.
             body: 81u32.to_le_bytes().to_vec(),
         };
         let (stats, replies) = apply(&mut world, None, &packet);
@@ -914,6 +914,18 @@ mod tests {
         assert_eq!(replies, vec![(Opcode::CMSG_COMPLETE_CINEMATIC, Vec::new())]);
     }
 
+    /// A bag of movement packets is unpacked and every packet in it is applied.
+    ///
+    /// `WorldSession::SendMovementPacket` batches every movement packet into
+    /// `SMSG_COMPRESSED_MOVES` once the rate passes
+    /// `CONFIG_UINT32_COMPRESSION_MOVEMENT_COUNT`. A client that drops the
+    /// opcode works against a quiet localhost server and, on a busy realm,
+    /// loses every creature movement, every other player's movement and every
+    /// speed change. One session measured 428 packets and 35.7 KiB of it
+    /// before it was handled.
+    ///
+    /// The test asserts that the packets inside the bag reached the world,
+    /// because nothing about the bag itself is visible.
     #[test]
     fn a_bag_of_movement_packets_is_unpacked_and_every_one_of_them_lands() {
         let mut world = ObjectManager::new();
@@ -926,14 +938,14 @@ mod tests {
         assert_eq!(stats.monster_moves, 2, "the bag was dropped: {:?}", stats.other);
         assert!(world.get(9).is_some_and(|e| e.spline.is_some()));
         assert!(world.get(11).is_some_and(|e| e.spline.is_some()));
-        // …and the *destinations* are the two the bag carried, so the bodies
-        // were cut at the right boundaries rather than merely counted.
+        // The destinations are the two the bag carried, so the bodies were
+        // split at the right boundaries and not only counted.
         assert_eq!(world.get(9).unwrap().spline.as_ref().unwrap().to()[0], 24.0);
         assert_eq!(world.get(11).unwrap().spline.as_ref().unwrap().to()[0], -18.0);
 
-        // **Each one is an ordinary packet from the census's point of view**,
-        // which is the whole reason this goes back through the one dispatch:
-        // the traffic table has to show what the stream is really made of.
+        // Each inner packet is counted in the traffic table as an ordinary
+        // packet. That is why the bag's contents go back through the one
+        // dispatch: the traffic table must show what the stream contains.
         let moves = stats.traffic.get(&Opcode::SMSG_MONSTER_MOVE.code());
         assert_eq!(moves.map(|f| f.count), Some(2));
         assert!(stats.traffic.contains_key(&Opcode::SMSG_COMPRESSED_MOVES.code()));
@@ -943,9 +955,9 @@ mod tests {
         assert_eq!(stats.compressed, 0, "the update stream's counter is a different question");
     }
 
-    /// **A damaged tail costs the rest of the bag and says so**, and the
-    /// packets in front of it still land — the rule every reader in this crate
-    /// follows, and the one that matters most here because there is no way to
+    /// A damaged tail loses the rest of the bag and produces a warning, and the
+    /// packets before it are still applied. Every reader in this crate follows
+    /// this rule. It matters most here because there is no way to
     /// resynchronise past a bad length byte.
     #[test]
     fn a_truncated_bag_keeps_what_it_read_and_warns() {
@@ -975,21 +987,21 @@ mod tests {
             "a torn bag went unreported: {:?}",
             stats.warnings
         );
-        // …and the whole one still reads clean, so the warning above is about
-        // the tear rather than about the shape.
+        // The undamaged bag reads without a warning, so the warning above is
+        // caused by the truncation and not by the bag's layout.
         let mut world = ObjectManager::new();
         assert!(apply(&mut world, None, &good).0.warnings.is_empty());
     }
 
-    /// **A bag inside a bag is refused rather than recursed into.** The server
-    /// never produces one — only movement packets reach the compressor — and
-    /// unbounded recursion off the wire is not a thing to leave open.
+    /// A bag inside a bag is refused rather than recursed into. The server
+    /// never produces one, because only movement packets reach the compressor,
+    /// and recursion depth must not be controlled by received data.
     #[test]
     fn a_nested_bag_is_refused() {
         let mut world = ObjectManager::new();
         let inner = bag(&[(Opcode::SMSG_MONSTER_MOVE, walk(9, 24.0))]);
-        // Truncated only so it fits the u8 length; the guard is on the opcode
-        // and never looks at the body, which is the point.
+        // Truncated only so it fits the u8 length. The guard checks the opcode
+        // and never reads the body, so the truncated body does not matter.
         let short = inner.body[..inner.body.len().min(64)].to_vec();
         let nested = bag(&[(Opcode::SMSG_COMPRESSED_MOVES, short)]);
         let (stats, _) = apply(&mut world, None, &nested);
@@ -1001,14 +1013,14 @@ mod tests {
         );
     }
 
-    /// **Every packet lands in the traffic table, and the ones nothing reads
-    /// are marked.**
+    /// Every packet is recorded in the traffic table, and opcodes with no
+    /// handler are marked.
     ///
-    /// The distinction is the whole instrument: an opcode arriving a thousand
-    /// times with no handler is a subject this client is deaf to, and from the
-    /// packet count alone it is indistinguishable from one that is being read
-    /// perfectly. The bytes include the four-byte framed header, which no body
-    /// length carries — so this and `WireCounts::bytes_in` agree per packet.
+    /// Without the mark, an opcode that arrives a thousand times with no
+    /// handler cannot be told apart by packet count from one that is read
+    /// correctly. The bytes include the four-byte framed header, which no body
+    /// length includes, so this table and `WireCounts::bytes_in` agree per
+    /// packet.
     #[test]
     fn the_traffic_table_counts_every_opcode_and_marks_the_unread() {
         let mut world = ObjectManager::new();
@@ -1027,10 +1039,9 @@ mod tests {
                     &packet(Opcode::SMSG_EMOTE, body),
                 );
             }
-            // …and one with none. `SMSG_AUTH_CHALLENGE` belongs to the
-            // handshake and never reaches this dispatch in a real session,
-            // which is exactly why it is the honest stand-in for an opcode
-            // nothing here reads.
+            // An opcode with no handler. `SMSG_AUTH_CHALLENGE` belongs to the
+            // handshake and never reaches this dispatch in a real session, so
+            // it will stay unhandled here and is a stable example.
             apply_packet(
                 &mut Incoming {
                     world: &mut world,
@@ -1052,27 +1063,27 @@ mod tests {
         assert_eq!(deaf.count, 1);
         assert!(!deaf.handled, "nothing in the dispatch reads it");
 
-        // `other` is the unhandled *subset*, and it must stay exactly that —
-        // the CLI's login summary is written against it.
+        // `other` holds only the unhandled subset. The CLI's login summary
+        // depends on that.
         assert_eq!(stats.other.len(), 1);
         assert_eq!(stats.other["SMSG_AUTH_CHALLENGE"], 1);
         assert_eq!(stats.packets, 3);
     }
 
-    /// **A forced speed change is recorded on the unit it is about**, not only
-    /// when it is about us.
+    /// A forced speed change is recorded on the unit it names, including a unit
+    /// other than the local player.
     ///
-    /// This is the bug the two-site dispatch had: the live loop intercepted
-    /// these packets, acknowledged them and returned, so one about another
-    /// player never reached the world at all. `Entity::speeds` is otherwise
-    /// written only by an update block's movement section, so the client went on
+    /// When the dispatch was split across two places, the live loop
+    /// intercepted these packets, acknowledged them and returned, so one about
+    /// another player never reached the world. `Entity::speeds` is otherwise
+    /// written only by an update block's movement section, so the client kept
     /// dead-reckoning a hasted player at their old run speed until the server
-    /// happened to describe them again — and then corrected them, which arrives
-    /// as a jump and reads as "mobs teleport around".
+    /// described them again. The correction then showed as the unit jumping to
+    /// a new position.
     #[test]
     fn a_speed_change_about_someone_else_still_reaches_the_world() {
-        // Another player, known because they walked into view — which is the
-        // only way this client hears about one.
+        // Another player, known because they walked into view, which is the
+        // only way this client learns about one.
         let mut world = ObjectManager::new();
         world.apply_movement(7, &movement::MovementInfo::default());
 
@@ -1096,8 +1107,8 @@ mod tests {
             Some(11.0),
             "the unit the packet named kept its old speed"
         );
-        // …and it is still acknowledged, or the server leaves the change
-        // pending forever.
+        // It is still acknowledged; otherwise the server leaves the change
+        // pending.
         assert_eq!(
             replies.first().map(|(op, _)| *op),
             Some(Opcode::CMSG_FORCE_RUN_SPEED_CHANGE_ACK)
@@ -1106,16 +1117,18 @@ mod tests {
         assert_eq!(state.mover.speeds.run(), movement::Speeds::default().run());
     }
 
-    /// **`SMSG_MONSTER_MOVE` may be about *us*, and then it is a ride.**
+    /// An `SMSG_MONSTER_MOVE` naming the local player is a server-driven
+    /// movement (a ride) that the local simulation must follow.
     ///
-    /// The one packet in the movement family that carries no hint of who it is
-    /// for beyond the guid: a Charge moves the caster through the same
-    /// `MoveSpline` machinery a patrolling creature is walked with
-    /// (`Spell::OnSpellLaunch` → `MoveCharge`), so the packet is identical and
-    /// only the guid says it is ours. Applied to the world and nothing else, the
-    /// local simulation walks on from where it was while the server has us at the
-    /// target — and, worse, holds us as spline-pending for the rest of the
-    /// session. See [`movement::Mover::ride`].
+    /// This is the one packet in the movement family that says nothing about
+    /// its target beyond the guid. A Charge moves the caster through the same
+    /// `MoveSpline` code that walks a patrolling creature
+    /// (`Spell::OnSpellLaunch` → `MoveCharge` in vmangos), so the packet is
+    /// identical and only the guid identifies the local player. If it is
+    /// applied to the world only, the local simulation continues from its old
+    /// position while the server has the player at the target, and the server
+    /// also keeps the player spline-pending for the rest of the session. See
+    /// [`movement::Mover::ride`].
     #[test]
     fn a_monster_move_naming_the_player_is_ridden_by_the_local_simulation() {
         let mut world = ObjectManager::new();
@@ -1140,7 +1153,7 @@ mod tests {
             packet(Opcode::SMSG_MONSTER_MOVE, body.buf)
         };
 
-        // Somebody else's: the world hears it, the mover does not.
+        // Another unit's move: the world applies it, the mover does not.
         let mut state = local();
         apply(&mut world, Some(&mut state), &charge(9));
         assert!(!state.mover.is_riding());
@@ -1149,37 +1162,39 @@ mod tests {
         let (stats, replies) = apply(&mut world, Some(&mut state), &charge(42));
         assert_eq!(stats.monster_moves, 1);
         assert!(state.mover.is_riding(), "the player's own spline was ignored");
-        // **Nothing is answered here.** The ack is owed when the ride *ends*,
-        // with the position it ends at — see `Mover::take_finished_ride`.
+        // Nothing is sent yet. The acknowledgement is due when the ride ends,
+        // with the end position; see `Mover::take_finished_ride`.
         assert!(replies.is_empty(), "{replies:?}");
-        // The relocation counter moves, which is what stops the session loop
-        // reading the world's own copy of this move as a correction to resync to.
+        // The relocation counter increments. This stops the session loop from
+        // treating the world's copy of this move as a correction to resync to.
         assert_eq!(state.relocations, 1);
 
         for _ in 0..41 {
             state.mover.advance(0.025, None);
         }
         assert_eq!(state.mover.take_finished_ride(), Some(41));
-        // …facing the unit it charged, which only the world could resolve.
+        // The player ends facing the charged unit, whose position only the
+        // world state knows.
         assert!(state.mover.position().orientation.abs() < 0.01);
     }
 
-    /// **The observer's copy of that same change, which is the one the client
-    /// had never read at all** — and the one that matters, because it is the
-    /// only one that ever arrives about somebody else.
+    /// The observers' copy of a speed change, which this client previously did
+    /// not read. It is the only speed change that arrives about a unit this
+    /// client does not control.
     ///
-    /// `SMSG_FORCE_*_SPEED_CHANGE` goes to whoever *controls* the unit and to
-    /// nobody else (`SendSpeedChangeToController` sends to `mover`), so the test
-    /// above only ever fires for a unit we are moving. Everyone else is told on
+    /// `SMSG_FORCE_*_SPEED_CHANGE` goes only to the unit's controller
+    /// (vmangos' `SendSpeedChangeToController` sends to `mover`), so
+    /// `a_speed_change_about_someone_else_still_reaches_the_world` covers only
+    /// a unit this client is moving. Every other client receives
     /// `MSG_MOVE_SET_*_SPEED`, which carries a whole movement block between the
-    /// guid and the speed — parse it as an ordinary heartbeat and the position
-    /// lands while the speed falls off the end.
+    /// guid and the speed. Parsed as an ordinary heartbeat, the position is
+    /// applied and the trailing speed is ignored.
     ///
-    /// A player mounting at +60% is 11.2 y/s against the 7.0 the block they were
-    /// created with said, so a client that misses this dead-reckons them 2.1
-    /// yards short every half-second and snaps them forward on the heartbeat,
-    /// twice a second, for as long as they are mounted — and does it again in
-    /// the other direction when they get off.
+    /// A player mounted at +60% moves at 11.2 y/s, against the 7.0 in the
+    /// movement block they were created with. A client that misses this packet
+    /// dead-reckons them 2.1 yards short every half-second and snaps them
+    /// forward on each heartbeat, twice a second, while they are mounted, and
+    /// does the reverse when they dismount.
     #[test]
     fn a_mount_speed_about_another_player_is_recorded_and_never_acknowledged() {
         let mut world = ObjectManager::new();
@@ -1211,19 +1226,20 @@ mod tests {
         // The block is part of the packet and is applied, which is why this is
         // not simply `speed_change` with a different offset.
         assert_eq!(world.get(7).and_then(|e| e.position).map(|p| p.x), Some(100.0));
-        // **Not answered.** The ack belongs to the controller and we are not it;
-        // sending one is `OnWrongAckData`, and three of those is a kick.
+        // Not answered. The acknowledgement belongs to the unit's controller,
+        // which is not this client; sending one triggers `OnWrongAckData`, and
+        // three of those get the player kicked.
         assert!(replies.is_empty(), "acknowledged a change about someone else");
     }
 
-    /// The other observer family: a **server-driven** unit, which is every
-    /// creature in the game.
+    /// The other observer family: speed changes about a server-driven unit,
+    /// which is every creature.
     ///
-    /// `SendSpeedChangeToAll` uses `moveTypeToOpcode[mtype][0]` —
-    /// `SMSG_SPLINE_SET_*` — and its body is the packed guid and the speed with
-    /// **no movement block at all**, because a creature mid-path has no
-    /// position worth stating. Every enrage, every daze, every fleeing mob and
-    /// every aura that touches a speed comes this way.
+    /// vmangos' `SendSpeedChangeToAll` uses `moveTypeToOpcode[mtype][0]`, which
+    /// is `SMSG_SPLINE_SET_*`. Its body is the packed guid and the speed with no
+    /// movement block, because a creature on a path has no position worth
+    /// stating. Every enrage, daze, fleeing mob and speed-changing aura on a
+    /// creature arrives this way.
     #[test]
     fn a_creature_speed_change_carries_no_movement_block() {
         let mut world = ObjectManager::new();
@@ -1244,13 +1260,13 @@ mod tests {
         assert!(replies.is_empty());
     }
 
-    /// All twelve resolve, to the slot [`movement::Speeds`] holds and to the
-    /// family whose body shape that opcode actually has.
+    /// All twelve observer speed opcodes resolve to the right slot in
+    /// [`movement::Speeds`] and to the family whose body layout that opcode
+    /// has.
     ///
-    /// A transposition here is silent and plausible: writing a run speed into
-    /// the swim slot leaves a runner reckoned correctly on land and wrongly the
-    /// moment they enter water, which is a bug nobody would trace back to a
-    /// table.
+    /// A transposed entry fails silently. For example, writing a run speed into
+    /// the swim slot leaves a runner reckoned correctly on land and wrongly as
+    /// soon as they enter water, and the symptom does not point at this table.
     #[test]
     fn every_observer_speed_opcode_names_its_own_slot() {
         use movement::SpeedBroadcast::{Observed, Spline};
@@ -1275,24 +1291,25 @@ mod tests {
                 "{op:?}"
             );
         }
-        // …and the controller's own family is *not* in it, or a forced change
-        // would be recorded twice and never acknowledged once.
+        // The controller's own family is not in the table; otherwise a forced
+        // change would be recorded twice and never acknowledged.
         assert_eq!(
             movement::broadcast_speed_slot(Opcode::SMSG_FORCE_RUN_SPEED_CHANGE),
             None
         );
     }
 
-    /// **A root is answered, and the answer carries the flag.**
+    /// A root is acknowledged, and the acknowledgement carries the root flag.
     ///
-    /// Two separate rules, both of which end the session. Not answering leaves
-    /// the change pending: `CheckPendingMovementChanges` fires
-    /// `OnFailedToAckChange` after four seconds — `PendingAckDelay`, threshold
-    /// 3, kick — and then applies the root anyway, after which every step is
-    /// `CHEAT_TYPE_ROOT_MOVE`. Answering *without* `MOVEFLAG_ROOT` in the block
-    /// is worse and faster: `HandleMoveRootAck` calls `KickPlayer()` outright.
-    /// `Anticheat.log` on the reference server carries both, on this client's
-    /// own characters.
+    /// These are two separate server rules, and breaking either ends the
+    /// session. Not answering leaves the change pending:
+    /// `CheckPendingMovementChanges` fires `OnFailedToAckChange` after four
+    /// seconds (`PendingAckDelay`; at a threshold of 3 the player is kicked)
+    /// and then applies the root anyway, after which every step is
+    /// `CHEAT_TYPE_ROOT_MOVE`. Answering without `MOVEFLAG_ROOT` in the block
+    /// ends the session sooner: `HandleMoveRootAck` calls `KickPlayer()`
+    /// directly. `Anticheat.log` on the reference server records both, for
+    /// this client's own characters.
     #[test]
     fn a_root_is_acknowledged_with_the_flag_the_server_demands() {
         let mut world = ObjectManager::new();
@@ -1328,7 +1345,7 @@ mod tests {
             !info.is_moving(),
             "moving while rooted is CHEAT_TYPE_ROOT_MOVE, and it is sticky"
         );
-        // …and the local simulation is actually rooted, not merely reported so.
+        // The local simulation is rooted too, not only the reported flags.
         state.mover.advance(1.0, None);
         assert_eq!(state.mover.position().x, 0.0);
 
@@ -1351,15 +1368,15 @@ mod tests {
 
     /// A far teleport is answered even by a caller with no simulation.
     ///
-    /// `Player::TeleportTo` raises `SetSemaphoreTeleportFar` *before* sending
-    /// `SMSG_NEW_WORLD` and only this ack lowers it, so a client that does not
-    /// answer is held on no map — nothing it sends is processed and nothing
-    /// comes back. The CLI's snapshot pump has no `Mover` to resync and used to
-    /// reach a dispatch that did not handle this packet at all; it now answers,
-    /// which is the half that matters.
+    /// vmangos' `Player::TeleportTo` raises `SetSemaphoreTeleportFar` before
+    /// sending `SMSG_NEW_WORLD`, and only this acknowledgement lowers it. A
+    /// client that does not answer is held on no map: nothing it sends is
+    /// processed and nothing comes back. The CLI's snapshot pump has no `Mover`
+    /// to resync, and its dispatch previously did not handle this packet. It
+    /// now sends the acknowledgement, which is the part the server requires.
     ///
     /// The body is empty on purpose: `HandleMoveWorldportAckOpcode(WorldPacket&
-    /// /*recvData*/)` does not read a byte of it.
+    /// /*recvData*/)` does not read any of it.
     #[test]
     fn a_far_teleport_is_acknowledged_with_or_without_a_simulation() {
         let mut body = Vec::new();
@@ -1377,8 +1394,8 @@ mod tests {
             "the ack is a signal and its body is empty"
         );
 
-        // With one: the map and the mover move too, and the relocation is
-        // counted so the caller can re-baseline.
+        // With a simulation, the map and the mover are updated as well, and the
+        // relocation is counted so the caller can re-baseline.
         let mut state = local();
         let mut world = ObjectManager::new();
         let (_, replies) = apply(&mut world, Some(&mut state), &pkt);
@@ -1388,21 +1405,20 @@ mod tests {
         assert_eq!(replies.len(), 1);
     }
 
-    /// **A login that landed somewhere else says so, and it is not a
-    /// teleport.**
+    /// A login on a different map from the character list updates the map,
+    /// and is not treated as a teleport.
     ///
     /// `SMSG_LOGIN_VERIFY_WORLD` is the first packet of the login burst and the
-    /// only statement the server ever makes of which map a character is on.
-    /// It is usually a restatement of the character-list row and worth
-    /// nothing; the case it exists for is `Player::LoadFromDB` relocating a
-    /// character out of an instance that has been reset, which it does with a
-    /// bare `Relocate` and no teleport packet of any kind.
+    /// only packet in which the server states which map a character is on.
+    /// It usually repeats the character-list row. It matters when vmangos'
+    /// `Player::LoadFromDB` moves a character out of an instance that has been
+    /// reset, which it does with a bare `Relocate` and no teleport packet.
     ///
-    /// Three things are pinned here. The map is taken from the packet rather
-    /// than left alone; **no ack goes out**, because there is no semaphore up
-    /// — that is `SMSG_NEW_WORLD`'s; and the **position is not adopted**,
-    /// because the character's own create block states it a few packets later
-    /// together with the speeds and flags that have to agree with it.
+    /// The test checks three things. The map is taken from the packet. No
+    /// acknowledgement is sent, because no teleport semaphore is raised (that
+    /// belongs to `SMSG_NEW_WORLD`). The position is not adopted, because the
+    /// character's create block states it a few packets later, together with
+    /// the speeds and flags that must agree with it.
     #[test]
     fn a_login_that_landed_on_another_map_moves_the_map_and_answers_nothing() {
         let mut body = Vec::new();
@@ -1413,8 +1429,8 @@ mod tests {
         let pkt = packet(Opcode::SMSG_LOGIN_VERIFY_WORLD, body);
 
         let mut state = local();
-        // What the character list said: Blackrock Depths, which is where this
-        // character logged out and is not where it has come back.
+        // The character list's map: Blackrock Depths, where this character
+        // logged out. The server has placed it elsewhere.
         state.map_id = 230;
         let was = state.mover.position();
         let mut world = ObjectManager::new();
@@ -1426,14 +1442,14 @@ mod tests {
         assert!(stats.warnings.is_empty());
         assert_eq!(stats.landed_on_map, Some(0), "…and a caller with no simulation can read it");
 
-        // A caller with no `LocalState` at all — `vale login`'s snapshot
-        // pump — still learns it, which is the whole of why the stat exists.
+        // A caller with no `LocalState` (`vale login`'s snapshot pump) still
+        // receives the map. That is the reason `landed_on_map` exists.
         let (stats, _) = apply(&mut ObjectManager::new(), None, &pkt);
         assert_eq!(stats.landed_on_map, Some(0));
 
-        // …and a body that will not read leaves the row's map standing, which
-        // is right in every case but the one above and is the conservative
-        // side of it.
+        // A body that does not parse leaves the character-list map in place.
+        // That map is correct in every case except the one above, so keeping
+        // it is the conservative choice.
         let mut state = local();
         state.map_id = 230;
         let (stats, _) = apply(
@@ -1446,12 +1462,12 @@ mod tests {
         assert_eq!(stats.warnings.len(), 1, "{:?}", stats.warnings);
     }
 
-    /// **An unreadable body is reported, not dropped.**
+    /// An unreadable body is reported, not dropped.
     ///
     /// Every `parse_*` here returns `Option`, and each call site used to decide
-    /// for itself whether to say so — the movement broadcast did, the monster
-    /// move did not. So a length bug in the packet that moves every creature in
-    /// the world produced a frozen creature and complete silence.
+    /// for itself whether to report a `None`. The movement broadcast did and
+    /// the monster move did not, so a length bug in the packet that moves every
+    /// creature produced a frozen creature and no warning.
     #[test]
     fn a_body_that_will_not_read_says_so() {
         let mut world = ObjectManager::new();
@@ -1464,24 +1480,23 @@ mod tests {
         assert_eq!(stats.warnings.len(), 1, "{:?}", stats.warnings);
         assert!(stats.warnings[0].contains("SMSG_MONSTER_MOVE"));
 
-        // …and an opcode with no handler is *not* a warning. The server
-        // legitimately sends packets this client does not implement, and
-        // counting them beside the failures would bury the failures.
+        // An opcode with no handler is not a warning. The server legitimately
+        // sends packets this client does not implement, and counting them with
+        // the parse failures would hide the failures.
         //
-        // This used to be `SMSG_EMOTE`, then `SMSG_WEATHER`, then
-        // `SMSG_PLAYED_TIME`, each the module comment's own example of a packet
-        // nobody could tell you the fate of. All three are handled now, so the
-        // example has to be one that genuinely is not: `SMSG_GMTICKET_GETTICKET`
-        // answers a GM ticket, and this client has no ticket window.
+        // The example must be an opcode with no handler.
+        // `SMSG_GMTICKET_GETTICKET` answers a GM ticket, and this client has
+        // no ticket window. (`SMSG_EMOTE`, `SMSG_WEATHER` and
+        // `SMSG_PLAYED_TIME` were used here earlier and are all handled now.)
         let (stats, _) =
             apply(&mut world, None, &packet(Opcode::SMSG_GMTICKET_GETTICKET, Vec::new()));
         assert!(stats.warnings.is_empty());
         assert_eq!(stats.other.values().sum::<u32>(), 1);
     }
 
-    /// **The login burst is the only time the spellbook is stated**, and the
-    /// action bar with it. Both land in the world state and both bump the
-    /// version a reader rebuilds the bar on.
+    /// The login burst is the only time the server states the spellbook and
+    /// the action bar. Both are stored in the world state, and each increments
+    /// `spellbook_version`, which readers use to rebuild the bar.
     #[test]
     fn the_login_burst_fills_the_spellbook_and_the_bar() {
         use crate::bytes::Writer;
@@ -1503,9 +1518,9 @@ mod tests {
         assert_eq!(world.spellbook_version, 2, "each statement bumps the version");
     }
 
-    /// A refused swing has **no body at all** — the opcode is the message — and
-    /// it is the only trace the refusal leaves. Dropping it is a player pressing
-    /// attack at twenty yards and being told nothing.
+    /// A refused swing has no body; the opcode is the message. It is the only
+    /// trace the refusal leaves. If it is dropped, a player who presses attack
+    /// at twenty yards gets no feedback.
     #[test]
     fn a_refused_swing_reaches_the_event_queue() {
         let mut world = ObjectManager::new();
@@ -1522,21 +1537,20 @@ mod tests {
                 crate::play::spells::AttackRefusal::NotInRange
             )]
         );
-        // …and taking them empties the queue, exactly as the chat one does.
+        // Taking the events empties the queue, as it does for the chat queue.
         assert!(world.take_events().is_empty());
     }
 
-    /// **The only thing the server ever says about a ranged volley is that it
-    /// has stopped** — and, like the refusal above, the opcode is the whole
-    /// message.
+    /// The only packet the server sends about an auto-repeat ranged attack is
+    /// the one saying it has stopped. As with the swing refusal above, the
+    /// opcode is the whole message.
     ///
-    /// Pinned because the asymmetry is the finding: there is no "it started"
-    /// packet at all (starting one is an ordinary `CMSG_CAST_SPELL`), so a
-    /// client that dropped this one could turn Auto Shot on and never
-    /// legitimately turn it off — the button would keep flashing through a
-    /// fight that had already ended, since `SpellCaster::InterruptSpell` routes
-    /// the target dying, the range breaking and a wand-user moving through this
-    /// same packet.
+    /// There is no packet for the start (starting one is an ordinary
+    /// `CMSG_CAST_SPELL`). A client that dropped `SMSG_CANCEL_AUTO_REPEAT`
+    /// could turn Auto Shot on and never turn it off, and the button would
+    /// keep flashing after the fight ended. vmangos'
+    /// `SpellCaster::InterruptSpell` sends this packet when the target dies,
+    /// when the target leaves range, and when a wand user moves.
     #[test]
     fn the_end_of_a_volley_reaches_the_event_queue() {
         let mut world = ObjectManager::new();
@@ -1556,26 +1570,26 @@ mod tests {
         );
     }
 
-    /// **Both halves of a cast are broadcast about everybody, and both are news
-    /// about our own casting when the caster is us.**
+    /// `SMSG_SPELL_START` and `SMSG_SPELL_GO` are broadcast for every caster,
+    /// and each raises a player event when the caster is the local player.
     ///
-    /// `SMSG_SPELL_START` is what puts the bar up — it is the only thing that
-    /// raises `SPELLCAST_START` in the 1.12 client, and this client no longer
-    /// draws a cast at the press at all — and `SMSG_SPELL_GO` is the only thing
-    /// on the wire that empties the next-swing queue. See
+    /// `SMSG_SPELL_START` shows the cast bar: it is the only thing that raises
+    /// `SPELLCAST_START` in the 1.12 client, and this client does not draw a
+    /// cast bar when the key is pressed. `SMSG_SPELL_GO` is the only packet that
+    /// empties the next-swing queue. See
     /// [`crate::play::spells::PlayerEvent::CastStarted`].
     ///
-    /// Three things are pinned and each is a one-line mistake: the caster is the
-    /// **second** packed guid in the body (the first is the cast *item*), a
-    /// stranger's cast raises nothing, and the two halves must not raise each
-    /// other's event.
+    /// The test checks three things, each of which a one-line mistake would
+    /// break: the caster is the second packed guid in the body (the first is
+    /// the cast item), another unit's cast raises no event, and neither packet
+    /// raises the other's event.
     #[test]
     fn both_halves_of_our_own_cast_reach_the_event_queue() {
         use crate::bytes::Writer;
         let mut world = ObjectManager::new();
         world.player_guid = Some(7);
-        // `SMSG_SPELL_START` carries the timer and `SMSG_SPELL_GO` a hit list,
-        // which is the one place the two bodies differ.
+        // `SMSG_SPELL_START` carries the cast timer and `SMSG_SPELL_GO` a hit
+        // list. That is the only difference between the two bodies.
         let start = |caster: u64, timer: u32| {
             let mut w = Writer::new();
             w.packed_guid(0).packed_guid(caster).u32(78).u16(0).u32(timer);
@@ -1607,19 +1621,19 @@ mod tests {
         );
     }
 
-    /// **A burst of our own releases raises one event *each*, in order, and each
-    /// one names its own spell** — which is the whole reason the cast bar is
-    /// ended from this queue rather than from the entity's `last_spell`.
+    /// Several of the local player's releases in a row raise one event each,
+    /// in order, each naming its own spell. This is why the cast bar is ended
+    /// from this queue rather than from the entity's `last_spell`.
     ///
     /// `last_spell` is one field, so the second release below overwrites the
-    /// first: a reader polling `casts_released` and then asking which spell it
-    /// was gets 21084 and never 78. That is not a hypothetical shape —
-    /// [`crate::state::objects::Entity::recent_spells`] exists because Charge is
-    /// measured as two releases inside one 25 ms tick, and a seal proc on every
-    /// swing is the same thing at melee speed. When it lost that race nothing
-    /// ever cleared the bar again, so `in_progress` stayed true and every press
-    /// for the rest of the session was refused with "another action is in
-    /// progress".
+    /// first: a reader polling `casts_released` and then reading the spell gets
+    /// 21084 and never 78. This happens in play.
+    /// [`crate::state::objects::Entity::recent_spells`] exists because Charge
+    /// was measured as two releases inside one 25 ms tick, and a seal proc on
+    /// every swing does the same at melee speed. When the bar was ended from
+    /// `last_spell` and missed the first release, nothing cleared the bar, so
+    /// `in_progress` stayed true and every press for the rest of the session was
+    /// refused with "another action is in progress".
     #[test]
     fn a_burst_of_our_own_releases_keeps_one_event_per_spell() {
         use crate::bytes::Writer;
@@ -1630,7 +1644,8 @@ mod tests {
             w.packed_guid(0).packed_guid(7).u32(spell).u16(0).u8(0);
             w.buf
         };
-        // Ours, then the one it triggered, with nothing looking in between.
+        // The player's spell, then the spell it triggered, with no read of the
+        // queue in between.
         apply(&mut world, None, &packet(Opcode::SMSG_SPELL_GO, go(78)));
         apply(&mut world, None, &packet(Opcode::SMSG_SPELL_GO, go(21084)));
         assert_eq!(
@@ -1641,14 +1656,14 @@ mod tests {
             ],
             "both releases, each naming its own spell"
         );
-        // The other half of this — that the *field* a poll would have read holds
-        // only the second — is
-        // `state::objects::tests::a_burst_of_releases_leaves_only_the_last_in_the_field`,
-        // where the manager's own fixtures are.
+        // The check that the `last_spell` field holds only the second release
+        // is `state::objects::tests::a_burst_of_releases_leaves_only_the_last_in_the_field`,
+        // next to the object manager's own fixtures.
     }
 
-    /// **`SMSG_ATTACKSTART` is broadcast about everybody**, so the one thing
-    /// the state may not do is adopt somebody else's fight as our own.
+    /// `SMSG_ATTACKSTART` is broadcast for every attacker, so the world state
+    /// must record it as the local player's attack only when the attacker is
+    /// the local player.
     #[test]
     fn only_our_own_swing_becomes_our_own_attack_state() {
         use crate::bytes::Writer;
@@ -1665,16 +1680,16 @@ mod tests {
         apply(&mut world, None, &packet(Opcode::SMSG_ATTACKSTART, ours.buf));
         assert_eq!(world.attacking, Some(1234));
 
-        // The stop is *packed* where the start is plain, and its victim may be
-        // an empty packed guid — "stop attacking, nobody in particular".
+        // The stop uses packed guids where the start uses plain ones, and its
+        // victim may be an empty packed guid, meaning no particular target.
         let mut stop = Writer::new();
         stop.packed_guid(7).packed_guid(0).u32(0);
         apply(&mut world, None, &packet(Opcode::SMSG_ATTACKSTOP, stop.buf));
         assert_eq!(world.attacking, None);
     }
 
-    /// The warning list is capped, because a systematically mis-read field
-    /// produces one per packet and the tenth says nothing the first did not.
+    /// The warning list is capped, because a field mis-read on every packet
+    /// produces one warning per packet and later copies add no information.
     #[test]
     fn warnings_are_capped() {
         let mut world = ObjectManager::new();
@@ -1695,17 +1710,17 @@ mod tests {
         assert_eq!(stats.packets, 100, "every packet is still counted");
     }
 
-    /// **The third audience: a movement flag about a unit no player is moving.**
+    /// A movement flag change about a unit no player is moving.
     ///
-    /// `SendMovementFlagChangeToAll` is the branch `Unit::SetRooted` takes for a
-    /// creature, and under 1.9.4 its body is a **packed guid and nothing else** —
-    /// so the opcode is the entire message and the flag comes from a table. It
-    /// is not acknowledged: nobody is being asked to obey it.
+    /// vmangos' `Unit::SetRooted` calls `SendMovementFlagChangeToAll` for a
+    /// creature, and under 1.9.4 its body is only a packed guid. The opcode is
+    /// the entire message and the flag comes from a table. It is not
+    /// acknowledged, because no client is being asked to obey it.
     ///
     /// Dropping it is silent and permanent. A creature's flags arrive once, in
-    /// its create block; no values update carries one and `SMSG_MONSTER_MOVE`
-    /// carries a path with no flags at all. These twelve are the only
-    /// restatement that exists.
+    /// its create block. No values update carries them, and `SMSG_MONSTER_MOVE`
+    /// carries a path with no flags. These twelve opcodes are the only
+    /// restatement.
     #[test]
     fn a_root_about_a_creature_is_a_packed_guid_and_is_never_acknowledged() {
         let mut world = ObjectManager::new();
@@ -1730,12 +1745,13 @@ mod tests {
             world.get(9).map(|e| e.move_flags() & movement::move_flags::ROOT != 0) == Some(true),
             "the creature is still being drawn as one that can move"
         );
-        // **Not answered**, for the same reason the speed broadcast is not: the
-        // server has no pending change to close and three wrong acks is a kick.
+        // Not answered, for the same reason as the speed broadcast: the server
+        // has no pending change to close, and three wrong acknowledgements get
+        // the player kicked.
         assert!(replies.is_empty(), "acknowledged a change nobody asked us to obey");
 
-        // …and it is the *only* statement, so the unroot has to come through the
-        // same door and win.
+        // This family is the only statement of the flag, so the unroot must
+        // arrive the same way and clear it.
         let (stats, _) = apply(
             &mut world,
             Some(&mut state),
@@ -1748,12 +1764,13 @@ mod tests {
         );
     }
 
-    /// A near teleport about somebody else is an ordinary movement broadcast,
-    /// and it is the only thing that moves a player who is standing still.
+    /// A near teleport about another unit is an ordinary movement broadcast,
+    /// and it is the only packet that moves a player who is standing still.
     ///
-    /// `SendTeleportToObservers` fires twice per teleport, around the old
-    /// position and the new, both carrying the destination — so it is applied
-    /// twice and must be idempotent.
+    /// vmangos' `SendTeleportToObservers` sends it twice per teleport, to
+    /// observers around the old position and around the new one, and both
+    /// copies carry the destination. It is therefore applied twice and must be
+    /// idempotent.
     #[test]
     fn a_near_teleport_moves_the_unit_it_names() {
         let mut world = ObjectManager::new();
@@ -1774,19 +1791,19 @@ mod tests {
         assert_eq!(world.get(7).and_then(|e| e.position).map(|p| p.x), Some(300.0));
         assert!(replies.is_empty(), "the ack belongs to whoever was teleported");
 
-        // The second copy lands on the same place rather than doubling it.
+        // The second copy sets the same position rather than moving it again.
         apply(&mut world, Some(&mut state), &pkt);
         assert_eq!(world.get(7).and_then(|e| e.position).map(|p| p.x), Some(300.0));
     }
 
-    /// **The three packets whose whole content is a noise**, and the fact that
-    /// two of them are laid out opposite ways round.
+    /// The three packets whose only content is a sound, and the reversed field
+    /// order between `SMSG_PLAY_OBJECT_SOUND` and the spell-visual packets.
     ///
-    /// Nothing else on the wire implies any of them: every scripted line, gate
-    /// and zone-wide announcement is `WorldObject::PlayDirectSound` or one of
-    /// its two siblings, or it is silent. They go on the player queue rather
-    /// than into the world because there is no state to fold — two arrivals are
-    /// two noises.
+    /// No other packet implies any of them: every scripted line, gate sound
+    /// and zone-wide announcement is sent by vmangos'
+    /// `WorldObject::PlayDirectSound` or one of its two siblings, or it is
+    /// silent. They go on the player event queue rather than into the world
+    /// state because there is no state to update: two arrivals are two sounds.
     #[test]
     fn a_pushed_sound_reaches_the_queue_and_keeps_its_placement() {
         use crate::play::sound::Cue;
@@ -1817,8 +1834,8 @@ mod tests {
             "music is a different channel, not a different volume"
         );
 
-        // …and the placed one, whose body is sound-then-guid where the two
-        // spell visuals below are guid-then-sound.
+        // The positioned sound. Its body is sound id then guid, where the two
+        // spell-visual packets in the next test are guid then kit id.
         let mut body = crate::bytes::Writer::new();
         body.u32(1129).u64(0xF130_0000_0000_002A);
         apply(
@@ -1835,16 +1852,17 @@ mod tests {
         );
     }
 
-    /// **A `SpellVisualKit` pushed at a unit**, which is what eating looks like.
+    /// A `SpellVisualKit` sent for a unit, which is how eating and drinking are
+    /// shown.
     ///
-    /// vmangos sends kit 406 (food) or 438 (drink) on every regeneration tick a
-    /// character spends sitting with either, and both read `animID 61`,
-    /// `EmoteEat`. Nothing else on the wire says a character is eating at all.
+    /// vmangos sends kit 406 (food) or 438 (drink) on every regeneration tick
+    /// a character spends sitting with either, and both kits use `animID 61`,
+    /// `EmoteEat`. No other packet says a character is eating.
     ///
-    /// Recorded on the entity rather than pushed on the queue — it is about a
-    /// unit and it stays true for as long as its models are up — and **on two
-    /// counters**, because the visual is about what a unit did and the impact
-    /// about what was done to it.
+    /// Recorded on the entity rather than pushed on the event queue, because
+    /// it is about a unit and stays valid while that unit's models exist.
+    /// Recorded on two counters, because the visual describes what a unit did
+    /// and the impact describes what was done to it.
     #[test]
     fn a_pushed_visual_lands_on_the_unit_it_names_and_keeps_the_two_apart() {
         let mut world = ObjectManager::new();
@@ -1880,9 +1898,9 @@ mod tests {
             "an impact must not overwrite what the unit is doing"
         );
 
-        // **A guid this client has never been sent conjures nothing**, which is
-        // the reference's own behaviour — vmangos' comment on the sibling packet
-        // says the 1.12 client ignores one for a unit it has not loaded.
+        // A guid this client has not been sent creates no entity. This matches
+        // the 1.12 client: vmangos' comment on the sibling packet says the
+        // client ignores one for a unit it has not loaded.
         let mut body = crate::bytes::Writer::new();
         body.u64(777).u32(406);
         apply(

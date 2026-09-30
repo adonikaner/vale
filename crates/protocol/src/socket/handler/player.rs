@@ -1,24 +1,25 @@
-//! **What this character can do, and what the server said about doing it.**
+//! Packet handlers for the local character: its spells, action bar, casts,
+//! items, pet, quests, NPC windows, group, social lists, mail and timers.
 //!
-//! One `pub(super) fn` per arm of [`super::apply_packet`]'s match, exactly as
-//! [`super::world`] is — see that module's comment for why the dispatch stays
-//! whole and only the bodies live out here.
+//! There is one `pub(super) fn` per arm of [`super::apply_packet`]'s match, the
+//! same layout as [`super::world`]. That module's comment explains why the
+//! dispatch match stays in one place and only the bodies live here.
 //!
-//! The split against `world` is *whose* packet it is. Everything there is about
-//! the world and arrives about anybody: a swing, an emote, a cast, a spline.
-//! Everything here is about **us** — the spellbook is ours, the action bar is
-//! ours, a cast result answers a `CMSG_CAST_SPELL` we sent, and the five
-//! attack-swing refusals answer a `CMSG_ATTACKSWING` we sent. The two attack
-//! *state* packets are the exception that proves it: they are broadcast about
-//! everyone and [`crate::state::objects::ObjectManager::apply_attack_state`] throws
-//! away every one that is not ours, because the rest is already covered by the
-//! combat flag on the units themselves.
+//! The split against `world` is by whose packet it is. Packets in `world` are
+//! about any unit in view: a swing, an emote, a cast, a spline. Packets here are
+//! about the local character: the spellbook, the action bar, a cast result that
+//! answers our `CMSG_CAST_SPELL`, and the five attack-swing refusals that answer
+//! our `CMSG_ATTACKSWING`. The two attack-state packets are an exception. They
+//! are broadcast about every unit, and
+//! [`crate::state::objects::ObjectManager::apply_attack_state`] discards every
+//! one that is not about the local character, because the combat flag on each
+//! unit already covers the others.
 //!
-//! **None of these can fail loudly.** A cast result that is dropped is a spell
-//! that silently does nothing; a spellbook that is dropped is an empty action
-//! bar. Both look like "the client does not implement casting yet" rather than
-//! like a bug, which is why every one of them goes through [`super::read`] and
-//! reaches the HUD as a warning when the body will not parse.
+//! A dropped packet here produces no visible error. A dropped cast result is a
+//! spell that does nothing; a dropped spellbook is an empty action bar. Both look
+//! like missing features rather than bugs. For that reason every handler parses
+//! through [`super::read`], which reports a body that will not parse to the HUD
+//! as a warning.
 
 use super::{read, Incoming};
 use crate::opcodes::Opcode;
@@ -29,8 +30,8 @@ use crate::socket::world::Packet;
 
 /// `SMSG_INITIAL_SPELLS`: every spell this character knows.
 ///
-/// Said **once**, in the login burst, and never restated. Everything the action
-/// bar can do is downstream of this one packet.
+/// Sent once, in the login burst, and never sent again. The action bar's
+/// contents depend on this packet.
 pub(super) fn initial_spells(ctx: &mut Incoming, pkt: &Packet) {
     let Some(book) = read(ctx.stats, pkt, spells::parse_initial_spells(&pkt.body)) else {
         return;
@@ -41,18 +42,20 @@ pub(super) fn initial_spells(ctx: &mut Incoming, pkt: &Packet) {
 
 /// `SMSG_ACTION_BUTTONS`: where the last session left the bar.
 ///
-/// 120 bare words with no count in front of them, so the *length* is the
-/// framing and a short read is a half-filled bar rather than a failure.
+/// The body is 120 `u32` words with no count before them. The body length is
+/// the only framing, so a short body produces a partly filled bar rather than a
+/// parse failure.
 pub(super) fn action_buttons(ctx: &mut Incoming, pkt: &Packet) {
     let buttons = spells::parse_action_buttons(&pkt.body);
     ctx.stats.action_buttons = buttons.len() as u32;
     ctx.world.apply_action_buttons(buttons);
 }
 
-/// `SMSG_LEARNED_SPELL` (`u32`) and `SMSG_REMOVED_SPELL` (**`u16`**).
+/// `SMSG_LEARNED_SPELL` (`u32` spell id) and `SMSG_REMOVED_SPELL` (`u16` spell
+/// id).
 ///
-/// The widths differ and the packets are adjacent in the opcode table, which is
-/// the sort of asymmetry that reads as "learned spell 0" when it is guessed at.
+/// The two packets are adjacent in the opcode table but their id widths differ.
+/// Reading both with the same width produces wrong spell ids, such as spell 0.
 pub(super) fn spell_change(ctx: &mut Incoming, pkt: &Packet, learned: bool) {
     let parsed = if learned {
         spells::parse_learned_spell(&pkt.body)
@@ -67,12 +70,11 @@ pub(super) fn spell_change(ctx: &mut Incoming, pkt: &Packet, learned: bool) {
 
 /// `SMSG_SUPERCEDED_SPELL`: a higher rank replaced a lower one.
 ///
-/// **The root cause of a stale action bar, and it had never been read.** The
-/// swap is the client's to perform — in the book and in every slot holding the
-/// old id — and the server says so once and never again. What it costs to miss
-/// is a button that draws correctly and casts nothing, because the server
-/// refuses a superseded rank without replying; see
-/// [`spells::parse_superceded_spell`].
+/// The client performs the replacement itself, in the spellbook and in every
+/// action bar slot that holds the old id. The server sends this packet once. If
+/// it is missed, the action bar keeps the old rank: the button draws correctly
+/// but casts nothing, because the server refuses a superseded rank without
+/// replying. See [`spells::parse_superceded_spell`].
 pub(super) fn superceded_spell(ctx: &mut Incoming, pkt: &Packet) {
     let Some((old, new)) = read(ctx.stats, pkt, spells::parse_superceded_spell(&pkt.body)) else {
         return;
@@ -82,9 +84,8 @@ pub(super) fn superceded_spell(ctx: &mut Incoming, pkt: &Packet) {
 
 /// `SMSG_CAST_RESULT`: the answer to our own `CMSG_CAST_SPELL`.
 ///
-/// **Sent on success as well as on failure.** The success is not noise: it is
-/// what says a cast bar may keep running, and its *absence* after a failure is
-/// what stops one. See [`spells::CastResult`].
+/// Sent on success as well as on failure. A success tells the cast bar to keep
+/// running; a failure, with no success, stops it. See [`spells::CastResult`].
 pub(super) fn cast_result(ctx: &mut Incoming, pkt: &Packet) {
     let Some(result) = read(ctx.stats, pkt, spells::parse_cast_result(&pkt.body)) else {
         return;
@@ -100,9 +101,10 @@ pub(super) fn cast_result(ctx: &mut Incoming, pkt: &Packet) {
             spell_id: result.spell_id,
         },
     });
-    // **And take the art back off.** This client draws its own cast at the
-    // press, so a refusal arrives with the wind-up already held and — for an
-    // instant — the release already playing. Nothing else would end either; see
+    // On a failure, also cancel the cast animation. This client starts its own
+    // cast animation when the key is pressed, so a refusal arrives while the
+    // wind-up pose is held and, for an instant cast, the release is already
+    // playing. No other packet ends either animation; see
     // [`crate::state::objects::Entity::casts_cancelled`].
     if result.failure.is_some() {
         if let Some(guid) = ctx.world.player_guid {
@@ -111,43 +113,30 @@ pub(super) fn cast_result(ctx: &mut Incoming, pkt: &Packet) {
     }
 }
 
-/// `SMSG_INVENTORY_CHANGE_FAILURE`: an item verb was refused.
+/// `SMSG_PET_SPELLS`: the whole pet action bar, or an eight-byte body that
+/// removes it.
 ///
-/// **The only thing on the wire that answers a right-click the server threw
-/// away.** A potion whose level requirement is not met never reaches
-/// `Spell::prepare`, so no `SMSG_CAST_RESULT` is sent and the click is otherwise
-/// indistinguishable from a click on empty ground — which is the report this arm
-/// exists for.
+/// The bar is stored as state rather than raised as events, for two reasons. The
+/// pet panel is drawn from it every frame. The dismissal is the same packet with
+/// a zero guid, which a queue of events could not express.
 ///
-/// `EQUIP_ERR_OK` arrives here too, as a one-byte body: several verbs end with
-/// one and it is not a failure. It is passed on rather than dropped, because the
-/// *release* code `HandleUseItemOpcode` sends before the real reason
-/// (`EQUIP_ERR_NONE`) is a different value with no string, and telling the two
-/// apart is the reader's business rather than this one's.
-/// **`SMSG_PET_SPELLS`: the whole pet panel, or the eight bytes that take it
-/// down.**
-///
-/// The bar is stored rather than fanned out into events because it is *state* —
-/// a panel is drawn from it every frame — and because the dismissal is the same
-/// packet with a zero guid, which a queue of edges could not express.
-///
-/// **The pet's *name* is not asked for here**, and that is deliberate: this
-/// packet arrives before the pet's own create block on a summon, so the number
-/// it is keyed by does not exist yet. `ObjectManager::unresolved_pet_names`
-/// derives the ask from the bar and the entity together instead.
+/// The pet's name is not queried here. On a summon this packet arrives before
+/// the pet's create block, so the pet number the name query is keyed by is not
+/// known yet. `ObjectManager::unresolved_pet_names` builds the query from the
+/// bar and the entity together instead.
 pub(super) fn pet_spells(ctx: &mut Incoming, pkt: &Packet) {
     let Some(spells) = read(ctx.stats, pkt, crate::play::pet::parse_pet_spells(&pkt.body)) else {
         return;
     };
     ctx.world.apply_pet_spells(spells);
-    // …and the query pass is told to look, which is what turns the name's ask
-    // from a two-second beat into the next tick. See
+    // Tell the query pass to run on the next tick instead of waiting for its
+    // two-second interval, so the pet name query goes out promptly. See
     // `ObjectManager::take_query_hint`.
     ctx.world.hint_queries();
 }
 
-/// `SMSG_PET_MODE` — the four state bytes on their own, for when only the mood
-/// changed.
+/// `SMSG_PET_MODE`: the pet's four state bytes on their own, sent when only the
+/// pet's mode changed.
 pub(super) fn pet_mode(ctx: &mut Incoming, pkt: &Packet) {
     let Some(mode) = read(ctx.stats, pkt, crate::play::pet::parse_pet_mode(&pkt.body)) else {
         return;
@@ -155,24 +144,26 @@ pub(super) fn pet_mode(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.apply_pet_mode(mode);
 }
 
-/// `SMSG_PET_NAME_QUERY_RESPONSE` — what the player called it, keyed by number.
+/// `SMSG_PET_NAME_QUERY_RESPONSE`: the name the player gave the pet, keyed by
+/// pet number.
 pub(super) fn pet_name(ctx: &mut Incoming, pkt: &Packet) {
     let Some(name) = read(ctx.stats, pkt, crate::play::pet::parse_pet_name(&pkt.body)) else {
         return;
     };
-    // A rename answers under the same pet number, so this is the one cached
-    // answer that replaces rather than skips — see [`crate::play::wdb`].
+    // A rename is answered under the same pet number, so this cached answer
+    // replaces an existing entry instead of being skipped. See
+    // [`crate::play::wdb`].
     ctx.world
         .remember_again(Kind::PetName, u64::from(name.pet_number), &pkt.body);
     ctx.world.apply_pet_name(name);
 }
 
-/// **The four pet packets whose whole content is a sentence**, plus the unlearn
-/// confirmation.
+/// Pet feedback: the four pet packets that each carry one message line, plus
+/// the unlearn confirmation.
 ///
-/// Each is an edge rather than state — see [`PlayerEvent::PetFeedback`] — and
-/// two of the five have no body at all, which is the same shape the five
-/// attack-swing refusals have: the opcode *is* the message.
+/// Each is an event rather than state; see [`PlayerEvent::PetFeedback`]. Two of
+/// the five have no body, like the five attack-swing refusals: the opcode is the
+/// message.
 pub(super) fn pet_feedback(ctx: &mut Incoming, pkt: &Packet) {
     let Some(message) = read(ctx.stats, pkt, crate::play::pet::parse_pet_feedback(&pkt.body))
     else {
@@ -226,9 +217,9 @@ pub(super) fn pet_unlearn_confirm(ctx: &mut Incoming, pkt: &Packet) {
         .note_event(PlayerEvent::PetUnlearnConfirm { pet, cost });
 }
 
-/// **The pet said something** — `SMSG_PET_ACTION_SOUND`, whose value selects
-/// between two `CreatureSoundData` columns rather than naming a sound. An edge
-/// like the feedback above it: two orders are two barks.
+/// `SMSG_PET_ACTION_SOUND`: the pet plays a voice sound. The value selects one
+/// of two `CreatureSoundData` columns rather than naming a sound. It is an event,
+/// like the pet feedback above: two orders produce two sounds.
 pub(super) fn pet_action_sound(ctx: &mut Incoming, pkt: &Packet) {
     let Some((pet, talk)) = read(
         ctx.stats,
@@ -240,8 +231,9 @@ pub(super) fn pet_action_sound(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::PetTalk { pet, talk });
 }
 
-/// …and its goodbye — `SMSG_PET_DISMISS_SOUND`, the one pet packet about a
-/// unit that no longer exists, which is why it carries a model id and a place.
+/// `SMSG_PET_DISMISS_SOUND`: the sound played when a pet is dismissed. It is the
+/// only pet packet about a unit that no longer exists, so it carries a model id
+/// and a position.
 pub(super) fn pet_dismiss_sound(ctx: &mut Incoming, pkt: &Packet) {
     let Some(sound) = read(
         ctx.stats,
@@ -253,6 +245,19 @@ pub(super) fn pet_dismiss_sound(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::PetDismissSound(sound));
 }
 
+/// `SMSG_INVENTORY_CHANGE_FAILURE`: an item action was refused.
+///
+/// This is the only packet that answers an item right-click the server
+/// discarded. A potion whose level requirement is not met never reaches
+/// vmangos's `Spell::prepare`, so no `SMSG_CAST_RESULT` is sent. Without this
+/// packet the click looks the same as a click on empty ground, which is the
+/// reported problem this handler fixes.
+///
+/// `EQUIP_ERR_OK` also arrives here, as a one-byte body: several item actions
+/// end with one, and it is not a failure. It is passed on rather than dropped.
+/// The release code that `HandleUseItemOpcode` sends before the real reason
+/// (`EQUIP_ERR_NONE`) is a different value with no string, and the event's
+/// reader tells the two apart.
 pub(super) fn inventory_failed(ctx: &mut Incoming, pkt: &Packet) {
     let Some(failure) = read(
         ctx.stats,
@@ -264,17 +269,17 @@ pub(super) fn inventory_failed(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::InventoryFailed(failure));
 }
 
-/// **`SMSG_ITEM_PUSH_RESULT`: something went into a bag** — and the only packet
-/// that says so whatever brought it.
+/// `SMSG_ITEM_PUSH_RESULT`: an item was added to a bag. It is the only packet
+/// that reports this, whatever the source of the item.
 ///
-/// Everything else about the inventory is update fields, and a field says what
-/// is true now rather than what happened: a stack that grew by three carries no
-/// statement that it was looted rather than bought. `Player::SendNewItem` has
-/// twenty call sites — loot, a vendor, a quest reward, mail, a trade, a craft,
-/// a battleground mark, a GM command — and this is all of them.
+/// The rest of the inventory arrives as update fields, and a field states the
+/// current value, not what happened: a stack that grew by three does not say
+/// whether it was looted or bought. vmangos's `Player::SendNewItem` has twenty
+/// callers (loot, a vendor, a quest reward, mail, a trade, a craft, a
+/// battleground mark, a GM command), and every one of them sends this packet.
 ///
-/// **Broadcast to the group for a loot**, so the guid in the body is not
-/// necessarily ours and the reader has to check. See
+/// For loot it is broadcast to the group, so the guid in the body is not always
+/// the local character's and the reader has to check it. See
 /// [`crate::play::items::ItemPush`].
 pub(super) fn item_received(ctx: &mut Incoming, pkt: &Packet) {
     let Some(push) = read(
@@ -288,14 +293,50 @@ pub(super) fn item_received(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::ItemReceived(push));
 }
 
-/// **`SMSG_TRANSFER_ABORTED`: the map change we asked for is not happening.**
+/// `SMSG_ITEM_ENCHANT_TIME_UPDATE`: how long a temporary enchantment has left.
 ///
-/// One byte, and it is the only reply an instance portal ever gets that is not
-/// the teleport itself — `HandleAreaTriggerOpcode` answers a trigger it declines
-/// to act on with silence, so this arm and `SMSG_NEW_WORLD` are the two
-/// outcomes. The reason is passed on raw; see
-/// [`crate::play::areatrigger::TransferAbort`], where three of the six codes show
-/// nothing at all and that is the client's own behaviour.
+/// The 1.12.1 client counts the time down itself from the moment the packet
+/// arrives; the time the interface prints is not the item's own duration
+/// field. See [`crate::play::items::ItemTimers`]. The inventory version is
+/// incremented so the snapshot the interface reads picks up the new expiry.
+pub(super) fn enchant_time(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(time) = read(
+        ctx.stats,
+        pkt,
+        crate::play::items::parse_item_enchant_time_update(&pkt.body),
+    ) else {
+        return;
+    };
+    ctx.world
+        .item_timers
+        .note_enchantment(time, std::time::Instant::now());
+    ctx.world.inventory_version = ctx.world.inventory_version.wrapping_add(1);
+}
+
+/// `SMSG_ITEM_TIME_UPDATE`: how long an expiring item has left, on the same
+/// terms as [`enchant_time`].
+pub(super) fn item_time(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(time) = read(
+        ctx.stats,
+        pkt,
+        crate::play::items::parse_item_time_update(&pkt.body),
+    ) else {
+        return;
+    };
+    ctx.world
+        .item_timers
+        .note_item(time, std::time::Instant::now());
+    ctx.world.inventory_version = ctx.world.inventory_version.wrapping_add(1);
+}
+
+/// `SMSG_TRANSFER_ABORTED`: the requested map change will not happen.
+///
+/// The body is one byte. Apart from the teleport itself, this is the only reply
+/// an instance portal can produce: vmangos's `HandleAreaTriggerOpcode` sends
+/// nothing for a trigger it declines to act on, so the two outcomes are this
+/// packet and `SMSG_NEW_WORLD`. The reason byte is passed on unchanged; see
+/// [`crate::play::areatrigger::TransferAbort`]. For three of the six codes the
+/// 1.12.1 client shows nothing.
 pub(super) fn transfer_aborted(ctx: &mut Incoming, pkt: &Packet) {
     let Some(reason) = read(
         ctx.stats,
@@ -307,16 +348,15 @@ pub(super) fn transfer_aborted(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::TransferAborted { reason });
 }
 
-/// **`SMSG_TRANSFER_PENDING`: the map change we are about to make.**
+/// `SMSG_TRANSFER_PENDING`: the character is about to change map.
 ///
-/// The one packet in this dispatch whose entire purpose is a *picture*. Nothing
-/// is acknowledged, no state changes and no position arrives — the server sends
-/// it from `Player::ExecuteTeleportFar` a few lines before it removes the
-/// character from the old map, so that the client can put the loading screen up
-/// before the world underneath it goes away.
+/// This packet exists so the client can show the loading screen. Nothing is
+/// acknowledged, no state changes and no position arrives. vmangos sends it from
+/// `Player::ExecuteTeleportFar` shortly before it removes the character from the
+/// old map, so the client can show the loading screen before the old world is
+/// unloaded.
 ///
-/// This arm was deliberately absent for the life of the project, because this
-/// client had no loading screen to raise. It has one now: `crates/client/src/game/loading.rs`.
+/// The loading screen is `crates/client/src/game/loading.rs`.
 pub(super) fn transfer_pending(ctx: &mut Incoming, pkt: &Packet) {
     let Some(pending) = read(
         ctx.stats,
@@ -325,11 +365,11 @@ pub(super) fn transfer_pending(ctx: &mut Incoming, pkt: &Packet) {
     ) else {
         return;
     };
-    // **…and one thing that is not a picture**: whether this transfer began on
-    // a boat. The two extra dwords are written only for a character standing on
-    // a transport, and `SMSG_NEW_WORLD` carries no such mark — so this is the
-    // only place the difference between *the boat is taking me with it* and
-    // *something has taken me off the boat* crosses the wire. See
+    // The packet also says whether the transfer began on a transport. The two
+    // extra dwords are written only for a character standing on a transport,
+    // and `SMSG_NEW_WORLD` has no equivalent field. This is therefore the only
+    // packet that distinguishes a transport carrying the character to the new
+    // map from a teleport that takes the character off the transport. See
     // [`crate::state::movement::Mover::transfer_aboard`].
     if let Some(local) = ctx.local.as_deref_mut() {
         local.transfer_on_transport = pending.transport.is_some();
@@ -339,25 +379,26 @@ pub(super) fn transfer_pending(ctx: &mut Incoming, pkt: &Packet) {
     });
 }
 
-/// **`SMSG_LOGIN_VERIFY_WORLD`: which map this login actually landed on.**
+/// `SMSG_LOGIN_VERIFY_WORLD`: the map the login actually placed the character
+/// on.
 ///
-/// Sets [`LocalState::map_id`] and nothing else. The whole argument for the
-/// arm is in [`crate::state::movement::LoginVerifyWorld`]: the map the
-/// character list named can be stale by the time the login finishes, the server
-/// corrects it inside `Player::LoadFromDB` with a bare `Relocate`, and this is
-/// the only packet that carries the correction.
+/// Sets [`LocalState::map_id`] and nothing else. The reasoning is in
+/// [`crate::state::movement::LoginVerifyWorld`]: the map named in the character
+/// list can be stale by the time the login finishes, vmangos corrects it inside
+/// `Player::LoadFromDB` with a bare `Relocate`, and this is the only packet that
+/// carries the correction.
 ///
-/// **Not acknowledged**, unlike `SMSG_NEW_WORLD`. There is no semaphore up: the
-/// server is telling us where we already are rather than holding the session
-/// until we say we have arrived, and a `MSG_MOVE_WORLDPORT_ACK` with nothing
-/// pending is a packet the server has no state for.
+/// Not acknowledged, unlike `SMSG_NEW_WORLD`. No transfer semaphore is set: the
+/// server is not holding the session until the client confirms arrival; it is
+/// stating where the character
+/// already is. A `MSG_MOVE_WORLDPORT_ACK` sent with no transfer pending is a
+/// packet the server has no state for.
 ///
-/// **The position is deliberately not adopted.** It arrives before the
-/// character's own create block, which states the same position along with the
-/// speeds and the movement flags that have to agree with it — see
-/// `SessionLoop::enter_world`, which resyncs the mover from that block. Two
-/// sources for one position is a place for them to disagree, and this is the
-/// one with less in it.
+/// The position in the packet is not used. It arrives before the character's
+/// create block, which carries the same position together with the speeds and
+/// movement flags that must agree with it; `SessionLoop::enter_world` resyncs
+/// the mover from that block. Using one source avoids two positions that could
+/// disagree, and the create block is the source with more data.
 ///
 /// [`LocalState::map_id`]: crate::socket::handler::LocalState::map_id
 pub(super) fn login_verify_world(ctx: &mut Incoming, pkt: &Packet) {
@@ -376,8 +417,8 @@ pub(super) fn login_verify_world(ctx: &mut Incoming, pkt: &Packet) {
 
 /// `SMSG_SPELL_FAILED_OTHER`: a cast in progress was interrupted.
 ///
-/// Broadcast, so it arrives about anyone in sight; the reader decides whether
-/// the guid is ours. vmangos never sends `SMSG_SPELL_FAILURE` at all.
+/// Broadcast, so it arrives for any caster in view; the reader decides whether
+/// the guid is the local character's. vmangos never sends `SMSG_SPELL_FAILURE`.
 pub(super) fn cast_interrupted(ctx: &mut Incoming, pkt: &Packet) {
     let Some((guid, spell_id)) = read(ctx.stats, pkt, spells::parse_spell_failed_other(&pkt.body))
     else {
@@ -385,46 +426,47 @@ pub(super) fn cast_interrupted(ctx: &mut Incoming, pkt: &Packet) {
     };
     ctx.world
         .note_event(PlayerEvent::CastInterrupted { guid, spell_id });
-    // **Broadcast, so this one ends anybody's wind-up.** Before it, an
-    // interrupted caster held the pose until `HOLD_GRACE_SECS` ran out — a
-    // silenced mage stood with his hands up for a second after the cast had
-    // stopped. The bar's own end is the `PlayerEvent` above, and it is ours
-    // only; this is the *art*, and it is everyone's.
+    // The packet is broadcast, so this cancels the wind-up animation of any
+    // caster, not only the local character. Without this call an interrupted
+    // caster held the pose until `HOLD_GRACE_SECS` ran out: a silenced mage
+    // kept the casting pose for a second after the cast had stopped. The
+    // `PlayerEvent` above ends the cast bar, which only the local character has;
+    // this call ends the animation, which every caster has.
     ctx.world.apply_cast_cancelled(guid, spell_id);
 }
 
-/// `SMSG_SPELL_DELAYED`: our cast was pushed back by damage taken.
+/// `SMSG_SPELL_DELAYED`: a cast was pushed back by damage taken.
 ///
-/// **The whole of "an interrupt adds time to the cast"**, and the client owns
-/// none of the arithmetic: the server has already moved its own `m_timer` and
-/// this says by how much. Both halves of the client have to be told, and they
-/// are two different readers — the world's copy extends the wind-up pose and the
-/// art hanging off the caster ([`ObjectManager::apply_cast_delayed`]), and the
-/// queue's copy is what slides the cast bar, which is
-/// `CastingBarFrame_OnEvent`'s own `SPELLCAST_DELAYED` arm.
+/// This packet is the only source of cast pushback, and the client does none
+/// of the arithmetic: the server has already moved its own `m_timer`, and the
+/// packet says by how much. Two readers in the client need it. The world's copy
+/// extends the wind-up pose and the effects attached to the caster
+/// ([`ObjectManager::apply_cast_delayed`]). The event queue's copy moves the
+/// cast bar, which FrameXML's `CastingBarFrame_OnEvent` does on
+/// `SPELLCAST_DELAYED`.
 pub(super) fn cast_delayed(ctx: &mut Incoming, pkt: &Packet) {
     let Some((guid, delay_ms)) = read(ctx.stats, pkt, spells::parse_spell_delayed(&pkt.body)) else {
         return;
     };
     ctx.world.apply_cast_delayed(guid, delay_ms);
-    // Caster-only on the wire, but the guid is what says so rather than the
-    // opcode: a pushback against a pet or any other unit has no bar of ours to
-    // slide, and putting one on the player's would be a bar that moves for a
-    // cast they are not making.
+    // The packet is sent only to the caster, but the guid in it, not the
+    // opcode, decides whether the local cast bar moves. A pushback on a pet or
+    // any other unit has no
+    // cast bar here; applying it to the player's bar would move the bar for a
+    // cast the player is not making.
     if ctx.world.player_guid == Some(guid) {
         ctx.world.note_event(PlayerEvent::CastDelayed { delay_ms });
     }
 }
 
-/// **The quest family, one arm apiece** — see [`crate::play::quest`], which owns the
-/// wire and the two things about it that are not guessable: the log's packed
-/// six-bit counters and the `| 0x80000000` that makes an objective's target a
-/// game object rather than a creature.
+/// Quest packet handlers, one function per opcode. The wire format is in
+/// [`crate::play::quest`], including two details that cannot be inferred: the
+/// quest log's packed six-bit counters, and the `| 0x80000000` flag that makes
+/// an objective's target a game object rather than a creature.
 ///
-/// A macro because eleven of these are the same three lines and the alternative
-/// is eleven copies of a `let Some(x) = read(…) else { return }` — the shape
-/// this file already repeats twenty times, at the point where repeating it
-/// again stops being clearer than naming it.
+/// This is a macro because eleven of the handlers are the same three lines. The
+/// alternative is eleven more copies of `let Some(x) = read(…) else { return }`,
+/// a pattern this file already repeats twenty times.
 macro_rules! quest_arm {
     ($name:ident, $parse:path, $event:expr) => {
         pub(super) fn $name(ctx: &mut Incoming, pkt: &Packet) {
@@ -454,8 +496,8 @@ quest_arm!(
     crate::play::quest::parse_quest_complete,
     PlayerEvent::QuestComplete
 );
-/// `SMSG_QUEST_QUERY_RESPONSE`: one quest's template. The body is kept for the
-/// on-disk cache, keyed by the quest id it begins with — see
+/// `SMSG_QUEST_QUERY_RESPONSE`: one quest's template. The body is stored in the
+/// on-disk cache, keyed by the quest id it begins with. See
 /// [`crate::play::wdb`].
 pub(super) fn quest_template(ctx: &mut Incoming, pkt: &Packet) {
     let Some(template) = read(
@@ -482,12 +524,12 @@ quest_arm!(quest_refused, crate::play::quest::parse_quest_id, |reason| {
     PlayerEvent::QuestRefused { reason }
 });
 
-/// `SMSG_QUESTGIVER_STATUS`: **what is over this giver's head.**
+/// `SMSG_QUESTGIVER_STATUS`: the quest marker over a quest giver's head.
 ///
-/// Kept in the world as well as raised, because it is the one member of the
-/// family that outlives its own arrival: the `!` stays there until the server
-/// says otherwise, and the pass that draws it reads the world rather than
-/// listening for an edge it may have been spawned after.
+/// Stored in the world as well as raised as an event, because unlike the other
+/// quest packets its value persists: the `!` stays until the server sends a new
+/// status. The pass that draws the marker reads the stored value, because it may
+/// have started after the event was raised.
 pub(super) fn quest_status(ctx: &mut Incoming, pkt: &Packet) {
     let Some((guid, status)) = read(
         ctx.stats,
@@ -502,8 +544,9 @@ pub(super) fn quest_status(ctx: &mut Incoming, pkt: &Packet) {
 
 /// `SMSG_QUESTUPDATE_FAILED` and `SMSG_QUESTUPDATE_FAILEDTIMER`.
 ///
-/// Two opcodes, one body, and the difference is what the interface says about
-/// it — which is why the flag is carried rather than the two being folded.
+/// Two opcodes with the same body. They differ only in the message the
+/// interface shows, so the event carries a `timed_out` flag instead of merging
+/// the two.
 pub(super) fn quest_failed(ctx: &mut Incoming, pkt: &Packet, timed_out: bool) {
     let Some(quest_id) = read(ctx.stats, pkt, crate::play::quest::parse_quest_id(&pkt.body)) else {
         return;
@@ -512,8 +555,9 @@ pub(super) fn quest_failed(ctx: &mut Incoming, pkt: &Packet, timed_out: bool) {
         .note_event(PlayerEvent::QuestFailed { quest_id, timed_out });
 }
 
-/// **Talking to an NPC** — the gossip menu, its text, and the vendor window.
-/// See [`crate::play::gossip`], which owns the wire and the icon-word table.
+/// `SMSG_GOSSIP_MESSAGE`: an NPC's gossip menu. This handler and the ones after
+/// it cover NPC interaction: the gossip menu, its text, and the vendor window.
+/// The wire format and the icon table are in [`crate::play::gossip`].
 pub(super) fn gossip_show(ctx: &mut Incoming, pkt: &Packet) {
     let Some(menu) = read(ctx.stats, pkt, crate::play::gossip::parse_gossip_message(&pkt.body)) else {
         return;
@@ -521,17 +565,18 @@ pub(super) fn gossip_show(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::GossipShow(Box::new(menu)));
 }
 
-/// `SMSG_GOSSIP_COMPLETE`: the server closed the window. The opcode is the
-/// whole message.
+/// `SMSG_GOSSIP_COMPLETE`: the server closed the gossip window. The packet has
+/// no body.
 pub(super) fn gossip_closed(ctx: &mut Incoming) {
     ctx.world.note_event(PlayerEvent::GossipClosed);
 }
 
 /// `SMSG_BINDPOINTUPDATE`: where the hearthstone returns the character to.
 ///
-/// Arrives once in the login burst and again on every change, and nothing else
-/// ever restates it — hence [`ObjectManager::bind_point`] rather than an event.
-/// See [`crate::play::bindpoint`] for the whole subject.
+/// Arrives once in the login burst and again on every change, and no other
+/// packet carries the bind point. It is therefore stored in
+/// [`ObjectManager::bind_point`] rather than raised as an event. See
+/// [`crate::play::bindpoint`].
 pub(super) fn bind_point(ctx: &mut Incoming, pkt: &Packet) {
     if let Some(point) = read(
         ctx.stats,
@@ -542,12 +587,13 @@ pub(super) fn bind_point(ctx: &mut Incoming, pkt: &Packet) {
     }
 }
 
-/// `SMSG_PLAYERBOUND`: who bound us, and to which area.
+/// `SMSG_PLAYERBOUND`: the unit that set the local character's bind point, and
+/// the area it was set to.
 ///
-/// Raised as an event *and* folded into the stored bind point. The two packets
-/// arrive together out of `Spell::EffectBind`, and there is no ordering rule
-/// between them — so the area is taken from whichever lands first rather than
-/// leaving a window in which the tooltip names the old home.
+/// Raised as an event and also written into the stored bind point. vmangos's
+/// `Spell::EffectBind` sends this packet and `SMSG_BINDPOINTUPDATE` together,
+/// with no fixed order between them. Taking the area from whichever arrives
+/// first means the tooltip never names the old home in between.
 pub(super) fn player_bound(ctx: &mut Incoming, pkt: &Packet) {
     let Some((guid, area_id)) = read(
         ctx.stats,
@@ -564,10 +610,10 @@ pub(super) fn player_bound(ctx: &mut Incoming, pkt: &Packet) {
 
 /// `SMSG_BINDER_CONFIRM`: an innkeeper asking to be made home.
 ///
-/// **Not answered here.** The reply is a person pressing Accept on the
-/// interface's own `CONFIRM_BINDER` popup, so the guid goes to the client and
-/// comes back as `CMSG_BINDER_ACTIVATE` if it does. A handler that answered it
-/// outright would bind the character to every inn they asked a question in.
+/// Not answered here. The reply comes from the player pressing Accept on the
+/// interface's `CONFIRM_BINDER` popup: the guid goes to the client, which sends
+/// `CMSG_BINDER_ACTIVATE` if the player accepts. Answering automatically would
+/// bind the character to every inn whose innkeeper they spoke to.
 pub(super) fn binder_confirm(ctx: &mut Incoming, pkt: &Packet) {
     if let Some(guid) = read(
         ctx.stats,
@@ -578,11 +624,11 @@ pub(super) fn binder_confirm(ctx: &mut Incoming, pkt: &Packet) {
     }
 }
 
-/// `SMSG_DUEL_REQUESTED`: a duel asked for, by us or at us.
+/// `SMSG_DUEL_REQUESTED`: a duel request, sent by the local character or to it.
 ///
-/// Passed on whole: what the reference does with it depends on whether the
-/// initiator is us, whether they are on the ignore list and whether they are
-/// in view, and all three are the client's to answer. See
+/// Passed on unchanged. What the 1.12.1 client does with it depends on whether
+/// the initiator is the local character, whether they are on the ignore list,
+/// and whether they are in view; the client decides all three. See
 /// [`crate::play::duel`].
 pub(super) fn duel_requested(ctx: &mut Incoming, pkt: &Packet) {
     if let Some((arbiter, initiator)) =
@@ -606,29 +652,29 @@ pub(super) fn duel_bounds(ctx: &mut Incoming, out: bool) {
     ctx.world.note_event(PlayerEvent::DuelBounds { out });
 }
 
-/// `SMSG_DUEL_COMPLETE`: over, one way or another.
+/// `SMSG_DUEL_COMPLETE`: the duel has ended, whether or not it started.
 pub(super) fn duel_complete(ctx: &mut Incoming, pkt: &Packet) {
     if let Some(started) = read(ctx.stats, pkt, crate::play::duel::parse_duel_complete(&pkt.body)) {
         ctx.world.note_event(PlayerEvent::DuelComplete { started });
     }
 }
 
-/// `SMSG_DUEL_WINNER`: who won. Broadcast to everyone near the flag, so it
-/// arrives for other people's duels too, and the reference prints it for them.
+/// `SMSG_DUEL_WINNER`: who won. Broadcast to every player near the duel flag, so
+/// it also arrives for other players' duels, and the 1.12.1 client prints the
+/// message for those too.
 pub(super) fn duel_winner(ctx: &mut Incoming, pkt: &Packet) {
     if let Some(winner) = read(ctx.stats, pkt, crate::play::duel::parse_duel_winner(&pkt.body)) {
         ctx.world.note_event(PlayerEvent::DuelWinner(winner));
     }
 }
 
-/// `SMSG_SUMMON_REQUEST`: somebody wants to bring us to them.
+/// `SMSG_SUMMON_REQUEST`: another player is summoning the local character.
 ///
-/// **The summoner's name is asked for here**, because it is the one thing the
-/// popup says and the summoner is almost never in view — they are at a stone
-/// or a ritual on the far side of the world. The reference reads its own name
-/// cache and fills the gap when the query lands, via a callback, which is what
-/// [`ObjectManager::want_social_guid`]'s query
-/// pass does here.
+/// The summoner's name is queried here. The popup shows the name, and the
+/// summoner is almost never in view: they are at a meeting stone or a ritual
+/// elsewhere in the world. The 1.12.1 client takes the name from its name cache
+/// and fills it in when the query answer arrives; here the query pass behind
+/// [`ObjectManager::want_social_guid`] does the same.
 pub(super) fn summon_request(ctx: &mut Incoming, pkt: &Packet) {
     if let Some(request) = read(ctx.stats, pkt, crate::play::summon::parse_summon_request(&pkt.body)) {
         ctx.world.want_social_guid(request.summoner);
@@ -676,7 +722,7 @@ pub(super) fn vendor_sold(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::VendorSold { guid, slot, left });
 }
 
-/// `SMSG_BUY_FAILED`: …or did not, and why.
+/// `SMSG_BUY_FAILED`: a purchase was refused, and the reason.
 pub(super) fn buy_failed(ctx: &mut Incoming, pkt: &Packet) {
     let Some((_guid, entry, reason)) =
         read(ctx.stats, pkt, crate::play::gossip::parse_buy_failed(&pkt.body))
@@ -686,7 +732,7 @@ pub(super) fn buy_failed(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::BuyFailed { entry, reason });
 }
 
-/// `SMSG_SELL_ITEM`: a sale refused — the success has no packet at all.
+/// `SMSG_SELL_ITEM`: a sale was refused. A successful sale sends no packet.
 pub(super) fn sell_failed(ctx: &mut Incoming, pkt: &Packet) {
     let Some((_vendor, item, reason)) =
         read(ctx.stats, pkt, crate::play::gossip::parse_sell_failed(&pkt.body))
@@ -696,8 +742,8 @@ pub(super) fn sell_failed(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::SellFailed { item, reason });
 }
 
-/// `SMSG_TRAINER_LIST`: **what this NPC will teach.** See [`crate::play::trainer`],
-/// which owns the row layout and the three states.
+/// `SMSG_TRAINER_LIST`: the services this trainer offers. The row layout and
+/// the three row states are in [`crate::play::trainer`].
 pub(super) fn trainer_list(ctx: &mut Incoming, pkt: &Packet) {
     let Some(list) = read(ctx.stats, pkt, crate::play::trainer::parse_trainer_list(&pkt.body)) else {
         return;
@@ -708,11 +754,11 @@ pub(super) fn trainer_list(ctx: &mut Incoming, pkt: &Packet) {
 
 /// `SMSG_TRAINER_BUY_SUCCEEDED`: a service was learned.
 ///
-/// **This is not how the spell reaches the spellbook** — that is
-/// `SMSG_LEARNED_SPELL`, sent by the cast the server runs on our behalf. All
-/// this says is which row of the open window is now grey, and the server
-/// re-sends the whole list anyway; both are read, because the row has to
-/// re-colour on the press rather than a round trip later.
+/// This packet does not add the spell to the spellbook; `SMSG_LEARNED_SPELL`
+/// does that, sent by the cast the server runs for the player. This packet only
+/// says which row of the open window is now grey. The server also re-sends the
+/// whole list. Both are read, because the row has to change colour on the
+/// purchase rather than a round trip later.
 pub(super) fn trainer_bought(ctx: &mut Incoming, pkt: &Packet) {
     let Some((_guid, spell)) = read(ctx.stats, pkt, crate::play::trainer::parse_trainer_bought(&pkt.body))
     else {
@@ -721,8 +767,8 @@ pub(super) fn trainer_bought(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::TrainerBought { spell });
 }
 
-/// `SMSG_TRAINER_BUY_FAILED`: …or was not, and why — a **`u32`** reason where
-/// every other refusal in the game is a byte.
+/// `SMSG_TRAINER_BUY_FAILED`: a trainer purchase was refused. The reason is a
+/// `u32`, where every other refusal code in the game is a byte.
 pub(super) fn trainer_buy_failed(ctx: &mut Incoming, pkt: &Packet) {
     let Some((_guid, spell, reason)) = read(
         ctx.stats,
@@ -735,11 +781,12 @@ pub(super) fn trainer_buy_failed(ctx: &mut Incoming, pkt: &Packet) {
         .note_event(PlayerEvent::TrainerBuyFailed { spell, reason });
 }
 
-/// `MSG_LIST_STABLED_PETS`: **the stable window, whole.** See
-/// [`crate::play::stable`], which owns the row layout and the slot convention.
+/// `MSG_LIST_STABLED_PETS`: the full contents of the stable window. The row
+/// layout and the slot numbering are in [`crate::play::stable`].
 ///
-/// The same opcode the client re-asks with, which is what `MSG_` means — the
-/// direction is decided by who sent it and not by the name.
+/// The client sends the same opcode to request the list again. The `MSG_`
+/// prefix means the opcode is used in both directions; the sender decides the
+/// direction, not the name.
 pub(super) fn stable_list(ctx: &mut Incoming, pkt: &Packet) {
     let Some(list) = read(ctx.stats, pkt, crate::play::stable::parse_stabled_pets(&pkt.body)) else {
         return;
@@ -747,12 +794,12 @@ pub(super) fn stable_list(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::StableList(Box::new(list)));
 }
 
-/// `SMSG_STABLE_RESULT`: **one byte, and it is the answer to all four verbs.**
+/// `SMSG_STABLE_RESULT`: a one-byte result shared by all four stable actions.
 ///
-/// Which verb it answers is not in the packet — a stable, an unstable, a swap
-/// and a slot purchase all come back here, and only the success codes say which
-/// of them happened. The window re-asks on any success rather than guessing;
-/// see `client/src/game/npc/stable.rs`.
+/// The packet does not say which action it answers. Stabling, unstabling,
+/// swapping and buying a slot all reply here, and only the success codes
+/// distinguish them. The window requests the list again after any success
+/// instead of inferring the change; see `client/src/game/npc/stable.rs`.
 pub(super) fn stable_result(ctx: &mut Incoming, pkt: &Packet) {
     let Some((byte, result)) = read(ctx.stats, pkt, crate::play::stable::parse_stable_result(&pkt.body))
     else {
@@ -761,10 +808,10 @@ pub(super) fn stable_result(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::StableResult { byte, result });
 }
 
-/// `SMSG_SHOW_BANK`: **the bank window, which is a guid.** What is in the bank
-/// is twenty-four guid fields that arrived with the backpack — see
-/// [`crate::play::bank`] — so this packet opens the frame and names the
-/// banker every verb will name again, and carries nothing else.
+/// `SMSG_SHOW_BANK`: opens the bank window. The body is the banker's guid and
+/// nothing else. The bank's contents are twenty-four guid fields that arrive
+/// with the backpack (see [`crate::play::bank`]), so this packet only opens the
+/// frame and names the banker that every later bank action names again.
 pub(super) fn bank_show(ctx: &mut Incoming, pkt: &Packet) {
     let Some(banker) = read(ctx.stats, pkt, crate::play::bank::parse_show_bank(&pkt.body)) else {
         return;
@@ -772,9 +819,9 @@ pub(super) fn bank_show(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::BankShow(banker));
 }
 
-/// `SMSG_BUY_BANK_SLOT_RESULT`: **a refusal, and only ever a refusal.** The
-/// success writes a byte of `PLAYER_BYTES_2` and sends nothing; see
-/// [`crate::play::bank`].
+/// `SMSG_BUY_BANK_SLOT_RESULT`: a refused bank slot purchase. This packet is
+/// only sent on failure; a success changes a byte of `PLAYER_BYTES_2` and sends
+/// nothing. See [`crate::play::bank`].
 pub(super) fn bank_slot_result(ctx: &mut Incoming, pkt: &Packet) {
     let Some((code, result)) = read(
         ctx.stats,
@@ -786,9 +833,9 @@ pub(super) fn bank_slot_result(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::BankSlotResult { code, result });
 }
 
-/// `SMSG_SHOWTAXINODES`: **the flight map.** See [`crate::play::taxi`], which owns
-/// the wire, and `vale_assets::tables::taxi`, which owns everything the window then
-/// makes of it.
+/// `SMSG_SHOWTAXINODES`: opens the flight map. The wire format is in
+/// [`crate::play::taxi`]; the data the window draws from is in
+/// `vale_assets::tables::taxi`.
 pub(super) fn taxi_show(ctx: &mut Incoming, pkt: &Packet) {
     let Some(menu) = read(ctx.stats, pkt, crate::play::taxi::parse_show_taxi_nodes(&pkt.body)) else {
         return;
@@ -796,12 +843,13 @@ pub(super) fn taxi_show(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::TaxiShow(menu));
 }
 
-/// `SMSG_TAXINODE_STATUS`: is this master's own node one we know?
+/// `SMSG_TAXINODE_STATUS`: whether the local character knows this flight
+/// master's node.
 ///
-/// **Both an edge and a state**, which is the shape `SMSG_QUESTGIVER_STATUS`
-/// already has and for the same reason: the green `!` over an undiscovered
-/// flight master has to be drawable by a pass that was not listening when the
-/// byte arrived, so the answer is kept on the world as well as announced.
+/// Stored as state and also raised as an event, like `SMSG_QUESTGIVER_STATUS`
+/// and for the same reason. The green `!` over an undiscovered flight master is
+/// drawn by a pass that may have started after the byte arrived, so the value
+/// is kept in the world as well as announced.
 pub(super) fn taxi_node_status(ctx: &mut Incoming, pkt: &Packet) {
     let Some((guid, known)) = read(
         ctx.stats,
@@ -815,22 +863,21 @@ pub(super) fn taxi_node_status(ctx: &mut Incoming, pkt: &Packet) {
         .note_event(PlayerEvent::TaxiNodeStatus { guid, known });
 }
 
-/// `SMSG_NEW_TAXI_PATH`: **a flight point discovered.** No body at all — the
-/// packet is the whole message, and the mask that changed with it arrives on
-/// the next `SMSG_SHOWTAXINODES` rather than here.
+/// `SMSG_NEW_TAXI_PATH`: a flight point was discovered. The packet has no body.
+/// The updated known-nodes mask arrives with the next `SMSG_SHOWTAXINODES`, not
+/// here.
 ///
-/// **Nothing is invalidated here either**, which is worth stating because it
-/// looks like an omission: the green `!` this discovery takes down is keyed on
-/// the master's guid, and `SendLearnNewTaxiNode` sends a fresh
-/// `SMSG_TAXINODE_STATUS` carrying 1 for that very guid immediately after this
-/// packet. The mark comes down because the server said so, not because the
-/// client guessed which unit was meant.
+/// No stored status is cleared here. The green `!` that the discovery removes is
+/// keyed by the flight master's guid, and vmangos's `SendLearnNewTaxiNode` sends
+/// a new `SMSG_TAXINODE_STATUS` with value 1 for that guid immediately after
+/// this packet. The marker is removed by that status packet, so the client does
+/// not have to work out which unit the discovery refers to.
 pub(super) fn new_taxi_path(ctx: &mut Incoming) {
     ctx.world.note_event(PlayerEvent::NewTaxiPath);
 }
 
-/// `SMSG_ACTIVATETAXIREPLY`: the flight is happening, or one of twelve reasons
-/// it is not.
+/// `SMSG_ACTIVATETAXIREPLY`: the flight has started, or one of twelve reasons it
+/// has not.
 pub(super) fn taxi_reply(ctx: &mut Incoming, pkt: &Packet) {
     let Some(reply) = read(
         ctx.stats,
@@ -842,12 +889,12 @@ pub(super) fn taxi_reply(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::TaxiReply(reply));
 }
 
-/// `SMSG_LOOT_RESPONSE`: **the window on a body — or the refusal to open one.**
+/// `SMSG_LOOT_RESPONSE`: the loot window for a corpse or object, or a refusal to
+/// open one.
 ///
-/// One opcode, two meanings, told apart by a loot type of zero. See
-/// [`crate::play::loot`], which is where that reading is argued and where the two
-/// numberings — the server's sparse index and the interface's dense row — are
-/// crossed.
+/// A loot type of zero marks the refusal. [`crate::play::loot`] explains that
+/// reading and maps between the two numberings: the server's sparse slot index
+/// and the interface's dense row number.
 pub(super) fn loot_response(ctx: &mut Incoming, pkt: &Packet) {
     let Some(loot) = read(ctx.stats, pkt, crate::play::loot::parse_loot_response(&pkt.body)) else {
         return;
@@ -855,12 +902,13 @@ pub(super) fn loot_response(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::LootOpened(loot));
 }
 
-/// `SMSG_LOOT_RELEASE_RESPONSE`: **the server agrees the body is shut.**
+/// `SMSG_LOOT_RELEASE_RESPONSE`: the server has closed the loot session.
 ///
-/// What actually closes the window. `HandleLootReleaseOpcode` discards the guid
-/// the client sends and releases whatever it last recorded, so closing on the
-/// send is a window the server still thinks is open — and a body that will not
-/// reopen.
+/// This packet, not the client's release request, closes the window.
+/// vmangos's `HandleLootReleaseOpcode` ignores the guid the client sends and
+/// releases whatever loot it last recorded. Closing the window when the request
+/// is sent leaves the server believing the window is still open, and the corpse
+/// cannot be looted again.
 pub(super) fn loot_released(ctx: &mut Incoming, pkt: &Packet) {
     let Some(guid) = read(
         ctx.stats,
@@ -872,11 +920,12 @@ pub(super) fn loot_released(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::LootClosed { guid });
 }
 
-/// `SMSG_LOOT_REMOVED`: one row is gone, by the **server's** index.
+/// `SMSG_LOOT_REMOVED`: one row was taken, identified by the server's slot
+/// index.
 ///
-/// Sent to everyone with the window open, so it arrives for a row a group
-/// member took as well as for one we took — which is why the window is amended
-/// from this rather than from our own click.
+/// Sent to every player with the window open, so it arrives for a row a group
+/// member took as well as one the local character took. The window is updated
+/// from this packet rather than from the local click for that reason.
 pub(super) fn loot_removed(ctx: &mut Incoming, pkt: &Packet) {
     let Some(index) = read(ctx.stats, pkt, crate::play::loot::parse_loot_removed(&pkt.body)) else {
         return;
@@ -884,12 +933,12 @@ pub(super) fn loot_removed(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::LootRemoved { index });
 }
 
-/// `SMSG_LOOT_START_ROLL`: **a group roll has opened on one row.**
+/// `SMSG_LOOT_START_ROLL`: a group roll has started on one loot row.
 ///
-/// The window on the body already holds that row as `RollOngoing`; this is what
-/// puts a `GroupLootFrame` in front of the player. See
-/// [`crate::play::lootroll`], and note the id the interface uses is the
-/// client's own counter rather than anything in this packet.
+/// The loot window already holds that row as `RollOngoing`; this packet opens a
+/// `GroupLootFrame` for the player. See [`crate::play::lootroll`]. The roll id
+/// the interface uses is a counter kept by the client, not a value from this
+/// packet.
 pub(super) fn loot_roll_started(ctx: &mut Incoming, pkt: &Packet) {
     let Some(roll) = read(
         ctx.stats,
@@ -901,10 +950,11 @@ pub(super) fn loot_roll_started(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::LootRollStarted(roll));
 }
 
-/// `SMSG_LOOT_ROLL`: somebody chose, or somebody's dice landed.
+/// `SMSG_LOOT_ROLL`: a player chose need, greed or pass, or a player's roll
+/// result.
 ///
-/// **Both, on one packet.** The discriminator is the roll *number* and not the
-/// type byte beside it — see [`crate::play::lootroll::RollLine::of`].
+/// Both use this one packet. The roll number tells them apart, not the roll
+/// type byte next to it; see [`crate::play::lootroll::RollLine::of`].
 pub(super) fn loot_roll_cast(ctx: &mut Incoming, pkt: &Packet) {
     let Some(cast) = read(
         ctx.stats,
@@ -916,11 +966,12 @@ pub(super) fn loot_roll_cast(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::LootRollCast(cast));
 }
 
-/// `SMSG_LOOT_ROLL_WON`: the item is in somebody's bags already.
+/// `SMSG_LOOT_ROLL_WON`: the roll is over and the item is in the winner's bags.
 ///
-/// It can name a roll that never started here — the result goes to everyone who
-/// was eligible, and a member who joined after the roll opened was sent no
-/// start. The reference has that branch too; see [`crate::play::lootroll`].
+/// It can name a roll that never started on this client. The result goes to
+/// every eligible player, and a member who joined after the roll opened was not
+/// sent the start. The 1.12.1 client handles that case as well; see
+/// [`crate::play::lootroll`].
 pub(super) fn loot_roll_won(ctx: &mut Incoming, pkt: &Packet) {
     let Some(won) = read(
         ctx.stats,
@@ -932,10 +983,11 @@ pub(super) fn loot_roll_won(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::LootRollWon(won));
 }
 
-/// `SMSG_LOOT_ALL_PASSED`: **nobody wanted it, and the row is clickable again.**
+/// `SMSG_LOOT_ALL_PASSED`: every player passed on the roll.
 ///
-/// The second half of that sentence is the client's own: no packet ever says a
-/// blocked row has been unblocked. See [`crate::play::loot::Loot::unblock`].
+/// The client also makes the row clickable again on this packet. No packet
+/// states that a blocked row has been unblocked. See
+/// [`crate::play::loot::Loot::unblock`].
 pub(super) fn loot_roll_all_passed(ctx: &mut Incoming, pkt: &Packet) {
     let Some(passed) = read(
         ctx.stats,
@@ -947,13 +999,15 @@ pub(super) fn loot_roll_all_passed(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::LootRollAllPassed(passed));
 }
 
-/// `SMSG_LOOT_CLEAR_MONEY`: the coins are gone from the window. No body at all.
+/// `SMSG_LOOT_CLEAR_MONEY`: the money has been removed from the loot window. The
+/// packet has no body.
 pub(super) fn loot_money_cleared(ctx: &mut Incoming) {
     ctx.world.note_event(PlayerEvent::LootMoneyCleared);
 }
 
-/// `SMSG_LOOT_MONEY_NOTIFY`: **your share**, which in a group is not what was on
-/// the body. A different statement from the clear above; see [`crate::play::loot`].
+/// `SMSG_LOOT_MONEY_NOTIFY`: the local character's share of the money, which in
+/// a group differs from the amount on the corpse. It is a separate event from
+/// the clear above; see [`crate::play::loot`].
 pub(super) fn loot_money_gained(ctx: &mut Incoming, pkt: &Packet) {
     let Some(copper) = read(
         ctx.stats,
@@ -965,17 +1019,17 @@ pub(super) fn loot_money_gained(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::LootMoneyGained { copper });
 }
 
-/// `SMSG_START_MIRROR_TIMER`: **a bar the server is counting for us.**
+/// `SMSG_START_MIRROR_TIMER`: a timer bar that the server counts down.
 ///
-/// The breath meter, and the two beside it. Nothing here decides anything: the
-/// packet carries a remaining, a length and a *rate*, and the interface
-/// interpolates between statements — see [`crate::play::timers`], which is the whole
-/// of the family, including why the third of these packets is one the shipped
-/// handler cannot act on.
+/// These are the breath meter and the two bars next to it. This handler makes
+/// no decisions: the packet carries a remaining value, a maximum and a rate, and
+/// the interface interpolates between packets. See [`crate::play::timers`],
+/// which covers all three mirror-timer packets, including why the shipped
+/// FrameXML handler cannot act on the third (pause).
 ///
-/// A start and not an update: the server resends this to say *paused* as well,
-/// because its own pause event is broken, so two arrivals with identical fields
-/// are two statements about the bar.
+/// Every arrival is a start, not an update. The server also resends this packet
+/// to signal a pause, because its own pause event is broken, so two arrivals
+/// with identical fields are still two separate statements about the bar.
 pub(super) fn mirror_timer_start(ctx: &mut Incoming, pkt: &Packet) {
     let Some(start) = read(ctx.stats, pkt, timers::parse_start_mirror_timer(&pkt.body)) else {
         return;
@@ -983,7 +1037,7 @@ pub(super) fn mirror_timer_start(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::MirrorTimerStarted(start));
 }
 
-/// `SMSG_STOP_MIRROR_TIMER`: that bar goes away. One `u32` and no more.
+/// `SMSG_STOP_MIRROR_TIMER`: removes a timer bar. The body is one `u32`.
 pub(super) fn mirror_timer_stop(ctx: &mut Incoming, pkt: &Packet) {
     let Some(timer) = read(ctx.stats, pkt, timers::parse_stop_mirror_timer(&pkt.body)) else {
         return;
@@ -991,12 +1045,12 @@ pub(super) fn mirror_timer_stop(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::MirrorTimerStopped { timer });
 }
 
-/// `SMSG_PAUSE_MIRROR_TIMER`: it freezes where it stands.
+/// `SMSG_PAUSE_MIRROR_TIMER`: freezes a timer bar at its current value.
 ///
-/// **The reference server never sends this** and the reference interface could
-/// not use it if it did — `MirrorTimerFrame_OnEvent` reads `arg1` as both the
-/// timer's name and the paused flag. Read and raised anyway, faithfully, so
-/// that a server which does send it is not silently ignored.
+/// vmangos never sends this, and the FrameXML interface could not use it if it
+/// did: `MirrorTimerFrame_OnEvent` reads `arg1` as both the timer's name and
+/// the paused flag. It is still parsed and raised, so a server that does send it
+/// is not ignored.
 pub(super) fn mirror_timer_pause(ctx: &mut Incoming, pkt: &Packet) {
     let Some((timer, paused)) = read(ctx.stats, pkt, timers::parse_pause_mirror_timer(&pkt.body))
     else {
@@ -1006,18 +1060,19 @@ pub(super) fn mirror_timer_pause(ctx: &mut Incoming, pkt: &Packet) {
         .note_event(PlayerEvent::MirrorTimerPaused { timer, paused });
 }
 
-/// `SMSG_SPELL_COOLDOWN`: the server's **override** path, not the ordinary one.
+/// `SMSG_SPELL_COOLDOWN`: a cooldown the server imposes directly, not the
+/// ordinary per-cast cooldown.
 ///
-/// A plain cast's own recovery is computed by the client from `Spell.dbc` and
-/// started when its `SMSG_SPELL_GO` returns — vmangos sends no packet for it.
-/// This is a school lockout, a pet's list, or a GM reset, and it may name
-/// several spells at once.
+/// The client computes an ordinary cast's cooldown from `Spell.dbc` and starts
+/// it when the cast's `SMSG_SPELL_GO` arrives; vmangos sends no packet for it.
+/// This packet carries a school lockout, a pet's cooldown list, or a GM reset,
+/// and it can name several spells at once.
 pub(super) fn spell_cooldown(ctx: &mut Incoming, pkt: &Packet) {
     let Some(cooldowns) = read(ctx.stats, pkt, spells::parse_spell_cooldowns(&pkt.body)) else {
         return;
     };
-    // About a pet or another unit: this client has one cooldown store and it is
-    // the player's, so anything else is dropped rather than applied to it.
+    // A packet about a pet or another unit is dropped: this client has one
+    // cooldown store, and it belongs to the player.
     if ctx.world.player_guid != Some(cooldowns.guid) {
         return;
     }
@@ -1027,17 +1082,16 @@ pub(super) fn spell_cooldown(ctx: &mut Incoming, pkt: &Packet) {
     }
 }
 
-/// `SMSG_CLEAR_COOLDOWN`: **the cooldown is over now.**
+/// `SMSG_CLEAR_COOLDOWN`: a cooldown ends now.
 ///
-/// The counterpart to [`spell_cooldown`] above, and the one this client read
-/// nothing for: a school lockout lifted early, any cooldown removal, the
-/// warlock ritual fix-up. Without it the swirl runs to the length the *start*
-/// packet stated, which is right whenever the lockout runs its course and wrong
-/// whenever it does not.
+/// The counterpart to [`spell_cooldown`] above. The server sends it when a
+/// school lockout is lifted early, when any cooldown is removed, and for the
+/// warlock ritual correction. Without it the cooldown animation runs for the
+/// length the start packet gave, which is correct only when the lockout runs its
+/// full course.
 ///
-/// **The guid test is doing real work here**, not just filtering pets: it is
-/// what makes the layout reading in [`spells::parse_clear_cooldown`] check
-/// itself. See there.
+/// The guid comparison does more than filter out pets: it validates the field
+/// layout assumed by [`spells::parse_clear_cooldown`]. See that function.
 pub(super) fn clear_cooldown(ctx: &mut Incoming, pkt: &Packet) {
     let Some((spell_id, guid)) = read(ctx.stats, pkt, spells::parse_clear_cooldown(&pkt.body))
     else {
@@ -1050,11 +1104,11 @@ pub(super) fn clear_cooldown(ctx: &mut Incoming, pkt: &Packet) {
         .note_event(PlayerEvent::CooldownCleared { spell_id });
 }
 
-/// `SMSG_COOLDOWN_EVENT`: release a cooldown that was parked.
+/// `SMSG_COOLDOWN_EVENT`: start a cooldown that was held.
 ///
-/// `SPELL_ATTR_COOLDOWN_ON_EVENT` — Stealth and Feign Death take their recovery
-/// when they *break* rather than when they are cast, so the client inserts the
-/// record on hold and this starts its clock.
+/// Spells with `SPELL_ATTR_COOLDOWN_ON_EVENT`, such as Stealth and Feign Death,
+/// start their cooldown when the effect ends rather than when they are cast. The
+/// client records the cooldown as held at cast time, and this packet starts it.
 pub(super) fn cooldown_event(ctx: &mut Incoming, pkt: &Packet) {
     let Some((spell_id, guid)) = read(ctx.stats, pkt, spells::parse_cooldown_event(&pkt.body))
     else {
@@ -1070,9 +1124,10 @@ pub(super) fn cooldown_event(ctx: &mut Incoming, pkt: &Packet) {
 /// `SMSG_ATTACKSTART` and `SMSG_ATTACKSTOP`: a unit has begun or stopped
 /// swinging at another.
 ///
-/// **The two disagree about guid packing** — start streams two plain ones and
-/// stop two packed ones, one function apart in `Unit.cpp`. Broadcast about
-/// everybody; only our own reaches the state, see the module comment.
+/// The two packets encode guids differently: start writes two plain guids and
+/// stop writes two packed guids, in adjacent functions of vmangos's `Unit.cpp`.
+/// Both are broadcast about every unit; only the local character's reach the
+/// state. See the module comment.
 pub(super) fn attack_state(ctx: &mut Incoming, pkt: &Packet, starting: bool) {
     let parsed = if starting {
         spells::parse_attack_start(&pkt.body)
@@ -1086,35 +1141,35 @@ pub(super) fn attack_state(ctx: &mut Incoming, pkt: &Packet, starting: bool) {
         .apply_attack_state(attacker, starting.then_some(victim));
 }
 
-/// `SMSG_CANCEL_AUTO_REPEAT`: the ranged loop has stopped.
+/// `SMSG_CANCEL_AUTO_REPEAT`: the auto-repeat ranged attack has stopped.
 ///
-/// **No body and no guid** — it is sent to the one player it is about
-/// (`Player::SendAutoRepeatCancel`), so there is nothing to check and nothing
-/// to read. See [`PlayerEvent::AutoRepeatCancelled`] for why it has more
-/// senders than the player's own press, and why that is the reason it has to be
-/// read at all: every server-side end of the loop (the target dies, walks out
-/// of range, a wand-user moves) comes through here and nowhere else.
+/// No body and no guid. vmangos sends it only to the player it concerns
+/// (`Player::SendAutoRepeatCancel`), so there is nothing to check or read. See
+/// [`PlayerEvent::AutoRepeatCancelled`] for the senders other than the player's
+/// own key press. Those senders are why the packet must be handled: every
+/// server-side end of the loop (the target dies, the target moves out of range,
+/// a wand user moves) is reported only by this packet.
 pub(super) fn auto_repeat_cancelled(ctx: &mut Incoming) {
     ctx.world.note_event(PlayerEvent::AutoRepeatCancelled);
 }
 
 /// `MSG_CHANNEL_START`: a channel has begun, and for how long.
 ///
-/// **The one packet that says how long to hold a channel's pose.** Everything
-/// else about a channelled spell looks like an instant one from the wire —
-/// `SMSG_SPELL_START` is not sent and `SMSG_SPELL_GO` fires immediately — so an
-/// Evocation was drawn as a release with nothing after it. See
-/// [`ObjectManager::apply_channel_start`], which folds it into the cast
-/// counters because from the animation's side that is what a channel is.
+/// This is the only packet that says how long to hold a channel's pose. On the
+/// wire every other packet of a channelled spell looks like an instant cast:
+/// `SMSG_SPELL_START` is not sent and `SMSG_SPELL_GO` arrives immediately.
+/// Without this packet Evocation was drawn as a release animation with nothing
+/// after it. See [`ObjectManager::apply_channel_start`], which records the
+/// channel in the cast counters, because for the animation a channel is a cast.
 pub(super) fn channel_start(ctx: &mut Incoming, pkt: &Packet) {
     let Some((spell_id, duration_ms)) = read(ctx.stats, pkt, spells::parse_channel_start(&pkt.body))
     else {
         return;
     };
     ctx.world.apply_channel_start(spell_id, duration_ms);
-    // **…and the same news on the interface's own queue.** The world's copy
-    // above drives the held pose; this is what a cast bar has to hear, and there
-    // is no other packet that would tell it — see [`PlayerEvent::ChannelStart`].
+    // Also raise the event for the interface. The world's copy above drives the
+    // held pose; this event drives the cast bar, and no other packet starts a
+    // channel's bar. See [`PlayerEvent::ChannelStart`].
     ctx.world
         .note_event(spells::PlayerEvent::ChannelStart {
             spell_id,
@@ -1122,7 +1177,7 @@ pub(super) fn channel_start(ctx: &mut Incoming, pkt: &Packet) {
         });
 }
 
-/// `MSG_CHANNEL_UPDATE`: how much of it is left, and zero for "it is over".
+/// `MSG_CHANNEL_UPDATE`: the time left on the channel; zero means it has ended.
 pub(super) fn channel_update(ctx: &mut Incoming, pkt: &Packet) {
     let Some(remaining_ms) = read(ctx.stats, pkt, spells::parse_channel_update(&pkt.body)) else {
         return;
@@ -1134,10 +1189,10 @@ pub(super) fn channel_update(ctx: &mut Incoming, pkt: &Packet) {
 
 /// `SMSG_UPDATE_AURA_DURATION`: how long the buff in this slot has left.
 ///
-/// **Ours by construction** — the server sends it only to the aura's own target
-/// and only when that target is a player — so there is no guid to check and
-/// nothing to filter. What a mis-slotted reading costs is a timer under the
-/// wrong icon, which is why the join is the reader's and is gated there; see
+/// Always about the local character: the server sends it only to the aura's
+/// target, and only when that target is a player. There is no guid to check. A
+/// wrong slot reading would put a timer under the wrong icon, so matching the
+/// slot to an aura is done and checked by the reader; see
 /// [`ObjectManager::note_aura_duration`].
 pub(super) fn aura_duration(ctx: &mut Incoming, pkt: &Packet) {
     let Some((slot, remaining_ms)) = read(ctx.stats, pkt, spells::parse_aura_duration(&pkt.body))
@@ -1147,11 +1202,11 @@ pub(super) fn aura_duration(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_aura_duration(slot, remaining_ms);
 }
 
-/// `SMSG_LEVELUP_INFO`: we gained a level.
+/// `SMSG_LEVELUP_INFO`: the local character gained a level.
 ///
-/// The one packet that says a level-up *happened*, and the eleven deltas it
-/// carries beside the level — all of which the interface's own handler reads.
-/// See [`spells::parse_levelup`].
+/// The only packet that reports a level-up as an event. It carries the new
+/// level and eleven stat deltas, all of which the FrameXML handler reads. See
+/// [`spells::parse_levelup`].
 pub(super) fn levelup(ctx: &mut Incoming, pkt: &Packet) {
     let Some(gained) = read(ctx.stats, pkt, spells::parse_levelup(&pkt.body)) else {
         return;
@@ -1159,11 +1214,11 @@ pub(super) fn levelup(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::LevelUp(gained));
 }
 
-/// `SMSG_CORPSE_RECLAIM_DELAY`: how long the body must lie there.
+/// `SMSG_CORPSE_RECLAIM_DELAY`: how long until the corpse can be reclaimed.
 ///
-/// **Said once, at the moment of release, and never restated** — so a client
-/// that drops it has no way to ask again, and offers a Retrieve button the
-/// server will silently ignore for the next thirty seconds.
+/// Sent once, when the spirit is released, and never again. A client that drops
+/// it cannot ask again, and shows a Retrieve button that the server ignores for
+/// the next thirty seconds.
 pub(super) fn corpse_reclaim_delay(ctx: &mut Incoming, pkt: &Packet) {
     let Some(ms) = read(ctx.stats, pkt, crate::play::death::parse_corpse_reclaim_delay(&pkt.body)) else {
         return;
@@ -1171,12 +1226,13 @@ pub(super) fn corpse_reclaim_delay(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::CorpseReclaimDelay { ms });
 }
 
-/// `MSG_CORPSE_QUERY`, the **reply** — the same opcode we asked with.
+/// `MSG_CORPSE_QUERY`, the server's reply, which uses the same opcode as the
+/// request.
 ///
-/// A found corpse and no corpse are both valid answers and only the first has a
-/// body past its flag byte; see [`crate::play::death::parse_corpse_query`], which is
-/// why this is `Option<Option<_>>` all the way through rather than collapsing
-/// "no corpse" into "would not parse".
+/// A found corpse and no corpse are both valid answers, and only the first has
+/// data after its flag byte; see [`crate::play::death::parse_corpse_query`]. For
+/// that reason the value is `Option<Option<_>>` throughout, so "no corpse" is
+/// not confused with "would not parse".
 pub(super) fn corpse_located(ctx: &mut Incoming, pkt: &Packet) {
     let Some(place) = read(ctx.stats, pkt, crate::play::death::parse_corpse_query(&pkt.body)) else {
         return;
@@ -1184,7 +1240,8 @@ pub(super) fn corpse_located(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::CorpseLocated(place));
 }
 
-/// `SMSG_RESURRECT_REQUEST`: somebody has offered to bring us back.
+/// `SMSG_RESURRECT_REQUEST`: a unit has offered to resurrect the local
+/// character.
 pub(super) fn resurrect_offered(ctx: &mut Incoming, pkt: &Packet) {
     let Some(offer) = read(ctx.stats, pkt, crate::play::death::parse_resurrect_request(&pkt.body)) else {
         return;
@@ -1207,11 +1264,11 @@ pub(super) fn spirit_healer_offered(ctx: &mut Incoming, pkt: &Packet) {
 
 /// `SMSG_LOGOUT_RESPONSE`: what the server made of `CMSG_LOGOUT_REQUEST`.
 ///
-/// **The only one of the four logout packets with a body**, and the only one
-/// that can say no — see [`crate::play::logout`], where the three `reason` values and
-/// the instant flag come from. A body that will not parse is reported rather
-/// than taken as an acceptance: five bytes read as a zero reason would put the
-/// character screen up over a character still standing in the world.
+/// The only one of the four logout packets with a body, and the only one that
+/// can refuse. The three `reason` values and the instant flag are documented in
+/// [`crate::play::logout`]. A body that will not parse is reported, not treated
+/// as an acceptance: reading five bytes as a zero reason would show the
+/// character screen while the character is still in the world.
 pub(super) fn logout_response(ctx: &mut Incoming, pkt: &Packet) {
     let Some(logout) = read(ctx.stats, pkt, crate::play::logout::parse_logout_response(&pkt.body)) else {
         return;
@@ -1219,19 +1276,18 @@ pub(super) fn logout_response(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::Logout(logout));
 }
 
-/// `SMSG_LOGOUT_COMPLETE` and `SMSG_LOGOUT_CANCEL_ACK`: **no body on either**,
-/// so the opcode is the whole message — the same shape as the five attack
-/// refusals below.
+/// `SMSG_LOGOUT_COMPLETE` and `SMSG_LOGOUT_CANCEL_ACK`: neither has a body, so
+/// the opcode is the message, as with the five attack refusals below.
 pub(super) fn logout_state(ctx: &mut Incoming, state: crate::play::logout::Logout) {
     ctx.world.note_event(PlayerEvent::Logout(state));
 }
 
 /// The five `SMSG_ATTACKSWING_*` refusals.
 ///
-/// **The opcode is the whole message**; there is no body on any of them. Each
-/// names a `GlobalStrings.lua` key rather than a string this client made up —
-/// "You are too far away!" and "You are facing the wrong way!" are the game's
-/// own words for the two that a player meets constantly.
+/// None of them has a body; the opcode is the message. Each maps to a
+/// `GlobalStrings.lua` key rather than a string written for this client. "You
+/// are too far away!" and "You are facing the wrong way!" are the game's own
+/// text for the two most common ones.
 pub(super) fn attack_refused(ctx: &mut Incoming, refusal: spells::AttackRefusal) {
     ctx.stats.attack_refusals += 1;
     ctx.world.note_event(PlayerEvent::AttackRefused(refusal));
@@ -1246,14 +1302,15 @@ pub(super) fn is_spell_change(op: Opcode) -> Option<bool> {
     }
 }
 
-// --- the party ------------------------------------------------------------
+// --- Group packets --------------------------------------------------------
 //
-// See [`crate::play::group`]. Six edges and one piece of state; the state is
-// `SMSG_GROUP_LIST` and it arrives whole every time.
+// See [`crate::play::group`]. Six packets are events and one is state; the
+// state is `SMSG_GROUP_LIST`, which always arrives complete.
 
-/// `SMSG_GROUP_INVITE`: **somebody wants us in their party.** The body is their
-/// name and nothing else, and what it costs when it is dropped is the whole of
-/// joining a group: there is no second announcement and no way to ask.
+/// `SMSG_GROUP_INVITE`: another player invited the local character to a group.
+/// The body is the inviter's name and nothing else. If it is dropped the player
+/// cannot join the group: the invitation is not repeated and cannot be
+/// requested.
 pub(super) fn group_invite(ctx: &mut Incoming, pkt: &Packet) {
     let Some(name) = read(ctx.stats, pkt, crate::play::group::parse_name(&pkt.body)) else {
         return;
@@ -1261,8 +1318,8 @@ pub(super) fn group_invite(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::GroupInvite { name });
 }
 
-/// `SMSG_GROUP_DECLINE`: somebody we asked said no. **Only the inviter is
-/// told**, so this reaches exactly one client and leaves no other trace.
+/// `SMSG_GROUP_DECLINE`: a player the local character invited declined. Only
+/// the inviter receives it, and nothing else records the decline.
 pub(super) fn group_decline(ctx: &mut Incoming, pkt: &Packet) {
     let Some(name) = read(ctx.stats, pkt, crate::play::group::parse_name(&pkt.body)) else {
         return;
@@ -1270,33 +1327,35 @@ pub(super) fn group_decline(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::GroupDecline { name });
 }
 
-/// `SMSG_GROUP_LIST`: **the roster, and there is no incremental form of it.**
+/// `SMSG_GROUP_LIST`: the full group roster. There is no incremental form.
 ///
-/// Every join, leave, promotion and loot-rule change re-sends the whole thing,
-/// and the copy each member gets leaves *them* out of it — so this list is
-/// `party1..N` directly.
+/// Every join, leave, promotion and loot-rule change re-sends the whole list,
+/// and each member's copy leaves out that member, so the list maps directly to
+/// `party1..N`.
 pub(super) fn group_list(ctx: &mut Incoming, pkt: &Packet) {
     let Some(list) = read(ctx.stats, pkt, crate::play::group::parse_group_list(&pkt.body)) else {
         return;
     };
-    // **The name query is asked from here rather than from the entity walk**,
-    // because a member out of range has no entity — and their *class* is what a
-    // raid button is coloured by. See `ObjectManager::group_guids`.
+    // Member names are queried from here rather than from the entity walk,
+    // because a member out of range has no entity, and the name query also
+    // supplies the class that colours a raid button. See
+    // `ObjectManager::group_guids`.
     ctx.world
         .note_group(list.members.iter().map(|member| member.guid).collect());
     ctx.world.note_event(PlayerEvent::GroupList(Box::new(list)));
 }
 
-/// `SMSG_GROUP_DESTROYED`: the party is over. **No body**, and it is the only
-/// thing that says so — the server never sends a `SMSG_GROUP_LIST` with an empty
-/// roster, so a client reading only that one leaves a party frame standing.
+/// `SMSG_GROUP_DESTROYED`: the group was disbanded. The packet has no body and
+/// is the only notice of the disband: the server never sends a
+/// `SMSG_GROUP_LIST` with an empty roster, so a client that reads only that
+/// packet keeps showing the party frames.
 pub(super) fn group_destroyed(ctx: &mut Incoming) {
     ctx.world.note_group(Vec::new());
     ctx.world.note_event(PlayerEvent::GroupDestroyed);
 }
 
-/// `SMSG_GROUP_SET_LEADER`: who leads now — **by name**, where
-/// `CMSG_GROUP_SET_LEADER` asked by guid.
+/// `SMSG_GROUP_SET_LEADER`: the new group leader, identified by name, whereas
+/// `CMSG_GROUP_SET_LEADER` identifies the leader by guid.
 pub(super) fn group_new_leader(ctx: &mut Incoming, pkt: &Packet) {
     let Some(name) = read(ctx.stats, pkt, crate::play::group::parse_name(&pkt.body)) else {
         return;
@@ -1304,11 +1363,11 @@ pub(super) fn group_new_leader(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::GroupNewLeader { name });
 }
 
-/// `SMSG_PARTY_COMMAND_RESULT`: what came of an invite or a leave.
+/// `SMSG_PARTY_COMMAND_RESULT`: the result of an invite or a leave.
 ///
-/// **Sent on success as well as failure**, which is what makes it the only
-/// acknowledgement `/invite` has: the invitee's own client gets the invitation
-/// and ours gets this.
+/// Sent on success as well as on failure, so it is the only acknowledgement
+/// `/invite` gets: the invitee's client receives the invitation, and the
+/// inviter's client receives this.
 pub(super) fn party_result(ctx: &mut Incoming, pkt: &Packet) {
     let Some(result) = read(
         ctx.stats,
@@ -1320,13 +1379,14 @@ pub(super) fn party_result(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::PartyResult(result));
 }
 
-/// `SMSG_PARTY_MEMBER_STATS` and `SMSG_PARTY_MEMBER_STATS_FULL`: **one body,
-/// two opcodes**, told apart only by whether the server sent everything or only
-/// what changed — which the mask already says.
+/// `SMSG_PARTY_MEMBER_STATS` and `SMSG_PARTY_MEMBER_STATS_FULL`: two opcodes
+/// with one body layout. They differ only in whether the server sent every
+/// field or only the changed ones, and the field mask in the body already says
+/// which.
 ///
-/// This is the only thing that knows a party member's health when they are out
-/// of the object manager's range, which for a party spread across a zone is most
-/// of the time.
+/// This is the only source of a party member's health when the member is out
+/// of the object manager's range, which for a party spread across a zone is
+/// most of the time.
 pub(super) fn party_member_stats(ctx: &mut Incoming, pkt: &Packet) {
     let Some(stats) = read(
         ctx.stats,
@@ -1338,12 +1398,12 @@ pub(super) fn party_member_stats(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::PartyMemberStats(stats));
 }
 
-/// `MSG_RAID_READY_CHECK`: **the same opcode in three directions**, and the
-/// length is the only thing that tells them apart.
+/// `MSG_RAID_READY_CHECK`: one opcode used for three different messages, told
+/// apart only by body length.
 ///
-/// An empty body is the leader starting one and is by far the commonest form —
-/// a reader that treats a zero-length packet as damaged never shows the box.
-/// See [`crate::play::group::ReadyCheck`].
+/// An empty body means the leader started a ready check, and it is the most
+/// common form. A reader that treats a zero-length body as malformed never
+/// shows the ready-check dialog. See [`crate::play::group::ReadyCheck`].
 pub(super) fn raid_ready_check(ctx: &mut Incoming, pkt: &Packet) {
     let Some(check) = read(
         ctx.stats,
@@ -1355,18 +1415,18 @@ pub(super) fn raid_ready_check(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::RaidReadyCheck(check));
 }
 
-// --- who you know ---------------------------------------------------------
+// --- Friends, ignore list and /who ----------------------------------------
 //
-// See [`crate::play::social`]. Two lists that arrive once and are patched by a
-// third packet, and one search reply — and **not one of the four carries a
-// name for anybody on the two lists**, which is why the two list arms mark
-// their guids wanted here rather than leaving it to the entity walk.
+// See [`crate::play::social`]. Two lists arrive once and are updated by a third
+// packet, and one packet is a search reply. None of the four carries a name
+// for anyone on the two lists, so the two list handlers mark their guids for a
+// name query here instead of leaving it to the entity walk.
 
-/// `SMSG_FRIEND_LIST`: **the whole friends list, and it arrives once.**
+/// `SMSG_FRIEND_LIST`: the whole friends list, sent once.
 ///
-/// Every later change is an `SMSG_FRIEND_STATUS` about one player, so a client
-/// that reads this and not that shows the list it logged in with for the rest of
-/// the session.
+/// Every later change is an `SMSG_FRIEND_STATUS` about one player. A client that
+/// reads this packet but not that one shows the login-time list for the rest
+/// of the session.
 pub(super) fn friend_list(ctx: &mut Incoming, pkt: &Packet) {
     let Some(list) = read(
         ctx.stats,
@@ -1379,7 +1439,8 @@ pub(super) fn friend_list(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::FriendList(list));
 }
 
-/// `SMSG_IGNORE_LIST`: the same, for the ignore list — guids and nothing else.
+/// `SMSG_IGNORE_LIST`: the whole ignore list, sent once. The body is guids and
+/// nothing else.
 pub(super) fn ignore_list(ctx: &mut Incoming, pkt: &Packet) {
     let Some(list) = read(
         ctx.stats,
@@ -1394,10 +1455,10 @@ pub(super) fn ignore_list(ctx: &mut Incoming, pkt: &Packet) {
 
 /// `SMSG_FRIEND_STATUS`: one answer about one player.
 ///
-/// **Both a refusal and a change arrive here**, which is why the event carries
-/// the result byte rather than a patched list: "already your friend" and "your
+/// Both refusals and list changes arrive in this packet, so the event carries
+/// the result byte rather than an updated list. "Already your friend" and "your
 /// friend just logged in" are the same packet with a different first byte, and
-/// only one of them touches the list.
+/// only the second changes the list.
 pub(super) fn friend_status(ctx: &mut Incoming, pkt: &Packet) {
     let Some(status) = read(
         ctx.stats,
@@ -1406,16 +1467,16 @@ pub(super) fn friend_status(ctx: &mut Incoming, pkt: &Packet) {
     ) else {
         return;
     };
-    // A new friend or a new ignore is a guid nothing has ever named, and the
-    // panel draws the name — so ask on the tick it arrives rather than on
-    // whichever later one something else happens to want it.
+    // A new friend or ignore entry is a guid with no known name, and the panel
+    // shows the name. Queue the name query on the tick the packet arrives
+    // rather than waiting for some later request to ask for it.
     if !status.result.removes() {
         ctx.world.want_social_guid(status.guid);
     }
     ctx.world.note_event(PlayerEvent::FriendStatus(status));
 }
 
-/// `SMSG_WHO`: the search's answer. Names, not guids — see
+/// `SMSG_WHO`: the reply to a `/who` search. It carries names, not guids; see
 /// [`crate::play::social`].
 pub(super) fn who_results(ctx: &mut Incoming, pkt: &Packet) {
     let Some(results) = read(ctx.stats, pkt, crate::play::social::parse_who(&pkt.body)) else {
@@ -1426,10 +1487,10 @@ pub(super) fn who_results(ctx: &mut Incoming, pkt: &Packet) {
 
 /// `SMSG_INITIALIZE_FACTIONS`: the whole standing table, at login.
 ///
-/// Sixty-four slots whether or not the character has met them, so this replaces
-/// rather than merges — the same statement `SMSG_INITIAL_SPELLS` makes about the
-/// spellbook, and for the same reason: the server sends it again after anything
-/// that could have changed the set.
+/// Sixty-four slots, whether or not the character has met each faction, so the
+/// table replaces the stored one rather than merging into it. `SMSG_INITIAL_SPELLS`
+/// replaces the spellbook for the same reason: the server sends the packet again
+/// after anything that could have changed the set.
 pub(super) fn initialize_factions(ctx: &mut Incoming, pkt: &Packet) {
     let Some(states) = read(
         ctx.stats,
@@ -1442,7 +1503,7 @@ pub(super) fn initialize_factions(ctx: &mut Incoming, pkt: &Packet) {
         .note_event(PlayerEvent::FactionsInitialized(Box::new(states)));
 }
 
-/// `SMSG_SET_FACTION_STANDING`: one or more slots moved.
+/// `SMSG_SET_FACTION_STANDING`: the standing in one or more slots changed.
 pub(super) fn faction_standing(ctx: &mut Incoming, pkt: &Packet) {
     let Some(list) = read(
         ctx.stats,
@@ -1456,8 +1517,8 @@ pub(super) fn faction_standing(ctx: &mut Incoming, pkt: &Packet) {
 
 /// `SMSG_SET_FACTION_VISIBLE`: a faction met for the first time.
 ///
-/// vmangos suppresses this while the character is loading, so it is always the
-/// mid-session case and always a *new row* rather than a changed one.
+/// vmangos does not send this while the character is loading, so it always
+/// arrives mid-session and always adds a new row rather than changing one.
 pub(super) fn faction_visible(ctx: &mut Incoming, pkt: &Packet) {
     let Some(reputation_list_id) = read(
         ctx.stats,
@@ -1470,7 +1531,8 @@ pub(super) fn faction_visible(ctx: &mut Incoming, pkt: &Packet) {
         .note_event(PlayerEvent::FactionVisible { reputation_list_id });
 }
 
-/// `SMSG_SET_FACTION_ATWAR`: the crossed-swords box, from the server's side.
+/// `SMSG_SET_FACTION_ATWAR`: the server's update of a faction's at-war flag,
+/// shown as the crossed-swords checkbox in the reputation panel.
 pub(super) fn faction_at_war(ctx: &mut Incoming, pkt: &Packet) {
     let Some((reputation_list_id, flags)) = read(
         ctx.stats,
@@ -1485,12 +1547,12 @@ pub(super) fn faction_at_war(ctx: &mut Incoming, pkt: &Packet) {
     });
 }
 
-/// `SMSG_GAMEOBJECT_PAGETEXT`: **this thing has something written on it.**
+/// `SMSG_GAMEOBJECT_PAGETEXT`: open the text of a readable game object.
 ///
-/// One guid and nothing else — the page id is in the template the client
-/// queried when the object came into view, which is what makes this packet a
-/// *nudge* rather than a statement. See [`crate::play::pagetext`], which says
-/// why a sign gets no packet at all and reaches the same window anyway.
+/// The body is one guid and nothing else. The page id is in the object's
+/// template, which the client queried when the object came into view, so this
+/// packet only tells the client to open it. See [`crate::play::pagetext`],
+/// which explains why a sign gets no packet and still opens the same window.
 pub(super) fn gameobject_pagetext(ctx: &mut Incoming, pkt: &Packet) {
     if let Some(guid) = read(
         ctx.stats,
@@ -1501,11 +1563,13 @@ pub(super) fn gameobject_pagetext(ctx: &mut Incoming, pkt: &Packet) {
     }
 }
 
-/// `SMSG_PAGE_TEXT_QUERY_RESPONSE`: **one page of it**, and the id of the next.
+/// `SMSG_PAGE_TEXT_QUERY_RESPONSE`: one page of text and the id of the next
+/// page.
 ///
-/// The server answers the whole chain to one query — `HandlePageTextQueryOpcode`
-/// loops until `next_page` is zero — so these arrive in a burst and the reader
-/// assembles them by id rather than by arrival.
+/// The server answers one query with the whole chain: vmangos's
+/// `HandlePageTextQueryOpcode` loops until `next_page` is zero. The pages
+/// arrive in a burst, and the reader assembles them by id rather than by
+/// arrival order.
 pub(super) fn page_text(ctx: &mut Incoming, pkt: &Packet) {
     if let Some(page) = read(ctx.stats, pkt, crate::play::pagetext::parse_page_text(&pkt.body)) {
         ctx.world.remember(Kind::PageText, u64::from(page.id), &pkt.body);
@@ -1513,11 +1577,11 @@ pub(super) fn page_text(ctx: &mut Incoming, pkt: &Packet) {
     }
 }
 
-/// `SMSG_GOSSIP_POI`: **the flag a guard's directions put on the map**.
+/// `SMSG_GOSSIP_POI`: the map marker placed by a guard's directions.
 ///
-/// The only packet in the game that marks a place, and the client keeps one —
-/// see [`crate::play::gossip::parse_gossip_poi`], which says why a second
-/// replaces the first rather than joining it.
+/// The only packet in the game that marks a place, and the client keeps only
+/// one marker. See [`crate::play::gossip::parse_gossip_poi`], which explains why
+/// a second marker replaces the first instead of being added.
 pub(super) fn gossip_poi(ctx: &mut Incoming, pkt: &Packet) {
     let Some((flags, x, y, icon, data, name)) = read(
         ctx.stats,
@@ -1535,14 +1599,15 @@ pub(super) fn gossip_poi(ctx: &mut Incoming, pkt: &Packet) {
     });
 }
 
-/// `SMSG_SET_FORCED_REACTIONS`: **the server overriding friend-or-foe outright**,
-/// and the one thing that can do it without changing a field on any unit.
+/// `SMSG_SET_FORCED_REACTIONS`: the server overrides the friendly or hostile
+/// reaction toward factions directly. It is the only mechanism that does this
+/// without changing a field on any unit.
 ///
-/// Unhandled, a `SPELL_AURA_FORCE_REACTION` is invisible to this client: the
-/// faction table still says friendly, the name plate stays green, the unit
-/// cannot be clicked into combat — and the server, which is answering off its
-/// own copy of the map, damages it and is attacked back by it. That
-/// disagreement is what the aura exists to state.
+/// If this packet is not handled, a `SPELL_AURA_FORCE_REACTION` has no effect in
+/// this client: the faction table still says friendly, the name plate stays
+/// green, and the unit cannot be attacked with a click. The server uses its own
+/// reaction table, so it lets the character damage the unit and the unit
+/// attacks back. The aura exists to state that override.
 pub(super) fn forced_reactions(ctx: &mut Incoming, pkt: &Packet) {
     let Some(reactions) = read(
         ctx.stats,
@@ -1554,14 +1619,15 @@ pub(super) fn forced_reactions(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::ForcedReactions(reactions));
 }
 
-/// `SMSG_EXPLORATION_EXPERIENCE`: **a place was discovered, and this is the only
-/// announcement it gets.**
+/// `SMSG_EXPLORATION_EXPERIENCE`: an area was discovered. This is the only
+/// packet that announces a discovery.
 ///
 /// `PLAYER_EXPLORED_ZONES` is a `PRIVATE` update field with no event of its own,
-/// so without this the map fills in silently — and, because the interface only
-/// re-reads the overlays on `WORLD_MAP_UPDATE`, a zone map opened before the
-/// bit arrived keeps showing bare paper until something else moves the view.
-/// That is the "does not update until relog" half of the report.
+/// so without this packet the map changes with no notification. The interface
+/// re-reads the map overlays only on `WORLD_MAP_UPDATE`, so a zone map opened
+/// before the bit arrived keeps showing the unexplored map until something
+/// else changes the view. That is one of the two causes of the reported
+/// problem that the map did not update until relog.
 pub(super) fn discovered(ctx: &mut Incoming, pkt: &Packet) {
     let parsed = {
         let mut r = crate::bytes::Reader::new(&pkt.body);
@@ -1574,18 +1640,10 @@ pub(super) fn discovered(ctx: &mut Incoming, pkt: &Packet) {
         .note_event(PlayerEvent::Discovered { area, experience });
 }
 
-// --- the box on the corner ---------------------------------------------------
+// --- Mail, trade, proficiency, spell modifiers, enchantments ----------------
 
-/// `SMSG_MAIL_LIST_RESULT`: **the inbox, whole.** See [`crate::play::mail`],
-/// which owns the header layout and the union in its sender field.
-///
-/// It replaces whatever was held rather than patching it, because that is what
-/// the packet is: there is no per-letter update on the wire, and every one of
-/// the six verbs is answered by a bare result code that names an id and nothing
-/// else. A client that patched its own copy from those codes would drift from
-/// the server the first time anything else touched the mailbox.
-/// `SMSG_TRADE_STATUS`: **the trade's state machine**, one code at a time.
-/// See [`crate::play::trade`]. The window is `client/src/game/session/trade.rs`.
+/// `SMSG_TRADE_STATUS`: one state change of the trade, as a status code. See
+/// [`crate::play::trade`]. The window is `client/src/game/session/trade.rs`.
 pub(super) fn trade_status(ctx: &mut Incoming, pkt: &Packet) {
     let Some(status) = read(ctx.stats, pkt, crate::play::trade::parse_trade_status(&pkt.body))
     else {
@@ -1594,10 +1652,10 @@ pub(super) fn trade_status(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::TradeStatus(status));
 }
 
-/// `SMSG_TRADE_STATUS_EXTENDED`: **one side's offer, whole.** The items are
-/// entries and the panel wants names, so every entry is asked for here the way
-/// a vendor's are — `want_item` puts it on the query list and the template
-/// lands a round trip later, which is what the window's own refresh waits on.
+/// `SMSG_TRADE_STATUS_EXTENDED`: one side's complete trade offer. The items are
+/// given as entries and the panel shows names, so every entry is queried here,
+/// as a vendor's items are. `want_item` adds it to the query list, the template
+/// arrives a round trip later, and the window refreshes when it does.
 pub(super) fn trade_offer(ctx: &mut Incoming, pkt: &Packet) {
     let Some(offer) = read(
         ctx.stats,
@@ -1612,9 +1670,10 @@ pub(super) fn trade_offer(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::TradeOffer(Box::new(offer)));
 }
 
-/// **One item class's whole proficiency mask.** Without it every item in the
-/// bags draws as usable, which is a character told they may equip a weapon they
-/// cannot and finding out from a refusal a round trip later.
+/// `SMSG_SET_PROFICIENCY`: the complete proficiency mask for one item class.
+/// Without it every item in the bags is drawn as usable, so the player sees a
+/// weapon they cannot equip as equippable and learns otherwise only from the
+/// server's refusal a round trip later.
 pub(super) fn proficiency(ctx: &mut Incoming, pkt: &Packet) {
     let Some(said) = read(ctx.stats, pkt, crate::play::skills::parse_proficiency(&pkt.body)) else {
         return;
@@ -1622,9 +1681,10 @@ pub(super) fn proficiency(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::Proficiency(said));
 }
 
-/// **One modifier bit's running total.** A talent that shortens a cast reaches
-/// the client here and nowhere else; dropped, the cast bar and the tooltip print
-/// the untalented number for the whole of a session.
+/// `SMSG_SET_FLAT_SPELL_MODIFIER` and `SMSG_SET_PCT_SPELL_MODIFIER`: the
+/// running total for one spell modifier bit. A talent that shortens a cast
+/// reaches the client only through this packet. If it is dropped, the cast bar
+/// and the tooltip show the value without the talent for the whole session.
 pub(super) fn spell_modifier(ctx: &mut Incoming, pkt: &Packet, percent: bool) {
     let Some(modifier) = read(
         ctx.stats,
@@ -1636,20 +1696,28 @@ pub(super) fn spell_modifier(ctx: &mut Incoming, pkt: &Packet, percent: bool) {
     ctx.world.note_event(PlayerEvent::SpellModifier(modifier));
 }
 
-/// **An enchant landed, or one faded.** The item's own fields move in an update
-/// block with no announcement, so this is the only thing that can put a line in
-/// the log.
+/// `SMSG_ENCHANTMENTLOG`: an enchantment was applied or expired. The item's own
+/// fields change in an update block with no announcement, so this packet is the
+/// only source for the combat log line.
 pub(super) fn enchantment_log(ctx: &mut Incoming, pkt: &Packet) {
     let Some(log) = read(ctx.stats, pkt, crate::play::items::parse_enchantment_log(&pkt.body))
     else {
         return;
     };
-    // The line names the item, and the name is a template this session may not
-    // have asked for yet.
+    // The log line names the item, and the name comes from an item template
+    // this session may not have queried yet.
     ctx.world.want_item(log.item_entry);
     ctx.world.note_combat(crate::play::combatlog::CombatEvent::Enchantment(log));
 }
 
+/// `SMSG_MAIL_LIST_RESULT`: the whole inbox. See [`crate::play::mail`], which
+/// has the header layout and the union in its sender field.
+///
+/// It replaces the stored inbox rather than updating it, because the wire has
+/// no per-letter update: each of the six mail actions is answered by a bare
+/// result code that names a mail id and nothing else. A client that updated its
+/// own copy from those codes would diverge from the server as soon as anything
+/// else changed the mailbox.
 pub(super) fn mail_list(ctx: &mut Incoming, pkt: &Packet) {
     let Some(list) = read(ctx.stats, pkt, crate::play::mail::parse_mail_list(&pkt.body)) else {
         return;
@@ -1657,8 +1725,8 @@ pub(super) fn mail_list(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::MailList(Box::new(list)));
 }
 
-/// `SMSG_SEND_MAIL_RESULT`: **the one answer seven verbs share**, and its tail
-/// is conditional on both of its words — see
+/// `SMSG_SEND_MAIL_RESULT`: the result shared by seven mail actions. Whether
+/// the trailing fields are present depends on both of its leading words; see
 /// [`crate::play::mail::parse_mail_result`].
 pub(super) fn mail_result(ctx: &mut Incoming, pkt: &Packet) {
     let Some(response) = read(ctx.stats, pkt, crate::play::mail::parse_mail_result(&pkt.body))
@@ -1670,19 +1738,20 @@ pub(super) fn mail_result(ctx: &mut Incoming, pkt: &Packet) {
 
 /// `SMSG_RECEIVED_MAIL`: a letter has been delivered.
 ///
-/// The body is one word and vmangos always writes zero, so the arrival is the
-/// whole message. What it is *for* is the envelope on the minimap, which the
-/// client turns on by asking `MSG_QUERY_NEXT_MAIL_TIME` again.
+/// The body is one word and vmangos always writes zero, so only the arrival
+/// matters. It drives the envelope icon on the minimap: the client responds by
+/// sending `MSG_QUERY_NEXT_MAIL_TIME` again, and the answer turns the icon on.
 pub(super) fn mail_received(ctx: &mut Incoming) {
     ctx.world.note_event(PlayerEvent::MailReceived);
 }
 
-/// `MSG_QUERY_NEXT_MAIL_TIME`: **seconds until the next letter, and 0 means one
-/// is already waiting.**
+/// `MSG_QUERY_NEXT_MAIL_TIME`: seconds until the next letter; 0 means a letter
+/// is already waiting.
 ///
-/// The sign is the answer and it reads backwards — see
-/// [`crate::play::mail::parse_next_mail_time`], where the client's own
-/// `abs(x) <= epsilon` test is.
+/// The sign of the value carries the answer, and it reads the opposite way from
+/// what the name suggests; see
+/// [`crate::play::mail::parse_next_mail_time`], which describes how the 1.12.1
+/// client treats a value at or near zero.
 pub(super) fn mail_next_time(ctx: &mut Incoming, pkt: &Packet) {
     let Some(seconds) = read(
         ctx.stats,
@@ -1694,11 +1763,11 @@ pub(super) fn mail_next_time(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::MailNextTime(seconds));
 }
 
-/// `SMSG_ITEM_TEXT_QUERY_RESPONSE`: **the words of one letter.**
+/// `SMSG_ITEM_TEXT_QUERY_RESPONSE`: the text of one letter.
 ///
-/// Named for items rather than for mail because the same query answers for a
-/// book or a signpost's page; in 1.12 the only sender of it here is an open
-/// letter, and the id it echoes is `MailHeader::item_text_id`.
+/// It is named for items rather than mail because the same query also answers
+/// for a book or a signpost's page. In 1.12 the only thing here that queries it
+/// is an open letter, and the id it echoes is `MailHeader::item_text_id`.
 pub(super) fn item_text(ctx: &mut Incoming, pkt: &Packet) {
     let Some((id, text)) = read(ctx.stats, pkt, crate::play::mail::parse_item_text(&pkt.body))
     else {
@@ -1708,30 +1777,28 @@ pub(super) fn item_text(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::ItemText { id, text });
 }
 
-/// `SMSG_QUESTUPDATE_ADD_ITEM`: **an item objective moved.**
+/// `SMSG_QUESTUPDATE_ADD_ITEM`: progress on an item objective.
 ///
-/// Two words, an entry and an increment, and **no quest id** — see
-/// [`crate::play::quest::parse_quest_item`]. It was named and undispatched for
-/// several rounds, which is the whole of "the tracker updates silently": an
-/// item objective's counter comes off the bags, so the row moved and the line
-/// that says so never fired.
+/// Two words, an item entry and an increment, and no quest id; see
+/// [`crate::play::quest::parse_quest_item`]. An item objective's counter is
+/// computed from the bags, so without this handler the tracker row updated but
+/// the progress message was never shown.
 pub(super) fn quest_item(ctx: &mut Incoming, pkt: &Packet) {
     let Some((entry, added)) = read(ctx.stats, pkt, crate::play::quest::parse_quest_item(&pkt.body))
     else {
         return;
     };
-    // **The bag count is read here and carried, not looked up later.**
+    // The bag count is read here and carried in the event, not looked up
+    // later.
     //
-    // The line the reference shows is `min(bags + added, required)`, and the
-    // addition is the whole point: the packet arrives
-    // *before* the item lands in the bags, so the count on its own is one
-    // behind on every pickup. That arithmetic is only right if `bags` is the
-    // count **at the instant this packet was handled** — which is here, on the
-    // session thread, ahead of whatever object update the same server tick
-    // sends. Read a frame later off the renderer's copy of the inventory it is
-    // a coin toss whether the item has landed yet, and the two outcomes are
-    // "6/8" twice running and then "8/8" for the seventh — which is exactly how
-    // it was reported.
+    // The 1.12.1 client shows `min(bags + added, required)`. The addition is
+    // needed because the packet arrives before the item is in the bags, so the
+    // bag count alone is one behind on every pickup. The formula is correct
+    // only if `bags` is the count at the moment this packet is handled: here,
+    // on the session thread, before any object update the same server tick
+    // sends. Read a frame later from the renderer's copy of the inventory, the
+    // item may or may not have arrived, which produced "6/8" twice and then
+    // "8/8" for the seventh item.
     let have = crate::play::items::Inventory::read(ctx.world).count_of(entry);
     ctx.world
         .note_event(PlayerEvent::QuestItem { entry, added, have });

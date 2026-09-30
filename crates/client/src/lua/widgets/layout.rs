@@ -512,6 +512,29 @@ fn resize_the_screen_latches(lua: &mlua::Lua, width: f64, height: f64) -> mlua::
         size("UpperBlackBar", width, bar)?;
         size("LowerBlackBar", width, bar)?;
     }
+    // `GlueParent_OnLoad`: the login and character screens are held to 16:9.
+    // It anchors `GlueParent` `bar` units in from each side of a wider
+    // screen. The glue is loaded while the window is still held to 16:9, so
+    // without this a later fullscreen switch leaves the screens' panels at
+    // the window's edges while the scene behind them is pillarboxed. The
+    // FrameXML function has no else; with no bar the two anchors are the
+    // screen's own corners, which is the same rectangle.
+    if let Some(frame) = globals.get::<Option<mlua::Table>>("GlueParent")? {
+        let bar = if width / height > 16.0 / 9.0 {
+            (width - height * 16.0 / 9.0) / 2.0
+        } else {
+            0.0
+        };
+        let points = lua.create_table()?;
+        for (point, x) in [("TOPLEFT", bar), ("BOTTOMRIGHT", -bar)] {
+            let entry = lua.create_table()?;
+            entry.set("point", point)?;
+            entry.set("x", x)?;
+            entry.set("y", 0.0)?;
+            points.push(entry)?;
+        }
+        frame.set(super::widget::POINTS_KEY, points)?;
+    }
     Ok(())
 }
 
@@ -1620,6 +1643,38 @@ mod clamp_tests {
         let out = clamp(&lua, &object, Rect { left: -30.0, bottom: -10.0, width: 180.0, height: 60.0 });
         assert_eq!(out.left, 0.0);
         assert_eq!(out.bottom, 0.0);
+    }
+
+    /// A screen wider than 16:9 insets `GlueParent` by the same bar
+    /// `GlueParent_OnLoad` computes, and a change back to 16:9 removes it.
+    #[test]
+    fn a_wide_screen_insets_the_glue_to_sixteen_by_nine() {
+        let lua = mlua::Lua::new();
+        let glue = lua.create_table().unwrap();
+        lua.globals().set("GlueParent", glue.clone()).unwrap();
+        let anchors = |glue: &mlua::Table| -> Vec<(String, f64)> {
+            let points: mlua::Table = glue.get(super::super::widget::POINTS_KEY).unwrap();
+            points
+                .sequence_values::<mlua::Table>()
+                .map(|p| {
+                    let p = p.unwrap();
+                    (p.get("point").unwrap(), p.get("x").unwrap())
+                })
+                .collect()
+        };
+
+        set_screen(&lua, 2000.0, 768.0).unwrap();
+        let bar = (2000.0 - 768.0 * 16.0 / 9.0) / 2.0;
+        assert_eq!(
+            anchors(&glue),
+            vec![("TOPLEFT".to_string(), bar), ("BOTTOMRIGHT".to_string(), -bar)]
+        );
+
+        set_screen(&lua, 768.0 * 16.0 / 9.0, 768.0).unwrap();
+        assert_eq!(
+            anchors(&glue),
+            vec![("TOPLEFT".to_string(), 0.0), ("BOTTOMRIGHT".to_string(), 0.0)]
+        );
     }
 
     /// A rectangle larger than the screen keeps its left and bottom on the

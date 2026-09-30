@@ -1,52 +1,51 @@
-//! **The surface an interface asks questions through**, named the way the game
-//! names it.
+//! The read-only query functions the interface calls, named as the game names
+//! them.
 //!
-//! Everything in `interface/` is state the client owns; this module is how that state
-//! is *addressed*. The distinction matters because the real client's interface
-//! never touches the state directly — it calls a fixed set of C functions, and
-//! every one of them that concerns a creature takes a **unit token**:
+//! Everything in `interface/` is state the client owns; this module is how that
+//! state is addressed. The game's interface never reads the state directly. It
+//! calls a fixed set of C functions, and each one that concerns a creature takes
+//! a unit token:
 //!
 //! ```lua
 //! UnitHealth("target")           UnitName("targettarget")     UnitIsUnit("player", "target")
 //! TargetUnit("player")           AssistUnit("target")         FollowUnit("target")
 //! ```
 //!
-//! `Bindings.xml` is full of them — `TARGETSELF` is literally
-//! `if ( UnitIsUnit("player", "target") ) then TargetUnit("pet") else TargetUnit("player") end`
-//! — so the token is not an interface convenience layered on top of a guid API.
-//! It **is** the API, and a guid never appears in FrameXML at all.
+//! `Bindings.xml` uses them throughout. `TARGETSELF` is
+//! `if ( UnitIsUnit("player", "target") ) then TargetUnit("pet") else TargetUnit("player") end`.
+//! The token is the API itself, not a layer over a guid API; a guid never
+//! appears in FrameXML.
 //!
-//! ## Why that is worth having before the Lua host
+//! ## Why tokens are resolved here rather than in each interface
 //!
-//! Because half the tokens are *derived rather than stored*, and the derivation is
-//! the client's job. `target` is a selection this client holds; `targettarget` is
-//! a field on whatever that resolves to and is a second lookup; `mouseover` is
-//! this frame's hover and lives for one frame. An interface written against
-//! `Entity` would have to do all three itself, differently each time — which is
-//! how the same rule ends up written twice with one of them out of date, the
-//! failure `assets::dress` was moved to fix.
+//! Several tokens are derived rather than stored, and the client does the
+//! derivation. `target` is a selection this client holds. `targettarget` is a
+//! field on the unit `target` resolves to, so it takes a second lookup.
+//! `mouseover` is the current frame's hover and lasts one frame. An interface
+//! written against `Entity` would have to derive all three itself in each place
+//! that needs them, and copies of the same rule drift apart; `assets::dress` was
+//! moved for the same reason.
 //!
-//! So the guid stays the internal identity (it is what goes on the wire) and the
-//! token is the address. [`Units`] is the join.
+//! The guid stays the internal identity, because it is what goes on the wire,
+//! and the token is the address. [`Units`] maps one to the other.
 //!
-//! ## What is here and what is next door
+//! ## Reads here, actions in the module that owns the state
 //!
-//! **Questions here, verbs in the module that owns the state.** `UnitHealth` and
-//! `GetActionCooldown` are pure reads and live in this file; `UseAction` mutates a
-//! cooldown and sends a packet, so it is [`super::action::use_action`], and
-//! `TargetUnit` is [`super::target::target_unit`]. The game makes no such split —
-//! it is one flat C API — but a Rust read is a `&` and a verb needs half the
-//! world mutably, and pretending otherwise would mean every query dragging a
-//! `ResMut` behind it. The names are the game's either way, which is the part
-//! that has to survive.
+//! `UnitHealth` and `GetActionCooldown` are pure reads and live in this file.
+//! `UseAction` changes a cooldown and sends a packet, so it is
+//! [`super::action::use_action`], and `TargetUnit` is
+//! [`super::target::target_unit`]. The game has one flat C API with no such
+//! split. In Rust a read takes `&` and an action needs mutable access to much of
+//! the world; putting both in one place would make every query carry a `ResMut`.
+//! The function names match the game's in both places.
 //!
-//! ## The numbers are the interface's, not the wire's
+//! ## Values are in display units, not wire units
 //!
-//! One trap, and it is the same one that made a warrior's rage bar read
-//! "1000/1000": **`UnitMana` returns what the game would display**, and rage is
-//! stored in tenths. `UnitMana("player")` on a warrior is 0..100 and
-//! `UNIT_FIELD_POWER2` is 0..1000. A function named after the game's must answer
-//! what the game's answers, or every consumer has to remember the exception.
+//! `UnitMana` returns what the game displays. Rage is stored in tenths:
+//! `UnitMana("player")` on a warrior is 0..100 while `UNIT_FIELD_POWER2` is
+//! 0..1000. Returning the wire value made a warrior's rage bar read "1000/1000".
+//! A function named after the game's must return what the game's returns, so
+//! that no consumer has to handle the exception.
 
 use super::action::{ActionBar, Cooldowns, Slot};
 use super::target::{Hovered, Selection};
@@ -57,70 +56,73 @@ use bevy::prelude::*;
 
 /// One of the game's unit tokens.
 ///
-/// Not the whole set — the game has `party1`..`party4`, `partypet1`..`4`, `pet`,
-/// `raid1`..`raid40` and a `player`/`target` pair of *modifier* forms
-/// (`targettarget`, `pettarget`). What is here is what this client has state for.
-/// A token it cannot answer is [`UnitId::parse`]-able to `None` rather than to a
-/// wrong unit, because "there is no party" and "the party is empty" are the same
-/// answer to `UnitExists` and different answers to everything else.
+/// This is not the game's full set. The game has `party1`..`party4`,
+/// `partypet1`..`4`, `pet`, `raid1`..`raid40` and modifier forms such as
+/// `targettarget` and `pettarget`. The variants here are the tokens this client
+/// has state for. [`UnitId::parse`] returns `None` for a token the client cannot
+/// answer, rather than a wrong unit, because "there is no party" and "the party
+/// is empty" give the same answer to `UnitExists` and different answers to every
+/// other function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UnitId {
-    /// `"player"` — us.
+    /// `"player"`: the local character.
     Player,
-    /// `"target"` — what we have selected.
+    /// `"target"`: the local character's selection.
     Target,
-    /// `"targettarget"` — what *it* has selected, which is how a healer watches a
-    /// tank's aggro and how this client knows it is being attacked.
+    /// `"targettarget"`: the target's own selection. A healer uses it to watch
+    /// which unit a tank's enemy is attacking, and this client uses it to tell
+    /// that the local character is being attacked.
     TargetTarget,
-    /// `"mouseover"` — whatever the cursor is over **this frame**.
+    /// `"mouseover"`: the unit under the cursor in the current frame.
     Mouseover,
-    /// `"npc"` — whoever the character is talking to: the gossip menu's giver,
-    /// the vendor, the quest page's NPC. Derived by
-    /// [`crate::interface::gossip::point_the_token`] from whichever window is up,
-    /// and `"questnpc"` parses here too — the reference distinguishes them only
-    /// for the trainer, which this client does not have.
+    /// `"npc"`: the unit the character is talking to, which is the gossip giver,
+    /// the vendor or the quest page's NPC. It is set by
+    /// [`crate::interface::gossip::point_the_token`] from whichever window is
+    /// open. `"questnpc"` parses to this variant too; the 1.12.1 client treats
+    /// the two differently only for the trainer, which this client does not
+    /// have.
     Npc,
-    /// `"party1"`..`"party4"` — **one-based**, and the one token here whose unit
-    /// may not be in the world at all.
+    /// `"party1"`..`"party4"`, one-based. This is the one token here whose unit
+    /// may not be in the world.
     ///
-    /// A party member across the zone has no `WorldEntity`: what this client
-    /// knows about them is a row in [`crate::interface::party::Party`] and whatever
-    /// `SMSG_PARTY_MEMBER_STATS` last said. So [`Units::resolve`] answers `None`
-    /// for one and [`Units::exists`] still answers **true** — see that method,
-    /// which is where the difference is paid for.
+    /// A party member in another part of the zone has no `WorldEntity`. This
+    /// client knows only their row in [`crate::interface::party::Party`] and the
+    /// last `SMSG_PARTY_MEMBER_STATS` for them. [`Units::resolve`] therefore
+    /// returns `None` for such a member while [`Units::exists`] returns true;
+    /// that method handles the difference.
     Party(usize),
-    /// `"pet"` — **our charm if we have one, otherwise our summon**, which is
-    /// the precedence the client reads them in and not a guess. See
+    /// `"pet"`: the local character's charm if there is one, otherwise the
+    /// summon. The 1.12.1 client uses the same precedence. See
     /// [`vale_protocol::state::objects::Entity::pet_guid`].
     ///
-    /// Not a stored token: it is derived from the local player's own fields
-    /// every time it is asked, like `targettarget`. `PetFrame_Update` hides the
-    /// whole frame unless `UnitExists("pet")`, so a client that never answers
-    /// this draws no pet frame at all — which is what it did.
+    /// It is not stored. Like `targettarget`, it is derived from the local
+    /// player's fields each time it is asked. `PetFrame_Update` hides the whole
+    /// frame unless `UnitExists("pet")` is true, so without this token no pet
+    /// frame is drawn.
     Pet,
-    /// `"raid1"`..`"raid40"` — **one-based, and *we* are one of them**, which is
-    /// the whole difference from [`Self::Party`].
+    /// `"raid1"`..`"raid40"`, one-based. Unlike [`Self::Party`], the local
+    /// player is one of the members.
     ///
-    /// The server leaves the reader out of their own `SMSG_GROUP_LIST`, so the
-    /// last slot is the local player and the client makes the join — see
-    /// [`crate::interface::raid`], which is where the order comes from and why
-    /// it is stable. Everything else about the token is `party<n>`'s: a member
-    /// across the zone has no entity, [`Units::resolve`] answers `None` for one,
-    /// and [`Units::exists`] still answers **true**.
+    /// The server leaves the receiving player out of their own
+    /// `SMSG_GROUP_LIST`, so the client puts the local player in the last slot.
+    /// [`crate::interface::raid`] defines the order and explains why it is
+    /// stable. In all other respects the token behaves like `party<n>`: a member
+    /// elsewhere in the zone has no entity, [`Units::resolve`] returns `None` for
+    /// them, and [`Units::exists`] returns true.
     Raid(usize),
-    /// `"partypet1"`..`"partypet4"` — **one-based**, like [`Self::Party`], and
-    /// with the same two-places-to-look rule one level deeper.
+    /// `"partypet1"`..`"partypet4"`, one-based like [`Self::Party`], with the
+    /// same two sources one level down.
     ///
-    /// The client resolves it by looking the *owner* up in the object manager
-    /// and reading their live charm/summon; only when the owner is not there
-    /// does it fall back to the pet guid `SMSG_PARTY_MEMBER_STATS` cached on
-    /// that member's row. So this token exists for a pet whose owner is across
-    /// the zone, and both halves are in [`Units::pet_guid_for`].
+    /// The client looks up the owner in the object manager and reads the
+    /// owner's current charm or summon. When the owner is not in the world, it
+    /// uses the pet guid that `SMSG_PARTY_MEMBER_STATS` stored on that member's
+    /// row. The token therefore exists for a pet whose owner is elsewhere in the
+    /// zone. [`Units::pet_guid_for`] implements both lookups.
     PartyPet(usize),
 }
 
-/// **`raid1`..`raid40` as literals**, because [`UnitId::token`] answers a
-/// `&'static str` and forty `format!`s a frame is not what a token is for.
+/// `raid1`..`raid40` as string literals. [`UnitId::token`] returns a
+/// `&'static str`, and formatting forty strings each frame would allocate.
 const RAID_TOKENS: [&str; vale_protocol::play::group::MAX_RAID_MEMBERS] = [
     "raid1", "raid2", "raid3", "raid4", "raid5", "raid6", "raid7", "raid8",
     "raid9", "raid10", "raid11", "raid12", "raid13", "raid14", "raid15",
@@ -131,8 +133,8 @@ const RAID_TOKENS: [&str; vale_protocol::play::group::MAX_RAID_MEMBERS] = [
 ];
 
 impl UnitId {
-    /// The token as the game spells it. Lower case, no separators — `targettarget`
-    /// really is one word.
+    /// The token as the game spells it: lower case with no separators, so
+    /// `targettarget` is one word.
     pub fn token(&self) -> &'static str {
         match self {
             UnitId::Player => "player",
@@ -140,17 +142,16 @@ impl UnitId {
             UnitId::TargetTarget => "targettarget",
             UnitId::Mouseover => "mouseover",
             UnitId::Npc => "npc",
-            // Four literals rather than `format!`, which is what keeps this a
-            // `&'static str` for the twenty call sites that want one.
+            // Four literals rather than `format!`, so the result stays a
+            // `&'static str` for the twenty call sites that need one.
             UnitId::Party(index) => match index {
                 1 => "party1",
                 2 => "party2",
                 3 => "party3",
                 _ => "party4",
             },
-            // **A table rather than forty literals in a match**, which is the
-            // same trade the four above make: the token has to outlive the call
-            // for the twenty consumers that want a `&'static str`.
+            // A table rather than forty match arms, for the same reason as the
+            // four literals above: the twenty consumers need a `&'static str`.
             UnitId::Raid(index) => RAID_TOKENS
                 .get(index.saturating_sub(1))
                 .copied()
@@ -165,9 +166,9 @@ impl UnitId {
         }
     }
 
-    /// Parse a token. **Case-insensitive**, because the game's own is: FrameXML
-    /// writes `"player"` throughout but the C side folds case, and an addon
-    /// author who writes `"Player"` gets a working call rather than a silent nil.
+    /// Parse a token, ignoring case as the game does. FrameXML writes
+    /// `"player"` throughout, but the game's C functions fold case, so an addon
+    /// that passes `"Player"` gets a working call rather than nil.
     pub fn parse(token: &str) -> Option<UnitId> {
         match token.to_ascii_lowercase().as_str() {
             "player" => Some(UnitId::Player),
@@ -180,13 +181,12 @@ impl UnitId {
             "party2" => Some(UnitId::Party(2)),
             "party3" => Some(UnitId::Party(3)),
             "party4" => Some(UnitId::Party(4)),
-            // **`raidpet<n>` is not this and must not fall through to it.**
-            // The client tests the `"raidpet"` prefix *before* the `"raid"`
-            // prefix, and a parser that
-            // checked the shorter prefix first would read `raidpet3` as raid
-            // slot 0 and answer with somebody's owner. This client keeps no
-            // raid-pet state, so the token is `None` — see [`UnitId`]'s own note
-            // about answering nothing rather than the wrong unit.
+            // `raidpet<n>` must not fall through to the `raid` arm. The client
+            // tests the `"raidpet"` prefix before the `"raid"` prefix. A parser
+            // that checked the shorter prefix first would read `raidpet3` as
+            // raid slot 0 and return the pet's owner. This client keeps no
+            // raid-pet state, so the token parses to `None`; see [`UnitId`] on
+            // returning nothing rather than the wrong unit.
             token if token.starts_with("raidpet") => None,
             token if token.starts_with("raid") => {
                 let index: usize = token.strip_prefix("raid")?.parse().ok()?;
@@ -202,9 +202,9 @@ impl UnitId {
         }
     }
 
-    /// **Whose pet this token names**, or `None` for a token that is not a
-    /// pet's — the join the client makes by falling through `"pet"` to the
-    /// local player and `"partypet<n>"` to `"party<n>"`.
+    /// The token of the owner of the pet this token names, or `None` for a
+    /// token that does not name a pet. `"pet"` maps to the local player and
+    /// `"partypet<n>"` to `"party<n>"`, as in the client.
     pub fn owner(&self) -> Option<UnitId> {
         match self {
             UnitId::Pet => Some(UnitId::Player),
@@ -213,15 +213,15 @@ impl UnitId {
         }
     }
 
-    /// …and the inverse: **the token this one's pet would be named by**, or
-    /// `None` for a token that cannot own one.
+    /// The inverse of [`Self::owner`]: the token that names this unit's pet,
+    /// or `None` for a token that cannot own one.
     ///
-    /// Two tokens can, and they are exactly the two the game raises `UNIT_PET`
-    /// at — `PetFrame_OnEvent` opens on `arg1 == "player"` and
-    /// `PartyMemberFrame_OnEvent` on `arg1 == "party<n>"`. So this is the
-    /// event's own guard as well as a lookup, and it is why a `partypet<n>` row
-    /// raises nothing: a pet does not have a pet, and no body in the ninety
-    /// files would hear it if it did.
+    /// Two tokens can own a pet, and they are the two the game raises
+    /// `UNIT_PET` for: `PetFrame_OnEvent` checks `arg1 == "player"` and
+    /// `PartyMemberFrame_OnEvent` checks `arg1 == "party<n>"`. This function
+    /// therefore also decides whether the event is raised. A `partypet<n>` row
+    /// raises nothing, because a pet has no pet and no handler in the ninety
+    /// FrameXML files listens for one.
     pub fn pet(&self) -> Option<UnitId> {
         match self {
             UnitId::Player => Some(UnitId::Pet),
@@ -231,18 +231,19 @@ impl UnitId {
     }
 }
 
-/// **Two units' gap, in the pieces the server tests separately** — see
-/// [`Units::separation`], which is where the reason is.
+/// The distance between two units, split into the parts the server tests
+/// separately. [`Units::separation`] explains why.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Separation {
     /// Centre to centre in the horizontal plane.
     pub across: f32,
-    /// …and the vertical part, signed: positive when the second unit is above
+    /// The vertical distance, signed: positive when the second unit is above
     /// the first.
     pub up: f32,
-    /// Both units' `UNIT_FIELD_COMBATREACH`, in the order they were asked for.
-    /// **Raw**, not floored — the melee rule's own `max(reach, 1.5)` belongs to
-    /// the caller applying that rule, and a spell's does not apply it at all.
+    /// Both units' `UNIT_FIELD_COMBATREACH`, in the order they were requested.
+    /// The values are raw, not floored. The melee rule's `max(reach, 1.5)` is
+    /// applied by the caller that implements that rule, and the spell range
+    /// rule does not apply it.
     pub reaches: (f32, f32),
 }
 
@@ -253,43 +254,43 @@ pub struct Separation {
 /// to ask one question should not have to name all three.
 #[derive(SystemParam)]
 pub struct Units<'w, 's> {
-    /// Everything the server has told us about, for the scans below.
+    /// Every entity the server has described, for the scans below.
     ///
-    /// **The `Transform` is `Option` and that is load-bearing**, not caution: a
-    /// `WorldEntity` exists from the update block that names it and is *placed*
-    /// by the renderer some frames later, so a plain `&Transform` in this query
-    /// would filter an unplaced unit out of the query altogether — and every
-    /// read in this file goes through it, so `UnitName` and `UnitHealth` would
-    /// start answering nil for a unit the server has already described. The one
-    /// read that needs a position ([`Units::reach`]) looks at it through
-    /// [`Units::placed`] and answers `None` rather than a distance of zero.
+    /// The `Transform` is an `Option` on purpose. A `WorldEntity` exists from
+    /// the update block that names it, and the renderer places it some frames
+    /// later. A plain `&Transform` would exclude an unplaced unit from the
+    /// query. Every read in this file goes through this query, so `UnitName`
+    /// and `UnitHealth` would return nil for a unit the server has already
+    /// described. The one read that needs a position ([`Units::reach`]) reads
+    /// it through [`Units::placed`] and returns `None` rather than a distance
+    /// of zero.
     pub all: Query<'w, 's, (Entity, &'static WorldEntity, Option<&'static Transform>)>,
     selection: Res<'w, Selection>,
     hovered: Res<'w, Hovered>,
-    /// Whoever the character is talking to — see [`crate::interface::gossip::NpcUnit`].
+    /// The unit the character is talking to. See
+    /// [`crate::interface::gossip::NpcUnit`].
     npc: Res<'w, crate::interface::gossip::NpcUnit>,
-    /// …and who is in the group, which is the only thing that knows a
-    /// `party<n>` token names anybody at all — see [`crate::interface::party`].
+    /// The group roster. It is the only source that says whether a
+    /// `party<n>` token names anyone. See [`crate::interface::party`].
     pub party: Res<'w, crate::interface::party::Party>,
-    /// …and what the character's own reputation says, which is the half of
-    /// friend-or-foe that is in no file — see
-    /// [`crate::interface::reputation::PlayerStanding`]. **Nothing that
-    /// takes this param may take it `ResMut` as well**; the one system that
-    /// writes it does not take `Units`.
+    /// The character's reputation standings, the part of friend-or-foe that
+    /// no DBC file holds. See [`crate::interface::reputation::PlayerStanding`].
+    /// A system that takes this param must not also take the resource as
+    /// `ResMut`; the one system that writes it does not take `Units`.
     standing: Res<'w, crate::interface::reputation::PlayerStanding>,
 }
 
-/// **One side of the friend-or-foe question, off an entity** — the same
-/// [`vale_assets::tables::faction::Party`] [`Units`] builds from a token.
+/// One side of the friend-or-foe question, built from an entity. It is the same
+/// [`vale_assets::tables::faction::Party`] that [`Units`] builds from a token.
 ///
-/// Free rather than a method because four passes hold `WorldEntity`s and no
-/// tokens: the pointer's judgement, the Tab-target scan, the spell cursor and
-/// the cast's binding. **They must build it the same way this does**, or the
-/// picker and the interface disagree about who is a friend — which is the one
-/// property [`Units::rank`]'s own comment is about.
+/// It is a free function rather than a method because four passes hold
+/// `WorldEntity`s and no tokens: the pointer's reaction check, the Tab-target
+/// scan, the spell cursor and the cast's target binding. They must build the
+/// value the same way this function does, or the picker and the interface
+/// disagree about who is a friend; [`Units::rank`] describes that requirement.
 ///
-/// The group flag is the only field that is not a straight read: a unit is "in
-/// the local character's group" when the roster names its guid.
+/// The group flag is the only field that is not copied directly: a unit is in
+/// the local character's group when the roster contains its guid.
 pub fn faction_party(
     unit: &WorldEntity,
     party: &crate::interface::party::Party,
@@ -306,11 +307,11 @@ pub fn faction_party(
     }
 }
 
-/// **The two resources friend-or-foe needs beyond the tables**, bundled.
+/// The two resources friend-or-foe needs besides the DBC tables, in one value.
 ///
-/// One reference rather than two, because the cast path threads them through
-/// four call sites and a pair of `&Res` arguments repeated down a chain is the
-/// shape that gets one of them dropped. Copy, so passing it costs nothing.
+/// The cast path passes them through four call sites, and one argument is
+/// harder to drop by mistake than a pair of `&Res` arguments. The type is
+/// `Copy`, so passing it is free.
 #[derive(Clone, Copy)]
 pub struct Friendship<'a> {
     pub party: &'a crate::interface::party::Party,
@@ -328,7 +329,7 @@ impl Friendship<'_> {
         rank_between(tables, self.party, self.standing, a, b)
     }
 
-    /// …and the same fold every three-way consumer wants.
+    /// [`Self::rank`] reduced to the three-way reaction most consumers use.
     pub fn reaction(
         &self,
         tables: &vale_assets::tables::dbc::DisplayTables,
@@ -339,7 +340,7 @@ impl Friendship<'_> {
     }
 }
 
-/// **How `a` stands towards `b`**, for those same four passes.
+/// How `a` stands towards `b`, for the four passes named on [`faction_party`].
 ///
 /// A missing `FactionTemplate.dbc` reads Neutral, which is
 /// [`vale_assets::tables::faction::Factions::template_rank`]'s own answer for
@@ -361,7 +362,7 @@ pub fn rank_between(
     }
 }
 
-/// …and whether `a` may swing at `b`, which is not the reaction alone — see
+/// Whether `a` may attack `b`. The reaction alone does not decide this; see
 /// [`vale_assets::tables::faction::Factions::can_attack`].
 pub fn can_attack_between(
     tables: &vale_assets::tables::dbc::DisplayTables,
@@ -387,19 +388,19 @@ impl Units<'_, '_> {
     /// The entity a token names, if it currently names one.
     pub fn resolve(&self, id: UnitId) -> Option<Entity> {
         match id {
-            // **By the flag rather than by a `With<LocalPlayer>` query.** The
-            // marker component and the field say the same thing and the field is
-            // already in the query this param holds; a second query would make
-            // every caller pay for a filter it never reads.
+            // Found by the `is_self` field rather than a `With<LocalPlayer>`
+            // query. The marker component and the field carry the same
+            // information, and the field is already in this param's query; a
+            // second query would add a filter to every caller.
             UnitId::Player => self
                 .all
                 .iter()
                 .find(|(_, unit, _)| unit.is_self)
                 .map(|(entity, _, _)| entity),
             UnitId::Target => self.selection.entity,
-            // Derived, and the reason this module exists: two lookups, one of
-            // them by guid, which is exactly what a consumer would otherwise
-            // reimplement.
+            // Derived with two lookups, the second by guid. Doing it here keeps
+            // consumers from each reimplementing it, which is why this module
+            // exists.
             UnitId::TargetTarget => {
                 let target = self.get(UnitId::Target)?;
                 let of = target.target?;
@@ -409,9 +410,9 @@ impl Units<'_, '_> {
                     .map(|(entity, _, _)| entity)
             }
             UnitId::Mouseover => self.hovered.entity,
-            // By guid, like target-of-target: the token is the server's
-            // identity and the entity is looked up fresh, so a despawned NPC
-            // answers nothing rather than a stale handle.
+            // By guid, like target-of-target. The stored value is the server's
+            // guid and the entity is looked up on each call, so a despawned NPC
+            // returns `None` rather than a stale handle.
             UnitId::Npc => {
                 let of = self.npc.0?;
                 self.all
@@ -419,9 +420,9 @@ impl Units<'_, '_> {
                     .find(|(_, unit, _)| unit.guid == of)
                     .map(|(entity, _, _)| entity)
             }
-            // **By guid through the roster, and `None` is ordinary here.** A
-            // party member out of range has no entity; every read below that
-            // can be answered off the roster instead says so on its own.
+            // By guid through the roster. `None` is a normal result: a party
+            // member out of range has no entity. Each read below that can use
+            // the roster instead handles that case itself.
             UnitId::Party(index) => {
                 let of = self.party.member(index)?.guid;
                 self.all
@@ -429,10 +430,10 @@ impl Units<'_, '_> {
                     .find(|(_, unit, _)| unit.guid == of)
                     .map(|(entity, _, _)| entity)
             }
-            // **The same, plus the one row the server never sends.** The last
-            // raid slot is us — see [`crate::interface::raid`] — so this
-            // token resolves through the local player rather than through the
-            // roster, which does not have us in it.
+            // As for a party member, except for the slot the server never
+            // sends. The last raid slot is the local player (see
+            // [`crate::interface::raid`]), so that slot resolves through the
+            // local player rather than the roster, which does not contain it.
             UnitId::Raid(index) => match self.party.raid_slot(index)? {
                 crate::interface::raid::RaidSlot::Player => self.resolve(UnitId::Player),
                 crate::interface::raid::RaidSlot::Member(at) => {
@@ -443,10 +444,10 @@ impl Units<'_, '_> {
                         .map(|(entity, _, _)| entity)
                 }
             },
-            // **Derived twice over** — whose pet, then which guid — and the
-            // entity looked up fresh like every other derived token. A pet the
-            // world has not streamed in is `None` here and still *exists*; see
-            // [`Units::exists`].
+            // Derived in two steps, the owner and then the pet guid, and the
+            // entity looked up on each call like every other derived token. A
+            // pet whose entity has not arrived returns `None` here and still
+            // exists; see [`Units::exists`].
             UnitId::Pet | UnitId::PartyPet(_) => {
                 let of = self.pet_guid_for(id)?;
                 self.all
@@ -457,26 +458,26 @@ impl Units<'_, '_> {
         }
     }
 
-    /// **What a pet token names, as a guid** — the two places the client looks,
-    /// in the order it looks in them.
+    /// The guid a pet token names. The client checks two sources, in the order
+    /// given here.
     ///
-    /// The client's lookup behind `partypet<n>` is four steps: take the
-    /// owner's guid out of the party array, ask the object manager for them,
-    /// and if it answers read their live `UNIT_FIELD_CHARM`/`SUMMON`. Only when
-    /// the object manager has *no* owner does it fall back to the pet guid
-    /// `SMSG_PARTY_MEMBER_STATS` cached on that member's row — gated on the
-    /// row's own valid bit, which is why [`vale_protocol::play::group::PartyPetStats::exists`]
-    /// treats a zero guid as "no pet" rather than as no answer.
+    /// For `partypet<n>`, the 1.12.1 client takes the owner's guid from the
+    /// party roster. If the owner is in the world, it uses the owner's current
+    /// `UNIT_FIELD_CHARM`/`SUMMON`. Only when the owner is not in the world
+    /// does it use the pet guid that `SMSG_PARTY_MEMBER_STATS` stored on that
+    /// member's row, and only when the row holds pet data. That is why
+    /// [`vale_protocol::play::group::PartyPetStats::exists`] treats a zero
+    /// guid as "no pet" rather than as "unknown".
     ///
-    /// **The order is load-bearing and it is not the obvious one.** A cache
-    /// consulted first would keep showing a dismissed pet for as long as the
-    /// member stayed out of range and nothing re-sent the block; the live
-    /// fields win wherever they exist, and an owner who is present with no pet
-    /// answers `None` rather than falling through to a stale row.
+    /// The order matters. If the cached row were checked first, a dismissed
+    /// pet would stay visible for as long as its owner stayed out of range and
+    /// the server did not resend the block. The owner's own fields take
+    /// precedence wherever they exist, and an owner who is present with no pet
+    /// returns `None` rather than the stale row.
     ///
-    /// `"pet"` has only the first half: it reads the local
-    /// player's own two fields and stops, because there is no cache for our own
-    /// pet and no case in which we are out of our own range.
+    /// `"pet"` uses only the first source: it reads the local player's two
+    /// fields and stops. There is no cache for the local player's pet, and the
+    /// local player is always in the world.
     pub fn pet_guid_for(&self, id: UnitId) -> Option<u64> {
         let owner = id.owner()?;
         if let Some(unit) = self.get(owner) {
@@ -487,9 +488,9 @@ impl Units<'_, '_> {
             .filter(|guid| *guid != 0)
     }
 
-    /// The **pet** half of a party member's cached stats, for a `partypet<n>`
-    /// token — `None` for every other token, including `pet`, which has no
-    /// cache. The sibling of [`Units::party_row`], one unit further out.
+    /// The pet part of a party member's cached stats, for a `partypet<n>`
+    /// token. Returns `None` for every other token, including `pet`, which has
+    /// no cache. The pet counterpart of [`Units::party_row`].
     fn party_pet_row(&self, id: UnitId) -> Option<&vale_protocol::play::group::PartyPetStats> {
         match id {
             UnitId::PartyPet(index) => Some(&self.party.member(index)?.stats.as_ref()?.pet),
@@ -497,33 +498,32 @@ impl Units<'_, '_> {
         }
     }
 
-    /// What the server has told us about the unit a token names.
+    /// The server's data for the unit a token names.
     pub fn get(&self, id: UnitId) -> Option<&WorldEntity> {
         let entity = self.resolve(id)?;
         self.all.get(entity).ok().map(|(_, unit, _)| unit)
     }
 
-    /// Where a unit is standing, or `None` for one the renderer has not placed
-    /// yet — see the note on [`Units::all`].
+    /// A unit's position, or `None` for a unit the renderer has not placed
+    /// yet. See the note on [`Units::all`].
     pub fn placed(&self, id: UnitId) -> Option<(&WorldEntity, &Transform)> {
         let entity = self.resolve(id)?;
         let (_, unit, at) = self.all.get(entity).ok()?;
         Some((unit, at?))
     }
 
-    /// **How far apart two units are, less both their bulk** — vmangos'
-    /// `GetCombatDistance`, which is what `Spell::CheckRange` is written
-    /// against, so a client measuring anything else disagrees with the server
-    /// about every range in the game.
+    /// The distance between two units minus both combat reaches. This is
+    /// vmangos' `GetCombatDistance`, which `Spell::CheckRange` uses; a client
+    /// that measured differently would disagree with the server about every
+    /// range.
     ///
-    /// `None` when either end is absent or unplaced. That is not the same as
-    /// "far away" and callers must not treat it as one: a missing measurement
-    /// reads as *do not answer*, which is what keeps a unit that arrived this
-    /// frame from flashing an out-of-range hotkey.
+    /// Returns `None` when either unit is absent or unplaced. Callers must not
+    /// treat `None` as "far away": it means no answer, so a unit that arrived
+    /// this frame does not flash an out-of-range hotkey.
     ///
-    /// The same arithmetic as [`crate::interface::action::reach_between`], which
-    /// measures for a *press* out of its own query rather than for a read —
-    /// they are two callers of one rule and the rule is one subtraction.
+    /// [`crate::interface::action::reach_between`] does the same arithmetic
+    /// with its own query, for an action button press rather than a read. Both
+    /// implement one rule, which is a single subtraction.
     pub fn reach(&self, from: UnitId, to: UnitId) -> Option<f32> {
         let (me, here) = self.placed(from)?;
         let (other, there) = self.placed(to)?;
@@ -534,9 +534,9 @@ impl Units<'_, '_> {
         Some((centres - me.combat_reach - other.combat_reach).max(0.0))
     }
 
-    /// **A unit's name by guid**, for the one window whose other party has no
-    /// token until it opens: the trade request names who asked and nothing
-    /// else. `None` for a guid not in view.
+    /// A unit's name by guid, for the trade request, whose other party has no
+    /// token until the window opens; the request carries only the requester's
+    /// guid. `None` for a guid not in view.
     pub fn name_of_guid(&self, guid: u64) -> Option<String> {
         self.all
             .iter()
@@ -545,10 +545,10 @@ impl Units<'_, '_> {
             .filter(|name| !name.is_empty())
     }
 
-    /// [`Units::reach`] to a unit named by **guid** rather than by token — the
-    /// spirit healer whose offer is on the table has no token of its own, and
-    /// the client's own range check measures against the guid the confirm
-    /// packet carried. `None` on the same terms as `reach`.
+    /// [`Units::reach`] to a unit named by guid rather than by token. The
+    /// spirit healer whose offer is open has no token, and the client checks
+    /// range against the guid the confirm packet carried. Returns `None` in
+    /// the same cases as `reach`.
     pub fn reach_to_guid(&self, from: UnitId, guid: u64) -> Option<f32> {
         let (me, here) = self.placed(from)?;
         let (_, other, there) = self.all.iter().find(|(_, unit, _)| unit.guid == guid)?;
@@ -560,32 +560,32 @@ impl Units<'_, '_> {
         Some((centres - me.combat_reach - other.combat_reach).max(0.0))
     }
 
-    /// **The gap between two units, taken apart**, for a caller that has to
-    /// apply the server's own range rule rather than this client's.
+    /// The distance between two units split into components, for a caller that
+    /// applies the server's range rule rather than this client's.
     ///
-    /// [`Units::reach`] is the right answer to "how far apart are they" and the
-    /// wrong shape for that: it folds the horizontal distance, the vertical
-    /// distance and both units' bulk into one number, and **vmangos does not
-    /// test them together**. `Unit::CanReachWithMeleeAutoAttackAtPosition` ends
-    /// in
+    /// [`Units::reach`] answers "how far apart are they" but combines the
+    /// horizontal distance, the vertical distance and both combat reaches into
+    /// one number. vmangos does not test them together.
+    /// `Unit::CanReachWithMeleeAutoAttackAtPosition` ends in
     ///
     /// ```text
     /// (dx*dx + dy*dy < reach*reach) && (dz*dz < zReach)
     /// ```
     ///
-    /// — a *two-dimensional* distance against the summed reaches and a separate
-    /// height test — where `Spell::CheckRange` is the 3D `GetCombatDistance`
-    /// [`Units::reach`] already mirrors. A caller measuring melee in 3D would
-    /// disagree with the server on any slope, which is exactly the class of
-    /// wrongness the instrument that wants this exists to detect.
+    /// which is a two-dimensional distance against the summed reaches plus a
+    /// separate height test. `Spell::CheckRange` uses the 3D
+    /// `GetCombatDistance` that [`Units::reach`] already matches. A caller that
+    /// measured melee range in 3D would disagree with the server on any slope,
+    /// and detecting that disagreement is the purpose of the diagnostic that
+    /// calls this.
     ///
-    /// `None` on the same terms as [`Units::reach`]: either end absent or
-    /// unplaced is *do not answer*, never zero.
+    /// Returns `None` in the same cases as [`Units::reach`]: when either unit
+    /// is absent or unplaced, never zero.
     pub fn separation(&self, from: UnitId, to: UnitId) -> Option<Separation> {
         let (me, here) = self.placed(from)?;
         let (other, there) = self.placed(to)?;
-        // **Bevy's Y is up** — `render::axes::to_bevy` is `(-y, z, -x)`, so the
-        // world's horizontal plane is Bevy's XZ and the height is its Y.
+        // Bevy's Y axis is up. `render::axes::to_bevy` is `(-y, z, -x)`, so the
+        // world's horizontal plane is Bevy's XZ and the height is Bevy's Y.
         let (a, b) = (here.translation, there.translation);
         Some(Separation {
             across: ((b.x - a.x).powi(2) + (b.z - a.z).powi(2)).sqrt(),
@@ -594,34 +594,34 @@ impl Units<'_, '_> {
         })
     }
 
-    /// `UnitExists` — is there anything at this token at all?
+    /// `UnitExists`: whether the token names any unit.
     ///
-    /// **A `party<n>` token exists whether or not the member is in the world**,
-    /// which is the whole of what [`UnitId::Party`]'s note is about: hiding a
-    /// party frame because its member walked out of range is a bug a player sees
-    /// every time somebody rounds a corner.
+    /// A `party<n>` token exists whether or not the member is in the world;
+    /// see [`UnitId::Party`]. Hiding a party frame because its member moved out
+    /// of range would hide it each time the member went out of sight.
     pub fn exists(&self, id: UnitId) -> bool {
-        // **A pet exists when its guid does, entity or no.** `UnitExists`
-        // asks the object manager and then falls back to a walk over our own
-        // charm/summon and every party row's pet guid — so a pet that has been summoned but not yet streamed in,
-        // or one whose owner is across the zone, is *there*. Answering off the
-        // entity alone hides `PetFrame` for the first seconds of every summon.
+        // A pet exists when its guid is known, with or without an entity. The
+        // 1.12.1 `UnitExists` is true for a unit in the world and also for a
+        // guid that is the local player's charm or summon or any party row's
+        // pet guid. So a pet that has been summoned but whose entity has not
+        // arrived, or one whose owner is elsewhere in the zone, exists.
+        // Checking the entity alone would hide `PetFrame` for the first
+        // seconds of every summon.
         if id.owner().is_some() {
             return self.pet_guid_for(id).is_some();
         }
         self.get(id).is_some() || self.party_row(id).is_some()
     }
 
-    /// **Who the token names, as a guid** — the one identity that outlives the
-    /// entity, so it is what tells a *slot* apart from its occupant.
+    /// The guid of the unit the token names. The guid outlives the entity, so
+    /// it distinguishes a slot from the unit occupying it.
     ///
-    /// `party1` is a slot rather than a person: somebody leaving shifts
-    /// everybody below them up one, and the token then names a different
-    /// character whose numbers may happen to match. A watcher that compares
-    /// only the numbers announces nothing there — see
-    /// [`crate::interface::vitals`], which holds this beside the vitals for
-    /// exactly that reason. Falls back to the roster, like every other read a
-    /// member across the zone can still answer.
+    /// `party1` is a slot, not a person. When a member leaves, everyone below
+    /// moves up one slot, and the token then names a different character whose
+    /// values may happen to match. A watcher that compares only the values
+    /// reports no change in that case; [`crate::interface::vitals`] stores the
+    /// guid beside the vitals for that reason. Falls back to the roster, like
+    /// every other read that a member elsewhere in the zone can still answer.
     pub fn guid(&self, id: UnitId) -> Option<u64> {
         if id.owner().is_some() {
             return self.pet_guid_for(id);
@@ -632,16 +632,16 @@ impl Units<'_, '_> {
         }
     }
 
-    /// The roster row behind a `party<n>` token, or `None` for every other
-    /// token — the fallback for the four reads that can be answered without an
-    /// entity.
+    /// The roster row for a `party<n>` or `raid<n>` token, or `None` for every
+    /// other token. It is the fallback for the four reads that can be answered
+    /// without an entity.
     fn party_row(&self, id: UnitId) -> Option<&crate::interface::party::PartyMember> {
         match id {
             UnitId::Party(index) => self.party.member(index),
-            // …and a raid slot, which is the same row reached a different way —
-            // except for the last one, which is the local player and has no row
-            // at all. That is not a gap: we are always in the world, so every
-            // read that would fall back here is already answered off the entity.
+            // A raid slot reaches the same rows by a different index. The last
+            // slot is the local player and has no row. The local player is
+            // always in the world, so every read that would fall back here is
+            // already answered from the entity.
             UnitId::Raid(index) => match self.party.raid_slot(index)? {
                 crate::interface::raid::RaidSlot::Member(at) => {
                     self.party.members.get(at)
@@ -652,15 +652,15 @@ impl Units<'_, '_> {
         }
     }
 
-    /// `UnitName`. **Falls back to the roster**, which carries a name for a
-    /// member nothing else in this client knows about.
+    /// `UnitName`. Falls back to the roster, which carries a name for a member
+    /// that has no entity in this client.
     pub fn name(&self, id: UnitId) -> Option<&str> {
         match self.get(id) {
             Some(unit) => Some(unit.name.as_str()),
-            // …and a party *pet* out of range has one too, off the same packet
-            // — `GROUP_UPDATE_FLAG_PET_NAME`. Empty for a member with no pet,
-            // which the builder writes as a bare NUL, so it is filtered here
-            // rather than drawn as a blank plate.
+            // A party pet out of range also has a name, from the same packet
+            // (`GROUP_UPDATE_FLAG_PET_NAME`). For a member with no pet the
+            // server writes a bare NUL, so the empty name is filtered here
+            // rather than drawn as a blank nameplate.
             None => match self.party_pet_row(id) {
                 Some(pet) => pet.name.as_deref().filter(|name| !name.is_empty()),
                 None => self.party_row(id).map(|member| member.name.as_str()),
@@ -668,8 +668,8 @@ impl Units<'_, '_> {
         }
     }
 
-    /// `UnitLevel`. **`-1` for a unit whose level we do not know**, which is the
-    /// game's own answer and is what the interface draws as a skull.
+    /// `UnitLevel`. Returns `-1` for a unit whose level is unknown, as the game
+    /// does; the interface draws `-1` as a skull.
     pub fn level(&self, id: UnitId) -> i32 {
         if let Some(unit) = self.get(id) {
             return unit.level.map_or(-1, |level| level as i32);
@@ -679,40 +679,40 @@ impl Units<'_, '_> {
             .map_or(-1, i32::from)
     }
 
-    /// **The level as the interface is allowed to see it** — `-1` where the
-    /// reference refuses to say, which is what draws the `??` skull.
+    /// The level the interface displays: `-1` where the 1.12.1 client hides
+    /// the level, which draws the `??` skull.
     ///
-    /// [`Self::level`] above is the raw number and stays raw: five callers want
-    /// the player's own level for arithmetic (the skill ranks, the two craft
-    /// windows, the trainer) and a `-1` there would be a bug rather than a
-    /// skull. This is the one every *display* goes through.
+    /// [`Self::level`] returns the raw number and must stay raw. Five callers
+    /// use the player's own level for arithmetic (the skill ranks, the two
+    /// craft windows, the trainer), where `-1` would be a bug. Every display of
+    /// a level goes through this function instead.
     ///
     /// ## The rule `UnitLevel` follows
     ///
-    /// A target hostile to the player whose level is ten or more above the
-    /// player's answers `-1`; so does a world boss (classification 3), at any
-    /// level; everything else answers its true level.
+    /// A unit hostile to the player whose level is ten or more above the
+    /// player's returns `-1`. A world boss (classification 3) returns `-1` at
+    /// any level. Every other unit returns its true level.
     ///
-    /// Two things in that which a plain reading of the report would miss:
+    /// Two details of that rule:
     ///
-    /// * **The ten-level rule is gated on hostility.** The reaction the client
-    ///   tests is `UnitReaction` minus one, and `<= 1` is Hated or Hostile. A *neutral*
-    ///   unit reports its true level however far above the player it is, which
-    ///   is why a level 60 quest giver in a starting zone shows its number.
-    ///   This client's [`vale_assets::tables::faction::Reaction`] collapses
-    ///   the eight ranks to three and maps `Hostile` onto `UnitReaction` 2, so
-    ///   the gate is exactly that variant.
-    /// * **The boss clause is not gated at all** and is tested either way,
-    ///   so a worldboss is `??` at any level and any reaction.
+    /// * The ten-level rule applies only to units whose `UnitReaction` is 1 or
+    ///   2 (Hated or Hostile). A neutral unit shows its true level however far
+    ///   above the player it is, so a level 60 quest giver in a starting zone
+    ///   shows its number. This client's
+    ///   [`vale_assets::tables::faction::Reaction`] reduces the eight ranks to
+    ///   three and maps `Hostile` to `UnitReaction` 2, so the check is for that
+    ///   variant.
+    /// * The boss rule does not depend on reaction, so a world boss shows `??`
+    ///   at any level and any reaction.
     ///
     /// The comparison is `playerLevel <= targetLevel - 10`, so a unit exactly
-    /// nine levels above still shows its number and one ten above does not.
+    /// nine levels above shows its number and one ten above does not.
     ///
-    /// `None` tables is no opinion about the reaction, for the reason
-    /// [`crate::lua::api::UnitAnswers::unit_rank`] gives: with no `FactionTemplate`
-    /// every unit reads Neutral, and a neutral reading here would silently turn
-    /// the ten-level rule off for the whole session. The boss clause needs no
-    /// table and applies either way.
+    /// `None` tables means the reaction is unknown, for the reason
+    /// [`crate::lua::api::UnitAnswers::unit_rank`] gives: with no
+    /// `FactionTemplate` every unit reads Neutral, and treating that as neutral
+    /// here would disable the ten-level rule for the whole session. The boss
+    /// rule needs no table and applies either way.
     pub fn level_shown(
         &self,
         tables: Option<&vale_assets::tables::dbc::DisplayTables>,
@@ -729,11 +729,11 @@ impl Units<'_, '_> {
             self.reaction(tables, id, UnitId::Player)
                 == Some(vale_assets::tables::faction::Reaction::Hostile)
         });
-        // **Both levels have to be known.** The client reaches the comparison
-        // only with a player object in hand; here a level nothing has stated is
-        // `-1`, and `-1 <= level - 10` is true for anything above level 9 — so
-        // an unguarded test would mask every unit in the world for the frames
-        // between entering it and the player's own fields arriving.
+        // Both levels must be known. The client applies the comparison only
+        // when the local player exists. Here an unknown level is `-1`, and
+        // `-1 <= level - 10` is true for any unit above level 9, so without
+        // this check every unit would show `??` between entering the world and
+        // the arrival of the player's own fields.
         let player = self.level(UnitId::Player);
         if hostile && level > 0 && player > 0 && player <= level - 10 {
             return -1;
@@ -741,43 +741,42 @@ impl Units<'_, '_> {
         level
     }
 
-    /// `UnitXP` / `UnitXPMax`, and **zero for anybody but the player** — both
-    /// fields are `PRIVATE` and the server sends nobody else's.
+    /// `UnitXP` / `UnitXPMax`, zero for every unit but the player. Both fields
+    /// are `PRIVATE`, so the server sends them only for the player.
     ///
-    /// The pair is answered together because it is read together and because a
-    /// maximum of zero is load-bearing: `TextStatusBar_UpdateTextString` hides a
-    /// bar whose maximum is zero, so a client that answered a real `UnitXP` and
-    /// a stubbed `UnitXPMax` would take the XP bar off the screen — which is
-    /// exactly what a pair of stubs did.
+    /// The pair is returned together because it is read together and because a
+    /// maximum of zero has an effect: `TextStatusBar_UpdateTextString` hides a
+    /// bar whose maximum is zero. A real `UnitXP` paired with a stubbed
+    /// `UnitXPMax` removed the XP bar from the screen.
     pub fn experience(&self, id: UnitId) -> (u32, u32) {
         self.get(id).and_then(|unit| unit.experience).unwrap_or((0, 0))
     }
 
-    /// `GetXPExhaustion()` — the rested pool, `None` when there is none.
+    /// `GetXPExhaustion()`: the rested experience pool, `None` when there is
+    /// none.
     pub fn rested_experience(&self, id: UnitId) -> Option<u32> {
         self.get(id).and_then(|unit| unit.rested)
     }
 
     /// `UnitHealth`.
     ///
-    /// **This is not always hit points**, and that is the server's doing rather
-    /// than a shortcut here: vmangos sends another player's health as a percentage
-    /// of maximum, with `UnitHealthMax` reading 100 to match. The pair is always
-    /// self-consistent, so a fraction is always right and an absolute number is
-    /// only meaningful where the server sent one.
+    /// The value is not always hit points. vmangos sends another player's
+    /// health as a percentage of maximum, with `UnitHealthMax` reading 100 to
+    /// match. The pair is always consistent, so a fraction is always correct,
+    /// and an absolute number is meaningful only where the server sent one.
     pub fn health(&self, id: UnitId) -> u32 {
         if let Some(unit) = self.get(id) {
             return unit.health_value.map_or(0, |(now, _)| now);
         }
-        // …and off `SMSG_PARTY_MEMBER_STATS` for a member out of range, which is
-        // the only thing that carries one.
+        // For a member out of range, the value comes from
+        // `SMSG_PARTY_MEMBER_STATS`, the only source that carries it.
         self.party_row(id)
             .and_then(|member| member.stats.as_ref()?.health)
             .or_else(|| self.party_pet_row(id)?.health)
             .map_or(0, u32::from)
     }
 
-    /// `UnitHealthMax` — see [`Units::health`] on what it is a maximum *of*.
+    /// `UnitHealthMax`. See [`Units::health`] for what the value measures.
     pub fn health_max(&self, id: UnitId) -> u32 {
         if let Some(unit) = self.get(id) {
             return unit.health_value.map_or(0, |(_, max)| max);
@@ -788,11 +787,11 @@ impl Units<'_, '_> {
             .map_or(0, u32::from)
     }
 
-    /// `UnitMana` — the current power, **as the interface shows it**.
+    /// `UnitMana`: the current power, in the units the interface displays.
     ///
-    /// The name is the game's and so is the generality: `UnitMana` answers for
-    /// rage, energy and focus too, which is why the bar in FrameXML is one widget.
-    /// Rage is stored in tenths and this divides it out — see the module comment.
+    /// As in the game, `UnitMana` also returns rage, energy and focus, which is
+    /// why FrameXML has one power bar widget. Rage is stored in tenths and this
+    /// divides by ten; see the module comment.
     pub fn mana(&self, id: UnitId) -> u32 {
         if let Some(unit) = self.get(id) {
             return unit
@@ -814,7 +813,7 @@ impl Units<'_, '_> {
             .map_or(0, |(_, max, kind)| power_type::display(kind, max))
     }
 
-    /// `UnitPowerType` — which of the five bars this unit runs on.
+    /// `UnitPowerType`: which of the five power types this unit uses.
     pub fn power_type(&self, id: UnitId) -> Option<u8> {
         match self.get(id) {
             Some(unit) => unit.power_value.map(|(_, _, kind)| kind),
@@ -822,16 +821,16 @@ impl Units<'_, '_> {
         }
     }
 
-    /// **A party member's power, out of the stats packet** — `(now, max, kind)`
-    /// in the same shape `WorldEntity::power_value` carries, so the three reads
-    /// above fall through to it unchanged.
+    /// A party member's power from the stats packet, as `(now, max, kind)`,
+    /// the same shape as `WorldEntity::power_value`, so the three reads above
+    /// can fall back to it without conversion.
     ///
-    /// `None` unless all three arrived: `UnitFrame_UpdateManaType` colours the
-    /// bar off the *kind*, and answering a value with no kind paints a rogue's
-    /// energy blue.
+    /// `None` unless all three values arrived. `UnitFrame_UpdateManaType`
+    /// colours the bar by the kind, and a value with no kind would draw a
+    /// rogue's energy in blue.
     fn party_power(&self, id: UnitId) -> Option<(u32, u32, u8)> {
-        // The member's own row, or their pet's — the two carry the same three
-        // fields over the same opcode and the token says which is wanted.
+        // The member's own row or the pet's. Both carry the same three fields
+        // in the same opcode, and the token selects which one.
         let (power, max_power, kind) = match self.party_pet_row(id) {
             Some(pet) => (pet.power, pet.max_power, pet.power_type),
             None => {
@@ -842,9 +841,9 @@ impl Units<'_, '_> {
         Some((u32::from(power?), u32::from(max_power?), kind?))
     }
 
-    /// `UnitIsDead`. **Falls back to the roster's status byte**, which is the
-    /// only thing that says a member across the zone has died — and it is what
-    /// greys their frame out.
+    /// `UnitIsDead`. Falls back to the roster's status byte, the only source
+    /// that says a member elsewhere in the zone has died; the party frame greys
+    /// out on it.
     pub fn is_dead(&self, id: UnitId) -> bool {
         match self.get(id) {
             Some(unit) => unit.dead,
@@ -852,17 +851,16 @@ impl Units<'_, '_> {
         }
     }
 
-    /// `UnitIsConnected` — **false only for a party member the roster says is
-    /// offline**. Every unit the world knows about is connected by construction,
-    /// which is the real client's answer too.
+    /// `UnitIsConnected`: false only for a party member the roster marks as
+    /// offline. Every unit in the world is connected, which matches the 1.12.1
+    /// client.
     pub fn is_connected(&self, id: UnitId) -> bool {
-        // **A pet has no roster row, so it is connected only while it is in the
-        // world** — which is `UnitIsConnected`'s own answer and not a simplification:
-        // that function returns 1 for anything the object manager holds, then
-        // looks the guid up in the party and raid rows, and a pet is in
-        // neither. So a party pet across the zone reads *not connected* and
-        // `UnitFrameManaBar_Update` paints its bar grey, which is what the
-        // reference draws.
+        // A pet has no roster row, so it is connected only while it is in the
+        // world. The 1.12.1 `UnitIsConnected` behaves the same way: it is true
+        // for any unit in the world and otherwise depends on the party and raid
+        // rows, which do not contain pets. A party pet elsewhere in the zone
+        // therefore reads as not connected, and `UnitFrameManaBar_Update` draws
+        // its bar grey, as the 1.12.1 client does.
         if id.owner().is_some() {
             return self.get(id).is_some();
         }
@@ -872,10 +870,10 @@ impl Units<'_, '_> {
         }
     }
 
-    /// `UnitIsGhost` — the spirit has been released.
+    /// `UnitIsGhost`: the spirit has been released.
     ///
-    /// **Not the same question as [`Self::is_dead`]**, and neither implies the
-    /// other: a ghost's health is 1, so it reads as alive. See
+    /// This is separate from [`Self::is_dead`], and neither implies the other:
+    /// a ghost's health is 1, so it reads as alive. See
     /// [`vale_protocol::play::death`].
     pub fn is_ghost(&self, id: UnitId) -> bool {
         match self.get(id) {
@@ -889,53 +887,50 @@ impl Units<'_, '_> {
         self.get(id).is_some_and(|unit| unit.in_combat)
     }
 
-    /// **The character sheet's whole population**, or `None` for a unit whose
-    /// stat block never crossed the wire — which is everyone but us. See
-    /// [`vale_protocol::play::stats`], where the decode and its authority are.
+    /// All values on the character sheet, or `None` for a unit whose stat block
+    /// the server never sent, which is every unit but the player. See
+    /// [`vale_protocol::play::stats`] for the decoding and its sources.
     pub fn stats(&self, id: UnitId) -> Option<&vale_protocol::play::stats::UnitStats> {
         self.get(id).and_then(|unit| unit.stats.as_deref())
     }
 
-    /// **Unspent talent points and unspent profession points**, or `None` for
-    /// anybody but the player — both fields are `PRIVATE`.
+    /// Unspent talent points and unspent profession points, or `None` for every
+    /// unit but the player; both fields are `PRIVATE`.
     ///
-    /// `UnitCharacterPoints`' pair, and the whole of what the wire says about
-    /// talents: how many points are *spent* is worked back out of the known
-    /// spells. See [`crate::interface::talents`].
+    /// This is the pair `UnitCharacterPoints` returns, and it is all the server
+    /// sends about talents. The number of spent points is computed from the
+    /// known spells. See [`crate::interface::talents`].
     pub fn character_points(&self, id: UnitId) -> Option<(u32, u32)> {
         self.get(id).and_then(|unit| unit.character_points)
     }
 
-    /// **Where the character has been**, or `None` for a unit that carries no
-    /// exploration mask — which is everyone but us, on the same terms as
+    /// The areas the character has explored, or `None` for a unit that carries
+    /// no exploration mask, which is every unit but the player, as with
     /// [`Self::stats`]. See [`vale_protocol::play::explored`].
     pub fn explored(&self, id: UnitId) -> Option<&vale_protocol::play::explored::Explored> {
         self.get(id).and_then(|unit| unit.explored.as_deref())
     }
 
-    /// **Every skill the character has**, or `None` for a unit that carries no
-    /// block — which is everyone but us. See
+    /// Every skill the character has, or `None` for a unit that carries no
+    /// skill block, which is every unit but the player. See
     /// [`vale_protocol::play::skills`].
     pub fn skills(&self, id: UnitId) -> Option<&vale_protocol::play::skills::Skills> {
         self.get(id).and_then(|unit| unit.skills.as_deref())
     }
 
-    /// **`UnitSex`'s answer**, already mapped onto the three numbers the
-    /// interface uses.
+    /// The value `UnitSex` returns, mapped to the numbers the interface uses.
     ///
-    /// The mapping is a four-entry table — `[2, 3, 1, 6]` — indexed by `UNIT_FIELD_BYTES_0`'s gender byte. So male
-    /// (byte 0) is **2** and female (byte 1) is **3**, which is what
-    /// `GetText(key, gender)` picks the `_MALE`/`_FEMALE` variant with.
+    /// The value depends on the gender byte of `UNIT_FIELD_BYTES_0`. Male
+    /// (byte 0) is 2 and female (byte 1) is 3; `GetText(key, gender)` uses
+    /// these to choose the `_MALE` or `_FEMALE` variant.
     ///
-    /// **A unit that resolves to nobody answers 2, not nil** — the client's own
-    /// fallback is 2.0. That
-    /// matters more than it looks: `ReputationFrame_Update` calls this on line
-    /// 44, *before* its loop, and a nil there takes the whole panel down before
-    /// a single bar is hidden.
+    /// A token that names no unit returns 2, not nil, as in the 1.12.1 client.
+    /// `ReputationFrame_Update` calls this on line 44, before its loop, and a
+    /// nil there would raise an error before any reputation bar is updated.
     pub fn sex(&self, id: UnitId) -> u32 {
-        // The table's third and fourth entries are unreachable from a byte the
-        // server sends — vmangos writes 0 or 1 — so they are named rather than
-        // indexed: 1 is the neuter the interface calls "unknown".
+        // vmangos sends only gender 0 or 1, so other bytes do not occur in
+        // practice. They map to 1, the neuter value the interface calls
+        // "unknown".
         match self.get(id).and_then(|unit| unit.gender) {
             Some(0) => 2,
             Some(1) => 3,
@@ -944,54 +939,67 @@ impl Units<'_, '_> {
         }
     }
 
-    /// **Which faction's bar sits over the action bar**, or `None` for a unit
-    /// that carries no such field — which is everyone but us, on the same terms
-    /// as [`Self::explored`]. See [`crate::interface::reputation`].
+    /// The faction whose reputation bar is shown above the action bar, or
+    /// `None` for a unit that carries no such field, which is every unit but
+    /// the player, as with [`Self::explored`]. See
+    /// [`crate::interface::reputation`].
     pub fn watched_faction(&self, id: UnitId) -> Option<i32> {
         self.get(id).and_then(|unit| unit.watched_faction)
     }
 
-    /// `UnitRace` — `(localised, fileName)`, e.g. `("Night Elf", "NightElf")`.
+    /// `UnitRace`: `(localised, fileName)`, for example
+    /// `("Night Elf", "NightElf")`.
     ///
-    /// **The second is the one with a rule**, and `DressUpFrame.lua` is where
-    /// the rule is legible: it compares against `"Gnome"` *and* `"GNOME"` on
-    /// the same line, so 1.12's own answer is the un-spaced name in mixed case
-    /// and every consumer folds case anyway.
+    /// The format of the second value is shown by `DressUpFrame.lua`, which
+    /// compares against both `"Gnome"` and `"GNOME"` on the same line. The
+    /// 1.12 value is therefore the name without spaces in mixed case, and
+    /// consumers fold case anyway.
     pub fn race(&self, id: UnitId) -> Option<(&'static str, &'static str)> {
         let (race, _) = self.get(id)?.race_class?;
         let name = vale_protocol::state::query::race_name(u32::from(race));
         (!name.is_empty()).then(|| (name, unspaced(name)))
     }
 
-    /// `UnitClass` — `(localised, fileName)`. Both call sites in the directory
-    /// (`PaperDollStatTooltip` composing `WARRIOR_STRENGTH_TOOLTIP`, and
-    /// `UIOptionsFrame.lua` testing for a rogue) `strupper` the second before
-    /// using it, so the case here is not load-bearing.
+    /// `UnitClass`: `(localised, fileName)`. Both FrameXML call sites
+    /// (`PaperDollStatTooltip` building `WARRIOR_STRENGTH_TOOLTIP`, and
+    /// `UIOptionsFrame.lua` testing for a rogue) apply `strupper` to the second
+    /// value before using it, so its case has no effect.
     pub fn class(&self, id: UnitId) -> Option<(&'static str, &'static str)> {
         let (_, class) = self.get(id)?.race_class?;
         let name = vale_protocol::state::query::class_name(u32::from(class));
         (!name.is_empty()).then_some((name, name))
     }
 
-    /// …and the same pair as **ids**, which is what a requirement mask is tested
+    /// The unit's race and class as ids, which requirement masks are tested
     /// against.
     ///
-    /// `AllowableRace`/`AllowableClass` are bit masks over these numbers, so the
-    /// name is no use there: an item plate has to ask "is bit `race - 1` set",
-    /// and a word cannot answer that.
+    /// `AllowableRace` and `AllowableClass` are bit masks over these numbers.
+    /// An item tooltip has to test whether bit `race - 1` is set, which needs
+    /// the id rather than the name.
     pub fn race_class_ids(&self, id: UnitId) -> Option<(u32, u32)> {
         let (race, class) = self.get(id)?.race_class?;
         Some((u32::from(race), u32::from(class)))
     }
 
-    /// `UnitIsUnit` — do two tokens name the same creature?
+    /// The local character's standing with a `Faction.dbc` id, 0 (Hated) to 7
+    /// (Exalted), from its reputation list. `None` for a faction with no
+    /// reputation bar. An item plate's reputation requirement is measured
+    /// against this.
+    pub fn standing_rank(&self, faction: u32) -> Option<u32> {
+        self.standing
+            .standings
+            .iter()
+            .find(|(id, _)| *id == faction)
+            .map(|(_, state)| state.rank as u32)
+    }
+
+    /// `UnitIsUnit`: whether two tokens name the same unit.
     ///
-    /// **Compared by guid, not by entity**, which is the one that stays true: an
-    /// entity is this client's handle and a guid is the server's identity, and
-    /// nothing guarantees a unit keeps its entity across a stream-out and back.
-    /// Two tokens that both resolve to nothing are **not** the same unit — the
-    /// game answers nil there, and `TARGETSELF`'s body would otherwise target the
-    /// pet whenever nothing at all was selected.
+    /// Compared by guid, not by entity. An entity is this client's handle and a
+    /// guid is the server's identity, and a unit that leaves view and returns
+    /// may get a new entity. Two tokens that both name nothing are not the same
+    /// unit: the game returns nil in that case, and otherwise `TARGETSELF`'s
+    /// body would target the pet whenever nothing was selected.
     pub fn is_unit(&self, a: UnitId, b: UnitId) -> bool {
         match (self.get(a), self.get(b)) {
             (Some(a), Some(b)) => a.guid == b.guid,
@@ -999,37 +1007,37 @@ impl Units<'_, '_> {
         }
     }
 
-    /// **One side of the friend-or-foe question**, as the rule wants it —
-    /// [`vale_assets::tables::faction::Party`].
-    ///
-    /// The group flag is the only field that is not a straight read: a unit is
-    /// "in the local character's group" when the roster names its guid, which
-    /// is the same set the party and raid tokens are built from.
-    /// The two resources friend-or-foe needs beyond the tables, for a pass
-    /// that already holds this param and calls out to a function that does not
-    /// — see [`Friendship`], and the cast path, which is the one caller.
+    /// The two resources friend-or-foe needs besides the DBC tables, for a pass
+    /// that holds this param and calls a function that does not. See
+    /// [`Friendship`]; the cast path is the only caller.
     pub fn friendship(&self) -> Friendship<'_> {
         Friendship { party: &self.party, standing: &self.standing }
     }
 
+    /// One side of the friend-or-foe question, as
+    /// [`vale_assets::tables::faction::Party`].
+    ///
+    /// The group flag is the only field that is not copied directly: a unit is
+    /// in the local character's group when the roster contains its guid, the
+    /// same set the party and raid tokens are built from.
     fn party_of(&self, id: UnitId) -> Option<vale_assets::tables::faction::Party> {
         Some(faction_party(self.get(id)?, &self.party))
     }
 
-    /// **How one unit stands towards another** — the join `UnitIsFriend`,
-    /// `UnitIsEnemy`, `UnitReaction` and `UnitCanAttack` are all decided by, on
-    /// the client's own eight-rank scale.
+    /// How one unit stands towards another, on the client's eight-rank scale.
+    /// `UnitIsFriend`, `UnitIsEnemy`, `UnitReaction` and `UnitCanAttack` are
+    /// all decided from it.
     ///
-    /// The same call Tab-targeting makes ([`super::target`]), through the same
+    /// Tab-targeting ([`super::target`]) makes the same call through the same
     /// table, so the interface and the picker cannot disagree about who is a
-    /// friend. `None` when either token names nothing, which is the nil every
-    /// one of those four answers for an absent unit.
+    /// friend. Returns `None` when either token names nothing, matching the nil
+    /// each of those four functions returns for an absent unit.
     ///
-    /// **It is the whole cascade and not the faction table alone** — see
-    /// [`vale_assets::tables::faction`], where the eleven legs are written
-    /// out. A duel, a free-for-all flag, a forced reaction and the at-war bit
-    /// each beat the table, and three of the four can make two units of one
-    /// faction hostile.
+    /// The result comes from the full sequence of checks, not the faction table
+    /// alone; [`vale_assets::tables::faction`] lists the eleven checks. A duel,
+    /// a free-for-all flag, a forced reaction and the at-war bit each override
+    /// the table, and three of the four can make two units of one faction
+    /// hostile.
     pub fn rank(
         &self,
         tables: &vale_assets::tables::dbc::DisplayTables,
@@ -1038,14 +1046,14 @@ impl Units<'_, '_> {
     ) -> Option<vale_assets::tables::faction::Rank> {
         let (a, b) = (self.party_of(a)?, self.party_of(b)?);
         let Some(factions) = tables.factions() else {
-            // No table is no opinion, which resolves to Neutral exactly as a
-            // template neither side has does.
+            // Without the table there is no information, which resolves to
+            // Neutral, the same result as a template missing from the table.
             return Some(vale_assets::tables::faction::Rank::Neutral);
         };
         Some(factions.rank(&a, &b, &self.standing.lend()))
     }
 
-    /// …and the same answer folded to the three readings this client paints.
+    /// [`Self::rank`] reduced to the three reactions this client draws.
     pub fn reaction(
         &self,
         tables: &vale_assets::tables::dbc::DisplayTables,
@@ -1055,13 +1063,14 @@ impl Units<'_, '_> {
         self.rank(tables, a, b).map(Into::into)
     }
 
-    /// `UnitCanAttack(a, b)` — **may the first swing at the second?**
+    /// `UnitCanAttack(a, b)`: whether the first unit may attack the second.
     ///
-    /// Not the reaction alone: the client's attack test folds in both units'
-    /// `UNIT_FIELD_FLAGS` — which is what takes a non-attackable quest giver
-    /// standing in a hostile camp out of the set — and, between two players, a
-    /// duel, the PvP flag and the free-for-all pair. One rule, in the crate
-    /// that owns it, called from both here and the picker.
+    /// The reaction alone does not decide this. The client's attack check also
+    /// uses both units' `UNIT_FIELD_FLAGS`, which exclude a non-attackable
+    /// quest giver standing in a hostile camp, and, between two players, a
+    /// duel, the PvP flag and the free-for-all pair. The rule is implemented
+    /// once, in the crate that owns it, and called from here and from the
+    /// picker.
     pub fn can_attack(
         &self,
         tables: &vale_assets::tables::dbc::DisplayTables,
@@ -1080,58 +1089,57 @@ impl Units<'_, '_> {
         factions.can_attack(&a, &b, &self.standing.lend())
     }
 
-    /// `UnitPlayerControlled` — is there a person behind this unit?
+    /// `UnitPlayerControlled`: whether a player controls this unit.
     ///
-    /// **The object type, which is the whole of the question for this client.**
-    /// The real answer is `UNIT_FLAG_PLAYER_CONTROLLED`, which is also set on a
-    /// pet, a charmed creature and a mind-controlled one; this client models
-    /// none of those, so the two agree everywhere it can currently look, and the
-    /// day a pet exists this is the line to change.
+    /// This client answers from the object type alone. The game answers from
+    /// `UNIT_FLAG_PLAYER_CONTROLLED`, which is also set on a pet, a charmed
+    /// creature and a mind-controlled one. This function models none of those,
+    /// so the two answers agree for players and creatures; it must be changed
+    /// to read the flag once pets are handled here.
     pub fn player_controlled(&self, id: UnitId) -> bool {
         self.get(id)
             .is_some_and(|unit| unit.kind == vale_protocol::state::update::ObjectType::Player)
     }
 
-    /// `UnitIsPVP` — is this unit flagged for open combat?
+    /// `UnitIsPVP`: whether this unit is flagged for player-versus-player
+    /// combat.
     ///
-    /// **`UNIT_FIELD_FLAGS` bit 12**, which is the field the tooltip builder
-    /// reads: `(UNIT_FIELD_FLAGS >> 12) & 1`. Its player branch also takes `PLAYER_FLAGS`' own bit 8, so a
-    /// player who is flagged but whose unit bit has not caught up still shows
-    /// the line; that second read is deliberately not made here, because this
-    /// client parses `PLAYER_FLAGS` for exactly one bit (the release timer) and
-    /// a second reading of the same word is a fact to establish rather than to
-    /// assume.
+    /// Reads bit 12 of `UNIT_FIELD_FLAGS`, the bit the 1.12.1 client uses for
+    /// the tooltip's PvP line. For a player the client also shows the line when
+    /// bit 8 of `PLAYER_FLAGS` is set, so a player who is flagged but whose unit
+    /// bit has not updated yet still shows it. This function does not read that
+    /// second bit: this client parses `PLAYER_FLAGS` for one bit only (the
+    /// release timer), and the meaning of bit 8 has not been verified.
     pub fn is_pvp(&self, id: UnitId) -> bool {
         self.get(id)
             .is_some_and(|unit| unit.unit_flags & UNIT_FLAG_PVP != 0)
     }
 
-    /// `UnitCreatureType` — `"Humanoid"`, `"Beast"`, and `None` for a player,
-    /// which is the game's own answer (`UnitCreatureType("player")` is nil).
+    /// `UnitCreatureType`: `"Humanoid"`, `"Beast"` and so on, or `None` for a
+    /// player, as in the game (`UnitCreatureType("player")` is nil).
     pub fn creature_type(&self, id: UnitId) -> Option<&'static str> {
         let unit = self.get(id)?;
         let name = vale_protocol::state::query::creature_type_name(unit.creature_type);
         (!name.is_empty()).then_some(name)
     }
 
-    /// **Everything the unit plate is made of, in one pass.**
+    /// All the values the unit tooltip shows, collected in one call.
     ///
-    /// One call rather than eleven because the plate is composed inside a single
-    /// `GameTooltip:SetUnit` and every cell of it is about the same unit — see
-    /// [`crate::lua::widgets::tooltip`], where the composition law is, and
-    /// [`UnitTip`] for what each field is.
+    /// One call rather than eleven, because the tooltip is built inside a
+    /// single `GameTooltip:SetUnit` and every line is about the same unit. See
+    /// [`crate::lua::widgets::tooltip`] for how the lines are composed and
+    /// [`UnitTip`] for each field.
     pub fn unit_tip(
         &self,
         tables: Option<&vale_assets::tables::dbc::DisplayTables>,
         id: UnitId,
     ) -> Option<UnitTip> {
         let Some(unit) = self.get(id) else {
-            // **A party member with no entity still has a plate**, built out of
-            // the roster and whatever stats have arrived — which is what the
-            // report about a blank frame was half about. Race, class and
-            // classification are absent because nothing on the wire carries
-            // them for a member out of range, and the level/class line falls
-            // through to `TOOLTIP_UNIT_LEVEL` on its own.
+            // A party member with no entity still has a tooltip, built from the
+            // roster and whatever stats have arrived; without this branch the
+            // tooltip was blank. Race, class and classification are absent
+            // because the server sends none of them for a member out of range,
+            // and the level/class line then uses `TOOLTIP_UNIT_LEVEL`.
             let member = self.party_row(id)?;
             return Some(UnitTip {
                 name: member.name.clone(),
@@ -1156,10 +1164,10 @@ impl Units<'_, '_> {
         Some(UnitTip {
             name: unit.name.clone(),
             sub_name: unit.sub_name.clone(),
-            // **The plate's own `??`**, which is the same rule the frame's is
-            // — see [`Units::level_shown`]. `0` rather than `-1` because the
-            // builder treats any level `<= 0` as unknown and this side has
-            // always spelt its unknown as zero; both compose the same cell.
+            // The tooltip's `??` follows the same rule as the unit frame's; see
+            // [`Units::level_shown`]. Unknown is `0` rather than `-1` because
+            // the tooltip builder treats any level `<= 0` as unknown and this
+            // struct uses zero for unknown; both produce the same line.
             level: level_shown.max(0),
             race: self.race(id).map(|(localised, _)| localised),
             class: self.class(id).map(|(localised, _)| localised),
@@ -1169,89 +1177,92 @@ impl Units<'_, '_> {
             pvp: unit.unit_flags & UNIT_FLAG_PVP != 0,
             dead: unit.dead,
             health: unit.health_value,
-            // **Filled in by the caller**, which is the only side holding
-            // `AreaTable` and the only side that knows where *we* are standing.
-            // See [`UnitTip::zone`].
+            // Filled in by the caller, which holds `AreaTable` and knows the
+            // local player's zone. See [`UnitTip::zone`].
             zone: String::new(),
         })
     }
 
-    /// **Which zone a party member is standing in**, as an `AreaTable` id —
-    /// `None` for every other unit and for one no stats packet has arrived for.
+    /// The zone a party member is in, as an `AreaTable` id. `None` for every
+    /// other unit and for a member with no stats packet yet.
     ///
-    /// The only thing on the wire that knows: `SMSG_PARTY_MEMBER_STATS` carries
-    /// it, and a member across the world is in no other list this client keeps.
+    /// `SMSG_PARTY_MEMBER_STATS` is the only packet that carries it, and a
+    /// member elsewhere in the world is in no other list this client keeps.
     pub fn party_zone(&self, id: UnitId) -> Option<u32> {
         let zone = self.party_row(id)?.stats.as_ref()?.zone?;
         (zone != 0).then_some(u32::from(zone))
     }
 }
 
-/// **`worldboss`** — the `creature_template.rank` this client draws as `(Boss)`
-/// and the reference reports no level for, at any level and any reaction.
+/// The `worldboss` classification: the `creature_template.rank` this client
+/// draws as `(Boss)` and for which the 1.12.1 client shows no level, at any
+/// level and any reaction.
 ///
-/// The same 3 `UnitClassification` maps to `"worldboss"` and
-/// `vale_protocol::state::query::classification_key` maps to `"BOSS"`;
-/// named here because [`Units::level_shown`] compares against it and a bare 3
-/// beside a `classification` field reads as one of the other four ranks just as
-/// easily.
+/// `UnitClassification` maps this value 3 to `"worldboss"`, and
+/// `vale_protocol::state::query::classification_key` maps it to `"BOSS"`. It
+/// is a named constant because [`Units::level_shown`] compares against it, and
+/// a bare 3 next to a `classification` field could be any of the other four
+/// ranks.
 ///
-/// **It is 0 until the creature query lands.** `WorldEntity::classification` is
-/// filled from `SMSG_CREATURE_QUERY_RESPONSE`, so a boss states its real level
-/// for the round trip and then goes to `??`. That is a fault of the order the
-/// wire arrives in rather than of this rule, and it is the same window every
-/// other template-derived cell of the plate has.
+/// The field is 0 until the creature query response arrives.
+/// `WorldEntity::classification` is filled from
+/// `SMSG_CREATURE_QUERY_RESPONSE`, so a boss shows its real level for one
+/// round trip and then `??`. Every other tooltip line that comes from the
+/// creature template has the same delay.
 pub const BOSS_CLASSIFICATION: u32 = 3;
 
-/// `UNIT_FLAG_PVP` — vmangos' own `UNIT_FLAG_PVP = 0x00001000`, and the bit the
-/// client tests to draw the "PvP" line and to pick the ring's colour.
+/// `UNIT_FLAG_PVP`, vmangos' `UNIT_FLAG_PVP = 0x00001000`. The client uses
+/// this bit to show the "PvP" tooltip line and to choose the selection ring's
+/// colour.
 pub const UNIT_FLAG_PVP: u32 = 0x0000_1000;
 
-/// **What `GameTooltip:SetUnit` draws**, resolved once.
+/// The values `GameTooltip:SetUnit` draws, collected once.
 ///
-/// Deliberately words and numbers rather than sentences: this side answers *what
-/// the unit is* and [`crate::lua::widgets::tooltip`] composes it into the game's own
-/// format strings, which is the same split every other plate in this client
-/// takes ([`SpellTip`]). A cell nothing can answer is `None`/empty and the
-/// composition drops it, which is how the four `TOOLTIP_UNIT_LEVEL*` formats
-/// choose between themselves.
+/// The fields are words and numbers rather than sentences. This struct says
+/// what the unit is, and [`crate::lua::widgets::tooltip`] composes it into the
+/// game's format strings; every other tooltip in this client is split the same
+/// way ([`SpellTip`]). A value that is unknown is `None` or empty and the
+/// composition leaves it out, which is how one of the four
+/// `TOOLTIP_UNIT_LEVEL*` formats is chosen.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnitTip {
     pub name: String,
-    /// `<Innkeeper>` — a creature's template tag, empty for a player.
+    /// A creature's template subname, such as `<Innkeeper>`; empty for a
+    /// player.
     pub sub_name: String,
-    /// `0` for a unit whose level never crossed the wire, which the builder
-    /// turns into `"??"`, as it does any level `<= 0`.
+    /// `0` for a unit whose level the server never sent. The tooltip builder
+    /// shows `"??"` for it, as for any level `<= 0`.
     pub level: i32,
     /// A player's race and class, both `None` for a creature.
     pub race: Option<&'static str>,
     pub class: Option<&'static str>,
-    /// …and a creature's `CreatureType.dbc` word, `None` for a player.
+    /// A creature's `CreatureType.dbc` name, `None` for a player.
     pub creature_type: Option<&'static str>,
     /// The `GlobalStrings.lua` key for the classification cell, `""` for none.
     pub classification: &'static str,
     pub player_controlled: bool,
     pub pvp: bool,
     pub dead: bool,
-    /// `(current, maximum)` for the plate's own status bar, `None` for anything
-    /// that never had health.
+    /// `(current, maximum)` for the tooltip's status bar, `None` for a unit
+    /// with no health values.
     pub health: Option<(u32, u32)>,
-    /// **Where a party member is, when it is not where we are** — the bare zone
-    /// line the reference adds to a group mate's plate, and empty for every unit
-    /// that should not have one.
+    /// A party member's zone when it differs from the local player's. The
+    /// 1.12.1 client adds this zone line to a group member's tooltip; it is
+    /// empty for every other unit.
     ///
-    /// Empty rather than `Option` because the composition's test is "is there a
-    /// line to draw", and because the *decision* is made before it gets here:
-    /// [`Units::party_zone`] answers the id and the caller resolves it and drops
-    /// it when it matches the character's own zone. A member in the same zone
-    /// says nothing, which is the whole information in the line.
+    /// A `String` rather than an `Option`, because the composition only tests
+    /// whether there is a line to draw, and the decision is made earlier:
+    /// [`Units::party_zone`] returns the id, and the caller resolves it and
+    /// clears it when it matches the local player's zone. A member in the same
+    /// zone gets no line.
     pub zone: String,
 }
 
-/// A race's file name from its localised one — `UnitRace`'s second answer.
+/// A race's file name from its localised name: the second value `UnitRace`
+/// returns.
 ///
-/// **Night Elf is the only one of the eight with a space in it**, so this is a
-/// one-arm match rather than a second table to keep in step with
+/// Night Elf is the only one of the eight race names with a space, so this is
+/// a one-arm match rather than a second table to keep in step with
 /// [`vale_protocol::state::query::race_name`].
 fn unspaced(name: &'static str) -> &'static str {
     match name {
@@ -1260,46 +1271,44 @@ fn unspaced(name: &'static str) -> &'static str {
     }
 }
 
-/// `GetTime` — **the interface's clock**, in seconds since the client started.
+/// `GetTime`: the interface's clock, in seconds since the client started.
 ///
-/// A float, monotonic, and *not* wall-clock time — `date()` is the game's
-/// function for that. Half of FrameXML is written against it:
-/// `CastingBarFrame_OnUpdate` scrubs the bar between `this.startTime` and
-/// `this.maxValue`, both of which are `GetTime()` values, and every
-/// `CooldownFrame` is `(start, duration)` in the same base.
+/// A monotonic float, not wall-clock time; the game's function for wall-clock
+/// time is `date()`. Much of FrameXML depends on it:
+/// `CastingBarFrame_OnUpdate` moves the bar between `this.startTime` and
+/// `this.maxValue`, both `GetTime()` values, and every `CooldownFrame` takes
+/// `(start, duration)` on the same clock.
 ///
-/// **The base being one base is the whole point of routing it through here.** A
-/// second time origin invented somewhere else would produce a cast bar that is
-/// full or empty and never in between, with no error and nothing in the log — so
-/// [`get_action_cooldown`] takes its `now` from this and nothing else.
+/// All interface times must share one origin, which is why they come through
+/// this function. A value from a second origin would make a cast bar always
+/// full or always empty, with no error in the log. [`get_action_cooldown`]
+/// takes its `now` from this function only.
 ///
-/// Bevy's `Time::elapsed` is already seconds since the app started, so this is a
-/// rename. That is deliberate: the rename is the fact.
+/// Bevy's `Time::elapsed` is already seconds since the app started, so this
+/// function only renames it. The name records which clock the interface uses.
 pub fn get_time(time: &Time) -> f64 {
     time.elapsed_secs_f64()
 }
 
-/// `GetQuestGreenRange()` — **how far below you a thing stays green**, in levels.
+/// `GetQuestGreenRange()`: how many levels below the player a unit or quest
+/// stays green.
 ///
-/// One number, about the player and nothing else, and the only input to the
-/// bottom of `GetDifficultyColor`'s cascade: `QuestLogFrame.lua` colours a level
-/// red / orange / yellow off the difference outright, and then asks *this* to
-/// decide between green and grey (`if ( -levelDiff <= GetQuestGreenRange() )`).
-/// So it is what separates "worth killing" from "not worth killing" on the
-/// target frame's level number and on every quest title in the log.
+/// The value depends only on the player's level. It decides the last step of
+/// `GetDifficultyColor`: `QuestLogFrame.lua` colours a level red, orange or
+/// yellow from the level difference directly, and uses this value to choose
+/// between green and grey (`if ( -levelDiff <= GetQuestGreenRange() )`). It
+/// therefore separates units that give experience from those that do not, on
+/// the target frame's level number and on every quest title in the log.
 ///
-/// **A table, not a formula, and it is the client's own**: the player's level,
-/// divided by ten and clamped to 19, indexes twenty entries, and those twenty
-/// are [`QUEST_GREEN_RANGE`]. That matters because the
-/// obvious reconstruction is the *server's* — vmangos derives a grey level
-/// arithmetically in `MaNGOS::XP::GetGrayLevel` — and the two do not agree: at
-/// level 60 the server's rule gives 9 and the client's table gives **7**. This
-/// number never crosses the wire, so the client's is the only one that decides
-/// what is on screen.
+/// The 1.12.1 client's value is a lookup by the player's level in steps of
+/// ten, not a formula; the values are [`QUEST_GREEN_RANGE`], and levels of
+/// 190 and above use the last entry. The server's rule differs: vmangos
+/// computes a grey level in `MaNGOS::XP::GetGrayLevel`, and at level 60 that
+/// gives 9 where the client gives 7. The value is never sent by the server,
+/// so the client's value decides what is on screen.
 ///
-/// **No player is `0`**, which is the client's own early return and not a
-/// guess: with no character there is nothing a
-/// level can be measured against, and green collapses onto grey.
+/// With no player the result is `0`, as in the 1.12.1 client: there is no
+/// level to compare against, and green and grey coincide.
 pub fn quest_green_range(player_level: i32) -> i32 {
     if player_level <= 0 {
         return 0;
@@ -1308,48 +1317,50 @@ pub fn quest_green_range(player_level: i32) -> i32 {
     QUEST_GREEN_RANGE[index]
 }
 
-/// The client's twenty entries, indexed by `playerLevel / 10`.
+/// The green range for each band of ten player levels, indexed by
+/// `playerLevel / 10`.
 ///
-/// Only the first seven are reachable in 1.12 — the level cap is 60 — and the
-/// rest are transcribed rather than trimmed, because a table read at an index
-/// the client clamps is a table whose length is part of the rule.
+/// Only the first seven entries are reachable in 1.12, where the level cap is
+/// 60. All twenty are kept so that the clamp to the last entry gives the same
+/// result as the 1.12.1 client for any level.
 const QUEST_GREEN_RANGE: [i32; 20] = [
     4, 4, 5, 5, 6, 6, 7, 7, 8, 9, 10, 11, 12, 12, 12, 12, 12, 12, 12, 12,
 ];
 
-/// `HasAction` — is there anything in this slot?
+/// `HasAction`: whether the slot holds anything.
 ///
-/// Slots are **one-based** here and everywhere the game touches them:
-/// `ActionButtonDown(1)` is the first button, and `ACTIONBAR_SLOT_CHANGED`'s
-/// `arg1 == 0` is free to mean "all of them" precisely because no real slot is 0.
+/// Slots are one-based here and everywhere the game uses them:
+/// `ActionButtonDown(1)` is the first button. `ACTIONBAR_SLOT_CHANGED` uses
+/// `arg1 == 0` to mean "all slots" because no real slot is 0.
 pub fn has_action(bar: &ActionBar, slot: u8) -> bool {
     action(bar, slot).is_some()
 }
 
-/// The slot's contents, or `None`. The one-based-to-zero-based conversion, in one
-/// place.
+/// The slot's contents, or `None`. This is the one place that converts the
+/// one-based slot to a zero-based index.
 pub fn action(bar: &ActionBar, slot: u8) -> Option<&Slot> {
     let index = usize::from(slot.checked_sub(1)?);
     bar.slots.get(index)?.as_ref()
 }
 
-/// `GetActionText` — what to write on the button, **and for a spell that is
-/// nothing**. The real client answers only a *macro's* name here; a spell or
-/// an item answers nil, and `ActionButton_Update` hands the answer straight to
-/// the button's Name font string. Answering the spell's name — the old
-/// fallback from before the bar drew icons — printed a label over every icon,
-/// twelve overlapping names along the bottom of the screen.
+/// `GetActionText`: the text drawn on the button, which is nothing for a
+/// spell. The 1.12.1 client returns only a macro's name here; a spell or an
+/// item returns nil. `ActionButton_Update` passes the value directly to the
+/// button's Name font string. Returning the spell's name, a fallback left from
+/// before the bar drew icons, printed a label over every icon: twelve
+/// overlapping names along the bottom of the screen.
 pub fn get_action_text(bar: &ActionBar, slot: u8) -> Option<String> {
     action(bar, slot)
         .filter(|held| held.kind == vale_protocol::play::spells::action_kind::MACRO)
         .map(Slot::label)
 }
 
-/// `GetActionTexture` — the icon path out of `SpellIcon.dbc`.
+/// `GetActionTexture`: the icon path from `SpellIcon.dbc`.
 ///
-/// **A spell's only.** An item slot's icon is its prototype's and wants the
-/// inventory as well as the bar, so it is answered one layer up where both are
-/// in hand — see `lua::api`'s `Live::action_texture` and [`action_item`].
+/// Spells only. An item slot's icon comes from the item's prototype and needs
+/// the inventory as well as the bar, so it is resolved one layer up where both
+/// are available; see `lua::api`'s `Live::action_texture` and
+/// [`action_item`].
 pub fn get_action_texture(bar: &ActionBar, slot: u8) -> Option<&str> {
     action(bar, slot)
         .and_then(|slot| slot.spell.as_ref())
@@ -1357,59 +1368,60 @@ pub fn get_action_texture(bar: &ActionBar, slot: u8) -> Option<&str> {
         .filter(|icon| !icon.is_empty())
 }
 
-/// **The item entry in a slot**, or `None` for anything that is not an item.
+/// The item entry in a slot, or `None` for a slot that does not hold an item.
 ///
-/// The one thing `SMSG_ACTION_BUTTONS` says about an item slot, and the input to
-/// every other question about one: what it looks like, how many are left,
-/// whether it is worn, and what pressing it does — see
-/// [`super::items::UseCarriedItem`]. Kept here rather than inlined at four call
-/// sites because the test is the *kind* byte and not the presence of a
-/// `SpellInfo`: a spell `Spell.dbc` does not carry has no info either.
+/// The entry is all `SMSG_ACTION_BUTTONS` says about an item slot, and every
+/// other question about the slot starts from it: its icon, how many are left,
+/// whether it is equipped, and what pressing it does (see
+/// [`super::items::UseCarriedItem`]). It is a function rather than inlined at
+/// four call sites because the test must use the kind byte, not the absence
+/// of a `SpellInfo`: a spell missing from `Spell.dbc` has no info either.
 pub fn action_item(bar: &ActionBar, slot: u8) -> Option<u32> {
     action(bar, slot)
         .filter(|held| held.kind == vale_protocol::play::spells::action_kind::ITEM)
         .map(|held| held.action)
 }
 
-/// `IsAttackAction` — is this the auto-attack toggle rather than a cast?
+/// `IsAttackAction`: whether the slot holds the auto-attack toggle rather than
+/// a spell.
 ///
-/// `ActionButton.lua` reads it to decide whether the button should *flash* while
-/// in combat, which is the melee player's only feedback that the swing took.
+/// `ActionButton.lua` uses it to decide whether the button flashes during
+/// combat, which is a melee player's only sign that auto-attack is on.
 pub fn is_attack_action(bar: &ActionBar, slot: u8) -> bool {
     action(bar, slot).is_some_and(Slot::is_auto_attack)
 }
 
-/// `GetActionCooldown` — the game's own `(start, duration, enable)`.
+/// `GetActionCooldown`: the game's `(start, duration, enable)`.
 ///
-/// `start` is a [`get_time`] value and `duration` is the whole length, which is
-/// exactly what `CooldownFrame_SetTimer(cooldown, start, duration, enable)` takes
-/// in `ActionButton_UpdateCooldown`:
+/// `start` is a [`get_time`] value and `duration` is the full length, which is
+/// what `CooldownFrame_SetTimer(cooldown, start, duration, enable)` takes in
+/// `ActionButton_UpdateCooldown`:
 ///
 /// ```lua
 /// local start, duration, enable = GetActionCooldown(ActionButton_GetPagedID(this));
 /// ```
 ///
-/// **This used to return `(remaining, duration)`** because there was no clock to
-/// express a start in; there is one now, and the conversion is the one that
-/// comment stated — `start = now - (duration - remaining)`. Both halves are
-/// derived from the same instant, so the pair is self-consistent even though
-/// `Cooldowns` counts in `Instant`s and `now` comes from the frame clock.
+/// `Cooldowns` stores remaining time, so the start is computed as
+/// `start = now - (duration - remaining)`. Both values are derived from the
+/// same instant, so the pair is consistent even though `Cooldowns` counts in
+/// `Instant`s and `now` comes from the frame clock.
 ///
-/// A slot with nothing on cooldown answers `(0, 0, 1)`, which is the game's own
-/// "no timer" and is what a `CooldownFrame` hides on — not `nil`.
+/// A slot with nothing on cooldown returns `(0, 0, 1)`, the game's value for
+/// "no timer", on which a `CooldownFrame` hides itself. It does not return
+/// `nil`.
 ///
-/// **`enable` is always 1 here**, and that is a stated simplification. In the real
-/// client it is 0 for an action whose cooldown exists but should not be *drawn* —
-/// the case is an enchant or an item proc — and this client has neither on a bar.
-/// Erring towards drawing is the visible direction, which is the one to err in.
+/// `enable` is always 1 here, which is a simplification. In the 1.12.1 client
+/// it is 0 for an action whose cooldown exists but should not be drawn, such
+/// as an enchant or an item proc, and this client has neither on a bar. If
+/// the value is wrong, drawing a cooldown is the visible error, which is the
+/// easier one to notice.
 pub fn get_action_cooldown(
     bar: &ActionBar,
     cooldowns: &Cooldowns,
     slot: u8,
     now: f64,
-    // **The item's own on-use spell**, for an item slot — see the branch
-    // below. `None` for a spell slot, and for an item whose template has not
-    // arrived yet.
+    // The item's on-use spell, for an item slot; see the branch below. `None`
+    // for a spell slot and for an item whose template has not arrived yet.
     item_spell: Option<&vale_assets::tables::spellbook::SpellInfo>,
 ) -> (f64, f64, bool) {
     let idle = (0.0, 0.0, true);
@@ -1557,104 +1569,276 @@ impl TipContext<'_> {
     }
 }
 
-/// **An item's plate, as values** — the same division [`SpellTip`] makes.
+/// An item's plate, as values: the same division [`SpellTip`] makes.
 ///
-/// Everything here is a number or a resolved string; not one field is a
-/// sentence composed here. The *words* come out of `GlobalStrings.lua` in
-/// [`crate::lua::widgets::tooltip`], read from the live globals table exactly as the
-/// real client reads them, so a key the shipped file does not carry draws as
-/// nothing rather than as something this repo made up.
+/// Every field is a number or a resolved name; no field is a sentence composed
+/// here. The words come out of `GlobalStrings.lua` in
+/// [`crate::interface::plate::item_plate`], read through a lookup, so a key the
+/// shipped file does not carry draws as nothing.
 ///
-/// **The line order is a reconstruction and is marked as one** — see
-/// `lua::tooltip::item_lines`. What *is* measured is every value below: each is
-/// a named column of `SMSG_ITEM_QUERY_SINGLE_RESPONSE` or of the update field
-/// block the slot came from.
+/// The fields are in the order the 1.12.1 client draws their lines; see
+/// [`crate::interface::plate`] for the order and the colours. Each value is a
+/// named column of `SMSG_ITEM_QUERY_SINGLE_RESPONSE`, of the item object the
+/// slot came from, of a DBC, or of the character's own state in [`Wearer`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ItemTip {
     pub name: String,
-    /// `ITEM_QUALITY_*` 0..6 — the name's colour, through the interface's own
+    /// The random suffix of the copy in hand ("of the Bear"), composed onto the
+    /// name through `ITEM_SUFFIX_TEMPLATE`. Empty for none.
+    pub suffix: String,
+    /// `ITEM_QUALITY_*` 0..6: the name's colour, through the interface's own
     /// `GetItemQualityColor`.
     pub quality: u32,
-    /// Whether the *stack in hand* is already bound, as opposed to what the
-    /// prototype says it will do. `ITEM_FIELD_FLAGS` bit 0, so it is only ever
-    /// true for something actually carried.
-    pub soulbound: bool,
-    /// `ItemPrototype::Bonding`: 1 on pickup, 2 on equip, 3 on use, 4 quest.
-    pub bonding: u32,
-    /// `ITEM_FLAG_CONJURED`, bit 0.
+    /// `ITEM_FLAG_CHARTER`: a guild charter's "<Right Click for Details>".
+    pub charter: bool,
+    /// The zone and the map the item is limited to (`Area`, `Map`), already
+    /// named from `AreaTable.dbc` and `Map.dbc`. Empty for none.
+    pub zone: String,
+    pub map: String,
+    /// `ITEM_FLAG_CONJURED`.
     pub conjured: bool,
-    /// The number of slots, if this is a bag — which turns the type line into
-    /// `CONTAINER_SLOTS` ("%d Slot %s").
+    /// Whether the copy in hand is already bound: `ITEM_FIELD_FLAGS` bit 0, so
+    /// only ever true for something carried.
+    pub soulbound: bool,
+    /// `ItemPrototype::Bonding`: 1 on pickup, 2 on equip, 3 on use, 4 and 5
+    /// quest.
+    pub bonding: u32,
+    /// `MaxCount`: 1 draws "Unique", more draws "Unique (n)", 0 nothing.
+    pub unique: u32,
+    /// `This Item Begins a Quest`.
+    pub starts_quest: bool,
+    /// A carried copy with a lock that has not been picked: "Locked", red.
+    pub locked: bool,
+    /// The number of slots, for a bag (`INVTYPE_BAG`), whose type line is
+    /// `CONTAINER_SLOTS` ("%d Slot %s") instead of the slot and subclass.
     pub container_slots: u32,
-    /// `ItemClass.dbc`'s and `ItemSubClass.dbc`'s words, already looked up.
+    /// `ItemClass.dbc`'s word for the class. The type line's left cell for a
+    /// projectile (class 6), whose inventory type has no word.
     pub class_name: String,
+    /// `ItemSubClass.dbc`'s singular word, or empty where the plate prints
+    /// none: see `ItemTables::subclass_on_plate`. Also empty for a cloak.
     pub subclass_name: String,
-    /// `INVTYPE_*` — the *number*, because the word is a `GlobalStrings` key
-    /// and this side does not read that file.
+    /// `ItemPrototype::Class`.
+    pub item_class: u32,
+    /// `INVTYPE_*`, as the number; the word is a `GlobalStrings.lua` key.
     pub inventory_type: u32,
+    /// Whether the character is proficient with the subclass. The subclass
+    /// word is red when it is not.
+    pub subclass_usable: bool,
     /// Every damage entry with a non-zero maximum, as `(min, max, school)`.
     pub damage: Vec<(f32, f32, u32)>,
     /// Swing time in seconds, 0 for anything that is not a weapon.
     pub speed: f32,
-    /// …and the damage per second the plate prints under it, which the client
-    /// computes rather than reads.
+    /// The damage per second the plate prints under a weapon's damage, which
+    /// the client computes: the sum of each entry's mean over the swing time.
     pub dps: f32,
     pub armor: i32,
     pub block: u32,
     /// The non-zero `(ITEM_MOD_*, value)` pairs, in table order.
     pub stats: Vec<(u32, i32)>,
-    /// Holy..arcane, in `RESISTANCE1_NAME`..`RESISTANCE6_NAME` order.
+    /// Holy..arcane, in `SPELL_SCHOOL1_CAP`..`SPELL_SCHOOL6_CAP` order.
     pub resistances: [i32; 6],
+    /// The enchantments on the copy in hand, one line each, in slot order.
+    pub enchantments: Vec<EnchantLine>,
+    /// "<Random enchantment>": an item with a random property, shown with no
+    /// copy in hand to say which.
+    pub random_enchantment: bool,
     /// `(current, maximum)`, or `None` for something that cannot be damaged.
     pub durability: Option<(u32, u32)>,
-    /// `ItemPrototype::RequiredLevel`. **The line is drawn only above 1**, so
-    /// an item requiring level 1 says nothing rather than "Requires Level 1".
+    /// How long the copy in hand has left, in milliseconds, for an item that
+    /// expires.
+    pub duration_ms: Option<u32>,
+    /// "%s Only." with the race and the class, for an item limited to exactly
+    /// one of each, and whether the character is that race and class.
+    pub race_class_only: Option<(String, bool)>,
+    /// `ItemPrototype::RequiredLevel`. The line is drawn only above 1.
     pub required_level: u32,
-    /// …and whether the character *meets* it, which is the only thing that
-    /// decides the colour. The client compares the requirement against the
-    /// player's own level and picks between two colour globals.
+    /// Whether the character meets it, which decides the colour.
     pub level_met: bool,
-    /// **The races allowed, in `ChrRaces` order, or empty when everyone is.**
-    ///
-    /// The client walks the race table twice: once to find out whether *any*
-    /// bit is clear — and if none is, the line is skipped outright,
-    /// which is why 99% of items have no "Races:" line — and once to build the
-    /// list. Empty here means the mask covers everyone, not that nobody may use
-    /// it.
+    /// The races allowed, in `ChrRaces` order, or empty when the mask covers
+    /// every playable race. See [`allowed`].
     pub races_allowed: Vec<&'static str>,
-    /// …and whether the character's own race is among them.
+    /// Whether the character's own race is among them.
     pub race_allowed: bool,
     /// The same pair for `AllowableClass`.
     pub classes_allowed: Vec<&'static str>,
     pub class_allowed: bool,
-    /// Each of the item's spells that has one, as `(trigger, sentence)` — the
-    /// trigger picking between `ITEM_SPELL_TRIGGER_ONUSE`, `ONEQUIP` and
-    /// `ONPROC`, and the sentence already substituted by
-    /// [`vale_assets::tables::spelltext`].
-    pub spells: Vec<(u32, String)>,
-    /// The flavour text, in gold and quoted — the item's own, not a spell's.
+    /// `RequiredSkill`: the skill line's name, the rank (`None` when the item
+    /// states none) and whether the character meets it.
+    pub skill: Option<(String, Option<u32>, bool)>,
+    /// A recipe whose spell the character already knows: "Already known",
+    /// red.
+    pub already_known: bool,
+    /// `RequiredSpell`: the spell's name and whether the character knows it.
+    pub required_spell: Option<(String, bool)>,
+    /// `RequiredHonorRank` and whether the character has reached it. The
+    /// rank's title is a `PVP_RANK_<rank>_<team>` key; see [`Self::team`].
+    pub honor_rank: Option<(u32, bool)>,
+    /// `RequiredCityRank`, a `PVP_MEDAL<n>` key, and whether the character
+    /// holds that title.
+    pub city_rank: Option<(u32, bool)>,
+    /// `RequiredReputationFaction` named, the standing (0 Hated to 7 Exalted)
+    /// and whether the character has reached it.
+    pub reputation: Option<(String, u32, bool)>,
+    /// The character's side for the honor rank titles: 0 Horde, 1 Alliance.
+    pub team: Option<u8>,
+    /// Whether the character is female, which picks the `_FEMALE` form of a
+    /// rank title or a standing where the file has one.
+    pub female: bool,
+    /// Each of the item's spells that has a sentence.
+    pub spells: Vec<ItemSpellLine>,
+    /// The set block, for an item in an `ItemSet.dbc` set.
+    pub set: Option<SetTip>,
+    /// The flavour text, in gold and quoted.
     pub description: String,
+    /// `ITEM_FIELD_CREATOR` named, and whether the copy has written text
+    /// (`ITEM_WRITTEN_BY`) rather than being made (`ITEM_CREATED_BY`).
+    pub creator: Option<(String, bool)>,
+    /// `ITEM_FIELD_GIFTCREATOR` named, for a wrapped gift.
+    pub gift_from: Option<String>,
     /// `<Right Click to Read>`.
     pub readable: bool,
-    /// `<Right Click to Open>`, **and it takes precedence over the line above**
-    /// — the reference picks one key and adds one line. See
-    /// `ItemInfo::says_right_click_to_open`, which is where the lock gate is:
-    /// a strongbox nobody has picked promises nothing.
+    /// `<Right Click to Open>`, which takes precedence over the line above.
+    /// See `ItemInfo::says_right_click_to_open` for the lock gate.
     pub openable: bool,
-    /// `This Item Begins a Quest`.
-    pub starts_quest: bool,
 }
 
-/// Compose one from a template and, when there is one, the stack in hand.
+/// One enchantment line: the enchantment's name, its colour, and the two
+/// additions a temporary enchantment can have.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnchantLine {
+    pub name: String,
+    pub ink: vale_assets::tables::enchant::EnchantInk,
+    /// Milliseconds left on the clock the server started, printed through
+    /// `ITEM_ENCHANT_TIME_LEFT`.
+    pub left_ms: Option<u32>,
+    /// Charges left, printed through `ITEM_SPELL_CHARGES` in brackets; 0 for
+    /// none.
+    pub charges: u32,
+}
+
+/// One of the item's spells, as its line.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemSpellLine {
+    /// `ITEM_SPELLTRIGGER_*`: 0 on use, 1 on equip, 2 chance on hit. Any
+    /// other trigger prints the sentence with no label.
+    pub trigger: u32,
+    pub sentence: String,
+    /// The charges line under the sentence, for a spell whose prototype has
+    /// charges: the count of the copy in hand, or the prototype's with none.
+    pub charges: Option<i32>,
+    /// A recipe's teaching spell, whose taught spell creates an item: drawn
+    /// in white rather than green.
+    pub recipe: bool,
+    /// For a recipe, the plate of the item the taught spell creates, drawn
+    /// whole under the line. `None` until the item's template has arrived.
+    pub product: Option<Box<ItemTip>>,
+    /// For a recipe, the taught spell's reagents as the line lists them:
+    /// "Linen Cloth (2), Coarse Thread". `None` when a reagent's name has not
+    /// arrived yet, which leaves the line out.
+    pub reagents: Option<String>,
+}
+
+/// The set block of an item plate. See [`vale_assets::tables::itemset`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SetTip {
+    pub name: String,
+    /// Pieces the character has equipped, and pieces in the set.
+    pub owned: usize,
+    pub total: usize,
+    /// The set's skill requirement: the skill's name, its rank and whether
+    /// the character meets it.
+    pub skill: Option<(String, u32, bool)>,
+    /// Each piece whose name is known, and whether it is owned. A piece whose
+    /// template has not arrived is left out; its query is queued.
+    pub pieces: Vec<(String, bool)>,
+    /// Each bonus in threshold order: the threshold, the sentence and whether
+    /// it is active.
+    pub bonuses: Vec<(u32, String, bool)>,
+}
+
+/// The character an item plate is measured against: what it wears, knows
+/// and has reached. [`Wearer::none`] is a plate with no character, whose
+/// requirements all read as unmet.
+pub struct Wearer<'a> {
+    /// The entries in the 19 worn slots, broken items left out. A set piece
+    /// counts as owned when it is here.
+    pub equipped: Vec<u32>,
+    /// The character's rank in a skill line (`Skill::rank`), `None` for a
+    /// line it does not have.
+    pub skill_rank: &'a dyn Fn(u32) -> Option<i32>,
+    /// Whether the character knows a spell.
+    pub knows_spell: &'a dyn Fn(u32) -> bool,
+    /// The character's standing with a `Faction.dbc` id, 0 (Hated) to 7
+    /// (Exalted), `None` for a faction without a reputation bar.
+    pub standing: &'a dyn Fn(u32) -> Option<u32>,
+    /// Whether the character may use an item class and subclass
+    /// (`SMSG_SET_PROFICIENCY`).
+    pub proficient: &'a dyn Fn(u32, u32) -> bool,
+    /// A player's name by guid, for the "<Made by X>" line. A miss queues a
+    /// name query and leaves the line out.
+    pub player_name: &'a dyn Fn(u64) -> Option<String>,
+    /// An item's template by entry, for the item a recipe creates. A miss
+    /// queues the query.
+    pub template: &'a dyn Fn(u32) -> Option<vale_protocol::state::query::ItemInfo>,
+    /// `PLAYER_FIELD_BYTES` byte 3: the highest honor rank reached.
+    pub honor_rank: u32,
+    /// `PLAYER_FIELD_PVP_MEDALS`: one bit per city title, bit `n - 1` for
+    /// `PVP_MEDAL<n>`.
+    pub medals: u32,
+    /// 0 Horde, 1 Alliance, `None` before the character's faction is known.
+    pub team: Option<u8>,
+    pub female: bool,
+    /// The moment remaining times are measured from.
+    pub now: std::time::Instant,
+}
+
+impl Wearer<'_> {
+    /// No character: nothing worn, nothing known, nothing reached.
+    pub fn none() -> Wearer<'static> {
+        Wearer {
+            equipped: Vec::new(),
+            skill_rank: &|_| None,
+            knows_spell: &|_| false,
+            standing: &|_| None,
+            proficient: &|_, _| true,
+            player_name: &|_| None,
+            template: &|_| None,
+            honor_rank: 0,
+            medals: 0,
+            team: None,
+            female: false,
+            now: std::time::Instant::now(),
+        }
+    }
+}
+
+/// `INVTYPE_BAG`: the one inventory type whose type line states the slot
+/// count.
+const INVTYPE_BAG: u32 = 18;
+/// `INVTYPE_CLOAK`: the plate prints no subclass beside it.
+const INVTYPE_CLOAK: u32 = 16;
+/// `SPELL_EFFECT_LEARN_SPELL`, the effect of a recipe's teaching spell.
+const EFFECT_LEARN_SPELL: u32 = 36;
+/// `SPELL_EFFECT_CREATE_ITEM`, the effect of a taught spell that makes an
+/// item.
+const EFFECT_CREATE_ITEM: u32 = 24;
+/// `TARGET_PET`: a teaching spell aimed at the pet teaches the pet, whose
+/// spells this client does not track.
+const TARGET_PET: u32 = 5;
+
+/// Compose a plate from a template and, when there is one, the copy in hand.
 ///
 /// `carried` is `None` for a plate reached from a link or a merchant, where
-/// there is a prototype and no object — the two fields it contributes are the
-/// current durability and whether *this* copy is already soulbound.
+/// there is a prototype and no object; the fields it contributes (the current
+/// durability, the binding, the enchantments, the suffix, the charges, the
+/// creator, the lock and the right-click lines) are then absent.
 pub fn item_tip(
     info: &vale_protocol::state::query::ItemInfo,
     carried: Option<&vale_protocol::play::items::ItemSlot>,
     tables: Option<&vale_assets::tables::dbc::DisplayTables>,
     context: &TipContext,
+    wearer: &Wearer,
 ) -> ItemTip {
     let words = tables.map(vale_assets::tables::dbc::DisplayTables::item_tables);
     let damage: Vec<(f32, f32, u32)> = info
@@ -1663,10 +1847,9 @@ pub fn item_tip(
         .filter(|d| d.max > 0.0)
         .map(|d| (d.min, d.max, d.school))
         .collect();
-    // **Summed over every school, which is what the real plate does**: a
-    // weapon with a physical entry and a fire entry prints one dps line
-    // covering both. Guarded on the delay rather than on the damage, since a
-    // zero swing time is what a non-weapon has.
+    // Summed over every school: a weapon with a physical entry and a fire
+    // entry prints one dps line covering both. Guarded on the swing time,
+    // which is zero on anything that is not a weapon.
     let speed = info.delay as f32 / 1000.0;
     let dps = if speed > 0.0 {
         let total: f32 = damage.iter().map(|(min, max, _)| (min + max) / 2.0).sum();
@@ -1674,20 +1857,62 @@ pub fn item_tip(
     } else {
         0.0
     };
+    let subclass_name = if info.inventory_type == INVTYPE_CLOAK {
+        String::new()
+    } else {
+        words
+            .map(|w| w.subclass_on_plate(info.class, info.subclass))
+            .unwrap_or_default()
+            .to_string()
+    };
+    let unlocked = carried.is_some_and(vale_protocol::play::items::ItemSlot::unlocked);
+    let skill_name = |line: u32| -> String {
+        tables
+            .and_then(|t| t.skills())
+            .and_then(|s| s.line(line))
+            .map(|l| l.name.clone())
+            .unwrap_or_default()
+    };
+    let spell_name = |id: u32| -> Option<String> {
+        Some(context.catalog?.info(id)?.name.clone())
+    };
     ItemTip {
         name: info.name.clone(),
-        quality: info.quality,
-        soulbound: carried.is_some_and(|c| c.soulbound()),
-        bonding: info.bonding,
-        // `ITEM_FLAG_CONJURED`, bit 0 of the flag word.
-        conjured: info.flags & 0x1 != 0,
-        container_slots: info.container_slots,
-        class_name: words.map(|w| w.class_name(info.class)).unwrap_or_default().to_string(),
-        subclass_name: words
-            .map(|w| w.subclass_name(info.class, info.subclass))
+        suffix: carried
+            .and_then(|c| tables?.random_properties().suffix(c.random_property))
             .unwrap_or_default()
             .to_string(),
+        quality: info.quality,
+        charter: info.flags & vale_protocol::state::query::item_flags::CHARTER != 0,
+        zone: (info.area != 0)
+            .then(|| {
+                tables
+                    .and_then(|t| t.areas())
+                    .and_then(|a| a.get(info.area))
+                    .map(|a| a.name.clone())
+            })
+            .flatten()
+            .unwrap_or_default(),
+        map: (info.map != 0)
+            .then(|| tables.map(|t| t.map_name(info.map).to_string()))
+            .flatten()
+            .unwrap_or_default(),
+        conjured: info.is_conjured(),
+        soulbound: carried.is_some_and(|c| c.soulbound()),
+        bonding: info.bonding,
+        unique: info.max_count,
+        starts_quest: info.start_quest != 0,
+        locked: carried.is_some() && info.lock_id != 0 && !unlocked,
+        container_slots: if info.inventory_type == INVTYPE_BAG {
+            info.container_slots
+        } else {
+            0
+        },
+        class_name: words.map(|w| w.class_name(info.class)).unwrap_or_default().to_string(),
+        subclass_name,
+        item_class: info.class,
         inventory_type: info.inventory_type,
+        subclass_usable: (wearer.proficient)(info.class, info.subclass),
         damage,
         speed,
         dps,
@@ -1700,19 +1925,27 @@ pub fn item_tip(
             .map(|s| (s.kind, s.value))
             .collect(),
         resistances: info.resistances,
-        // **The prototype's maximum and the object's current**, which is the
-        // one number a template alone cannot answer — an unworn copy of a sword
-        // and the one in your hand have different durability and the same row.
+        enchantments: carried
+            .map(|c| enchantment_lines(c, tables, wearer.now))
+            .unwrap_or_default(),
+        random_enchantment: carried.is_none() && info.random_property != 0,
+        // The prototype's maximum and the object's current: an unworn copy of
+        // a sword and the one in hand have different durability and the same
+        // row.
         durability: (info.max_durability > 0).then(|| {
             (
-                carried.map_or(info.max_durability, |c| c.durability),
+                carried
+                    .map_or(info.max_durability, |c| c.durability)
+                    .min(info.max_durability),
                 info.max_durability,
             )
         }),
+        duration_ms: carried.and_then(|c| {
+            vale_protocol::play::items::left_ms(c.expires, wearer.now)
+        }),
+        race_class_only: race_class_only(info, context),
         required_level: info.required_level,
-        // **The line is coloured by whether it is met, and this is the only
-        // place that decides.** `>=` rather than `>`: the item wants that level
-        // and having it is enough.
+        // `>=`: the item wants that level and having it is enough.
         level_met: context.level >= info.required_level,
         races_allowed: allowed(
             info.allowable_race,
@@ -1726,20 +1959,292 @@ pub fn item_tip(
             vale_protocol::state::query::class_name,
         ),
         class_allowed: allows(info.allowable_class, context.class),
+        skill: (info.required_skill != 0).then(|| {
+            let rank = (wearer.skill_rank)(info.required_skill);
+            let wanted = (info.required_skill_rank != 0).then_some(info.required_skill_rank);
+            let met = rank.is_some_and(|rank| rank > 0 && rank >= info.required_skill_rank as i32);
+            (skill_name(info.required_skill), wanted, met)
+        }),
+        already_known: already_known(info, context, wearer),
+        required_spell: (info.required_spell != 0)
+            .then(|| {
+                spell_name(info.required_spell)
+                    .map(|name| (name, (wearer.knows_spell)(info.required_spell)))
+            })
+            .flatten(),
+        honor_rank: (info.required_honor_rank != 0)
+            .then(|| (info.required_honor_rank, wearer.honor_rank >= info.required_honor_rank)),
+        city_rank: (info.required_city_rank != 0).then(|| {
+            let bit = 1u32
+                .checked_shl(info.required_city_rank - 1)
+                .unwrap_or(0);
+            (info.required_city_rank, wearer.medals & bit != 0)
+        }),
+        reputation: (info.required_reputation_faction != 0).then(|| {
+            let name = tables
+                .and_then(|t| t.reputation())
+                .and_then(|f| f.get(info.required_reputation_faction))
+                .map(|f| f.name.clone())
+                .unwrap_or_default();
+            let met = (wearer.standing)(info.required_reputation_faction)
+                .is_some_and(|rank| rank >= info.required_reputation_rank);
+            (name, info.required_reputation_rank, met)
+        }),
+        team: wearer.team,
+        female: wearer.female,
         spells: info
             .spells
             .iter()
-            .filter(|s| s.spell_id != 0)
-            .map(|s| (s.trigger, item_spell_text(s.spell_id, context)))
+            .enumerate()
+            .filter(|(_, s)| s.spell_id != 0)
+            .map(|(index, s)| ItemSpellLine {
+                trigger: s.trigger,
+                sentence: item_spell_text(s.spell_id, context),
+                charges: (s.charges != 0).then(|| {
+                    carried.map_or(s.charges, |c| {
+                        c.spell_charges.get(index).copied().unwrap_or(s.charges)
+                    })
+                }),
+                recipe: taught_creation(s.spell_id, context).is_some(),
+                product: (index == 0)
+                    .then(|| recipe_product(s.spell_id, tables, context, wearer))
+                    .flatten(),
+                reagents: (index == 0)
+                    .then(|| recipe_reagents(s.spell_id, context))
+                    .flatten(),
+            })
+            .filter(|line| !line.sentence.is_empty())
             .collect(),
+        set: set_tip(info, tables, context, wearer),
         description: info.description.clone(),
-        readable: info.is_readable(),
-        openable: info.says_right_click_to_open(
-            carried.is_some_and(vale_protocol::play::items::ItemSlot::unlocked),
-            carried.is_some_and(vale_protocol::play::items::ItemSlot::wrapped),
-        ),
-        starts_quest: info.start_quest != 0,
+        creator: carried
+            .filter(|c| c.creator != 0 && !c.wrapped())
+            .and_then(|c| Some(((wearer.player_name)(c.creator)?, c.text_id != 0))),
+        gift_from: carried
+            .filter(|c| c.gift_creator != 0 && c.wrapped())
+            .and_then(|c| (wearer.player_name)(c.gift_creator)),
+        readable: carried.is_some() && (info.is_readable() || carried.is_some_and(|c| c.text_id != 0)),
+        openable: carried.is_some()
+            && info.says_right_click_to_open(
+                unlocked,
+                carried.is_some_and(vale_protocol::play::items::ItemSlot::wrapped),
+            ),
     }
+}
+
+/// The enchantment lines of the copy in hand: one per non-empty slot whose
+/// row `SpellItemEnchantment.dbc` carries, in slot order.
+fn enchantment_lines(
+    carried: &vale_protocol::play::items::ItemSlot,
+    tables: Option<&vale_assets::tables::dbc::DisplayTables>,
+    now: std::time::Instant,
+) -> Vec<EnchantLine> {
+    let Some(tables) = tables else {
+        return Vec::new();
+    };
+    carried
+        .enchantments
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.id != 0)
+        .filter_map(|(slot, e)| {
+            Some(EnchantLine {
+                name: tables.enchantments().name(e.id)?.to_string(),
+                ink: vale_assets::tables::enchant::ink(slot, e.id),
+                left_ms: e.left_ms(now),
+                charges: e.charges,
+            })
+        })
+        .collect()
+}
+
+/// Apply a hyperlink's permanent enchantment and random property to a plate
+/// composed with no copy in hand.
+///
+/// The 1.12.1 client treats a link as a copy: the link's enchantment fills
+/// slot 0 (green) and the random property's enchantments fill the slots after
+/// it (white), and the suffix joins the name. A link therefore never draws
+/// "<Random enchantment>".
+pub fn apply_link(
+    tip: &mut ItemTip,
+    enchant: i32,
+    random: i32,
+    tables: &vale_assets::tables::dbc::DisplayTables,
+) {
+    use vale_assets::tables::enchant::ink;
+    tip.random_enchantment = false;
+    let mut lines = Vec::new();
+    if let Some(name) = (enchant != 0)
+        .then(|| tables.enchantments().name(enchant))
+        .flatten()
+    {
+        lines.push(EnchantLine {
+            name: name.to_string(),
+            ink: ink(0, enchant),
+            left_ms: None,
+            charges: 0,
+        });
+    }
+    if let Some(row) = tables.random_properties().get(random) {
+        tip.suffix = row.suffix.clone();
+        for (column, id) in row.enchantments.iter().enumerate() {
+            let id = *id as i32;
+            if let Some(name) = (id != 0).then(|| tables.enchantments().name(id)).flatten() {
+                lines.push(EnchantLine {
+                    name: name.to_string(),
+                    ink: ink(2 + column, id),
+                    left_ms: None,
+                    charges: 0,
+                });
+            }
+        }
+    }
+    tip.enchantments = lines;
+}
+
+/// "%s Only.": an item whose race mask and class mask each name exactly one
+/// id. The words are `ChrRaces` and `ChrClasses` names joined by a space, and
+/// the line is met when the character is both.
+fn race_class_only(
+    info: &vale_protocol::state::query::ItemInfo,
+    context: &TipContext,
+) -> Option<(String, bool)> {
+    let single = |mask: i32| {
+        let mask = mask as u32;
+        (mask != 0 && mask & (mask - 1) == 0).then(|| mask.trailing_zeros() + 1)
+    };
+    let race = single(info.allowable_race)?;
+    let class = single(info.allowable_class)?;
+    let race_word = vale_protocol::state::query::race_name(race);
+    let class_word = vale_protocol::state::query::class_name(class);
+    if race_word.is_empty() && class_word.is_empty() {
+        return None;
+    }
+    Some((
+        format!("{race_word} {class_word}"),
+        context.race == race && context.class == class,
+    ))
+}
+
+/// Whether the item's first spell teaches a spell the character already
+/// knows: a recipe, a book or a pattern read before. A teaching spell aimed at
+/// the pet is left out, since this client does not track the pet's spells.
+fn already_known(
+    info: &vale_protocol::state::query::ItemInfo,
+    context: &TipContext,
+    wearer: &Wearer,
+) -> bool {
+    let Some(catalog) = context.catalog else {
+        return false;
+    };
+    let Some(teaching) = catalog.info(info.spells[0].spell_id) else {
+        return false;
+    };
+    let effect = &teaching.effects[0];
+    if effect.kind != EFFECT_LEARN_SPELL || effect.target_a == TARGET_PET {
+        return false;
+    }
+    effect.trigger_spell != 0 && (wearer.knows_spell)(effect.trigger_spell)
+}
+
+/// The spell a teaching spell teaches, when that spell creates an item: a
+/// recipe. The 1.12.1 client draws such a line in white and follows it with
+/// the created item's plate and the reagents.
+fn taught_creation(
+    spell: u32,
+    context: &TipContext,
+) -> Option<vale_assets::tables::spellbook::SpellInfo> {
+    let catalog = context.catalog?;
+    let teaching = catalog.info(spell)?;
+    if teaching.effects[0].kind != EFFECT_LEARN_SPELL {
+        return None;
+    }
+    catalog
+        .info(teaching.effects[0].trigger_spell)
+        .filter(|taught| taught.effects[0].kind == EFFECT_CREATE_ITEM)
+}
+
+/// The plate of the item a recipe creates, composed with no copy in hand.
+/// Only a recipe's own plate embeds one: the created item's plate does not
+/// embed a further one.
+fn recipe_product(
+    spell: u32,
+    tables: Option<&vale_assets::tables::dbc::DisplayTables>,
+    context: &TipContext,
+    wearer: &Wearer,
+) -> Option<Box<ItemTip>> {
+    let taught = taught_creation(spell, context)?;
+    let product = (wearer.template)(taught.effects[0].item_type)?;
+    let inner = Wearer {
+        equipped: wearer.equipped.clone(),
+        template: &|_| None,
+        ..*wearer
+    };
+    Some(Box::new(item_tip(&product, None, tables, context, &inner)))
+}
+
+/// A recipe's reagent list: each reagent's name, with " (n)" through
+/// `"%s (%d)"` when more than one is needed, joined by ", ". `None` when the
+/// taught spell has no reagents or one of their names has not arrived.
+fn recipe_reagents(spell: u32, context: &TipContext) -> Option<String> {
+    let taught = taught_creation(spell, context)?;
+    if taught.reagents.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    for (entry, count) in &taught.reagents {
+        let name = (context.item_names)(*entry)?;
+        parts.push(if *count > 1 {
+            format!("{name} ({count})")
+        } else {
+            name
+        });
+    }
+    Some(parts.join(", "))
+}
+
+/// The set block for an item in a set: the pieces the character owns among
+/// those it has equipped, and the bonuses that makes active.
+fn set_tip(
+    info: &vale_protocol::state::query::ItemInfo,
+    tables: Option<&vale_assets::tables::dbc::DisplayTables>,
+    context: &TipContext,
+    wearer: &Wearer,
+) -> Option<SetTip> {
+    if info.item_set == 0 {
+        return None;
+    }
+    let tables = tables?;
+    let set = tables.item_sets().get(info.item_set)?;
+    let owned = set.owned(&wearer.equipped);
+    let count = owned.iter().filter(|o| **o).count();
+    let skill_met = set.skill_met((wearer.skill_rank)(set.required_skill));
+    let active = set.active(count, skill_met);
+    Some(SetTip {
+        name: set.name.clone(),
+        owned: count,
+        total: set.items.len(),
+        skill: (set.required_skill != 0).then(|| {
+            let name = tables
+                .skills()
+                .and_then(|s| s.line(set.required_skill))
+                .map(|l| l.name.clone())
+                .unwrap_or_default();
+            (name, set.required_skill_rank, skill_met)
+        }),
+        pieces: set
+            .items
+            .iter()
+            .zip(&owned)
+            .filter_map(|(entry, owned)| Some(((context.item_names)(*entry)?, *owned)))
+            .collect(),
+        bonuses: set
+            .bonuses
+            .iter()
+            .zip(active)
+            .map(|(bonus, active)| (bonus.threshold, item_spell_text(bonus.spell, context), active))
+            .collect(),
+    })
 }
 
 /// The `ChrRaces` ids the 1.12 client will list, in the order it walks them.

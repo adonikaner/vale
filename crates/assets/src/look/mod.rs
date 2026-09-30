@@ -1,32 +1,33 @@
-//! **How a unit *looks*, which is the one subject here that is not a file
-//! format and not a table lookup.**
+//! How a unit looks. This is the one subject in this crate that is neither a
+//! file format nor a table lookup.
 //!
-//! These read the tables one directory over, but their subject is the join:
+//! These modules read the tables in `tables/`, but their subject is the join:
 //! what to draw an entity as, what colour the ring under it is, which pointer
-//! goes over it, and where a camera stands to see it. The plan that made this
-//! directory flagged the placement as arguable and it is left arguable.
+//! goes over it, and where a camera stands to see it. Placing this directory in
+//! this crate is arguable; it has been left here.
 //!
 //! ```text
-//! character.rs a player's skin, which the game ships no file for: composed at
-//!              runtime from CharSections into one 256x256 body texture
-//! dress.rs     …and what to draw an entity *as*: geosets, attachments, and
-//!              whether its skin is a file or has to be built
-//! sheath.rs    …and whether the weapons are out
-//! conform.rs   …and which models lean with the ground
-//! scenery.rs   …and what a thing that is not a unit is *doing*: which clip a
-//!              doodad plays, and which of its variations this one took
-//! selection.rs what colour the ring under it is
-//! unitname.rs  …and the name over its head, which is the one part of 1.12's
-//!              interface that ships no XML at all
-//! worldtext.rs …and the numbers that float off it when you hit it, which is
-//!              the other part
-//! cursor.rs    …and which pointer the world puts up over it
-//! object.rs    …and the same question for a thing rather than a person: what
-//!              a door, a chest or an ore vein is *for*
-//! pick.rs      …and what that pointer is *on*: the volume a click must hit
-//! blips.rs     …and the dot it gets on the minimap, if any
-//! anchor.rs    where a third-person camera looks at it
-//! portrait.rs  …and where to stand to take its picture
+//! character.rs    a player's skin, which the game ships no file for: composed
+//!                 at runtime from CharSections into one 256x256 body texture
+//! dress.rs        what to draw an entity as: geosets, attachments, and whether
+//!                 its skin is a file or has to be built
+//! sheath.rs       whether the weapons are out
+//! weapon_trail.rs the strip a weapon leaves behind it during a melee ability
+//! conform.rs      which models lean with the ground
+//! scenery.rs      what a thing that is not a unit is doing: which clip a
+//!                 doodad plays, and which of its variations this one took
+//! selection.rs    what colour the ring under a unit is
+//! unitname.rs     the name over a unit's head, the one part of 1.12's
+//!                 interface that ships no XML
+//! worldtext.rs    the numbers that float off a unit when it is hit, the other
+//!                 part of the interface that ships no XML
+//! cursor.rs       which pointer the world puts up over a unit
+//! object.rs       which pointer goes over a game object, and what a door, a
+//!                 chest or an ore vein is for
+//! pick.rs         what the pointer is on: the volume a click must hit
+//! blips.rs        the dot a unit gets on the minimap, if any
+//! anchor.rs       where a third-person camera looks at a unit
+//! portrait.rs     where to stand to take a unit's picture
 //! ```
 
 pub mod anchor;
@@ -42,4 +43,5 @@ pub mod scenery;
 pub mod selection;
 pub mod sheath;
 pub mod unitname;
+pub mod weapon_trail;
 pub mod worldtext;

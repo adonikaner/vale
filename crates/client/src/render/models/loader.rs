@@ -81,6 +81,9 @@ pub(super) struct RawModel {
     /// The `$CSD`/`$SND` events, sorted into their sequences; see
     /// `sound::cues`. Built here, once per file, from `M2::events`.
     cues: vale_assets::world::m2::SoundCues,
+    /// The `$WTB`/`$WTT` points a weapon's trail runs between, when the model
+    /// carries both; see [`vale_assets::look::weapon_trail`].
+    trail: Option<vale_assets::look::weapon_trail::TrailPoints>,
     /// The lights this model carries, already in Bevy's axes and already
     /// coloured; see [`crate::render::lamps::ModelGlow`]. Empty for almost
     /// everything; a lamppost has one. Built here rather than in the renderer
@@ -241,7 +244,7 @@ pub(crate) struct RawDraw {
     /// The tint for a doodad batch: sampled once at the start of the timeline,
     /// as a `MeshTag`, or `None` when the batch has no tint or this is the
     /// skinned build. See the note where it is built: without it, a light cone
-    /// whose own track says 0.16 was drawn at 1.0.
+    /// whose own track says 0.16 is drawn at 1.0.
     pub baked_tint: Option<u32>,
     /// Which of the model's texture matrices moves this batch's texture,
     /// already resolved through the lookup. `None` for all but two dozen
@@ -770,6 +773,7 @@ fn read_model(archive: &mut Archive, path: &str, skinned: bool) -> Option<RawMod
         // dropping it here would make the two builds disagree.
         conform: vale_assets::look::conform::Conform::of(model.global_flags),
         cues: model.sound_cues(),
+        trail: vale_assets::look::weapon_trail::TrailPoints::of(&model.events),
         attachments: model.attachments,
         // The same hull whichever build was requested: an entity build and a
         // doodad build of one file are two meshes and one solid shape.
@@ -800,12 +804,11 @@ fn read_model(archive: &mut Archive, path: &str, skinned: bool) -> Option<RawMod
         //
         // `joint_count` says whether this build can be posed; the skeleton
         // says whether the model moves at all, which is a property of the file
-        // and the same for both builds. When the skeleton was dropped here
-        // with the tints, the unskinned build (the only build a doodad has)
-        // could not say whether the model moves, `render::doodads` never
-        // requested the skinned build, and no scenery in the world animated.
-        // The tests did not catch it because they asserted on the entity
-        // build's skeleton.
+        // and the same for both builds. Dropping the skeleton here with the
+        // tints leaves the unskinned build (the only build a doodad has) unable
+        // to say whether the model moves, so `render::doodads` never requests
+        // the skinned build and no scenery animates. Tests that assert on the
+        // entity build's skeleton do not detect that.
         skeleton: model.skeleton,
     })
 }
@@ -1051,10 +1054,10 @@ pub(crate) fn batch_draw(
         // entity, `world::entities::effects` writes the sampled tint every
         // frame. On scenery nothing writes it: `render::doodads::pose_scenery`
         // writes joint transforms and no tag. Without a baked value the spawner
-        // fell through to its room-light arm and the tinted shader read a room
-        // colour as a tint, so an animated doodad authored faint was drawn at
-        // the room's brightness (Ironforge's lava steam came out warm
-        // orange-brown rather than invisible).
+        // falls through to its room-light arm and the tinted shader reads a
+        // room colour as a tint, so an animated doodad authored faint is drawn
+        // at the room's brightness (Ironforge's lava steam draws warm
+        // orange-brown instead of invisible).
         //
         // A doodad whose tint animates gets its first frame held, matching the
         // bind pose its bones hold; an entity overwrites this on its first
@@ -1251,6 +1254,7 @@ pub(super) fn receive_models(
             conform: raw.conform,
             attachments: Arc::new(raw.attachments),
             cues: Arc::new(raw.cues),
+            trail: raw.trail,
             glows: Arc::new(raw.glows),
             collision: Arc::new(raw.collision),
             pick: Arc::new(raw.pick),
@@ -1511,12 +1515,13 @@ fn draw_mesh(draw: RawDraw) -> Mesh {
 /// at a pitched-down camera an isotropic filter chooses the mip for the
 /// shortest axis of the footprint, which blurs along the long axis.
 ///
-/// This was held at 1 for a time because at 16 a regular lattice appeared
-/// over the ground at one Tanaris framing, changing phase at chunk
-/// boundaries. The alpha atlas was also sampled anisotropically then, and it
-/// is not now (the 1.12.1 client samples its alpha map isotropically), which
-/// is the likely source of a lattice aligned to chunks. If the lattice
-/// reappears, check the alpha atlas sampler first.
+/// At 16, with the alpha atlas also sampled anisotropically, a regular lattice
+/// appeared over the ground at one Tanaris framing and changed phase at chunk
+/// boundaries; the value was held at 1 until the cause was found. The alpha
+/// atlas is now sampled isotropically, as the 1.12.1 client samples its alpha
+/// map, and an anisotropic alpha atlas is the likely source of a lattice
+/// aligned to chunks. If the lattice reappears, check the alpha atlas sampler
+/// first.
 ///
 /// The 1.12.1 client's default for `anisotropic` is `"1"`, so a folder that
 /// has never set it gets the stock result; the value is read once at start-up
@@ -1602,7 +1607,7 @@ pub(crate) fn model_image(width: u32, height: u32, levels: Vec<Vec<u8>>) -> Imag
 
 /// Magenta, for a texture the archive did not have, as the ground uses. A
 /// grey fallback would look like a lighting bug; magenta marks the texture as
-/// missing, which is how two gaps in NPC skins were found.
+/// missing. It exposed two gaps in NPC skins.
 pub(crate) fn missing_image() -> Image {
     model_image(1, 1, vec![vec![255, 0, 255, 255]])
 }

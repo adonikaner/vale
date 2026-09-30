@@ -15,6 +15,8 @@
 //!               the liquid flipbook, and the colour of every liquid surface
 //! particles.rs  the emitters those models carry: the simulation and the quads
 //! ribbons.rs    the trails they carry: a weapon's streak, a missile's tail
+//! weapon_trail.rs the strip a melee ability's kit draws behind a unit's
+//!               weapons, which no model carries
 //! missiles.rs   the object a cast throws: a model with a velocity and no owner
 //! lightning.rs  the bolt a spell draws between two units, whose geometry is a
 //!               DBC row rather than a file
@@ -34,7 +36,7 @@
 //!               the dress-up frame, the tabard designer
 //! present.rs    what a framebuffer value means, and the quad that presents it
 //! glow.rs       the one post-process 1.12 applies to the frame: the full-screen
-//!               glow, three passes in the client's own order
+//!               glow, three passes in the order the 1.12.1 client applies them
 //! sky.rs        Light.dbc -> the frame: sun, fill, fog, dome
 //! night.rs      a deep volumetric night the game does not have, applied as a
 //!               grade over the sky's result. Its shader, `shaders/night.wgsl`,
@@ -58,8 +60,9 @@
 //!               `diagnostics` only
 //! nothing.rs    the mesh a per-frame pass holds on a frame with no geometry
 //! axes.rs       the one place WoW's coordinate frame becomes Bevy's
-//! lens.rs       the one place its field of view does: the 1.12.1 client's single
-//!               perspective build, whose field-of-view argument is a diagonal
+//! lens.rs       the one place its field of view does: the 1.12.1 client uses
+//!               one perspective projection, and its field of view is measured
+//!               on the diagonal
 //! shaders/      the WGSL, embedded; see the note below
 //! ```
 //!
@@ -108,6 +111,7 @@ pub mod questmarks;
 pub mod residency;
 pub mod reticle;
 pub mod ribbons;
+pub mod weapon_trail;
 pub mod selection;
 pub mod shadows;
 pub mod ships;
@@ -220,6 +224,10 @@ impl bevy::app::Plugin for RenderPlugins {
                 // Trails, with the same owner-liveness rules and the same
                 // material, and a different kernel.
                 ribbons::RibbonPlugin,
+                // The strip a melee ability draws behind a weapon: a kit's
+                // colour between two points on the weapon model, with the
+                // same owner-liveness rule as the trails above.
+                weapon_trail::WeaponTrailPlugin,
                 // The one draw in the world whose geometry comes from a DBC
                 // row and not from a file: the bolt a spell draws between two
                 // units. Same material pool, no model. Its module doc says

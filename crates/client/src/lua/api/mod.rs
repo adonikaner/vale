@@ -1,20 +1,19 @@
-//! **The reads**, answered *during* the call — which is the half a widget tree
-//! cannot be written without.
+//! The read side of the Lua API: C functions that answer during the call.
 //!
 //! [`self::verbs`] is the write side and it works by recording: a registered
 //! closure cannot hold `&mut World`, so `ToggleSheath()` pushes a value the
-//! caller drains afterwards. That shape is fine for a verb and useless for a
-//! query. `UnitHealth("target")` has to answer *now*, in the middle of a Lua
-//! expression, and there is nowhere to defer it to:
+//! caller drains afterwards. A query cannot work that way.
+//! `UnitHealth("target")` must return a value in the middle of a Lua
+//! expression:
 //!
 //! ```lua
 //! if ( UnitHealth("target") / UnitHealthMax("target") < 0.2 ) then
 //! ```
 //!
-//! ## How: a scoped borrow, and a trait to erase the lifetimes
+//! ## A scoped borrow, and a trait that erases the lifetimes
 //!
-//! `mlua::Lua::scope` creates functions that may capture **non-`'static`**
-//! references and are destroyed when the scope ends. So the shape is:
+//! `mlua::Lua::scope` creates functions that may capture non-`'static`
+//! references and are destroyed when the scope ends. The sequence is:
 //!
 //! ```text
 //! a system holds the world's state       Units, ActionBar, Cooldowns, Time
@@ -24,52 +23,50 @@
 //!   -> the scope closes                  and the functions are gone again
 //! ```
 //!
-//! The trait is what makes that compile: `Live` borrows a `SystemParam` whose two
-//! lifetimes would otherwise have to be threaded through every signature in this
-//! directory. `&dyn Answers` erases them, and it buys a second thing that turns
-//! out to matter more — **the read side is unit-testable with no `World`**, since
-//! a test can implement `Answers` in twenty lines. Every test in this file does.
+//! The trait is needed for this to compile: `Live` borrows a `SystemParam` whose
+//! two lifetimes would otherwise have to be threaded through every signature in
+//! this directory. `&dyn Answers` erases them. It also makes the read side
+//! unit-testable with no `World`, since a test can implement `Answers` in
+//! twenty lines. Every test in this file does.
 //!
-//! **Nothing may run Lua outside such a scope.** Not a rule of taste: a global
-//! left pointing at a destroyed scoped function raises "callback destructed" when
-//! called, which is a confusing error in place of a working one. [`super::host`]
-//! therefore has exactly one entry point and it takes an `&dyn Answers`.
+//! No Lua may run outside such a scope. A global left pointing at a destroyed
+//! scoped function raises "callback destructed" when called. [`super::host`]
+//! therefore has one entry point, and it takes an `&dyn Answers`.
 //!
-//! ## The return shapes are the game's, and `true` is not one of them
+//! ## Return values follow the 1.12 conventions: `1`/`nil`, not `true`/`false`
 //!
-//! **A 1.12 API function answers a boolean as `1` or `nil`.** Not `true`/`false`
-//! — the C side pushes a number or nothing at all. `if ( x )` behaves the same
-//! either way, which is exactly why this is worth being deliberate about: every
-//! FrameXML use of these would work with Lua booleans, and the addon that writes
-//! `if UnitAffectingCombat("player") == 1` would silently stop. What is
-//! measured *here* is only that the shipped FrameXML never distinguishes the
-//! two, which is why the safe choice is the game's own.
+//! A 1.12 API function answers a boolean as `1` or `nil`, not `true`/`false`:
+//! the C side pushes a number or nothing. `if ( x )` behaves the same either
+//! way, so every FrameXML use of these would work with Lua booleans, but an
+//! addon that writes `if UnitAffectingCombat("player") == 1` would stop
+//! working. The only thing checked here is that the shipped FrameXML never
+//! distinguishes the two, so this file uses the game's convention.
 //!
-//! One inconsistency is worth recording rather than smoothing over: that
-//! reference answers `UnitExists` with a Lua boolean and its neighbours with
-//! `1`/`nil`, and this file does not know which of the two the client does for
-//! that particular function. It answers `1`/`nil` throughout, on the argument
-//! that `== 1` is the comparison an addon can write and `== true` is not.
+//! One exception is unresolved: the 1.12 API reference this file follows
+//! answers `UnitExists` with a Lua boolean and its neighbours with `1`/`nil`, and this file does not know which
+//! of the two the client returns for that function. It answers `1`/`nil`
+//! throughout, because `== 1` is a comparison an addon can write and
+//! `== true` is not.
 //!
-//! Absent things are `nil`, never a placeholder: `UnitName("party1")` with no
-//! party is `nil` and not `""`, because `if ( UnitName(u) ) then` is how FrameXML
-//! asks whether a unit is there.
+//! An absent value is `nil`, never a placeholder: `UnitName("party1")` with no
+//! party is `nil` and not `""`, because FrameXML asks whether a unit is there
+//! with `if ( UnitName(u) ) then`.
 //!
 //! ```text
-//! mod.rs      the `Answers` trait — the sum of the twelve subject traits the
-//!             panels declare — and the reads that belong to no panel
-//! verbs.rs    …and the other direction: a C function that *records* an intent
-//! stubs.rs    …and the ones that answer a constant, counted apart for it
-//! cvars.rs    the client's own settings — which is what every options panel
-//!             in the game is written against, and nothing else
-//! savedvars.rs …except for its forty-four `uvar` rows, which are Lua globals
-//!             persisted by `RegisterForSave` into a file of their own
-//! events.rs   what the world tells the interface, and who registered for it
-//! update.rs   …and the interface's own clock, which is 30 Hz and not the frame
-//! mouse.rs    what the pointer is on, and the five handlers it fires
-//! keyboard.rs …and whether a key is a binding or a character, never both
-//! sound.rs    the four verbs that make a noise
-//! portrait.rs …and the one that puts a unit's face on a texture
+//! mod.rs      the `Answers` trait (the sum of the subject traits the panels
+//!             declare) and the reads that belong to no panel
+//! verbs.rs    the write side: C functions that record an intent
+//! stubs.rs    C functions that answer a constant, counted separately
+//! cvars.rs    the client's settings (CVars), which every options panel in
+//!             the game reads and writes
+//! savedvars.rs the forty-four `uvar` rows: Lua globals persisted by
+//!             `RegisterForSave` into a file of their own
+//! events.rs   events the world sends the interface, and their registrations
+//! update.rs   the interface's `OnUpdate` clock, which runs at 30 Hz, not per frame
+//! mouse.rs    what the pointer is over, and the five handlers it fires
+//! keyboard.rs key routing: a key is either a binding or a character, never both
+//! sound.rs    the four sound verbs
+//! portrait.rs the verb that draws a unit's portrait onto a texture
 //! ```
 
 
@@ -92,24 +89,18 @@ pub mod update;
 pub mod verbs;
 
 
-/// **Everything the interface may ask, as one name** — the sum of the twelve
-/// subject traits, not a place any of them live.
+/// Everything the interface may ask, as one name: the sum of the subject
+/// traits listed below. No method is declared here.
 ///
-/// It used to be a single trait with **132 methods** covering fifteen unrelated
-/// subjects, in a 4,454-line file. A container read was declared here,
-/// answered here, registered next door in `container.rs` and named in a
-/// `READS` array there too, so four of a feature's five pieces were somewhere
-/// other than the file the feature is named after.
+/// Each subject declares its own trait beside its Lua registration, so a
+/// feature's declaration, answer, registration and `READS` entry are in the
+/// file the feature is named after. The traits together hold 132 methods.
+/// `&dyn Answers` resolves every one of them, because a trait object carries
+/// its supertraits' methods.
 ///
-/// Now each subject owns its own trait beside its own registration, and this is
-/// what joins them. Nothing that consumes the API changed: `&dyn Answers` still
-/// resolves every one of the 132 methods, because a trait object carries its
-/// supertraits' methods.
-///
-/// **The blanket impl is what makes it free to add one.** A new subject trait
-/// goes in the list below and any type answering all sixteen is an `Answers`
-/// automatically — no fourth place to remember, which is the whole complaint
-/// this split was fixing.
+/// The blanket impl below makes adding a subject a one-line change: a new
+/// subject trait goes in both lists, and any type that implements all of them
+/// is an `Answers` automatically.
 pub trait Answers:
     UnitAnswers
     + ActionAnswers
@@ -141,7 +132,7 @@ pub trait Answers:
 {
 }
 
-/// Anything that answers all sixteen answers the interface.
+/// Any type that implements every subject trait is an `Answers`.
 impl<T> Answers for T where
     T: UnitAnswers
     + ActionAnswers
@@ -173,225 +164,224 @@ impl<T> Answers for T where
 {
 }
 
-/// **What the interface may ask about a creature** — and, at the end, about
-/// being one that has died.
+/// What the interface may ask about a unit, plus the reads about the local
+/// player being dead (at the end).
 ///
 /// One method per API function, named after it. Four implementations: [`Live`],
 /// which reads the world; `Stub` in this file's own tests; and `Login` and
-/// `Ticking` in [`super::audit`], which are what the headless probes answer
-/// from. The point of the trait is that neither it nor its Lua registration
-/// knows which of the four it is holding.
+/// `Ticking` in [`super::audit`], which the headless probes answer from.
+/// Neither the trait nor its Lua registration knows which of the four it holds.
 ///
-/// A token this client has no state for answers the *absent* value rather than
-/// a guess, all the way down: see [`crate::interface::api::UnitId::parse`], which is
-/// what every `&str` token here goes through.
+/// A token this client has no state for answers the absent value rather than
+/// a guess. Every `&str` token here goes through
+/// [`crate::interface::api::UnitId::parse`].
 ///
-/// The death reads sit at the bottom rather than in a `DeathAnswers` of their
-/// own because there is no `lua::death` for them to live beside — the game's
-/// three death boxes are `StaticPopup`s, so their C functions have no file of
-/// their own to be registered from. See [`super::api::Answers`] for the twelve
-/// that do.
+/// The death reads are here rather than in a `DeathAnswers` trait because
+/// there is no `lua::death` module for them to live beside: the game's three
+/// death boxes are `StaticPopup`s, so their C functions have no file of their
+/// own to be registered from. See [`super::api::Answers`] for the subjects
+/// that do have one.
 pub trait UnitAnswers {
     // --- the clock ---
 
-    /// `GetTime()` — seconds since the client started. See
-    /// [`crate::interface::api::get_time`], which is the one place the base is set.
+    /// `GetTime()`: seconds since the client started. The base is set in
+    /// [`crate::interface::api::get_time`] and nowhere else.
     fn now(&self) -> f64;
 
-    /// `GetGameTime()` — the **world's** hour and minute, not the machine's.
+    /// `GetGameTime()`: the world's hour and minute, not the machine's.
     ///
     /// The server states it in `SMSG_LOGIN_SETTIMESPEED` and the session thread
-    /// advances it; this reads [`crate::render::sky::WorldClock`], which is the
-    /// one place the hour is decided, so the clock on the minimap and the light
-    /// on the ground can never disagree. A hand-set hour (`--hour`, the settings
-    /// panel) is in that number already.
+    /// advances it. This reads [`crate::render::sky::WorldClock`], the one place
+    /// the hour is decided, so the minimap clock and the sky lighting always
+    /// agree. A hand-set hour (`--hour`, the settings panel) is already included
+    /// in that value.
     ///
     /// `GameTime.lua` compares the answer against the minute it last drew and
-    /// only re-cuts its texture when the two differ, so a **constant** here is
-    /// indistinguishable from a stopped clock: the frame keeps the whole
-    /// 128x64 sheet's default coordinates and draws the day icon and the night
-    /// icon side by side. That was this function for as long as it was a stub.
+    /// only recomputes its texture coordinates when the two differ. A constant
+    /// answer therefore looks like a stopped clock: the frame keeps the 128x64
+    /// sheet's default coordinates and draws the day icon and the night icon
+    /// side by side.
     fn game_time(&self) -> (u32, u32);
 
-    /// `GetBindLocation()` — **where the hearthstone returns the character
-    /// to**, as a name.
+    /// `GetBindLocation()`: the name of the place the hearthstone returns the
+    /// character to.
     ///
-    /// `HOME_INN` ("your inn") before the bind point has arrived, which is the
-    /// reference's own fallback rather than an empty string: it falls back to
-    /// it whenever the stored area id is unset or out of `AreaTable`'s range.
-    /// See [`home_name`].
+    /// `HOME_INN` ("your inn") before the bind point has arrived. The 1.12.1
+    /// client uses the same fallback, not an empty string, whenever the stored
+    /// area id is unset or out of `AreaTable`'s range. See [`home_name`].
     fn bind_location(&self) -> String;
 
-    /// `CheckBinderDist()` — **is the innkeeper who asked still close
-    /// enough?**
+    /// `CheckBinderDist()`: whether the innkeeper who asked is still close
+    /// enough.
     ///
     /// `StaticPopupDialogs["CONFIRM_BINDER"]`'s `OnUpdate` hides the box when
-    /// this answers false, which is what takes the question away when the
-    /// player walks off mid-question. True with nothing pending, so a frame
-    /// between the event and the popup's first update cannot close it.
+    /// this answers false, which removes the question when the player walks
+    /// away. True with nothing pending, so a frame between the event and the
+    /// popup's first update cannot close it.
     fn binder_in_range(&self) -> bool;
 
-    /// `CheckPetUntrainerDist()` — **is the pet trainer still close enough?**
+    /// `CheckPetUntrainerDist()`: whether the pet trainer is still close
+    /// enough.
     ///
     /// The `CONFIRM_PET_UNLEARN` box's `OnUpdate` hides it when this answers
-    /// false, exactly as the binder's does. See
-    /// [`crate::interface::untrainer`].
+    /// false, as the binder's does. See [`crate::interface::untrainer`].
     fn untrainer_in_range(&self) -> bool;
 
     // --- units ---
 
     fn unit_exists(&self, token: &str) -> bool;
-    /// `UnitIsVisible(unit)` — the unit is in the object manager *and* placed:
-    /// a party member across the zone exists and is not visible. Every
-    /// unit-frame addon asks it before drawing a row. Defaults to
-    /// [`Self::unit_exists`] for a double with no positions.
+    /// `UnitIsVisible(unit)`: the unit is in the object manager and placed in
+    /// the world. A party member across the zone exists and is not visible.
+    /// Unit-frame addons ask it before drawing a row. Defaults to
+    /// [`Self::unit_exists`] for a test double with no positions.
     fn unit_is_visible(&self, token: &str) -> bool {
         self.unit_exists(token)
     }
-    /// `CheckInteractDistance(unit, index)` — within the range of one of the
+    /// `CheckInteractDistance(unit, index)`: within the range of one of the
     /// four interactions: 1 inspect (28 yards), 2 trade (11.11), 3 duel (9.9),
-    /// 4 follow (28). The four distances are the ones every 1.12 reference
-    /// states for this call; they have not been confirmed against the client.
-    /// Defaults to false for a double with no positions.
+    /// 4 follow (28). The four distances are the ones the 1.12 API references
+    /// give for this call; they have not been confirmed against the client.
+    /// Defaults to false for a test double with no positions.
     fn unit_in_range(&self, _token: &str, _index: u32) -> bool {
         false
     }
     /// `nil` for a unit that is not there, never `""`.
     fn unit_name(&self, token: &str) -> Option<String>;
-    /// `-1` for a level we do not know, which is the game's own answer and what
-    /// the interface draws as a skull.
+    /// `-1` for a level we do not know. The game answers the same, and the
+    /// interface draws it as a skull.
     fn unit_level(&self, token: &str) -> i32;
-    /// `UnitSex(unit)` — 2 male, 3 female, 1 neuter, and **2 for a unit that is
-    /// not there**. See [`crate::interface::api::Units::sex`], where the table and
-    /// the fallback are.
+    /// `UnitSex(unit)`: 2 male, 3 female, 1 neuter, and 2 for a unit that is
+    /// not there. The table and the fallback are in
+    /// [`crate::interface::api::Units::sex`].
     fn unit_sex(&self, token: &str) -> u32;
     fn unit_health(&self, token: &str) -> u32;
     fn unit_health_max(&self, token: &str) -> u32;
-    /// `UnitXP` and `UnitXPMax`, together — see
+    /// `UnitXP` and `UnitXPMax` together. See
     /// [`crate::interface::api::Units::experience`] for why the pair is one answer.
     fn unit_experience(&self, token: &str) -> (u32, u32);
-    /// `UnitCharacterPoints(unit)` — **unspent talent points, then unspent
-    /// profession points**, together for the same reason the XP pair is: they
-    /// are one field pair, read in one call, by two different panels. See
+    /// `UnitCharacterPoints(unit)`: unspent talent points, then unspent
+    /// profession points. They are one answer for the same reason the XP pair
+    /// is: one field pair, read in one call, by two different panels. See
     /// [`crate::interface::api::Units::character_points`].
     fn unit_character_points(&self, token: &str) -> (u32, u32);
-    /// `GetXPExhaustion()` — the rested pool, `nil` when there is none.
+    /// `GetXPExhaustion()`: the rested pool, `nil` when there is none.
     fn rested_experience(&self) -> Option<u32>;
-    /// `UnitMana` — **as the interface shows it**, so a warrior's rage is 0..100
-    /// and not the field's 0..1000.
+    /// `UnitMana`, scaled as the interface shows it: a warrior's rage is
+    /// 0..100, not the update field's 0..1000.
     fn unit_mana(&self, token: &str) -> u32;
     fn unit_mana_max(&self, token: &str) -> u32;
     fn unit_power_type(&self, token: &str) -> Option<u8>;
-    /// `UnitIsConnected` — false only for a party member the roster says is
+    /// `UnitIsConnected`: false only for a party member the roster says is
     /// offline.
     fn unit_is_connected(&self, token: &str) -> bool;
     fn unit_is_dead(&self, token: &str) -> bool;
-    /// `UnitIsGhost` — **released, not merely dead**, which are two different
-    /// states with two different boxes on screen. See [`crate::interface::death`].
+    /// `UnitIsGhost`: released, not only dead. The two states show two
+    /// different boxes. See [`crate::interface::death`].
     fn unit_is_ghost(&self, token: &str) -> bool;
     fn unit_affecting_combat(&self, token: &str) -> bool;
 
     // --- being dead ---
     //
-    // Five reads, all about the local player, all answering off
+    // Five reads, all about the local player, all answered from
     // [`crate::interface::death::Dying`]. They are here rather than in
-    // [`self::stubs`] because each one **decides what a box says**: the
-    // release box's own sentence, whether the Retrieve button counts down, and
-    // which of three resurrect popups opens.
+    // [`self::stubs`] because each one decides what a box shows: the release
+    // box's text, whether the Retrieve button counts down, and which of three
+    // resurrect popups opens.
 
-    /// `GetReleaseTimeRemaining()` — seconds, or **`-1` for "no timer"**, which
-    /// is the answer inside an instance and the one the `DEATH` box tests for
-    /// before swapping its text for `DEATH_RELEASE_NOTIMER`.
+    /// `GetReleaseTimeRemaining()`: seconds, or `-1` for "no timer". `-1` is
+    /// the answer inside an instance; the `DEATH` box tests for it and swaps
+    /// its text for `DEATH_RELEASE_NOTIMER`.
     fn release_time_remaining(&self) -> i32;
-    /// `GetCorpseRecoveryDelay()` — seconds until the body may be taken back.
+    /// `GetCorpseRecoveryDelay()`: seconds until the corpse may be recovered.
     /// Both corpse popups use it as their `StartDelay`.
     fn corpse_recovery_delay(&self) -> i32;
-    /// `ResurrectGetOfferer()` — who is offering, or `nil`.
+    /// `ResurrectGetOfferer()`: the name of the unit offering, or `nil`.
     fn resurrect_offerer(&self) -> Option<String>;
-    /// `ResurrectHasSickness()` / `ResurrectHasTimer()` — the two flags the
-    /// offer carries, which is what `UIParent_OnEvent` picks between three
-    /// popups on.
+    /// `ResurrectHasSickness()` / `ResurrectHasTimer()`: the two flags the
+    /// offer carries. `UIParent_OnEvent` uses them to pick one of three
+    /// popups.
     fn resurrect_has_sickness(&self) -> bool;
     fn resurrect_has_timer(&self) -> bool;
-    /// `GetResSicknessDuration()` — **the sentence's own duration word**, "10
-    /// minutes", or `None` for a character who would get no sickness at all,
-    /// which is what picks `XP_LOSS_NO_SICKNESS` over `XP_LOSS`. The rule is
-    /// the client's: the race's `ResSicknessSpellID` (`ChrRaces` field 12),
-    /// that spell's `SpellDuration` row at the character's level, `None` under
-    /// one second, and `%s_MIN`/`%s_SEC` off the `GENERIC` family for the
-    /// words. Defaulted to `None` because a headless harness has no level.
+    /// `GetResSicknessDuration()`: the duration text for the sentence, such as
+    /// "10 minutes", or `None` for a character who would get no sickness.
+    /// `None` selects `XP_LOSS_NO_SICKNESS` over `XP_LOSS`. The client's rule:
+    /// the race's `ResSicknessSpellID` (`ChrRaces` field 12), that spell's
+    /// `SpellDuration` row at the character's level, `None` under one second,
+    /// and `%s_MIN`/`%s_SEC` from the `GENERIC` family for the words.
+    /// Defaults to `None` because a headless harness has no level.
     fn res_sickness_duration(&self) -> Option<String> {
         None
     }
-    /// `CheckSpiritHealerDist()` — is the healer whose offer is on the table
-    /// still in reach? The client compares the squared distance to the guid
-    /// the confirm carried; the gate that matters is the server's
-    /// `INTERACTION_DISTANCE` on `CMSG_SPIRIT_HEALER_ACTIVATE`, so that is the
-    /// number. `false` with no offer, which is what closes a stale box.
+    /// `CheckSpiritHealerDist()`: whether the spirit healer whose offer is
+    /// pending is still in reach. The client compares the squared distance to
+    /// the guid the confirm carried. The check that decides the outcome is the
+    /// server's `INTERACTION_DISTANCE` on `CMSG_SPIRIT_HEALER_ACTIVATE`, so
+    /// that is the distance used. `false` with no offer, which closes a stale
+    /// box.
     fn spirit_healer_in_reach(&self) -> bool {
         false
     }
-    /// Two tokens that both resolve to nothing are **not** the same unit — see
+    /// Two tokens that both resolve to nothing are not the same unit. See
     /// [`crate::interface::api::Units::is_unit`].
     fn unit_is_unit(&self, a: &str, b: &str) -> bool;
-    /// **The character sheet's whole population, as one answer** — eleven of
-    /// the game's C functions read off it, and every one of them is a method
-    /// on [`vale_protocol::play::stats::UnitStats`]. `None` for a unit whose
-    /// block never crossed the wire, which is everyone but us.
+    /// Every character-sheet stat as one answer. Eleven of the game's C
+    /// functions read from it, and each is a method on
+    /// [`vale_protocol::play::stats::UnitStats`]. `None` for a unit whose
+    /// stat block the server never sent, which is every unit but the player.
     ///
-    /// One trait method rather than eleven because the split that matters is
-    /// *live world / not live world*, and the arithmetic on the far side of
-    /// this is testable with no `Answers` at all.
+    /// One trait method rather than eleven because the only part that needs
+    /// the live world is fetching the block; the arithmetic on it is testable
+    /// with no `Answers`.
     fn unit_stats(&self, token: &str) -> Option<vale_protocol::play::stats::UnitStats>;
-    /// `UnitRace` — `(localised, fileName)`.
+    /// `UnitRace`: `(localised, fileName)`.
     fn unit_race(&self, token: &str) -> Option<(&'static str, &'static str)>;
-    /// `UnitClass` — the same pair, and both call sites `strupper` the second.
+    /// `UnitClass`: the same pair. Both FrameXML call sites `strupper` the
+    /// second value.
     fn unit_class(&self, token: &str) -> Option<(&'static str, &'static str)>;
-    /// `UnitCreatureType` — the `CreatureType.dbc` word, and **nil for a
-    /// player**, which is the game's own answer.
+    /// `UnitCreatureType`: the `CreatureType.dbc` name, and nil for a player,
+    /// as the game answers.
     fn unit_creature_type(&self, token: &str) -> Option<&'static str>;
-    /// `UnitClassification` — `"elite"`, `"rareelite"`, `"worldboss"`, `"rare"`
-    /// or `"normal"`. Lower case: the directory compares against literals in
-    /// that case.
+    /// `UnitClassification`: `"elite"`, `"rareelite"`, `"worldboss"`, `"rare"`
+    /// or `"normal"`. Lower case, because FrameXML compares against lower-case
+    /// literals.
     fn unit_classification(&self, token: &str) -> &'static str;
-    /// `UnitIsPVP` — flagged for open combat.
+    /// `UnitIsPVP`: flagged for PvP combat.
     fn unit_is_pvp(&self, token: &str) -> bool;
-    /// **`UnitFactionGroup`** — `(internalName, localisedName)`, or `None` for a
-    /// unit with no side in words, which is every creature in the world.
+    /// `UnitFactionGroup`: `(internalName, localisedName)`, or `None` for a
+    /// unit with no named faction group, which is every creature.
     ///
-    /// The first return is what the interface builds a *path* out of
-    /// (`Interface\GroupFrame\UI-Group-PVP-<group>`), so it is the untranslated
-    /// one; the second is what it would print. See
-    /// [`vale_assets::tables::faction::Factions::group_name`], where the walk and
-    /// its empty-name rule are.
+    /// The interface builds a file path from the first value
+    /// (`Interface\GroupFrame\UI-Group-PVP-<group>`), so it is untranslated;
+    /// the second is the display text. The parent-faction walk and its
+    /// empty-name rule are in
+    /// [`vale_assets::tables::faction::Factions::group_name`].
     fn unit_faction_group(&self, token: &str) -> Option<(String, String)>;
-    /// **`GameTooltip:SetUnit`'s whole population, as one answer** — the same
-    /// argument [`Answers::unit_stats`] makes one line up: the plate is about
-    /// one unit and its composition is testable with no `Answers` at all.
+    /// Everything `GameTooltip:SetUnit` shows, as one answer, for the same
+    /// reason as [`Answers::unit_stats`]: the tooltip describes one unit and
+    /// its composition is testable with no `Answers`.
     fn unit_tooltip(&self, token: &str) -> Option<crate::interface::api::UnitTip>;
 
     // --- friend or foe ---
     //
-    // **Five of the game's names off one reading**, because they are five
-    // questions about one fact and answering some of them would put the
-    // interface in a state the real client never reaches. See
-    // [`vale_assets::tables::faction`], which owns the rule, and the note on
-    // [`Answers::unit_reaction`] for what these cost when they are nil.
+    // Five of the game's API functions answered from one reading, because they
+    // are five questions about one fact; answering them from different sources
+    // could produce a combination the real client never shows. The rule is in
+    // [`vale_assets::tables::faction`]. The note on [`Answers::unit_reaction`]
+    // describes what the interface does when these are nil.
 
-    /// `UnitReaction(a, b)`'s underlying answer: how the first stands towards
-    /// the second **on the client's own eight-rank scale**, or `None` when
-    /// either token names nothing — which is the nil
-    /// `TargetFrame_CheckFaction` falls through to a blue name plate on.
+    /// The answer behind `UnitReaction(a, b)`: how the first unit stands
+    /// towards the second on the client's eight-rank scale, or `None` when
+    /// either token names nothing. On that nil, `TargetFrame_CheckFaction`
+    /// falls through to a blue name background.
     ///
-    /// The rank rather than the three-way fold, because `UnitReactionColor` has
-    /// eight rows and the orange one at index 3 is Unfriendly — a rank only the
-    /// character's own reputation ever produces, and one this client could not
-    /// reach at all until it read that reputation.
+    /// The rank, not the three-way hostile/neutral/friendly fold, because
+    /// `UnitReactionColor` has eight rows. The orange row at index 3 is
+    /// Unfriendly, a rank only the character's own reputation produces.
     fn unit_rank(&self, a: &str, b: &str) -> Option<vale_assets::tables::faction::Rank>;
-    /// `UnitCanAttack(a, b)` — the reaction **and** the victim's own flags; see
+    /// `UnitCanAttack(a, b)`: the reaction and the target's own flags. See
     /// [`crate::interface::api::Units::can_attack`].
     fn unit_can_attack(&self, a: &str, b: &str) -> bool;
-    /// `UnitPlayerControlled` — is a person driving this unit?
+    /// `UnitPlayerControlled`: whether a player controls this unit.
     fn unit_player_controlled(&self, token: &str) -> bool;
 }
 
@@ -400,9 +390,9 @@ pub trait UnitAnswers {
 pub struct SpellTab {
     pub name: String,
     /// `Interface\Icons\…`, or empty for a line whose icon id is not in
-    /// `SpellIcon.dbc` — empty rather than absent because
-    /// `skillLineTab:SetNormalTexture(texture)` takes it either way and a
-    /// texture set to `nil` and one set to `""` draw the same nothing.
+    /// `SpellIcon.dbc`. Empty rather than absent because
+    /// `skillLineTab:SetNormalTexture(texture)` accepts either, and a texture
+    /// set to `nil` and one set to `""` both draw nothing.
     pub texture: String,
     pub offset: usize,
     pub count: usize,
@@ -410,179 +400,178 @@ pub struct SpellTab {
 
 /// The live world, as an [`Answers`].
 ///
-/// Built fresh by each system that enters Lua and thrown away when the call
-/// returns; it holds only borrows, so there is nothing here that can go stale —
-/// which is the whole argument for this shape over a snapshot refreshed once a
-/// frame.
+/// Built fresh by each system that enters Lua and dropped when the call
+/// returns. It holds only borrows, so nothing in it can go stale. That is the
+/// reason for this design over a snapshot refreshed once a frame.
 pub struct Live<'a, 'w, 's> {
     pub units: &'a Units<'w, 's>,
     pub bar: &'a ActionBar,
     pub cooldowns: &'a Cooldowns,
     pub book: &'a Spellbook,
-    /// **…and the *other* bar**, which the server states outright where the
-    /// player's own is the client's — see [`crate::interface::pet`].
+    /// The pet action bar. The server sends its contents, whereas the
+    /// player's own bar is kept by the client. See [`crate::interface::pet`].
     pub pet_bar: &'a crate::interface::pet::PetBar,
-    /// **The talent trees**, which the panel reads twenty buttons at a time —
-    /// see [`crate::interface::talents`] and [`super::panels::talent`].
+    /// The talent trees, which the panel reads twenty buttons at a time. See
+    /// [`crate::interface::talents`] and [`super::panels::talent`].
     pub talents: &'a crate::interface::talents::Talents,
     pub casting: &'a Casting,
-    /// **Which ranged attack is repeating**, for `IsAutoRepeatAction` — a spell
-    /// id rather than a borrow, because that is the whole of the state and
-    /// copying a `u32` is cheaper than the reference to it. See
+    /// The repeating ranged attack, for `IsAutoRepeatAction`. A spell id
+    /// rather than a borrow, because the id is the whole state and copying a
+    /// `u32` is cheaper than a reference to it. See
     /// [`crate::interface::action::AutoRepeat`].
     pub auto_repeat: Option<u32>,
-    /// The spell cursor's own state — see
-    /// [`crate::interface::action::SpellTargeting`]. Beside `casting` because they
-    /// are the two halves of "is a cast happening": one is running and the other
-    /// is waiting to be aimed, and the interface asks about them separately.
+    /// The spell cursor's state. See
+    /// [`crate::interface::action::SpellTargeting`]. It sits beside `casting`
+    /// because the two together answer "is a cast happening": one cast is
+    /// running, the other is waiting for a target, and the interface asks
+    /// about them separately.
     pub targeting: &'a crate::interface::action::SpellTargeting,
-    /// What is on the units the interface can ask about — see
+    /// The auras on the units the interface can ask about. See
     /// [`crate::interface::auras`].
     pub auras: &'a crate::interface::auras::Auras,
-    /// Being dead: the two clocks and the offer on the table — see
+    /// Death state: the two timers and the pending resurrect offer. See
     /// [`crate::interface::death`].
     pub dying: &'a crate::interface::death::Dying,
-    /// …and what is being read, if anything — see [`crate::interface::pagetext`].
+    /// The open book or page text, if any. See [`crate::interface::pagetext`].
     pub page: &'a crate::interface::pagetext::OpenBook,
-    /// …and the summon on the table, if any — see
-    /// [`crate::interface::summon`].
+    /// The pending summon, if any. See [`crate::interface::summon`].
     pub summon: &'a crate::interface::summon::Summon,
-    /// `GlobalStrings.lua`, for the one tab whose name is a key rather than a
-    /// word — see [`vale_assets::tables::book::GENERAL_NAME_KEY`]. `None` before the
-    /// table has loaded, which draws the key.
+    /// `GlobalStrings.lua`, for the one spellbook tab whose name is a string
+    /// key. See [`vale_assets::tables::book::GENERAL_NAME_KEY`]. `None` before
+    /// the table has loaded, in which case the key itself is drawn.
     pub strings: Option<&'a Strings>,
-    /// **What is on the body**, while a loot window is open — see
-    /// [`crate::interface::loot`]. `None` for the whole of a session in which
-    /// nothing has been right-clicked.
+    /// The contents of the corpse or object being looted, while a loot window
+    /// is open. See [`crate::interface::loot`]. Empty for a session in which
+    /// nothing has been looted.
     pub loot: &'a crate::interface::loot::LootWindow,
-    /// …and, in a group, the rolls open on what is on it — see
-    /// [`crate::interface::lootroll`]. Empty for every session that never
-    /// groups, which is what the systems behind it check first.
+    /// In a group, the open loot rolls. See [`crate::interface::lootroll`].
+    /// Empty for every session that never groups; the systems behind it check
+    /// that first.
     pub rolls: &'a crate::interface::lootroll::LootRolls,
-    /// …and the quest log and the page in front of the character — see
+    /// The quest log and the open quest dialog. See
     /// [`crate::interface::quest`].
     pub quests: &'a crate::interface::quest::Quests,
-    /// …and the two NPC windows — see [`crate::interface::gossip`] and
+    /// The gossip and merchant windows. See [`crate::interface::gossip`] and
     /// [`crate::interface::merchant`].
     pub gossip: &'a crate::interface::gossip::GossipWindow,
     pub merchant: &'a crate::interface::merchant::MerchantWindow,
-    /// …and the box on the corner, which is a window no NPC owns — see
-    /// [`crate::interface::mail`].
+    /// The mailbox, a window no NPC owns. See [`crate::interface::mail`].
     pub mail: &'a crate::interface::mail::Mailbox,
-    /// …and the third, whose panel is the game's own load-on-demand addon — see
+    /// The trainer window, whose panel is the game's load-on-demand addon. See
     /// [`crate::interface::trainer`].
     pub trainer: &'a crate::interface::trainer::TrainerWindow,
-    /// …and the two profession windows, which are the character's own rather
-    /// than an NPC's — see [`crate::interface::tradeskill`].
+    /// The two profession windows, which belong to the character rather than
+    /// an NPC. See [`crate::interface::tradeskill`].
     pub tradeskill: &'a crate::interface::tradeskill::TradeSkillWindow,
     pub craft: &'a crate::interface::tradeskill::CraftWindow,
-    /// …and the fourth, whose whole content the client works out for itself —
-    /// see [`crate::interface::taxi`].
+    /// The flight map, whose content the client computes itself. See
+    /// [`crate::interface::taxi`].
     pub taxi: &'a crate::interface::taxi::TaxiWindow,
-    /// …and the fifth, one gossip option deeper than the rest — see
+    /// The stable window, reached through one gossip option. See
     /// [`crate::interface::stable`].
     pub stable: &'a crate::interface::stable::StableWindow,
-    /// …and the sixth, whose contents are the inventory's and whose window is
-    /// a guid — see [`crate::interface::bank`].
+    /// The bank window: its contents are inventory slots and the window itself
+    /// is a banker guid. See [`crate::interface::bank`].
     pub bank: &'a crate::interface::bank::BankWindow,
-    /// …and the trade window, which is another player's rather than an
-    /// NPC's — see [`crate::interface::trade`].
+    /// The trade window, opened with another player rather than an NPC. See
+    /// [`crate::interface::trade`].
     pub trade: &'a crate::interface::trade::TradeWindow,
     /// [`crate::interface::api::get_time`]'s value for this frame.
     pub now: f64,
-    /// The **world's** hour and minute, for `GetGameTime` — see
-    /// [`UnitAnswers::game_time`]. Read off [`crate::render::sky::WorldClock`]
-    /// rather than off the session, so a hand-set hour reaches the minimap's
+    /// The world's hour and minute, for `GetGameTime`. See
+    /// [`UnitAnswers::game_time`]. Read from [`crate::render::sky::WorldClock`]
+    /// rather than from the session, so a hand-set hour reaches the minimap
     /// clock as well as the sky.
     pub game_clock: (u32, u32),
-    /// **Where the hearthstone points, in words** — `GetBindLocation()`'s
-    /// answer, and the `$z` in the stone's own sentence, which the reference
-    /// resolves the same way in both places.
+    /// The hearthstone's bind location as text: `GetBindLocation()`'s answer,
+    /// and the `$z` in the hearthstone's spell description. The 1.12.1 client
+    /// resolves both the same way.
     ///
-    /// Resolved once here rather than at each read: it is an `AreaTable` lookup
-    /// and a fallback, and three different reads want the same string. Empty
-    /// only with no archives open, since the fallback is `HOME_INN` — "your
-    /// inn", the reference's own answer for a bind point it does not have.
+    /// Resolved once here rather than at each read, because it is an
+    /// `AreaTable` lookup with a fallback and three different reads want the
+    /// same string. Empty only with no archives open, since the fallback is
+    /// `HOME_INN` ("your inn"), which the client also shows for an unknown
+    /// bind point.
     pub home: String,
-    /// …and the innkeeper waiting on an answer, for `CheckBinderDist` — see
+    /// The innkeeper waiting on an answer, for `CheckBinderDist`. See
     /// [`crate::interface::binder::HomeBind`].
     pub binder: &'a crate::interface::binder::HomeBind,
-    /// …and the pet trainer, for `CheckPetUntrainerDist` — see
+    /// The pet trainer, for `CheckPetUntrainerDist`. See
     /// [`crate::interface::untrainer::Untrainer`].
     pub untrainer: &'a crate::interface::untrainer::Untrainer,
-    /// …and the stance bar, which is a client read of `Spell.dbc` with no
-    /// packet behind it — see [`crate::interface::shapeshift`].
+    /// The stance bar, which the client builds from `Spell.dbc` with no packet
+    /// behind it. See [`crate::interface::shapeshift`].
     pub shapeshift: &'a crate::interface::shapeshift::ShapeshiftBar,
-    /// Whether a swing is in progress, for `IsCurrentAction` — the one piece of
-    /// state that lives on the session rather than in a resource.
+    /// Whether an auto-attack is in progress, for `IsCurrentAction`. This is
+    /// the one piece of state read from the session rather than a resource.
     pub attacking: bool,
-    /// Where the character is and which parchment is showing — see
-    /// [`crate::interface::worldmap`].
+    /// Where the character is and which map the world map panel is showing.
+    /// See [`crate::interface::worldmap`].
     pub place: &'a crate::interface::worldmap::WorldMapState,
-    /// …and the one mark the server can put on that parchment — see
+    /// The one landmark the server can place on that map. See
     /// [`crate::interface::worldmap::MapLandmarks`].
     pub landmarks: &'a crate::interface::worldmap::MapLandmarks,
-    /// …and who is with them — see [`crate::interface::party`]. The one unit subject
-    /// whose members may not be in the world at all.
+    /// The party. See [`crate::interface::party`]. The one unit subject whose
+    /// members may not be in the world at all.
     pub party: &'a crate::interface::party::Party,
-    /// …and what the character may hold — see
+    /// The item types the character may use. See
     /// [`crate::world::proficiency`].
     pub proficiency: &'a crate::world::proficiency::Proficiencies,
-    /// **What the character is carrying** — the bags, the worn slots, the
+    /// What the character is carrying: the bags, the equipped slots, the
     /// money, and the item templates for all of it. See
     /// [`crate::interface::items`].
     pub inventory: &'a crate::interface::items::Inventory,
-    /// …and what is on the **pointer**, which is what makes a left click on a
-    /// bag square a pick-up or a put-down. See [`crate::interface::cursor`].
+    /// The item on the cursor, which decides whether a left click on a bag
+    /// slot picks up or puts down. See [`crate::interface::cursor`].
     pub cursor: &'a crate::interface::cursor::Cursor,
-    /// …and **the archives' own tables**, which by now answer four different
-    /// questions here: the two that turn a place into words and rectangles, the
-    /// spell catalogue behind every tooltip, and `FactionTemplate.dbc` behind
-    /// friend-or-foe. `None` before the archives are open, which answers each of
-    /// those with its own "nothing" rather than with a plausible constant.
+    /// The archive's DBC tables. They answer four kinds of question here: the
+    /// two tables that turn a place into a name and a map rectangle, the spell
+    /// table behind every tooltip, and `FactionTemplate.dbc` behind reaction.
+    /// `None` before the archives are open; each read then answers its own
+    /// empty value rather than a constant that looks real.
     pub tables: Option<std::sync::Arc<vale_assets::tables::dbc::DisplayTables>>,
-    /// The map id and position the map reads are against — the local player's,
-    /// resolved once by [`LuaWorld::live`] rather than per call.
+    /// The local player's map id and position, used by the map reads.
+    /// Resolved once by [`LuaWorld::live`] rather than per call.
     pub here: Option<(u32, f32, f32)>,
-    /// …and which way they are looking, for the arrow that says so. See
+    /// The local player's facing, for the map arrow. See
     /// [`Answers::player_facing`].
     pub facing: f32,
-    /// **The screens before the world**: the handshake this client is holding
-    /// open, if it is holding one, and what the account box remembers.
+    /// The pre-world screens: the handshake this client holds open, if any,
+    /// and what the account box remembers.
     ///
-    /// `None` at the login screen and `None` in the world — the character list
-    /// exists only between `CMSG_CHAR_ENUM` and `CMSG_PLAYER_LOGIN` — and every
-    /// glue read answers its own "nothing" for that. See [`super::panels::glue`].
+    /// `None` at the login screen and `None` in the world, because the
+    /// character list exists only between `CMSG_CHAR_ENUM` and
+    /// `CMSG_PLAYER_LOGIN`. Every glue read answers its own empty value then.
+    /// See [`super::panels::glue`].
     pub selection: Option<&'a crate::world::session::Handshake>,
-    /// …and the client-side half beside it: the remembered account name and
-    /// whether the socket is still up. See [`crate::glue::glue::GlueState`].
+    /// The client-side glue state: the remembered account name and whether
+    /// the socket is still up. See [`crate::glue::glue::GlueState`].
     pub glue: &'a crate::glue::glue::GlueState,
-    /// **The object manager, for the one read that needs a name the server owns
-    /// and the ECS does not mirror**: a spell's reagents are item *entries* and
-    /// `Item.dbc` is not in the archives, so "Rune of Teleportation" lives in
-    /// the templates `CMSG_ITEM_QUERY_SINGLE` fills. See
-    /// [`Live::reagent_name`], which is the only thing that touches it — and
-    /// which is a hover, not a frame.
+    /// The object manager, for the one read that needs a server-owned name
+    /// the ECS does not mirror. A spell's reagents are item entries and
+    /// `Item.dbc` is not in the archives, so a name such as "Rune of
+    /// Teleportation" lives in the templates `CMSG_ITEM_QUERY_SINGLE` fills.
+    /// Only [`Live::reagent_name`] touches it, and only on tooltip hover, not
+    /// every frame.
     pub world: Option<std::sync::Arc<std::sync::Mutex<vale_protocol::state::objects::ObjectManager>>>,
 }
 
-/// **Everything the interface may ask about, as one system parameter.**
+/// Everything the interface may ask about, as one system parameter.
 ///
-/// Seven systems in this directory enter Lua and every one of them needs the
-/// same set — so before this existed, adding a *read* meant a new `Res<…>` on
-/// each of them and a new field at each `Live { … }`. That is the hub shape
-/// worth avoiding, and it had already been paid twice; the
-/// spellbook would have been the third. Now a read is one field here and one
-/// method on [`Answers`].
+/// Seven systems in this directory enter Lua and each needs the same set of
+/// resources. Without this bundle, a new read would need a new `Res<…>` on
+/// each of the seven systems and a new field at each `Live { … }`. With it, a
+/// read is one field here and one method on [`Answers`].
 ///
-/// It is also what keeps two of those systems under `SystemParam`'s sixteen.
+/// It also keeps two of those systems under `SystemParam`'s limit of sixteen
+/// parameters.
 #[derive(SystemParam)]
 pub struct LuaWorld<'w, 's> {
     pub units: Units<'w, 's>,
     pub bar: Res<'w, ActionBar>,
     pub cooldowns: Res<'w, Cooldowns>,
     pub casting: Res<'w, Casting>,
-    /// Which ranged attack is repeating, for `IsAutoRepeatAction` — see
+    /// The repeating ranged attack, for `IsAutoRepeatAction`. See
     /// [`crate::interface::action::AutoRepeat`].
     pub auto_repeat: Res<'w, crate::interface::action::AutoRepeat>,
     pub targeting: Res<'w, crate::interface::action::SpellTargeting>,
@@ -590,82 +579,82 @@ pub struct LuaWorld<'w, 's> {
     pub pet_bar: Res<'w, crate::interface::pet::PetBar>,
     pub talents: Res<'w, crate::interface::talents::Talents>,
     pub auras: Res<'w, crate::interface::auras::Auras>,
-    /// Being dead — see [`crate::interface::death`].
+    /// Death state. See [`crate::interface::death`].
     pub dying: Res<'w, crate::interface::death::Dying>,
     pub page: Res<'w, crate::interface::pagetext::OpenBook>,
     pub summon: Res<'w, crate::interface::summon::Summon>,
     pub session: Res<'w, crate::world::session::Session>,
     pub strings: Res<'w, crate::interface::messages::UiStrings>,
     pub time: Res<'w, Time>,
-    /// Where the character is and which parchment the map panel is on — see
+    /// Where the character is and which map the world map panel shows. See
     /// [`crate::interface::worldmap`].
     pub place: Res<'w, crate::interface::worldmap::WorldMapState>,
-    /// …and the flag a guard's directions put on it.
+    /// The landmark a guard's directions place on the map.
     pub landmarks: Res<'w, crate::interface::worldmap::MapLandmarks>,
-    /// …and who is with them — see [`crate::interface::party`].
+    /// The party. See [`crate::interface::party`].
     pub party: Res<'w, crate::interface::party::Party>,
-    /// …and what they may *hold*, which is the only thing that can colour a
-    /// square red — see [`crate::world::proficiency`].
+    /// The item types the character may use, which is the only thing that
+    /// colours an item slot red. See [`crate::world::proficiency`].
     pub proficiency: Res<'w, crate::world::proficiency::Proficiencies>,
-    /// …and what they are carrying — see [`crate::interface::items`].
+    /// What the character is carrying. See [`crate::interface::items`].
     pub inventory: Res<'w, crate::interface::items::Inventory>,
-    /// …and what is on the pointer — see [`crate::interface::cursor`].
+    /// The item on the cursor. See [`crate::interface::cursor`].
     pub cursor: Res<'w, crate::interface::cursor::Cursor>,
-    /// …and what is on the *body* — see [`crate::interface::loot`].
+    /// The contents of the corpse or object being looted. See
+    /// [`crate::interface::loot`].
     pub loot: Res<'w, crate::interface::loot::LootWindow>,
-    /// …and the rolls open on it — see [`crate::interface::lootroll`].
+    /// The open loot rolls. See [`crate::interface::lootroll`].
     pub rolls: Res<'w, crate::interface::lootroll::LootRolls>,
-    /// …and the log and the conversation — see [`crate::interface::quest`].
+    /// The quest log and the open quest dialog. See
+    /// [`crate::interface::quest`].
     pub quests: Res<'w, crate::interface::quest::Quests>,
-    /// …and the two windows a right-click on an NPC opens — see
+    /// The two windows a right-click on an NPC opens. See
     /// [`crate::interface::gossip`] and [`crate::interface::merchant`].
     pub gossip: Res<'w, crate::interface::gossip::GossipWindow>,
     pub merchant: Res<'w, crate::interface::merchant::MerchantWindow>,
-    /// …and the mailbox — see [`crate::interface::mail`].
+    /// The mailbox. See [`crate::interface::mail`].
     pub mail: Res<'w, crate::interface::mail::Mailbox>,
-    /// …and the trainer — see [`crate::interface::trainer`].
+    /// The trainer window. See [`crate::interface::trainer`].
     pub trainer: Res<'w, crate::interface::trainer::TrainerWindow>,
-    /// …and the two profession windows — see
-    /// [`crate::interface::tradeskill`].
+    /// The two profession windows. See [`crate::interface::tradeskill`].
     pub tradeskill: Res<'w, crate::interface::tradeskill::TradeSkillWindow>,
     pub craft: Res<'w, crate::interface::tradeskill::CraftWindow>,
-    /// …and the flight map — see [`crate::interface::taxi`].
+    /// The flight map. See [`crate::interface::taxi`].
     pub taxi: Res<'w, crate::interface::taxi::TaxiWindow>,
-    /// …and the stable — see [`crate::interface::stable`].
+    /// The stable. See [`crate::interface::stable`].
     pub stable: Res<'w, crate::interface::stable::StableWindow>,
-    /// …and the bank — see [`crate::interface::bank`].
+    /// The bank. See [`crate::interface::bank`].
     pub bank: Res<'w, crate::interface::bank::BankWindow>,
     pub trade: Res<'w, crate::interface::trade::TradeWindow>,
-    /// …and the archives, for the two tables that turn a place into words.
+    /// The archives, for the two tables that turn a place into a name.
     pub assets: Res<'w, crate::assets::GameAssets>,
-    /// The local player's position, for `GetPlayerMapPosition` — the one map
-    /// read that wants a world position rather than an id.
+    /// The local player's position, for `GetPlayerMapPosition`, the one map
+    /// read that needs a world position rather than an id.
     pub status: Res<'w, crate::world::session::WorldStatus>,
-    /// The glue's own client-side half — see [`crate::glue::glue`].
+    /// The client-side glue state. See [`crate::glue::glue`].
     pub glue: Res<'w, crate::glue::glue::GlueState>,
-    /// **Where the hearthstone points** — see [`crate::interface::binder`].
+    /// The hearthstone's bind point. See [`crate::interface::binder`].
     pub home: Res<'w, crate::interface::binder::HomeBind>,
-    /// …and the pet trainer's pending question — see
+    /// The pet trainer's pending question. See
     /// [`crate::interface::untrainer`].
     pub untrainer: Res<'w, crate::interface::untrainer::Untrainer>,
-    /// …and the stance bar — see [`crate::interface::shapeshift`].
+    /// The stance bar. See [`crate::interface::shapeshift`].
     pub shapeshift: Res<'w, crate::interface::shapeshift::ShapeshiftBar>,
-    /// **The world's hour**, for `GetGameTime` — see
+    /// The world's hour, for `GetGameTime`. See
     /// [`crate::render::sky::WorldClock`]. Taken from the sky's clock rather
-    /// than from the session so that the minimap's clock and the light on the
-    /// ground are the same number, hand-set hours included.
+    /// than from the session so that the minimap clock and the sky lighting
+    /// use the same value, hand-set hours included.
     pub clock: Res<'w, crate::render::sky::WorldClock>,
 }
 
 impl LuaWorld<'_, '_> {
-    /// **Every resource this bundle needs, in a test app.**
+    /// Inserts every resource this bundle needs into a test app.
     ///
-    /// Beside the bundle for the same reason the bundle exists: five test
-    /// harnesses in this directory each stand up a minimal `App` to run one
-    /// system, and without this every field added here is five more
-    /// `init_resource` lines that fail to compile in five files. The `Query`
-    /// needs nothing — an empty world answers every token as absent, which is
-    /// what those tests want.
+    /// Five test harnesses in this directory each build a minimal `App` to run
+    /// one system. Without this function, each field added to the bundle would
+    /// need a new `init_resource` line in five files, and those files would
+    /// fail to compile until it was added. The `Query` needs nothing: an empty
+    /// world answers every token as absent, which is what those tests want.
     #[cfg(test)]
     pub(crate) fn init(app: &mut bevy::app::App) -> &mut bevy::app::App {
         app.init_resource::<Time>()
@@ -709,24 +698,24 @@ impl LuaWorld<'_, '_> {
             .init_resource::<crate::interface::binder::HomeBind>()
             .init_resource::<crate::interface::untrainer::Untrainer>()
             .init_resource::<crate::interface::shapeshift::ShapeshiftBar>()
-            // …and what the character may hold, which the trade squares
-            // read — see [`crate::world::proficiency`]. Named
-            // here for the same reason the two below are: the headless
-            // probes build this app without the state plugin groups.
+            // The item types the character may use, which the trade slots
+            // read. See [`crate::world::proficiency`]. Inserted here for the
+            // same reason as the resources below: the headless probes build
+            // this app without the state plugin groups.
             .init_resource::<crate::world::proficiency::Proficiencies>()
             .insert_resource(crate::assets::GameAssets::new(String::new()))
             .init_resource::<crate::interface::target::Selection>()
             .init_resource::<crate::interface::target::Hovered>()
-            // …and its twin, which the world tooltip reads beside it — see
-            // `crate::interface::object::HoveredObject`. Both are named here
-            // rather than left to `InterfacePlugins` because the headless probes
-            // build this app without it.
+            // The hovered game object, which the world tooltip reads beside
+            // `Hovered`. See `crate::interface::object::HoveredObject`. Both
+            // are inserted here rather than left to `InterfacePlugins`
+            // because the headless probes build this app without it.
             .init_resource::<crate::interface::object::HoveredObject>()
     }
 
     /// The borrow to lend Lua for the length of one call.
     ///
-    /// Cheap enough to take per call and correct to take once per frame: it
+    /// Cheap enough to build per call, and correct to build once per frame: it
     /// holds only borrows, so nothing in it can go stale between two chunks.
     pub fn live(&self) -> Live<'_, '_, '_> {
         Live {
@@ -795,17 +784,17 @@ impl LuaWorld<'_, '_> {
     }
 }
 
-/// **What `GetBindLocation()` says**, resolved from the area id the bind point
-/// carries.
+/// The text `GetBindLocation()` returns, resolved from the area id the bind
+/// point carries.
 ///
-/// The reference reads `AreaTable`'s own `AreaName` for the row — not the zone
-/// it belongs to — so an inn's sub-area gives "Lion's Pride Inn" and a bind in
-/// open country gives the zone. `GetBindLocation` and the spell text's `$z`
-/// arm resolve it the same way, which is why one string answers both.
+/// The 1.12.1 client uses `AreaTable`'s `AreaName` for the row itself, not for
+/// the zone it belongs to, so an inn's sub-area gives "Lion's Pride Inn" and a
+/// bind in open country gives the zone. `GetBindLocation` and the spell text's
+/// `$z` token resolve it the same way, so one string answers both.
 ///
-/// **The fallback is `HOME_INN`** — "your inn" — which is the reference's own:
-/// both functions jump to it when the area id is unset or out of the table's
-/// range, which for a client is every frame before the login burst lands.
+/// The fallback is `HOME_INN` ("your inn"), as in the client: both use it
+/// when the area id is unset or out of the table's range, which is the case on
+/// every frame before the login packets arrive.
 fn home_name(
     area: Option<u32>,
     tables: Option<&vale_assets::tables::dbc::DisplayTables>,
@@ -826,20 +815,20 @@ impl Live<'_, '_, '_> {
         UnitId::parse(token)
     }
 
-    /// The map tables, or `None` before the archives are open — one door, since
-    /// six of the reads above want the same two-step.
+    /// The map tables, or `None` before the archives are open. One accessor,
+    /// because six of the reads above need the same two steps.
     pub(super) fn world_map(&self) -> Option<&vale_assets::tables::worldmap::WorldMap> {
         self.tables.as_ref()?.world_map()
     }
 
-    /// **Where a party member is standing**, as `(map, x, y)` — `None` for a
-    /// member no stats packet has arrived for, and for one whose zone
-    /// `AreaTable` cannot place on a map.
+    /// A party member's position as `(map, x, y)`. `None` for a member no
+    /// stats packet has arrived for, and for one whose zone `AreaTable` cannot
+    /// place on a map.
     ///
-    /// The position is `SMSG_PARTY_MEMBER_STATS`' two `int16`s, which is the
-    /// only thing on the wire that carries one. The **map** is not in that
-    /// packet at all: it is derived from the zone the same packet carries, which
-    /// is what keeps a member in Kalimdor off an Eastern Kingdoms parchment.
+    /// The position is `SMSG_PARTY_MEMBER_STATS`' two `int16`s, the only
+    /// position the server sends for a party member. The map is not in that
+    /// packet: it is derived from the zone the same packet carries, which keeps
+    /// a member in Kalimdor off an Eastern Kingdoms map.
     pub(super) fn party_position(&self, index: usize) -> Option<(u32, f32, f32)> {
         let stats = self.party.member(index)?.stats.as_ref()?;
         let (x, y) = stats.position?;
@@ -852,31 +841,31 @@ impl Live<'_, '_, '_> {
         Some((map, f32::from(x), f32::from(y)))
     }
 
-    /// **What a reagent is called**, and — if nothing knows yet — a request that
-    /// something find out.
+    /// A reagent's name, or `None` with a query queued if the name is not yet
+    /// known.
     ///
-    /// Both halves under one lock, which is what makes this safe to call from a
-    /// hover: a miss *queues* the entry ([`ObjectManager::want_item`]) and never
-    /// touches the socket, so the query goes out on the session's own interval
-    /// with the equipment queries and a hundred hovers cost one packet.
+    /// The lookup and the queueing happen under one lock, which makes this
+    /// safe to call from a hover: a miss queues the entry
+    /// ([`ObjectManager::want_item`]) and never touches the socket, so the
+    /// query goes out on the session's own interval with the equipment
+    /// queries, and a hundred hovers cost one packet.
     ///
-    /// The first hover on a cold cache therefore shows the plate without its
-    /// reagent line and the next one shows it, which is exactly what the retail
-    /// client does with an empty item cache.
+    /// The first hover on a cold cache therefore shows the tooltip without its
+    /// reagent line and the next one shows it. The retail client behaves the
+    /// same with an empty item cache.
     pub(super) fn reagent_name(&self, entry: u32) -> Option<String> {
         Some(self.session_template(entry)?.name)
     }
 
-    /// **A template out of the session-wide cache**, queued for query on a
-    /// miss — same contract as [`Self::reagent_name`]: the miss never touches
-    /// the socket, so a hundred reads cost one packet on the session's own
-    /// query interval.
+    /// A template from the session-wide cache, queued for query on a miss.
+    /// Same contract as [`Self::reagent_name`]: the miss never touches the
+    /// socket, so a hundred reads cost one packet on the session's query
+    /// interval.
     ///
-    /// This is the read for a population the character does **not** carry —
-    /// a vendor's shelf, a corpse's rows. [`super::game::items::Inventory`]'s
-    /// template map is deliberately the *carried* subset of this cache, so
-    /// resolving those rows through it answers blank until the item is bought
-    /// or looted, which was precisely the reported bug.
+    /// This is the read for items the character does not carry, such as a
+    /// vendor's stock or a corpse's loot. [`super::game::items::Inventory`]'s
+    /// template map holds only the carried subset of this cache, so resolving
+    /// those rows through it answers blank until the item is bought or looted.
     pub(super) fn session_template(&self, entry: u32) -> Option<vale_protocol::state::query::ItemInfo> {
         let world = self.world.as_ref()?;
         let mut world = world.lock().unwrap_or_else(|e| e.into_inner());
@@ -887,15 +876,14 @@ impl Live<'_, '_, '_> {
         None
     }
 
-    /// **What an objective is aimed at, in words** — queued for query on a
-    /// miss, the same contract [`Self::session_template`] has.
+    /// The name of a quest objective's creature or game object, queued for
+    /// query on a miss, with the same contract as [`Self::session_template`].
     ///
-    /// The name is not on the wire anywhere near the quest: `ReqCreatureOrGOId`
-    /// is an id and `CMSG_CREATURE_QUERY` / `CMSG_GAMEOBJECT_QUERY` are the only
-    /// things that answer it. A quest log opened in a city is almost always
-    /// asking about a creature that is nowhere in view, which is why
-    /// `ObjectManager::want_creature` exists at all — the on-sight walk cannot
-    /// reach one.
+    /// The quest packets do not carry the name: `ReqCreatureOrGOId` is an id,
+    /// and only `CMSG_CREATURE_QUERY` / `CMSG_GAMEOBJECT_QUERY` resolve it. A
+    /// quest log opened in a city usually asks about a creature that is not in
+    /// view, and the queries sent for objects in sight never reach it. That is
+    /// why `ObjectManager::want_creature` exists.
     pub(super) fn objective_target_name(&self, target: vale_protocol::play::quest::Target) -> Option<String> {
         use vale_protocol::play::quest::Target;
         let world = self.world.as_ref()?;
@@ -917,12 +905,10 @@ impl Live<'_, '_, '_> {
         None
     }
 
-    /// **One line of the quest log's objectives, in the client's own words.**
+    /// One line of the quest log's objectives, in the client's wording.
     ///
-    /// The sentence is not composed here in any sense that matters: it is a
-    /// `GlobalStrings.lua` key per objective kind, and the keys are the ones
-    /// `GetQuestLogLeaderBoard` itself pushes, and they are the whole of the
-    /// rule:
+    /// Each objective kind has one `GlobalStrings.lua` format key, the same
+    /// keys `GetQuestLogLeaderBoard` uses in the client:
     ///
     /// ```text
     /// QUEST_MONSTERS_KILLED   "%s slain: %d/%d"    with "monster"
@@ -932,15 +918,14 @@ impl Live<'_, '_, '_> {
     /// (none)                  the wording verbatim with "event"
     /// ```
     ///
-    /// **The monster line is the one that is not `%s: %d/%d`**, and it is the
-    /// commonest kind in the game: "Kobold Vermin slain: 3/8" rather than
-    /// "Kobold Vermin: 3/8". A client that used one shape for all of them reads
-    /// as plausible and is wrong on most quests in Elwynn, which is exactly the
-    /// class of fault this project keeps a rule about.
+    /// The monster line is the only one that is not `%s: %d/%d`, and it is the
+    /// most common kind: "Kobold Vermin slain: 3/8" rather than
+    /// "Kobold Vermin: 3/8". Using one format for all kinds would be wrong on
+    /// most quests in Elwynn.
     ///
-    /// Read out of the archive's own `GlobalStrings.lua` rather than written
-    /// here, so a key the file does not carry shows as nothing — the client's
-    /// own behaviour — instead of as a sentence invented in this repo.
+    /// The formats are read from the archive's `GlobalStrings.lua` rather than
+    /// written here, so a key the file does not carry shows as nothing, as in
+    /// the client, instead of as text invented in this repository.
     pub(super) fn leader_board_line(&self, kind: &str, name: &str, have: u32, want: u32) -> String {
         let key = match kind {
             "monster" => "QUEST_MONSTERS_KILLED",
@@ -949,25 +934,26 @@ impl Live<'_, '_, '_> {
         };
         let format = self.strings.and_then(|s| s.get(key));
         match format {
-            // `%s` then `%d` then `%d`, in that order in all three — so the
-            // substitution is positional and does not need a printf.
+            // `%s` then `%d` then `%d`, in that order in all three formats, so
+            // the substitution is positional and needs no printf.
             Some(format) => format
                 .replacen("%s", name, 1)
                 .replacen("%d", &have.to_string(), 1)
                 .replacen("%d", &want.to_string(), 1),
-            // No `GlobalStrings.lua` at all is the headless case; the counter
-            // is still the useful half.
+            // With no `GlobalStrings.lua` (the headless case), the counter is
+            // still shown.
             None => format!("{name}: {have}/{want}"),
         }
     }
 
-    /// The context every spell plate is composed against — see
+    /// The level every spell tooltip is composed at. See
     /// [`crate::interface::api::TipContext`].
     ///
-    /// The level is the *player's*, because that is what an effect's value
-    /// scales on and the tooltip is always answering "what would this do if I
-    /// cast it". `unit_level` answers -1 for a player who has not arrived yet,
-    /// which floors to 1 — the level every spell's own base is stated at.
+    /// The level is the player's, because an effect's value scales with the
+    /// caster's level and the tooltip describes what the spell would do if the
+    /// player cast it. `unit_level` answers -1 for a player who has not
+    /// arrived yet, which is clamped to 1, the level every spell's base value
+    /// is stated at.
     pub(super) fn tip_level(&self) -> u32 {
         Self::id("player")
             .map(|id| self.units.level(id))
@@ -975,21 +961,21 @@ impl Live<'_, '_, '_> {
             .max(1) as u32
     }
 
-    /// **Only `player` has bags**, and this is where that is said once.
+    /// Whether a token is `player`, the only unit with known bags and
+    /// equipment.
     ///
-    /// No packet carries another unit's inventory or another unit's durability
-    /// — an inspect is a family this client does not read — so every worn-slot
-    /// read answers the absent value for any other token rather than the local
-    /// player's own gear, which would be a plausible wrong answer of exactly
-    /// the kind this project keeps paying for.
+    /// No packet this client reads carries another unit's inventory or
+    /// durability (it does not handle inspect packets), so every equipped-slot
+    /// read answers the absent value for any other token. Answering with the
+    /// local player's gear instead would look correct and be wrong.
     pub(super) fn is_player(token: &str) -> bool {
         Self::id(token) == Some(UnitId::Player)
     }
 
     /// One slot's drawable state, from whatever it holds.
     ///
-    /// The quality is **-1** rather than 0 when the template has not arrived —
-    /// see [`super::panels::container`], where the reason is.
+    /// The quality is -1 rather than 0 when the template has not arrived. The
+    /// reason is given in [`super::panels::container`].
     pub(super) fn slot_contents(
         &self,
         item: &vale_protocol::play::items::ItemSlot,
@@ -1003,23 +989,17 @@ impl Live<'_, '_, '_> {
             quality: template.map_or(-1, |t| t.quality as i32),
             readable: template.is_some_and(vale_protocol::state::query::ItemInfo::is_readable),
             broken: item.broken(),
-            // **The place rather than the item.** Two stacks of the same entry
-            // are two squares, and locking by entry would desaturate both.
+            // Locked by slot, not by item entry. Two stacks of the same entry
+            // are two slots, and locking by entry would desaturate both.
             locked: self.cursor.locks(place),
         }
     }
 
 
-    /// One reward or requirement line, named through the item cache.
-    ///
-    /// **The display id comes free and the name does not.** A quest packet
-    /// carries `ItemPrototype::DisplayInfoID` for every item it names, so the
-    /// icon needs no round trip - unlike a loot row's. The name and the quality
-    /// still need the template.
-    /// **What the ammo slot draws** — the loaded entry's icon and quality,
-    /// and `GetItemCount` of it for the number. `None` with nothing loaded,
-    /// which is what puts the slot's own art back. Never locked: the cursor
-    /// holds bag squares, and loading is not a move.
+    /// What the ammo slot draws: the loaded entry's icon and quality, and
+    /// `GetItemCount` of it for the number. `None` with nothing loaded, which
+    /// restores the slot's empty art. Never locked: the cursor holds bag
+    /// slots, and loading ammo is not a move.
     pub(super) fn ammo_contents(&self) -> Option<super::panels::container::SlotContents> {
         let entry = self.inventory.ammo;
         if entry == 0 {
@@ -1036,11 +1016,15 @@ impl Live<'_, '_, '_> {
         })
     }
 
+    /// One reward or requirement line, named through the item cache.
+    ///
+    /// A quest packet carries `ItemPrototype::DisplayInfoID` for every item it
+    /// names, so the icon needs no query, unlike a loot row's. The name and the
+    /// quality still need the template.
     pub(super) fn quest_line(&self, entry: u32, count: u32, display_id: u32) -> super::panels::quest::RewardLine {
-        // **The session-wide cache and not the carried one** — a reward is by
-        // construction something the character does not own yet, which is the
-        // same argument a vendor's shelf and a corpse's rows already make. See
-        // [`Self::session_template`].
+        // The session-wide cache, not the carried one: a reward is an item the
+        // character does not own yet, as with a vendor's stock or a corpse's
+        // loot. See [`Self::session_template`].
         let template = self.session_template(entry);
         let display = match display_id {
             0 => template.as_ref().map(|t| t.display_id).unwrap_or(0),
@@ -1056,17 +1040,18 @@ impl Live<'_, '_, '_> {
         }
     }
 
-    /// **What a reward spell is to a panel** — see [`super::panels::quest::RewardSpell`],
-    /// which carries the reason this is three answers rather than an id.
+    /// A quest's reward spell as the panel reads it. See
+    /// [`super::panels::quest::RewardSpell`] for why this is three values
+    /// rather than an id.
     ///
-    /// `0` is "no reward spell" on the wire and is the case the whole thing
-    /// exists for: it must reach Lua as **nil**, not as a number.
+    /// `0` means "no reward spell" in the packet, and this function exists
+    /// mainly for that case: it must reach Lua as nil, not as a number.
     pub(super) fn reward_spell(&self, spell_id: u32) -> Option<super::panels::quest::RewardSpell> {
         let info = self.tables.as_ref()?.spellbook()?.info(spell_id)?;
         Some(super::panels::quest::RewardSpell {
-            // The client pushes nil for an icon row it cannot resolve and still
-            // pushes the name; the panel then hides the block, since it gates on
-            // the first answer. Empty is that nil.
+            // The client returns nil for an icon it cannot resolve and still
+            // returns the name; the panel then hides the block, because it
+            // tests the first value. An empty icon becomes that nil.
             texture: Some(info.icon.clone()).filter(|icon| !icon.is_empty()),
             name: info.name.clone(),
             tradeskill: info.attributes & vale_assets::tables::spellbook::spell_attributes::TRADESPELL
@@ -1074,9 +1059,9 @@ impl Live<'_, '_, '_> {
         })
     }
 
-    /// **Who the `$` variables in a quest's or an NPC's text are about** — see
-    /// [`crate::interface::messages::substitute`]. Always the local player: the
-    /// server writes the column for whoever is reading it.
+    /// The unit the `$` variables in a quest's or an NPC's text refer to. See
+    /// [`crate::interface::messages::substitute`]. Always the local player,
+    /// because the text is addressed to whoever is reading it.
     pub(super) fn speaker(&self) -> crate::interface::messages::Speaker<'_> {
         let unit = self.units.get(UnitId::Player);
         crate::interface::messages::Speaker {
@@ -1092,27 +1077,42 @@ impl Live<'_, '_, '_> {
         self.quests.template(slot.quest_id)
     }
 
-    /// …and its link, which needs the name and so needs the template.
+    /// The item link for a carried slot. It needs the item name, so it needs
+    /// the template.
     pub(super) fn slot_link(&self, item: &vale_protocol::play::items::ItemSlot) -> Option<String> {
         let template = self.inventory.template(item.entry)?;
-        Some(super::panels::container::item_link(
+        // The copy's permanent enchantment and random property go into the
+        // link, and the suffix into its name, as the 1.12.1 client writes a
+        // link to a carried item.
+        let suffix = self
+            .tables
+            .as_deref()
+            .and_then(|t| t.random_properties().suffix(item.random_property));
+        let name = match (suffix, self.strings.and_then(|s| s.get("ITEM_SUFFIX_TEMPLATE"))) {
+            (Some(suffix), Some(format)) => vale_assets::interface::strings::substitute_all(
+                format,
+                &[&template.name, suffix],
+            ),
+            _ => template.name.clone(),
+        };
+        Some(super::panels::container::item_link_with(
             template.entry,
+            item.enchantments[0].id,
+            item.random_property,
             template.quality,
-            &template.name,
+            &name,
         ))
     }
 
-    /// **An item's cooldown is its `ON_USE` spell's**, read through the same
-    /// clocks and the same arithmetic as an action button's.
+    /// An item's cooldown is its `ON_USE` spell's cooldown, read through the
+    /// same timers and the same arithmetic as an action button's.
     ///
-    /// There is no per-*item* timer anywhere in this client and there should not
-    /// be: `SMSG_SPELL_COOLDOWN` names a spell, and it is what the server sends
-    /// when a potion is drunk, so the record is already there under that id by
-    /// the time the bag frame asks. What was missing was only the *read* — this
-    /// answered `0, 0, 0` and every swirl in the bags stayed empty.
+    /// This client keeps no per-item timer. `SMSG_SPELL_COOLDOWN` names a
+    /// spell, and the server sends it when a potion is used, so the cooldown
+    /// is already recorded under that spell id by the time the bag frame asks.
     ///
-    /// The idle triple for everything with nothing to say: no item, no template
-    /// yet, no `ON_USE` block, or a spell the catalog does not carry.
+    /// Answers the idle triple when there is no item, no template yet, no
+    /// `ON_USE` block, or a spell the catalog does not carry.
     pub(super) fn item_cooldown(&self, entry: Option<u32>) -> (f64, f64, bool) {
         let resolved = || {
             let template = self.inventory.template(entry?)?;
@@ -1128,12 +1128,12 @@ impl Live<'_, '_, '_> {
         resolved().unwrap_or(IDLE_COOLDOWN)
     }
 
-    /// The context an item plate is composed against — the same one a spell's
-    /// is, since an item's "Use:" line is a spell's own sentence.
+    /// The context an item tooltip is composed against. It is the same as a
+    /// spell's, since an item's "Use:" line is a spell's description.
     pub(super) fn item_context(&self) -> crate::interface::api::TipContext<'_> {
-        // **The race and class are the item plate's alone.** A spell plate has
-        // no requirement lines, which is why the two other `TipContext`s below
-        // leave them at zero rather than paying for the lookup.
+        // Only the item tooltip uses race and class. A spell tooltip has no
+        // requirement lines, so the two other `TipContext`s below leave them
+        // at zero and skip the lookup.
         let (race, class) = Self::id("player")
             .and_then(|id| self.units.race_class_ids(id))
             .unwrap_or((0, 0));
@@ -1142,34 +1142,41 @@ impl Live<'_, '_, '_> {
             race,
             class,
             catalog: self.tables.as_ref().and_then(|t| t.spellbook()),
-            // **Not `reagent_name`**: an item plate never names another item, so
-            // there is nothing here to queue a query for. Passing the queueing
-            // closure would put a `want_item` behind every hover of every bag
-            // slot for a lookup that never happens.
+            // Replaced by `tip_from`, which names the pieces of an item's set
+            // through the queueing lookup.
             item_names: &|_| None,
             home: Some(self.home.clone()),
         }
     }
 
-    /// …and the plate itself, from a template and the stack that is in hand.
+    /// One of the local player's own update fields, 0 when absent. Takes the
+    /// world lock.
+    fn player_field(&self, index: u16) -> u32 {
+        let Some(world) = self.world.as_ref() else {
+            return 0;
+        };
+        let world = world.lock().unwrap_or_else(|e| e.into_inner());
+        world.player().and_then(|player| player.field(index)).unwrap_or(0)
+    }
+
+    /// The item tooltip, from a template and the carried stack if there is
+    /// one.
     ///
-    /// **Two caches, in that order, and the second one is the whole of why a
-    /// vendor's shelf had no tooltip.** [`crate::interface::items::Inventory`]'s map
-    /// is the *carried* subset — built from `carried.entries()` and nothing else
-    /// — so an entry the character does not own misses it by construction:
-    /// every item on a merchant's shelf, in a corpse, on a quest page and in a
-    /// chat link. Each of those populations already draws its *row* through
-    /// [`Self::session_template`] (the name, the icon, the link); only the plate
-    /// was still asking the narrow map, so hovering one composed nothing and
-    /// `item_plate` hid the tooltip — indistinguishable from hovering an empty
-    /// square, which is [`self::stubs`]' own standing lesson arriving a third
-    /// time.
+    /// The template is looked up in two caches, in this order.
+    /// [`crate::interface::items::Inventory`]'s map holds only carried items
+    /// (it is built from `carried.entries()`), so it misses every item the
+    /// character does not own: a merchant's stock, a corpse's loot, a quest
+    /// reward, a chat link. Those rows already get their name, icon and link
+    /// through [`Self::session_template`], so the tooltip falls back to the
+    /// same cache. Without the fallback, `item_plate` would hide the tooltip,
+    /// which looks the same as hovering an empty slot (see [`self::stubs`] on
+    /// silent empty answers).
     ///
-    /// The carried map stays *first* because it is the one that costs no lock:
-    /// a bag hover is the commonest plate in the game, and the session cache
-    /// takes the world's mutex to answer. A miss on both queues the query and
-    /// answers `None`, so the first hover on a cold cache shows nothing and the
-    /// next one shows the plate — the real client's own behaviour with an empty
+    /// The carried map is checked first because it needs no lock: a bag hover
+    /// is the most common item tooltip, and the session cache takes the
+    /// world's mutex. A miss on both queues the query and answers `None`, so
+    /// the first hover on a cold cache shows nothing and the next one shows the
+    /// tooltip. The real client behaves the same with an empty
     /// `ItemCache.wdb`.
     pub(super) fn tip_from(
         &self,
@@ -1186,11 +1193,93 @@ impl Live<'_, '_, '_> {
                 &queried
             }
         };
+        // An item tooltip names other items (the pieces of its set), so its
+        // context names them through the carried templates first and then the
+        // session cache, which queues a query on a miss.
+        let names = |entry: u32| {
+            self.inventory
+                .template(entry)
+                .map(|t| t.name.clone())
+                .or_else(|| self.reagent_name(entry))
+        };
+        let context = crate::interface::api::TipContext {
+            item_names: &names,
+            ..self.item_context()
+        };
+        let player = Self::id("player");
+        let skills = player.and_then(|id| self.units.skills(id));
+        let skill_rank = |line: u32| -> Option<i32> {
+            let skill = skills?.get(u16::try_from(line).ok()?)?;
+            Some(skill.rank())
+        };
+        let knows_spell = |spell: u32| -> bool {
+            let Some(world) = self.world.as_ref() else {
+                return false;
+            };
+            let world = world.lock().unwrap_or_else(|e| e.into_inner());
+            world.spellbook.known.contains(&spell)
+        };
+        let standing = |faction: u32| self.units.standing_rank(faction);
+        let proficient = |class: u32, subclass: u32| {
+            match (u8::try_from(class), u8::try_from(subclass)) {
+                (Ok(class), Ok(subclass)) => self.proficiency.0.allows(class, subclass),
+                _ => true,
+            }
+        };
+        let player_name = |guid: u64| -> Option<String> {
+            let world = self.world.as_ref()?;
+            let mut world = world.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(info) = world.players.get(&guid) {
+                return Some(info.name.clone());
+            }
+            world.want_social_guid(guid);
+            None
+        };
+        // A set piece counts only while it is equipped and not broken.
+        let equipped = self
+            .inventory
+            .carried
+            .equipped
+            .iter()
+            .flatten()
+            .filter(|item| !item.broken())
+            .map(|item| item.entry)
+            .collect();
+        // `UnitFactionGroup`'s internal name picks the rank titles' faction:
+        // `PVP_RANK_<rank>_0` is the Horde's and `_1` the Alliance's.
+        let team = self
+            .unit_faction_group("player")
+            .and_then(|(group, _)| match group.as_str() {
+                "Horde" => Some(0),
+                "Alliance" => Some(1),
+                _ => None,
+            });
+        let wearer = crate::interface::api::Wearer {
+            equipped,
+            skill_rank: &skill_rank,
+            knows_spell: &knows_spell,
+            standing: &standing,
+            proficient: &proficient,
+            player_name: &player_name,
+            template: &|entry| {
+                self.inventory
+                    .template(entry)
+                    .cloned()
+                    .or_else(|| self.session_template(entry))
+            },
+            // `PLAYER_FIELD_BYTES` byte 3 is the highest rank reached.
+            honor_rank: self.player_field(vale_protocol::state::fields::player::FIELD_BYTES) >> 24,
+            medals: self.player_field(vale_protocol::state::fields::player::PVP_MEDALS),
+            team,
+            female: player.is_some_and(|id| self.units.sex(id) == 3),
+            now: std::time::Instant::now(),
+        };
         Some(crate::interface::api::item_tip(
             template,
             carried,
             self.tables.as_deref(),
-            &self.item_context(),
+            &context,
+            &wearer,
         ))
     }
 }
@@ -1245,17 +1334,17 @@ impl UnitAnswers for Live<'_, '_, '_> {
     }
 
     fn unit_level(&self, token: &str) -> i32 {
-        // **`level_shown`, not `level`** — a unit ten or more levels above a
-        // hostile player, and any worldboss, report `-1`, which is what
-        // `TargetFrame_CheckLevel`'s `targetLevel > 0` draws as the skull. The
-        // rule is on
+        // `level_shown`, not `level`: a unit ten or more levels above a
+        // hostile player, and any worldboss, reports `-1`, which
+        // `TargetFrame_CheckLevel`'s `targetLevel > 0` test draws as the
+        // skull. The rule is on
         // [`crate::interface::api::Units::level_shown`].
         Self::id(token).map_or(-1, |id| self.units.level_shown(self.tables.as_deref(), id))
     }
 
     fn unit_sex(&self, token: &str) -> u32 {
-        // **2 rather than 0 for an unparseable token**, which is the client's
-        // own answer — see `Units::sex`.
+        // 2 rather than 0 for an unparseable token, as the client answers.
+        // See `Units::sex`.
         Self::id(token).map_or(2, |id| self.units.sex(id))
     }
 
@@ -1332,13 +1421,13 @@ impl UnitAnswers for Live<'_, '_, '_> {
         let tables = self.tables.as_deref()?;
         let spell = tables.res_sickness_spell(race)?;
         let ms = tables.spellbook()?.duration_at(spell, level)?;
-        // Under a second is no sickness at all.
+        // Under a second means no sickness.
         if ms < 1000 {
             return None;
         }
         // The `"GENERIC"` family: `%s_MIN` for a whole number of
         // minutes, `%s_SEC` under one, each with its `_P1` plural. The
-        // sickness is whole minutes by construction (60000 a level).
+        // sickness duration is always whole minutes (60000 ms per level).
         let strings = self.strings?;
         let (count, key) = if ms >= 60_000 {
             let minutes = ms / 60_000;
@@ -1405,9 +1494,9 @@ impl UnitAnswers for Live<'_, '_, '_> {
     fn unit_tooltip(&self, token: &str) -> Option<crate::interface::api::UnitTip> {
         let id = Self::id(token)?;
         let mut tip = self.units.unit_tip(self.tables.as_deref(), id)?;
-        // **The zone line, resolved and filtered here** — this is the only side
-        // holding `AreaTable` and the only side that knows what zone the
-        // character is standing in. A member in the same zone gets no line; see
+        // The zone line is resolved and filtered here, because this is the
+        // only place that holds `AreaTable` and knows the character's current
+        // zone. A member in the same zone gets no line. See
         // [`crate::interface::api::UnitTip::zone`].
         if let Some(zone) = self.units.party_zone(id) {
             if zone != self.place.zone {
@@ -1422,9 +1511,9 @@ impl UnitAnswers for Live<'_, '_, '_> {
     }
 
     fn unit_rank(&self, a: &str, b: &str) -> Option<vale_assets::tables::faction::Rank> {
-        // **No tables, no opinion.** Before the archives are open every unit
-        // would otherwise read Neutral — `Factions::template_rank`'s own answer
-        // for a table it does not have — and a plausible reaction is exactly the
+        // No tables, no answer. Before the archives are open every unit would
+        // otherwise read Neutral, which is `Factions::template_rank`'s answer
+        // for a missing table. A reaction that looks real but is not is the
         // kind of answer [`self::stubs`]' first line warns about.
         let tables = self.tables.as_ref()?;
         self.units.rank(tables, Self::id(a)?, Self::id(b)?)
@@ -1445,8 +1534,9 @@ impl UnitAnswers for Live<'_, '_, '_> {
     }
 }
 
-/// One held aura, flattened for the interface — the clock resolved against this
-/// frame's `now`, so a caller never has to know which base it was recorded in.
+/// One aura, flattened for the interface. The remaining time is resolved
+/// against this frame's `now`, so a caller never needs to know which time base
+/// it was recorded in.
 pub(super) fn aura_info(aura: &crate::interface::auras::Aura, now: f64) -> super::panels::auras::AuraInfo {
     super::panels::auras::AuraInfo {
         spell: aura.spell,
@@ -1460,33 +1550,33 @@ pub(super) fn aura_info(aura: &crate::interface::auras::Aura, now: f64) -> super
     }
 }
 
-/// **The reads the directory does not merely call — it *stores*.**
+/// Reads that FrameXML stores as function values, not only calls.
 ///
 /// Every other read in this file is a `scope.create_function`: it lives for the
 /// length of one call into Lua, which is what lets it borrow the world. A stored
-/// reference to one is dead the moment the scope closes, and calling it raises
+/// reference to one is invalid once the scope closes, and calling it raises
 /// "a destructed callback or destructed userdata method was called".
 ///
-/// `StaticPopup.lua` does exactly that, three times:
+/// `StaticPopup.lua` stores three of them:
 ///
 /// ```lua
 /// StaticPopupDialogs["RECOVER_CORPSE"] = { StartDelay = GetCorpseRecoveryDelay, … }
 /// ```
 ///
-/// — the *function value*, captured into a table at load and called much later
-/// from `StaticPopup_Show`. So the five death reads are ordinary persistent
-/// closures over this cell instead, and [`install`] refreshes it at the top of
-/// every call. `--audit --events` is what found it: `CORPSE_IN_RANGE` died on
-/// `StartDelay()` at `StaticPopup.lua:1685` with every other check passing.
+/// The function value is captured into a table at load and called later from
+/// `StaticPopup_Show`. The five death reads are therefore persistent closures
+/// over this cell, and [`install`] refreshes the cell at the start of every
+/// call. With scoped functions, `--audit --events` showed `CORPSE_IN_RANGE`
+/// failing on `StartDelay()` at `StaticPopup.lua:1685`.
 ///
-/// The cost of the indirection is that these five answer with the values as of
-/// the *start* of the call rather than during it. Both clocks are per-frame
-/// numbers and the offer cannot change mid-chunk, so the two are the same
-/// answer; anything that could change under a chunk must stay a scoped read.
+/// As a consequence, these five answer with the values as of the start of the
+/// call rather than during it. Both timers are per-frame values and the offer
+/// cannot change within a chunk, so the answers are the same. Anything that
+/// could change during a chunk must stay a scoped read.
 pub(super) type Held = std::rc::Rc<std::cell::RefCell<HeldReads>>;
 
-/// What [`Held`] holds. Flat, because the five have nothing to do with each
-/// other except the mechanism.
+/// The values [`Held`] holds. A flat struct, because the five reads share
+/// nothing except this mechanism.
 #[derive(Default)]
 pub(super) struct HeldReads {
     pub release: i32,
@@ -1504,12 +1594,14 @@ pub(super) struct HeldReads {
 pub(super) fn held_for_test(lua: &mlua::Lua) -> (Held, self::verbs::Queue) {
     let held: Held = std::rc::Rc::new(std::cell::RefCell::new(HeldReads::default()));
     install_held(lua, &held).expect("the held reads register");
-    // …and the verb queue [`install`] needs for the six drag verbs. Returned
-    // rather than made inside `install`, because it has to outlive the scope.
+    // Also returns the verb queue [`install`] needs for the six drag verbs.
+    // Created here rather than inside `install`, because it must outlive the
+    // scope.
     (held, std::rc::Rc::new(std::cell::RefCell::new(Vec::new())))
 }
 
-/// Register the five, once, against a cell [`install`] keeps current.
+/// Registers the five held reads once, against a cell [`install`] keeps
+/// current.
 pub(super) fn install_held(lua: &mlua::Lua, held: &Held) -> mlua::Result<()> {
     let globals = lua.globals();
     macro_rules! held {
@@ -1530,8 +1622,9 @@ pub(super) fn install_held(lua: &mlua::Lua, held: &Held) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Every read registered below, for the check that counts the gap — see
-/// [`self::verbs::REGISTERED`], which is the same list for the write side.
+/// Every read registered below, for the check that counts unimplemented API
+/// functions. See [`self::verbs::REGISTERED`], the same list for the write
+/// side.
 pub const READS: [&str; 67] = [
     "ActionHasRange",
     "CheckBinderDist",
@@ -1602,23 +1695,22 @@ pub const READS: [&str; 67] = [
     "UnitXPMax",
 ];
 
-/// **`(start, duration, enable)` for something that is not on a cooldown.**
+/// `(start, duration, enable)` for something that is not on a cooldown.
 ///
-/// `enable` is *true* here, which reads backwards and is the game's own: the
-/// third value says whether the button's swirl is allowed to run at all — a
-/// passive or a disabled action answers 0 — and a ready item is enabled with
-/// nothing to sweep. See `CooldownFrame_SetTimer`, which draws nothing when the
-/// duration is zero whatever `enable` says.
+/// `enable` is true here, as in the game. The third value says whether the
+/// button's cooldown sweep may run at all (a passive or a disabled action
+/// answers 0); a ready item is enabled with nothing to sweep.
+/// `CooldownFrame_SetTimer` draws nothing when the duration is zero,
+/// whatever `enable` says.
 pub(super) const IDLE_COOLDOWN: (f64, f64, bool) = (0.0, 0.0, true);
 
-/// `UnitClassification`'s five words, from the creature template's rank.
+/// `UnitClassification`'s five values, from the creature template's rank.
 ///
-/// **Lower case and these exact spellings**, because `TargetFrame.lua` compares
+/// Lower case and these exact spellings, because `TargetFrame.lua` compares
 /// against literals: `"worldboss"`, `"rareelite"`, `"elite"` and `"rare"` choose
-/// between the three target-frame borders and anything else takes the plain one.
-/// That is the whole of what the directory does with the answer, and it is why a
-/// stub answering the constant `"normal"` drew the ordinary border round every
-/// elite in the game.
+/// between the three target-frame borders and anything else gets the plain one.
+/// FrameXML uses the answer for nothing else. A constant `"normal"` would draw
+/// the plain border around every elite.
 pub fn classification_word(rank: u32) -> &'static str {
     match rank {
         1 => "elite",
@@ -1629,12 +1721,11 @@ pub fn classification_word(rank: u32) -> &'static str {
     }
 }
 
-/// The game's own boolean: `1` or `nil`, never `true`/`false`. See the module
-/// comment on why this is not pedantry.
+/// The game's boolean return value: `1` or `nil`, never `true`/`false`. The
+/// module comment gives the reason.
 ///
-/// One home for it, used by [`super::widgets::frames`] too — it is a *fact about the
-/// game's C API* rather than a helper, and a second copy is a second place to get
-/// it wrong.
+/// Defined once and also used by [`super::widgets::frames`], because it states
+/// a convention of the game's C API; a second copy could diverge.
 pub(super) fn one_or_nil(yes: bool) -> mlua::Value {
     if yes {
         mlua::Value::Integer(1)
@@ -1643,11 +1734,11 @@ pub(super) fn one_or_nil(yes: bool) -> mlua::Value {
     }
 }
 
-/// **…and the same fact read from the other side: how a C function reads a
-/// boolean *argument*.** It is emphatically not Lua's own truthiness.
+/// How a game C function reads a boolean argument. This is not Lua's own
+/// truthiness rule.
 ///
-/// This matters because the directory writes booleans in five different ways and
-/// expects all five to work:
+/// FrameXML writes boolean arguments in five different ways and expects all
+/// five to work:
 ///
 /// ```lua
 /// button:SetChecked(1);        button:SetChecked(0);        -- ActionButton.lua
@@ -1655,17 +1746,14 @@ pub(super) fn one_or_nil(yes: bool) -> mlua::Value {
 /// skillLineTab:SetChecked(nil);
 /// ```
 ///
-/// Under Lua's own rule `0` and `"false"` are both **true**, so a host that used
-/// `lua_toboolean` draws every action button and every spell in the book with its
-/// `<CheckedTexture>` on — the `CheckButtonHilight` sheet, additively, over every
-/// icon in the game, for ever. That is exactly what this client did, and the
-/// comment on `SetChecked` used to explain it away as a bug in the file that
-/// happened not to matter. It is not a bug in the file: the client's own
-/// coercion reads `0` and `"false"` as false, and the directory is written
-/// against it.
+/// Under Lua's own rule `0` and `"false"` are both true, so a host that used
+/// `lua_toboolean` would draw every action button and every spellbook spell
+/// with its `<CheckedTexture>` on: the `CheckButtonHilight` texture, blended
+/// additively, over every icon. The 1.12.1 client reads `0` and `"false"` as
+/// false, and FrameXML is written for that behaviour.
 ///
-/// The rule is one `switch` on `lua_type`, with the string case decided by its
-/// first character:
+/// The client's rule, by Lua type, with a string decided by its first
+/// character:
 ///
 /// ```text
 /// nil / none        false
@@ -1679,14 +1767,13 @@ pub(super) fn one_or_nil(yes: bool) -> mlua::Value {
 /// anything else     the caller's own default
 /// ```
 ///
-/// `default` is the value the call site pushes for the cases it has no opinion
-/// on; every widget setter in the client passes **true**, which is why
+/// `default` is the value the caller supplies for the cases the rule does not
+/// decide. Every widget setter in the client uses true, which is why
 /// `SetChecked({})` checks a button.
 ///
-/// One stated deviation, and it is in a corner nothing reaches: the client
-/// keeps only the low *byte* of the truncated number, so `SetChecked(256)` is
-/// false there and true here. Nothing in the directory or in
-/// any addon passes a boolean as 256.
+/// One known deviation: the client keeps only the low byte of the truncated
+/// number, so `SetChecked(256)` is false there and true here. Nothing in
+/// FrameXML or in any known addon passes a boolean as 256.
 pub(super) fn to_boolean(value: Option<&mlua::Value>, default: bool) -> bool {
     match value {
         None | Some(mlua::Value::Nil) => false,
@@ -1718,26 +1805,27 @@ pub(super) fn to_boolean(value: Option<&mlua::Value>, default: bool) -> bool {
     }
 }
 
-/// Register the reads into a scope, for the length of one call into Lua.
+/// Registers the reads into a scope, for the length of one call into Lua.
 ///
-/// Called by [`super::host::LuaHost::run`] and nowhere else, so there is no
-/// window in which a chunk can run without them — see the module comment.
+/// Called by [`super::host::LuaHost::run`] and nowhere else, so no chunk can
+/// run without them. See the module comment.
 pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     lua: &mlua::Lua,
     scope: &'scope mlua::Scope<'scope, 'env>,
     answers: &'env dyn Answers,
     held: &Held,
-    // **The verb queue, for the six drag verbs alone.** Every other write in
+    // The verb queue, used only by the six drag verbs. Every other write in
     // this client is registered once by [`self::verbs::register`] and never
-    // needs the world; `PutItemInBag` answers *and* records, so it has to be a
-    // scoped function with the queue in reach. See [`super::panels::container`].
+    // needs the world. `PutItemInBag` both answers and records, so it must be
+    // a scoped function with access to the queue. See
+    // [`super::panels::container`].
     queue: &'env self::verbs::Queue,
 ) -> mlua::Result<()> {
     let globals = crate::lua::scoped::globals(lua)?;
 
-    // A unit token argument. Optional because `UnitHealth()` with no argument is
-    // something an addon really writes, and the game answers it rather than
-    // raising — so a missing token is an absent unit, not an error.
+    // A unit token argument. Optional because addons do call `UnitHealth()`
+    // with no argument, and the game answers it rather than raising an error,
+    // so a missing token is an absent unit.
     macro_rules! unit {
         ($name:expr, |$token:ident| $body:expr) => {{
             let f = scope.create_function(move |_, token: Option<String>| {
@@ -1747,13 +1835,13 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
             globals.set($name, f)?;
         }};
     }
-    // An action-slot argument, one-based as every action id in the game is.
+    // An action-slot argument, one-based like every action id in the game.
     macro_rules! slot {
         ($name:expr, |$slot:ident| $body:expr) => {{
             let f = scope.create_function(move |_, slot: Option<u8>| {
-                // **Slot 0 is not a slot**, so an absent argument reads as one
-                // and every accessor answers "nothing there" rather than
-                // pointing at the first button.
+                // Slot 0 does not exist, so an absent argument becomes 0 and
+                // every accessor answers "nothing there" rather than reading
+                // the first button.
                 let $slot: u8 = slot.unwrap_or(0);
                 Ok($body)
             })?;
@@ -1766,18 +1854,19 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         scope.create_function(move |_, ()| Ok(answers.now()))?,
     )?;
 
-    // **`GetGameTime()` — the world's hour and minute**, which is a different
-    // clock from `GetTime`'s: one counts seconds since this process started, the
-    // other is what the sky is lit by. See [`UnitAnswers::game_time`] for why a
-    // constant here stops `GameTimeFrame` rather than merely misreporting it.
+    // `GetGameTime()`: the world's hour and minute. This is a different clock
+    // from `GetTime`'s: `GetTime` counts seconds since this process started,
+    // and `GetGameTime` is the time the sky is lit for. See
+    // [`UnitAnswers::game_time`] for why a constant here stops
+    // `GameTimeFrame` rather than only reporting a wrong time.
     globals.set(
         "GetGameTime",
         scope.create_function(move |_, ()| Ok(answers.game_time()))?,
     )?;
 
-    // **The hearthstone's two**, which have no panel of their own: one is read
-    // by three `StaticPopupDialogs` entries and the other by one `OnUpdate`.
-    // See [`crate::interface::binder`].
+    // The two hearthstone reads, which have no panel of their own:
+    // `GetBindLocation` is read by three `StaticPopupDialogs` entries and
+    // `CheckBinderDist` by one `OnUpdate`. See [`crate::interface::binder`].
     globals.set(
         "GetBindLocation",
         scope.create_function(move |_, ()| Ok(answers.bind_location()))?,
@@ -1791,19 +1880,20 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         scope.create_function(move |_, ()| Ok(answers.untrainer_in_range()))?,
     )?;
 
-    // **`GetBonusBarOffset()` — which of the four bonus bars is on the screen.**
-    // No arguments and no unit: it is always about the player, whose form
-    // `SpellShapeshiftForm.dbc` turns into a bar. Zero is the ordinary paged
-    // bar, which is what `BonusActionBar_OnEvent` hides the frame on.
-    // **The rested pool, and `nil` when there is none** — which is
-    // `ExhaustionTick_Update`'s own test (`if ( not exhaustionThreshold )`), so
-    // a zero here parks the blue tick at the left edge of the bar instead of
-    // hiding it. Always the player's: no unit argument, as the game takes none.
+    // `GetXPExhaustion()`: the rested pool, and `nil` when there is none.
+    // `ExhaustionTick_Update` tests for nil (`if ( not exhaustionThreshold )`),
+    // so a zero here would draw the blue tick at the left edge of the bar
+    // instead of hiding it. Always the player's: the game takes no unit
+    // argument.
     globals.set(
         "GetXPExhaustion",
         scope.create_function(move |_, ()| Ok(answers.rested_experience()))?,
     )?;
 
+    // `GetBonusBarOffset()`: which of the four bonus bars is shown. No
+    // arguments and no unit: it is always about the player, whose form
+    // `SpellShapeshiftForm.dbc` maps to a bar. Zero is the normal paged bar,
+    // and `BonusActionBar_OnEvent` hides the frame on it.
     globals.set(
         "GetBonusBarOffset",
         scope.create_function(move |_, ()| Ok(answers.bonus_bar_offset()))?,

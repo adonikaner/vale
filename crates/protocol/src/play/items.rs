@@ -1,8 +1,8 @@
-//! **What the character is carrying** — the bags, what is in them, and what is
-//! worn.
+//! What the character is carrying: the bags, their contents, and the worn
+//! items.
 //!
-//! Nothing on the wire ever says "here is your inventory". It is entirely
-//! **update fields**, in three layers, and this module is the join:
+//! No packet lists the inventory. It is held entirely in update fields, in
+//! three layers, and this module joins them:
 //!
 //! ```text
 //! the player's own block   PLAYER_FIELD_INV_SLOT_HEAD   23 guids: 19 worn + 4 bags
@@ -17,19 +17,19 @@
 //!                          ITEM_FIELD_DURABILITY        …and how worn out
 //! ```
 //!
-//! So a potion in the third slot of the second bag is **three objects deep**:
-//! the player names a container GUID, the container names an item GUID, and the
-//! item names an entry — and only the entry can be turned into a name, an icon
-//! or a tooltip, by `CMSG_ITEM_QUERY_SINGLE`, because `Item.dbc` is not in the
-//! 1.12 archives. All three arrive in the same `SMSG_UPDATE_OBJECT` at login,
-//! as ordinary create blocks with no position and no movement, which is why
-//! [`crate::state::objects::ObjectManager`] has been holding the whole inventory since
-//! the first session and nothing had ever looked at it.
+//! A potion in the third slot of the second bag is therefore three objects
+//! deep. The player names a container GUID, the container names an item GUID,
+//! and the item names an entry. Only the entry can be turned into a name, an
+//! icon or a tooltip, through `CMSG_ITEM_QUERY_SINGLE`, because `Item.dbc` is
+//! not in the 1.12 archives. All three kinds of object arrive in the same
+//! `SMSG_UPDATE_OBJECT` at login, as ordinary create blocks with no position
+//! and no movement, so [`crate::state::objects::ObjectManager`] already holds
+//! the whole inventory and this module reads it from there.
 //!
-//! ## The two numberings, and why both are here
+//! ## Field indices, Lua slot ids and bag ids
 //!
-//! The **field** index is zero-based and the **interface's** slot id is
-//! one-based, and they are not the same set:
+//! The field index is zero-based and the interface's slot id is one-based,
+//! and the two do not cover the same set:
 //!
 //! ```text
 //! field 0..18    worn:  head, neck, shoulder, shirt, chest, waist, legs, feet,
@@ -47,93 +47,96 @@
 //! bag id 5..10   the bags in the bank     ToggleBag(5) from BankFrameBag1
 //! ```
 //!
-//! **The bank is in this table because it is in these fields.** Nothing in
-//! the bank family carries an item — see [`crate::play::bank`] — so a bank
-//! square is read here, addressed by the same three numberings, and moved by
-//! the same swap packets; what the banker gates is only whether the server
-//! accepts the move. The Lua ids 24..39 are unused in 1.12: 24 is where the
-//! backpack would be if it were a slot, and it is not.
+//! The bank is in this table because its items are in these fields. No
+//! packet in the bank family carries an item (see [`crate::play::bank`]), so a
+//! bank square is read here, addressed by the same three numberings, and moved
+//! by the same swap packets. The banker only decides whether the server
+//! accepts a move. Lua ids 24..39 are unused in 1.12: 24 is where the backpack
+//! would be if it were a slot, and it is not a slot.
 //!
-//! Both numberings are the game's own and neither is derivable from the other
-//! by arithmetic alone: bag *id* 1 is Lua slot 20 is field 19.
-//! `PaperDollItemFrame.dbc` is what states the Lua ids — 36 rows of
-//! `(name, art, id)`, which is what `GetInventorySlotInfo` walks — and this
-//! module carries the field mapping beside it so that no caller ever does the
-//! subtraction itself.
+//! Both numberings are the game's own, and neither can be computed from the
+//! other by arithmetic alone: bag id 1 is Lua slot 20 is field 19.
+//! `PaperDollItemFrame.dbc` states the Lua ids in 36 rows of
+//! `(name, art, id)`, which `GetInventorySlotInfo` walks. This module keeps
+//! the field mapping beside it so that no caller does the subtraction itself.
 //!
-//! ## Reading is a snapshot, and that is deliberate
+//! ## Why the inventory is read as a snapshot
 //!
-//! [`Inventory::read`] walks the manager once and copies out. The alternative —
-//! answering each `GetContainerItemInfo` by chasing three GUIDs under the world
-//! lock — would put a hash lookup per bag slot on the hover path and hold the
-//! lock while Lua ran. A bag frame asks about 16 to 36 slots per refresh and
-//! refreshes on every `BAG_UPDATE`, so the snapshot is taken when the fields
-//! move and read from as many times as the interface likes.
+//! [`Inventory::read`] walks the manager once and copies the result out. The
+//! alternative, answering each `GetContainerItemInfo` by following three GUIDs
+//! under the world lock, would add a hash lookup per bag slot on the hover
+//! path and hold the lock while Lua ran. A bag frame asks about 16 to 36 slots
+//! per refresh and refreshes on every `BAG_UPDATE`, so the snapshot is taken
+//! when the fields change and read as many times as the interface needs.
 
 use crate::bytes::Reader;
 use crate::state::fields;
 use crate::state::objects::{Entity, ObjectManager};
 use crate::state::update::ObjectType;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 /// The nineteen worn slots, in field order.
 ///
-/// `EquipmentSlots` in vmangos, and the same order `PLAYER_VISIBLE_ITEM_n` uses
-/// — which is what lets [`crate::state::objects::Entity::equipment`] and this module
-/// agree slot for slot without either converting.
+/// This is `EquipmentSlots` in vmangos, and the same order
+/// `PLAYER_VISIBLE_ITEM_n` uses, so [`crate::state::objects::Entity::equipment`]
+/// and this module agree slot for slot without either converting.
 pub const EQUIPMENT_SLOTS: usize = 19;
 
-/// …and the four bag slots that follow them in the same field block.
+/// The four bag slots that follow the worn slots in the same field block.
 pub const BAG_SLOTS: usize = 4;
 
 /// How many GUIDs `PLAYER_FIELD_INV_SLOT_HEAD` covers: the worn slots and the
-/// bag slots together. 23 guids = 46 fields, which is exactly the gap to
+/// bag slots together. 23 guids = 46 fields, which is the gap to
 /// `PLAYER_FIELD_PACK_SLOT_1`.
 pub const INVENTORY_SLOTS: usize = EQUIPMENT_SLOTS + BAG_SLOTS;
 
-/// The backpack's own sixteen, which live in the player's block rather than in
-/// a container object — there is no backpack *item*, which is why
+/// The backpack's sixteen slots. They live in the player's block rather than
+/// in a container object. There is no backpack item, so
 /// `GetContainerNumSlots(0)` cannot be answered by looking for one.
 pub const BACKPACK_SLOTS: usize = 16;
 
-/// **The bank's own squares** — `PLAYER_FIELD_BANK_SLOT_1` is 48 fields = 24
-/// guids, and `BankFrame.xml` lays out exactly `BankFrameItem1..24`. Like the
-/// backpack, a run in the player's block with no container object behind it.
+/// The bank's own squares. `PLAYER_FIELD_BANK_SLOT_1` is 48 fields = 24
+/// guids, and `BankFrame.xml` lays out `BankFrameItem1..24`. Like the
+/// backpack, they are a run in the player's block with no container object
+/// behind it.
 pub const BANK_SLOTS: usize = 24;
 
-/// …and the bags a character may put in it: `PLAYER_FIELD_BANKBAG_SLOT_1` is
-/// six guids, `BankFrame.lua`'s `NUM_BANKBAGSLOTS` is 6, and
-/// `BANK_SLOT_BAG_END - BANK_SLOT_BAG_START` is 6. **How many of the six may
-/// be used is a byte** — see [`Inventory::bank_bag_slots`].
+/// The bag slots in the bank. `PLAYER_FIELD_BANKBAG_SLOT_1` is six guids,
+/// `BankFrame.lua`'s `NUM_BANKBAGSLOTS` is 6, and
+/// `BANK_SLOT_BAG_END - BANK_SLOT_BAG_START` is 6. How many of the six may be
+/// used is stored in a byte; see [`Inventory::bank_bag_slots`].
 pub const BANK_BAG_SLOTS: usize = 6;
 
-/// The key ring's, which is 32 fields = 16 guids. **The interface shows fewer
-/// than it has**: `GetKeyRingSize()` in `ContainerFrame.lua` is 4 under level
-/// 40 and grows to 16 past 60, so the extra slots exist and are not drawn.
+/// The key ring's slots: 32 fields = 16 guids. The interface shows fewer than
+/// exist: `GetKeyRingSize()` in `ContainerFrame.lua` is 4 under level 40 and
+/// grows to 16 past 60, so the extra slots exist and are not drawn.
 pub const KEYRING_SLOTS: usize = 16;
 
-/// The largest a 1.12 bag can be — `MAX_CONTAINER_ITEMS` in
+/// The largest a 1.12 bag can be: `MAX_CONTAINER_ITEMS` in
 /// `ContainerFrame.lua`, and the width of `CONTAINER_FIELD_SLOT_1`.
 pub const CONTAINER_SLOTS: usize = 36;
 
-/// **How many things a vendor will take back** — `BUYBACK_SLOT_END -
+/// How many sold items a vendor holds for buyback: `BUYBACK_SLOT_END -
 /// BUYBACK_SLOT_START`, and the interface's own `BUYBACK_ITEMS_PER_PAGE`.
 ///
-/// Twelve on both sides, and it has to be: `PLAYER_FIELD_VENDORBUYBACK_SLOT_1`
-/// is 24 fields = 12 guids, and `MerchantFrame.lua` lays out exactly twelve
-/// buttons on its second tab.
+/// Both sides use twelve: `PLAYER_FIELD_VENDORBUYBACK_SLOT_1` is 24 fields =
+/// 12 guids, and `MerchantFrame.lua` lays out twelve buttons on its second
+/// tab.
 pub const BUYBACK_SLOTS: usize = 12;
 
-/// `BUYBACK_SLOT_START` — where the buyback run begins in the *server's* flat
+/// `BUYBACK_SLOT_START`: where the buyback run begins in the server's flat
 /// 118-entry slot numbering, and the number `CMSG_BUYBACK_ITEM` carries.
 ///
-/// Taken from the client rather than from vmangos: its buyback list builder
-/// walks the player's guid array over slots 69 to 81. `PLAYER_FIELD_INV_SLOT_HEAD +
-/// 69 * 2` is 624, which is `PLAYER_FIELD_VENDORBUYBACK_SLOT_1` — the two
-/// numberings meet exactly here, and that agreement is what pins both.
+/// The 1.12.1 client reads the buyback items from slots 69 to 81 of the
+/// player's guid array. `PLAYER_FIELD_INV_SLOT_HEAD + 69 * 2` is 624, which is
+/// `PLAYER_FIELD_VENDORBUYBACK_SLOT_1`. The slot numbering and the field
+/// numbering agree at this point, which confirms both values.
 pub const BUYBACK_SLOT_START: u8 = 69;
 
-/// `KEYRING_CONTAINER`, declared in `MainMenuBarBagButtons.lua`. Negative, so
-/// every bag id this client handles is an `i32` rather than a count.
+/// `KEYRING_CONTAINER`, declared in `MainMenuBarBagButtons.lua`. It is
+/// negative, so every bag id this client handles is an `i32` rather than a
+/// count.
 pub const KEYRING_CONTAINER: i32 = -2;
 
 /// The backpack's bag id, which is what `ToggleBackpack` opens.
@@ -144,7 +147,7 @@ pub const BACKPACK_CONTAINER: i32 = 0;
 /// `PickupContainerItem`, `UseContainerItem` and `GetContainerItemInfo`.
 pub const BANK_CONTAINER: i32 = -1;
 
-/// The bag id of the first bag *in the bank*. `BankFrameBag1`'s own id is 5
+/// The bag id of the first bag in the bank. `BankFrameBag1`'s own id is 5
 /// (`NUM_BAG_SLOTS + 1`, which `CloseBankBagFrames` and
 /// `UpdateBagButtonHighlight` both count from), and `ToggleBag(5)` opens it
 /// as a container frame like any worn bag.
@@ -154,53 +157,54 @@ pub const FIRST_BANK_BAG_ID: i32 = 5;
 const GUID_STRIDE: u16 = 2;
 
 // ---------------------------------------------------------------------------
-// …and a *third* numbering, which is the one the wire uses
+// The server's (bag, slot) numbering, used by every outbound item packet
 // ---------------------------------------------------------------------------
 //
-// The two above are both the client's. Every outbound item packet addresses a
-// slot as a `(bag, slot)` **pair of server indices**, and neither half is
-// either of them: the bag is `INVENTORY_SLOT_BAG_0` (255) for anything held in
-// the player's own object, or the *inventory slot of the bag itself* for
-// anything inside a container; and the slot is a position in one flat 118-entry
-// numbering (`PLAYER_SLOT_START..PLAYER_SLOT_END` in vmangos'
-// `Player.h`) rather than a position in the bag.
+// The two numberings above are both the client's. Every outbound item packet
+// addresses a slot as a `(bag, slot)` pair of server indices, and neither half
+// matches either of them. The bag is `INVENTORY_SLOT_BAG_0` (255) for anything
+// held in the player's own object, or the inventory slot of the bag itself
+// for anything inside a container. The slot is a position in one flat
+// 118-entry numbering (`PLAYER_SLOT_START..PLAYER_SLOT_END` in vmangos'
+// `Player.h`), not a position in the bag.
 //
-// That is a third chance to be off by one and answer something plausible — a
-// neighbouring slot is a different item, not an error — so it is crossed here,
-// once, beside the other two, and `Player::GetItemByPos` is the authority.
+// An off-by-one here names a neighbouring slot, which holds a different item
+// and produces no error. The conversion is therefore done here, once, beside
+// the other two, with `Player::GetItemByPos` as the reference.
 
-/// `INVENTORY_SLOT_BAG_0` — "not in a container": the worn slots, the backpack
-/// and the key ring all live in the player's own object and are addressed by
-/// this bag with a slot in the flat numbering below.
+/// `INVENTORY_SLOT_BAG_0`, meaning "not in a container". The worn slots, the
+/// backpack and the key ring all live in the player's own object and are
+/// addressed by this bag with a slot in the flat numbering below.
 pub const SERVER_BAG_NONE: u8 = 255;
 
-/// `INVENTORY_SLOT_BAG_START` — the flat slot of the first *worn bag*, which is
-/// also the bag index a packet uses to name that bag's contents. Same 19 the
-/// field run uses, and that is not a coincidence: both count the bag slots from
-/// the end of the equipment.
+/// `INVENTORY_SLOT_BAG_START`: the flat slot of the first worn bag, which is
+/// also the bag index a packet uses to name that bag's contents. It is the
+/// same 19 the field run uses, because both count the bag slots from the end
+/// of the equipment.
 const SERVER_BAG_START: u8 = 19;
 
-/// `INVENTORY_SLOT_ITEM_START` — where the backpack's sixteen begin in the flat
-/// numbering.
+/// `INVENTORY_SLOT_ITEM_START`: where the backpack's sixteen slots begin in
+/// the flat numbering.
 const SERVER_BACKPACK_START: u8 = 23;
 
-/// `KEYRING_SLOT_START`. 81, not 86: `KEYRING_SLOT_END` is 97 and the ring is
-/// sixteen guids wide, which is the check that pins it.
+/// `KEYRING_SLOT_START`. It is 81, not 86: `KEYRING_SLOT_END` is 97 and the
+/// ring is sixteen guids wide, which confirms the value.
 const SERVER_KEYRING_START: u8 = 81;
 
-/// `BANK_SLOT_ITEM_START` — the bank's twenty-four squares in the flat
-/// numbering, 39..63, straight after the backpack's sixteen. `Player.h`, and
-/// the same 39 `BankButtonIDToInvSlotID` adds to a button id.
+/// `BANK_SLOT_ITEM_START`: the bank's twenty-four squares in the flat
+/// numbering, 39..63, directly after the backpack's sixteen. The value is from
+/// `Player.h`, and is the same 39 that `BankButtonIDToInvSlotID` adds to a
+/// button id.
 pub const SERVER_BANK_START: u8 = 39;
 
-/// `BANK_SLOT_BAG_START` — the six bank bag slots, 63..69, which is also the
-/// bag index a packet uses to name one of those bags' contents, exactly as
+/// `BANK_SLOT_BAG_START`: the six bank bag slots, 63..69. It is also the bag
+/// index a packet uses to name the contents of one of those bags, as
 /// [`SERVER_BAG_START`] is for a worn bag.
 pub const SERVER_BANK_BAG_START: u8 = 63;
 
-/// **Is this wire position in the bank?** `Player::IsBankPos`, which is the
-/// fork `HandleAutoStoreBankItemOpcode` takes to decide the direction of a
-/// move, and which the swap handlers test to demand a banker in reach.
+/// Whether a wire position is in the bank. This is `Player::IsBankPos`, which
+/// `HandleAutoStoreBankItemOpcode` uses to decide the direction of a move and
+/// which the swap handlers test to require a banker in reach.
 pub fn is_bank_position(bag: u8, slot: u8) -> bool {
     let bank_bags = SERVER_BANK_BAG_START..SERVER_BANK_BAG_START + BANK_BAG_SLOTS as u8;
     (bag == SERVER_BAG_NONE && (SERVER_BANK_START..SERVER_BANK_BAG_START).contains(&slot))
@@ -208,14 +212,14 @@ pub fn is_bank_position(bag: u8, slot: u8) -> bool {
         || bank_bags.contains(&bag)
 }
 
-/// **A container slot as the wire addresses it** — `(bag, slot)` for
+/// A container slot as the wire addresses it: the `(bag, slot)` pair for
 /// `CMSG_USE_ITEM`, `CMSG_AUTOEQUIP_ITEM` and every other packet that names an
-/// item by where it is.
+/// item by its position.
 ///
 /// Takes the interface's own pair: bag id 0 the backpack, 1..4 the worn bags,
-/// [`KEYRING_CONTAINER`] the ring, and a **one-based** slot within it. A slot of
-/// zero or one past the end of the numbering answers `None` rather than
-/// wrapping onto the neighbour.
+/// [`KEYRING_CONTAINER`] the ring, and a one-based slot within it. A slot of
+/// zero or one past the end of the numbering returns `None` rather than
+/// wrapping onto the neighbouring slot.
 pub fn server_container_slot(bag: i32, slot: usize) -> Option<(u8, u8)> {
     let index = u8::try_from(slot.checked_sub(1)?).ok()?;
     match bag {
@@ -241,32 +245,34 @@ pub fn server_container_slot(bag: i32, slot: usize) -> Option<(u8, u8)> {
     }
 }
 
-/// …and a **worn** slot, by the interface's own id: 1..19 the equipment, 20..23
-/// the four bag slots, 40..63 the bank's squares and 64..69 its bag slots.
+/// A worn slot as the wire addresses it, by the interface's own id: 1..19 the
+/// equipment, 20..23 the four bag slots, 40..63 the bank's squares and 64..69
+/// its bag slots.
 ///
-/// One subtraction and no bag, because everything in that run is in the
-/// player's own object — but it is here rather than at the call site for the
-/// same reason the other two crossings are. The gap 24..39 is nothing.
+/// The conversion is one subtraction with no bag, because everything in that
+/// run is in the player's own object. It is here rather than at the call site
+/// for the same reason as the other two conversions. Ids 24..39 map to
+/// nothing.
 pub fn server_inventory_slot(id: u32) -> Option<(u8, u8)> {
     let worn = 1..=INVENTORY_SLOTS as u32;
     let bank = FIRST_BANK_INVENTORY_SLOT..FIRST_BANK_BAG_INVENTORY_SLOT + BANK_BAG_SLOTS as u32;
     (worn.contains(&id) || bank.contains(&id)).then(|| (SERVER_BAG_NONE, (id - 1) as u8))
 }
 
-/// `CMSG_USE_ITEM`: **`u8 bag, u8 slot, u8 spellIndex`, then a
-/// `SpellCastTargets`.**
+/// `CMSG_USE_ITEM`: `u8 bag, u8 slot, u8 spellIndex`, then a
+/// `SpellCastTargets`.
 ///
-/// The third byte is the surprise and it is not a count.
-/// `HandleUseItemOpcode` reads it as `spellSlot` and indexes the item
-/// prototype's own five spell blocks with it, refusing anything whose trigger is
-/// not `ITEM_SPELLTRIGGER_ON_USE` — so a bandage and a potion are the *same*
-/// packet with a different byte here, and getting it wrong is
-/// `EQUIP_ERR_ITEM_NOT_FOUND` for an item that is plainly in the bag. See
-/// [`crate::state::query::ItemSpell::trigger`], which is where the index comes from.
+/// The third byte is an index, not a count. `HandleUseItemOpcode` reads it as
+/// `spellSlot`, uses it to index the item prototype's five spell blocks, and
+/// refuses any block whose trigger is not `ITEM_SPELLTRIGGER_ON_USE`. A
+/// bandage and a potion therefore send the same packet with a different value
+/// in this byte, and a wrong value gets `EQUIP_ERR_ITEM_NOT_FOUND` for an item
+/// that is in the bag. See [`crate::state::query::ItemSpell::trigger`], which
+/// is where the index comes from.
 ///
-/// The tail is the ordinary target block — [`crate::play::spells::CastTarget`], the
-/// same shapes `CMSG_CAST_SPELL` sends and written by the same function, because
-/// the server reads it with the same `SpellCastTargets::ReadForCaster`.
+/// The tail is the ordinary target block, [`crate::play::spells::CastTarget`]:
+/// the same shapes `CMSG_CAST_SPELL` sends, written by the same function,
+/// because the server reads both with `SpellCastTargets::ReadForCaster`.
 pub fn use_item_body(bag: u8, slot: u8, spell_index: u8, target: crate::play::spells::CastTarget) -> Vec<u8> {
     let mut w = crate::bytes::Writer::new();
     w.u8(bag).u8(slot).u8(spell_index);
@@ -276,12 +282,12 @@ pub fn use_item_body(bag: u8, slot: u8, spell_index: u8, target: crate::play::sp
 
 /// `CMSG_AUTOEQUIP_ITEM`: `u8 srcBag, u8 srcSlot`, and nothing else.
 ///
-/// **The other half of a right-click**, and the reason a right-click is two
-/// packets rather than one: `HandleUseItemOpcode` refuses outright when
+/// This is the second packet a right-click can send. `HandleUseItemOpcode`
+/// refuses outright when
 /// `proto->InventoryType != INVTYPE_NON_EQUIP && !pItem->IsEquipped()`, so a
-/// sword in a bag can never be *used* — the client has to know it is a garment
-/// and send this instead. The server picks the slot itself
-/// (`CanEquipItem(NULL_SLOT, …)`), which is what makes a ring go to whichever
+/// sword in a bag can never be used; the client has to recognise it as
+/// equippable and send this packet instead. The server picks the slot itself
+/// (`CanEquipItem(NULL_SLOT, …)`), which is how a ring goes to whichever
 /// finger is free.
 pub fn auto_equip_body(bag: u8, slot: u8) -> Vec<u8> {
     let mut w = crate::bytes::Writer::new();
@@ -289,78 +295,79 @@ pub fn auto_equip_body(bag: u8, slot: u8) -> Vec<u8> {
     w.buf
 }
 
-/// `CMSG_OPEN_ITEM`: `u8 bag, u8 slot`, and nothing else — the same two bytes
-/// [`auto_equip_body`] sends, to a different opcode.
+/// `CMSG_OPEN_ITEM`: `u8 bag, u8 slot`, and nothing else. These are the same
+/// two bytes [`auto_equip_body`] sends, to a different opcode.
 ///
-/// **The third thing a right-click can be**, beside using and wearing: a Blue
-/// Sack of Gems, a lockbox, a wrapped gift. `HandleOpenItemOpcode` answers it
-/// with `SendLoot(item->GetObjectGuid(), LOOT_CORPSE)` — so what comes back is
-/// an ordinary `SMSG_LOOT_RESPONSE` whose guid is the *item's*, opening the
-/// very window a corpse opens. Nothing else about the loot path changes.
+/// This is the third packet a right-click can send, besides using and
+/// equipping: for a Blue Sack of Gems, a lockbox or a wrapped gift.
+/// `HandleOpenItemOpcode` answers it with
+/// `SendLoot(item->GetObjectGuid(), LOOT_CORPSE)`, so the reply is an ordinary
+/// `SMSG_LOOT_RESPONSE` whose guid is the item's, and it opens the same window
+/// a corpse opens. The rest of the loot path is unchanged.
 ///
-/// It refuses four things before that: no such item, in flight, dead, and a
-/// lock whose `Skill[0]` or `Skill[1]` is set without
-/// [`item_dyn_flags::UNLOCKED`] on the copy — which is the strongbox a rogue
-/// has not picked yet, answered `EQUIP_ERR_ITEM_LOCKED`.
+/// The server refuses four cases before that: no such item, in flight, dead,
+/// and a lock whose `Skill[0]` or `Skill[1]` is set without
+/// [`item_dyn_flags::UNLOCKED`] on the copy. The last case is a strongbox a
+/// rogue has not yet picked, answered with `EQUIP_ERR_ITEM_LOCKED`.
 ///
-/// **A wrapped item is the same packet.** The server reads
-/// `character_gifts`, puts the real entry back on the object and sends nothing
-/// else, so the unwrapping shows up as an ordinary field change.
+/// A wrapped item uses the same packet. The server reads `character_gifts`,
+/// puts the real entry back on the object and sends nothing else, so the
+/// unwrapping appears as an ordinary field change.
 pub fn open_item_body(bag: u8, slot: u8) -> Vec<u8> {
     let mut w = crate::bytes::Writer::new();
     w.u8(bag).u8(slot);
     w.buf
 }
 
-/// **`CMSG_SET_AMMO` — `{u32 entry}`, and 0 to unload.**
+/// `CMSG_SET_AMMO`: `{u32 entry}`, with 0 to unload.
 ///
-/// The ammo slot is the one paper-doll square that is not a slot: nothing is
-/// *in* it, `PLAYER_AMMO_ID` (field 1223) names an item **entry** the character
-/// is carrying somewhere in the bags, and the count the square draws is
-/// `GetItemCount` of that entry. So loading it is not a move and cannot be
-/// `CMSG_AUTOEQUIP_ITEM` — `FindEquipSlot` has no arm for `INVTYPE_AMMO` and
-/// answers `EQUIP_ERR_ITEM_CANT_BE_EQUIPPED` — it is this packet, which
-/// `HandleSetAmmoOpcode` answers by `SetAmmo` (`CanUseAmmo`: alive, the entry
-/// carried, its `InventoryType` 24, else `SendEquipError`) or, for 0,
-/// `RemoveAmmo`. Both end in the field moving, which is what redraws the
-/// square. `INVTYPE_AMMO` is the whole gate: vmangos does not test the ranged
-/// weapon here — `CheckAmmoCompatibility` is applied to the *shot*, not to
-/// the load.
+/// The ammo slot is the one paper-doll square that holds no item. Instead,
+/// `PLAYER_AMMO_ID` (field 1223) names an item entry the character carries
+/// somewhere in the bags, and the count the square draws is `GetItemCount` of
+/// that entry. Loading it is therefore not a move and cannot be
+/// `CMSG_AUTOEQUIP_ITEM`: `FindEquipSlot` has no case for `INVTYPE_AMMO` and
+/// answers `EQUIP_ERR_ITEM_CANT_BE_EQUIPPED`. It is this packet, which
+/// `HandleSetAmmoOpcode` answers with `SetAmmo` (`CanUseAmmo`: alive, the
+/// entry carried, its `InventoryType` 24, else `SendEquipError`) or, for 0,
+/// `RemoveAmmo`. Both end with the field changing, which redraws the square.
+/// `INVTYPE_AMMO` is the only check: vmangos does not test the ranged weapon
+/// here. `CheckAmmoCompatibility` is applied to the shot, not to the load.
 pub fn set_ammo_body(entry: u32) -> Vec<u8> {
     let mut w = crate::bytes::Writer::new();
     w.u32(entry);
     w.buf
 }
 
-/// `NULL_SLOT` / `NULL_BAG` — "you pick"; the same 255 as [`SERVER_BAG_NONE`]
-/// and a different meaning, which is why it has its own name.
+/// `NULL_SLOT` / `NULL_BAG`, meaning "the server picks". It is the same 255 as
+/// [`SERVER_BAG_NONE`] with a different meaning, so it has its own name.
 ///
 /// `Player::IsValidPos(bag, NULL_SLOT, false)` returns true outright, so a
-/// packet naming a destination *bag* and this slot is "anywhere in there" — the
-/// shape `CMSG_AUTOSTORE_BAG_ITEM` is for.
+/// packet naming a destination bag and this slot means "anywhere in that
+/// bag". `CMSG_AUTOSTORE_BAG_ITEM` uses this form.
 pub const SERVER_SLOT_ANY: u8 = 255;
 
-/// **`CMSG_SWAP_INV_ITEM`: `u8 srcSlot, u8 dstSlot`** — two positions in the
-/// player's own object, and no bag on either side.
+/// `CMSG_SWAP_INV_ITEM`: `u8 srcSlot, u8 dstSlot`. Both are positions in the
+/// player's own object, and neither side has a bag.
 ///
-/// The narrow form of a swap and the one the paper doll uses: everything it can
-/// address (the nineteen worn slots, the four bag slots, the backpack, the key
-/// ring) lives in the player's block, so the bag byte would be
-/// [`SERVER_BAG_NONE`] twice and the server does not ask for it.
+/// This is the narrow form of a swap, and the one the paper doll uses.
+/// Everything it can address (the nineteen worn slots, the four bag slots, the
+/// backpack, the key ring) lives in the player's block, so the bag byte would
+/// be [`SERVER_BAG_NONE`] on both sides and the server does not ask for it.
 ///
-/// **Source first.** `HandleSwapInvItemOpcode` reads `srcslot >> dstslot`,
-/// where [`swap_item_body`] below reads destination first — the two are the
-/// opposite way round on the wire and nothing about either says so.
+/// The source comes first. `HandleSwapInvItemOpcode` reads
+/// `srcslot >> dstslot`, while [`swap_item_body`] below puts the destination
+/// first. The two packets use opposite orders on the wire, and neither
+/// packet's layout indicates it.
 pub fn swap_inv_item_body(src_slot: u8, dst_slot: u8) -> Vec<u8> {
     let mut w = crate::bytes::Writer::new();
     w.u8(src_slot).u8(dst_slot);
     w.buf
 }
 
-/// **`CMSG_SWAP_ITEM`: `u8 dstBag, u8 dstSlot, u8 srcBag, u8 srcSlot`** — the
-/// general form, for anything with a bag on either end.
+/// `CMSG_SWAP_ITEM`: `u8 dstBag, u8 dstSlot, u8 srcBag, u8 srcSlot`. This is
+/// the general form, for a move with a bag on either end.
 ///
-/// **Destination first**, which is the opposite of [`swap_inv_item_body`]'s
+/// The destination comes first, the opposite of [`swap_inv_item_body`]'s
 /// order; see `HandleSwapItem`.
 pub fn swap_item_body(dst_bag: u8, dst_slot: u8, src_bag: u8, src_slot: u8) -> Vec<u8> {
     let mut w = crate::bytes::Writer::new();
@@ -368,13 +375,13 @@ pub fn swap_item_body(dst_bag: u8, dst_slot: u8, src_bag: u8, src_slot: u8) -> V
     w.buf
 }
 
-/// **`CMSG_AUTOSTORE_BAG_ITEM`: `u8 srcBag, u8 srcSlot, u8 dstBag`** — put this
-/// somewhere in that bag, wherever it fits.
+/// `CMSG_AUTOSTORE_BAG_ITEM`: `u8 srcBag, u8 srcSlot, u8 dstBag`. Stores the
+/// item anywhere in the destination bag where it fits.
 ///
 /// The destination has no slot: `HandleAutoStoreBagItemOpcode` checks
-/// `IsValidPos(dstbag, NULL_SLOT, false)` and lets `CanStoreItem` choose. That
-/// is what `PutItemInBag` and `PutItemInBackpack` are — a click on a bag
-/// *button* names no square — and [`SERVER_BAG_NONE`] as the destination is the
+/// `IsValidPos(dstbag, NULL_SLOT, false)` and lets `CanStoreItem` choose. This
+/// is what `PutItemInBag` and `PutItemInBackpack` send, because a click on a
+/// bag button names no square. [`SERVER_BAG_NONE`] as the destination is the
 /// backpack.
 pub fn autostore_bag_item_body(src_bag: u8, src_slot: u8, dst_bag: u8) -> Vec<u8> {
     let mut w = crate::bytes::Writer::new();
@@ -382,12 +389,13 @@ pub fn autostore_bag_item_body(src_bag: u8, src_slot: u8, dst_bag: u8) -> Vec<u8
     w.buf
 }
 
-/// **`CMSG_SPLIT_ITEM`: `u8 srcBag, u8 srcSlot, u8 dstBag, u8 dstSlot, u8
-/// count`** — move part of a stack.
+/// `CMSG_SPLIT_ITEM`: `u8 srcBag, u8 srcSlot, u8 dstBag, u8 dstSlot, u8
+/// count`. Moves part of a stack.
 ///
-/// Source first here, destination first in [`swap_item_body`]: the third of the
-/// three orders in this family. A count of zero is dropped by the server as a
-/// forged packet, so the caller filters one rather than sending it.
+/// The source comes first here and the destination first in
+/// [`swap_item_body`]; this is the third of the three byte orders in this
+/// family of packets. The server drops a count of zero as a forged packet, so
+/// the caller filters it out rather than sending it.
 pub fn split_item_body(
     src_bag: u8,
     src_slot: u8,
@@ -400,76 +408,243 @@ pub fn split_item_body(
     w.buf
 }
 
-/// **`CMSG_DESTROYITEM`: `u8 bag, u8 slot, u8 count`, then three more bytes.**
+/// `CMSG_DESTROYITEM`: `u8 bag, u8 slot, u8 count`, then three more bytes.
 ///
-/// `HandleDestroyItemOpcode` reads six and uses three: `data1..data3` are read
-/// and never referenced. They are written as zero because the packet is a fixed
-/// length and a short one would leave the next opcode misaligned in the same
-/// buffer.
+/// `HandleDestroyItemOpcode` reads six bytes and uses three: `data1..data3`
+/// are read and never referenced. They are written as zero because the packet
+/// has a fixed length, and a short one would leave the next opcode misaligned
+/// in the same buffer.
 pub fn destroy_item_body(bag: u8, slot: u8, count: u8) -> Vec<u8> {
     let mut w = crate::bytes::Writer::new();
     w.u8(bag).u8(slot).u8(count).u8(0).u8(0).u8(0);
     w.buf
 }
 
-/// **The Lua inventory slot id of the first bag slot** — `CharacterBag0Slot`'s
-/// own `GetID()`, out of `PaperDollItemFrame.dbc`. The four bags are 20..23 and
-/// the worn slots are 1..19, so this is 20 and not 19.
+/// The Lua inventory slot id of the first bag slot: `CharacterBag0Slot`'s own
+/// `GetID()`, from `PaperDollItemFrame.dbc`. The four bags are 20..23 and the
+/// worn slots are 1..19, so this is 20, not 19.
 pub const FIRST_BAG_INVENTORY_SLOT: u32 = 20;
 
-/// …and of the first bank square: `BankButtonIDToInvSlotID(1)` is
-/// `BANK_SLOT_ITEM_START + 1`, one-based over the wire's 39, so 40..63.
+/// The Lua inventory slot id of the first bank square:
+/// `BankButtonIDToInvSlotID(1)` is `BANK_SLOT_ITEM_START + 1`, one-based over
+/// the wire's 39, so the squares are 40..63.
 pub const FIRST_BANK_INVENTORY_SLOT: u32 = SERVER_BANK_START as u32 + 1;
 
-/// …and of the first bag slot in the bank: `BankButtonIDToInvSlotID(1, 1)`
-/// is 64, and `BankFrameBag1..6` are 64..69.
+/// The Lua inventory slot id of the first bag slot in the bank:
+/// `BankButtonIDToInvSlotID(1, 1)` is 64, and `BankFrameBag1..6` are 64..69.
 pub const FIRST_BANK_BAG_INVENTORY_SLOT: u32 = SERVER_BANK_BAG_START as u32 + 1;
 
-/// One occupied slot, flattened out of the item object that was in it.
+/// One occupied slot, flattened out of the item object in it.
 ///
-/// A slot this client has *seen the container of* but not the item is `None`
-/// rather than a zeroed record — the difference is an empty square against a
-/// square with an unnameable thing in it, and the interface draws them
-/// differently.
+/// A slot whose container this client has seen, but whose item it has not,
+/// is `None` rather than a zeroed record. An empty square and a square holding
+/// an item that cannot be named are different cases, and the interface draws
+/// them differently.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ItemSlot {
-    /// The item object's own GUID — unique to this stack, which is what makes
-    /// two identical stacks distinguishable.
+    /// The item object's own GUID. It is unique to this stack, which
+    /// distinguishes two identical stacks.
     pub guid: u64,
-    /// `OBJECT_FIELD_ENTRY`: which item it is, and the only thing
+    /// `OBJECT_FIELD_ENTRY`: which item it is, and the only value
     /// `CMSG_ITEM_QUERY_SINGLE` takes.
     pub entry: u32,
-    /// `ITEM_FIELD_STACK_COUNT`. **1 for anything that does not stack**, and
-    /// the create block omits the field when it is zero — see
-    /// [`Entity::created`], which is why this is read with a floor rather than
-    /// as an `Option`.
+    /// `ITEM_FIELD_STACK_COUNT`. It is 1 for anything that does not stack. The
+    /// create block omits the field when it is zero (see [`Entity::created`]),
+    /// so this is read with a floor rather than as an `Option`.
     pub count: u32,
     pub durability: u32,
     pub max_durability: u32,
-    /// **`ITEM_FIELD_FLAGS`, whole** — the three bits of it this client reads
-    /// are named in [`item_dyn_flags`] and reached through the three accessors
+    /// `ITEM_FIELD_FLAGS`, the whole word. The three bits this client reads
+    /// are named in [`item_dyn_flags`] and read through the three accessors
     /// below.
     ///
-    /// The word rather than one bool per bit, because the bits are read in
-    /// pairs: `<Right Click to Open>` is a prototype flag *and*
-    /// [`Self::unlocked`] *or* a second prototype flag *and* [`Self::wrapped`],
-    /// and splitting them makes that sentence three arguments instead of one.
+    /// The field is kept as one word rather than one bool per bit because the
+    /// bits are read in combination: `<Right Click to Open>` depends on a
+    /// prototype flag and [`Self::unlocked`], or on a second prototype flag and
+    /// [`Self::wrapped`]. Splitting the bits would turn that one test into
+    /// three arguments instead of one.
     pub flags: u32,
+    /// `ITEM_FIELD_ENCHANTMENT`: seven slots of `(id, duration, charges)`, in
+    /// vmangos' `EnchantmentSlot` order: 0 permanent, 1 temporary, 2 unused
+    /// in 1.12, 3..6 the random property's enchantments.
+    pub enchantments: [ItemEnchant; ENCHANTMENT_SLOTS],
+    /// `ITEM_FIELD_RANDOM_PROPERTIES_ID`: the `ItemRandomProperties.dbc` row
+    /// that names the item's suffix ("of the Bear"), 0 for none.
+    pub random_property: i32,
+    /// `ITEM_FIELD_SPELL_CHARGES`: this copy's charges, one per prototype
+    /// spell. Negative means the item is used up when they run out.
+    pub spell_charges: [i32; SPELL_CHARGE_SLOTS],
+    /// `ITEM_FIELD_CREATOR`: the player who made it, 0 for nobody.
+    pub creator: u64,
+    /// `ITEM_FIELD_GIFTCREATOR`: the player who wrapped it, 0 for nobody.
+    pub gift_creator: u64,
+    /// `ITEM_FIELD_ITEM_TEXT_ID`: text a player wrote into the item (a letter
+    /// taken out of the mailbox), 0 for none.
+    pub text_id: u32,
+    /// When this copy expires, from `SMSG_ITEM_TIME_UPDATE`. `None` for an
+    /// item that does not expire or whose time the server has not stated.
+    pub expires: Option<Instant>,
 }
 
-/// `ITEM_DYNFLAG_*` — the bits of an item **object**'s `ITEM_FIELD_FLAGS`.
+/// How many enchantment slots an item has: vmangos' `MAX_ENCHANTMENT_SLOT`,
+/// and the 21 fields of `ITEM_FIELD_ENCHANTMENT` at three per slot.
+pub const ENCHANTMENT_SLOTS: usize = 7;
+
+/// How many charge counters an item has: one per prototype spell, the five
+/// fields of `ITEM_FIELD_SPELL_CHARGES`.
+pub const SPELL_CHARGE_SLOTS: usize = 5;
+
+/// One enchantment slot of an item object.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ItemEnchant {
+    /// The `SpellItemEnchantment.dbc` row, 0 for an empty slot. The 1.12.1
+    /// client looks the row up by the absolute value and draws a negative id
+    /// in red.
+    pub id: i32,
+    /// The field's own duration in milliseconds. The server writes it when the
+    /// enchantment is applied and when the character is saved, so it is stale
+    /// between the two; the time the plate prints comes from
+    /// [`Self::expires`].
+    pub duration_ms: u32,
+    /// How many charges are left, 0 for an enchantment without charges.
+    pub charges: u32,
+    /// When the enchantment runs out, from `SMSG_ITEM_ENCHANT_TIME_UPDATE`.
+    pub expires: Option<Instant>,
+}
+
+impl ItemEnchant {
+    /// Milliseconds left at `now`, or `None` when no time was stated or it has
+    /// passed.
+    pub fn left_ms(&self, now: Instant) -> Option<u32> {
+        left_ms(self.expires, now)
+    }
+}
+
+/// Milliseconds from `now` to `expires`, `None` when there is no expiry or it
+/// has passed. The 1.12.1 client prints no time for a clock that has reached
+/// zero.
+pub fn left_ms(expires: Option<Instant>, now: Instant) -> Option<u32> {
+    let left = expires?.checked_duration_since(now)?;
+    let ms = u32::try_from(left.as_millis()).unwrap_or(u32::MAX);
+    (ms > 0).then_some(ms)
+}
+
+/// The clocks the server starts on carried items, keyed by item guid.
 ///
-/// These are per-copy and change during a session; [`crate::state::query::item_flags`]
-/// is the per-*prototype* word beside them, which does not. The two are easy to
-/// confuse and the failure is silent, which is why they are named in two places
-/// that each say so.
+/// Neither clock is an update field. `SMSG_ITEM_ENCHANT_TIME_UPDATE` states how
+/// many seconds a temporary enchantment has left and `SMSG_ITEM_TIME_UPDATE`
+/// how many an expiring item has; the 1.12.1 client turns each into an expiry
+/// time when the packet arrives and counts down itself. vmangos sends both when
+/// the clock starts and again at login (`Player::SendEnchantmentDurations`,
+/// `Player::SendItemDurations`). The login copies can arrive before the item
+/// objects are created, so the clocks are kept by guid rather than on the
+/// objects.
+#[derive(Debug, Clone, Default)]
+pub struct ItemTimers {
+    enchantments: HashMap<(u64, u8), Instant>,
+    items: HashMap<u64, Instant>,
+}
+
+impl ItemTimers {
+    /// Record an enchantment's time as `SMSG_ITEM_ENCHANT_TIME_UPDATE` states
+    /// it. Zero seconds clears the clock.
+    pub fn note_enchantment(&mut self, time: EnchantTime, now: Instant) {
+        let key = (time.item, time.slot);
+        if time.seconds == 0 {
+            self.enchantments.remove(&key);
+        } else {
+            self.enchantments
+                .insert(key, now + Duration::from_secs(u64::from(time.seconds)));
+        }
+    }
+
+    /// Record an item's own time, from `SMSG_ITEM_TIME_UPDATE`.
+    pub fn note_item(&mut self, time: ItemTime, now: Instant) {
+        if time.seconds == 0 {
+            self.items.remove(&time.item);
+        } else {
+            self.items
+                .insert(time.item, now + Duration::from_secs(u64::from(time.seconds)));
+        }
+    }
+
+    /// When one enchantment slot of an item runs out.
+    pub fn enchantment(&self, item: u64, slot: u8) -> Option<Instant> {
+        self.enchantments.get(&(item, slot)).copied()
+    }
+
+    /// When an item runs out.
+    pub fn item(&self, item: u64) -> Option<Instant> {
+        self.items.get(&item).copied()
+    }
+}
+
+/// `SMSG_ITEM_ENCHANT_TIME_UPDATE`: `{u64 item, u32 slot, u32 seconds, u64
+/// player}`, as vmangos' `WorldSession::SendItemEnchantTimeUpdate` writes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EnchantTime {
+    pub item: u64,
+    pub slot: u8,
+    pub seconds: u32,
+    pub player: u64,
+}
+
+/// Read `SMSG_ITEM_ENCHANT_TIME_UPDATE`. `None` for a short body or a slot
+/// past [`ENCHANTMENT_SLOTS`].
+pub fn parse_item_enchant_time_update(body: &[u8]) -> Option<EnchantTime> {
+    let mut r = Reader::new(body);
+    if !r.has(8 + 4 + 4) {
+        return None;
+    }
+    let item = r.u64();
+    let slot = r.u32();
+    let seconds = r.u32();
+    // The player guid closes the packet. The clock needs only the three
+    // fields before it.
+    let player = if r.has(8) { r.u64() } else { 0 };
+    Some(EnchantTime {
+        item,
+        slot: u8::try_from(slot)
+            .ok()
+            .filter(|s| usize::from(*s) < ENCHANTMENT_SLOTS)?,
+        seconds,
+        player,
+    })
+}
+
+/// `SMSG_ITEM_TIME_UPDATE`: `{u64 item, u32 seconds}`, from vmangos'
+/// `Item::SendTimeUpdate`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ItemTime {
+    pub item: u64,
+    pub seconds: u32,
+}
+
+/// Read `SMSG_ITEM_TIME_UPDATE`. `None` for a short body.
+pub fn parse_item_time_update(body: &[u8]) -> Option<ItemTime> {
+    let mut r = Reader::new(body);
+    if !r.has(8 + 4) {
+        return None;
+    }
+    Some(ItemTime {
+        item: r.u64(),
+        seconds: r.u32(),
+    })
+}
+
+/// `ITEM_DYNFLAG_*`: the bits of an item object's `ITEM_FIELD_FLAGS`.
+///
+/// These bits are per copy and change during a session.
+/// [`crate::state::query::item_flags`] is the per-prototype word, which does
+/// not change. The two are easy to confuse and a mix-up produces no error, so
+/// both modules state the distinction.
 pub mod item_dyn_flags {
     /// Bound to this character now, as opposed to binding when picked up. The
     /// tooltip's first grey line.
     pub const BOUND: u32 = 0x0000_0001;
-    /// **This copy's lock has been picked.** `HandleOpenItemOpcode` refuses a
-    /// `proto->LockID` item without it; the tooltip hides its
-    /// `<Right Click to Open>` line for the same reason.
+    /// This copy's lock has been picked. `HandleOpenItemOpcode` refuses an
+    /// item with a `proto->LockID` unless this bit is set, and the tooltip
+    /// hides its `<Right Click to Open>` line for the same reason.
     pub const UNLOCKED: u32 = 0x0000_0004;
     /// This copy is inside wrapping paper: its entry and flags are the
     /// wrapper's, and opening it is what puts the real item back.
@@ -477,9 +652,9 @@ pub mod item_dyn_flags {
 }
 
 impl ItemSlot {
-    /// Read one item object. `None` for a GUID naming nothing — which is
-    /// ordinary rather than an error, since a bag's contents stream in one
-    /// block behind the bag itself.
+    /// Read one item object. Returns `None` for a GUID that names no known
+    /// object. That is a normal case, not an error, because a bag's contents
+    /// stream in one block behind the bag itself.
     fn read(world: &ObjectManager, guid: u64) -> Option<ItemSlot> {
         if guid == 0 {
             return None;
@@ -488,51 +663,83 @@ impl ItemSlot {
         Some(ItemSlot {
             guid,
             entry: entity.entry().unwrap_or(0),
-            // **`max(1)`, and it is not tidiness.** `_SetCreateBits` omits
-            // every zero field, and a single non-stacking item is written with
-            // a stack count of 1 — but a *values* block that has never touched
-            // the field leaves it absent, and a zero there draws no count and
-            // divides to nothing. The same rule that made a corpse read as
-            // alive.
+            // `max(1)` is required. `_SetCreateBits` omits every zero field,
+            // and a single non-stacking item is written with a stack count of
+            // 1. A values block that has never set the field leaves it absent,
+            // and a zero count draws no number and makes any division by the
+            // count useless. The same omission of zero fields is what made a
+            // corpse read as alive.
             count: entity.field(fields::item::STACK_COUNT).unwrap_or(1).max(1),
             durability: entity.field(fields::item::DURABILITY).unwrap_or(0),
             max_durability: entity.field(fields::item::MAXDURABILITY).unwrap_or(0),
             flags: entity.field(fields::item::FLAGS).unwrap_or(0),
+            enchantments: std::array::from_fn(|slot| {
+                let base = fields::item::ENCHANTMENT + (slot as u16) * 3;
+                ItemEnchant {
+                    id: entity.field(base).unwrap_or(0) as i32,
+                    duration_ms: entity.field(base + 1).unwrap_or(0),
+                    charges: entity.field(base + 2).unwrap_or(0),
+                    expires: world.item_timers.enchantment(guid, slot as u8),
+                }
+            }),
+            random_property: entity.field(fields::item::RANDOM_PROPERTIES_ID).unwrap_or(0) as i32,
+            spell_charges: std::array::from_fn(|slot| {
+                entity
+                    .field(fields::item::SPELL_CHARGES + slot as u16)
+                    .unwrap_or(0) as i32
+            }),
+            creator: guid_field(entity, fields::item::CREATOR),
+            gift_creator: guid_field(entity, fields::item::GIFTCREATOR),
+            text_id: entity.field(fields::item::ITEM_TEXT_ID).unwrap_or(0),
+            expires: world.item_timers.item(guid),
         })
     }
 
-    /// Is this item broken — worn all the way down? `GetInventoryItemBroken`,
-    /// which paints the slot's icon red.
+    /// The enchantment in one slot, or `None` for an empty slot.
+    pub fn enchantment(&self, slot: usize) -> Option<&ItemEnchant> {
+        self.enchantments.get(slot).filter(|e| e.id != 0)
+    }
+
+    /// Whether this item is broken, with its durability worn down to zero.
+    /// This answers `GetInventoryItemBroken`, which paints the slot's icon
+    /// red.
     pub fn broken(&self) -> bool {
         self.max_durability > 0 && self.durability == 0
     }
 
-    /// Bound to this character already — [`item_dyn_flags::BOUND`]. The
+    /// Bound to this character already: [`item_dyn_flags::BOUND`]. The
     /// tooltip's first grey line.
     pub fn soulbound(&self) -> bool {
         self.flags & item_dyn_flags::BOUND != 0
     }
 
-    /// This copy's lock has been picked — [`item_dyn_flags::UNLOCKED`].
+    /// This copy's lock has been picked: [`item_dyn_flags::UNLOCKED`].
     pub fn unlocked(&self) -> bool {
         self.flags & item_dyn_flags::UNLOCKED != 0
     }
 
-    /// This copy is wrapped — [`item_dyn_flags::WRAPPED`].
+    /// This copy is wrapped: [`item_dyn_flags::WRAPPED`].
     pub fn wrapped(&self) -> bool {
         self.flags & item_dyn_flags::WRAPPED != 0
     }
 }
 
+/// A two-field guid, low word first, with 0 for an absent half.
+fn guid_field(entity: &Entity, index: u16) -> u64 {
+    let low = entity.field(index).unwrap_or(0);
+    let high = entity.field(index + 1).unwrap_or(0);
+    u64::from(low) | (u64::from(high) << 32)
+}
+
 /// A worn bag and what is in it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Bag {
-    /// The bag's own item slot — its entry is what names it and gives it an
-    /// icon, so a bag is an item as well as a container.
+    /// The bag's own item slot. Its entry names the bag and gives it an icon,
+    /// so a bag is an item as well as a container.
     pub item: ItemSlot,
-    /// `CONTAINER_FIELD_NUM_SLOTS`. **The container object's, not the
-    /// prototype's**: they agree, but only one of them has arrived when the
-    /// bag first appears.
+    /// The slots, `CONTAINER_FIELD_NUM_SLOTS` of them. The count is the
+    /// container object's, not the prototype's: the two agree, but only the
+    /// container object's value has arrived when the bag first appears.
     pub slots: Vec<Option<ItemSlot>>,
 }
 
@@ -546,73 +753,72 @@ impl Bag {
     }
 }
 
-/// **One thing a vendor is holding for you**, as the buyback tab draws it.
+/// One item a vendor holds for buyback, as the buyback tab draws it.
 ///
-/// Not part of what the character carries — the item object is alive and owned,
-/// but it sits in no bag and `Player::DurabilityRepairAll`'s own comment
-/// ("bank, buyback and keys not repaired") says the server does not treat it as
-/// carried either. So it is its own list beside [`Inventory`]'s four rather
-/// than a sixth container.
+/// This is not part of what the character carries. The item object exists
+/// and is owned, but it is in no bag, and the comment in
+/// `Player::DurabilityRepairAll` ("bank, buyback and keys not repaired") shows
+/// the server does not treat it as carried either. It is therefore its own
+/// list beside the four in [`Inventory`], not a sixth container.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BuybackSlot {
     /// The item itself, read out of the object the guid names.
     pub item: ItemSlot,
-    /// `PLAYER_FIELD_BUYBACK_PRICE_1 + n` — what buying it back costs, in
-    /// copper. **The filter as well as the value**: the client's own list
-    /// builder skips a slot whose price is zero, which is how an
-    /// emptied slot is told from a free one without a second flag.
+    /// `PLAYER_FIELD_BUYBACK_PRICE_1 + n`: what buying it back costs, in
+    /// copper. It also marks occupancy: the 1.12.1 client skips a slot whose
+    /// price is zero, which is how an emptied slot is recognised without a
+    /// second flag.
     pub price: u32,
-    /// `PLAYER_FIELD_BUYBACK_TIMESTAMP_1 + n` — when it was sold, in the
-    /// server's own `time() - loginTime + 30h` units. Never displayed; it is
-    /// the **sort key**, and that is the whole reason it is carried.
+    /// `PLAYER_FIELD_BUYBACK_TIMESTAMP_1 + n`: when the item was sold, in the
+    /// server's `time() - loginTime + 30h` units. It is never displayed and is
+    /// carried only as the sort key.
     pub sold_at: u32,
-    /// Which of the twelve wire slots this is — 69..80. Kept because the
-    /// interface addresses a row by its position in *this* list and
-    /// `CMSG_BUYBACK_ITEM` wants the slot, and once the twelve are full the
-    /// server evicts the oldest rather than the last, so position and slot stop
-    /// agreeing.
+    /// Which of the twelve wire slots this is, 69..80. The interface addresses
+    /// a row by its position in this list, and `CMSG_BUYBACK_ITEM` needs the
+    /// slot. Once all twelve are full the server evicts the oldest item rather
+    /// than the last, so the position and the slot no longer agree.
     pub wire_slot: u32,
 }
 
-/// **Everything the character is carrying, as one snapshot.**
+/// Everything the character is carrying, as one snapshot.
 ///
-/// Empty before `SMSG_UPDATE_OBJECT` has described the player, which is the
-/// honest state at a character screen — and is what makes
-/// `GetContainerNumSlots` answer 0 there rather than a stale count.
+/// It is empty before `SMSG_UPDATE_OBJECT` has described the player, which is
+/// the correct state at a character screen, and makes `GetContainerNumSlots`
+/// answer 0 there rather than a stale count.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Inventory {
-    /// The nineteen worn slots, in field order — `equipped[0]` is the head.
+    /// The nineteen worn slots, in field order: `equipped[0]` is the head.
     pub equipped: [Option<ItemSlot>; EQUIPMENT_SLOTS],
     /// The four worn bags. `None` for an empty bag slot, which is different
     /// from a bag with no room left in it.
     pub bags: [Option<Bag>; BAG_SLOTS],
     /// The backpack, always sixteen entries once the player exists.
     pub backpack: Vec<Option<ItemSlot>>,
-    /// The key ring, always sixteen — see [`KEYRING_SLOTS`] on why the
+    /// The key ring, always sixteen slots. See [`KEYRING_SLOTS`] for why the
     /// interface shows fewer.
     pub keyring: Vec<Option<ItemSlot>>,
-    /// **The bank's own twenty-four squares**, always that many once the
-    /// player exists — a run in the player's block like the backpack. See
-    /// [`crate::play::bank`] for why no packet ever carries them.
+    /// The bank's own twenty-four squares, always that many once the player
+    /// exists. Like the backpack, they are a run in the player's block. See
+    /// [`crate::play::bank`] for why no packet carries them.
     pub bank: Vec<Option<ItemSlot>>,
-    /// …and the six bags in the bank, `None` for an empty slot — bought or
-    /// not, which the slot itself does not say.
+    /// The six bags in the bank, `None` for an empty slot. The slot does not
+    /// say whether it has been bought.
     pub bank_bags: [Option<Bag>; BANK_BAG_SLOTS],
-    /// **How many of those six may be used**: the third byte of
-    /// `PLAYER_BYTES_2`, which `GetNumBankSlots()` answers and a purchase
+    /// How many of the six bank bag slots may be used: the third byte of
+    /// `PLAYER_BYTES_2`, which `GetNumBankSlots()` returns and a purchase
     /// increments. 0 for a character who has never bought one.
     pub bank_bag_slots: u8,
-    /// **What the vendor is holding**, oldest first — see [`read_buyback`] for
-    /// why that order is the client's own and not a choice.
+    /// The items the vendor holds, oldest first. See [`read_buyback`] for why
+    /// this is the 1.12.1 client's order.
     ///
-    /// Only the occupied slots, so this is 0..12 entries rather than twelve
-    /// `Option`s: `GetNumBuybackItems()` is its length and
+    /// Only occupied slots are included, so this has 0..12 entries rather than
+    /// twelve `Option`s: `GetNumBuybackItems()` is its length and
     /// `GetBuybackItemInfo(i)` is a one-based index into it.
     pub buyback: Vec<BuybackSlot>,
 }
 
 impl Inventory {
-    /// Walk the manager and copy the whole thing out.
+    /// Walk the manager and copy the whole inventory out.
     ///
     /// Returns the default for a world with no local player, which is what a
     /// character screen and a logged-out session both are.
@@ -658,19 +864,20 @@ impl Inventory {
         out
     }
 
-    /// **Everything a repair-all would touch**, in the server's own order.
+    /// Every item a repair-all would touch, in the server's order.
     ///
     /// `Player::DurabilityRepairAll` walks `EQUIPMENT_SLOT_START ..
-    /// INVENTORY_SLOT_ITEM_END` — the worn slots, the four bag *containers*
-    /// themselves and the backpack — and then the contents of each bag. Its own
-    /// comment says what it leaves out: **"bank, buyback and keys not
-    /// repaired"**, which is why the key ring is absent here and why a client
-    /// that walked every container it knows would quote a price above the one it
-    /// is charged.
+    /// INVENTORY_SLOT_ITEM_END` (the worn slots, the four bag containers
+    /// themselves and the backpack) and then the contents of each bag. Its
+    /// comment names what it leaves out: "bank, buyback and keys not
+    /// repaired". The key ring is therefore absent here. A client that walked
+    /// every container it knows would quote a higher price than the server
+    /// charges.
     ///
-    /// Here rather than in the renderer because it is a walk of *this* layout:
-    /// the same reason `container` is here. What it is *for* — the price — is a
-    /// rule in a file, and lives in `vale_assets::tables::repair`.
+    /// This is here rather than in the renderer because it walks this module's
+    /// layout, for the same reason `container` is here. The price it is used
+    /// for is a rule from a data file and lives in
+    /// `vale_assets::tables::repair`.
     pub fn repairable(&self) -> impl Iterator<Item = &ItemSlot> {
         self.equipped
             .iter()
@@ -680,16 +887,16 @@ impl Inventory {
             .chain(self.bags.iter().flatten().flat_map(|bag| bag.slots.iter().flatten()))
     }
 
-    /// The slots of one container, by the **bag id** the interface uses: 0 the
+    /// The slots of one container, by the bag id the interface uses: 0 the
     /// backpack, 1..4 the worn bags, -2 the key ring, -1 the bank's own
     /// squares, 5..10 the bags in the bank.
     ///
-    /// `None` for a bag id with no bag in it, which is what
-    /// `GetContainerNumSlots` answers 0 for — as distinct from an empty slice,
-    /// which would be a bag with no room. **A bank square is answered with no
-    /// banker in sight**, because the fields are there whether or not one is;
-    /// the reference's `BankFrame` reads the same way and only the verbs are
-    /// gated.
+    /// Returns `None` for a bag id with no bag in it, which
+    /// `GetContainerNumSlots` answers with 0. An empty slice would instead be a
+    /// bag with no room. A bank square is returned with no banker nearby,
+    /// because the fields are present whether or not one is. The game's
+    /// `BankFrame` reads them the same way, and only the actions that move
+    /// items are gated.
     pub fn container(&self, bag: i32) -> Option<&[Option<ItemSlot>]> {
         match bag {
             KEYRING_CONTAINER => Some(&self.keyring),
@@ -704,21 +911,21 @@ impl Inventory {
     }
 
     /// How many squares a container has, or `None` for a bag id with nothing
-    /// in it — `GetContainerNumSlots` before its `unwrap_or(0)`.
+    /// in it. This is `GetContainerNumSlots` before its `unwrap_or(0)`.
     pub fn container_num(&self, bag: i32) -> Option<usize> {
         self.container(bag).map(<[_]>::len)
     }
 
-    /// One slot of one container, **one-based**, which is how every
+    /// One slot of one container, one-based, which is how every
     /// `GetContainerItem*` call addresses it.
     pub fn container_item(&self, bag: i32, slot: usize) -> Option<&ItemSlot> {
         let slots = self.container(bag)?;
         slots.get(slot.checked_sub(1)?)?.as_ref()
     }
 
-    /// The bag *item* in a bag id, for the name and icon of the bag itself.
-    /// The backpack has none — it is a field block rather than an object — so
-    /// `GetBagName(0)` falls back to the game's own `BACKPACK_TOOLTIP`.
+    /// The bag item in a bag id, for the name and icon of the bag itself. The
+    /// backpack has none, because it is a field block rather than an object,
+    /// so `GetBagName(0)` falls back to the game's own `BACKPACK_TOOLTIP`.
     pub fn bag_item(&self, bag: i32) -> Option<&ItemSlot> {
         match bag {
             1..=4 => self.bags[bag as usize - 1].as_ref().map(|b| &b.item),
@@ -729,14 +936,15 @@ impl Inventory {
         }
     }
 
-    /// One worn slot by the **interface's** id: 1..19 worn, 20..23 the bags,
-    /// 40..63 the bank's squares, 64..69 the bags in the bank — the last two
-    /// being what `BankButtonIDToInvSlotID` hands every `GetInventoryItem*`
-    /// read the bank frame makes.
+    /// One worn slot by the interface's id: 1..19 worn, 20..23 the bags,
+    /// 40..63 the bank's squares, 64..69 the bags in the bank. The last two
+    /// ranges are what `BankButtonIDToInvSlotID` passes to every
+    /// `GetInventoryItem*` call the bank frame makes.
     ///
-    /// The one place the two numberings are crossed, so that no caller
-    /// subtracts one itself. An id outside the set — 0 (the ammo slot, which
-    /// 1.12 declares and never fills) or the gap at 24..39 — answers `None`.
+    /// This is the one place the two numberings are converted, so that no
+    /// caller subtracts one itself. An id outside the set answers `None`: 0
+    /// (the ammo slot, which 1.12 declares and never fills) or the gap at
+    /// 24..39.
     pub fn inventory_slot(&self, id: u32) -> Option<&ItemSlot> {
         match id {
             1..=19 => self.equipped[id as usize - 1].as_ref(),
@@ -768,8 +976,8 @@ impl Inventory {
         carried + worn
     }
 
-    /// Every item entry this inventory holds, bags included, deduplicated —
-    /// the work list for `CMSG_ITEM_QUERY_SINGLE`.
+    /// Every item entry this inventory holds, bags included, without
+    /// duplicates. This is the work list for `CMSG_ITEM_QUERY_SINGLE`.
     pub fn entries(&self) -> Vec<u32> {
         let mut out: Vec<u32> = Vec::new();
         let mut push = |entry: u32| {
@@ -799,53 +1007,52 @@ impl Inventory {
     }
 }
 
-/// **Where an item is**, in whichever of the interface's two numberings
-/// addresses it — which is what [`Inventory::find_entry`] answers and what every
-/// item verb in the client takes.
+/// Where an item is, in whichever of the interface's two numberings addresses
+/// it. [`Inventory::find_entry`] returns this, and every item action in the
+/// client takes it.
 ///
-/// Two variants rather than one pair because the two are genuinely different
-/// questions to the wire: a worn slot is `(SERVER_BAG_NONE, flat)` and a carried
-/// one is `(the bag's own slot, position)`, and [`server_inventory_slot`] and
-/// [`server_container_slot`] are the two crossings.
+/// There are two variants rather than one pair because the wire addresses the
+/// two cases differently: a worn slot is `(SERVER_BAG_NONE, flat)` and a
+/// carried one is `(the bag's own slot, position)`. [`server_inventory_slot`]
+/// and [`server_container_slot`] are the two conversions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemPlace {
     /// A worn slot, by the interface's own id: 1..19 the equipment, 20..23 the
     /// four bag slots. [`Inventory::inventory_slot`]'s numbering.
     Worn(u32),
     /// A container slot: the bag id (0 the backpack, 1..4 the worn bags, -2 the
-    /// ring) and a **one-based** position in it, which is how every
+    /// ring) and a one-based position in it, which is how every
     /// `GetContainerItem*` call addresses one.
     Carried { bag: i32, slot: usize },
 }
 
 impl Inventory {
-    /// **Where the first copy of an entry is**, in the client's own search
-    /// order — which is what an item on the *action bar* has to be resolved
-    /// through, since `SMSG_ACTION_BUTTONS` stores an item as its entry and
-    /// nothing else.
+    /// Where the first copy of an entry is, in the 1.12.1 client's search
+    /// order. An item on the action bar is resolved through this, because
+    /// `SMSG_ACTION_BUTTONS` stores an item as its entry and nothing else.
     ///
-    /// The order is `UseAction`'s own, and it is not arbitrary. The client
-    /// asks twice: first whether the entry is **worn** (the inventory walk
-    /// limited to the equipment), and only if it is not does it search for a
-    /// position to use. The general walk is over the *server's* flat numbering in
-    /// ascending order — 0..18 the equipment, 19..22 the bag slots, 23..38 the
-    /// backpack, the ring last — and it **descends into a bag at the moment that
-    /// bag's own slot is reached**, so a bag's contents come before
-    /// the backpack rather than after it.
+    /// The order is the one `UseAction` uses. The client checks twice: first
+    /// whether the entry is worn (the inventory walk limited to the
+    /// equipment), and only if it is not does it search for a position to use.
+    /// The general walk runs over the server's flat numbering in ascending
+    /// order: 0..18 the equipment, 19..22 the bag slots, 23..38 the backpack,
+    /// the ring last. It descends into a bag when it reaches that bag's own
+    /// slot, so a bag's contents come before the backpack rather than after
+    /// it.
     ///
-    /// That ordering only decides *which copy* is used when a character carries
-    /// several, so getting it wrong is invisible until it is not: the same
-    /// entry worn and carried is a trinket, and using the carried one would try
-    /// to equip a second.
+    /// The order only decides which copy is used when a character carries
+    /// several, so an error in it shows only in that case. A trinket that is
+    /// both worn and carried is the case that matters: using the carried copy
+    /// would try to equip a second one.
     ///
-    /// `None` is an entry the character is not carrying at all, which is what a
-    /// bar slot holding an item that has been used up or sold looks like.
+    /// `None` is an entry the character is not carrying at all, which is what
+    /// a bar slot looks like when its item has been used up or sold.
     pub fn find_entry(&self, entry: u32) -> Option<ItemPlace> {
         if entry == 0 {
             return None;
         }
         let holds = |slot: &Option<ItemSlot>| slot.as_ref().is_some_and(|i| i.entry == entry);
-        // The equipment first, and on its own — see the two asks above.
+        // The equipment first, on its own; see the two checks above.
         if let Some(id) = self.equipped.iter().position(holds) {
             return Some(ItemPlace::Worn(id as u32 + 1));
         }
@@ -862,7 +1069,7 @@ impl Inventory {
                 });
             }
         }
-        // …then the backpack, and the ring after it.
+        // Then the backpack, and the ring after it.
         for (bag, slots) in [
             (BACKPACK_CONTAINER, &self.backpack),
             (KEYRING_CONTAINER, &self.keyring),
@@ -877,9 +1084,9 @@ impl Inventory {
         None
     }
 
-    /// **Is this entry being worn?** `IsEquippedAction`'s own question, which is
-    /// the equipment-only half of the search above and is what puts the green
-    /// border round a bar button.
+    /// Whether this entry is worn. This answers `IsEquippedAction`, is the
+    /// equipment-only half of the search above, and decides the green border
+    /// round a bar button.
     pub fn is_equipped(&self, entry: u32) -> bool {
         entry != 0
             && self
@@ -890,28 +1097,28 @@ impl Inventory {
     }
 }
 
-/// **Every container id, in the order a report walks them.**
+/// Every container id, in the order a report walks them.
 ///
-/// The key ring first because it is the one with a negative id and is the
-/// easiest to drop out of a range by accident. Here rather than in a caller
-/// because both the renderer's diff and `vale live`'s `bags` walk exactly
-/// this set, and a second copy is a second chance to leave one out.
+/// The key ring comes first because it is the one with a negative id and the
+/// easiest to leave out of a range by accident. The list is here rather than
+/// in a caller because both the renderer's diff and `vale live`'s `bags` walk
+/// this set, and a second copy could leave one out.
 pub const CONTAINERS_FOR_REPORT: [i32; 6] = [KEYRING_CONTAINER, BACKPACK_CONTAINER, 1, 2, 3, 4];
 
-/// **…and the bank's, in the same spirit**: its own squares first, then the
+/// The bank's container ids, in report order: its own squares first, then the
 /// six bags. Kept apart from [`CONTAINERS_FOR_REPORT`] because the two halves
-/// raise different events — a bank square is `PLAYERBANKSLOTS_CHANGED` where
-/// a bag in the bank is an ordinary `BAG_UPDATE` — and a walker that wants
-/// both chains them.
+/// raise different events: a bank square raises `PLAYERBANKSLOTS_CHANGED` and
+/// a bag in the bank raises an ordinary `BAG_UPDATE`. A walker that wants both
+/// chains the two lists.
 pub const BANK_CONTAINERS_FOR_REPORT: [i32; 7] = [BANK_CONTAINER, 5, 6, 7, 8, 9, 10];
 
-/// The bag id a bag slot corresponds to: Lua slot 20 is bag 1, and 64 — the
-/// first bag slot in the bank — is bag 5.
+/// The bag id a bag slot corresponds to: Lua slot 20 is bag 1, and 64 (the
+/// first bag slot in the bank) is bag 5.
 ///
-/// `BagSlotButton_OnClick`'s own arithmetic —
-/// `id - CharacterBag0Slot:GetID() + 1` — written once here rather than at
-/// each of its four call sites; the bank half is `BankFrameItemButtonBag_OnClick`'s
-/// `ToggleBag(this:GetID())` against a button whose id is `NUM_BAG_SLOTS + n`.
+/// This is `BagSlotButton_OnClick`'s arithmetic,
+/// `id - CharacterBag0Slot:GetID() + 1`, written once here rather than at each
+/// of its four call sites. The bank half is `BankFrameItemButtonBag_OnClick`'s
+/// `ToggleBag(this:GetID())` on a button whose id is `NUM_BAG_SLOTS + n`.
 pub fn bag_id_of_inventory_slot(id: u32) -> Option<i32> {
     let worn = FIRST_BAG_INVENTORY_SLOT..FIRST_BAG_INVENTORY_SLOT + BAG_SLOTS as u32;
     let bank = FIRST_BANK_BAG_INVENTORY_SLOT..FIRST_BANK_BAG_INVENTORY_SLOT + BANK_BAG_SLOTS as u32;
@@ -924,7 +1131,8 @@ pub fn bag_id_of_inventory_slot(id: u32) -> Option<i32> {
     }
 }
 
-/// …and back: bag id 1 is the inventory slot 20, and bag id 5 is 64.
+/// The reverse of [`bag_id_of_inventory_slot`]: bag id 1 is inventory slot 20,
+/// and bag id 5 is 64.
 pub fn inventory_slot_of_bag_id(bag: i32) -> Option<u32> {
     if (1..=BAG_SLOTS as i32).contains(&bag) {
         Some(FIRST_BAG_INVENTORY_SLOT + bag as u32 - 1)
@@ -943,13 +1151,12 @@ fn guid_at(entity: &Entity, base: u16, index: usize) -> u64 {
     low | (high << 32)
 }
 
-/// **One worn slot's item guid**, without walking the bags to get it.
+/// One worn slot's item guid, read without walking the bags.
 ///
-/// [`Inventory::read`] answers the same question and reads the whole of what
-/// the character is carrying to do it, which is right for a panel and far too
-/// much for something asked every time a spell is pressed. The one caller is
-/// the aiming rule's main hand — see
-/// `vale_assets::tables::spellbook::CastAim::Item`, and
+/// [`Inventory::read`] answers the same question but reads everything the
+/// character carries to do it. That suits a panel and is too much work for a
+/// query made every time a spell is pressed. The one caller is the aiming
+/// rule's main hand; see `vale_assets::tables::spellbook::CastAim::Item`, and
 /// [`EQUIPMENT_SLOTS`] for what a slot index means.
 ///
 /// `None` for an empty slot, which is a zero guid on the wire.
@@ -963,44 +1170,44 @@ pub fn equipped_guid(player: &Entity, slot: usize) -> Option<u64> {
     }
 }
 
-/// **`EQUIPMENT_SLOT_MAINHAND`** — 15, and the slot every weapon imbue,
-/// poison and sharpening stone binds. vmangos names the same constant and
-/// comments the client flag beside it *"Client automatically selects item from
-/// mainhand slot as a cast target"*.
+/// `EQUIPMENT_SLOT_MAINHAND`: 15, the slot every weapon imbue, poison and
+/// sharpening stone applies to. vmangos names the same constant and comments
+/// the client flag beside it: "Client automatically selects item from
+/// mainhand slot as a cast target".
 pub const EQUIPMENT_SLOT_MAINHAND: usize = 15;
 
-/// …out of `PLAYER_FIELD_INV_SLOT_HEAD`, which covers the worn slots and the
-/// bag slots in one run.
+/// One slot's item guid from `PLAYER_FIELD_INV_SLOT_HEAD`, which covers the
+/// worn slots and the bag slots in one run.
 fn inventory_guid(player: &Entity, slot: usize) -> u64 {
     debug_assert!(slot < INVENTORY_SLOTS);
     guid_at(player, fields::player::INV_SLOT_HEAD, slot)
 }
 
-/// **The vendor's twelve slots, compacted and sorted the client's own way.**
+/// The vendor's twelve buyback slots, compacted and sorted in the 1.12.1
+/// client's order.
 ///
-/// Three parallel runs on the player's own object and no packet at all:
-/// `PLAYER_FIELD_VENDORBUYBACK_SLOT_1` (12 guids), `..._BUYBACK_PRICE_1` and
-/// `..._BUYBACK_TIMESTAMP_1` (12 each). A sale does not destroy the item — it
-/// re-parents it, which is why the object the guid names is still in the world
-/// and still carries its entry and its stack count.
+/// The data is three parallel runs on the player's own object, with no
+/// packet: `PLAYER_FIELD_VENDORBUYBACK_SLOT_1` (12 guids), `..._BUYBACK_PRICE_1`
+/// and `..._BUYBACK_TIMESTAMP_1` (12 each). A sale does not destroy the item;
+/// it re-parents it, so the object the guid names is still in the world and
+/// still carries its entry and its stack count.
 ///
-/// Every rule here is the client's own list builder's, and each one
-/// changes what the panel shows:
+/// Each of these rules matches the 1.12.1 client and changes what the panel
+/// shows:
 ///
-/// * **A slot is occupied when its *price* is non-zero**, not when
-///   its guid is. Both are cleared together, so the two agree in practice; the
-///   price is what the client tests and a zero-price row would be unbuyable
-///   anyway.
-/// * **The list is compacted**, so `GetBuybackItemInfo(1)` is the first
-///   occupied slot and not slot 69. Below twelve items the two coincide, which
-///   is exactly why an implementation that skipped this step would test clean.
-/// * **Sorted by the timestamp, ascending** (the comparison returns -1 when
-///   the left key is the smaller). That is what makes the *newest* sale the last
-///   entry, which is what `MerchantFrame.lua` shows on its first tab:
-///   `GetBuybackItemInfo(GetNumBuybackItems())`. Once the twelve are full the
-///   server replaces the **oldest** slot (`Player::AddItemToBuyBackSlot`), so
-///   without the sort the last thing you sold appears in the middle of the
-///   list and the front tab shows something else.
+/// * A slot is occupied when its price is non-zero, not when its guid is.
+///   Both are cleared together, so the two agree in practice. The client
+///   tests the price, and a zero-price row could not be bought anyway.
+/// * The list is compacted, so `GetBuybackItemInfo(1)` is the first occupied
+///   slot and not slot 69. Below twelve items the two coincide, so an
+///   implementation that skipped this step would pass a test with fewer than
+///   twelve items.
+/// * The list is sorted by timestamp, ascending. This makes the newest sale
+///   the last entry, which is what `MerchantFrame.lua` shows on its first
+///   tab: `GetBuybackItemInfo(GetNumBuybackItems())`. Once the twelve are full
+///   the server replaces the oldest slot (`Player::AddItemToBuyBackSlot`), so
+///   without the sort the most recent sale would appear in the middle of the
+///   list and the first tab would show a different item.
 fn read_buyback(world: &ObjectManager, player: &Entity) -> Vec<BuybackSlot> {
     let mut out: Vec<BuybackSlot> = (0..BUYBACK_SLOTS)
         .filter_map(|slot| {
@@ -1028,16 +1235,16 @@ fn read_buyback(world: &ObjectManager, player: &Entity) -> Vec<BuybackSlot> {
 
 /// Read a container object and everything in it.
 ///
-/// **The number of slots comes from the container's own field, and a container
-/// that states none is still a bag** — it is a bag whose create block has not
-/// arrived in full, and answering "no slots" for it is what the real client
-/// does too (`ContainerFrame_OnShow` compares `> 0`).
+/// The number of slots comes from the container's own field. A container that
+/// states no slot count is still a bag: its create block has not arrived in
+/// full. Answering "no slots" for it matches the 1.12.1 client
+/// (`ContainerFrame_OnShow` compares `> 0`).
 fn read_bag(world: &ObjectManager, guid: u64) -> Option<Bag> {
     let item = ItemSlot::read(world, guid)?;
     let entity = world.get(guid)?;
-    // A bag that is not a `Container` is not a bag: the field indices below
-    // mean something else on every other object type, which is exactly the
-    // overlap the per-type field modules exist to prevent.
+    // An object that is not a `Container` is not a bag: the field indices
+    // below mean something else on every other object type, and the per-type
+    // field modules exist to keep those overlapping indices apart.
     if entity.object_type != Some(ObjectType::Container) {
         return Some(Bag {
             item,
@@ -1055,10 +1262,10 @@ fn read_bag(world: &ObjectManager, guid: u64) -> Option<Bag> {
 }
 
 // ---------------------------------------------------------------------------
-// …and the one packet that says why nothing happened
+// SMSG_INVENTORY_CHANGE_FAILURE: the reason an item action was refused
 // ---------------------------------------------------------------------------
 
-/// **`SMSG_INVENTORY_CHANGE_FAILURE` — the refusal every item verb shares.**
+/// `SMSG_INVENTORY_CHANGE_FAILURE`: the refusal shared by every item action.
 ///
 /// ```text
 /// u8  code                       an index into INVENTORY_FAILURE_KEYS
@@ -1067,73 +1274,69 @@ fn read_bag(world: &ObjectManager, guid: u64) -> Option<Bag> {
 /// u8  bagSubclass                the two WRONG_BAG_TYPE codes only
 /// ```
 ///
-/// **The whole body after the first byte is absent when the code is
-/// `EQUIP_ERR_OK`**, and the level word is present for exactly one code — see
+/// The whole body after the first byte is absent when the code is
+/// `EQUIP_ERR_OK`, and the level word is present for exactly one code. See
 /// `Player::SendEquipError`, which sizes the packet at 22, 18 or 1 bytes for
-/// the three cases. Reading the tail unconditionally is how a one-byte packet
-/// becomes a parse failure, and a refusal that fails to parse is the same
-/// silence the refusal was sent to break.
+/// the three cases. Reading the tail unconditionally makes a one-byte packet a
+/// parse failure, and a refusal that fails to parse leaves the player with no
+/// feedback, which is the problem the packet is sent to solve.
 ///
-/// This is the packet the bags had been missing, and it is the *only* thing on
-/// the wire that answers a right-click the server has thrown away: a potion
-/// eleven levels too high is `HandleUseItemOpcode` -> `Player::CanUseItem` ->
-/// `EQUIP_ERR_CANT_EQUIP_LEVEL_I`, no cast is ever prepared, so no
-/// `SMSG_CAST_RESULT` is sent and nothing else in the session moves at all.
-/// Without this arm the click is indistinguishable from a click on empty air.
+/// This packet is the only thing on the wire that answers a right-click the
+/// server has rejected. A potion eleven levels too high goes
+/// `HandleUseItemOpcode` -> `Player::CanUseItem` ->
+/// `EQUIP_ERR_CANT_EQUIP_LEVEL_I`. No cast is prepared, so no
+/// `SMSG_CAST_RESULT` is sent and nothing else in the session changes.
+/// Without handling this packet, the click looks the same as a click on empty
+/// space.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct InventoryFailure {
     /// `InventoryResult`, and an index into [`INVENTORY_FAILURE_KEYS`].
     pub code: u8,
-    /// The level the item wants — **only ever set by
-    /// [`EQUIP_ERR_CANT_EQUIP_LEVEL_I`]**, whose string has the one `%d` in the
-    /// family.
+    /// The level the item requires. Only [`EQUIP_ERR_CANT_EQUIP_LEVEL_I`] sets
+    /// it; its string is the only one in the family with a `%d`.
     pub required_level: u32,
-    /// The item the refusal is about, or 0. Not used to name it — the plate is
-    /// the interface's job — but it is what distinguishes two refusals about
-    /// two stacks in the same second.
+    /// The item the refusal is about, or 0. It is not used to name the item,
+    /// because the message text is the interface's job, but it distinguishes
+    /// two refusals about two stacks in the same second.
     pub item: u64,
     pub other_item: u64,
 }
 
-/// `EQUIP_ERR_OK`: sent as a one-byte packet, and it is not an error at all.
+/// `EQUIP_ERR_OK`: sent as a one-byte packet, and not an error.
 ///
-/// `HandleUseItemOpcode`'s failure path sends `EQUIP_ERR_NONE` first — "free
-/// gray item after use fail" — and *that* is a different code with no string;
-/// this one is the success acknowledgement several verbs end with.
+/// `HandleUseItemOpcode`'s failure path sends `EQUIP_ERR_NONE` first ("free
+/// gray item after use fail"), which is a different code with no string. This
+/// code is the success acknowledgement that several actions end with.
 pub const EQUIP_ERR_OK: u8 = 0;
 
 /// The one code that carries a number, and the reason this packet has two
 /// shapes.
 pub const EQUIP_ERR_CANT_EQUIP_LEVEL_I: u8 = 1;
 
-/// **`InventoryResult` in declaration order, as `GlobalStrings.lua` keys.**
+/// `InventoryResult` in declaration order, as `GlobalStrings.lua` keys.
 ///
-/// The same shape as [`crate::play::spells::CAST_FAILURE_KEYS`] and for the same
-/// reason: the wire carries a byte that *indexes* an enum, the enum's entries
-/// name keys in a file the archives ship, and an off-by-one here does not fail —
-/// it says "That bag is full." when the server said "You must reach level 45 to
-/// use that item."
+/// This has the same shape as [`crate::play::spells::CAST_FAILURE_KEYS`], for
+/// the same reason: the wire carries a byte that indexes an enum, and the
+/// enum's entries name keys in a file the archives ship. An off-by-one here
+/// does not fail; it shows "That bag is full." when the server said "You must
+/// reach level 45 to use that item."
 ///
-/// Transcribed from vmangos' `InventoryResult` (`Objects/ItemDefines.h`), whose
-/// comment column is the key for each entry. Every `#if` guard in that header is
-/// `> CLIENT_BUILD_1_x` for an x below 1.12, so **1.12.1 gets all 67** and
-/// declaration order is the wire value. The client carries its own copy of
-/// the names — every name in this list that is *not* also used by the much
-/// larger `UI_ERROR_MESSAGE` table — but not in the enum's order, so it
-/// corroborates the membership and not the indices.
+/// Transcribed from vmangos' `InventoryResult` (`Objects/ItemDefines.h`),
+/// whose comment column gives the key for each entry. Every `#if` guard in
+/// that header is `> CLIENT_BUILD_1_x` for an x below 1.12, so 1.12.1 gets all
+/// 67 entries and declaration order is the wire value.
 ///
-/// **Two entries deviate from vmangos' comment, both deliberately.**
+/// Two entries differ from vmangos' comment on purpose.
 /// `EQUIP_ERR_BANK_FULL` (51) is commented `ERR_BAG_FULL` there and is
-/// `ERR_BANK_FULL` here: the client carries a distinct `ERR_BANK_FULL` string
-/// (beside `ERR_INV_FULL` and `ERR_CANT_EQUIP_LEVEL_I`) and `GlobalStrings.lua`
-/// ships it as "Your bank is full", so the comment is a mislabel of an
-/// enumerator whose own name says otherwise.
+/// `ERR_BANK_FULL` here: `GlobalStrings.lua` ships a separate `ERR_BANK_FULL`
+/// as "Your bank is full", so the vmangos comment mislabels an enumerator
+/// whose own name says otherwise.
 /// `EQUIP_ERR_NONE` (59) is `ERR_CANT_BE_DISENCHANTED`, which
-/// `GlobalStrings.lua` **does not carry** — so it displays as nothing, which is
-/// right: it is the code the server sends to *release* a grey item after a
-/// failed use, immediately before the real reason.
+/// `GlobalStrings.lua` does not carry, so it displays nothing. That is
+/// correct: the server sends this code to release a grey item after a failed
+/// use, immediately before the real reason.
 pub const INVENTORY_FAILURE_KEYS: [&str; 67] = [
-    "",                                // 0  EQUIP_ERR_OK — not a failure
+    "",                                // 0  EQUIP_ERR_OK, not a failure
     "ERR_CANT_EQUIP_LEVEL_I",          // 1  You must reach level %d to use that item.
     "ERR_CANT_EQUIP_SKILL",            // 2  You aren't skilled enough to use that item.
     "ERR_WRONG_SLOT",                  // 3  That item does not go in that slot.
@@ -1144,7 +1347,7 @@ pub const INVENTORY_FAILURE_KEYS: [&str; 67] = [
     "ERR_PROFICIENCY_NEEDED",          // 8
     "ERR_NO_SLOT_AVAILABLE",           // 9
     "ERR_CANT_EQUIP_EVER",             // 10
-    "ERR_CANT_EQUIP_EVER",             // 11 …the enum has two of these
+    "ERR_CANT_EQUIP_EVER",             // 11 the enum has two of these
     "ERR_NO_SLOT_AVAILABLE",           // 12
     "ERR_2HANDED_EQUIPPED",            // 13
     "ERR_2HSKILLNOTFOUND",             // 14 You cannot dual-wield
@@ -1184,7 +1387,7 @@ pub const INVENTORY_FAILURE_KEYS: [&str; 67] = [
     "ERR_CANT_WRAP_BAGS",              // 48
     "ERR_LOOT_GONE",                   // 49
     "ERR_INV_FULL",                    // 50
-    "ERR_BANK_FULL",                   // 51 …see the note above
+    "ERR_BANK_FULL",                   // 51 see the note above
     "ERR_VENDOR_SOLD_OUT",             // 52
     "ERR_BAG_FULL",                    // 53
     "ERR_ITEM_NOT_FOUND",              // 54
@@ -1192,7 +1395,7 @@ pub const INVENTORY_FAILURE_KEYS: [&str; 67] = [
     "ERR_BAG_FULL",                    // 56
     "ERR_VENDOR_SOLD_OUT",             // 57
     "ERR_OBJECT_IS_BUSY",              // 58
-    "ERR_CANT_BE_DISENCHANTED",        // 59 …not in GlobalStrings: shows nothing
+    "ERR_CANT_BE_DISENCHANTED",        // 59 not in GlobalStrings: shows nothing
     "ERR_NOT_IN_COMBAT",               // 60
     "ERR_NOT_WHILE_DISARMED",          // 61
     "ERR_BAG_FULL",                    // 62
@@ -1205,12 +1408,11 @@ pub const INVENTORY_FAILURE_KEYS: [&str; 67] = [
 /// The `GlobalStrings.lua` key for one of those codes, or `None` for the
 /// success code and for anything the table does not carry.
 ///
-/// **A code past the end is `ERR_BAG_FULL`**, and that is the client's own
-/// behaviour rather than a fallback invented here: `ItemDefines.h` ends with
-/// `// any greater values show as "bag full"`. It matters because vmangos and
-/// this client are the two halves of a table that has grown in later builds, so
-/// an unknown code is a *newer* code and the client already decided what to do
-/// with one.
+/// A code past the end maps to `ERR_BAG_FULL`. That is the 1.12.1 client's
+/// behaviour, not a fallback chosen here: `ItemDefines.h` ends with
+/// `// any greater values show as "bag full"`. vmangos and this client are two
+/// halves of a table that grew in later builds, so an unknown code is a newer
+/// code, and the client already defines how to show one.
 pub fn inventory_failure_key(code: u8) -> Option<&'static str> {
     if code == EQUIP_ERR_OK {
         return None;
@@ -1222,14 +1424,15 @@ pub fn inventory_failure_key(code: u8) -> Option<&'static str> {
     (!key.is_empty()).then_some(key)
 }
 
-/// **An item has arrived in a bag** — `SMSG_ITEM_PUSH_RESULT`, the one packet
-/// that says so whatever brought it.
+/// `SMSG_ITEM_PUSH_RESULT`: an item has arrived in a bag. It is the one packet
+/// that says so, whatever the source.
 ///
-/// Everything else about the inventory is update fields, and update fields say
-/// *what is true now* rather than *what just happened*. A stack that grew by
-/// three is a `ITEM_FIELD_STACK_COUNT` moving, with nothing to say whether it
-/// was looted, bought, crafted, mailed or traded. This packet is the event, and
-/// `Player::SendNewItem` has twenty callers covering all of them.
+/// Everything else about the inventory is update fields, and update fields
+/// state the current value, not the event that changed it. A stack that grew
+/// by three is `ITEM_FIELD_STACK_COUNT` changing, with nothing to say whether
+/// the items were looted, bought, crafted, mailed or traded. This packet is
+/// the event, and `Player::SendNewItem` has twenty callers covering all of
+/// those cases.
 ///
 /// ```text
 /// u64 playerGuid       whose bag — a group broadcast names the other player
@@ -1244,33 +1447,33 @@ pub fn inventory_failure_key(code: u8) -> Option<&'static str> {
 /// u32 count
 /// ```
 ///
-/// **The last two fields exist only above 1.10.2**, which 5875 is — the
-/// `#if SUPPORTED_CLIENT_BUILD` guards in `SendNewItem` bracket the slot and the
-/// count. A reader written against the older layout is two fields short and
-/// reports every stack as one item.
+/// The last two fields exist only in builds above 1.10.2, which 5875 is: the
+/// `#if SUPPORTED_CLIENT_BUILD` guards in `SendNewItem` bracket the slot and
+/// the count. A reader written against the older layout is two fields short
+/// and reports every stack as one item.
 ///
-/// **It is broadcast to the group for a loot**, with `broadcast = true` at
-/// `LootHandler.cpp:236` — which is why the guid is in the body at all and why
-/// it has to be checked. A client that skips that check announces every party
+/// For loot the packet is broadcast to the group, with `broadcast = true` at
+/// `LootHandler.cpp:236`. That is why the guid is in the body, and why it has
+/// to be checked: a client that skips the check announces every party
 /// member's loot as its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ItemPush {
-    /// Whose bag it landed in. **Not necessarily ours** — see above.
+    /// Whose bag it landed in. Not necessarily the local player's; see above.
     pub guid: u64,
     /// `0` looted, `1` handed over by an NPC. Chooses between the game's
     /// `LOOT_ITEM_SELF` and `LOOT_ITEM_PUSHED_SELF` lines.
     pub received: bool,
-    /// `1` when the item was *made* rather than given — `LOOT_ITEM_CREATED_SELF`.
-    /// Outranks [`Self::received`], which is what a crafted item is.
+    /// `1` when the item was made rather than given: `LOOT_ITEM_CREATED_SELF`.
+    /// Takes precedence over [`Self::received`], which a crafted item also
+    /// has.
     pub created: bool,
-    /// The server's own "say this in the chat frame" switch. Quest rewards turn
-    /// it off (`Player.cpp:14381` passes `showInChat = false`), which is the
-    /// reference's own reason the quest-reward window does not double up with a
-    /// loot line.
+    /// The server's "show this in the chat frame" switch. Quest rewards turn
+    /// it off (`Player.cpp:14381` passes `showInChat = false`), which is why
+    /// the quest-reward window does not also produce a loot line.
     pub show_in_chat: bool,
     pub bag_slot: u8,
-    /// The slot inside that bag, or `None` when the item went onto a stack that
-    /// was already there — the wire's `0xFFFFFFFF`.
+    /// The slot inside that bag, or `None` when the item went onto an existing
+    /// stack (the wire's `0xFFFFFFFF`).
     pub slot: Option<u32>,
     pub item_id: u32,
     pub suffix_factor: u32,
@@ -1308,11 +1511,11 @@ pub fn parse_item_push_result(body: &[u8]) -> Option<ItemPush> {
 }
 
 impl ItemPush {
-    /// **The `GlobalStrings` key for the line this item makes**, or `None` when
-    /// the server asked for no line.
+    /// The `GlobalStrings` key for the chat line this item produces, or `None`
+    /// when the server asked for no line.
     ///
-    /// Six keys, three cases times singular and plural, and the game ships all
-    /// six:
+    /// There are six keys, three cases times singular and plural, and the game
+    /// ships all six:
     ///
     /// ```text
     /// LOOT_ITEM_CREATED_SELF   "You create: %s."
@@ -1320,11 +1523,10 @@ impl ItemPush {
     /// LOOT_ITEM_SELF           "You receive loot: %s."
     /// ```
     ///
-    /// **Nothing in `Interface\FrameXML\` uses any of them**, which is the
-    /// evidence that the C client composes the line itself off this packet: the
-    /// strings exist, they take exactly the arguments this body carries, and no
-    /// Lua in the ninety files the `.toc` loads mentions them. What is *not*
-    /// measured here is the address of the handler that does it.
+    /// No file in `Interface\FrameXML\` uses any of them. The strings exist,
+    /// they take exactly the arguments this body carries, and none of the
+    /// ninety Lua files the `.toc` loads mentions them, so the 1.12.1 client
+    /// composes the line itself from this packet.
     pub fn line_key(&self) -> Option<&'static str> {
         if !self.show_in_chat {
             return None;
@@ -1343,10 +1545,10 @@ impl ItemPush {
 
 /// Parse `SMSG_INVENTORY_CHANGE_FAILURE`.
 ///
-/// A one-byte body is the success acknowledgement and parses to a
-/// [`InventoryFailure`] with [`EQUIP_ERR_OK`] in it — **not to `None`**, because
-/// `None` is this crate's word for "the packet was malformed" and gets counted
-/// as a read failure on the HUD.
+/// A one-byte body is the success acknowledgement and parses to an
+/// [`InventoryFailure`] holding [`EQUIP_ERR_OK`], not to `None`. In this crate
+/// `None` means "the packet was malformed", and it is counted as a read
+/// failure on the HUD.
 pub fn parse_inventory_change_failure(body: &[u8]) -> Option<InventoryFailure> {
     let mut r = crate::bytes::Reader::new(body);
     let code = r.has(1).then(|| r.u8())?;
@@ -1363,9 +1565,9 @@ pub fn parse_inventory_change_failure(body: &[u8]) -> Option<InventoryFailure> {
         }
         failure.required_level = r.u32();
     }
-    // **The guids are optional in practice and not on the wire.** vmangos always
-    // writes them, but they are the tail and this client has no use for either,
-    // so a short body still yields the code — which is the whole message.
+    // The guids are optional here, though always present on the wire. vmangos
+    // always writes them, but they are the tail and this client uses neither,
+    // so a short body still yields the code, which is the whole message.
     if r.has(16) {
         failure.item = r.u64();
         failure.other_item = r.u64();
@@ -1374,29 +1576,28 @@ pub fn parse_inventory_change_failure(body: &[u8]) -> Option<InventoryFailure> {
 }
 
 
-/// **`SMSG_ENCHANTMENTLOG`: somebody enchanted an item, or an enchant faded.**
+/// `SMSG_ENCHANTMENTLOG`: an item was enchanted, or an enchantment faded.
 ///
 /// `{u64 caster, u64 owner, u32 item_entry, u32 spell_id, u8 show_affiliation}`,
-/// full guids rather than packed ones, and the last byte is only read when there
-/// is a caster.
+/// with full guids rather than packed ones. The last byte is only read when
+/// there is a caster.
 ///
-/// **A zero caster is a fade, not a bad packet.** vmangos' own comment on the
-/// field is "enchanter; empty means enchant has faded", and the two cases take
-/// different `GlobalStrings` keys — `ITEMENCHANTMENTADD*` for an application and
-/// `ITEMENCHANTMENTREMOVE*` for a fade — so a reader that treats the guid as
+/// A zero caster means a fade, not a bad packet. vmangos' comment on the field
+/// is "enchanter; empty means enchant has faded", and the two cases use
+/// different `GlobalStrings` keys: `ITEMENCHANTMENTADD*` for an application
+/// and `ITEMENCHANTMENTREMOVE*` for a fade. A reader that treats the guid as
 /// mandatory loses every expiry line.
 ///
-/// This is the only statement on the wire that an enchant landed. Nothing else
-/// says so: the item's own `ITEM_FIELD_ENCHANTMENT` fields move in an update
-/// block with no announcement, and the trade window's echo says only what is
-/// *proposed*.
+/// This is the only packet that reports an enchantment being applied. The
+/// item's `ITEM_FIELD_ENCHANTMENT` fields change in an update block with no
+/// announcement, and the trade window's echo only reports what is proposed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnchantmentLog {
     /// Zero means the enchant faded rather than that somebody applied it.
     pub caster: u64,
     pub owner: u64,
     pub item_entry: u32,
-    /// The **enchanting** spell, which is the name the line prints.
+    /// The enchanting spell, whose name the line prints.
     pub spell_id: u32,
     /// Only meaningful when [`Self::caster`] is set.
     pub show_affiliation: bool,
@@ -1418,8 +1619,8 @@ pub fn parse_enchantment_log(body: &[u8]) -> Option<EnchantmentLog> {
     let owner = r.u64();
     let item_entry = r.u32();
     let spell_id = r.u32();
-    // The trailing byte is the last field and a short packet is not a broken
-    // one: read it if it is there.
+    // The trailing byte is the last field, and a packet without it is not
+    // broken: read it if present.
     let show_affiliation = r.has(1) && r.u8() != 0;
     Some(EnchantmentLog { caster, owner, item_entry, spell_id, show_affiliation })
 }
@@ -1444,8 +1645,8 @@ mod tests {
     }
 
     /// A player carrying a bag with one stack in it, plus a worn helmet and one
-    /// thing in the backpack. Every level of the three-deep chain, because the
-    /// chain is the whole of what this module does.
+    /// item in the backpack. It covers every level of the three-object chain,
+    /// which is what this module reads.
     fn world_with_a_bag() -> ObjectManager {
         const PLAYER: u64 = 0x1;
         const HELMET: u64 = 0x10;
@@ -1507,7 +1708,7 @@ mod tests {
         world
     }
 
-    /// **The three-deep chain**: the player names the bag, the bag names the
+    /// The three-object chain: the player names the bag, the bag names the
     /// stack, the stack names the entry.
     #[test]
     fn a_bag_and_its_contents_are_read_through_three_objects() {
@@ -1517,7 +1718,7 @@ mod tests {
         assert_eq!(bag.item.entry, 4500, "the bag is itself an item");
         assert_eq!(bag.len(), 6, "CONTAINER_FIELD_NUM_SLOTS");
 
-        // The potion is in the *third* slot, and the interface counts from one.
+        // The potion is in the third slot, and the interface counts from one.
         let potion = inventory.container_item(1, 3).expect("the third slot");
         assert_eq!(potion.entry, 858);
         assert_eq!(potion.count, 5);
@@ -1525,8 +1726,8 @@ mod tests {
         assert!(inventory.container_item(1, 7).is_none(), "past the end");
     }
 
-    /// The backpack is a *field block* rather than an object, and the key ring
-    /// is a third one — neither has a container to chase.
+    /// The backpack is a field block rather than an object, and so is the key
+    /// ring. Neither has a container object to follow.
     #[test]
     fn the_backpack_lives_in_the_players_own_fields() {
         let inventory = Inventory::read(&world_with_a_bag());
@@ -1537,8 +1738,8 @@ mod tests {
         assert_eq!(inventory.container(KEYRING_CONTAINER).map(<[_]>::len), Some(KEYRING_SLOTS));
     }
 
-    /// **The two numberings.** Bag id 1 is inventory slot 20 is field 19, and
-    /// getting any of the three wrong reads a plausible neighbour.
+    /// The two numberings. Bag id 1 is inventory slot 20 is field 19, and
+    /// getting any of the three wrong reads a neighbouring slot.
     #[test]
     fn the_interfaces_slot_ids_and_the_field_indices_are_crossed_here() {
         let inventory = Inventory::read(&world_with_a_bag());
@@ -1552,7 +1753,7 @@ mod tests {
     }
 
     /// A count is a sum over everything carried, which is what `GetItemCount`
-    /// answers — and a stack the create block never stated a count for is one.
+    /// answers. A stack whose create block stated no count counts as one.
     #[test]
     fn a_count_sums_every_stack_and_an_absent_count_is_one() {
         let inventory = Inventory::read(&world_with_a_bag());
@@ -1580,35 +1781,36 @@ mod tests {
         .broken());
     }
 
-    /// A world with no player at all answers the empty inventory rather than a
-    /// panic — which is a character screen, and every frame before the first
-    /// update block.
+    /// A world with no player answers the empty inventory rather than
+    /// panicking. That is the state at a character screen, and in every frame
+    /// before the first update block.
     #[test]
     fn no_player_is_an_empty_inventory() {
         let inventory = Inventory::read(&ObjectManager::new());
         assert_eq!(inventory, Inventory::default());
-        // The backpack is still *a* container and it has no slots, which is
-        // the number `ToggleBackpack` refuses to open on (`size > 0`). A `None`
-        // here would mean "there is no backpack", which is never true of a
-        // character and would be a different lie.
+        // The backpack is still a container, with no slots, which is the size
+        // `ToggleBackpack` refuses to open on (`size > 0`). `None` here would
+        // mean "there is no backpack", which is never true of a character.
         assert_eq!(inventory.container(0).map(<[_]>::len), Some(0));
         assert!(inventory.container(1).is_none(), "and no bag in slot one");
         assert!(inventory.entries().is_empty());
     }
 
-    /// **The latch, which is the only announcement an inventory change has.**
+    /// The inventory version (the latch), which is the only signal an
+    /// inventory change produces.
     ///
-    /// A stack count moving must bump it and a *position* must not: the local
-    /// player's block carries both, and a version that moved on every step
-    /// would rebuild the bags sixty times a second and be no latch at all.
+    /// A stack count changing must increment it and a position change must
+    /// not. The local player's block carries both, and a version that changed
+    /// on every step would rebuild the bags sixty times a second and signal
+    /// nothing useful.
     #[test]
     fn the_version_moves_for_an_item_and_not_for_a_step() {
         let mut world = world_with_a_bag();
-        // **Without this the player half of the test passes vacuously.**
-        // `touches_inventory` asks the entity's own `is_self`, which only a
-        // `SELF` movement flag sets, so a fixture that writes `player_guid`
-        // directly leaves every assertion below about the player's block true
-        // for the wrong reason — including the two that are the whole point.
+        // Without this line the player half of the test passes vacuously.
+        // `touches_inventory` checks the entity's own `is_self`, which only a
+        // `SELF` movement flag sets. A fixture that only writes `player_guid`
+        // makes every assertion below about the player's block pass for the
+        // wrong reason, including the two about health and coinage.
         world.get_mut(0x1).expect("the fixture's player").is_self = true;
         let before = world.inventory_version;
 
@@ -1638,13 +1840,13 @@ mod tests {
         });
         assert_eq!(world.inventory_version, after, "health is not inventory");
 
-        // **…and neither is the purse**, which is what makes the money a latch
-        // of its own one crate up. `PLAYER_FIELD_COINAGE` sits well past the
-        // slot runs, correctly — paying a trainer moves nothing a bag square
-        // draws — so anything watching only this version never learns that gold
-        // was spent. See `vale_client::game::items`, where reading it below
-        // this latch instead of above it was the whole of "your gold does not
-        // update until you move an item".
+        // The coinage is not inventory either, which is why money has its own
+        // latch one crate up. `PLAYER_FIELD_COINAGE` sits past the slot runs,
+        // and paying a trainer changes nothing a bag square draws, so anything
+        // watching only this version never learns that gold was spent. See
+        // `vale_client::game::items`: reading the coinage under this latch
+        // instead of its own made the gold display update only when an item
+        // moved.
         world.apply(&ObjectUpdate {
             has_transport: false,
             warning: None,
@@ -1658,26 +1860,24 @@ mod tests {
         assert_eq!(world.inventory_version, after, "the purse is not inventory");
     }
 
-    /// **A destroyed item clears its slot on the packet that destroys it**, and
-    /// that is the bug this test exists for.
+    /// A destroyed item clears its slot on the packet that destroys it.
     ///
-    /// `SMSG_DESTROY_OBJECT` is a bare guid handled outside `apply` entirely, so
-    /// the latch that the `OUT_OF_RANGE` arm sets was never reached — and items
-    /// are not in the grid, so nothing *ever* names one in an out-of-range
-    /// block. The version therefore did not move for the one case that
-    /// happens, and the client's snapshot kept the old row until something else
-    /// moved a field: a stack merged into another showed in **both** squares
-    /// until the next bag update, which is the report verbatim.
+    /// `SMSG_DESTROY_OBJECT` is a bare guid handled outside `apply`, so the
+    /// latch that the `OUT_OF_RANGE` case sets was never reached, and items are
+    /// not in the grid, so no out-of-range block ever names one. The version
+    /// did not change on a destroy, and the client's snapshot kept the old row
+    /// until another field changed: a stack merged into another showed in both
+    /// squares until the next bag update.
     ///
-    /// The two assertions are the two halves: the version moves, and the read
-    /// taken after it is empty.
+    /// The two assertions test the two parts: the version changes, and the
+    /// read taken after it is empty.
     #[test]
     fn destroying_an_item_moves_the_version_and_empties_the_square() {
         let mut world = world_with_a_bag();
         assert_eq!(Inventory::read(&world).container_item(0, 1).unwrap().entry, 2589);
         let before = world.inventory_version;
 
-        // The whole of `world::destroy`: one guid, no block, no fields.
+        // All that `world::destroy` does: one guid, no block, no fields.
         world.remove(0x30);
 
         assert_eq!(world.inventory_version, before + 1, "the destroy is a change");
@@ -1686,26 +1886,26 @@ mod tests {
             "the backpack square the linen was in is empty"
         );
 
-        // …and a creature dying is not an inventory change, which is what keeps
-        // this from being a latch that moves on every despawn in the world.
+        // A creature dying is not an inventory change, so the latch does not
+        // change on every despawn in the world.
         let after = world.inventory_version;
         world.remove(0x1234);
         assert_eq!(world.inventory_version, after, "an absent guid changes nothing");
     }
 
-    /// **The buyback list, in the three ways the client's own builder differs
-    /// from a straight walk of the twelve slots.**
+    /// The buyback list differs from a straight walk of the twelve slots in
+    /// three ways, all matching the 1.12.1 client.
     ///
-    /// Occupancy is the *price*, the list is compacted, and it is sorted by the
-    /// timestamp — so the newest sale is last, which is the entry
-    /// `MerchantFrame_UpdateMerchantInfo` draws on the front tab.
+    /// Occupancy is decided by the price, the list is compacted, and it is
+    /// sorted by timestamp, so the newest sale is last. That is the entry
+    /// `MerchantFrame_UpdateMerchantInfo` draws on the first tab.
     #[test]
     fn the_buyback_is_compacted_and_sorted_oldest_first() {
         let mut world = world_with_a_bag();
         let player = 0x1u64;
-        // Three of the twelve, deliberately out of order and with a gap: slot 0
-        // holds the *oldest* and slot 2 the newest, which is what happens once
-        // the twelve are full and the server starts replacing the oldest.
+        // Slots 0 and 2, out of order and with a gap: slot 0 holds the newer
+        // sale and slot 2 the older, which is what happens once the twelve are
+        // full and the server starts replacing the oldest.
         let mut fields = vec![];
         for (slot, guid, price, when) in [(0usize, 0x40u64, 55u32, 300u32), (2, 0x41, 70, 100)] {
             let base = fields::player::VENDORBUYBACK_SLOT_1 + slot as u16 * GUID_STRIDE;
@@ -1714,9 +1914,8 @@ mod tests {
             fields.push((fields::player::BUYBACK_PRICE_1 + slot as u16, price));
             fields.push((fields::player::BUYBACK_TIMESTAMP_1 + slot as u16, when));
         }
-        // …and a fourth slot with a guid and **no price**, which is what an
-        // emptied slot looks like if only half of it is cleared. It must not
-        // appear.
+        // Slot 5 has a guid and no price, which is what an emptied slot looks
+        // like if only half of it is cleared. It must not appear.
         let base = fields::player::VENDORBUYBACK_SLOT_1 + 5 * GUID_STRIDE;
         fields.push((base, 0x42));
         fields.push((base + 1, 0));
@@ -1743,19 +1942,19 @@ mod tests {
         assert_eq!(buyback[1].item.entry, 2589);
         assert_eq!(buyback[1].item.count, 4);
         assert_eq!(buyback[1].price, 55);
-        // **And this is the assertion the whole sort is for**: the last entry is
-        // the newest sale, which is `GetBuybackItemInfo(GetNumBuybackItems())`.
+        // The sort exists for this assertion: the last entry is the newest
+        // sale, which is `GetBuybackItemInfo(GetNumBuybackItems())`.
         assert_eq!(buyback.last().unwrap().wire_slot, BUYBACK_SLOT_START as u32);
     }
 
-    /// A sale moves only the buyback runs, and those have to count as an
-    /// inventory change or the vendor's second tab fills a packet late.
+    /// A sale changes only the buyback runs, and those must count as an
+    /// inventory change, or the vendor's second tab fills one packet late.
     #[test]
     fn the_buyback_runs_move_the_version() {
         let mut world = world_with_a_bag();
-        // **`is_self` and not merely `player_guid`.** `touches_inventory` asks
-        // the *entity*, because the field runs it checks mean something else on
-        // every other player in the world; the fixture sets the guid directly
+        // Set `is_self`, not only `player_guid`. `touches_inventory` checks the
+        // entity, because the field runs it checks mean something else on
+        // every other player in the world. The fixture sets the guid directly
         // because nothing else in it needs a position.
         world.get_mut(0x1).expect("the fixture's player").is_self = true;
         for field in [
@@ -1778,12 +1977,13 @@ mod tests {
         }
     }
 
-    /// **The third numbering, against `Player::GetItemByPos`.**
+    /// The server's (bag, slot) numbering, checked against
+    /// `Player::GetItemByPos`.
     ///
-    /// Bag id 1's first slot is `(19, 0)` and the backpack's is `(255, 23)` —
-    /// two different bags *and* two different bases, which is why this is
-    /// crossed here rather than at a call site. Getting either half wrong names
-    /// a neighbouring item, which the server will happily use.
+    /// Bag id 1's first slot is `(19, 0)` and the backpack's is `(255, 23)`:
+    /// two different bags and two different bases, which is why the conversion
+    /// is done here rather than at a call site. Getting either half wrong names
+    /// a neighbouring item, and the server accepts it.
     #[test]
     fn a_container_slot_crosses_into_the_servers_own_pair() {
         // The backpack: no bag, and the flat run starts at INVENTORY_SLOT_ITEM_START.
@@ -1794,12 +1994,12 @@ mod tests {
             None,
             "one past the backpack is the first bank slot, not a seventeenth pocket"
         );
-        // A worn bag: the bag *is* its own inventory slot, and the slot inside
+        // A worn bag: the bag is its own inventory slot, and the slot inside
         // it counts from zero.
         assert_eq!(server_container_slot(1, 1), Some((19, 0)));
         assert_eq!(server_container_slot(4, 3), Some((22, 2)));
-        // The key ring, whose base is 81 — the value pinned by KEYRING_SLOT_END
-        // being 97 and the ring being sixteen guids wide.
+        // The key ring, whose base is 81: KEYRING_SLOT_END is 97 and the ring
+        // is sixteen guids wide.
         assert_eq!(server_container_slot(KEYRING_CONTAINER, 1), Some((255, 81)));
         assert_eq!(server_container_slot(KEYRING_CONTAINER, 16), Some((255, 96)));
         // Zero is not a slot: the interface counts from one, and a `checked_sub`
@@ -1808,7 +2008,7 @@ mod tests {
         assert_eq!(server_container_slot(11, 1), None, "four worn bags and six in the bank");
     }
 
-    /// …and the worn run, which is one subtraction and the same bag.
+    /// The worn run, which is one subtraction and always the same bag.
     #[test]
     fn a_worn_slot_is_the_players_own_object() {
         assert_eq!(server_inventory_slot(1), Some((255, 0)), "the head");
@@ -1821,8 +2021,8 @@ mod tests {
         assert_eq!(server_inventory_slot(24), None);
     }
 
-    /// **`CMSG_USE_ITEM`'s three bytes and its target block**, against
-    /// `HandleUseItemOpcode`'s own read order.
+    /// `CMSG_USE_ITEM`'s three bytes and its target block, checked against
+    /// `HandleUseItemOpcode`'s read order.
     #[test]
     fn a_use_names_the_slot_the_spell_index_and_whom() {
         // A potion in the backpack's first slot, no target: three bytes and an
@@ -1831,7 +2031,7 @@ mod tests {
             use_item_body(255, 23, 0, crate::play::spells::CastTarget::SelfImplicit),
             vec![255, 23, 0, 0, 0]
         );
-        // …and a bandage on the selection, which is the ordinary unit block.
+        // A bandage on the selection, which uses the ordinary unit block.
         let aimed = use_item_body(19, 2, 1, crate::play::spells::CastTarget::Unit(0xF130_0000_0001_2345));
         assert_eq!(&aimed[..3], &[19, 2, 1]);
         assert_eq!(
@@ -1841,13 +2041,13 @@ mod tests {
         );
         // The equip form carries the pair and stops.
         assert_eq!(auto_equip_body(255, 25), vec![255, 25]);
-        // …and `CMSG_OPEN_ITEM`'s is the same two bytes to a different opcode,
-        // which is the whole reason the two are easy to confuse.
+        // `CMSG_OPEN_ITEM` sends the same two bytes to a different opcode,
+        // which is why the two are easy to confuse.
         assert_eq!(open_item_body(255, 25), vec![255, 25]);
         assert_eq!(open_item_body(19, 3), vec![19, 3]);
     }
 
-    /// Every entry carried, once each — the work list the query pass sends.
+    /// Every entry carried, once each: the work list the query pass sends.
     #[test]
     fn the_entry_list_covers_every_layer_and_deduplicates() {
         let mut entries = Inventory::read(&world_with_a_bag()).entries();
@@ -1855,11 +2055,11 @@ mod tests {
         assert_eq!(entries, vec![858, 2589, 4500, 12640]);
     }
 
-    /// **`SMSG_INVENTORY_CHANGE_FAILURE` has three shapes and one of them is a
-    /// single byte.** `Player::SendEquipError` sizes the packet at 22, 18 or 1,
+    /// `SMSG_INVENTORY_CHANGE_FAILURE` has three shapes, and one of them is a
+    /// single byte. `Player::SendEquipError` sizes the packet at 22, 18 or 1,
     /// and reading the tail unconditionally turns the success acknowledgement
-    /// into a parse failure — which reaches the HUD as a warning about a packet
-    /// that was perfectly well formed.
+    /// into a parse failure. That reaches the HUD as a warning about a packet
+    /// that was well formed.
     #[test]
     fn a_refusal_reads_its_one_optional_word_and_no_more() {
         // The success form: one byte, no tail.
@@ -1874,8 +2074,8 @@ mod tests {
         assert_eq!(level.required_level, 45, "the *item's* level, not ours");
         assert_eq!(level.item, 7);
 
-        // …and every other code, whose body starts with the guids. Reading the
-        // level word here would take the low half of the item guid for it.
+        // Every other code: the body starts with the guids. Reading the level
+        // word here would take the low half of the item guid for it.
         let mut w = crate::bytes::Writer::new();
         w.u8(23).u64(0xABCD).u64(0);
         let other = parse_inventory_change_failure(&w.buf).expect("the 18-byte form parses");
@@ -1885,11 +2085,11 @@ mod tests {
         assert_eq!(parse_inventory_change_failure(&[]), None);
     }
 
-    /// **The table is an index, and the two ends of it are what pin it.**
+    /// The table is indexed by code, and its first and last entries confirm
+    /// the indexing.
     ///
-    /// An off-by-one here says "That bag is full." where the server said "You
-    /// must reach level 45 to use that item." — the exact failure the round that
-    /// added this was reported for, one layer further out.
+    /// An off-by-one here shows "That bag is full." where the server said "You
+    /// must reach level 45 to use that item."
     #[test]
     fn a_refusal_code_names_the_games_own_string() {
         assert_eq!(inventory_failure_key(0), None, "success is not a message");
@@ -1899,34 +2099,34 @@ mod tests {
         );
         assert_eq!(inventory_failure_key(23), Some("ERR_ITEM_NOT_FOUND"));
         assert_eq!(inventory_failure_key(50), Some("ERR_INV_FULL"));
-        // The last entry of the 1.12 enum — the check that the four `#if`
+        // The last entry of the 1.12 enum, which checks that the four `#if`
         // guards were all resolved the way 5875 resolves them.
         assert_eq!(
             inventory_failure_key(66),
             Some("ERR_LOOT_CANT_LOOT_THAT_NOW")
         );
-        // **Past the end is "bag full", which is the client's own rule** rather
-        // than a fallback chosen here — `ItemDefines.h` says so in its last
+        // Past the end is "bag full", which is the client's own rule rather
+        // than a fallback chosen here: `ItemDefines.h` says so in its last
         // line, and an unknown code is a code from a later build.
         assert_eq!(inventory_failure_key(200), Some("ERR_BAG_FULL"));
-        // …and the one code with no string at all, which is how the client
-        // shows nothing for the grey-item release that precedes a real reason.
+        // The one code with no string, which is how the client shows nothing
+        // for the grey-item release that precedes a real reason.
         assert_eq!(
             INVENTORY_FAILURE_KEYS[59], "ERR_CANT_BE_DISENCHANTED",
             "not in GlobalStrings.lua, and deliberately so"
         );
     }
 
-    /// **An entry resolves to a place, in the client's own order** — which is
-    /// the whole of what an item on the action bar is, since
-    /// `SMSG_ACTION_BUTTONS` carries the entry and nothing else.
+    /// An entry resolves to a place, in the client's search order. An item on
+    /// the action bar is only an entry, because `SMSG_ACTION_BUTTONS` carries
+    /// the entry and nothing else.
     #[test]
     fn an_entry_is_found_where_it_is() {
         let inventory = Inventory::read(&world_with_a_bag());
 
         // The worn helmet, by the interface's 1..19.
         assert_eq!(inventory.find_entry(12640), Some(ItemPlace::Worn(1)));
-        // The bag itself is a worn slot too, and it is 20 rather than 19 — see
+        // The bag itself is a worn slot too, and it is 20 rather than 19; see
         // `FIRST_BAG_INVENTORY_SLOT`.
         assert_eq!(inventory.find_entry(4500), Some(ItemPlace::Worn(20)));
         // Inside that bag, one-based.
@@ -1934,7 +2134,7 @@ mod tests {
             inventory.find_entry(858),
             Some(ItemPlace::Carried { bag: 1, slot: 3 })
         );
-        // …and the backpack.
+        // The backpack.
         assert_eq!(
             inventory.find_entry(2589),
             Some(ItemPlace::Carried {
@@ -1942,20 +2142,20 @@ mod tests {
                 slot: 1
             })
         );
-        // An entry nobody is carrying, and the zero that is "no item at all" —
-        // an empty slot must not resolve to the first empty square.
+        // An entry nobody is carrying, and the zero that means "no item": an
+        // empty slot must not resolve to the first empty square.
         assert_eq!(inventory.find_entry(99999), None);
         assert_eq!(inventory.find_entry(0), None);
     }
 
-    /// **The equipment is asked about first and separately**, which is the one
-    /// part of the order that changes what a press *does*: a trinket that is
-    /// worn and also spare in a bag is fired from the paper doll, where using
-    /// the carried one would try to equip a second.
+    /// The equipment is checked first and separately. This is the part of the
+    /// order that changes what a press does: a trinket that is worn and also
+    /// spare in a bag is used from the paper doll, where using the carried one
+    /// would try to equip a second.
     ///
-    /// And a bag's contents come before the backpack, because the walk descends
-    /// into a container at the moment that container's own slot is reached
-    /// rather than after the player's own slots are exhausted.
+    /// A bag's contents come before the backpack, because the walk descends
+    /// into a container when it reaches that container's own slot, not after
+    /// the player's own slots are exhausted.
     #[test]
     fn the_search_order_is_the_clients_own() {
         let mut inventory = Inventory::read(&world_with_a_bag());
@@ -2046,7 +2246,7 @@ mod tests {
         assert_eq!(inventory.inventory_slot(65).map(|i| i.entry), Some(4500));
         assert_eq!(inventory.container_item(6, 1).map(|i| i.entry), Some(2770));
         assert_eq!(inventory.container(5), None, "an empty bank bag slot is no bag");
-        // …and every entry is asked for, so the squares get names.
+        // Every entry is queried, so the squares get names.
         let entries = inventory.entries();
         assert!(entries.contains(&2589) && entries.contains(&4500) && entries.contains(&2770));
         // The action bar's walk does not descend into the bank.
@@ -2078,8 +2278,8 @@ mod tests {
         assert!(!is_bank_position(SERVER_BAG_NONE, 69));
         assert!(!is_bank_position(19, 0));
     }
-    /// **Two full guids, two dwords and a byte** — and a zero caster is a fade
-    /// rather than a bad packet. See [`EnchantmentLog`].
+    /// Two full guids, two dwords and a byte. A zero caster is a fade rather
+    /// than a bad packet. See [`EnchantmentLog`].
     #[test]
     fn an_enchantment_log_tells_an_application_from_a_fade() {
         let body = |caster: u64, owner: u64, entry: u32, spell: u32, show: u8| {
@@ -2098,8 +2298,8 @@ mod tests {
         assert!(!applied.faded());
         let faded = parse_enchantment_log(&body(0, 0x22, 12345, 7218, 0)).expect("faded");
         assert!(faded.faded(), "an empty caster is the expiry line");
-        // **The trailing byte is the last field and its absence is not a broken
-        // packet**, which is the one length decision in this parser.
+        // The trailing byte is the last field, and a packet without it is not
+        // broken. This is the one length decision in this parser.
         let short = &body(0x11, 0x22, 1, 2, 0)[..24];
         assert!(parse_enchantment_log(short).is_some());
         assert!(parse_enchantment_log(&short[..23]).is_none());

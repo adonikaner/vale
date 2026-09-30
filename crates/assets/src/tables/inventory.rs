@@ -1,11 +1,11 @@
-//! **The four shipped tables the bags and the paper doll are drawn from**, and
-//! nothing about the wire.
+//! The four shipped tables that the bags and the paper doll read. Nothing in
+//! this module concerns the wire.
 //!
-//! An item's *identity* comes from the server ([`vale_protocol::state::query`]);
-//! what a slot is **called**, what art an empty one shows, where an icon lives
-//! and what an item's class is called are all in the archives, and this module
-//! is where they are read. None of it
-//! needs a renderer or a session, so it is checkable with no window.
+//! An item's identity comes from the server ([`vale_protocol::state::query`]).
+//! The archives hold the rest: what a slot is called, what art an empty slot
+//! shows, where an icon lives and what an item's class is called. This module
+//! reads them. None of it needs a renderer or a session, so it can be checked
+//! without a window.
 //!
 //! ```text
 //! PaperDollItemFrame.dbc   36 rows  (slotName, art, slotId)   GetInventorySlotInfo
@@ -14,54 +14,53 @@
 //! ItemSubClass.dbc         72 rows  "Sword" / "Swords"        …and its right cell
 //! ```
 //!
-//! ## The icon path is not a literal, and this is the one that surprises
+//! ## How an icon name becomes a path
 //!
-//! `ItemDisplayInfo.dbc`'s `inventoryIcon` is a **bare name** —
-//! `"INV_Sword_39"` — and the client makes a path out of it. The directory it
-//! prefixes is not compiled in: `GetContainerItemInfo` looks up index **3**
-//! of a table loaded from `DBFilesClient\StringLookups.dbc`, takes that
-//! row's second column, and formats `"%s%s%s"` with a `"\"`
-//! separator that is dropped when the directory is empty. Row 3 of that table
-//! is `Interface\Icons`, so the answer is
-//! `Interface\Icons\INV_Sword_39` — but by way of a shipped table rather than
-//! by a constant, which is why it is read here.
+//! `ItemDisplayInfo.dbc`'s `inventoryIcon` is a bare name, such as
+//! `"INV_Sword_39"`, and the client builds a path from it. The directory is
+//! not a constant in the client: `GetContainerItemInfo` takes it from row 3 of
+//! `DBFilesClient\StringLookups.dbc`, second column, and joins directory and
+//! name with a `\` separator. The separator is omitted when the directory is
+//! empty. Row 3 of the shipped table is `Interface\Icons`, so the result is
+//! `Interface\Icons\INV_Sword_39`. This module reads the directory from the
+//! table for the same reason.
 //!
-//! ## `GetInventorySlotInfo` is a table walk, not a switch
+//! ## `GetInventorySlotInfo` and `PaperDollItemFrame.dbc`
 //!
-//! The client walks an array of `{name, art, slotId}` records, comparing the
-//! caller's string case-insensitively against the first column and pushing
-//! `(slotId, art, checkRelic)`. The array is loaded from
-//! `PaperDollItemFrame.dbc`, three columns wide. `checkRelic`
-//! is `1.0` when `slotId - 1 == 0x11`, i.e. **slot 18, the ranged slot**, and
-//! `nil` otherwise; that is the only special case in the function.
+//! `GetInventorySlotInfo(name)` matches `name` case-insensitively against the
+//! first column of `PaperDollItemFrame.dbc`, which has three columns (name,
+//! art, slot id), and returns `slotId`, `art` and `checkRelic`. `checkRelic`
+//! is `1.0` for slot 18, the ranged slot, and `nil` for every other slot. No
+//! other slot is treated differently.
 //!
-//! The table is what states the interface's slot numbering: 1..19 worn, 20..23
-//! the four bag slots, 64..75 the bank bags, and **0 for `AmmoSlot`** — which
-//! is why an ammo slot is declared and never filled. See
-//! [`vale_protocol::play::items`], which carries the same numbering from the field
-//! side.
+//! The table defines the interface's slot numbering: 1..19 worn, 20..23 the
+//! four bag slots, 64..75 the bank bags, and 0 for `AmmoSlot`. Because
+//! `AmmoSlot` is 0, the ammo slot is declared and never filled.
+//! [`vale_protocol::play::items`] carries the same numbering on the update
+//! field side.
 
 use crate::tables::dbc::Dbc;
 use std::collections::HashMap;
 
-/// **The `GlobalStrings.lua` key for an `INVTYPE_*` value** — the word the
-/// tooltip's type line and `GetItemInfo`'s `itemEquipLoc` are both built from.
+/// The `GlobalStrings.lua` key for an `INVTYPE_*` value. The tooltip's type
+/// line and `GetItemInfo`'s `itemEquipLoc` are both built from it.
 ///
-/// A token rather than a word, because the *word* is in `GlobalStrings.lua` and
-/// this crate does not read that file for anyone: `PaperDollFrame.lua` does
-/// `getglobal(equipLoc)` itself, and so does [`crate::interface::strings`] on the client
-/// side. Returning `"Two-Hand"` here would be inventing an English string.
+/// This returns a token rather than a word because the word is in
+/// `GlobalStrings.lua`, which this crate does not read: `PaperDollFrame.lua`
+/// calls `getglobal(equipLoc)` itself, and so does
+/// [`crate::interface::strings`] on the client side. Returning `"Two-Hand"`
+/// here would invent an English string.
 ///
-/// **Four of the twenty-eight have no key at all** — `INVTYPE_AMMO`,
-/// `INVTYPE_THROWN`, `INVTYPE_RANGEDRIGHT` and `INVTYPE_QUIVER` are absent from
-/// the shipped `GlobalStrings.lua`, so they resolve to nothing and the type
-/// line's left cell is blank. That is the client's own behaviour and the same
-/// rule three of the 146 cast-failure reasons follow; it is not a gap to paper
-/// over. The tokens are still returned, so an addon reading `itemEquipLoc` sees
-/// the value the real client puts there.
+/// Four of the twenty-eight tokens have no entry in the shipped
+/// `GlobalStrings.lua`: `INVTYPE_AMMO`, `INVTYPE_THROWN`,
+/// `INVTYPE_RANGEDRIGHT` and `INVTYPE_QUIVER`. They resolve to nothing, and
+/// the left cell of the type line is blank. The 1.12.1 client shows the same
+/// blank cell, and three of the 146 cast-failure reasons follow the same rule,
+/// so this is not filled in. The tokens are still returned, so an addon
+/// reading `itemEquipLoc` sees the value the 1.12.1 client puts there.
 ///
-/// `""` for `INVTYPE_NON_EQUIP` (0) and for anything past the enum, which is
-/// what every consumer tests before drawing the line at all.
+/// Returns `""` for `INVTYPE_NON_EQUIP` (0) and for any value past the enum.
+/// Every consumer tests for `""` before drawing the type line.
 pub fn inventory_type_key(inventory_type: u32) -> &'static str {
     match inventory_type {
         1 => "INVTYPE_HEAD",
@@ -99,32 +98,32 @@ pub fn inventory_type_key(inventory_type: u32) -> &'static str {
 /// One row of `PaperDollItemFrame.dbc`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlotInfo {
-    /// The interface's own slot id — what `this:SetID(id)` is given, and what
-    /// every `GetInventoryItem*` call is addressed by.
+    /// The interface's slot id: the value passed to `this:SetID(id)`, and the
+    /// id every `GetInventoryItem*` call takes.
     pub id: u32,
-    /// The empty-slot art, exactly as the table spells it (lower-case
-    /// `interface\paperdoll\…`, `.blp` suffix included). Passed through
-    /// unaltered: the archive lookup is case-insensitive and the real client
-    /// hands the string straight to `SetTexture`.
+    /// The empty-slot art, spelled exactly as in the table (lower-case
+    /// `interface\paperdoll\…`, `.blp` suffix included). It is passed through
+    /// unaltered because the archive lookup is case-insensitive and the 1.12.1
+    /// client passes the string to `SetTexture` unchanged.
     pub art: String,
 }
 
-/// **`RangedSlot`'s id**, which is the one value `GetInventorySlotInfo`
-/// branches on: a totem, libram or idol goes in the ranged slot, so that slot
-/// alone answers a third value and the paper doll swaps its art for
-/// `UI-PaperDoll-Slot-Relic` when the class has one.
+/// `RangedSlot`'s id. It is the only slot for which `GetInventorySlotInfo`
+/// returns a non-nil third value (`checkRelic`): a totem, libram or idol goes
+/// in the ranged slot, and the paper doll swaps that slot's art for
+/// `UI-PaperDoll-Slot-Relic` when the class uses a relic.
 pub const RANGED_SLOT: u32 = 18;
 
-/// **`AmmoSlot`'s id in the same table: 0.** The one square on the paper
-/// doll that is not a slot — nothing is stored in it, `PLAYER_AMMO_ID` names
-/// an entry the character is carrying, and every read of it is a read of that
+/// `AmmoSlot`'s id in the same table: 0. It is the one square on the paper
+/// doll that is not a slot. Nothing is stored in it: `PLAYER_AMMO_ID` names an
+/// entry the character is carrying, and every read of the ammo slot reads that
 /// entry. See `vale_protocol::play::items::set_ammo_body`.
 pub const AMMO_SLOT: u32 = 0;
 
-/// **Which coin picture stands for an amount** — `GetCoinIcon(copper)`'s whole
-/// content, and it is a five-way cascade rather than a formula.
+/// The coin icon that `GetCoinIcon(copper)` returns for an amount. It is a
+/// cascade of five thresholds, not a formula.
 ///
-/// Six pictures and five thresholds, in the order the client compares them:
+/// Six icons and five thresholds, in the order the client tests them:
 ///
 /// ```text
 /// < 10        INV_Misc_Coin_05     a single copper
@@ -135,15 +134,13 @@ pub const AMMO_SLOT: u32 = 0;
 /// otherwise   INV_Misc_Coin_02     a heap of gold
 /// ```
 ///
-/// **The numbering is not in order and that is the point of reading it rather
-/// than guessing it**: `_05` and `_06` are the two smallest and `_01` and `_02`
-/// the two largest, which is the opposite of what the names invite. A cascade
-/// written from the names alone draws a pile of gold on a letter carrying four
-/// copper.
+/// The icon numbers do not follow the amounts: `_05` and `_06` are the two
+/// smallest and `_01` and `_02` the two largest. A cascade written from the
+/// names alone would draw a pile of gold on a letter carrying four copper.
 ///
-/// The **bare name**, like every other icon in this crate — see
-/// [`InventoryTables::icon_path`], which is the same `StringLookups` row 3 the
-/// reference's own lookup fetches.
+/// Returns the bare name, like every other icon in this crate.
+/// [`InventoryTables::icon_path`] turns it into a path using `StringLookups`
+/// row 3, the same directory the 1.12.1 client uses.
 pub fn coin_icon(copper: u32) -> &'static str {
     match copper {
         ..10 => "INV_Misc_Coin_05",
@@ -155,26 +152,27 @@ pub fn coin_icon(copper: u32) -> &'static str {
     }
 }
 
-/// **Which row of `StringLookups.dbc` holds the icon directory.** The literal
-/// `3` `GetContainerItemInfo` passes; see the module comment.
+/// The row of `StringLookups.dbc` that holds the icon directory. It is the
+/// row `GetContainerItemInfo` takes its directory from; see the module
+/// comment.
 const ICON_DIRECTORY_ROW: u32 = 3;
 
 /// The archive fallback for that directory, used when the table is absent.
 ///
-/// Stated rather than silently empty: without a directory an icon name is a
-/// bare `"INV_Sword_39"`, which resolves to nothing and draws an empty square
-/// for every item in the game. The value is what row 3 of the shipped table
-/// says, so the fallback and the reading agree by construction.
+/// The fallback is a stated value rather than an empty string because an icon
+/// name without a directory is a bare `"INV_Sword_39"`, which resolves to no
+/// file and draws an empty square for every item in the game. The value is
+/// what row 3 of the shipped table holds, so the fallback and the table agree.
 const ICON_DIRECTORY: &str = "Interface\\Icons";
 
 /// The paper doll's slot table, `StringLookups`' directories, and the two class
-/// name tables — everything about an item that is in a file rather than on the
-/// wire.
+/// name tables: everything about an item that comes from a file rather than
+/// from the wire.
 #[derive(Debug, Default)]
 pub struct ItemTables {
-    /// Keyed by the **lower-cased** slot name, because
-    /// `PaperDollItemSlotButton_OnLoad` passes `strsub(slotName, 10)` — the
-    /// frame's own name minus `"Character"` — and the client compares
+    /// Keyed by the lower-cased slot name, because
+    /// `PaperDollItemSlotButton_OnLoad` passes `strsub(slotName, 10)` (the
+    /// frame's name minus `"Character"`) and the client compares
     /// case-insensitively.
     slots: HashMap<String, SlotInfo>,
     /// `StringLookups.dbc` row -> directory.
@@ -183,6 +181,10 @@ pub struct ItemTables {
     classes: HashMap<u32, String>,
     /// `ItemSubClass.dbc`: (class, subclass) -> (singular, plural).
     subclasses: HashMap<(u32, u32), (String, String)>,
+    /// The `(class, subclass)` rows whose display flags have bit 0 set: the
+    /// item plate draws no subclass word for them. See
+    /// [`ItemTables::subclass_on_plate`].
+    unnamed_on_plate: std::collections::HashSet<(u32, u32)>,
 }
 
 /// `PaperDollItemFrame.dbc` columns: the frame's name, its empty art, the id.
@@ -190,37 +192,44 @@ mod paperdoll_fields {
     pub const NAME: usize = 0;
     pub const ART: usize = 1;
     pub const ID: usize = 2;
-    /// Three, and the client's loader checks exactly this and the 12-byte
-    /// record size before reading a row.
+    /// Three. The 1.12.1 client accepts the file only with exactly three
+    /// fields and a 12-byte record.
     pub const COUNT: usize = 3;
 }
 
-/// `ItemClass.dbc` — id, then two ids nothing here reads, then the name.
+/// `ItemClass.dbc` columns: the id, two ids nothing here reads, then the name.
 mod class_fields {
     pub const ID: usize = 0;
     pub const NAME: usize = 3;
 }
 
-/// `ItemSubClass.dbc` — the class and subclass in the first two columns, the
-/// **singular** name at 10 and the **plural** at 19.
+/// `ItemSubClass.dbc`: 28 fields. The class and subclass are in the first two
+/// columns, the display flags at 5, the singular name at 10 and the plural at
+/// 19.
 ///
-/// Measured rather than named by the file: row (2, 2) reads `"Axe"` at 10 and
-/// `"Axes"` at 19, (2, 18) reads `"Wand"` and `"Wands"`, (4, 8) reads `"Idol"`
-/// and `"Idols"`. Which of the two the *client* puts on a tooltip is **not**
-/// measured here — see [`ItemTables::subclass_name`], where the choice is
-/// stated as a choice.
+/// The file does not name its columns; these indices were measured. Row
+/// (2, 2) reads `"Bow"` at 10 and `"Bows"` at 19, (2, 18) reads `"Crossbow"`
+/// and `"Crossbows"`, and (4, 8) reads `"Idol"` and `"Idols"`. The item plate
+/// prints the singular. Bit 0 of the
+/// display flags is set on the rows the plate prints no subclass for:
+/// Consumable (0, 0), Miscellaneous armour (4, 0), Miscellaneous weapons
+/// (2, 14), Trade Goods (7, 0), every recipe row and Quest (12, 0).
 mod subclass_fields {
     pub const CLASS: usize = 0;
     pub const SUBCLASS: usize = 1;
+    pub const DISPLAY_FLAGS: usize = 5;
     pub const NAME: usize = 10;
     pub const PLURAL: usize = 19;
+    /// The display-flags bit that hides the subclass on the item plate.
+    pub const NO_PLATE_NAME: u32 = 0x1;
 }
 
 impl ItemTables {
-    /// Read all four. Every one of them is optional and each absence is its own
-    /// degradation: no `PaperDollItemFrame` is twenty-four paper-doll buttons
-    /// with no id and no empty art, no `StringLookups` is the stated fallback
-    /// above, and no class table is a tooltip missing its type line.
+    /// Reads all four tables. Each is optional, and each missing table affects
+    /// a different part: without `PaperDollItemFrame` the twenty-four
+    /// paper-doll buttons have no id and no empty art; without `StringLookups`
+    /// icon paths use the fallback directory above; without the class tables
+    /// the tooltip has no type line.
     pub fn parse(
         paperdoll: &[u8],
         string_lookups: &[u8],
@@ -294,33 +303,38 @@ impl ItemTables {
                 let name = dbc.string_at(record, subclass_fields::NAME).unwrap_or_default();
                 let plural = dbc.string_at(record, subclass_fields::PLURAL).unwrap_or_default();
                 out.subclasses.insert((class, subclass), (name, plural));
+                let flags = dbc
+                    .u32_at(record, subclass_fields::DISPLAY_FLAGS)
+                    .unwrap_or(0);
+                if flags & subclass_fields::NO_PLATE_NAME != 0 {
+                    out.unnamed_on_plate.insert((class, subclass));
+                }
             }
         }
         out
     }
 
-    /// `GetInventorySlotInfo(name)` — the id, the empty art, and whether this is
+    /// `GetInventorySlotInfo(name)`: the id, the empty art, and whether this is
     /// the slot a relic can go in.
     ///
-    /// `None` for a name the table does not carry, which is what the real
-    /// client's walk falls out of the bottom of: it pushes nothing at all and
-    /// the caller's `this:SetID(id)` gets nil.
+    /// `None` for a name the table does not carry. The 1.12.1 client returns
+    /// nothing for such a name, so the caller's `this:SetID(id)` receives nil.
     pub fn slot(&self, name: &str) -> Option<(&SlotInfo, bool)> {
         let info = self.slots.get(&name.to_ascii_lowercase())?;
         Some((info, info.id == RANGED_SLOT))
     }
 
-    /// How many slot rows were read — the number `vale` checks report.
+    /// How many slot rows were read. `vale` checks report this number.
     pub fn slot_count(&self) -> usize {
         self.slots.len()
     }
 
-    /// **A full icon path from an `ItemDisplayInfo` icon name.**
+    /// A full icon path from an `ItemDisplayInfo` icon name.
     ///
-    /// The composition the client makes: directory, a backslash if the
-    /// directory is non-empty, then the name. An empty name answers `None`
-    /// rather than a bare directory — an item whose display row carries no icon
-    /// draws nothing, which is different from drawing the folder.
+    /// The path is built the way the client builds it: the directory, a
+    /// backslash if the directory is non-empty, then the name. An empty name
+    /// returns `None` rather than the bare directory, because an item whose
+    /// display row has no icon draws nothing, not the folder.
     pub fn icon_path(&self, icon_name: &str) -> Option<String> {
         if icon_name.is_empty() {
             return None;
@@ -336,30 +350,36 @@ impl ItemTables {
         })
     }
 
-    /// `ItemClass.dbc`'s word for a class — "Weapon", "Armor", "Consumable".
-    /// Empty for a class the table does not carry, which draws a shorter
-    /// tooltip rather than a wrong one.
+    /// `ItemClass.dbc`'s word for a class: "Weapon", "Armor", "Consumable".
+    /// Empty for a class the table does not carry, so the tooltip is shorter
+    /// rather than wrong.
     pub fn class_name(&self, class: u32) -> &str {
         self.classes.get(&class).map_or("", String::as_str)
     }
 
-    /// …and `ItemSubClass.dbc`'s, in the **singular** — "Sword", "Cloth",
-    /// "Bow".
-    ///
-    /// **The singular is a choice, and it is recorded as one.** The table
-    /// carries both forms and this client has not established which column the
-    /// tooltip builder reads; the singular is chosen because it
-    /// is what the retail plate shows beside a weapon's `INVTYPE_*` word
-    /// ("One-Hand / Sword"), and [`Self::subclass_plural`] is beside it for the
-    /// other use.
+    /// `ItemSubClass.dbc`'s word for a subclass, in the singular: "Sword",
+    /// "Cloth", "Bow". This is the column the item plate prints; see
+    /// [`Self::subclass_on_plate`] for the rows it leaves out.
     pub fn subclass_name(&self, class: u32, subclass: u32) -> &str {
         self.subclasses
             .get(&(class, subclass))
             .map_or("", |(name, _)| name.as_str())
     }
 
-    /// The plural form of the same row — "Swords", "Bows" — which is what
-    /// `GetItemInfo`'s `itemSubType` is documented as answering.
+    /// The subclass word the item plate prints beside the slot: the singular,
+    /// or empty for a row whose display flags hide it. A potion's plate has no
+    /// "Consumable" and a ring's no "Miscellaneous" for this reason. The
+    /// 1.12.1 client also prints no subclass for a cloak (`INVTYPE_CLOAK`),
+    /// which is decided by the caller from the inventory type.
+    pub fn subclass_on_plate(&self, class: u32, subclass: u32) -> &str {
+        if self.unnamed_on_plate.contains(&(class, subclass)) {
+            return "";
+        }
+        self.subclass_name(class, subclass)
+    }
+
+    /// The plural form of the same row ("Swords", "Bows"). `GetItemInfo`'s
+    /// `itemSubType` is documented as returning this form.
     pub fn subclass_plural(&self, class: u32, subclass: u32) -> &str {
         self.subclasses
             .get(&(class, subclass))
@@ -371,26 +391,26 @@ impl ItemTables {
         (self.classes.len(), self.subclasses.len())
     }
 
-    /// **The word a refused cast puts in its own `%s`** — "Sword", "Weapon".
+    /// The word a refused cast substitutes for its `%s`, such as "Sword" or
+    /// "Weapon".
     ///
-    /// `SMSG_CAST_RESULT`'s three equipped-item refusals quote the spell's own
+    /// `SMSG_CAST_RESULT`'s three equipped-item refusals quote the spell's
     /// `EquippedItemClass` and `EquippedItemSubClassMask`, and
-    /// `GlobalStrings.lua` spells all three of them with a placeholder
-    /// (`"Must have a %s equipped in the main hand"`). Without this the
-    /// placeholder is what the player reads, which is what the warrior report
-    /// was. See `vale_protocol::play::spells::EquipRequirement`.
+    /// `GlobalStrings.lua` writes all three messages with a placeholder
+    /// (`"Must have a %s equipped in the main hand"`). Without this word the
+    /// player reads the raw placeholder, as a warrior bug report showed. See
+    /// `vale_protocol::play::spells::EquipRequirement`.
     ///
-    /// **The two branches are not the same kind of claim.** A mask with exactly
-    /// one bit names one subclass row and there is nothing to choose: the spell
-    /// wants a sword and the row says "Sword". A mask with *several* — the
-    /// ordinary shape for "any melee weapon" — has no single row to name, and
-    /// falling back to the class name ("Weapon") is a **choice**, not a
-    /// measurement: what the reference composes there is not established, and
-    /// the honest options were this or the placeholder. `None` when no table
-    /// was loaded or the row is absent, which draws nothing at all rather than
-    /// a sentence with a hole in it.
+    /// The two branches rest on different evidence. A mask with exactly one
+    /// bit names one subclass row: the spell wants a sword and the row says
+    /// "Sword". A mask with several bits, the usual shape for "any melee
+    /// weapon", names no single row. Falling back to the class name ("Weapon")
+    /// there is a choice, not a measurement: what the 1.12.1 client shows in
+    /// that case is not established, and the only alternative was to leave the
+    /// placeholder. `None` when no table was loaded or the row is absent; the
+    /// caller then draws no sentence rather than one with a gap in it.
     pub fn requirement_name(&self, class: u32, subclass_mask: u32) -> Option<&str> {
-        // `count_ones() == 1` rather than a loop: the bit index *is* the
+        // `count_ones() == 1` rather than a loop: the bit index is the
         // subclass id, so a single-bit mask resolves with no search.
         if subclass_mask.count_ones() == 1 {
             let name = self.subclass_name(class, subclass_mask.trailing_zeros());
@@ -407,10 +427,9 @@ impl ItemTables {
 mod tests {
     use super::*;
 
-    /// **The five thresholds, at their edges** — and the reason this is a test
-    /// rather than a glance is that the picture numbering runs backwards
-    /// against the amounts, so an off-by-one here is a plausible coin rather
-    /// than a broken path.
+    /// The five thresholds, tested at their edges. The icon numbering does not
+    /// follow the amounts, so an off-by-one error still produces a valid coin
+    /// icon rather than a broken path, and only a test catches it.
     #[test]
     fn the_coin_picture_steps_at_ten_and_then_by_tens() {
         assert_eq!(coin_icon(0), "INV_Misc_Coin_05");
@@ -454,8 +473,8 @@ mod tests {
             3,
             &paperdoll_strings,
         );
-        // Row 3 is the icon directory; row 1 is something else entirely, which
-        // is the point of keying by id rather than by position.
+        // Row 3 is the icon directory and row 1 is a different directory.
+        // Rows are keyed by id, not by position, so row 1 must not be used.
         let lookup_strings = b"\0Interface\\Cursor\0Interface\\Icons\0".to_vec();
         let lookups = dbc(&[vec![1, 1], vec![3, 18]], 2, &lookup_strings);
         let class_strings = b"\0Weapon\0".to_vec();
@@ -471,9 +490,9 @@ mod tests {
         ItemTables::parse(&paperdoll, &lookups, &classes, &subclasses)
     }
 
-    /// **The slot lookup is by name and case-insensitive**, because the
-    /// interface passes a substring of a frame name and the client compares
-    /// with a case-folding compare.
+    /// The slot lookup is by name and case-insensitive, because the interface
+    /// passes a substring of a frame name and the client ignores case when
+    /// matching it.
     #[test]
     fn a_slot_is_found_by_the_name_the_frame_carries() {
         let tables = tables();
@@ -485,15 +504,14 @@ mod tests {
         assert!(tables.slot("PocketSlot").is_none());
     }
 
-    /// `checkRelic` is the ranged slot and only the ranged slot — the one
-    /// branch in the client's slot lookup.
+    /// `checkRelic` is set for the ranged slot and for no other slot.
     #[test]
     fn only_the_ranged_slot_answers_check_relic() {
         let tables = tables();
         assert!(tables.slot("RangedSlot").expect("ranged").1);
     }
 
-    /// **The icon directory comes out of the table, not out of a literal.**
+    /// The icon directory comes from `StringLookups.dbc`, not from a literal.
     #[test]
     fn an_icon_name_becomes_a_path_through_string_lookups() {
         let tables = tables();
@@ -504,8 +522,8 @@ mod tests {
         assert_eq!(tables.icon_path("").as_deref(), None, "no icon is not the folder");
     }
 
-    /// …and without the table at all it is still a path, by the stated
-    /// fallback — an item with a bare name draws nothing at all.
+    /// Without `StringLookups.dbc` the icon path still gets the fallback
+    /// directory. A bare name would resolve to no file and draw nothing.
     #[test]
     fn an_absent_lookup_table_falls_back_rather_than_dropping_the_folder() {
         let tables = ItemTables::parse(&[], &[], &[], &[]);
@@ -528,18 +546,37 @@ mod tests {
         assert_eq!(tables.subclass_name(2, 99), "");
     }
 
-    /// **The word that fills a refused cast's `%s`.** One bit names its own
-    /// subclass row; several have no row to name and fall back to the class,
-    /// which is the branch the doc records as a choice rather than a
-    /// measurement.
+    /// A subclass row with bit 0 of its display flags set keeps its name but
+    /// prints none on the item plate.
+    #[test]
+    fn a_flagged_subclass_prints_nothing_on_the_plate() {
+        let strings = b"\0Consumable\0Sword\0".to_vec();
+        let mut consumable = vec![0u32; 28];
+        consumable[subclass_fields::NAME] = 1;
+        consumable[subclass_fields::DISPLAY_FLAGS] = 1;
+        let mut sword = vec![0u32; 28];
+        sword[subclass_fields::CLASS] = 2;
+        sword[subclass_fields::SUBCLASS] = 7;
+        sword[subclass_fields::NAME] = 12;
+        sword[subclass_fields::DISPLAY_FLAGS] = 2;
+        let tables = ItemTables::parse(&[], &[], &[], &dbc(&[consumable, sword], 28, &strings));
+        assert_eq!(tables.subclass_name(0, 0), "Consumable");
+        assert_eq!(tables.subclass_on_plate(0, 0), "");
+        assert_eq!(tables.subclass_on_plate(2, 7), "Sword", "bit 1 alone is not the hiding bit");
+    }
+
+    /// The word that fills a refused cast's `%s`. A one-bit mask names its
+    /// subclass row. A mask with several bits names no row and falls back to
+    /// the class; the doc comment on `requirement_name` records that fallback
+    /// as a choice, not a measurement.
     #[test]
     fn a_requirement_names_its_subclass_when_the_mask_names_exactly_one() {
         let tables = tables();
 
-        // Bit 7 set and nothing else: the subclass id *is* the bit index.
+        // Only bit 7 set: the subclass id is the bit index.
         assert_eq!(tables.requirement_name(2, 1 << 7), Some("Sword"));
 
-        // Several bits — "any melee weapon" — has no single row, so the class.
+        // Several bits ("any melee weapon") name no single row, so the class.
         assert_eq!(tables.requirement_name(2, (1 << 7) | (1 << 0)), Some("Weapon"));
 
         // An empty mask is not one bit either.
@@ -549,7 +586,7 @@ mod tests {
         // answering the empty string, which would draw "Must have a  equipped".
         assert_eq!(tables.requirement_name(2, 1 << 9), Some("Weapon"));
 
-        // …and with no tables at all there is no sentence to draw.
+        // With no tables loaded there is no word, so no sentence is drawn.
         let none = ItemTables::parse(&[], &[], &[], &[]);
         assert_eq!(none.requirement_name(2, 1 << 7), None);
     }

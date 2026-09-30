@@ -107,7 +107,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{mpsc, Arc, Mutex};
 
 /// The alpha-key cutoff for an M2 material (blend mode 1): 224/255, the same
-/// value the WMO path uses. An earlier value of 0.5 had no source.
+/// value the WMO path uses. It replaces a value of 0.5 that had no source.
 ///
 /// The 1.12.1 client sets the alpha reference from the blend mode whenever it
 /// sets the blend state. The values per blend mode are:
@@ -121,19 +121,18 @@ use std::sync::{mpsc, Arc, Mutex};
 /// ```
 ///
 /// So the engine has one alpha-key cut, 224, and the WMO constant and this one
-/// are the same value under two names. A second observation gives the same
-/// number: the reference for a blend-1 material is set to
-/// `material.alpha * 224.0`, so 224 is the ceiling that a material's own alpha
-/// scales.
+/// are the same value under two names. The reference for a blend-1 material is
+/// also set to `material.alpha * 224.0`, so 224 is the ceiling that a
+/// material's own alpha scales.
 ///
-/// This constant does not explain the blue squares drawn around an Evocation,
-/// although an earlier version of this comment said it did.
-/// `SPELLS\CLOUDS.BLP` decodes with `alphaDepth = 0` and 0% transparent
-/// texels, so under a 0.5 cut each of its quads would draw as an opaque tile.
-/// But those emitters name a geometry model, and the client draws no quad for
-/// such an emitter, so their texture slot is not read and no alpha reference
-/// affects them (see `crate::render::particles::model_particles`). Changing the
-/// cut hid three of Evocation's five emitters, which concealed that second bug.
+/// This constant is not the cause of the blue squares drawn around an
+/// Evocation. `SPELLS\CLOUDS.BLP` decodes with `alphaDepth = 0` and 0%
+/// transparent texels, so under a 0.5 cut each of its quads would draw as an
+/// opaque tile. But those emitters name a geometry model, and the client draws
+/// no quad for such an emitter, so their texture slot is not read and no alpha
+/// reference affects them (see `crate::render::particles::model_particles`).
+/// Changing the cut hides three of Evocation's five emitters, which masks
+/// that separate fault instead of fixing it.
 ///
 /// The value of the constant comes from the table above. Its visible effect on
 /// screen is not established.
@@ -271,6 +270,9 @@ pub struct ModelAssets {
     /// The sound cues its animations carry, such as a laugh at the laugh's
     /// keyframe. See `sound::cues`.
     pub cues: Arc<vale_assets::world::m2::SoundCues>,
+    /// The two points a weapon's trail runs between, `None` for every model
+    /// that is not a melee weapon. See [`vale_assets::look::weapon_trail`].
+    pub trail: Option<vale_assets::look::weapon_trail::TrailPoints>,
     /// The lights it carries, such as a lamppost's glow quad or a sconce's
     /// flame. Empty for almost everything. See [`crate::render::lamps`], which
     /// turns one into a light, and `vale_assets::world::glow`, which decides
@@ -379,6 +381,8 @@ struct Geometry {
     /// The sound cues, per sequence, shared by every dressing of the file,
     /// like the hull.
     cues: Arc<vale_assets::world::m2::SoundCues>,
+    /// The weapon-trail points; see [`ModelAssets::trail`].
+    trail: Option<vale_assets::look::weapon_trail::TrailPoints>,
     /// The lights it carries; see [`ModelAssets::glows`].
     glows: Arc<Vec<crate::render::lamps::ModelGlow>>,
     collision: Arc<vale_assets::world::collision::CollisionMesh>,
@@ -568,12 +572,12 @@ pub const SHADOW_BLOB: &str = r"Textures\ShadowBlob.blp";
 /// it is coplanar with the terrain, and coplanar geometry z-fights. This offset
 /// lifts it clear. It is a depth bias only, as the CVar's name says.
 ///
-/// When the blob was one flat horizontal quad, the bias also decided how much
-/// of a slope the quad hung over: the uphill half was hidden by the ground
-/// (blend mode 5 is drawn in the sorted phase, which depth-tests and does not
-/// write depth) and the downhill half hung in the air with a hard edge. The
-/// blob now follows the ground, so the bias has no other effect. 0.1 is the
-/// client's default for `shadowBias`.
+/// The blob follows the ground, so the bias has no other effect. On one flat
+/// horizontal quad the bias would also decide how much of a slope the quad
+/// hung over: the uphill half is hidden by the ground (blend mode 5 is drawn
+/// in the sorted phase, which depth-tests and does not write depth) and the
+/// downhill half hangs in the air with a hard edge. 0.1 is the client's
+/// default for `shadowBias`.
 const SHADOW_BIAS: f32 = 0.10;
 
 /// [`SHADOW_BIAS`], for the entity pass that places the quad.
@@ -714,7 +718,7 @@ pub fn tint_tag(rgba: [f32; 4]) -> u32 {
 /// `0x00RRGGBB`, and the sun scale is stored in the byte the colour does not
 /// use, as fixed-point 1/32ths (2.5 → 80, 0.5 → 16). Zero means "unspecified",
 /// which the shader reads as [`sun_scale::NEUTRAL`], so every entity and WMO
-/// batch that never sets a tag is lit as before.
+/// batch that never sets a tag is lit at a sun scale of 1.0.
 pub fn instance_tag(room: Option<RoomLight>, sun: f32) -> u32 {
     let scale = if sun == sun_scale::NEUTRAL {
         0
@@ -744,9 +748,9 @@ fn dressing_key(
     // Every field of the dress is in the key, not only the hair. A dressing is
     // a batch list, and two characters differing only in their boots have
     // different batch lists, so leaving the equipment geosets out of the key
-    // would give the second one the first one's gear. This had no visible
-    // effect while the only NPC gear was in the bake and every player's
-    // equipment array was empty, but it is wrong once equipment is filled in.
+    // would give the second one the first one's gear. The fault is invisible
+    // while the only NPC gear is in the bake and every player's equipment
+    // array is empty, and visible once equipment is filled in.
     let look = match dress {
         Dress::Creature => String::new(),
         Dress::Character(g) => {
@@ -966,9 +970,9 @@ impl ModelCache {
     /// scene wears no skins and stands in no room, so `lookup` looks like the
     /// right call, but `lookup` builds the doodad dressing, which drops the
     /// skeleton and the tints (see [`Self::lookup`] and `loader::RawModel`).
-    /// Measured on `UI_MainMenu.m2`: 22 batches and 0 bones, so the login
-    /// screen's fire would not burn, its figures would not breathe, and its sky
-    /// would be drawn at the colour of its first key.
+    /// Measured on `UI_MainMenu.m2`, that build has 22 batches and 0 bones: the
+    /// login screen's fire and figures would not animate, and its sky would be
+    /// drawn at the colour of its first key.
     ///
     /// `Dress::Creature` and no skins: the model's own textures are all it
     /// uses. `vale glue` reports 25 of 25 named textures resolving on this
@@ -1267,6 +1271,7 @@ impl ModelCache {
             conform: geometry.conform,
             attachments: Arc::clone(&geometry.attachments),
             cues: Arc::clone(&geometry.cues),
+            trail: geometry.trail,
             glows: Arc::clone(&geometry.glows),
             collision: Arc::clone(&geometry.collision),
             pick: Arc::clone(&geometry.pick),
@@ -1909,17 +1914,17 @@ fn parse_character_key(key: &str) -> Option<CharacterLook> {
 /// joint last, as every spawner builds it; this selects
 /// [`ModelDraw::bones`], the batch's own subset, from it.
 ///
-/// It is one function because four spawners need it. `world::entities::spawn`,
-/// `entities::effects`, `render::glue` and `render::portraits` (which builds a
-/// model's parts on its own render layer for the unit-frame faces) each build
-/// a model's parts. When each had its own copy of these four lines, the change
-/// that introduced bone subsets updated only two of them. The login and
-/// character-select screens kept binding the model's whole skeleton to meshes
-/// whose joint indices had become subset-local, which poses every vertex off
+/// It is one function because four spawners build a model's parts:
+/// `world::entities::spawn`, `entities::effects`, `render::glue` and
+/// `render::portraits` (which builds a model's parts on its own render layer
+/// for the unit-frame faces). When each had its own copy of these four lines,
+/// the change that introduced bone subsets updated only two of them. The login
+/// and character-select screens then bound the model's whole skeleton to
+/// meshes whose joint indices were subset-local, which poses every vertex off
 /// the wrong bone: splayed shoulders, a twisted weapon and a body that clips
 /// through itself. The test suite, six interface probes and two in-world
-/// screenshots did not catch it, because none of them shows the glue screens.
-/// `render::portraits` had the same fault for longer: on a 64-pixel face a
+/// screenshots missed it, because none of them shows the glue screens.
+/// `render::portraits` kept the same fault for longer: on a 64-pixel face a
 /// wrong bone is a smear, and no headless check looks at a portrait.
 ///
 /// `every_skinned_mesh_is_built_through_skin_for` in this module's tests reads

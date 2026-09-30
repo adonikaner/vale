@@ -41,8 +41,8 @@
 //! `frame:SetID(id)` with it) and it is not the paper doll's: the bag buttons
 //! are inventory slots 20..23. The conversion between them is done once, in
 //! [`vale_protocol::play::items`], so that no call site here subtracts one
-//! itself. A wrong subtraction reads a neighbouring slot and returns a
-//! plausible wrong answer.
+//! itself. A wrong subtraction reads the neighbouring slot and returns its
+//! item without an error.
 //!
 //! ## Why a quality of `-1` rather than `nil`
 //!
@@ -62,7 +62,7 @@
 //! `UseContainerItem` and `UseInventoryItem` stay in
 //! [`super::super::api::verbs`], because a right click needs no return value.
 //!
-//! The drag functions do. `PutItemInBag(id)` returns whether the cursor held
+//! Some drag functions need a return value. `PutItemInBag(id)` returns whether the cursor held
 //! anything (`BagSlotButton_OnClick` opens the bag only when it did), so it is
 //! a read and a write in one call. That is why this module's `install` takes
 //! the verb queue as well as the world. The five that return nothing are kept
@@ -174,16 +174,38 @@ pub fn quality_colour(quality: u32) -> &'static str {
     super::super::api::stubs::quality_hex(quality)
 }
 
-/// An item hyperlink, in exactly the format the 1.12.1 client uses.
+/// An item hyperlink, in exactly the format the 1.12.1 client uses, for an
+/// item with no enchantment and no random property.
 ///
-/// `item:<entry>:<enchant>:<randomProperty>:<seed>` has four numbers. This
-/// client has no enchantments or random properties on anything it carries, so
-/// the last three are zero. `GetItemInfo` accepts the same format, so a link
-/// this client writes can be read back by the interface.
+/// `item:<entry>:<enchant>:<randomProperty>:<seed>` has four numbers.
+/// `GetItemInfo` accepts the same format, so a link this client writes can be
+/// read back by the interface.
 pub fn item_link(entry: u32, quality: u32, name: &str) -> String {
+    item_link_with(entry, 0, 0, quality, name)
+}
+
+/// The same link for a copy that carries a permanent enchantment (slot 0) and
+/// a random property. `name` is the name with its suffix, as the plate draws
+/// it. The seed is written as 0.
+pub fn item_link_with(entry: u32, enchant: i32, random: i32, quality: u32, name: &str) -> String {
     let colour = quality_colour(quality);
     let close = if colour.is_empty() { "" } else { "|r" };
-    format!("{colour}|Hitem:{entry}:0:0:0|h[{name}]|h{close}")
+    format!("{colour}|Hitem:{entry}:{enchant}:{random}:0|h[{name}]|h{close}")
+}
+
+/// The entry, the permanent enchantment and the random property an `item:`
+/// link names: `item:<entry>:<enchant>:<randomProperty>:<seed>`. The two
+/// numbers after the entry are 0 when the link leaves them out.
+pub fn link_fields(argument: &str) -> Option<(u32, i32, i32)> {
+    let at = argument.find("item:")?;
+    let mut numbers = argument[at + 5..]
+        .split(|c: char| c == ':' || c == '|')
+        .map(|part| part.trim());
+    let entry = numbers.next()?.parse().ok()?;
+    let mut signed = || numbers.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+    let enchant = signed();
+    let random = signed();
+    Some((entry, enchant, random))
 }
 
 /// The item entry a `GetItemInfo` argument names.
@@ -460,8 +482,8 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     // needs the world: the icon is the carried bag's, which is a lookup, not a
     // recorded request. Its one caller is the last line of
     // `ContainerFrame_GenerateFrame` before the buttons, so if it is nil no
-    // bag opens. `--audit --panels` reported this as soon as
-    // `GetContainerNumSlots` returned real sizes.
+    // bag opens. `--audit --panels` reports a missing `SetBagPortaitTexture`
+    // once `GetContainerNumSlots` returns non-zero sizes.
     globals.set(
         "SetBagPortaitTexture",
         scope.create_function(move |lua, (region, bag): (Option<mlua::Table>, Option<i64>)| {
@@ -612,7 +634,7 @@ fn container_place(bag: Option<i64>, slot: Option<i64>) -> Option<Binding> {
 /// A paper-doll slot id as the interface passes it, 0..23. 0 is a valid id:
 /// `CharacterAmmoSlot` is a `PaperDollItemSlotButton` whose id is
 /// `GetInventorySlotInfo("AmmoSlot")`, so a click or a drop on it calls
-/// `PickupInventoryItem(0)`. When 0 was filtered out here, ammo could not be
+/// `PickupInventoryItem(0)`. Filtering out 0 here would stop ammo from being
 /// put in the slot. A negative id gives `None`.
 fn inventory_slot(slot: Option<i64>) -> Option<u32> {
     u32::try_from(slot.unwrap_or(0)).ok()
@@ -833,9 +855,9 @@ mod tests {
     /// `ToggleBag`. A return value of `0` or `""` would pass the audit and
     /// still never open a bag, because both are true in Lua.
     ///
-    /// The same assertion applied when these two were stubs in
-    /// [`super::super::api::stubs`]; the empty-cursor result does not depend on
-    /// the implementation.
+    /// The empty-cursor result does not depend on the implementation: the
+    /// same assertion held when these two were stubs in
+    /// [`super::super::api::stubs`].
     #[test]
     fn the_bag_buttons_fall_through_when_the_cursor_is_empty() {
         let world = Stub::default().bags();
@@ -852,8 +874,9 @@ mod tests {
 
 /// What the interface may ask about the bags and the worn slots.
 ///
-/// Split out of `Answers`, which was one trait with 132 methods covering
-/// fifteen unrelated subjects in a 4,454-line file. It is here rather than in
+/// This is the bags-and-inventory part of `Answers`, which was one trait with
+/// 132 methods covering fifteen unrelated subjects in a 4,454-line file. It is
+/// here rather than in
 /// [`super::super::api`] so that the four parts of a read (this declaration,
 /// the answer below it, the registration further up this file and the name in
 /// [`READS`]) are all in the file named after the subject.
@@ -923,6 +946,13 @@ pub trait ContainerAnswers {
     /// as for a carried item but with no item instance, so no durability and
     /// never soulbound.
     fn item_tip(&self, entry: u32) -> Option<api::ItemTip>;
+    /// The same plate for a link that names a permanent enchantment and a
+    /// random property (`item:<entry>:<enchant>:<random>:<seed>`): the suffix
+    /// joins the name and the enchantments print as they would on the copy.
+    /// A harness without tables answers the plain plate.
+    fn item_link_tip(&self, entry: u32, _enchant: i32, _random: i32) -> Option<api::ItemTip> {
+        self.item_tip(entry)
+    }
 }
 
 impl ContainerAnswers for super::super::api::Live<'_, '_, '_> {
@@ -1062,5 +1092,13 @@ impl ContainerAnswers for super::super::api::Live<'_, '_, '_> {
 
     fn item_tip(&self, entry: u32) -> Option<api::ItemTip> {
         self.tip_from(entry, None)
+    }
+
+    fn item_link_tip(&self, entry: u32, enchant: i32, random: i32) -> Option<api::ItemTip> {
+        let mut tip = self.tip_from(entry, None)?;
+        if let Some(tables) = self.tables.as_deref() {
+            api::apply_link(&mut tip, enchant, random, tables);
+        }
+        Some(tip)
     }
 }

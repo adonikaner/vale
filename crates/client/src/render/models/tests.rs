@@ -263,6 +263,7 @@ fn stub_geometry(used: f32) -> Geometry {
         body: vale_assets::look::portrait::derive_body([[0.0; 3], [1.0, 1.0, 2.0]]),
         attachments: Arc::new(Vec::new()),
         cues: Arc::new(Default::default()),
+        trail: None,
         glows: Arc::new(Vec::new()),
         collision: Arc::new(Default::default()),
         pick: Arc::new(Default::default()),
@@ -292,6 +293,7 @@ fn stub_assets() -> Arc<ModelAssets> {
         body: vale_assets::look::portrait::derive_body([[0.0; 3], [1.0, 1.0, 2.0]]),
         attachments: Arc::new(Vec::new()),
         cues: Arc::new(Default::default()),
+        trail: None,
         glows: Arc::new(Vec::new()),
         collision: Arc::new(Default::default()),
         pick: Arc::new(Default::default()),
@@ -958,11 +960,11 @@ fn a_skin_still_loading_is_never_evicted() {
 ///
 /// A doodad starts with the unskinned build, so that build must say whether
 /// the model moves, and the answer decides whether `render::doodads` requests
-/// the skinned build in order to pose it. When the skeleton was dropped along
-/// with the tints, `resolve_doodads` read `model.skeleton`, got `None` for
-/// every model in the game, and built no rig, so no scenery animated. No test
-/// failed, because every other test that looks at a skeleton uses the entity
-/// build, which has one.
+/// the skinned build in order to pose it. With the skeleton dropped along with
+/// the tints, `resolve_doodads` reads `model.skeleton`, gets `None` for every
+/// model in the game and builds no rig, so no scenery animates. Every other
+/// test that looks at a skeleton uses the entity build, which has one, so only
+/// this test detects that.
 ///
 /// `joint_count` stays build-specific and answers a different question:
 /// whether this build can be posed. Every joint spawner iterates it, so
@@ -1059,10 +1061,10 @@ fn a_batch_keeps_the_winding_the_file_gave_it() {
 /// ref      0  224    1    1    1    1    1
 /// ```
 ///
-/// Blend 1 was previously 0.5 here, which does not match the client; blends 2
-/// to 6 were previously 0, which means no alpha test at all rather than
-/// discarding fully transparent pixels. Both affected the same family of
-/// draws; see [`crate::render::models::M2_ALPHA_KEY`].
+/// The test guards against two earlier values: 0.5 for blend 1, which does not
+/// match the client, and 0 for blends 2 to 6, which means no alpha test at all
+/// rather than discarding fully transparent pixels. Both affected the same
+/// family of draws; see [`crate::render::models::M2_ALPHA_KEY`].
 #[test]
 fn the_alpha_cut_is_the_clients_own_per_blend_table() {
     use crate::render::models::{alpha_cut, M2_TRANSLUCENT_CUT};
@@ -1071,8 +1073,8 @@ fn the_alpha_cut_is_the_clients_own_per_blend_table() {
     for blend in 2..=6u16 {
         assert_eq!(alpha_cut(blend, M2_ALPHA_KEY), M2_TRANSLUCENT_CUT, "blend {blend}");
     }
-    // The cutoff is a parameter, because a WMO's key is the same 224 from the
-    // same table but arrives through its own constant.
+    // The cutoff is a parameter, because a WMO's key is the same 224 as blend
+    // 1's but arrives through its own constant.
     assert_eq!(
         alpha_cut(1, crate::render::wmos::WMO_ALPHA_KEY),
         M2_ALPHA_KEY,
@@ -1266,13 +1268,12 @@ fn scenery_has_no_bone_subset() {
 /// nothing else may name a joint list.
 ///
 /// There are four spawners: `world::entities::spawn`,
-/// `world::entities::effects`, `render::glue` and `render::portraits`. When the
-/// bone subset was introduced, `render::portraits` was missed and kept binding
-/// the model's whole skeleton to meshes whose joint indices had become
-/// subset-local. Every vertex posed off the wrong bone, which on a 64-pixel
-/// face looks like a smear, and it passed the whole test suite and six
-/// interface probes because no headless check looks at a portrait (the glue
-/// screens had the same gap).
+/// `world::entities::effects`, `render::glue` and `render::portraits`. A
+/// spawner that binds the model's whole skeleton to meshes whose joint indices
+/// are subset-local poses every vertex off the wrong bone, which on a 64-pixel
+/// face looks like a smear. `render::portraits` did this after the bone subset
+/// was introduced. The test suite and six interface probes passed, because no
+/// headless check looks at a portrait or at the glue screens.
 ///
 /// This test enforces the rule: each call site has one line of source that
 /// names `skin_for`, so a new spawner that skips it fails the test.

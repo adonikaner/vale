@@ -1,10 +1,10 @@
 //! Name/detail lookups.
 //!
-//! `SMSG_UPDATE_OBJECT` gives an entity an *entry id*, not a name. Turning
+//! `SMSG_UPDATE_OBJECT` gives an entity an entry id, not a name. Turning
 //! "unit with entry 448" into "Hogger" costs a round trip: the client asks with
 //! `CMSG_CREATURE_QUERY` and the server answers from its creature template
-//! table. Responses are cached — entries repeat constantly (every wolf in a
-//! zone shares one) and re-asking would be pure waste.
+//! table. Responses are cached by entry, because many entities share one entry
+//! (every wolf in a zone has the same one).
 //!
 //! Source: vmangos `src/game/Handlers/QueryHandler.cpp`.
 
@@ -19,24 +19,22 @@ pub struct CreatureInfo {
     pub sub_name: String,
     /// `CreatureType.dbc` — beast, humanoid, undead…
     pub creature_type: u32,
-    /// **`CreatureFamily.dbc`** — wolf, cat, boar; 0 for anything that is not a
-    /// tameable beast.
+    /// Row in `CreatureFamily.dbc` (wolf, cat, boar). 0 for anything that is
+    /// not a tameable beast.
     ///
-    /// Read for the pet panel and nothing else, and it is the *only* place the
-    /// family comes from: `UnitCreatureFamily` takes it off the
-    /// creature cache at `+0x1c`, which is this field. See
-    /// [`vale_assets::tables::pet`].
+    /// Only the pet panel reads it. This field is the only source of the
+    /// family: the 1.12.1 client answers `UnitCreatureFamily` from the cached
+    /// creature query response. See [`vale_assets::tables::pet`].
     pub pet_family: u32,
-    /// **`PetPersonality.dbc`** — the happiness bands, the damage percentage
-    /// and the loyalty rate.
+    /// Row in `PetPersonality.dbc`, which holds the happiness bands, the damage
+    /// percentage and the loyalty rate.
     ///
     /// vmangos writes a literal `uint32(0)` here and its own comment calls the
-    /// field reserved, so against this server it is always zero and the client
-    /// falls back to personality 1 — see
-    /// [`vale_assets::tables::pet::DEFAULT_PERSONALITY`], which is where the
-    /// fallback lives because it is the ordinary path rather than the
-    /// exception. `GetPetHappiness` reads the same field off the
-    /// cache at `+0x24`.
+    /// field reserved. Against this server it is therefore always zero, and
+    /// the client falls back to personality 1. The fallback is defined in
+    /// [`vale_assets::tables::pet::DEFAULT_PERSONALITY`], because it is the
+    /// ordinary case rather than the exception. The 1.12.1 client answers
+    /// `GetPetHappiness` from this field of the cached response.
     pub pet_personality: u32,
     /// 0 normal, 1 elite, 2 rare elite, 3 boss, 4 rare.
     pub rank: u32,
@@ -48,9 +46,9 @@ pub struct CreatureInfo {
 impl CreatureInfo {
     /// Human-readable rank suffix, or empty for ordinary creatures.
     ///
-    /// **This is the CLI's listing form and not the tooltip's.** The plate the
-    /// game draws puts the classification in its own `(…)` cell through
-    /// [`classification_key`], which is a different set of words — a rare
+    /// This is the CLI's listing form, not the tooltip's. The unit tooltip
+    /// puts the classification in its own `(…)` cell through
+    /// [`classification_key`], which uses a different set of words. A rare
     /// creature gets no word at all there.
     pub fn rank_label(&self) -> &'static str {
         match self.rank {
@@ -84,8 +82,8 @@ impl CreatureInfo {
 /// u8 civilian, u8 racialLeader
 /// ```
 ///
-/// Returns `None` when the server has no template for the entry — it replies
-/// with the entry id alone in that case.
+/// Returns `None` when the server has no template for the entry. In that case
+/// the server replies with the entry id alone.
 pub fn parse_creature_response(body: &[u8]) -> Option<CreatureInfo> {
     let mut r = Reader::new(body);
     if !r.has(4) {
@@ -99,7 +97,7 @@ pub fn parse_creature_response(body: &[u8]) -> Option<CreatureInfo> {
         return None;
     }
     let name = r.cstring();
-    // name2/3/4 — empty, but they occupy a byte each and must be consumed.
+    // name2/3/4 are empty, but each occupies one byte and must be consumed.
     for _ in 0..3 {
         if !r.has(1) {
             return None;
@@ -116,17 +114,15 @@ pub fn parse_creature_response(body: &[u8]) -> Option<CreatureInfo> {
     };
 
     if !r.has(20) {
-        return Some(info); // truncated tail: the name is the valuable part
+        return Some(info); // truncated tail: keep the name, which is already read
     }
     let _type_flags = r.u32();
     info.creature_type = r.u32();
     info.pet_family = r.u32();
     info.rank = r.u32();
-    // **The field vmangos calls reserved is the pet's personality**, and the
-    // client's own struct is what says so: it drops `typeFlags`, so the cache's
-    // `+0x1c` is this packet's `petFamily` and its `+0x24` is this word — and
-    // those are the two `GetPetHappiness` and `UnitCreatureFamily` index their
-    // tables with. See [`CreatureInfo::pet_personality`].
+    // The field vmangos calls reserved is the pet's personality. The 1.12.1
+    // client uses `petFamily` for `UnitCreatureFamily` and this word for
+    // `GetPetHappiness`. See [`CreatureInfo::pet_personality`].
     info.pet_personality = r.u32();
 
     if r.has(4) {
@@ -145,7 +141,8 @@ pub fn parse_creature_response(body: &[u8]) -> Option<CreatureInfo> {
 }
 
 /// Body for `CMSG_CREATURE_QUERY`: the entry, then the GUID of an instance of
-/// it. The server needs both — the entry to look up, the GUID to answer about.
+/// it. The server needs both: the entry to look up and the GUID to answer
+/// about.
 pub fn creature_query_body(entry: u32, guid: u64) -> Vec<u8> {
     let mut out = Vec::with_capacity(12);
     out.extend_from_slice(&entry.to_le_bytes());
@@ -161,9 +158,9 @@ pub fn gameobject_query_body(entry: u32, guid: u64) -> Vec<u8> {
 /// How many template words `SMSG_GAMEOBJECT_QUERY_RESPONSE` carries.
 ///
 /// `GameObjectInfo`'s union is 24 `uint32`s in every build of the server, and
-/// the packet appends the whole raw block whatever the type is — so the count
-/// is fixed and it is what [`parse_gameobject_response`] measures the trailing
-/// name fields against.
+/// the packet appends the whole raw block for every type. The count is
+/// therefore fixed, and [`parse_gameobject_response`] uses it to measure the
+/// trailing name fields.
 pub const GAMEOBJECT_DATA: usize = 24;
 
 /// The parts of `SMSG_GAMEOBJECT_QUERY_RESPONSE` worth keeping.
@@ -174,14 +171,14 @@ pub struct GameObjectInfo {
     pub object_type: u32,
     pub display_id: u32,
     pub name: String,
-    /// **The template's own 24-word union**, verbatim and uninterpreted.
+    /// The template's 24-word union, verbatim and uninterpreted.
     ///
-    /// What each word *means* depends on [`Self::object_type`] and is a game
-    /// rule rather than a packet fact, so it is read in
-    /// `vale_assets::look::object` and not here. It is what says a chest is
-    /// an ore vein rather than a strongbox, and there is nowhere else to learn
-    /// it: no DBC names a game object and the update block carries only the
-    /// display id and the open/shut state.
+    /// The meaning of each word depends on [`Self::object_type`] and is a game
+    /// rule rather than a packet fact, so it is interpreted in
+    /// `vale_assets::look::object`, not here. These words say whether a chest
+    /// is an ore vein or a strongbox. No other source has them: no DBC names a
+    /// game object, and the update block carries only the display id and the
+    /// open/shut state.
     pub data: [u32; GAMEOBJECT_DATA],
 }
 
@@ -210,19 +207,19 @@ impl Default for GameObjectInfo {
 /// A "not found" reply is `entry | 0x80000000` and nothing else, which falls
 /// out of the length check below as `None`.
 ///
-/// **How many empty names sit between the name and the data is measured, not
-/// assumed**, and that is the whole reason this function does arithmetic
-/// instead of calling `cstring` a fixed number of times. The count differs
-/// between server builds (1.12 sends the three alternate names; later ones add
-/// a cast-bar caption, and a patched core may send either), the fields are all
-/// a single zero byte, and **a reader that is off by one still parses** — it
-/// simply returns every word of the union shifted by a byte, which is a lock id
-/// of 637,534,208 and an ore vein that reads as a strongbox. So the tail is
-/// counted backwards from the end, where [`GAMEOBJECT_DATA`] is fixed, and
-/// whatever is left over is skipped whatever it was.
+/// The number of empty names between the name and the data is measured, not
+/// assumed, which is why this function does arithmetic instead of calling
+/// `cstring` a fixed number of times. The count differs between server builds:
+/// 1.12 sends the three alternate names, later builds add a cast-bar caption,
+/// and a patched core may send either. Each of these fields is a single zero
+/// byte, so a reader that is off by one does not fail. It returns every word of
+/// the union shifted by a byte, which gives a lock id of 637,534,208 and makes
+/// an ore vein read as a strongbox. The parser therefore counts the tail
+/// backwards from the end, where [`GAMEOBJECT_DATA`] is fixed, and skips
+/// whatever bytes remain between the name and the union.
 ///
-/// A body with no room for the union at all keeps the name and leaves the data
-/// zeroed, which is [`Default`]'s own answer and reads as "a game object with
+/// A body with no room for the union keeps the name and leaves the data
+/// zeroed. That is the [`Default`] value, and it reads as "a game object with
 /// no lock and no loot" rather than as a parse failure.
 ///
 /// Source: vmangos `Handlers/QueryHandler.cpp`,
@@ -237,9 +234,10 @@ pub fn parse_gameobject_response(body: &[u8]) -> Option<GameObjectInfo> {
     let display_id = r.u32();
     let name = r.cstring();
     let mut data = [0u32; GAMEOBJECT_DATA];
-    // The union is the last 96 bytes of the body; everything between it and the
-    // name is the run of empty alternate names, whatever this server's build
-    // sends. `checked_sub` is what makes a short body the zeroed case.
+    // The union is the last 96 bytes of the body. Everything between it and the
+    // name is the run of empty alternate names, however many this server's
+    // build sends. `checked_sub` returns `None` for a short body, which leaves
+    // the data zeroed.
     let read = body.len() - r.remaining();
     if let Some(padding) = body
         .len()
@@ -262,45 +260,43 @@ pub fn parse_gameobject_response(body: &[u8]) -> Option<GameObjectInfo> {
 /// Body for `CMSG_ITEM_QUERY_SINGLE`: the item entry, then a GUID of one.
 ///
 /// `HandleItemQuerySingleOpcode` reads the entry and skips the GUID, so zero is
-/// a perfectly good answer for the second — and it has to be, because the entry
-/// is all a *visible item* field carries. There is no item object to have a GUID
-/// for: another player's sword is a number in `PLAYER_VISIBLE_ITEM_n_0` and
-/// nothing else.
+/// a valid GUID. Callers often have no GUID to send: a visible item field
+/// carries only the entry. Another player's sword is a number in
+/// `PLAYER_VISIBLE_ITEM_n_0`, with no item object behind it.
 pub fn item_query_body(entry: u32, guid: u64) -> Vec<u8> {
     creature_query_body(entry, guid)
 }
 
 /// One `_ItemStat` pair: which attribute, and by how much.
 ///
-/// The type is an `ITEM_MOD_*` value — 0 mana, 1 health, 3 agility, 4 strength,
-/// 5 intellect, 6 spirit, 7 stamina, and **there is no 2** — and the value is
-/// signed, because a handful of 1.12 items really do take an attribute away.
+/// The type is an `ITEM_MOD_*` value: 0 mana, 1 health, 3 agility, 4 strength,
+/// 5 intellect, 6 spirit, 7 stamina. There is no value 2. The value is signed,
+/// because a few 1.12 items reduce an attribute.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ItemStat {
     pub kind: u32,
     pub value: i32,
 }
 
-/// One `_ItemDamage` triple. `min`/`max` are **floats on the wire** —
-/// `ItemPrototype::Damage` is `{float, float, uint32}` — and reading them as
-/// integers produces enormous plausible numbers rather than an error.
+/// One `_ItemDamage` triple. `min` and `max` are floats on the wire, because
+/// `ItemPrototype::Damage` is `{float, float, uint32}`. Reading them as
+/// integers produces very large numbers rather than an error.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ItemDamage {
     pub min: f32,
     pub max: f32,
     /// `Resistances.dbc` row: 0 physical, 2 fire, 3 nature, 4 frost, 5 shadow,
-    /// 6 arcane — which is what makes a Thorium Shells' "Fire Damage" line.
+    /// 6 arcane. This field produces the "Fire Damage" line on Thorium Shells.
     pub school: u32,
 }
 
-/// One `_ItemSpell` block, as the *packet* carries it — six words, of which the
-/// last three are the cooldown the server chose between the item's own and the
-/// spell's.
+/// One `_ItemSpell` block as the packet carries it: six words. The last three
+/// are the cooldown the server chose between the item's own and the spell's.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ItemSpell {
     pub spell_id: u32,
-    /// `ITEM_SPELLTRIGGER_*`: 0 on use, 1 on equip, 2 chance on hit. It is what
-    /// picks between `ITEM_SPELL_TRIGGER_ONUSE`, `ONEQUIP` and `ONPROC`.
+    /// `ITEM_SPELLTRIGGER_*`: 0 on use, 1 on equip, 2 chance on hit. It selects
+    /// the tooltip string: `ITEM_SPELL_TRIGGER_ONUSE`, `ONEQUIP` or `ONPROC`.
     pub trigger: u32,
     /// Negative means the item is consumed when the charges run out.
     pub charges: i32,
@@ -311,42 +307,40 @@ pub struct ItemSpell {
 
 /// The parts of `SMSG_ITEM_QUERY_SINGLE_RESPONSE` this client needs.
 ///
-/// **Everything about an item costs a round trip, and there is no way around
-/// it.** `Item.dbc` is not in the 1.12 archives — neither the display id that
-/// says what a sword *looks* like nor the name, the stats or the sentence under
-/// them is in any file this client can open — so the whole prototype comes from
-/// the server's `item_template`, exactly as a creature's name does, cached by
-/// entry because forty guards share one breastplate and a stack of linen is one
-/// row.
+/// Every item fact costs a round trip. `Item.dbc` is not in the 1.12 archives,
+/// so the display id, the name, the stats and the description are in no file
+/// this client can open. The whole prototype comes from the server's
+/// `item_template`, as a creature's name does. It is cached by entry, because
+/// many items share one entry (forty guards wear one breastplate, and a stack
+/// of linen is one row).
 ///
-/// **This is a much larger record than the four fields the dressing code
-/// needed**, and it is read in full because a tooltip is the only consumer that
-/// can tell the difference: an item plate is name, binding, type, damage,
-/// speed, armour, stats, resistances, durability, requirement, its two spells
-/// and its description, and every one of those is a column here. What is still
-/// dropped is named in [`parse_item_response`].
+/// The record is read in full, not only the four fields the character-dressing
+/// code uses, because the item tooltip needs the rest: name, binding, type,
+/// damage, speed, armour, stats, resistances, durability, requirement, its two
+/// spells and its description. Each of those is a field here. The fields that
+/// are dropped are listed in [`parse_item_response`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ItemInfo {
     pub entry: u32,
     /// `ItemPrototype::DisplayInfoID` — the row in `ItemDisplayInfo.dbc`.
     pub display_id: u32,
-    /// `ItemPrototype::InventoryType` — where it is worn, which decides both
-    /// which geoset groups it fills and what it paints over.
+    /// `ItemPrototype::InventoryType`: where it is worn. It decides which
+    /// geoset groups the item fills and which body texture regions it covers.
     pub inventory_type: u32,
     pub name: String,
     pub class: u32,
     pub subclass: u32,
-    /// `ITEM_QUALITY_*`: 0 poor .. 6 artifact. The name's colour, and the one
-    /// field a `|Hitem:` link's `|cff……` prefix is built from.
+    /// `ITEM_QUALITY_*`: 0 poor .. 6 artifact. It sets the colour of the name,
+    /// and a `|Hitem:` link's `|cff……` prefix is built from this field alone.
     pub quality: u32,
-    /// `ITEM_FLAG_*`. Bit 0 is conjured, bit 1 openable, bit 3 "no drop"
-    /// (unique-in-the-loot sense), bit 5 wrapped, bit 11 party loot.
+    /// `ITEM_FLAG_*`, named in [`item_flags`]: 0x2 conjured, 0x4 lootable,
+    /// 0x200 wrapper, 0x800 party loot, 0x2000 guild charter.
     pub flags: u32,
     pub buy_price: u32,
     pub sell_price: u32,
-    /// `AllowableClass`/`AllowableRace` — a mask, and `-1` (all bits) for the
-    /// overwhelming majority. Kept as signed because that is how it is stored
-    /// and how "everyone" reads.
+    /// `AllowableClass`/`AllowableRace`: a mask. Most items carry `-1` (all
+    /// bits). Kept signed because the server stores it signed and "everyone"
+    /// is written as `-1`.
     pub allowable_class: i32,
     pub allowable_race: i32,
     pub item_level: u32,
@@ -355,19 +349,31 @@ pub struct ItemInfo {
     pub required_skill: u32,
     pub required_skill_rank: u32,
     pub required_spell: u32,
-    /// The largest stack the server will make. **0 and 1 both mean "does not
-    /// stack"** — 0 is what an equippable carries.
+    /// `RequiredHonorRank`: the PvP rank the character must have reached, 0
+    /// for none.
+    pub required_honor_rank: u32,
+    /// `RequiredCityRank`: a `PVP_MEDAL<n>` title, 0 for none.
+    pub required_city_rank: u32,
+    /// `RequiredReputationFaction` (a `Faction.dbc` id) and the standing, 0
+    /// (Hated) to 7 (Exalted), needed with it. The faction is 0 for none.
+    pub required_reputation_faction: u32,
+    pub required_reputation_rank: u32,
+    /// `MaxCount`: how many copies a character may hold. 0 for no limit; 1 is
+    /// the plate's "Unique" line and more than 1 is "Unique (n)".
+    pub max_count: u32,
+    /// The largest stack the server will make. 0 and 1 both mean "does not
+    /// stack"; equippable items carry 0.
     pub stackable: u32,
-    /// How many slots this is, if it is a bag. The one field that makes
-    /// `GetContainerNumSlots` answerable for a bag whose *object* has not been
+    /// The slot count, if the item is a bag. This field lets
+    /// `GetContainerNumSlots` answer for a bag whose item object has not been
     /// created yet.
     pub container_slots: u32,
     pub stats: [ItemStat; ITEM_STATS],
     pub damage: [ItemDamage; ITEM_DAMAGES],
     pub armor: i32,
-    /// Holy, fire, nature, frost, shadow, arcane — in that order, which is
-    /// `RESISTANCE1_NAME`..`RESISTANCE6_NAME`'s. Armour is `RESISTANCE0` and is
-    /// the field above, because the server sends it in the same run.
+    /// Holy, fire, nature, frost, shadow, arcane, in the order of
+    /// `RESISTANCE1_NAME`..`RESISTANCE6_NAME`. Armour is `RESISTANCE0`; it is
+    /// the `armor` field above, which the server sends in the same run.
     pub resistances: [i32; 6],
     /// Weapon swing time in milliseconds.
     pub delay: u32,
@@ -376,37 +382,41 @@ pub struct ItemInfo {
     /// `ItemBondingType`: 1 on pickup, 2 on equip, 3 on use, 4 quest item.
     pub bonding: u32,
     pub description: String,
-    /// Non-zero for anything with a page of text behind it — a book, a note, a
-    /// scroll — which is what makes `GetContainerItemInfo`'s fifth answer
-    /// (`readable`) true.
+    /// Non-zero for anything with a page of text behind it (a book, a note, a
+    /// scroll). When it is non-zero, `GetContainerItemInfo`'s fifth return
+    /// value (`readable`) is true.
     pub page_text: u32,
-    /// `PageTextMaterial.dbc`'s row — what the page is written on, which is
-    /// what the window builds four corner textures out of. Zero is parchment.
+    /// Row in `PageTextMaterial.dbc`: what the page is written on. The page
+    /// text window builds its four corner textures from it. Zero is parchment.
     /// See [`vale_assets::tables::pagetext`] for the names and
     /// `crate::play::pagetext` for the window.
     pub page_material: u32,
     pub start_quest: u32,
     pub lock_id: u32,
-    /// `Material.dbc`, and **`-1` is a real value** meaning "no material" — a
-    /// consumable rather than a piece of metal.
+    /// Row in `Material.dbc`. `-1` is a valid value meaning "no material", as
+    /// on a consumable.
     pub material: i32,
-    /// `ItemPrototype::Sheath` — **where this item hangs when it is put away**,
-    /// as a `SHEATHETYPE_*` value.
+    /// `ItemPrototype::Sheath`: where this item hangs when it is put away, as
+    /// a `SHEATHETYPE_*` value.
     ///
-    /// It is 90 words and a string deep into the tail, which is why this client
-    /// stopped short of it for so long; a *creature's* copy of the same number
-    /// is in `UNIT_VIRTUAL_ITEM_INFO` and costs nothing. See
-    /// `vale_assets::tables::item::sheath_point` for what it means.
+    /// It sits 90 words and one string into the record. For a creature's
+    /// weapon the same number is in `UNIT_VIRTUAL_ITEM_INFO` and needs no
+    /// query. See `vale_assets::tables::item::sheath_point` for what each
+    /// value means.
     pub sheath: u32,
     pub random_property: u32,
     /// A shield's block value.
     pub block: u32,
     /// `ItemSet.dbc` row, 0 for anything not part of a set.
     pub item_set: u32,
-    /// 0 for anything that cannot be damaged, which is most things.
+    /// 0 for anything that cannot be damaged, which is most items.
     pub max_durability: u32,
-    /// What a bag will hold: 0 anything, otherwise an `ItemBagFamily.dbc` row —
-    /// quiver, soul bag, herb bag.
+    /// `Area` and `Map`: the zone and the map the item may only be used in,
+    /// 0 for none. The tooltip names each on its own line.
+    pub area: u32,
+    pub map: u32,
+    /// What a bag will hold: 0 for anything, otherwise an `ItemBagFamily.dbc`
+    /// row (quiver, soul bag, herb bag).
     pub bag_family: u32,
 }
 
@@ -418,50 +428,57 @@ pub const ITEM_DAMAGES: usize = 5;
 pub const ITEM_SPELLS: usize = 5;
 
 impl ItemInfo {
-    /// Is this a bag? `ITEM_CLASS_CONTAINER` (1) or `ITEM_CLASS_QUIVER` (11) —
-    /// the two the paper doll's four bag slots accept.
+    /// Is this a bag? True for `ITEM_CLASS_CONTAINER` (1) and
+    /// `ITEM_CLASS_QUIVER` (11), the two classes the paper doll's four bag
+    /// slots accept.
     pub fn is_container(&self) -> bool {
         self.class == 1 || self.class == 11
     }
 
     /// Does hovering it want a `<Right Click to Read>` line, and does
-    /// `GetContainerItemInfo` answer `readable`? The client's own test is the
-    /// page id being set.
+    /// `GetContainerItemInfo` answer `readable`? The 1.12.1 client treats an
+    /// item as readable when its page id is set.
     pub fn is_readable(&self) -> bool {
         self.page_text != 0
     }
 
-    /// **Does a right-click open this for loot?** — `ITEM_FLAG_LOOTABLE`, and
-    /// it is the whole of the test the reference makes before sending
+    /// `ITEM_FLAG_CONJURED`: the tooltip's "Conjured Item" line.
+    pub fn is_conjured(&self) -> bool {
+        self.flags & item_flags::CONJURED != 0
+    }
+
+    /// Does a right-click open this for loot? True when `ITEM_FLAG_LOOTABLE` is
+    /// set. The 1.12.1 client checks only this flag before sending
     /// `CMSG_OPEN_ITEM`.
     ///
-    /// It is a *different* question from [`Self::is_container`], which is
-    /// whether the thing is a bag. A bag has slots and is opened by a frame;
-    /// this has a loot table and is opened by the server, into the very window
-    /// a corpse opens. 17962, the Blue Sack of Gems, is this and not that.
+    /// This is a different question from [`Self::is_container`], which asks
+    /// whether the item is a bag. A bag has slots and is opened by a frame. A
+    /// lootable item has a loot table and is opened by the server, into the
+    /// same loot window a corpse uses. 17962, the Blue Sack of Gems, is
+    /// lootable and is not a bag.
     ///
-    /// **The lock is deliberately not consulted here.** The client's item-use
-    /// path sends the packet on this bit alone and lets `HandleOpenItemOpcode` answer a
-    /// still-locked one with `EQUIP_ERR_ITEM_LOCKED` — which is a sentence the
-    /// player can read. What *is* gated on the lock is the tooltip's
-    /// `<Right Click to Open>` line; see [`Self::says_right_click_to_open`].
+    /// The lock is not consulted here. The client sends the packet on this bit
+    /// alone, and `HandleOpenItemOpcode` answers a still-locked item with
+    /// `EQUIP_ERR_ITEM_LOCKED`, which the player sees as an error message. The
+    /// tooltip's `<Right Click to Open>` line is the part gated on the lock;
+    /// see [`Self::says_right_click_to_open`].
     pub fn is_openable(&self) -> bool {
         self.flags & item_flags::LOOTABLE != 0
     }
 
-    /// **Does the plate promise `<Right Click to Open>`?** — which is a
-    /// narrower question than [`Self::is_openable`], and the narrowing is the
-    /// lock.
+    /// Does the tooltip show `<Right Click to Open>`? This is narrower than
+    /// [`Self::is_openable`] because it also checks the lock.
     ///
-    /// The client's own test, in its own order: lootable **and**
-    /// (no lock, or this copy has already been unlocked); or a wrapper whose
-    /// copy is wrapped. `unlocked` and `wrapped` are bits of the item object's
-    /// `ITEM_FIELD_FLAGS` rather than of the prototype, so they are arguments
-    /// — see [`crate::play::items::ItemSlot::unlocked`].
+    /// The 1.12.1 client shows the line when the item is lootable and either
+    /// has no lock or this copy has already been unlocked. It also shows the
+    /// line for a wrapper whose copy is wrapped. `unlocked` and `wrapped` are
+    /// bits of the item object's `ITEM_FIELD_FLAGS`, not of the prototype, so
+    /// they are passed as arguments; see
+    /// [`crate::play::items::ItemSlot::unlocked`].
     ///
-    /// A locked strongbox therefore says nothing rather than promising a
-    /// right-click that comes back refused, which is the reference's own
-    /// behaviour and the reason this is not simply [`Self::is_openable`].
+    /// A locked strongbox therefore shows no line, instead of offering a
+    /// right-click that the server refuses. The real client behaves this way,
+    /// which is why this is not simply [`Self::is_openable`].
     pub fn says_right_click_to_open(&self, unlocked: bool, wrapped: bool) -> bool {
         if self.is_openable() && (self.lock_id == 0 || unlocked) {
             return true;
@@ -469,35 +486,35 @@ impl ItemInfo {
         self.flags & item_flags::WRAPPER != 0 && wrapped
     }
 
-    /// The largest stack that can sit in one slot. **1 rather than 0** for the
-    /// things that do not stack, because every caller is dividing or comparing.
+    /// The largest stack that can sit in one slot. Returns 1 rather than 0 for
+    /// items that do not stack, because callers divide by it or compare with it.
     pub fn stack_size(&self) -> u32 {
         self.stackable.max(1)
     }
 
-    /// **Is this worn rather than carried?** `INVTYPE_NON_EQUIP` is 0, and every
+    /// Is this worn rather than carried? `INVTYPE_NON_EQUIP` is 0, and every
     /// other value is a slot on the paper doll.
     ///
-    /// The one test that decides what a right-click *is*: an equippable thing is
-    /// `CMSG_AUTOEQUIP_ITEM` and everything else is `CMSG_USE_ITEM`. See
-    /// [`crate::play::items::auto_equip_body`], where the server-side refusal that
-    /// forces the split is quoted.
+    /// This test decides which packet a right-click sends: an equippable item
+    /// sends `CMSG_AUTOEQUIP_ITEM` and every other item sends `CMSG_USE_ITEM`.
+    /// See [`crate::play::items::auto_equip_body`], which quotes the
+    /// server-side refusal that requires the split.
     pub fn is_equippable(&self) -> bool {
         self.inventory_type != 0
     }
 
-    /// **Which of the five spell blocks a right-click fires**, as the index
+    /// Which of the five spell blocks a right-click casts, as the index that
     /// `CMSG_USE_ITEM`'s third byte carries.
     ///
-    /// `ITEM_SPELLTRIGGER_ON_USE` is 0, and it is the *only* trigger the server
-    /// will accept there — an on-equip or a chance-on-hit spell in the same
-    /// record is not something a click can set off. The first one wins, which is
-    /// what the prototype's own ordering means; nothing in 1.12 carries two.
+    /// `ITEM_SPELLTRIGGER_ON_USE` is 0, and it is the only trigger the server
+    /// accepts there. An on-equip or chance-on-hit spell in the same record
+    /// cannot be cast by a click. The first on-use block is chosen, following
+    /// the prototype's order; no 1.12 item carries two.
     ///
-    /// `None` is a thing with no use at all, and it is the ordinary case: a
-    /// stack of linen, a quest token, a grey. Nothing is sent for one, which is
-    /// what the real client does too — the packet would come back
-    /// `EQUIP_ERR_ITEM_NOT_FOUND` and say so in the error frame.
+    /// `None` means the item has no use, which is the common case: a stack of
+    /// linen, a quest token, a grey item. Nothing is sent for such an item,
+    /// and the real client sends nothing either. The server would answer
+    /// `EQUIP_ERR_ITEM_NOT_FOUND`, which shows in the error frame.
     pub fn on_use_spell(&self) -> Option<u8> {
         self.spells
             .iter()
@@ -505,8 +522,8 @@ impl ItemInfo {
             .and_then(|index| u8::try_from(index).ok())
     }
 
-    /// **Does an action button write a stack count under this?**
-    /// `IsConsumableAction`'s own test:
+    /// Does an action button draw a stack count for this item? This is the
+    /// test `IsConsumableAction` applies:
     ///
     /// ```text
     /// InventoryType 24                 ; ammo -> yes
@@ -517,16 +534,17 @@ impl ItemInfo {
     ///   charges  < 0                   ; …consumed when they run out
     /// ```
     ///
-    /// **Negative charges are the whole of it** and that is not an
-    /// approximation: a potion carries `-1`, a hearthstone carries `0`, and the
-    /// sign is the only thing separating "this stack shrinks" from "this thing
-    /// is reusable". `ActionButton_UpdateCount` writes `GetActionCount` under a
-    /// button this answers for and an empty string under every other, so
-    /// answering it too generously puts a `1` under every trinket on the bar.
+    /// Outside ammo and thrown weapons, the sign of the charges decides it. A
+    /// potion carries `-1` and a hearthstone carries `0`; the sign is the only
+    /// field that separates "this stack shrinks" from "this item is reusable".
+    /// `ActionButton_UpdateCount` writes `GetActionCount` under a button for
+    /// which this returns true and an empty string under every other button.
+    /// Returning true too often puts a `1` under every trinket on the bar.
     ///
-    /// Note this is a *class*-free test. The obvious reading — class 0 is
-    /// `ITEM_CLASS_CONSUMABLE` — is not what the client asks, and it would be
-    /// wrong in both directions: a Thorium Shell is class 6.
+    /// The test does not use the item class. Class 0 is
+    /// `ITEM_CLASS_CONSUMABLE`, but the client does not check it, and a
+    /// class test would be wrong in both directions: a Thorium Shell is
+    /// class 6.
     pub fn is_consumable(&self) -> bool {
         const INVTYPE_THROWN: u32 = 25;
         if self.inventory_type == INVTYPE_AMMO || self.inventory_type == INVTYPE_THROWN {
@@ -538,33 +556,38 @@ impl ItemInfo {
     }
 }
 
-/// `INVTYPE_AMMO` — the inventory type that goes in the ammo slot and
-/// nowhere else. The only one `FindEquipSlot` refuses outright, and the whole
-/// of `CanUseAmmo`'s type test; see `crate::play::items::set_ammo_body`.
+/// `INVTYPE_AMMO`: the inventory type that goes in the ammo slot and nowhere
+/// else. It is the only inventory type `FindEquipSlot` refuses outright, and
+/// the only type `CanUseAmmo` accepts; see `crate::play::items::set_ammo_body`.
 pub const INVTYPE_AMMO: u32 = 24;
 
-/// `ITEM_FLAG_*` — the bits of [`ItemInfo::flags`] this client has a rule
+/// `ITEM_FLAG_*`: the bits of [`ItemInfo::flags`] this client has a rule
 /// about.
 ///
-/// Named rather than written as literals, as every wire constant here is:
-/// `0x4` and `0x200` are both "a right-click opens this" and they
-/// mean two different things, and the second is read together with a bit of a
-/// *different* word ([`crate::play::items::item_dyn_flags::WRAPPED`]).
+/// They are named rather than written as literals, like every wire constant
+/// here. `0x4` and `0x200` both make a right-click open the item, but they
+/// mean different things, and `0x200` is read together with a bit of a
+/// different word ([`crate::play::items::item_dyn_flags::WRAPPED`]).
 pub mod item_flags {
-    /// **Right-clicking this opens it for loot** — a Blue Sack of Gems, a
-    /// lockbox, a Small Brown Pouch. The client's item-use path tests this bit
-    /// and sends `CMSG_OPEN_ITEM`; there is no other route to that packet
-    /// for an ordinary item.
+    /// A conjured item: the plate says "Conjured Item". Values follow
+    /// vmangos' `ItemPrototype.h`.
+    pub const CONJURED: u32 = 0x0000_0002;
+    /// A guild charter: the tooltip says "<Right Click for Details>".
+    pub const CHARTER: u32 = 0x0000_2000;
+    /// Right-clicking this opens it for loot: a Blue Sack of Gems, a lockbox,
+    /// a Small Brown Pouch. When the player uses an item with this bit, the
+    /// 1.12.1 client sends `CMSG_OPEN_ITEM`. An ordinary item has no other way
+    /// to send that packet.
     pub const LOOTABLE: u32 = 0x0000_0004;
-    /// **This item wraps another one** — a Red Ribboned Wrapping. The
-    /// right-click on one of these is the *wrapping* gesture, and the
-    /// right-click on something already wrapped is `CMSG_OPEN_ITEM` again; the
-    /// two are told apart by [`crate::play::items::item_dyn_flags::WRAPPED`] on
-    /// the item object rather than by anything in the prototype.
+    /// This item wraps another one, such as a Red Ribboned Wrapping. A
+    /// right-click on blank wrapping starts the wrapping action. A right-click
+    /// on an already wrapped item sends `CMSG_OPEN_ITEM`. The two cases are
+    /// told apart by [`crate::play::items::item_dyn_flags::WRAPPED`] on the
+    /// item object, not by anything in the prototype.
     pub const WRAPPER: u32 = 0x0000_0200;
 }
 
-/// Parse `SMSG_ITEM_QUERY_SINGLE_RESPONSE` — the whole prototype.
+/// Parse `SMSG_ITEM_QUERY_SINGLE_RESPONSE`, which carries the whole prototype.
 ///
 /// ```text
 /// u32 entry, class, subclass
@@ -592,28 +615,27 @@ pub mod item_flags {
 /// u32 bagFamily                                           (build > 1.8.4)
 /// ```
 ///
-/// **Every field is four bytes wide and the only variable-length things are the
-/// two strings**, which is what makes the record worth reading straight through
-/// rather than skipping to the two or three fields a caller wants. The five
-/// spell blocks look conditional in `HandleItemQuerySingleOpcode` and are not:
-/// both arms of the `if` write six words, one of them all zeroes and `-1`s. The
-/// three build guards — `> 1.6.1` for the reputation pair and `Area`, `> 1.9.4`
-/// for `rangedModRange`, `> 1.10.2` for `Map` — are all satisfied by 1.12.1, so
-/// they are read unconditionally.
+/// Every field is four bytes wide except the two strings, so the parser reads
+/// the record straight through instead of seeking to the few fields a caller
+/// wants. The five spell blocks look conditional in
+/// `HandleItemQuerySingleOpcode` but are not: both arms of the `if` write six
+/// words, and one arm writes zeroes and `-1`s. The three build guards (`> 1.6.1`
+/// for the reputation pair and `Area`, `> 1.9.4` for `rangedModRange`,
+/// `> 1.10.2` for `Map`) are all satisfied by 1.12.1, so those fields are read
+/// unconditionally.
 ///
-/// What is deliberately dropped, because nothing here has a use for it:
-/// `buyCount`, the honour and city ranks, the reputation pair, `maxCount`,
-/// `rangedModRange`, `languageId`, `pageMaterial` and `map`.
+/// Fields dropped because nothing here uses them: `buyCount`,
+/// `rangedModRange` and `languageId`.
 ///
-/// **Stopping early is safe in a way that stopping early inside an update block
-/// is not** — this packet is one record with no successor to desynchronise — so
-/// a short body still yields every field that did arrive, and the fields are
-/// filled in wire order so that "arrived" and "read" cannot disagree.
+/// Stopping early is safe here, unlike inside an update block, because this
+/// packet is one record with no following record to desynchronise. A short
+/// body still yields every field that arrived. The fields are filled in wire
+/// order, so every field that arrived is also read.
 ///
-/// A "not found" reply is `entry | 0x80000000` and nothing else, which is what
-/// the server sends for an item it will not describe (vmangos gates on
-/// `Discovered` when `PreventItemDataMining` is on). Four bytes fails the length
-/// check below and comes back `None`.
+/// A "not found" reply is `entry | 0x80000000` and nothing else. The server
+/// sends it for an item it will not describe (vmangos gates on `Discovered`
+/// when `PreventItemDataMining` is on). Four bytes fail the length check below,
+/// and the result is `None`.
 ///
 /// Source: vmangos `Handlers/ItemHandler.cpp`,
 /// `WorldSession::HandleItemQuerySingleOpcode`, field for field.
@@ -639,9 +661,10 @@ pub fn parse_item_response(body: &[u8]) -> Option<ItemInfo> {
         let _ = r.cstring();
     }
 
-    // From here on every read is guarded, and each guard covers the run up to
-    // the next one — so a body cut anywhere keeps everything above the cut.
-    // `word!` reads one `u32` or leaves the record as it stands.
+    // From here on every read is guarded, and each guard covers the run of
+    // fields up to the next guard. A body cut anywhere keeps every field before
+    // the cut. `words!(n)` returns the record as it stands unless `n` more
+    // `u32`s are present.
     macro_rules! words {
         ($n:expr) => {
             if !r.has(4 * $n) {
@@ -666,16 +689,16 @@ pub fn parse_item_response(body: &[u8]) -> Option<ItemInfo> {
     info.required_skill = r.u32();
     info.required_skill_rank = r.u32();
     info.required_spell = r.u32();
-    let _required_honor_rank = r.u32();
-    let _required_city_rank = r.u32();
+    info.required_honor_rank = r.u32();
+    info.required_city_rank = r.u32();
 
-    // Present because this build is past 1.6.1 — see the layout above.
+    // Present because this build is later than 1.6.1; see the layout above.
     words!(2);
-    let _required_reputation_faction = r.u32();
-    let _required_reputation_rank = r.u32();
+    info.required_reputation_faction = r.u32();
+    info.required_reputation_rank = r.u32();
 
     words!(3);
-    let _max_count = r.u32();
+    info.max_count = r.u32();
     info.stackable = r.u32();
     info.container_slots = r.u32();
 
@@ -685,8 +708,8 @@ pub fn parse_item_response(body: &[u8]) -> Option<ItemInfo> {
         stat.value = r.u32() as i32;
     }
 
-    // **Floats.** `ItemPrototype::Damage` is `{float, float, uint32}`; reading
-    // the first two as integers gives 1.1e9 rather than 34.
+    // Floats: `ItemPrototype::Damage` is `{float, float, uint32}`. Reading the
+    // first two as integers gives about 1.1e9 rather than 34.
     words!(3 * ITEM_DAMAGES);
     for damage in &mut info.damage {
         damage.min = f32::from_bits(r.u32());
@@ -739,17 +762,17 @@ pub fn parse_item_response(body: &[u8]) -> Option<ItemInfo> {
     info.max_durability = r.u32();
 
     words!(3);
-    let _area = r.u32();
-    let _map = r.u32();
+    info.area = r.u32();
+    info.map = r.u32();
     info.bag_family = r.u32();
     Some(info)
 }
 
 /// The parts of `SMSG_NAME_QUERY_RESPONSE` worth keeping.
 ///
-/// Players are the one entity type with no *entry* — a creature's name comes
-/// from its shared template, but every player is unique, so the lookup is by
-/// GUID and the result caches per GUID rather than per entry.
+/// Players are the only entity type with no entry. A creature's name comes from
+/// its shared template, but every player is unique, so the lookup is by GUID
+/// and the result is cached per GUID rather than per entry.
 #[derive(Debug, Clone, Default)]
 pub struct PlayerInfo {
     pub guid: u64,
@@ -762,8 +785,8 @@ pub struct PlayerInfo {
     pub class: u32,
 }
 
-/// 1.12 `enum Races`. Fixed for this build — the four later races do not exist,
-/// and `ChrRaces.dbc` would only restate this at the cost of a file read.
+/// 1.12 `enum Races`. Fixed for this build: the four later races do not exist,
+/// and reading `ChrRaces.dbc` would only return the same names.
 pub fn race_name(race: u32) -> &'static str {
     match race {
         1 => "Human",
@@ -794,15 +817,15 @@ pub fn class_name(class: u32) -> &'static str {
     }
 }
 
-/// `CreatureType.dbc`'s own name column, which is the word the unit tooltip's
-/// middle cell holds for anything that is not a player.
+/// `CreatureType.dbc`'s name column: the word the unit tooltip's middle cell
+/// holds for anything that is not a player.
 ///
-/// **Read out of the file rather than transcribed from a wiki**: the shipped
-/// `DBFilesClient\CreatureType.dbc` is 11 records of 11 fields, ids 1..11, and
-/// these are its string block verbatim — so 1.12 has no "Non-combat Pet" and no
-/// "Gas Cloud", which later builds do. Fixed for this build on exactly the terms
-/// [`race_name`] states: eleven words are not worth a file read, and the check
-/// that they are the right eleven is the decode above.
+/// The names are copied from the shipped file, not from a wiki. The shipped
+/// `DBFilesClient\CreatureType.dbc` has 11 records of 11 fields, ids 1..11, and
+/// these are its string block verbatim. 1.12 therefore has no "Non-combat Pet"
+/// and no "Gas Cloud", which later builds have. The list is fixed for this build
+/// for the same reason as [`race_name`]: eleven words do not justify a file
+/// read, and a decode of the file confirmed them.
 pub fn creature_type_name(creature_type: u32) -> &'static str {
     match creature_type {
         1 => "Beast",
@@ -822,11 +845,11 @@ pub fn creature_type_name(creature_type: u32) -> &'static str {
 
 /// The `GlobalStrings.lua` key the tooltip's classification cell holds, or `""`.
 ///
-/// **It is not [`CreatureInfo::rank_label`]'s set.** The client's unit tooltip
-/// builder indexes a five-entry table of string *keys* by the creature's
-/// classification and skips the cell when the entry is the empty string: `{"", "ELITE", "ELITE", "BOSS", ""}`. So a **rare**
-/// creature draws no classification at all, and a rare elite draws plain
-/// "Elite" — neither of which the listing form above says.
+/// This is a different set from [`CreatureInfo::rank_label`]. The 1.12.1 unit
+/// tooltip maps rank 0..4 to the keys `"", "ELITE", "ELITE", "BOSS", ""` and
+/// draws no classification cell for an empty key. A rare creature therefore
+/// shows no classification, and a rare elite shows plain "Elite". The listing
+/// form above says something different in both cases.
 pub fn classification_key(rank: u32) -> &'static str {
     match rank {
         1 | 2 => "ELITE",
@@ -854,7 +877,7 @@ impl PlayerInfo {
 /// Body for `CMSG_NAME_QUERY`: a plain u64.
 ///
 /// `HandleNameQueryOpcode` does `recv_data >> guid` into an `ObjectGuid`, which
-/// streams as its raw value — this is one of the places a GUID is *not* packed.
+/// streams as its raw value. The GUID is not packed in this packet.
 pub fn name_query_body(guid: u64) -> Vec<u8> {
     guid.to_le_bytes().to_vec()
 }
@@ -869,9 +892,9 @@ pub fn name_query_body(guid: u64) -> Vec<u8> {
 /// ```
 ///
 /// Source: `WorldSession::SendNameQueryOpcode`. The realm-name string is inside
-/// a `SUPPORTED_CLIENT_BUILD >= CLIENT_BUILD_1_12_1` guard — this client *is*
-/// 1.12.1, so it is always present, and skipping it would shift race/gender/
-/// class by one byte and report every player as a gnome.
+/// a `SUPPORTED_CLIENT_BUILD >= CLIENT_BUILD_1_12_1` guard. This client is
+/// 1.12.1, so the string is always present. Skipping it would shift race,
+/// gender and class by one byte and report every player as a gnome.
 pub fn parse_name_response(body: &[u8]) -> Option<PlayerInfo> {
     let mut r = Reader::new(body);
     if !r.has(8 + 1) {
@@ -881,7 +904,7 @@ pub fn parse_name_response(body: &[u8]) -> Option<PlayerInfo> {
     let name = r.cstring();
     if name.is_empty() {
         // The server answers an unknown GUID with an empty name rather than
-        // staying silent; caching that would mean never asking again.
+        // no reply. Caching the empty name would stop the client asking again.
         return None;
     }
     let _realm_name = if r.has(1) { r.cstring() } else { String::new() };
@@ -912,12 +935,12 @@ mod openable_tests {
         }
     }
 
-    /// **A sack is not a bag**, and the two questions are one bit and one class
-    /// apart.
+    /// A lootable sack is not a bag. The two tests differ in one flag bit and
+    /// one item class.
     ///
-    /// 17962, the Blue Sack of Gems, is `ITEM_FLAG_LOOTABLE` with no inventory
-    /// type, no on-use spell and no container class — so every other branch of
-    /// the right-click falls through and it is this bit or nothing.
+    /// 17962, the Blue Sack of Gems, has `ITEM_FLAG_LOOTABLE` with no inventory
+    /// type, no on-use spell and no container class. Every other right-click
+    /// case fails for it, so the lootable bit alone makes it openable.
     #[test]
     fn a_lootable_item_is_opened_and_a_bag_is_not() {
         let sack = proto(item_flags::LOOTABLE, 0);
@@ -931,12 +954,12 @@ mod openable_tests {
         assert!(bag.is_container());
     }
 
-    /// **The plate's promise is gated on the lock and the packet is not.**
+    /// The tooltip line is gated on the lock; the packet is not.
     ///
-    /// That split is the reference's and it is deliberate: a strongbox nobody
-    /// has picked says nothing rather than promising a right-click, but the
-    /// right-click still goes so that the server can answer
-    /// `EQUIP_ERR_ITEM_LOCKED` in words.
+    /// The real client makes the same split. A strongbox that has not been
+    /// picked shows no `<Right Click to Open>` line, but a right-click still
+    /// sends the packet so that the server can answer `EQUIP_ERR_ITEM_LOCKED`
+    /// with an error message.
     #[test]
     fn a_locked_box_promises_nothing_and_is_still_sent() {
         let box_ = proto(item_flags::LOOTABLE, 2);
@@ -947,8 +970,9 @@ mod openable_tests {
         assert!(proto(item_flags::LOOTABLE, 0).says_right_click_to_open(false, false));
     }
 
-    /// **Wrapping paper is the other half of the same line**, and the bit that
-    /// tells the two apart is on the object rather than in the prototype.
+    /// A wrapped gift also shows `<Right Click to Open>`. The bit that tells
+    /// blank wrapping paper from a wrapped gift is on the item object, not in
+    /// the prototype.
     #[test]
     fn a_wrapped_gift_promises_the_same_line_and_blank_paper_does_not() {
         let paper = proto(item_flags::WRAPPER, 0);
@@ -1028,15 +1052,15 @@ mod tests {
         assert_eq!(info.object_type, 3);
     }
 
-    /// A whole `item_template` on the wire, written the way
-    /// `HandleItemQuerySingleOpcode` writes it — field for field, in order.
+    /// A whole `item_template` on the wire, written field for field in the
+    /// order `HandleItemQuerySingleOpcode` writes it.
     ///
-    /// The only thing that can go wrong in this parser is a **miscount**, and a
-    /// miscount does not fail: it reads some other column as the one asked for
-    /// and answers something plausible. So the fixture fills every field with a
-    /// distinguishable value and the assertions walk the record end to end. The
-    /// item is a Thunderfury-shaped one-hander: class 2 subclass 7, worn
-    /// `INVTYPE_WEAPONMAINHAND`, sheathed `LARGEWEAPONLEFT`.
+    /// The main failure mode of this parser is a miscount, and a miscount does
+    /// not fail: it reads a different column and returns a plausible value. The
+    /// fixture therefore gives the fields distinguishable values, and the
+    /// assertions check the record from start to end. The item is modelled on
+    /// Thunderfury: class 2 subclass 7, worn `INVTYPE_WEAPONMAINHAND`, sheathed
+    /// `LARGEWEAPONLEFT`.
     fn thunderfury() -> Writer {
         let mut w = Writer::new();
         w.u32(19019); // entry
@@ -1111,8 +1135,8 @@ mod tests {
             },
             "a stat value is signed"
         );
-        // **The damage floats**, which is the field a miscount turns into
-        // 1.1e9 rather than into an error.
+        // The damage floats. A miscount turns these into about 1.1e9 rather
+        // than into an error.
         assert_eq!(info.damage[0].min, 44.0);
         assert_eq!(info.damage[0].max, 115.0);
         assert_eq!(info.damage[1].school, 3);
@@ -1129,24 +1153,24 @@ mod tests {
 
     /// A body that stops short keeps everything above the cut.
     ///
-    /// The display id and the inventory type are what decide whether the item is
-    /// *drawn at all*; everything past them decorates a tooltip. Losing the whole
-    /// item over a short tail would be the worse trade, and this is the same rule
-    /// `parse_creature_response` follows for a truncated name block.
+    /// The display id and the inventory type decide whether the item is drawn
+    /// at all; the fields after them are used by the tooltip. Keeping a partial
+    /// record is better than losing the whole item over a short tail.
+    /// `parse_creature_response` follows the same rule for a truncated body.
     #[test]
     fn a_truncated_body_keeps_every_field_that_arrived() {
         let full = thunderfury().buf;
         // Cut just past `inventoryType`: name (44+1) + 3 empty + 3 words of
-        // header + 6 more. Counted from the front rather than from the back,
-        // because the back is what is being removed.
+        // header + 6 more. Counted from the front, because the test removes
+        // the back.
         let head = 4 * 3 + 45 + 3 + 4 * 6;
         let info = parse_item_response(&full[..head]).expect("parsed");
         assert_eq!(info.display_id, 30606);
         assert_eq!(info.inventory_type, 21);
         assert_eq!(info.sheath, 0, "an absent sheath type reads as SHEATHETYPE_NONE");
         assert_eq!(info.max_durability, 0);
-        // …and every prefix of the body parses rather than panicking, which is
-        // the property that keeps a damaged packet from taking the session down.
+        // Every prefix of the body must parse without panicking, so a damaged
+        // packet cannot end the session.
         for cut in 0..full.len() {
             let _ = parse_item_response(&full[..cut]);
         }
@@ -1160,13 +1184,13 @@ mod tests {
         assert!(parse_item_response(&w.buf).is_none());
     }
 
-    /// **What a right-click *is*, decided off the prototype alone.**
+    /// The prototype alone decides what a right-click sends.
     ///
-    /// The two branches are `CMSG_AUTOEQUIP_ITEM` and `CMSG_USE_ITEM`, and the
-    /// third answer — neither — is the ordinary case for most of what a
-    /// character carries. `on_use_spell` must ignore an on-equip spell in the
-    /// same record: `HandleUseItemOpcode` checks the trigger of the block the
-    /// *index* names, so pointing it at an `ON_EQUIP` proc is a refusal.
+    /// The two packets are `CMSG_AUTOEQUIP_ITEM` and `CMSG_USE_ITEM`. The third
+    /// outcome, sending neither, is the common case for most items a character
+    /// carries. `on_use_spell` must ignore an on-equip spell in the same record:
+    /// `HandleUseItemOpcode` checks the trigger of the block the index names,
+    /// and refuses an index that points at an `ON_EQUIP` proc.
     #[test]
     fn a_prototype_says_whether_a_click_wears_it_uses_it_or_neither() {
         let mut cloth = ItemInfo::default();
@@ -1186,9 +1210,8 @@ mod tests {
         assert!(sword.is_equippable());
         assert_eq!(sword.on_use_spell(), None);
 
-        // A trinket: worn *and* usable — `is_equippable` wins the first click,
-        // which is what puts it on the paper doll rather than firing it in the
-        // bag.
+        // A trinket is worn and usable. `is_equippable` decides the first
+        // click, so the click equips it rather than using it from the bag.
         cloth.spells[1] = ItemSpell {
             spell_id: 439,
             trigger: 0,
@@ -1197,13 +1220,13 @@ mod tests {
         assert_eq!(cloth.on_use_spell(), Some(1), "the index, not the spell");
     }
 
-    /// **A stack count under an action button is the *sign of the charges***,
-    /// not the item class — see [`ItemInfo::is_consumable`], which is
-    /// `IsConsumableAction`'s own test.
+    /// The stack count under an action button depends on the sign of the
+    /// charges, not on the item class. See [`ItemInfo::is_consumable`], which
+    /// applies `IsConsumableAction`'s test.
     ///
-    /// The failure this pins is silent in the mild direction and loud in the
-    /// other: too generous puts a `1` under every trinket and hearthstone on the
-    /// bar, too strict leaves a stack of potions unnumbered.
+    /// A test that returns true too often puts a `1` under every trinket and
+    /// hearthstone on the bar. A test that returns true too rarely leaves a
+    /// stack of potions without a count.
     #[test]
     fn a_stack_count_is_drawn_for_a_consumed_charge_and_for_ammo() {
         let potion = |charges: i32, trigger: u32| {
@@ -1229,8 +1252,8 @@ mod tests {
             !ItemInfo::default().is_consumable(),
             "a quest token has no spell at all"
         );
-        // The two inventory types the client answers for whatever their spells
-        // say — arrows and throwing knives, whose count is the whole point.
+        // The two inventory types that always count, whatever their spells:
+        // ammo (arrows) and thrown weapons (throwing knives).
         for kind in [24, 25] {
             assert!(
                 ItemInfo {
@@ -1253,8 +1276,8 @@ mod tests {
 
     #[test]
     fn a_missing_gameobject_template_is_none() {
-        // The server answers with `entry | 0x80000000` alone; there is no name
-        // to read and pretending otherwise would invent one.
+        // The server answers with `entry | 0x80000000` alone. There is no name
+        // to read, so the result must be `None`.
         let mut w = Writer::new();
         w.u32(9999 | 0x8000_0000);
         assert!(parse_gameobject_response(&w.buf).is_none());
