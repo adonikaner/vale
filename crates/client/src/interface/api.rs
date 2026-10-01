@@ -1994,7 +1994,12 @@ pub fn item_tip(
             .map(|s| (s.kind, s.value))
             .collect(),
         resistances: info.resistances,
+        // A guild charter keeps its petition's id in the first enchantment
+        // field, so the field is not an enchantment on one and no line is
+        // drawn from it. Read as an enchantment, petition 1 prints the name
+        // of `SpellItemEnchantment.dbc` row 1.
         enchantments: carried
+            .filter(|_| info.flags & vale_protocol::state::query::item_flags::CHARTER == 0)
             .map(|c| enchantment_lines(c, tables, wearer.now))
             .unwrap_or_default(),
         random_enchantment: carried.is_none() && info.random_property != 0,

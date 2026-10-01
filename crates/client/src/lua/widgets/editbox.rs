@@ -33,7 +33,8 @@
 //! the history. [`text_was_set`] is the hook that makes the shared `SetText`
 //! fire `OnTextSet` on an edit box, the only kind that has that script.
 //!
-//! ## Focus is a single registry slot, and hiding drops it
+//! ## Focus is a single registry slot, hiding drops it, and a hidden box
+//! ## cannot take it
 //!
 //! There is one keyboard focus in the client, so it is one registry key rather
 //! than a flag per frame, the same shape [`super::super::api::mouse`] uses for
@@ -819,7 +820,18 @@ fn first_line(e: &mlua::Error) -> String {
 /// [`super::frames::register_methods`], and [`super::button`] for why one
 /// table serves every kind.
 pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
-    let set_focus = lua.create_function(|lua, this: mlua::Table| take_focus(lua, &this))?;
+    // A box that is not visible takes no focus. Several panels end their
+    // accept handler with `HideUIPanel(…); ChatFrameEditBox:SetFocus();`
+    // (the guild registrar's purchase button is one), which returns the
+    // keyboard to the chat line when it is open. With the chat line closed
+    // the call must do nothing: a hidden box holding the focus suppresses
+    // every key binding and shows nowhere that it has it.
+    let set_focus = lua.create_function(|lua, this: mlua::Table| {
+        if !super::layout::visible(&this) {
+            return Ok(());
+        }
+        take_focus(lua, &this)
+    })?;
     methods.set("SetFocus", set_focus)?;
     let clear_focus = lua.create_function(|lua, this: mlua::Table| release_focus(lua, &this))?;
     methods.set("ClearFocus", clear_focus)?;
@@ -1335,6 +1347,19 @@ mod tests {
         lua.load("edit:Hide()").exec().expect("runs");
         assert_eq!(eval(&lua, "return edit:HasFocus()"), "Nil");
         assert!(focused(&lua).is_none());
+    }
+
+    /// `SetFocus` on a hidden box does nothing, so a panel that hands the
+    /// keyboard back to a closed chat line does not leave it on a box nobody
+    /// can see.
+    #[test]
+    fn a_hidden_box_takes_no_focus() {
+        let lua = boxed("");
+        lua.load("edit:Hide(); edit:SetFocus()").exec().expect("runs");
+        assert_eq!(eval(&lua, "return edit:HasFocus()"), "Nil");
+        assert!(focused(&lua).is_none());
+        lua.load("edit:Show(); edit:SetFocus()").exec().expect("runs");
+        assert_eq!(eval(&lua, "return edit:HasFocus()"), "Integer(1)");
     }
 
     /// The letter cap is the box's own `letters` attribute, and a full box drops
