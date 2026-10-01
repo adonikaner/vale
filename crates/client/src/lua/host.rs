@@ -240,6 +240,9 @@ pub struct LuaHost {
     trade: super::panels::trade::Queue,
     /// The duel's four verbs. See [`super::panels::duel`].
     duel: super::panels::duel::Queue,
+    /// The inspect window's three verbs and `CanInspect`'s refusal line. See
+    /// [`super::panels::inspect`].
+    inspect: super::panels::inspect::Queue,
     /// The talent panel's one verb, drained by
     /// [`crate::interface::talents`].
     talent: super::panels::talent::Queue,
@@ -333,6 +336,7 @@ impl LuaHost {
         let pagetext: super::panels::pagetext::Queue = Rc::new(RefCell::new(Vec::new()));
         let trade: super::panels::trade::Queue = Rc::new(RefCell::new(Vec::new()));
         let duel: super::panels::duel::Queue = Rc::new(RefCell::new(Vec::new()));
+        let inspect: super::panels::inspect::Queue = Rc::new(RefCell::new(Vec::new()));
         let talent: super::panels::talent::Queue = Rc::new(RefCell::new(Vec::new()));
         let taxi: super::panels::taxi::Queue = Rc::new(RefCell::new(Vec::new()));
         let held: api::Held = Rc::new(RefCell::new(api::HeldReads::default()));
@@ -422,6 +426,9 @@ impl LuaHost {
         super::panels::trade::register(&lua, &trade)?;
         // The duel's four verbs, drained by `crate::interface::duel`.
         super::panels::duel::register(&lua, &duel)?;
+        // The inspect window's three verbs, drained by
+        // `crate::interface::inspect`.
+        super::panels::inspect::register(&lua, &inspect)?;
         // The talent panel's one verb. See [`super::panels::talent`] for the
         // five reads beside it and why they are scoped.
         super::panels::talent::register(&lua, &talent)?;
@@ -471,6 +478,7 @@ impl LuaHost {
             pagetext,
             trade,
             duel,
+            inspect,
             talent,
             taxi,
             bindings: None,
@@ -1605,6 +1613,12 @@ impl LuaHost {
         std::mem::take(&mut *self.duel.borrow_mut())
     }
 
+    /// Take and clear the inspect window's presses. See
+    /// [`crate::interface::inspect`].
+    pub fn take_inspect_presses(&mut self) -> Vec<crate::interface::inspect::InspectPress> {
+        std::mem::take(&mut *self.inspect.borrow_mut())
+    }
+
     /// Take and clear the talent panel's presses, as `(tab, index)` pairs the
     /// ECS resolves against the tree. See [`crate::interface::talents`].
     pub fn take_talent_presses(&mut self) -> Vec<(usize, usize)> {
@@ -1953,6 +1967,12 @@ fn flatten_libraries(lua: &mlua::Lua) -> mlua::Result<()> {
             globals.set(flat, function)?;
         }
     }
+    // `PI`, the one flat name that is a number. `Model_OnUpdate` in
+    // `UIParent.lua` turns a paper doll by `elapsedTime * 2 * PI` while a
+    // rotate button is held, and `InspectPaperDollFrame.lua` does the same.
+    // Without it that body raised on every frame, and a held button turned the
+    // doll by its click's 0.03 and no further.
+    globals.set("PI", std::f64::consts::PI)?;
     // `date` and `time`, the two `os` functions 1.12 exposes as flat
     // globals. 1.12's state has them and no `os` table, and addons read the
     // clock through them (pfUI's first line after load is `date("%d")`).
@@ -3387,6 +3407,8 @@ mod tests {
                 if ( abs(-2) ~= 2 ) then error("abs") end
                 -- `mod` is fmod, which is what PlayerFrame_OnUpdate wants.
                 if ( mod(1.2, 0.5) < 0.19 or mod(1.2, 0.5) > 0.21 ) then error("mod") end
+                -- `PI`, which `Model_OnUpdate` turns a paper doll by.
+                if ( PI < 3.14159 or PI > 3.1416 ) then error("PI") end
                 local t = {};
                 tinsert(t, "a"); tinsert(t, "b");
                 if ( getn(t) ~= 2 ) then error("tinsert/getn") end

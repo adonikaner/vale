@@ -687,6 +687,9 @@ pub(in crate::lua) fn dispatch(lua: &mlua::Lua, pointer: &Pointer) -> mlua::Resu
         // slider takes the mouse by its kind and has no `OnDragStart`. See
         // [`super::super::widgets::slider`].
         super::super::widgets::slider::drag(lua, (x, y));
+        // A paper doll being turned follows the pointer sideways. See
+        // [`super::super::widgets::model::turn`].
+        super::super::widgets::model::turn(lua, (x, y));
     }
     let previous: Option<mlua::Table> = lua.named_registry_value(REG_FOCUS)?;
     // The tree walk, or the answer from the last pass; see [`settled`]. When
@@ -737,6 +740,7 @@ pub(in crate::lua) fn dispatch(lua: &mlua::Lua, pointer: &Pointer) -> mlua::Resu
         // thumb are the same gesture.
         if *name == LEFT {
             super::super::widgets::slider::grab(lua, frame, pointer.at);
+            super::super::widgets::model::grab(lua, frame, pointer.at);
             // A press on a text field takes keyboard focus, which 1.12's C
             // widgets also do without a script.
             focus_edit_box(lua, frame, &mut errors);
@@ -761,6 +765,7 @@ pub(in crate::lua) fn dispatch(lua: &mlua::Lua, pointer: &Pointer) -> mlua::Resu
         let dragged = resolve_drag(lua, name)?;
         if *name == LEFT {
             super::super::widgets::slider::release(lua);
+            super::super::widgets::model::release(lua);
         }
         // The frame that took the press, not the one under the pointer: a
         // button pressed, dragged off and released still returns to normal,

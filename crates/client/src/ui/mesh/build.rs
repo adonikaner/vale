@@ -1,25 +1,24 @@
-//! **The draw list as vertices** — every [`Item`] kind turned into batched,
-//! z-ordered geometry, with no egui anywhere in it.
+//! The draw list as vertices: every [`Item`] kind turned into batched,
+//! z-ordered geometry, with no egui in it.
 //!
 //! This is the mesh painter's counterpart of the kind handlers in
-//! [`crate::ui::framexml`], and it is written against them deliberately: each
-//! handler here states which egui handler it mirrors, and the two must draw
-//! the same picture until the egui painter is retired. Where they cannot be
-//! the same — the blend modes, which egui does not have — the divergence is
-//! toward the reference and stated at the site.
+//! [`crate::ui::framexml`]. Each handler here states which egui handler it
+//! mirrors, and the two must draw the same picture until the egui painter is
+//! retired. Where they cannot match, as with the blend modes egui does not
+//! have, this painter follows the 1.12.1 client and the handler says so.
 //!
-//! ## Batching is adjacency, and the paint order is the batch order
+//! ## Batching and paint order
 //!
 //! The list arrives sorted back to front, so batches must be drawn in list
-//! order. A batch therefore only ever merges **adjacent** emissions that share
-//! a texture and a blend — a panel's worth of art on one sheet is one batch —
-//! and each batch's z is the list index of its first item, so bevy's sorted
-//! transparent phase reproduces the list order exactly. [`Emitter::barrier`]
-//! closes the open batch where an item is drawn by somebody else (the minimap,
-//! whose batches rebuild on their own cadence), so nothing merges across the
-//! gap and z-sorts over it.
+//! order. A batch therefore merges only adjacent emissions that share a
+//! texture and a blend; a panel's art on one sheet is one batch. Each batch's z
+//! is the list index of its first item, so bevy's sorted transparent phase
+//! reproduces the list order exactly. [`Emitter::barrier`] closes the open
+//! batch where another pass draws an item (the minimap, whose batches rebuild
+//! on their own cadence), so that no batch merges across that item and sorts
+//! over it.
 //!
-//! ## Clipping is the CPU's
+//! ## Clipping on the CPU
 //!
 //! A 2d mesh has no scissor, so [`Item::clip`] is applied to the geometry: a
 //! quad is clamped (with its uv), and arbitrary triangles — a disc, a turned
@@ -44,7 +43,7 @@ use super::textures::UiTextures;
 const Z_BASE: f32 = 1.0;
 /// One item of separation; 3,000 items reach z 4, far inside the camera.
 const Z_STEP: f32 = 0.001;
-/// One [`Emitter::layer`] of separation **inside** a single item.
+/// One [`Emitter::layer`] of separation inside a single item.
 ///
 /// A sixteenth of an item's step, so fifteen layers fit under the next item and
 /// the list order across items is untouched. See [`Emitter::layer`] for why an
@@ -95,10 +94,10 @@ impl Emitter {
         self.sub = 0;
     }
 
-    /// **Start a new layer inside the current item**, above everything already
+    /// Start a new layer inside the current item, above everything already
     /// emitted for it.
     ///
-    /// The z is per *item*, so an item that emits several batches gives them
+    /// The z is per item, so an item that emits several batches gives them
     /// all the same z and leaves their relative order to the phase's iteration
     /// order, which this painter does not control. The minimap is the one item
     /// that does emit several: one batch per visible terrain tile and then the
@@ -311,8 +310,9 @@ fn tint(rgba: [f32; 4], alpha: f32) -> [f32; 4] {
     ]
 }
 
-/// …and the solid-fill form, with the coloured-alpha fold — see
-/// [`crate::ui::framexml::coloured_alpha`], whose argument this inherits.
+/// The solid-fill form of [`tint`], with the coloured-alpha fold. See
+/// [`crate::ui::framexml::coloured_alpha`] for the reasoning, which applies
+/// here unchanged.
 fn solid_tint(rgba: [f32; 4], alpha: f32) -> [f32; 4] {
     [
         linear(rgba[0]),
@@ -322,8 +322,8 @@ fn solid_tint(rgba: [f32; 4], alpha: f32) -> [f32; 4] {
     ]
 }
 
-/// The IEC curve, through bevy's own conversion so this file cannot hold a
-/// second opinion about it.
+/// The IEC sRGB curve, through bevy's own conversion so that this file cannot
+/// disagree with bevy about it.
 fn linear(c: f32) -> f32 {
     bevy::color::Srgba::gamma_function(c.clamp(0.0, 1.0))
 }
@@ -346,18 +346,18 @@ pub struct Painter<'w> {
     pub fonts: &'w mut UiFonts,
     pub models: &'w crate::lua::widgets::model::UiModels,
     pub portraits: &'w crate::render::portraits::Portraits,
-    /// …and the bodies — see [`crate::render::paperdoll`].
+    /// The paper-doll pictures; see [`crate::render::paperdoll`].
     pub dolls: &'w crate::render::paperdoll::Dolls,
     pub place: &'w crate::interface::minimap::MinimapView,
     pub view: Viewport,
-    /// **Device pixels per interface pixel** — the window's own scale factor,
-    /// and the only place in this painter that knows the two are different.
+    /// Device pixels per interface pixel: the window's scale factor. This is
+    /// the only field in this painter that distinguishes the two.
     ///
-    /// Art is stretched by it and always was, which is what the reference does
-    /// to its own art at any resolution. **Text is not**: a glyph is rastered
-    /// at `size * dpi` and its quad placed by [`fonts::quad`], so one atlas
-    /// texel lands on one screen pixel. See that function for what rounding in
-    /// interface pixels looked like.
+    /// Art is stretched by this factor, as the 1.12.1 client stretches its art
+    /// at any resolution. Text is not stretched: a glyph is rastered at
+    /// `size * dpi` and its quad is placed by [`fonts::quad`], so one atlas
+    /// texel lands on one screen pixel. See that function for the effect of
+    /// rounding in interface pixels instead.
     pub dpi: f32,
     /// The wall clock in milliseconds, for a `<Model>`'s global sequences —
     /// the same clock the egui handler reads off its context.
@@ -367,16 +367,17 @@ pub struct Painter<'w> {
     pub reported_models: &'w mut std::collections::HashSet<String>,
 }
 
-/// **The static pass**: every item except the minimap, which
-/// [`minimap_batches`] rebuilds on its own cadence.
+/// The static pass: every item except the minimap, which [`minimap_batches`]
+/// rebuilds on its own cadence, and the `<Model>` frames, which
+/// [`model_batches`] rebuilds.
 pub fn item_batches(items: &[Item], painter: &mut Painter) -> Vec<Batch> {
     let mut emit = Emitter::new();
     for (index, item) in items.iter().enumerate() {
         emit.item(index);
-        // **The two kinds that are drawn by a pass of their own**, each because
-        // its picture moves without any item moving: the minimap follows the
-        // player, and a `<Model>` is a clock. Both still take their index here,
-        // so the z they draw at is the one their place in the list gives them.
+        // The minimap and `<Model>` are drawn by passes of their own, because
+        // their pictures change without any item changing: the minimap follows
+        // the player, and a `<Model>` animates with the clock. Both still take
+        // their index here, so they draw at the z of their place in the list.
         if matches!(item.content, Content::Minimap(_) | Content::Model(_)) {
             emit.barrier();
             continue;
@@ -386,22 +387,21 @@ pub fn item_batches(items: &[Item], painter: &mut Painter) -> Vec<Batch> {
     emit.into_batches()
 }
 
-/// **The model pass**: every `<Model>` frame, rebuilt at frame rate.
+/// The model pass: every `<Model>` frame, rebuilt at frame rate.
 ///
-/// Its own group for the same reason the minimap has one, and the reason is
-/// measured rather than aesthetic. A flat model's triangles are a function of
-/// the **wall clock** — `uimodel::sprites` places every live sprite from
-/// `Painter::now_ms` — and the clock is not in any `Item`, so the deep compare
-/// in [`super::rebuild`] said "nothing moved" and the mesh stood still. What
-/// that looks like on screen is the pet bar's autocast border: frozen while the
-/// interface is quiet, then jumping forward by however long it was frozen the
-/// moment anything else on the screen changes. Reported as "inconsistent,
-/// freezes, behaves as if it has extremely low FPS".
+/// `<Model>` frames have their own pass for the same reason the minimap does.
+/// A flat model's triangles depend on the wall clock: `uimodel::sprites`
+/// places every live sprite from `Painter::now_ms`. The clock is not in any
+/// `Item`, so when models were in the static pass the deep compare in
+/// [`super::rebuild`] found no change and the mesh was not rebuilt. The pet
+/// bar's autocast border then froze while the interface was idle and jumped
+/// forward when anything else on the screen changed; the report described it
+/// as "inconsistent, freezes, behaves as if it has extremely low FPS".
 ///
-/// The cooldown swirl had the same fault from the other end and it was hidden:
-/// `Scene::elapsed` *is* in the item, so a running cooldown rebuilt the whole
-/// fixed list thirty times a second — the one cost this module exists to
-/// remove. Out here it costs its own batches and nothing else's.
+/// The cooldown swirl had the opposite problem. `Scene::elapsed` is in the
+/// item, so a running cooldown rebuilt the whole static list thirty times a
+/// second, which is the cost this module exists to avoid. In this pass it
+/// rebuilds only its own batches.
 pub fn model_batches(items: &[Item], painter: &mut Painter) -> Vec<Batch> {
     let mut emit = Emitter::new();
     for (index, item) in items.iter().enumerate() {
@@ -418,8 +418,8 @@ pub fn model_batches(items: &[Item], painter: &mut Painter) -> Vec<Batch> {
     emit.into_batches()
 }
 
-/// **The minimap pass**: the one widget whose contents are the world, so its
-/// batches move every frame the player does while everything else stands.
+/// The minimap pass: the one widget that shows the world, so its batches
+/// change on every frame the player moves, while the other items do not.
 pub fn minimap_batches(items: &[Item], painter: &mut Painter) -> Vec<Batch> {
     let mut emit = Emitter::new();
     for (index, item) in items.iter().enumerate() {
@@ -433,14 +433,16 @@ pub fn minimap_batches(items: &[Item], painter: &mut Painter) -> Vec<Batch> {
     emit.into_batches()
 }
 
-/// Where the held item draws: over every strata, the way the egui painter put
-/// it in the tooltip layer — a carry a panel could cover would look dropped.
-/// Far above the ~4 the deepest item list reaches, far under the camera.
+/// The z of the held item: above every strata, as the egui painter puts it in
+/// the tooltip layer. A held item drawn under a panel would look dropped. The
+/// value is far above the ~4 the deepest item list reaches and far below the
+/// camera.
 const CARRIED_Z: f32 = 900.0;
 
-/// **The carried pass**: the one thing drawn that is not in the tree — the
-/// icon on the pointer, the mesh form of `framexml::carried`. Its own group
-/// because it follows the mouse at frame rate while everything else stands.
+/// The carried pass: the icon on the pointer, the only thing drawn that is not
+/// in the tree, and the mesh form of `framexml::carried`. It has its own pass
+/// because it follows the mouse at frame rate while the other items do not
+/// change.
 pub fn carried_batch(painter: &mut Painter, path: &str, at: Vec2) -> Vec<Batch> {
     let Some(image) = painter.textures.texture(painter.images, painter.assets, path) else {
         return Vec::new();
@@ -482,9 +484,9 @@ fn one(emit: &mut Emitter, painter: &mut Painter, item: &Item) {
             fill(emit, painter, bar, rect, item.alpha, clip);
             return;
         }
-        // Both of these are drawn by their own pass — see [`item_batches`],
-        // which barriers over them rather than reaching here at all. Kept as
-        // arms so that a caller of `one` outside that loop still draws them.
+        // Both of these are drawn by their own pass: [`item_batches`] places a
+        // barrier for them and does not call `one`. The arms remain so that a
+        // caller of `one` outside that loop still draws a `<Model>`.
         Content::Model(scene) => {
             model(emit, painter, scene, rect, item.alpha, clip);
             return;
@@ -797,8 +799,8 @@ fn glyphs(
     glyphs_with(emit, painter, placed, face, raster, offset, fallback, &none, clip);
 }
 
-/// …and the general form, with a per-glyph colour override for the coloured
-/// runs of the main pass.
+/// The general form of [`glyphs`], with a per-glyph colour override for the
+/// coloured runs of the main pass.
 #[allow(clippy::too_many_arguments)]
 fn glyphs_with(
     emit: &mut Emitter,
@@ -819,8 +821,8 @@ fn glyphs_with(
             continue;
         };
         let (uv_min, uv_max) = UiFonts::uv(&sprite);
-        // Placed on the **device** pixel grid, which is what makes the quad
-        // span one screen pixel per atlas texel; see [`fonts::quad`].
+        // Placed on the device pixel grid, so the quad spans one screen pixel
+        // per atlas texel; see [`fonts::quad`].
         let rect = fonts::quad(
             &sprite,
             [glyph.x + offset[0], glyph.baseline + offset[1]],
@@ -847,12 +849,18 @@ fn model(
     alpha: f32,
     clip: Option<[f32; 4]>,
 ) {
-    // **A paper doll before a file** — the same fork the egui handler makes and
-    // for the same reason; see it for why the two are exclusive. Here the
-    // picture is bound as a `Handle<Image>` rather than as an egui id, which is
-    // the whole difference between the two painters on this path.
+    // A frame with a unit is a paper doll and draws no file. The egui handler
+    // makes the same choice; see it for why the two are exclusive. The only
+    // difference between the two painters on this path is that the picture is
+    // bound here as a `Handle<Image>` rather than as an egui id.
     if scene.unit.is_some() {
         if let Some(image) = painter.dolls.image(&scene.frame) {
+            // Snapped to whole device pixels, as a glyph is: a quad that
+            // starts part-way into a pixel is sampled between texels across
+            // its whole width, which softens the picture.
+            let dpi = if painter.dpi.is_finite() && painter.dpi > 0.0 { painter.dpi } else { 1.0 };
+            let snap = |v: f32| (v * dpi).round() / dpi;
+            let rect = [snap(rect[0]), snap(rect[1]), snap(rect[2]), snap(rect[3])];
             emit.quad(
                 &image,
                 Blend::Alpha,
@@ -929,8 +937,7 @@ fn turned_quad(
     turned(emit, image, blend, centre, half, radians, colour, clip);
 }
 
-/// …and the same quad given centre and half-size outright, for the minimap's
-/// arrow.
+/// The same quad given by centre and half-size, for the minimap's arrows.
 #[allow(clippy::too_many_arguments)]
 fn turned(
     emit: &mut Emitter,
@@ -959,8 +966,8 @@ fn turned(
     emit.raw(image, blend, &vertices, &[0, 1, 2, 0, 2, 3], clip);
 }
 
-/// The eight-argument `SetTexCoord` — `framexml::corner_quad`, argument order
-/// warning included by reference.
+/// The eight-argument `SetTexCoord`, the mesh form of `framexml::corner_quad`.
+/// See that function for the argument order.
 #[allow(clippy::too_many_arguments)]
 fn corner_quad(
     emit: &mut Emitter,
@@ -981,8 +988,8 @@ fn corner_quad(
     emit.raw(image, blend, &vertices, &[0, 1, 2, 0, 2, 3], clip);
 }
 
-/// A textured disc inscribed in a rectangle, with a half-pixel faded rim —
-/// `framexml::disc`, uv closure and all.
+/// A textured disc inscribed in a rectangle, with a half-pixel faded rim. The
+/// mesh form of `framexml::disc`, including its uv closure.
 fn disc(
     emit: &mut Emitter,
     image: &Handle<Image>,
@@ -1069,11 +1076,11 @@ fn minimap(
     }
     painter.textures.trim_minimap();
 
-    // **The dots and the markers go above the tiles**, which sharing the
-    // item's z does not achieve — see [`Emitter::layer`]. Every tile's disc is
-    // built over the whole minimap rectangle and the one under the character
-    // is opaque, so a tie they lose hides them completely rather than
-    // blending them. The arrow takes a layer of its own above these.
+    // The dots and the markers are drawn above the tiles, which sharing the
+    // item's z does not guarantee; see [`Emitter::layer`]. Every tile's disc
+    // covers the whole minimap rectangle and the tile under the character is
+    // opaque, so a dot that loses the tie is hidden completely. The arrow takes
+    // a layer of its own above these.
     emit.layer();
     blips(emit, painter, rect, radius, colour, clip);
     emit.layer();
@@ -1100,7 +1107,8 @@ fn minimap(
     );
 }
 
-/// **The dots, and the two markers** — `framexml::blips`' mesh form.
+/// The minimap dots and the two kinds of marker: the mesh form of
+/// `framexml::blips`.
 ///
 /// A dot is a cell of `ObjectIcons` at its projected place inside the disc; a
 /// marker inside the disc is its `POIIcons` cell there, and beyond the rim it
@@ -1246,12 +1254,11 @@ mod tests {
         assert!(batches[1].z > Z_BASE + Z_STEP, "the later batch sorts over the gap");
     }
 
-    /// **A layer sorts over the batches before it and under the next item.**
+    /// A layer sorts over the batches before it and under the next item.
     ///
-    /// Both halves matter and they pull opposite ways: without the first the
-    /// minimap's arrow ties with the tile it stands on and is hidden by it,
-    /// and without the second an item with several layers would paint over the
-    /// panel that comes after it in the list.
+    /// Both conditions are needed. Without the first, the minimap's arrow ties
+    /// with the tile under it and is hidden by it. Without the second, an item
+    /// with several layers would paint over the panel after it in the list.
     #[test]
     fn a_layer_sorts_within_its_item_and_never_past_the_next() {
         let mut emit = Emitter::new();
@@ -1262,8 +1269,8 @@ mod tests {
         emit.quad(&art, Blend::Alpha, [0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 1.0, 1.0], [1.0; 4], None);
         emit.item(1);
         // A barrier, because a batch merges across items when the texture and
-        // the blend match and then carries the *first* item's z — which is
-        // correct for the paint order and would hide what this asserts.
+        // the blend match, and then carries the first item's z. That is correct
+        // for the paint order but would hide what this test asserts.
         emit.barrier();
         emit.quad(&art, Blend::Alpha, [0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 1.0, 1.0], [1.0; 4], None);
         let batches = emit.into_batches();
@@ -1301,7 +1308,7 @@ mod tests {
         .expect("half survives");
         assert_eq!(rect, [5.0, 0.0, 10.0, 10.0]);
         assert_eq!(uv, [0.5, 0.0, 1.0, 1.0]);
-        // …and one wholly outside dies.
+        // A quad wholly outside the window is removed.
         assert!(clamp(
             [0.0, 0.0, 1.0, 1.0],
             [0.0, 0.0, 1.0, 1.0],

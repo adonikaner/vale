@@ -1,90 +1,85 @@
-//! **What the client draws to say which unit is which**: the ring on the ground
-//! under the target, and the brighten on the model under the pointer.
+//! Selection feedback: the ring on the ground under the target, and the
+//! brighten on the model under the pointer.
 //!
-//! They are one subject because the reference raises them from one place — the
-//! selection setter and the mouseover publisher — and two mechanisms, which is
-//! why they are two halves of this file rather than two files. The ring is the
-//! second of the two things 1.12 uses its ground-decal projector for and the
-//! first of them this client draws through [`super::decals`]; the brighten is a
-//! material property, and neither is the other's fallback.
+//! The 1.12.1 client changes both when the selection or the mouseover changes,
+//! so they share this file. They are two separate mechanisms, in two halves of
+//! the file, and neither is a fallback for the other. The ring is a ground
+//! decal drawn through [`super::decals`]; 1.12 uses its ground-decal projector
+//! for two things, and the ring is the first of them this client draws. The
+//! brighten is a material property.
 //!
-//! The circle is a real object in the reference rather than a special case:
-//! the client builds a model called **`ObjectSelectionCircle`** and gives it
-//! **`Textures\UnitSelectTexture.blp`**, and the projector drapes it over whatever the unit is
-//! standing on. That is why a selection circle in the real client follows a
-//! hill and pours down a step instead of hovering flat over it, and it is the
-//! whole reason this module is thirty lines of policy over
-//! [`super::decals::spawn_ground_decal`] rather than a pass of its own.
+//! The 1.12.1 client draws the selection circle as a model textured with
+//! `Textures\UnitSelectTexture.blp` and projects it onto the ground under the
+//! unit. The circle therefore follows a hill and bends down a step instead of
+//! lying flat. This module does the same through
+//! [`super::decals::spawn_ground_decal`], so it holds only the size and colour
+//! rules and no render pass of its own.
 //!
-//! ## The texture states the shape and the client states the colour
+//! ## The ring texture carries the shape and the selector supplies the colour
 //!
-//! Decoded: 256x256, palettised with an 8-bit alpha channel, **RGB white in
-//! every texel that is not fully transparent**. The alpha is the ring — nothing
-//! out to r ≈ 0.28 of the half-width, a soft ~44/255 fill to 0.85, a 136/255 rim
-//! at 0.875, gone by 0.97. So the colour is entirely the selector's, which is
-//! [`vale_assets::look::selection`], and the blend has to be one that *keeps* the
-//! alpha ramp: **mode 4**, `(SrcAlpha, One)` — add-alpha. Mode 3's `(One, One)`
-//! would add white across the whole quad and draw a square.
+//! The decoded texture is 256x256, palettised with an 8-bit alpha channel, and
+//! RGB white in every texel that is not fully transparent. The alpha channel
+//! holds the ring: zero out to r ≈ 0.28 of the half-width, a soft ~44/255 fill
+//! to 0.85, a 136/255 rim at 0.875, and zero again by 0.97. The colour
+//! therefore comes entirely from the selector, [`vale_assets::look::selection`].
+//! The blend must keep the alpha ramp, so it is mode 4, `(SrcAlpha, One)`
+//! (add-alpha). Mode 3, `(One, One)`, would add white across the whole quad and
+//! draw a square.
 //!
-//! ## What is a ring, and when
+//! ## Which unit gets a ring
 //!
-//! One decal, on the **selection** only. The mouseover gets no ring: the
-//! reference's `SetHighlight`/`ClearHighlight` pair is
-//! what a hover changes, and the circle object is a single global
-//! attached to the *selected* unit — which is also what the two
-//! screenshots this round was asked from show, a ring under the target and none
-//! under the unit merely being pointed at.
+//! One decal, under the selected unit only. The mouseover changes the highlight
+//! and gets no ring. The 1.12.1 client draws one circle at a time, under the
+//! selected unit. Screenshots of the 1.12.1 client show the same: a ring under
+//! the target and none under a unit that is only hovered.
 //!
-//! ## Two numbers that are this client's and say so
+//! ## Numbers this client chooses
 //!
-//! * **the radius.** The reference scales the circle object by the unit's own
-//!   footprint, and the footprint is `UNIT_FIELD_BOUNDINGRADIUS`
-//!   ([`WorldEntity::bounding_radius`]) — divided by [`RIM`], so that the
-//!   *bright rim* of the texture lands on the footprint rather than the quad's
-//!   corner. Which of the client's several bounding numbers the circle takes is
-//!   still not established; what **is** established is that the
-//!   number this used to take is the wrong one by a factor of two and a half.
+//! * The radius. The 1.12.1 client sizes the circle by the unit's footprint.
+//!   This client takes the footprint from `UNIT_FIELD_BOUNDINGRADIUS`
+//!   ([`WorldEntity::bounding_radius`]) and divides it by [`RIM`], so that the
+//!   bright rim of the texture lands on the footprint rather than on the quad's
+//!   corner. Which of the client's bounding numbers the circle uses is not
+//!   established. The number this module used before is wrong by a factor of
+//!   two and a half.
 //!
-//!   It was [`EntityModel::shadow_radius`] — the M2's own declared
-//!   half-extent, which is the same number the blob shadow uses. That box is
-//!   authored to cover *every frame of every animation the model has*, so it is
-//!   an answer to a different question: `Creature\Boar\Boar.m2` declares 2.5
-//!   model yards of horizontal half-extent (`vale model`), which at the
-//!   Rockhide Boar's 0.75 scale and over [`RIM`] is a ring **4.3 yards across**,
-//!   where the server sends 0.882 for the same creature — a ring of 2.0. That
-//!   ratio is the whole of the "the circle is much too large" report.
+//!   That number was [`EntityModel::shadow_radius`], the M2's declared
+//!   half-extent, which the blob shadow also uses. The M2 box covers every
+//!   frame of every animation of the model, so it is larger than the footprint.
+//!   `Creature\Boar\Boar.m2` declares 2.5 model yards of horizontal half-extent
+//!   (`vale model`). At the Rockhide Boar's 0.75 scale and divided by [`RIM`],
+//!   that is a ring 4.3 yards across. The server sends 0.882 for the same
+//!   creature, which is a ring 2.0 yards across. This ratio caused the report
+//!   that the circle was much too large.
 //!
-//!   The wire value is world-space and the quad is posed through the *unit's*
-//!   transform, which carries `OBJECT_FIELD_SCALE_X` — so it is divided back out
-//!   here, or the scale is applied twice and a tauren gets a ring half again too
-//!   big while a gnome gets one too small.
-//! * **nothing pulses.** This used to say the reference *does* pulse and that
-//!   the pulse belongs to the ground-target reticle. Half of that stands and
-//!   half is retracted: the reticle is `Spell-Shadow-Acceptable` and it is real
-//!   ([`super::reticle`]), but nothing in its path pulses either — the colour it
-//!   hands the projector is a flat `0xffffffff` and the texture
+//!   The wire value is in world space, and the quad is posed through the unit's
+//!   transform, which carries `OBJECT_FIELD_SCALE_X`. This module divides the
+//!   scale back out. Without that the scale is applied twice: a tauren gets a
+//!   ring half again too big and a gnome gets one too small.
+//! * No pulse. Neither the selection ring nor the ground-target reticle pulses.
+//!   The reticle is `Spell-Shadow-Acceptable` ([`super::reticle`]); the
+//!   1.12.1 client draws it in constant white (`0xffffffff`), and its texture
 //!   carries the whole shape.
 //!
-//! ## …and the brighten, which is the other half
+//! ## The highlight on hovered and selected units
 //!
-//! `SetHighlight` and `ClearHighlight` are a pair
-//! taking a **reason** and keeping a bitmask: the mouseover
-//! publisher pushes reason 0 and the
-//! selection setter reason 1. So the two
-//! **stack**, and the glow only drops when the last reason clears — which
-//! collapses exactly to set membership: a unit is lit while it is hovered *or*
-//! selected. `SetHighlight` then reads three configured bytes and scales each by
-//! 1/255; the shipped default is
-//! `0xff404040`, so the lift is **0x40/255 per channel**. It reaches the model
-//! as `glMaterialfv(GL_EMISSION)` — inside the lighting sum, before the texture
-//! modulate — which is where `m2.wgsl` puts it.
+//! The 1.12.1 client lights a unit while it is hovered or selected, and the
+//! glow stays until both have ended. This module models that as set
+//! membership: a unit is lit while it is hovered or selected. The highlight
+//! colour is configurable in the client, with a default of `0xff404040`, and
+//! each channel is scaled by 1/255, so the lift is 0x40/255 per channel. The
+//! lift is an emissive term: it is added inside the lighting sum, before the
+//! texture modulate, which is where `m2.wgsl` adds it.
 //!
-//! Three things are this client's and are stated rather than measured: the
-//! highlight colour is the shipped default and no CVar can change it here; a
-//! batch whose *texture* moves is skipped, because copying its material would
-//! stop it scrolling (see [`vale_assets::world::m2::M2TextureAnims`] and
-//! `Materials::moving`); and the lift is re-asserted every frame rather than on
-//! a change, so that a dressing rebuilt under the pointer comes back lit.
+//! Three rules belong to this client and are not measured from the 1.12.1
+//! client:
+//!
+//! * The highlight colour is always the default; no CVar changes it here.
+//! * A batch whose texture moves is skipped, because copying its material
+//!   would stop it scrolling (see [`vale_assets::world::m2::M2TextureAnims`]
+//!   and `Materials::moving`).
+//! * The lift is applied every frame rather than on a change, so that a model
+//!   whose dressing is rebuilt under the pointer is lit again.
 
 use bevy::prelude::*;
 
@@ -96,36 +91,37 @@ use crate::world::session::{LocalPlayer, WorldEntity};
 use vale_assets::look::selection::{ring_rgba, Selected};
 
 /// Where the texture's bright rim sits, as a fraction of the image's
-/// half-width. Measured off the decoded alpha channel — see the module comment.
+/// half-width, measured from the decoded alpha channel. See the module comment.
 const RIM: f32 = 0.875;
 
 /// How much wider than the bare footprint the ring is drawn.
 ///
-/// **This one is chosen by eye and says so.** `UNIT_FIELD_BOUNDINGRADIUS` is the
-/// unit's footprint and the reference's circle is visibly wider than that; what
-/// the reference actually multiplies it by is not established, so this is a
-/// client-side factor tuned against the window rather than a number read out
-/// of anything. Anyone who finds the real scale should delete this and say so.
+/// This factor is chosen by eye. `UNIT_FIELD_BOUNDINGRADIUS` is the unit's
+/// footprint, and the 1.12.1 client's circle is visibly wider than that. The
+/// factor the 1.12.1 client applies is not established, so this value is tuned
+/// by eye in this client's window. If the real factor is found, it replaces
+/// this one.
 const RING_SCALE: f32 = 1.5;
 
 /// The floor on the quad's half-width, in yards.
 ///
 /// A unit whose field block never stated a bounding radius takes
-/// `DEFAULT_BOUNDING_RADIUS` (0.389) and lands under this; the same argument —
-/// and the same shape of answer — as the pick box's own minimum. It is a
-/// *drawing* floor and deliberately not a correction to the wire value, which
-/// nothing else reads through here.
+/// `DEFAULT_BOUNDING_RADIUS` (0.389), which is below this floor. The pick box
+/// has a minimum for the same reason. This floor applies only to drawing; it
+/// does not correct the wire value, and nothing else reads that value through
+/// here.
 const MIN_RADIUS: f32 = 0.5;
 
-/// The decal under the selected unit. One at a time, by construction.
+/// The decal under the selected unit. There is at most one.
 #[derive(Component)]
 pub struct SelectionRing {
-    /// Which unit it is under, so a target change is one comparison.
+    /// The unit the ring is under, so a target change is one comparison.
     unit: Entity,
-    /// …and how wide it was built, so a unit that *grows* while selected is one
-    /// comparison too. A growth aura changes `UNIT_FIELD_BOUNDINGRADIUS` and
-    /// `OBJECT_FIELD_SCALE_X` without changing the target, and without this the
-    /// ring would keep the size the unit was when it was clicked.
+    /// The half-width the ring was built at, so a unit that grows while
+    /// selected is also one comparison. A growth aura changes
+    /// `UNIT_FIELD_BOUNDINGRADIUS` and `OBJECT_FIELD_SCALE_X` without changing
+    /// the target; without this field the ring would keep the size the unit had
+    /// when it was selected.
     half: f32,
 }
 
@@ -136,22 +132,22 @@ impl Plugin for SelectionPlugin {
         app.add_systems(
             Update,
             (
-                // **After the selection is settled and before the projection
-                // reads it.** `interface::target` may retarget in this frame, and a
-                // ring spawned after `decals::project_decals` has run is a frame
-                // of a ring at the origin — which is under the map.
+                // Runs after the selection is settled and before the projection
+                // reads it. `interface::target` may retarget in this frame, and
+                // a ring spawned after `decals::project_decals` has run is drawn
+                // for one frame at the origin, under the map.
                 follow_selection.after(crate::interface::target::TargetSet),
-                // …and the colour every frame, which is cheap and has to be:
-                // the ring turns red the instant a flagged player attacks, with
-                // nothing to notice but the reaction itself changing.
+                // The colour is set every frame. It is cheap, and the ring must
+                // turn red as soon as a flagged player attacks, when the only
+                // input that changes is the reaction.
                 tint_ring.after(follow_selection),
             )
                 .before(crate::render::decals::DecalSet),
         );
-        // **After the dressing, not before it.** A model rebuilt this frame has
-        // fresh materials with no lift on them, and a highlight applied before
-        // the rebuild is one the rebuild throws away — which is a unit that
-        // stops glowing the moment it equips something under the pointer.
+        // Runs after the dressing. A model rebuilt this frame has new
+        // materials with no lift on them, and the rebuild discards a highlight
+        // applied before it: a unit under the pointer would stop glowing when
+        // it equipped an item.
         app.add_systems(
             Update,
             apply_highlight.after(crate::world::entities::EntitySet),
@@ -159,41 +155,39 @@ impl Plugin for SelectionPlugin {
     }
 }
 
-/// The lift `SetHighlight` writes, per channel — `0x40/255`. See the module
-/// comment for where it comes from.
-const HIGHLIGHT_LIFT: f32 = 64.0 / 255.0;
+/// The highlight lift per channel, `0x40/255`. See the module comment for its
+/// source.
+pub(crate) const HIGHLIGHT_LIFT: f32 = 64.0 / 255.0;
 
 /// Light every part of the hovered and selected units, and unlight everything
 /// that has left the set.
 ///
-/// **Set membership, not a reason bitmask.** The reference keeps one per object
-/// and drops the glow when the last reason clears; hovered-or-selected is the
-/// same answer with nothing to keep, and there are exactly three reasons — the
-/// third being a game object under the pointer, which is hovered like a unit
-/// and selected like nothing.
+/// The lit set is the union of the hovered unit, the hovered game object and
+/// the selected unit. The 1.12.1 client keeps the glow until the last of these
+/// ends, and the union gives the same result without per-object state. A game
+/// object under the pointer is hovered like a unit and is never selected.
 ///
-/// **A lootable body is not a third reason**, and it was briefly written as one
-/// here. It has its own effect and the client's own name for it —
-/// `SpellVisualEffectName`'s `HARDCODED Loot Art`, hung off the corpse by
-/// `crate::world::entities::effects::loot_art`. A lift would have been this
-/// repo inventing a mechanism, which is exactly what that module's note is
-/// about.
+/// A lootable body does not get the lift. It has its own effect,
+/// `SpellVisualEffectName`'s `HARDCODED Loot Art`, attached to the corpse by
+/// `crate::world::entities::effects::loot_art`. A lift on a lootable body
+/// would be a mechanism the 1.12.1 client does not have; that module's note
+/// covers this.
 fn apply_highlight(
     hovered: Res<crate::interface::target::Hovered>,
-    // …and the game object under the same pointer, which is the same reason
-    // reached by the other half of one ray — see
-    // [`crate::interface::object::HoveredObject`]. **The template decides**, not
-    // usability: a street sign lights up and cannot be clicked at all, which is
-    // `GAMEOBJECT_TYPE_GENERIC`'s own `highlight` word — see
+    // The game object under the pointer, found by the same pointer ray as the
+    // hovered unit; see [`crate::interface::object::HoveredObject`]. The
+    // template decides whether it lights, not whether it is usable: a street
+    // sign lights up and cannot be clicked, through
+    // `GAMEOBJECT_TYPE_GENERIC`'s `highlight` field. See
     // `vale_assets::look::object::hover_of`.
     object: Res<crate::interface::object::HoveredObject>,
     selection: Res<Selection>,
     children: Query<&Children>,
-    // **The blob used to need excluding here and no longer does**: it was a
-    // child of the entity, so this walk reached it, and lifting an `unlit`
-    // shadow would have taken one unit's blob out of the batch set every shadow
-    // in the world shares for no visible change. Every blob is now one root
-    // mesh built by `render::shadows`, which `iter_descendants` cannot reach.
+    // Blob shadows are not excluded here because this walk cannot reach them.
+    // Every blob is one root mesh built by `render::shadows`, not a child of
+    // the unit, so `iter_descendants` does not visit it. Lifting an `unlit`
+    // shadow would take one unit's blob out of the batch that every shadow in
+    // the world shares, with no visible change.
     parts: Query<&MeshMaterial3d<crate::render::models::M2Material>>,
     mut commands: Commands,
     mut materials: Materials,
@@ -226,11 +220,11 @@ fn apply_highlight(
 
 /// Rewrite one root's whole subtree to a material with this lift.
 ///
-/// **Re-interned rather than mutated.** A material is shared by every batch that
-/// means the same thing, so writing the lift into the asset would light every
-/// wolf in the zone; interning the copy is what keeps the pool's invariant, and
-/// interning the copy *back* returns the original handle by value — so nothing
-/// has to remember what a part was wearing before it was lit.
+/// The material is re-interned, not mutated. A material is shared by every
+/// batch with the same parameters, so writing the lift into the asset would
+/// light every wolf in the zone. Interning the lifted copy keeps the pool's
+/// invariant, and interning it back at lift 0 returns the original handle, so
+/// nothing has to record which material a part had before it was lit.
 fn set_lift(
     root: Entity,
     lift: f32,
@@ -250,10 +244,10 @@ fn set_lift(
 
 /// Keep exactly one ring, under whatever is selected.
 ///
-/// **Despawn-and-respawn rather than re-parent**, because a decal's owner is a
-/// field it was built with and its projection cache is keyed on the corners it
-/// last saw: moving one between units of different sizes would need both
-/// rewritten, and a target change is a once-a-fight event.
+/// The ring is despawned and respawned, not re-parented. A decal's owner is a
+/// field set when it is built, and its projection cache is keyed on the
+/// corners it last saw. Moving a ring between units of different sizes would
+/// require rewriting both, and a target change happens about once a fight.
 fn follow_selection(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -264,10 +258,10 @@ fn follow_selection(
     rings: Query<(Entity, &SelectionRing)>,
 ) {
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::Selection);
-    // The width is part of the comparison, not just the unit — see
-    // [`SelectionRing::half`]. It is the same arithmetic on the same two inputs,
-    // so `==` on the float is asking "did anything move", which is what is
-    // wanted; a tolerance here would be a ring that never followed a slow grow.
+    // The comparison includes the width as well as the unit; see
+    // [`SelectionRing::half`]. The width comes from the same arithmetic on the
+    // same two inputs, so `==` on the float detects any change in those inputs.
+    // A tolerance would stop the ring following a slow growth.
     let wanted = selection
         .entity
         .and_then(|unit| units.get(unit).ok().map(|(w, t)| (unit, w, t)));
@@ -278,17 +272,16 @@ fn follow_selection(
     if held.map(|(_, ring)| (ring.unit, ring.half)) == want {
         return;
     }
-    // Every ring, not the first: a frame that spawned two (it cannot, but the
-    // invariant is cheaper to enforce than to argue) would otherwise leave one.
+    // Despawns every ring, not only the first, so that the at-most-one
+    // invariant holds even if a frame ever spawned two.
     for (entity, _) in &rings {
         commands.entity(entity).despawn();
     }
     let Some((unit, half)) = want else { return };
-    // **The material is `None` until the texture lands**, which is a frame or
-    // two into a session — exactly the blob shadow's own situation, and the
-    // answer is the same: no ring yet rather than a ring with no picture. The
-    // next frame's comparison above still reads "no ring for this unit" and
-    // tries again.
+    // The material is `None` until the texture has loaded, a frame or two
+    // into a session. As with the blob shadow, no ring is drawn until then,
+    // rather than a ring with no texture. The next frame's comparison above
+    // still finds no ring for this unit and tries again.
     let Some(material) = ring_material(&mut cache, &mut materials) else {
         return;
     };
@@ -296,9 +289,9 @@ fn follow_selection(
         &mut commands,
         &mut meshes,
         unit,
-        // No joint: the ring rides the unit's own frame, which is where the
-        // reference's circle object hangs too. A unit's transform carries its
-        // facing, and a circle does not mind.
+        // No joint: the ring follows the unit's own transform, as the 1.12.1
+        // client's circle follows the unit. The transform also carries the
+        // unit's facing, which does not change a circle.
         None,
         &quad(half),
         material,
@@ -306,19 +299,18 @@ fn follow_selection(
     commands.entity(ring).insert(SelectionRing { unit, half });
 }
 
-/// The quad's half-width, in the **entity's own scaled frame**.
+/// The quad's half-width, in the entity's own scaled frame.
 ///
-/// [`RING_SCALE`] is the one factor here that is taste rather than measurement;
-/// the other two are not cosmetic. [`RIM`] puts the texture's bright ring
-/// on the footprint rather than 14% inside the quad's corner; the scale divides
-/// out `OBJECT_FIELD_SCALE_X`, which `place_entities` has put on the transform
-/// the decal's corners are posed through and which the server has *already*
-/// folded into the wire value (`Unit::UpdateModelData`). Applying it twice is
-/// invisible on everything at scale 1.0 and wrong by 44% on a tauren, which is
-/// exactly the shape of error that gets found by eye a milestone later.
+/// [`RING_SCALE`] is chosen by eye; the other two factors are measured.
+/// [`RIM`] puts the texture's bright ring on the footprint rather than 14%
+/// inside the quad's corner. The division by `scale` removes
+/// `OBJECT_FIELD_SCALE_X`, which `place_entities` puts on the transform that
+/// poses the decal's corners, and which the server has already applied to the
+/// wire value (`Unit::UpdateModelData`). Applying it twice has no effect at
+/// scale 1.0 and is wrong by 44% on a tauren.
 fn quad_half(bounding_radius: f32, scale: f32) -> f32 {
-    // A scale of zero is not a thing the server sends, but a divide by it is a
-    // ring of infinite radius and one NaN in a mesh is a whole frame.
+    // The server does not send a scale of zero, but dividing by it would give
+    // a ring of infinite radius, and one NaN in a mesh breaks the whole frame.
     let scale = if scale > 1e-3 { scale } else { 1.0 };
     (bounding_radius * RING_SCALE / scale / RIM).max(MIN_RADIUS)
 }
@@ -342,11 +334,10 @@ fn quad(half: f32) -> vale_assets::world::m2::GroundQuad {
 
 /// The one material every ring in the world shares.
 ///
-/// **Tinted, so the colour is per instance.** `DrawParams::tint` does not carry
-/// a colour — it says only that the shader should read this instance's
-/// `MeshTag` as `0xAARRGGBB` — which is exactly what is wanted here: one
-/// material for the pool whatever the reaction, and the selector's dword
-/// written into the tag by [`tint_ring`].
+/// The material is tinted, so the colour is set per instance.
+/// `DrawParams::tint` does not carry a colour; it tells the shader to read the
+/// instance's `MeshTag` as `0xAARRGGBB`. One material therefore serves every
+/// reaction, and [`tint_ring`] writes the selector's dword into the tag.
 fn ring_material(
     cache: &mut ModelCache,
     materials: &mut Materials,
@@ -359,8 +350,8 @@ fn ring_material(
             texture: None,
             // Add-alpha. See the module comment for why not 3.
             blend: 4,
-            // Nothing lights a selection ring: the reference writes the
-            // selector's dword straight into the decal's vertex colours.
+            // The selection ring is unlit: the 1.12.1 client draws it in the
+            // selector's colour regardless of the scene lighting.
             unlit: true,
             // Seen from above only, like the blob.
             two_sided: false,
@@ -368,7 +359,7 @@ fn ring_material(
             light: vale_assets::world::wmo::BatchLight::Sun,
             liquid: None,
             ground: None,
-            // Not an `M2Color` track — see this function's own note.
+            // Not an `M2Color` track; see this function's doc comment.
             baked_tint: None,
             tint: Some(vale_assets::world::m2::BatchTint {
                 color: None,
@@ -391,12 +382,12 @@ fn tint_ring(
     assets: Res<crate::assets::GameAssets>,
     player: Query<&WorldEntity, With<LocalPlayer>>,
     units: Query<&WorldEntity>,
-    // **The two halves of friend-or-foe that are not in a file** — see
-    // [`crate::interface::api::Friendship`]. The ring is drawn by the renderer and
-    // the name plate by `render::labels`, and both were asking
-    // `FactionTemplate.dbc` on its own long after the interface had stopped:
-    // that is a green ring and a green name under a unit the same client will
-    // let you attack, which is exactly how it was reported.
+    // Party membership and reputation standing: the two inputs to
+    // friend-or-foe that are not in a DBC file. See
+    // [`crate::interface::api::Friendship`]. The renderer draws the ring and
+    // `render::labels` draws the name plate. Both used to consult only
+    // `FactionTemplate.dbc`, after the interface had stopped doing so, and drew
+    // a green ring and a green name under a unit the player could attack.
     group: Res<crate::interface::party::Party>,
     reputation: Res<crate::interface::reputation::PlayerStanding>,
     mut rings: Query<(&SelectionRing, &mut bevy::mesh::MeshTag)>,
@@ -418,10 +409,10 @@ fn selected(
 ) -> Selected {
     use vale_assets::tables::faction::Reaction;
     let tables = assets.display_tables().ok();
-    // **No table, no opinion**, which is `lua::api::unit_rank`'s own rule: the
-    // rule answers Neutral for a table it does not have, and a yellow ring
-    // under a wolf is exactly the kind of plausible wrong answer this project
-    // counts separately.
+    // Without the tables, every question answers false and the reaction is
+    // Neutral, the same rule as `lua::api::unit_rank`. A yellow ring under a
+    // wolf is a plausible wrong answer, and this project tracks that kind of
+    // error separately.
     let (reaction, i_attack_it, attacks_me) = match (tables.as_deref(), me) {
         (Some(tables), Some(me)) => (
             friendship.reaction(tables, unit, me),
@@ -436,9 +427,9 @@ fn selected(
     };
     Selected {
         player_controlled: unit.kind == vale_protocol::state::update::ObjectType::Player,
-        // The two directions, each through the same `can_attack` the picker and
-        // the interface use — which is the whole point of asking it here rather
-        // than folding a reaction and a flags word by hand.
+        // Both directions go through the same `can_attack` the picker and the
+        // interface use, so the ring cannot disagree with them, as it could if
+        // this combined a reaction and a flags word by hand.
         attacks_me,
         i_attack_it,
         pvp: unit.unit_flags & crate::interface::api::UNIT_FLAG_PVP != 0,
@@ -451,10 +442,10 @@ fn selected(
 mod tests {
     use super::*;
 
-    /// **The quad is the footprint divided by the rim**, so that the bright ring
-    /// lands where [`RING_SCALE`] puts it rather than a texel short of the
-    /// corner. A ring built at the raw radius draws 14% small, which is the kind
-    /// of error that looks like a slightly wrong art asset for ever.
+    /// The quad is the footprint divided by the rim, so that the bright ring
+    /// lands where [`RING_SCALE`] puts it rather than short of the corner. A
+    /// ring built at the raw radius draws 14% small, which looks like a slightly
+    /// wrong texture rather than a code error.
     #[test]
     fn the_quad_puts_the_rim_where_the_scale_asks() {
         let footprint = 1.4_f32;
@@ -470,15 +461,14 @@ mod tests {
         assert_eq!(quad.uvs[3], [1.0, 1.0]);
     }
 
-    /// **The entity's scale is divided out, because the server already applied
-    /// it** — the trap this whole function exists for.
+    /// The entity's scale is divided out, because the server has already
+    /// applied it to the wire value.
     ///
     /// The corners go through the unit's `Transform`, which carries
-    /// `OBJECT_FIELD_SCALE_X`; `UNIT_FIELD_BOUNDINGRADIUS` is world-space and
-    /// carries the same scale (`Unit::UpdateModelData`). So the property to pin
-    /// is not "the number is divided" but **what the ring measures on the
-    /// ground**, which must be the wire value — times [`RING_SCALE`] and nothing
-    /// else — whatever the entity's scale is.
+    /// `OBJECT_FIELD_SCALE_X`; `UNIT_FIELD_BOUNDINGRADIUS` is in world space and
+    /// already includes the same scale (`Unit::UpdateModelData`). The test
+    /// therefore checks the ring's size on the ground, which must be the wire
+    /// value times [`RING_SCALE`] at every entity scale.
     #[test]
     fn the_ring_is_the_wire_radius_on_the_ground_at_any_scale() {
         let footprint = 1.4_f32;
@@ -493,30 +483,29 @@ mod tests {
         }
     }
 
-    /// A unit whose field block never stated a radius still gets a ring — the
-    /// same one-sided answer the pick box gives, and for the same reason.
+    /// A unit whose field block never stated a radius still gets a ring of
+    /// [`MIN_RADIUS`], as the pick box has a minimum for the same reason.
     #[test]
     fn a_unit_with_no_stated_radius_still_gets_a_ring() {
         assert_eq!(quad_half(0.0, 1.0), MIN_RADIUS);
-        // …and a scale the server cannot really send does not produce a NaN or
-        // a ring the size of the map.
+        // A scale of zero, which the server does not send, gives neither a NaN
+        // nor a ring the size of the map.
         assert_eq!(quad_half(0.9, 0.0), quad_half(0.9, 1.0));
     }
 
-    /// **The measurement the round turned on**, kept as a number rather than as
-    /// a sentence: the M2 box and the wire value are answers to different
-    /// questions and differ by a factor of two and a half on the creature the
-    /// report arrived about.
+    /// The M2 box and the wire value measure different things and differ by a
+    /// factor of two and a half on the creature in the "circle much too large"
+    /// report. This test records that measurement.
     ///
     /// `vale model 'Creature\Boar\Boar.m2'` declares a box of
-    /// `[-2.6, -1.3, -0.4]..[2.4, 2.2, 2.5]` — 2.5 model yards of horizontal
-    /// half-extent — and the Rockhide Boar (display 389) wears it at scale 0.75.
-    /// `creature_display_info_addon.bounding_radius` for that display is 0.882.
+    /// `[-2.6, -1.3, -0.4]..[2.4, 2.2, 2.5]`, which is 2.5 model yards of
+    /// horizontal half-extent, and the Rockhide Boar (display 389) uses it at
+    /// scale 0.75. `creature_display_info_addon.bounding_radius` for that
+    /// display is 0.882.
     ///
-    /// Stated against the **wire value** rather than against what this module
-    /// draws, so that tuning [`RING_SCALE`] cannot quietly move the number the
-    /// round turned on: the two data sources disagree by 2.126 whatever the ring
-    /// is finally drawn at.
+    /// The test compares the box with the wire value, not with what this module
+    /// draws, so that changing [`RING_SCALE`] does not change it: the two data
+    /// sources differ by 2.126 at any ring size.
     #[test]
     fn the_m2_box_is_the_wrong_footprint_by_two_and_a_half() {
         const BOX_HALF_EXTENT: f32 = 2.5;

@@ -996,7 +996,21 @@ impl ContainerAnswers for super::super::api::Live<'_, '_, '_> {
 
     fn inventory_item(&self, token: &str, id: u32) -> Option<super::container::SlotContents> {
         if !Self::is_player(token) {
-            return None;
+            // Another player's slot, for the inspect window: the item and
+            // nothing about the copy, since no packet this client reads
+            // carries another player's durability.
+            let entry = self.worn_by_other(token, id)?;
+            let template = self.session_template(entry);
+            return Some(super::container::SlotContents {
+                texture: template
+                    .as_ref()
+                    .and_then(|t| self.tables.as_ref()?.item_icon(t.display_id)),
+                count: 1,
+                quality: template.as_ref().map_or(-1, |t| t.quality as i32),
+                readable: false,
+                broken: false,
+                locked: false,
+            });
         }
         if id == vale_assets::tables::inventory::AMMO_SLOT {
             return self.ammo_contents();
@@ -1007,7 +1021,9 @@ impl ContainerAnswers for super::super::api::Live<'_, '_, '_> {
 
     fn inventory_item_link(&self, token: &str, id: u32) -> Option<String> {
         if !Self::is_player(token) {
-            return None;
+            let entry = self.worn_by_other(token, id)?;
+            let template = self.session_template(entry)?;
+            return Some(super::container::item_link(entry, template.quality, &template.name));
         }
         if id == vale_assets::tables::inventory::AMMO_SLOT {
             let entry = self.inventory.ammo;
@@ -1080,7 +1096,9 @@ impl ContainerAnswers for super::super::api::Live<'_, '_, '_> {
 
     fn inventory_item_tip(&self, token: &str, id: u32) -> Option<api::ItemTip> {
         if !Self::is_player(token) {
-            return None;
+            // The item as its template states it, with no copy behind it.
+            let entry = self.worn_by_other(token, id)?;
+            return self.tip_from(entry, None);
         }
         if id == vale_assets::tables::inventory::AMMO_SLOT {
             let entry = self.inventory.ammo;

@@ -1,62 +1,66 @@
-//! **The C functions each panel of the game's interface calls**, one file per
+//! The C functions each panel of the game's interface calls, one file per
 //! panel.
 //!
-//! This is the half of [`super::api`] that is about a *subject* rather than
-//! about the interpreter: `ContainerAnswers` is what `ContainerFrame.lua` asks,
-//! `TaxiAnswers` is what `TaxiFrame.lua` asks, and the `Answers` trait one
-//! directory up is the sum of them. A read is declared, answered, registered
-//! and listed in the file its subject is named after.
+//! These are the parts of [`super::api`] that serve one subject rather than
+//! the interpreter: `ContainerAnswers` answers what `ContainerFrame.lua` asks,
+//! `TaxiAnswers` answers what `TaxiFrame.lua` asks, and the `Answers` trait one
+//! directory up combines all of them. Each read is declared, answered,
+//! registered and listed in the file named after its subject.
 //!
 //! ```text
-//! container.rs   the bags: fourteen reads, an item link, and the whole drag
-//! spellbook.rs   the book, in the client's own page order
-//! paperdoll.rs   …and what is worn, which is the same question one panel over
-//! auras.rs       the buff bar, and everybody else's rows
-//! quest.rs       the log, and the page in front of a giver
-//! gossip.rs      talking to one — and the "npc" token the rest are written on
-//! merchant.rs    …the shop
-//! mail.rs        …and the box on the corner, which no NPC owns at all: the
-//!                inbox, one letter, and the one being written
-//! trainer.rs     …the training window, which is a load-on-demand addon
-//! tradeskill.rs  …and the profession window, which is another — and is
-//!                almost entirely a rule over SkillLineAbility.dbc
-//! craft.rs       …and its sibling for Enchanting, one door along
-//! talent.rs      …and the talent trees, which are another — and are almost
-//!                entirely a rule over two DBCs
-//! keybindings.rs …and the key bindings panel, which is a fourth — nine C
-//!                functions over the one key table the keyboard also reads
-//! taxi.rs        …and the flight map, whose parchment is painted from a table
-//! pagetext.rs    …and what is written on a thing: the sign, the plaque and
-//!                the book on a stand, which is the one window no person owns
-//! duel.rs        …and the four script functions a duel is made of, all writes
-//! summon.rs      …and the summon popup's three reads
-//! loot.rs        what is on the body
-//! lootroll.rs    …and, in a group, the four frames that decide who gets it
-//! reputation.rs  …and what you have earned: the panel with two sorts in it
-//! skills.rs      …and what you have learned, which is the same shape again
-//! party.rs       who is with you
-//! social.rs      …and who you know without being with them: the friends
-//!                list, the ignore list and the /who search
-//! channels.rs    …and the rooms everybody talks in: ten numbered slots and
-//!                the chat frame's twenty-five channel globals
-//! raid.rs        …and the same roster with its first byte set, which is a
-//!                different panel and eight reads the party has no use for
-//! pet.rs         …and what is beside them: the three gates on a pet frame
-//! stable.rs      …and where one is left: the stable master's seven reads over
-//!                one packet, four verbs and a DBC of prices
-//! bank.rs        …and where anything is left: three reads and two verbs, since
-//!                the thirty squares read as the paper doll does
-//! trade.rs       the window two players open at each other: six reads over
-//!                two packets, ten verbs
-//! shapeshift.rs  …and the bar beside the pet's, which shares its unbound
-//!                commands and none of its packets: the stance buttons, which
-//!                are a client read of Spell.dbc and nothing on the wire
-//! worldmap.rs    where you are
-//! charcreate.rs  …and the screen before any of it
-//! glue.rs        …and the two screens before *that*: login and character select
-//! addons.rs      …and the list behind that screen's AddOns button: every
-//!                addon the folder carries, which each character has on, and
-//!                the loader `LoadAddOn` runs
+//! container.rs   the bags: fourteen reads, an item link, and item dragging
+//! spellbook.rs   the spellbook, in the client's page order
+//! paperdoll.rs   the character sheet's numbers: stats, resistances, armour,
+//!                attack and defence
+//! auras.rs       the buff bar, and the aura rows of other units
+//! quest.rs       the quest log, and a quest giver's pages
+//! gossip.rs      talking to an NPC, and the "npc" unit token the other NPC
+//!                panels use
+//! merchant.rs    the merchant window
+//! mail.rs        the mailbox, which belongs to no NPC: the inbox, one letter,
+//!                and the letter being written
+//! trainer.rs     the training window, a load-on-demand addon
+//! tradeskill.rs  the profession window, another load-on-demand addon, mostly
+//!                a rule over SkillLineAbility.dbc
+//! craft.rs       the Enchanting window, the craft counterpart of tradeskill.rs
+//! talent.rs      the talent trees, another load-on-demand addon, mostly a rule
+//!                over two DBCs
+//! keybindings.rs the key bindings panel, a fourth load-on-demand addon: nine
+//!                C functions over the key table the keyboard also reads
+//! taxi.rs        the flight map, whose background is painted from a table
+//! pagetext.rs    text read from an object: a sign, a plaque, or a book on a
+//!                stand; the one window no NPC owns
+//! duel.rs        the four script functions a duel uses, all of them writes
+//! summon.rs      the summon popup's three reads
+//! inspect.rs     the inspect window's reads: who may be inspected, and the
+//!                honor tab
+//! loot.rs        the loot window of a corpse
+//! lootroll.rs    the four group-loot roll frames
+//! reputation.rs  the reputation panel, which has two sort orders
+//! skills.rs      the skills panel, which has the same shape as reputation.rs
+//! party.rs       the party
+//! social.rs      the friends list, the ignore list and the /who search
+//! channels.rs    chat channels: ten numbered slots and the chat frame's
+//!                twenty-five channel globals
+//! raid.rs        the raid roster: the party roster with its first byte set,
+//!                a separate panel, and eight reads the party does not use
+//! pet.rs         the three predicates the pet frame and its menu depend on
+//! stable.rs      the stable master: seven reads over one packet, four commands
+//!                and a DBC of prices
+//! bank.rs        the bank: three reads and two commands; the thirty bank
+//!                slots are read the same way as the paper doll's
+//! trade.rs       the trade window between two players: six reads over two
+//!                packets, ten commands
+//! shapeshift.rs  the stance bar beside the pet bar: it shares the pet bar's
+//!                unbound commands but none of its packets; the stance
+//!                buttons come from the client's reading of Spell.dbc, with
+//!                nothing on the wire
+//! worldmap.rs    the world map
+//! charcreate.rs  the character creation screen
+//! glue.rs        the login and character select screens
+//! addons.rs      the list behind character select's AddOns button: every
+//!                addon in the folder, which ones each character has enabled,
+//!                and the loader `LoadAddOn` runs
 //! ```
 pub mod addons;
 pub mod auras;
@@ -73,6 +77,7 @@ pub mod mail;
 pub mod pagetext;
 pub mod duel;
 pub mod summon;
+pub mod inspect;
 pub mod lootroll;
 pub mod merchant;
 pub mod paperdoll;

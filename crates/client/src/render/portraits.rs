@@ -1,60 +1,59 @@
-//! **The faces on the unit frames** — `SetPortraitTexture`'s other half.
+//! The portraits on the unit frames: the rendering behind `SetPortraitTexture`.
 //!
 //! ```text
-//! lua::portrait    SetPortraitTexture(TargetPortrait, "target")   a token
-//!   -> Units       …which unit that is, this frame
-//!   -> assets::dress + ModelCache      …dressed exactly as it is in the world
+//! lua::portrait    SetPortraitTexture(TargetPortrait, "target")   a unit token
+//!   -> Units       the unit the token names this frame
+//!   -> assets::dress + ModelCache      the model, dressed as it is in the world
 //!   -> one camera, one model, one render layer, one 128x96 image
-//!   -> EguiUserTextures                …and a texture id ui::framexml can draw
+//!   -> EguiUserTextures                a texture id ui::framexml can draw
 //! ```
 //!
-//! ## This is a render target per portrait, which the glue pass said it was not
+//! ## Each portrait has its own render target
 //!
-//! `render::glue`'s module note has carried the sentence for a dozen rounds:
-//! *"a `<Model>` with a rectangle of its own — the fourteen portraits in
-//! `Interface\FrameXML\` — would need a render target per frame, which this does
-//! not do."* This is that, for the population that actually matters, which turns
-//! out not to be the `<Model>` elements at all: **a unit frame's portrait is a
-//! plain `<Texture>`**, 64 by 64, filled by a C function rather than by markup.
-//! The fourteen `<Model>`s are the dress-up frame and the tabard designer, and
-//! they are still not drawn.
+//! `render::glue`'s module note says that "a `<Model>` with a rectangle of its
+//! own — the fourteen portraits in `Interface\FrameXML\` — would need a render
+//! target per frame, which this does not do." This module provides a render
+//! target per portrait for the unit frames. A unit frame's portrait is not a
+//! `<Model>` element: it is a plain 64 by 64 `<Texture>`, filled by a C
+//! function rather than by markup. The fourteen `<Model>`s are the dress-up
+//! frame and the tabard designer, and they are still not drawn.
 //!
-//! ## Where the camera stands is the file's and nothing here decides it
+//! ## The model file decides where the camera stands
 //!
-//! [`vale_assets::look::portrait`] holds the rule and `vale portrait` is the
-//! census: 401 of the 408 creature models that decode carry a camera of kind 0,
-//! sitting a median 0.91 yards from what it looks at. This pass converts that
-//! into Bevy's axes and points a camera down it. The one number it adds is the
-//! **anamorphic squeeze**, which is not this client's invention either:
-//! `render::lens::vertical_fov` already records that `M2Camera::fov` is a
-//! *diagonal* angle and that the portrait path renders at a fixed 4:3 into a
-//! square. So the image is 4:3, egui draws it into a square region, and the
-//! vertical field of view is `fov / sqrt((4/3)² + 1)` — the familiar `0.6 · fov`.
+//! [`vale_assets::look::portrait`] holds the rule, and `vale portrait` reports
+//! the census: 401 of the 408 creature models that decode carry a camera of
+//! kind 0, a median 0.91 yards from the point it looks at. This pass converts
+//! that camera into Bevy's axes and points a camera along it. The one number it
+//! adds is the anamorphic squeeze, which `render::lens::vertical_fov` already
+//! records: `M2Camera::fov` is a diagonal angle, and the portrait is rendered
+//! at a fixed 4:3 into a square. So the image is 4:3, egui draws it into a
+//! square region, and the vertical field of view is `fov / sqrt((4/3)² + 1)`,
+//! which is `0.6 · fov`.
 //!
-//! ## Three deviations, all stated
+//! ## Three differences from the 1.12.1 client
 //!
-//! * **The portrait is a still, taken over a settle window rather than baked in
-//!   one call.** `SetPortraitTexture` bakes one image and leaves it; this
-//!   points a camera at a model, lets it render for [`SETTLE_FRAMES`] while the
-//!   meshes allocate and the skin uploads, and then [`shutter`] switches the
-//!   camera off — the image persists and egui keeps sampling it. It used to
-//!   stay live, and that was the largest single per-player cost in the client:
-//!   ~1.5 ms of `Core3d` CPU encode per portrait per frame (Tracy, 2026-08),
-//!   paid for the player's own frame every session and again for the target
-//!   and every party member. The *picture* is identical either way, because
-//!   the pose is never advanced: see [`Portrait::posed`].
-//! * **It is lit by its own studio rig rather than by the world.** A portrait
-//!   taken under `Light.dbc`'s answer for midnight is a black square, which the
-//!   reference's plainly is not. [`STUDIO`] is a fixed ambient and one key lamp,
-//!   handed to the material cache through the same [`SceneLighting`] the glue
-//!   screens use — so it costs no shader, no light entity and no render-layer
-//!   interaction, and it interns the portrait's materials apart from the
-//!   world's copy of the same model, which is what keeps the two from fighting.
-//! * **It is drawn in the sequence's first frame, not the unit's current one.**
-//!   A portrait of a running wolf shows a standing wolf. That is the reference's
-//!   behaviour too — its portrait is baked once, long before the wolf ran — but
-//!   it is stated because the machinery here *could* animate and deliberately
-//!   does not.
+//! * The portrait is a still image rendered over a settle window, not in one
+//!   call. `SetPortraitTexture` in the 1.12.1 client renders one image and
+//!   keeps it. This module points a camera at a model, renders for
+//!   [`SETTLE_FRAMES`] while the meshes allocate and the skin uploads, and then
+//!   [`shutter`] switches the camera off; the image persists and egui keeps
+//!   sampling it. The camera used to stay active, and that was the largest
+//!   single per-player cost in the client: about 1.5 ms of `Core3d` CPU encode
+//!   per portrait per frame (Tracy, 2026-08), paid for the player's own frame
+//!   in every session and again for the target and every party member. The
+//!   image is the same either way, because the pose is never advanced: see
+//!   [`Portrait::posed`].
+//! * It is lit by a fixed studio rig, not by the world. A portrait lit by
+//!   `Light.dbc`'s values for midnight is a black square, and the 1.12.1
+//!   client's portraits are not. [`STUDIO`] is a fixed ambient and one key
+//!   lamp, passed to the material cache through the same [`SceneLighting`] the
+//!   glue screens use. It needs no shader, no light entity and no render-layer
+//!   interaction, and it keys the portrait's materials apart from the world's
+//!   copy of the same model, so the two do not overwrite each other.
+//! * It is drawn in the first frame of the stand sequence, not the unit's
+//!   current frame. A portrait of a running wolf shows a standing wolf. The
+//!   1.12.1 client does the same, because it renders its portrait once. This
+//!   is stated because this module could animate the portrait and does not.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -76,60 +75,58 @@ use crate::render::models::material::Materials;
 use crate::render::models::{Lookup, ModelAssets, ModelCache, SceneLighting};
 use crate::world::entities::{DisplayCache, Joint};
 
-/// The size the picture is taken at: **4:3, for the squeeze**, and big enough
-/// that the 64-unit square it lands in is not resampled up.
+/// The size the image is rendered at: 4:3, for the squeeze, and large enough
+/// that the 64-unit square it is drawn into is never upscaled.
 ///
-/// 128 wide at a game scale of one screen unit to about 1.4 pixels on a 1080p
-/// window is a little over the 90 pixels the square gets, so the sampler is
-/// always downscaling — which is the side of 1:1 to be on.
+/// At a game scale of one screen unit to about 1.4 pixels on a 1080p window,
+/// the square is about 90 pixels wide. 128 is a little over that, so the
+/// sampler always downscales, which looks better than upscaling.
 const SIZE: UVec2 = UVec2::new(128, 96);
 
-/// …and the aspect that field of view is taken at, which is the *reason* for
-/// the size above rather than a consequence of it. See the module note.
+/// The aspect ratio the field of view is computed at. [`SIZE`] is 4:3 because
+/// of this value. See the module note.
 const ASPECT: f32 = 4.0 / 3.0;
 
-/// **How many pictures may be taken at once.**
+/// The maximum number of portraits kept at once.
 ///
 /// Nine: the player, the target, target-of-target, four party members, the pet
-/// and one spare. Each costs a render layer, and the cap exists because the
-/// token vocabulary is the interface's rather than this client's — an addon
-/// asking for a portrait of `"party8"` would otherwise be a new camera every
-/// time it did.
+/// and one spare. Each uses a render layer. The cap exists because the
+/// interface, not this client, chooses the tokens: without it, an addon asking
+/// for a portrait of `"party8"` would create a new camera each time.
 pub(super) const MAX: usize = 9;
 
-/// The first render layer these use. Layer 0 is the world's and everything in
-/// this client that does not say otherwise is on it.
+/// The first render layer portraits use. Layer 0 is the world's, and every
+/// entity in this client that does not set a layer is on it.
 pub(super) const FIRST_LAYER: usize = 1;
 
-/// [`crate::ui::report::HudReport`] slot. 32, immediately under the interface's
-/// own line at 31: a portrait is a picture the interface asked for, and the
-/// number worth reading beside "N quads" is how many cameras that cost.
+/// [`crate::ui::report::HudReport`] slot 32, immediately under the interface's
+/// line at 31. The interface requests portraits, so the number of cameras they
+/// cost is shown beside the interface's "N quads".
 #[cfg(feature = "diagnostics")]
 const SLOT: crate::ui::report::Slot = crate::ui::report::Slot(32);
 
-/// **The light a portrait is taken under**, and the one number in this file
-/// that is neither the game's nor derived from it.
+/// The lighting a portrait is rendered under. It is the one value in this file
+/// that neither comes from the game nor is derived from it.
 ///
-/// Shared with [`super::paperdoll`], which is not a convenience: a face on the
-/// unit frame and the same character's body on the character sheet are two
-/// pictures of one person on one screen, and lighting them differently is
-/// visible where the numbers themselves are not.
+/// [`super::paperdoll`] uses the same rig. The face on the unit frame and the
+/// same character's body on the character sheet are on screen together, and a
+/// difference in their lighting would be visible.
 ///
-/// A three-quarter fill and one key lamp from the camera's own side, in the
-/// *model's* frame — so it follows the subject rather than the world. It is a
-/// deviation and the module note says so; what makes it the right one is that
-/// the alternative is a face that goes black at dusk and stays black all night,
-/// which no reference screenshot of this game has ever shown.
+/// A three-quarter fill and one key lamp from the camera's side, in the model's
+/// frame, so the light follows the subject rather than the world. This differs
+/// from the 1.12.1 client, as the module note states. World lighting would turn
+/// the face black at dusk and keep it black all night, which no screenshot of
+/// the 1.12.1 client shows.
 ///
 /// Written as a literal rather than through [`SceneLighting::resolve`] because
-/// there is no `M2Light` to resolve: this is a rig, not a file. The layout is
-/// that function's own — `(place.xyz, is_point)` then `(colour.rgb, 0)`, with
-/// `w` on the ambient holding the lamp count.
+/// there is no `M2Light` to resolve: this is a fixed rig, not data from a file.
+/// The layout is the one that function produces: `(place.xyz, is_point)` then
+/// `(colour.rgb, 0)`, with `w` on the ambient holding the lamp count.
 pub(super) const STUDIO: SceneLighting = SceneLighting {
     ambient: Vec4::new(0.42, 0.42, 0.46, 1.0),
     lamps: [
-        // Directional (`w = 0`), pointing *toward* the light — up, forward and
-        // to the model's left, which is the side the portrait cameras stand on.
+        // Directional (`w = 0`), pointing toward the light: up, forward and to
+        // the model's left, which is the side the portrait cameras stand on.
         Vec4::new(0.53, 0.53, 0.66, 0.0),
         Vec4::new(0.85, 0.83, 0.78, 0.0),
         Vec4::ZERO,
@@ -141,10 +138,10 @@ pub(super) const STUDIO: SceneLighting = SceneLighting {
     ],
 };
 
-/// One unit's picture, and everything it took to take it.
+/// One unit's portrait, and the entities and assets that render it.
 struct Portrait {
-    /// **What this was built from** — the change detector. A new guid, a
-    /// shapeshift, a helmet: any of them and the picture is rebuilt.
+    /// The values this portrait was built from, used to detect changes. A new
+    /// guid, a shapeshift or a helmet causes a rebuild.
     built: Built,
     /// The image the camera draws into, and the id egui knows it by.
     image: Handle<Image>,
@@ -154,33 +151,34 @@ struct Portrait {
     root: Entity,
     joints: Vec<Entity>,
     skeleton: Option<Arc<M2Skeleton>>,
-    /// Which render layer this pair is alone on.
+    /// The render layer this model and camera have to themselves.
     layer: usize,
-    /// **Whether the joints have been written yet.** The pose is a still — see
-    /// the module note — so it is written once and never advanced, and this is
-    /// what says "once".
+    /// Whether the joints have been written. The pose is a still (see the
+    /// module note), so it is written once and never advanced; this flag
+    /// records that it has been written.
     posed: bool,
-    /// **How many more frames the camera renders before it is switched off.**
+    /// How many more frames the camera renders before it is switched off.
     ///
-    /// The picture is a still: the pose is written once, the model never moves
-    /// and the framing never changes, so re-rendering it every frame bought
-    /// nothing and cost what a whole extra `Core3d` camera costs — measured
-    /// with Tracy at ~1.5 ms of CPU encode *per portrait per frame*, which with
-    /// a player, a target and a party is most of a frame budget on its own and
-    /// was the largest single per-player cost in the client. The camera runs
-    /// for [`SETTLE_FRAMES`] after the pose lands (meshes allocate and textures
-    /// upload over the first few frames) and then [`shutter`] deactivates it;
-    /// the rendered image persists and egui goes on sampling it. A retake is a
-    /// new camera, so nothing here ever needs waking back up.
+    /// The image is a still: the pose is written once, the model never moves
+    /// and the framing never changes. Rendering it every frame changed nothing
+    /// and cost a whole extra `Core3d` camera, measured with Tracy at about
+    /// 1.5 ms of CPU encode per portrait per frame. With a player, a target and
+    /// a party, that is most of a frame budget, and it was the largest single
+    /// per-player cost in the client. The camera runs for [`SETTLE_FRAMES`]
+    /// after the pose is written (meshes allocate and textures upload over the
+    /// first few frames), and then [`shutter`] deactivates it; the rendered
+    /// image persists and egui keeps sampling it. A rebuild spawns a new
+    /// camera, so no camera is ever reactivated.
     settle: u8,
 }
 
-/// What a picture was taken of, compared to decide whether to take it again.
+/// What a portrait was rendered from, compared to decide whether to render it
+/// again.
 ///
-/// The display id **and** the look, because a player changing gear keeps the
-/// same guid and the same model and is a different picture — and because
-/// `dress` is what decides that, this is the same pair the world's own model
-/// rebuild keys on.
+/// It holds the display id and the look, because a player who changes gear
+/// keeps the same guid and the same model but needs a new portrait. `dress`
+/// decides the look, so this is the same pair the world's model rebuild keys
+/// on.
 #[derive(Clone, PartialEq)]
 struct Built {
     guid: u64,
@@ -189,37 +187,37 @@ struct Built {
     equipment: Vec<(u32, u32)>,
 }
 
-/// Every picture the interface has asked for, and the tokens it asked by.
+/// Every portrait the interface has asked for, and the tokens it asked with.
 #[derive(Resource, Default)]
 pub struct Portraits {
-    /// **Tokens the interface has ever named**, accumulated rather than
-    /// drained.
+    /// Every token the interface has named, kept rather than cleared each
+    /// frame.
     ///
-    /// The set is the game's own unit vocabulary and never grows past a
-    /// handful; what a drained set would cost is a picture that flickers out
-    /// every frame the interface happens not to re-ask. Capped at [`MAX`].
+    /// The set holds the game's unit tokens and stays small. If it were cleared
+    /// each frame, a portrait would disappear on every frame the interface did
+    /// not ask again. Capped at [`WANTED_CAP`]; the camera cap is [`MAX`].
     wanted: BTreeSet<String>,
-    /// …and the pictures themselves, one per token that resolves to somebody.
+    /// The portraits, one per token that names a unit.
     taken: BTreeMap<String, Portrait>,
 }
 
 impl Portraits {
-    /// The texture id for a token, or `None` while there is no picture — which
-    /// is the frame a target is acquired on and any frame its model is still
-    /// loading. The painter falls back to whatever the `<Texture>` already had.
+    /// The texture id for a token, or `None` while there is no portrait: on the
+    /// frame a target is acquired, and on any frame its model is still loading.
+    /// The painter then draws whatever the `<Texture>` already had.
     pub fn texture(&self, token: &str) -> Option<bevy_egui::egui::TextureId> {
         Some(self.taken.get(token)?.texture)
     }
 
-    /// The same picture as the image the camera drew it into — the mesh
-    /// painter's door, which binds textures rather than egui ids. `Some` and
-    /// [`Self::texture`]'s `Some` coincide by construction: both fields are
-    /// written together when a picture lands.
+    /// The same portrait as the image the camera draws into, for the mesh
+    /// painter, which binds textures rather than egui ids. This returns `Some`
+    /// exactly when [`Self::texture`] does, because both fields are written
+    /// together when a portrait is built.
     pub fn image(&self, token: &str) -> Option<Handle<Image>> {
         Some(self.taken.get(token)?.image.clone())
     }
 
-    /// How many pictures are being kept, for the HUD line.
+    /// How many portraits are kept, for the HUD line.
     pub fn count(&self) -> usize {
         self.taken.len()
     }
@@ -241,25 +239,24 @@ impl Plugin for PortraitPlugin {
             Update,
             (collect, follow, pose, shutter)
                 .chain()
-                // **After the entity pass**, which is what puts a `WorldEntity`
-                // where [`follow`] can see it and what the dressing rule is
-                // shared with. Not a data dependency Bevy can see — the two
-                // touch different components — so it is written rather than
-                // inherited, per the convention.
+                // After the entity pass, which creates the `WorldEntity` that
+                // [`follow`] reads and shares the dressing rule with it. Bevy
+                // cannot see this dependency, because the two touch different
+                // components, so the ordering is stated here, per the
+                // convention.
                 .after(crate::world::entities::EntitySet),
         );
     }
 }
 
-/// **What the faces cost**, on the pass's own HUD line — see
-/// [`crate::ui::report`], which is why this is not a line in `hud.rs`.
+/// The portrait cost, on this pass's own HUD line. [`crate::ui::report`]
+/// explains why this is not a line in `hud.rs`.
 ///
-/// Two numbers and they answer different questions. *Asked* is how many tokens
-/// the interface has ever named, which is a property of the interface and
-/// should sit at three in an ordinary session and nine at a raid frame's worth;
-/// *taken* is how many of those resolve to somebody right now, which is how
-/// many extra cameras and models the frame is paying for. The two being far
-/// apart is the healthy state — an empty party asks for four and takes none.
+/// It shows two numbers. "Asked" is how many tokens the interface has named,
+/// which depends on the interface: about three in an ordinary session and nine
+/// with a raid frame. "Taken" is how many of those name a unit now, which is
+/// how many extra cameras and models the frame renders. The two are often far
+/// apart, and that is expected: an empty party asks for four and takes none.
 #[cfg(feature = "diagnostics")]
 fn report(portraits: Res<Portraits>, mut hud: ResMut<crate::ui::report::HudReport>) {
     if portraits.wanted.is_empty() {
@@ -278,19 +275,19 @@ fn report(portraits: Res<Portraits>, mut hud: ResMut<crate::ui::report::HudRepor
     );
 }
 
-/// How many token *names* may accumulate — a bound against a runaway addon
-/// inventing tokens, not against cameras. The camera cap is [`MAX`] and it is
-/// enforced where the layer is allocated, in [`follow`].
+/// How many token names may accumulate. This bounds an addon that invents
+/// tokens; it does not bound cameras. The camera cap is [`MAX`], enforced
+/// where the layer is allocated, in [`follow`].
 ///
-/// **These are different bounds and folding them was a bug**: the interface
-/// names `pet` and `party1..4` unconditionally at load, none of which this
-/// client's vocabulary can resolve — so nine unresolvable names filled the old
-/// cap and `"npc"`, asked for the first time you talk to somebody, was refused
-/// for the rest of the session. Every conversation portrait was white in any
-/// session that had held a party.
+/// The two bounds must stay separate. When one cap served both, the interface
+/// named `pet` and `party1..4` unconditionally at load, and this client could
+/// not resolve them. Nine unresolvable names filled the cap, and `"npc"`, first
+/// asked for when the player talks to an NPC, was refused for the rest of the
+/// session. Every conversation portrait was white in any session that had held
+/// a party.
 const WANTED_CAP: usize = 32;
 
-/// Drain what the interface asked for into the standing set.
+/// Move the interface's new portrait requests into the kept set.
 fn collect(host: Option<NonSendMut<crate::lua::host::LuaHost>>, mut portraits: ResMut<Portraits>) {
     let Some(mut host) = host else { return };
     for token in host.take_portrait_requests() {
@@ -320,26 +317,24 @@ fn follow(
 ) {
     let tokens: Vec<String> = portraits.wanted.iter().cloned().collect();
     for token in tokens {
-        // **Compared before it is built**, which is the whole of what this
-        // system does on all but a handful of frames. `Built` carries the
-        // wearer's equipment list, so constructing one is a `Vec` allocation —
-        // per token, per frame, nine times over, to throw all nine away. See
-        // [`unchanged`], which answers the same question by reading.
+        // Compare before building. On almost every frame this comparison is
+        // all the system does. `Built` carries the wearer's equipment list, so
+        // constructing one allocates a `Vec`, per token per frame, only to
+        // discard it. [`unchanged`] answers the same question by reading the
+        // unit's fields.
         if unchanged(&units, &portraits, &token) {
             continue;
         }
         let wanted = subject(&units, &token);
-        // **A token naming nobody takes its picture down**, which is what an
-        // empty party slot and a dropped target both are. Keeping the last face
-        // is the failure this is about: it is indistinguishable from a working
-        // portrait of the wrong unit.
-        // **A token naming nobody comes down at once**, and so does one naming
-        // a *different* somebody — keeping the last face is indistinguishable
-        // from a working portrait of the wrong unit. But the **same somebody
-        // whose look changed keeps the old picture up until the new one is
-        // ready**: a player's equipment arrives piecemeal behind
-        // `CMSG_ITEM_QUERY_SINGLE`, and tearing down per arriving template
-        // blanked the frame once per item for as long as the wardrobe took.
+        // A token that names no unit, such as an empty party slot or a cleared
+        // target, has its portrait removed at once. So does a token that now
+        // names a different unit. Keeping the last face would look the same as
+        // a working portrait of the wrong unit.
+        // A token that names the same unit with a changed look keeps the old
+        // portrait until the new one is ready. A player's equipment arrives one
+        // item at a time behind `CMSG_ITEM_QUERY_SINGLE`; removing the portrait
+        // on each arriving item template blanked the frame once per item until
+        // all of them had arrived.
         let Some(built) = wanted else {
             take_down(&mut commands, &mut portraits, &mut egui, &token);
             continue;
@@ -357,25 +352,23 @@ fn follow(
         else {
             continue;
         };
-        // A transport is a `.wmo` and has no portrait, exactly as it has no
-        // model — see `world::entities::spawn_models`, which declines the same
-        // paths for the same reason.
+        // A transport is a `.wmo` and has no portrait, as it has no model.
+        // `world::entities::spawn_models` skips the same paths for the same
+        // reason.
         if display.path.to_ascii_lowercase().ends_with(".wmo") {
             continue;
         }
         let Some(tables) = displays.tables() else {
             continue;
         };
-        // **The same dressing rule the world uses**, called through the same
-        // door — a second opinion here is what this project avoids, and it would
-        // put a face in the portrait wearing different gear from the body three
-        // yards away on the screen.
+        // The same dressing rule the world uses, through the same function. A
+        // separate rule here could dress the portrait in different gear from
+        // the same unit's body on screen.
         //
-        // **Weapons are deliberately not carried.** A portrait is a head and
-        // shoulders; hanging a sword on it is a load of a second model per
-        // frame for something outside the frustum. `Wearer::weapons` is empty
-        // and the sheath state is the put-away one, which is the shape
-        // `dress` reads as "no weapons at all".
+        // Weapons are left out on purpose. A portrait shows the head and
+        // shoulders; attaching a sword would load a second model for something
+        // outside the view frustum. `Wearer::weapons` is empty and the sheath
+        // state is the sheathed one, which `dress` reads as "no weapons".
         let dressed = vale_assets::look::dress::dress(
             tables,
             &display,
@@ -409,13 +402,13 @@ fn follow(
         };
         let Lookup::Ready(model) = ready else {
             // Loading or unreadable. Nothing is recorded either way, so the
-            // next frame asks again — `ModelCache` is idempotent about it, and
-            // a `Failed` path costs one map lookup a frame for as long as the
-            // unit is targeted. A stale same-guid picture stays up meanwhile —
-            // see the teardown note above.
+            // next frame asks again. `ModelCache` handles repeated requests,
+            // and a `Failed` path costs one map lookup a frame for as long as
+            // the unit is targeted. Meanwhile an older portrait of the same
+            // guid stays up; see the removal note above.
             continue;
         };
-        // The replacement is ready: now the old picture comes down, freeing its
+        // The replacement is ready, so remove the old portrait and free its
         // layer for the rebuild below.
         take_down(&mut commands, &mut portraits, &mut egui, &token);
         let Some(layer) = portraits.free_layer() else {
@@ -433,19 +426,18 @@ fn follow(
     }
 }
 
-/// What a token's picture should be of, or `None` for one naming nobody.
-/// **Whether the picture already up is the right one**, without building a
+/// Whether the portrait already shown is the right one, without building a
 /// [`Built`] to find out.
 ///
-/// The same comparison [`subject`] would produce, read field by field off the
-/// live unit — because the answer is *yes* on almost every frame for almost
-/// every token, and the version that built one first allocated a `Vec` per token
-/// per frame for nothing. Nine tokens at sixty frames a second is 540 wasted
-/// allocations a second in a client whose own collector is one of its larger
-/// per-frame costs.
+/// It makes the same comparison [`subject`] would allow, read field by field
+/// from the live unit. The answer is yes on almost every frame for almost
+/// every token, and building a `Built` first allocated a `Vec` per token per
+/// frame. Nine tokens at sixty frames a second is 540 needless allocations a
+/// second, in a client whose collector is already one of its larger per-frame
+/// costs.
 ///
-/// `false` when the token names nobody or has no picture: both mean the caller
-/// has work to do and must go and find out which.
+/// Returns `false` when the token names no unit or has no portrait. Both mean
+/// the caller has work to do and must find out which case applies.
 fn unchanged(
     units: &crate::interface::api::Units,
     portraits: &Portraits,
@@ -463,6 +455,8 @@ fn unchanged(
         && taken.built.equipment == unit.equipment
 }
 
+/// What a token's portrait should show, or `None` for a token that names no
+/// unit.
 fn subject(units: &crate::interface::api::Units, token: &str) -> Option<Built> {
     let id = crate::interface::api::UnitId::parse(token)?;
     let unit = units.get(id)?;
@@ -474,7 +468,8 @@ fn subject(units: &crate::interface::api::Units, token: &str) -> Option<Built> {
     })
 }
 
-/// …and which display table to resolve it through.
+/// The object type of a token's unit, which selects the display table its
+/// display id is resolved through.
 fn unit_kind(
     units: &crate::interface::api::Units,
     token: &str,
@@ -486,12 +481,14 @@ fn unit_kind(
 }
 
 /// Spawn the image, the camera and the model for one portrait.
-/// **No emitters and no trails**, unlike `render::glue::spawn`, which is the
-/// other function of this shape. A portrait is a head and shoulders held for as
-/// long as a unit is targeted; a wisp's dust and a weapon's streak are a
-/// simulation running every frame for something 90 pixels across, and neither is
-/// in shot at this framing anyway. Stated rather than merely omitted, because
-/// the omission is invisible next to the pass it was copied from.
+///
+/// This spawns no particle emitters and no ribbon trails, unlike
+/// `render::glue::spawn`, the other function with this structure. A portrait
+/// shows a head and shoulders for as long as a unit is targeted. A wisp's dust
+/// and a weapon's trail would be a simulation running every frame for an image
+/// 90 pixels across, and neither is in view at this framing. This is stated
+/// because the omission is not visible when comparing the code with the glue
+/// pass it was based on.
 fn build(
     commands: &mut Commands,
     images: &mut Assets<Image>,
@@ -504,7 +501,7 @@ fn build(
     let texture = egui.add_image(bevy_egui::EguiTextureHandle::Strong(image.clone()));
     let layers = RenderLayers::layer(layer);
 
-    // --- the model, alone on its layer at the origin ---
+    // --- The model, alone on its render layer at the origin ---
 
     let root = commands
         .spawn((Transform::default(), Visibility::default()))
@@ -523,26 +520,24 @@ fn build(
             MeshMaterial3d(draw.material.clone()),
             Transform::default(),
             ChildOf(root),
-            // **On every drawn entity**, because Bevy reads `RenderLayers` per
-            // entity and does not propagate it down a hierarchy. A part left
-            // off the layer is a part the world camera draws — a floating head
-            // at the origin of the map, which is exactly the artefact this
-            // costs one component to avoid.
+            // Set on every drawn entity, because Bevy reads `RenderLayers` per
+            // entity and does not propagate it down a hierarchy. A part without
+            // the layer is drawn by the world camera, as a floating head at the
+            // origin of the map.
             layers.clone(),
-            // The portrait camera sits inside the model's own bounding box, so
-            // the box is useless as a culling volume here and actively harmful:
-            // a subject whose declared box does not contain the camera can be
-            // culled out of its own portrait.
+            // The portrait camera can sit inside the model's bounding box, so
+            // frustum culling against that box is wrong here: a model whose
+            // declared box does not contain the camera can be culled out of its
+            // own portrait.
             NoFrustumCulling,
         ));
-        // **The batch's own bones, not the model's whole skeleton** — see
-        // `models::skin_for`, which is the one place that decides it. This was
-        // the *fourth* spawner and the one the subset round missed: the three
-        // it converted are named in that function's own doc, this one is not,
-        // and a portrait went on binding the whole skeleton to meshes whose
-        // joint indices had become subset-local. Every vertex posed off the
-        // wrong bone — which is a face stretched across the frame, and which no
-        // headless check looks at.
+        // Bind the batch's own bones, not the model's whole skeleton.
+        // `models::skin_for` is the one place that decides this. When mesh
+        // joint indices became subset-local, three spawners were converted and
+        // are named in that function's doc; this fourth one was missed. It kept
+        // binding the whole skeleton, every vertex was posed by the wrong bone,
+        // and the face was stretched across the frame. No headless check
+        // covers this.
         if let Some(joints) = crate::render::models::skin_for(draw, &joints) {
             part.insert(SkinnedMesh {
                 inverse_bindposes: model.inverse_bindposes.clone(),
@@ -551,17 +546,17 @@ fn build(
         }
     }
 
-    // --- and the camera, down the file's own axis ---
+    // --- The camera, along the model file's portrait camera ---
 
     let framing = model.portrait;
     let eye = axes::to_bevy(framing.eye);
-    // **A degenerate framing is nudged rather than aimed at itself.** An eye and
-    // an aim in the same place make `looking_at` produce a NaN basis, and a NaN
-    // view matrix takes the whole frame's culling with it — every mesh in the
-    // world, not only this one. The rule's own guards make it unreachable and
-    // the check costs one comparison; `render::glue::aim_camera` makes the same
-    // one and returns instead, which is not available here because the camera
-    // has to exist.
+    // A degenerate framing has its aim point moved rather than aimed at the
+    // eye. An eye and an aim at the same place make `looking_at` produce a NaN
+    // basis, and a NaN view matrix breaks culling for the whole frame, for
+    // every mesh in the world. The guards in the framing rule should prevent
+    // this case, and the check costs one comparison. `render::glue::aim_camera`
+    // makes the same check and returns instead; that is not possible here
+    // because the camera must exist.
     let aim = match axes::to_bevy(framing.aim) {
         target if eye.distance_squared(target) < 1e-6 => eye - Vec3::Z,
         target => target,
@@ -570,28 +565,28 @@ fn build(
         .spawn((
             Camera3d::default(),
             Camera {
-                // **Before the world's**, which is order 0 — a camera drawing
-                // into an image that something later in the frame samples has
-                // to have finished.
+                // Before the world camera, which is order 0. A camera drawing
+                // into an image that is sampled later in the frame must finish
+                // first.
                 order: -1 - layer as isize,
-                // **Transparent**, which is the whole reason the portrait is
-                // its own layer: the unit frame's art is drawn *under* this
-                // square and shows through wherever the model is not.
-                clear_color: ClearColorConfig::Custom(Color::NONE),
+                // Opaque black. The 1.12.1 client draws a portrait over a
+                // black ground, so the disc behind an NPC's face is black
+                // rather than the unit frame's art. The painter's disc cuts
+                // the square to the frame's round hole.
+                clear_color: ClearColorConfig::Custom(Color::BLACK),
                 ..default()
             },
-            // The target is a component of its own in Bevy 0.19, exactly as
-            // `world::camera::spawn` writes `WorldFrame::target()`.
+            // The render target is its own component in Bevy 0.19, as in
+            // `world::camera::spawn`, which writes `WorldFrame::target()`.
             RenderTarget::Image(ImageRenderTarget {
                 handle: image.clone(),
                 scale_factor: 1.0,
             }),
-            // The same declaration the world camera makes, and for the same
-            // reason: every model shader in this client ends in
-            // `atmosphere::to_frame` and writes the game's own bytes, so a
-            // camera left in the default space would encode them a second time
-            // and hand the interface a washed-out face. See
-            // `crate::render::present`.
+            // The world camera sets the same space for the same reason. Every
+            // model shader in this client ends in `atmosphere::to_frame` and
+            // writes the game's own bytes, so a camera in the default space
+            // would encode them a second time and give the interface a
+            // washed-out face. See `crate::render::present`.
             bevy::camera::CompositingSpace::Srgb,
             Projection::Perspective(PerspectiveProjection {
                 fov: crate::render::lens::vertical_fov(framing.fov, ASPECT),
@@ -600,9 +595,9 @@ fn build(
                 aspect_ratio: ASPECT,
                 ..default()
             }),
-            // Nothing here is edge-sampled and nothing is graded: this is a
-            // 128x96 square of one model. Both are named rather than defaulted
-            // because `Camera3d`'s defaults are multisampled and tonemapped.
+            // No multisampling and no tonemapping: this is a 128x96 image of
+            // one model. Both are set explicitly because `Camera3d` defaults to
+            // multisampled and tonemapped.
             Msaa::Off,
             bevy::core_pipeline::tonemapping::Tonemapping::None,
             layers.clone(),
@@ -627,27 +622,28 @@ fn build(
 
 /// How many frames a portrait camera keeps rendering once its pose is written.
 ///
-/// The content is final the moment the joints land, but the render world takes
-/// a few frames to allocate the meshes and upload the composed skin, and the
-/// camera has to be live for the frame that draws the finished picture into
-/// the target. Half a second at 60 fps is far past any of that and still
-/// removes ~97% of the steady-state cost; the number is margin, not tuning.
+/// The content is final once the joints are written, but the render world
+/// takes a few frames to allocate the meshes and upload the composed skin, and
+/// the camera must be active on the frame that draws the finished image into
+/// the target. Half a second at 60 fps is well past that and still removes
+/// about 97% of the steady-state cost. The value is a safety margin, not a
+/// tuned number.
 const SETTLE_FRAMES: u8 = 30;
 
 /// Switch a settled portrait's camera off.
 ///
-/// The picture is a still (see [`pose`]) drawn into a persistent image, so
-/// once it has been rendered there is nothing left for the camera to do — and
-/// an active `Camera3d` is a whole `Core3d` graph run per frame, ~1.5 ms of
-/// CPU encode on the measured machine, per portrait. The countdown starts when
-/// the content is final — the pose written, or the model rigid — and the
-/// camera comes off at zero. It never goes back on: a retake ([`follow`]) is a
-/// new camera. The one thing this freezes that the live camera did not is a
-/// UV-animated material on the subject, which a baked-once portrait freezes in
-/// the reference too.
+/// The portrait is a still (see [`pose`]) drawn into a persistent image, so
+/// once it has been rendered the camera has nothing left to do. An active
+/// `Camera3d` runs a whole `Core3d` graph per frame, about 1.5 ms of CPU encode
+/// per portrait on the measured machine. The countdown starts when the content
+/// is final (the pose is written, or the model has no skeleton), and the
+/// camera is switched off at zero. It is never switched back on: a rebuild
+/// ([`follow`]) spawns a new camera. The one thing this freezes that an active
+/// camera would animate is a UV-animated material on the model; the 1.12.1
+/// client renders its portrait once, so it freezes that too.
 fn shutter(mut portraits: ResMut<Portraits>, mut cameras: Query<&mut Camera>) {
     for portrait in portraits.taken.values_mut() {
-        // Content not final yet: the pose system is still waiting for the
+        // The content is not final: the pose system is still waiting for the
         // joint entities to exist. Keep rendering.
         if !(portrait.posed || portrait.joints.is_empty()) {
             continue;
@@ -666,11 +662,11 @@ fn shutter(mut portraits: ResMut<Portraits>, mut cameras: Query<&mut Camera>) {
 
 /// Write the joints, once.
 ///
-/// **`Stand` at time zero and never advanced** — see the module note on why a
-/// live camera still produces a still. The system runs every frame and does
-/// nothing on all but the first, which is cheaper than the alternative shapes
-/// (a one-shot schedule, or a marker component removed after the first pass)
-/// and is one `bool`.
+/// The pose is `Stand` at time zero and is never advanced; the module note
+/// explains why the portrait is a still. The system runs every frame and does
+/// nothing after the first pass for each portrait. That costs one `bool`, which
+/// is cheaper than the alternatives (a one-shot schedule, or a marker component
+/// removed after the first pass).
 fn pose(mut portraits: ResMut<Portraits>, mut joints: Query<&mut GlobalTransform, With<Joint>>) {
     for portrait in portraits.taken.values_mut() {
         if portrait.posed || portrait.joints.is_empty() {
@@ -689,9 +685,9 @@ fn pose(mut portraits: ResMut<Portraits>, mut joints: Query<&mut GlobalTransform
                 *transform = GlobalTransform::from(Affine3A::from_mat4(axes::pose_to_bevy(bone)));
             }
         }
-        // The identity joint on the end, which weightless vertices ride —
-        // without it the skinning shader collapses them to the origin. The same
-        // arrangement `world::entities` and `render::glue` both spawn.
+        // The identity joint at the end, which vertices with no bone weights
+        // use. Without it the skinning shader collapses them to the origin.
+        // `world::entities` and `render::glue` spawn the same extra joint.
         if let Some(&last) = portrait.joints.last() {
             if let Ok(mut transform) = joints.get_mut(last) {
                 *transform = GlobalTransform::default();
@@ -701,8 +697,8 @@ fn pose(mut portraits: ResMut<Portraits>, mut joints: Query<&mut GlobalTransform
     }
 }
 
-/// Take one picture down: the model, the camera, the image and egui's handle
-/// on it.
+/// Remove one portrait: the model, the camera, the image and egui's handle to
+/// it.
 fn take_down(
     commands: &mut Commands,
     portraits: &mut Portraits,
@@ -714,21 +710,22 @@ fn take_down(
     };
     commands.entity(portrait.root).despawn();
     commands.entity(portrait.camera).despawn();
-    // **Egui's handle goes with it**, or the id stays registered against an
-    // image asset nobody holds: a texture leak of one 48 KB image per target
-    // change, which over a session of pulling mobs is the whole of a memory
-    // report nobody could explain.
+    // Remove egui's handle as well. Otherwise the id stays registered against
+    // an image asset nothing else holds, which leaks one 48 KB image per
+    // target change; over a session of fighting many creatures that adds up
+    // to a large, unexplained memory growth.
     egui.remove_image(&portrait.image);
 }
 
 /// The image a portrait is drawn into.
 ///
-/// **`Rgba8UnormSrgb`, for the reason `render::present::WorldFrame` is**: the
-/// camera's main texture is raw bytes (`CompositingSpace::Srgb`), Bevy's
-/// upscaling blit applies `SRGB_TO_LINEAR` on the way out because it assumes the
-/// destination re-encodes, and this is the destination. Getting it backwards
-/// stores the linear value raw and the face comes out at dusk in the middle of
-/// the afternoon — which is the artefact that note describes, one texture over.
+/// The format is `Rgba8UnormSrgb`, for the same reason
+/// `render::present::WorldFrame` uses it. The camera's main texture holds raw
+/// bytes (`CompositingSpace::Srgb`), and Bevy's upscaling blit applies
+/// `SRGB_TO_LINEAR` on output because it assumes the destination re-encodes;
+/// this image is that destination. With a linear format the linear value would
+/// be stored as is, and the face would render as dark as dusk in daylight, the
+/// same artefact that note describes for the world frame.
 fn target_image() -> Image {
     let mut image = Image::new_fill(
         Extent3d {
@@ -741,7 +738,7 @@ fn target_image() -> Image {
         // the frame's own art rather than a coloured square.
         &[0, 0, 0, 0],
         TextureFormat::Rgba8UnormSrgb,
-        // The render world only: nothing on the CPU reads this, and egui
+        // Render world only: nothing on the CPU reads this image, and egui
         // samples it on the GPU like any other texture.
         RenderAssetUsages::RENDER_WORLD,
     );
@@ -754,12 +751,11 @@ fn target_image() -> Image {
 mod tests {
     use super::*;
 
-    /// **The squeeze, stated as arithmetic.** `M2Camera::fov` is a diagonal
-    /// angle at 4:3 — see `render::lens::vertical_fov` for what
-    /// settles it — so a human male's authored 0.785 has to come out at 0.6 of
-    /// itself vertically. Taken as vertical instead, every face in the
-    /// interface is framed 67% too wide and the head fills a third of the
-    /// square.
+    /// The squeeze as arithmetic. `M2Camera::fov` is a diagonal angle at 4:3
+    /// (`render::lens::vertical_fov` records the evidence), so a human male's
+    /// authored 0.785 becomes 0.6 of itself vertically. Read as a vertical
+    /// angle instead, every face in the interface is framed 67% too wide and
+    /// the head fills a third of the square.
     #[test]
     fn the_field_of_view_is_the_diagonal_squeezed_to_four_three() {
         let vertical = |diagonal: f32| diagonal / (ASPECT * ASPECT + 1.0).sqrt();
@@ -769,9 +765,9 @@ mod tests {
         assert!((vertical(0.950) - 0.570).abs() < 1e-3);
     }
 
-    /// **Every portrait is alone on its own layer**, which is the whole of how
-    /// one model is drawn without the world behind it. A collision here is two
-    /// units in one square.
+    /// Every portrait has a render layer to itself; that is how one model is
+    /// drawn without the world behind it. Two portraits on one layer would put
+    /// two units in one square.
     #[test]
     fn layers_are_handed_out_one_apiece_and_run_out_rather_than_repeating() {
         let mut portraits = Portraits::default();
@@ -805,10 +801,10 @@ mod tests {
         assert!(!used.contains(&0), "layer 0 is the world's");
     }
 
-    /// The camera orders are distinct and all **before** the world's, which is
-    /// order 0. Two cameras sharing an order is a target sampled before it has
-    /// been drawn into, which reads as a portrait one frame stale — or, on the
-    /// first frame, as an empty square.
+    /// The camera orders are distinct and all before the world camera's, which
+    /// is order 0. If two cameras shared an order, a target could be sampled
+    /// before it was drawn into, which shows a portrait one frame old, or an
+    /// empty square on the first frame.
     #[test]
     fn every_portrait_camera_draws_before_the_world() {
         let orders: Vec<isize> = (FIRST_LAYER..FIRST_LAYER + MAX)
@@ -821,10 +817,9 @@ mod tests {
         assert_eq!(sorted.len(), orders.len(), "no two share an order");
     }
 
-    /// The studio rig is a *lit* scene as far as the material cache is
-    /// concerned, and it keys apart from the world's build of the same model.
-    /// Without both of those a portrait would either draw unlit or would hand
-    /// the world its studio lighting.
+    /// The material cache treats the studio rig as a lit scene, and keys it
+    /// apart from the world's build of the same model. Without both, a portrait
+    /// would either draw unlit or give the world its studio lighting.
     #[test]
     fn the_studio_rig_is_lit_and_keys_apart_from_the_world() {
         assert!(STUDIO.is_lit());
@@ -832,11 +827,11 @@ mod tests {
         assert_ne!(STUDIO.key(), SceneLighting::NONE.key());
     }
 
-    /// **A settled portrait's camera goes off, and an unposed one's stays on.**
-    /// The first half is the whole optimization — a still re-rendered forever
-    /// was ~1.5 ms of encode per portrait per frame — and the second half is
-    /// what keeps it from being a regression: deactivating before the pose has
-    /// landed bakes a bind-pose face, or an empty square, into the frame.
+    /// A settled portrait's camera is switched off, and an unposed one's stays
+    /// on. The first half is the optimization: rendering a still image every
+    /// frame cost about 1.5 ms of encode per portrait per frame. The second half
+    /// prevents a regression: deactivating before the pose is written leaves a
+    /// bind-pose face, or an empty square, in the frame.
     #[test]
     fn the_shutter_closes_after_settling_and_never_early() {
         let mut app = App::new();
@@ -866,8 +861,8 @@ mod tests {
             portraits
                 .taken
                 .insert("posed".into(), portrait(settled, true, Vec::new(), 2));
-            // Skinned and not yet posed: the joints exist, the pose has not
-            // landed, so the countdown must not even start.
+            // Skinned and not yet posed: the joints exist but the pose has not
+            // been written, so the countdown must not start.
             portraits.taken.insert(
                 "waiting".into(),
                 portrait(waiting, false, vec![settled], 2),
@@ -885,7 +880,7 @@ mod tests {
             app.world().entity(waiting).get::<Camera>().unwrap().is_active,
             "an unposed portrait must keep its camera live"
         );
-        // …and the un-posed one still holds its full settle budget.
+        // The unposed portrait still has its full settle count.
         let portraits = app.world().resource::<Portraits>();
         assert_eq!(portraits.taken.get("waiting").unwrap().settle, 2);
     }

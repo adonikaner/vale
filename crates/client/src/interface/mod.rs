@@ -50,6 +50,8 @@
 //! stable.rs      the stable window
 //! stats.rs       the character sheet's stat events
 //! summon.rs      the summon popup
+//! inspect.rs     the inspect window: whom the character is inspecting, and
+//!                that player's honor tab
 //! supersede.rs   replacing lower spell ranks already on the action bar
 //! talents.rs     the talent trees
 //! taxi.rs        the flight map
@@ -151,6 +153,7 @@ pub mod spellbook;
 pub mod stable;
 pub mod stats;
 pub mod summon;
+pub mod inspect;
 pub mod supersede;
 pub mod talents;
 pub mod target;
@@ -236,6 +239,7 @@ impl Plugin for InterfacePlugins {
                 social::SocialPlugin,
                 duel::DuelPlugin,
                 summon::SummonPlugin,
+                inspect::InspectPlugin,
                 played::PlayedPlugin,
                 logout::LogoutPlugin,
             ),

@@ -689,6 +689,20 @@ pub(super) fn played_time(ctx: &mut Incoming, pkt: &Packet) {
     }
 }
 
+/// `SMSG_INSPECT`: the server accepted an inspect request. It carries the guid
+/// alone and nothing the inspect window draws, which comes from the visible
+/// item fields; it is read so that a malformed body is reported.
+pub(super) fn inspect(ctx: &mut Incoming, pkt: &Packet) {
+    let _ = read(ctx.stats, pkt, crate::play::inspect::parse_inspect(&pkt.body));
+}
+
+/// `MSG_INSPECT_HONOR_STATS`: the honor tab of the player being inspected.
+pub(super) fn inspect_honor(ctx: &mut Incoming, pkt: &Packet) {
+    if let Some(honor) = read(ctx.stats, pkt, crate::play::inspect::parse_honor_stats(&pkt.body)) {
+        ctx.world.note_event(PlayerEvent::InspectHonor(honor));
+    }
+}
+
 /// `SMSG_FISH_NOT_HOOKED` and `SMSG_FISH_ESCAPED`: no body.
 pub(super) fn fish(ctx: &mut Incoming, escaped: bool) {
     ctx.world.note_event(PlayerEvent::Fish { escaped });

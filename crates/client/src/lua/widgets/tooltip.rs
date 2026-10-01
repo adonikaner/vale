@@ -1472,7 +1472,18 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
     // SetUnit(token): the unit tooltip, composed by [`unit_lines`]. The name
     // is not coloured by reaction here; `GameTooltip.xml`'s
     // `UPDATE_MOUSEOVER_UNIT` handler does that.
+    //
+    // `<PlayerModel>` has a `SetUnit` of its own, and every frame kind shares
+    // one methods table, so this registration replaces that one for the length
+    // of every scope. A frame that is not a tooltip is handed to the model's
+    // method, as `SetText` hands a button to the shared text setter. Without
+    // this, `CharacterModelFrame:SetUnit("player")` wrote the player's tooltip
+    // lines into the character sheet and the paper doll never learned its unit.
     let set_unit = scope.create_function(move |lua, (this, token): (mlua::Table, Option<String>)| {
+        if !is_tooltip(&this) {
+            super::model::set_unit(lua, &this, token)?;
+            return Ok(mlua::Value::Nil);
+        }
         let token = token.unwrap_or_default();
         match answers.unit_tooltip(&token) {
             Some(tip) => {

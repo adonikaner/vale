@@ -252,6 +252,8 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         Opcode::SMSG_DUEL_WINNER => player::duel_winner(ctx, pkt),
         Opcode::SMSG_SUMMON_REQUEST => player::summon_request(ctx, pkt),
         Opcode::SMSG_PLAYED_TIME => player::played_time(ctx, pkt),
+        Opcode::SMSG_INSPECT => player::inspect(ctx, pkt),
+        Opcode::MSG_INSPECT_HONOR_STATS => player::inspect_honor(ctx, pkt),
         Opcode::SMSG_FISH_NOT_HOOKED => player::fish(ctx, false),
         Opcode::SMSG_FISH_ESCAPED => player::fish(ctx, true),
 

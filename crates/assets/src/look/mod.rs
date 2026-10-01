@@ -28,6 +28,8 @@
 //! blips.rs        the dot a unit gets on the minimap, if any
 //! anchor.rs       where a third-person camera looks at a unit
 //! portrait.rs     where to stand to take a unit's picture
+//! inspect.rs      who may be inspected: a player on the character's side,
+//!                 within ten yards
 //! ```
 
 pub mod anchor;
@@ -36,6 +38,7 @@ pub mod character;
 pub mod conform;
 pub mod cursor;
 pub mod dress;
+pub mod inspect;
 pub mod object;
 pub mod pick;
 pub mod portrait;

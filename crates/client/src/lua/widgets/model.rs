@@ -476,14 +476,7 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     // aborted the whole update, and every value after it (loyalty,
     // experience, stats, resistances, damage) stayed blank.
     let set_unit = lua.create_function(|lua, (this, token): (mlua::Table, Option<String>)| {
-        widget::set_paint(lua, &this, UNIT_KEY, token.clone())?;
-        // Added to the paper dolls' own list, which keeps [`unit_frames`] from
-        // walking the cooldown swirls; see [`REG_UNIT_FRAMES`]. A frame stays
-        // on the list once added: `PaperDollFrame_UpdateStats` sets the same
-        // unit on the same frame every time the panel is shown, and
-        // `SetUnit(nil)` leaves a paper doll with nothing to draw rather than
-        // making it something else.
-        remember_in(lua, REG_UNIT_FRAMES, &this)
+        set_unit(lua, &this, token)
     })?;
     methods.set("SetUnit", set_unit)?;
 
@@ -600,6 +593,89 @@ fn frames(lua: &mlua::Lua) -> mlua::Result<mlua::Table> {
 }
 
 /// One of the two registry lists, created empty on first use.
+/// The paper doll a left press is turning, and where the pointer was.
+const REG_TURNING: &str = "vale.modelTurning";
+const REG_TURN_X: &str = "vale.modelTurnX";
+
+/// Radians a paper doll turns per interface unit the pointer travels sideways.
+///
+/// A drag that turns a paper doll is this client's addition: 1.12's interface
+/// turns one only with the two rotate buttons under it (`Model_OnUpdate` in
+/// `UIParent.lua`). At this rate a drag across the character sheet's 233-unit
+/// frame turns the character a little over two radians.
+const TURN_PER_UNIT: f64 = 0.01;
+
+/// A left press on a paper doll takes hold of its turn. A press on any other
+/// frame lets go of whatever was held.
+pub(in crate::lua) fn grab(lua: &mlua::Lua, frame: &mlua::Table, at: Option<(f64, f64)>) {
+    let doll = frame
+        .raw_get::<Option<String>>(UNIT_KEY)
+        .ok()
+        .flatten()
+        .is_some_and(|unit| !unit.is_empty());
+    let held = match (doll, at) {
+        (true, Some((x, _))) => {
+            let _ = lua.set_named_registry_value(REG_TURN_X, x);
+            mlua::Value::Table(frame.clone())
+        }
+        _ => mlua::Value::Nil,
+    };
+    let _ = lua.set_named_registry_value(REG_TURNING, held);
+}
+
+/// Turn the held paper doll by how far the pointer moved sideways.
+///
+/// Writes the frame's own `rotation` field, which `Model_OnUpdate` and the
+/// rotate buttons add to, and the turn `SetRotation` would write, so the drag
+/// and the buttons agree about where the doll is facing.
+pub(in crate::lua) fn turn(lua: &mlua::Lua, (x, _): (f64, f64)) {
+    let Ok(Some(frame)) = lua.named_registry_value::<Option<mlua::Table>>(REG_TURNING) else {
+        return;
+    };
+    let last: f64 = lua.named_registry_value(REG_TURN_X).unwrap_or(x);
+    if x == last {
+        return;
+    }
+    let rotation = frame
+        .raw_get::<Option<f64>>("rotation")
+        .ok()
+        .flatten()
+        .or_else(|| frame.raw_get::<Option<f64>>(ROTATION_KEY).ok().flatten())
+        .unwrap_or(0.0);
+    // Rightward travel lowers the angle, which turns the doll's front toward
+    // the pointer's direction of travel, as the right-hand button does.
+    let turned = rotation - (x - last) * TURN_PER_UNIT;
+    let _ = frame.raw_set("rotation", turned);
+    let _ = widget::set_paint(lua, &frame, ROTATION_KEY, turned as f32);
+    let _ = lua.set_named_registry_value(REG_TURN_X, x);
+}
+
+/// A left release lets go of the held paper doll.
+pub(in crate::lua) fn release(lua: &mlua::Lua) {
+    let _ = lua.set_named_registry_value(REG_TURNING, mlua::Value::Nil);
+}
+
+/// `<PlayerModel>`'s `SetUnit(token)`: keep the token on the frame and put the
+/// frame on the paper dolls' own list.
+///
+/// A function rather than only a closure because a tooltip's `SetUnit` has the
+/// same name on the shared methods table and hands every frame that is not a
+/// tooltip here; see `tooltip::install_scoped`.
+///
+/// A frame stays on the list once added, which keeps [`unit_frames`] from
+/// walking the cooldown swirls; see [`REG_UNIT_FRAMES`].
+/// `PaperDollFrame_OnEvent` sets the same unit on the same frame on every
+/// `UNIT_MODEL_CHANGED`, and `SetUnit(nil)` leaves a paper doll with nothing
+/// to draw rather than making it something else.
+pub(in crate::lua) fn set_unit(
+    lua: &mlua::Lua,
+    this: &mlua::Table,
+    token: Option<String>,
+) -> mlua::Result<()> {
+    widget::set_paint(lua, this, UNIT_KEY, token)?;
+    remember_in(lua, REG_UNIT_FRAMES, this)
+}
+
 fn list_named(lua: &mlua::Lua, key: &str) -> mlua::Result<mlua::Table> {
     match lua.named_registry_value::<Option<mlua::Table>>(key)? {
         Some(list) => Ok(list),

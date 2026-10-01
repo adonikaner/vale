@@ -15,6 +15,7 @@
 /WTF
 /Interface
 /WDB
+**.wtf
 
 # Python bytecode.
 __pycache__/

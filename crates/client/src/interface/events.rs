@@ -1,30 +1,28 @@
-//! **The game's own events**, and the reason they are events rather than
-//! resources anything can poll.
+//! The game's interface events, carried as Bevy messages, and the reason they
+//! are messages rather than resources that readers poll.
 //!
-//! FrameXML is not a renderer of state — it is a set of frames that each said
-//! `this:RegisterEvent("PLAYER_TARGET_CHANGED")` at load and go back to sleep.
-//! Reading the archives' own `Interface\FrameXML\ActionButton.lua`, one action
-//! button registers **eighteen** of them, and a second button, a third, and every
-//! addon ever written register the same ones independently. So the shape the
-//! interface needs is *one write, N readers, each with its own cursor* — which is
-//! exactly `bevy::ecs::message`, and is exactly what a drained queue is not.
+//! A FrameXML frame does not poll state. It calls
+//! `this:RegisterEvent("PLAYER_TARGET_CHANGED")` at load and runs again only
+//! when that event is raised. In the archives'
+//! `Interface\FrameXML\ActionButton.lua`, one action button registers eighteen
+//! events, and every other button and every addon registers the same ones
+//! independently. The interface therefore
+//! needs one write with N readers, each keeping its own cursor. That is what
+//! `bevy::ecs::message` provides, and a drained queue does not.
 //!
-//! That distinction is the whole reason this module exists ahead of any Lua. The
-//! two channels this directory had before it were [`super::messages::Messages`]
-//! and `LiveSession::take_events`, and **both empty themselves for whoever asks
-//! first**: a second frame wanting the same news gets nothing, and there is no
-//! error when it happens. Retrofitting fan-out after four more subsystems have
-//! been written against a poll is a sweep through all of them; writing it now
-//! costs one file.
+//! The two channels that existed before this module,
+//! [`super::messages::Messages`] and `LiveSession::take_events`, both empty
+//! themselves for the first reader. A second frame that wants the same news
+//! gets nothing, and no error is reported. This module provides the fan-out
+//! before more subsystems are written against a poll.
 //!
-//! ## The names are the game's, taken from the archives
+//! ## Event names come from the FrameXML archives
 //!
-//! Every name below is a string this client extracted from
-//! `Interface\FrameXML\` — `vale extract 'Interface\FrameXML\ActionButton.lua'`
-//! and its siblings — rather than one invented here, for the same reason
-//! `assets::strings` reads `GlobalStrings.lua` instead of composing sentences.
-//! When the Lua host arrives, an addon's `RegisterEvent` string has to match
-//! something, and the only names that will match are these:
+//! Every name below is a string extracted from `Interface\FrameXML\`
+//! (`vale extract 'Interface\FrameXML\ActionButton.lua'` and its siblings),
+//! not one invented here, for the same reason `assets::strings` reads
+//! `GlobalStrings.lua` instead of composing sentences. An addon's
+//! `RegisterEvent` string has to match one of these names:
 //!
 //! ```text
 //! UI_ERROR_MESSAGE          UIErrorsFrame.lua      arg1 = the text, already resolved
@@ -39,115 +37,106 @@
 //! SPELLCAST_INTERRUPTED     CastingBarFrame.lua    no args
 //! ```
 //!
-//! **`UI_ERROR_MESSAGE` carries the resolved string, not a code**, and that is
-//! worth stating because it is the one that could plausibly have gone the other
-//! way. `UIErrorsFrame_OnEvent` does `this:AddMessage(message, 1.0, 0.1, 0.1)` and
-//! nothing else — no table, no lookup — so the C side has already turned the
-//! wire's failure byte into text through `GlobalStrings.lua` by the time the
-//! interface sees it. Which is what [`super::messages`] does, and is why that
-//! module survives this change as a *writer* rather than a queue.
+//! `UI_ERROR_MESSAGE` carries the resolved string, not a code.
+//! `UIErrorsFrame_OnEvent` calls `this:AddMessage(message, 1.0, 0.1, 0.1)` and
+//! does no lookup, so the client has already turned the wire's failure byte into
+//! text through `GlobalStrings.lua` before the interface sees it.
+//! [`super::messages`] does that resolution here, and so remains as a writer of
+//! these messages rather than a queue.
 //!
-//! **The argument order is theirs too, including where it is inconsistent.**
+//! The argument order is FrameXML's, including where it is inconsistent.
 //! `SPELLCAST_START` is `(name, duration)` and `SPELLCAST_CHANNEL_START` is
-//! `(duration, name)` — the other way round, in the same file, on adjacent
-//! branches. **Both are raised now**, so this is load-bearing rather than a
-//! note: see [`SpellcastChannelStart`], which was written from
-//! `CastingBarFrame_OnEvent`'s own `arg1`/`arg2` reads and not from the shape of
-//! its sibling.
+//! `(duration, name)`, in the same file, on adjacent branches. Both are raised.
+//! [`SpellcastChannelStart`] follows `CastingBarFrame_OnEvent`'s `arg1`/`arg2`
+//! reads, not the order of its sibling.
 //!
-//! ## What is deliberately not here
+//! ## Which events are raised
 //!
-//! Events for state this client does not have. `PLAYER_AURAS_CHANGED` was the
-//! standing example in this sentence and is now raised — the buff bar has
-//! nothing else to redraw on, so its absence was twenty-four buttons that hid
-//! themselves at load and were never asked again.
-//! `ACTIONBAR_PAGE_CHANGED` was in it beside them until
-//! `--audit --clicks` pressed the two arrows either side of the bar,
-//! which is the general shape of the argument below being wrong: "cheap when
-//! something needs it" is only safe while something *can* say it needs it, and
-//! an `OnClick` body no instrument fired could not. The ones below are
-//! the ones where a **consumer would otherwise miss an edge**: a message that
-//! appears and fades, a cast that starts and stops, a bar that is rebuilt.
-//! Adding the polling-equivalent events is cheap when something needs them and
-//! premature until then. `UNIT_HEALTH` and its siblings *used* to be in this
-//! paragraph, on the argument that a polling frame covers them — but nothing in
-//! the directory polls: `UnitFrameHealthBar_Update` runs **only** on the event,
-//! so until [`super::vitals`] raised them every unit frame sat at its loaded
-//! state, full-width and untinted white.
+//! An event is raised when a consumer would otherwise miss an edge: a message
+//! that appears and fades, a cast that starts and stops, a bar that is rebuilt.
+//! Events for state this client does not have are not raised.
 //!
-//! ## The name is on the type, because Lua is where it is going
+//! A FrameXML handler that runs only on an event never runs if the event is not
+//! raised, so "add it when something needs it" fails when the handler is the
+//! thing that needs it. Three examples:
+//!
+//! * `PLAYER_AURAS_CHANGED` is raised. The buff bar redraws on nothing else;
+//!   without it, its twenty-four buttons hide at load and never update.
+//! * `ACTIONBAR_PAGE_CHANGED` is raised. Without it the two page arrows beside
+//!   the action bar do nothing; `--audit --clicks` found this by pressing them.
+//! * `UNIT_HEALTH` and its siblings are raised by [`super::vitals`].
+//!   `UnitFrameHealthBar_Update` runs only on the event, so without them every
+//!   unit frame stays at its loaded state, full width and untinted white.
+//!
+//! ## The event name and arguments are defined on the message type
 //!
 //! Each message carries its own [`GameEvent::EVENT`] string and its own
-//! [`GameEvent::args`], and both live here rather than in the dispatcher that
-//! reads them. That is not tidiness: the name is the *only* thing an addon's
-//! `RegisterEvent` can match on and the argument order is the game's own —
-//! including where it is inconsistent — so the spelling belongs beside the
-//! comment that says which file it was read out of, not in a translation table
-//! one directory over that nothing checks.
+//! [`GameEvent::args`], defined here rather than in the dispatcher that reads
+//! them. The name is the only thing an addon's `RegisterEvent` can match, and
+//! the argument order is FrameXML's, so both are kept beside the comment that
+//! names the FrameXML file they come from.
 //!
 //! [`crate::lua::api::events`] is what drains them into the interface.
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
-/// `UI_ERROR_MESSAGE` — a line for the middle of the screen, **already resolved
-/// to text**.
+/// `UI_ERROR_MESSAGE`: a line for the middle of the screen, already resolved to
+/// text.
 ///
-/// See the module comment: the real client resolves the failure code against
-/// `GlobalStrings.lua` on the C side and hands the interface a finished string,
-/// so nothing downstream of this needs the archives open. Write it through
-/// [`super::messages::UiErrors`], which is the only thing that knows how to turn
-/// a key into one of these.
+/// See the module comment. The 1.12.1 client resolves the failure code against
+/// `GlobalStrings.lua` before the interface sees it and passes a finished
+/// string, so no reader of this message needs the archives open. Write it
+/// through [`super::messages::UiErrors`], which turns a key into one of these.
 #[derive(Message, Debug, Clone)]
 pub struct UiErrorMessage(pub String);
 
-/// `UI_INFO_MESSAGE` — **the same line in the same frame, in yellow**, already
+/// `UI_INFO_MESSAGE`: the same line in the same frame, in yellow, already
 /// resolved to text.
 ///
-/// A second event rather than a colour on the first, because that is what the
-/// game has: `UIErrorsFrame` registers for both names and the *only* difference
-/// between its two branches is the colour it adds the message with —
-/// `(1.0, 0.1, 0.1)` for an error and `(1.0, 1.0, 0.0)` for this one. An addon
-/// registers for one or the other by name, so folding them would make a name
-/// the directory uses unmatchable.
+/// This is a second event rather than a colour on the first because FrameXML
+/// has two: `UIErrorsFrame` registers for both names, and its two branches
+/// differ only in the colour they add the message with, `(1.0, 0.1, 0.1)` for
+/// an error and `(1.0, 1.0, 0.0)` for this one. An addon registers for one or
+/// the other by name, so merging them would leave a name unmatched.
 ///
-/// **Which of the two a given message takes is a column in the client's own
-/// table**, not a judgement here — see [`super::messages::UiErrors::info`],
-/// where the dig is. "New flight path discovered!" is one of these.
+/// Which of the two a given message uses is fixed per message by the 1.12.1
+/// client, not chosen here; see [`super::messages::UiErrors::info`]. "New
+/// flight path discovered!" is one of these.
 #[derive(Message, Debug, Clone)]
 pub struct UiInfoMessage(pub String);
 
-/// `PLAYER_TARGET_CHANGED` — the selection is now something else, including
+/// `PLAYER_TARGET_CHANGED`: the selection is now something else, including
 /// nothing.
 ///
-/// Written on a *change*, never per frame. `ActionButton.lua` re-runs
-/// `ActionButton_UpdateUsable` on this, which is how a button greys out when you
-/// target something out of range — so a spurious write is a whole bar's worth of
-/// work and a missed one is a stale bar.
+/// Written on a change, never per frame. `ActionButton.lua` re-runs
+/// `ActionButton_UpdateUsable` on this, which greys a button out when the
+/// target is out of range. A spurious write costs a whole bar's update; a
+/// missed one leaves the bar stale.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerTargetChanged;
 
-/// `UPDATE_MOUSEOVER_UNIT` — the `mouseover` token now names something else.
+/// `UPDATE_MOUSEOVER_UNIT`: the `mouseover` token now names something else.
 ///
-/// **The event is not what puts the tooltip up**; the C side fills the plate and
-/// *then* raises this, and the one handler in the shipped directory is
-/// `GameTooltip.xml`'s, which does nothing but recolour the plate's first line
-/// by reaction:
+/// This event does not show the tooltip. The client fills the tooltip first and
+/// then raises this. The one handler in the shipped FrameXML is
+/// `GameTooltip.xml`'s, which only recolours the tooltip's first line by
+/// reaction:
 ///
 /// ```lua
 /// getglobal(this:GetName().."TextLeft1"):SetTextColor(GameTooltip_UnitColor("mouseover"));
 /// ```
 ///
-/// So the ordering is load-bearing in one direction only — a recolour that
-/// arrives before the line exists is a colour written onto the *previous* unit's
-/// name. See [`crate::lua::widgets::tooltip::show_world_tooltip`], which fills first and
-/// is ordered before the dispatch that delivers this.
+/// The fill must therefore come before the event. A recolour delivered before
+/// the line is filled is applied to the previous unit's name.
+/// [`crate::lua::widgets::tooltip::show_world_tooltip`] fills the tooltip and is
+/// ordered before the dispatch that delivers this.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct MouseoverUnitChanged;
 
-/// `ACTIONBAR_SLOT_CHANGED` — one slot's contents are different.
+/// `ACTIONBAR_SLOT_CHANGED`: one slot's contents are different.
 ///
-/// `arg1 == 0` means *every* slot, which is `ActionButton.lua`'s own convention:
+/// `arg1 == 0` means every slot, which is `ActionButton.lua`'s convention:
 ///
 /// ```lua
 /// if ( arg1 == 0 or arg1 == ActionButton_GetPagedID(this) ) then
@@ -157,260 +146,249 @@ pub struct MouseoverUnitChanged;
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ActionbarSlotChanged(pub u8);
 
-/// The slot number meaning "all of them" — see [`ActionbarSlotChanged`].
+/// The slot number meaning "all of them"; see [`ActionbarSlotChanged`].
 pub const ALL_SLOTS: u8 = 0;
 
-/// `ACTIONBAR_PAGE_CHANGED` — the bar is showing a different twelve.
+/// `ACTIONBAR_PAGE_CHANGED`: the bar is showing a different twelve slots.
 ///
-/// **The page itself is not on the wire and is not in this message**, because
-/// it is not the client's to decide: `ActionBar_PageUp` sets the interface's own
-/// `CURRENT_ACTIONBAR_PAGE` global and *then* calls `ChangeActionBarPage()`, and
-/// every button works out its own slot from that global
-/// (`ActionButton_GetPagedID` is `id + (page - 1) * NUM_ACTIONBAR_BUTTONS`). So
-/// the C side's whole job is to tell the twelve buttons to look again, which is
-/// what this is.
+/// The page is not on the wire and not in this message, because the interface
+/// decides it. `ActionBar_PageUp` sets the Lua global `CURRENT_ACTIONBAR_PAGE`
+/// and then calls `ChangeActionBarPage()`, and every button works out its own
+/// slot from that global (`ActionButton_GetPagedID` is
+/// `id + (page - 1) * NUM_ACTIONBAR_BUTTONS`). The client's part is to tell the
+/// twelve buttons to look again, which is this event.
 ///
-/// It was on the "deliberately not here" list one paragraph up until
-/// `--audit --clicks` pressed `ActionBarUpButton`: the arrows either side of the
-/// bar are two of the twelve buttons a session touches most, and both died on
-/// the missing verb.
+/// Without it, `ActionBarUpButton` and its partner, the arrows either side of
+/// the bar, fail on the missing call; `--audit --clicks` found this.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ActionbarPageChanged;
 
-/// `UPDATE_BONUS_ACTIONBAR` — the character changed **form**, so a different
-/// twelve of the 120 slots is the bar.
+/// `UPDATE_BONUS_ACTIONBAR`: the character changed form, so a different twelve
+/// of the 120 slots is the bar.
 ///
-/// The sibling of [`ActionbarPageChanged`] and the one that is not the
-/// interface's own decision: a page is `CURRENT_ACTIONBAR_PAGE`, a Lua global
-/// the arrows write, where a bonus bar is `GetBonusBarOffset()` — the C side's
-/// answer, off the shapeshift form and `SpellShapeshiftForm.dbc`.
+/// The counterpart of [`ActionbarPageChanged`] that the interface does not
+/// decide. A page is `CURRENT_ACTIONBAR_PAGE`, a Lua global the arrows write; a
+/// bonus bar is `GetBonusBarOffset()`, which the client answers from the
+/// shapeshift form and `SpellShapeshiftForm.dbc`.
 ///
-/// Two readers, and both matter. `BonusActionBar_OnEvent` shows or hides
-/// `BonusActionBarFrame` on it — that frame is what `ActionButtonUp` routes a
-/// press through, so with no event it never appears at all — and every
-/// `ActionButton` re-reads its slot, because `ActionButton_GetPagedID` for a
-/// bonus button is `id + (NUM_ACTIONBAR_PAGES + offset - 1) * 12`.
+/// It has two readers. `BonusActionBar_OnEvent` shows or hides
+/// `BonusActionBarFrame` on it; `ActionButtonUp` routes a press through that
+/// frame, so without the event the frame never appears. Every `ActionButton`
+/// also re-reads its slot, because `ActionButton_GetPagedID` for a bonus button
+/// is `id + (NUM_ACTIONBAR_PAGES + offset - 1) * 12`.
 ///
-/// **Its absence is what made a warrior's bar look empty.** Page one of a
-/// stance-using character is genuinely blank; everything they press lives at
-/// slots 73..108, which nothing could reach.
+/// Without this event a warrior's bar shows empty. Page one of a stance-using
+/// character is blank; the actions are at slots 73..108, which are reached only
+/// through the bonus bar.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ActionbarBonusChanged;
 
-/// `ACTIONBAR_SHOWGRID` — **the cursor is carrying something that could go on a
-/// button, so show the empty ones.**
+/// `ACTIONBAR_SHOWGRID`: the cursor is carrying something that could go on a
+/// button, so show the empty buttons.
 ///
-/// Not cosmetic, and that is the whole reason it is here rather than on the
-/// "deliberately not raised" list one screen up. `ActionButton_Update` calls
+/// This affects input, not only appearance. `ActionButton_Update` calls
 /// `this:Hide()` on a slot with no action, and a hidden frame is not in
-/// [`crate::lua::widgets::draw`]'s visible set — so it takes no mouse and its
-/// `OnReceiveDrag` can never fire. Without this event **every empty slot on the
-/// bar is undroppable**, which makes the drag reachable only onto buttons that
-/// are already occupied.
+/// [`crate::lua::widgets::draw`]'s visible set, so it takes no mouse input and
+/// its `OnReceiveDrag` never fires. Without this event no empty slot on the bar
+/// accepts a drop, and a drag can land only on occupied buttons.
 ///
-/// Its partner has to balance it exactly: `ActionButton_ShowGrid` *counts*
-/// (`button.showgrid = button.showgrid + 1`) and `ActionButton_HideGrid`
+/// [`ActionbarHideGrid`] must balance it exactly. `ActionButton_ShowGrid`
+/// counts (`button.showgrid = button.showgrid + 1`) and `ActionButton_HideGrid`
 /// decrements, hiding only at zero. Two shows and one hide leave the whole bar
 /// visible for the rest of the session, so [`super::cursor`] raises them on the
-/// **transition** rather than per verb.
+/// cursor's transition rather than per call.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ActionbarShowGrid;
 
-/// …and `ACTIONBAR_HIDEGRID`, the other edge — see [`ActionbarShowGrid`] for why
-/// the pair must be balanced.
+/// `ACTIONBAR_HIDEGRID`, the other edge. See [`ActionbarShowGrid`] for why the
+/// pair must be balanced.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ActionbarHideGrid;
 
-/// `DELETE_ITEM_CONFIRM` — **something was dropped on the world**, and the
-/// client is asking whether to destroy it.
+/// `DELETE_ITEM_CONFIRM`: an item was dropped on the world, and the client is
+/// asking whether to destroy it.
 ///
-/// `arg1` is the item's name and `arg2` its quality, and both are used:
-/// `UIParent_OnEvent` branches on `arg2 >= 3` between `DELETE_ITEM` and
-/// `DELETE_GOOD_ITEM`, the second of which makes you type "DELETE" into a box.
+/// `arg1` is the item's name and `arg2` its quality, and both are used.
+/// `UIParent_OnEvent` chooses between `DELETE_ITEM` and `DELETE_GOOD_ITEM` on
+/// `arg2 >= 3`; the second makes the player type "DELETE" into a box.
 ///
-/// **`WorldFrame` has no `OnReceiveDrag` and no `OnMouseUp`** — the whole of
-/// "released over the world" is C, which is why this arrives as an event rather
-/// than as a handler the directory could have run itself. The two answers come
-/// back as verbs: Accept is `DeleteCursorItem()` and Cancel is `ClearCursor()`.
+/// `WorldFrame` has no `OnReceiveDrag` and no `OnMouseUp` handler. The client,
+/// not FrameXML, handles a release over the world, so this arrives as an event.
+/// The two answers come back as API calls: Accept is `DeleteCursorItem()` and
+/// Cancel is `ClearCursor()`.
 #[derive(Message, Debug, Clone)]
 pub struct DeleteItemConfirm {
     pub name: String,
     pub quality: u32,
 }
 
-/// `ACTIONBAR_UPDATE_COOLDOWN` — some timer moved; re-read the ones you draw.
+/// `ACTIONBAR_UPDATE_COOLDOWN`: a cooldown changed; readers re-read the ones
+/// they draw.
 ///
-/// Deliberately carries **no spell id**, which is the game's own shape and is not
-/// laziness: one cast starts a global cooldown that gates every other button, so
-/// there is no useful "which" to send. A reader re-asks
-/// [`super::api::get_action_cooldown`] for each slot it owns.
+/// Carries no spell id, as in the 1.12.1 client. One cast starts a global
+/// cooldown that gates every other button, so there is no single button to
+/// name. A reader re-asks [`super::api::get_action_cooldown`] for each slot it
+/// owns.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ActionbarUpdateCooldown;
 
-/// `SPELLS_CHANGED` — the spellbook is different: a spell learned, unlearned,
-/// or the whole book restated at login.
+/// `SPELLS_CHANGED`: the spellbook is different: a spell learned, unlearned, or
+/// the whole book restated at login.
 ///
-/// `SpellBookFrame_OnEvent` rebuilds the panel on it, and so does every one of
-/// the twelve `SpellButton`s independently — which is why this is one message
-/// with N readers rather than a rebuild the panel is pushed. It is what the
-/// client's own book-building code raises after both of its sorts (as event
-/// `0x104`), so the ordering claim is the
-/// game's: **the book is already sorted by the time anything is told.**
+/// `SpellBookFrame_OnEvent` rebuilds the panel on it, and each of the twelve
+/// `SpellButton`s does so independently, so this is one message with N readers
+/// rather than a rebuild pushed to the panel. The 1.12.1 client raises it after
+/// the book is sorted, so the book is already in order when a reader runs.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SpellsChanged;
 
-/// **`PET_BAR_UPDATE` — the pet's bar was restated.**
+/// `PET_BAR_UPDATE`: the pet's bar was restated.
 ///
-/// `SMSG_PET_SPELLS` is the only thing that says so, and it says everything at
-/// once: the ten slots, the mood, the spellbook and the cooldowns. So there is
-/// one message rather than a slot-changed family — the reference has no
-/// per-slot pet event either, and `PetActionBar_Update` redraws all ten.
+/// `SMSG_PET_SPELLS` is the only packet that restates it, and it carries
+/// everything at once: the ten slots, the mood, the spellbook and the
+/// cooldowns. So there is one message rather than a per-slot family. The 1.12.1
+/// client has no per-slot pet event either, and `PetActionBar_Update` redraws
+/// all ten.
 ///
-/// It is raised for the **dismissal** as well, which is the same packet with a
-/// zero guid: `PetActionBar_OnEvent` hides the bar off `PetHasActionBar()`
-/// answering nil, so the bar going away is news like any other.
+/// It is also raised for the dismissal, which is the same packet with a zero
+/// guid. `PetActionBar_OnEvent` hides the bar when `PetHasActionBar()` returns
+/// nil, so it needs the event to hide the bar.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PetBarChanged;
 
-/// …and `PET_BAR_UPDATE_COOLDOWN`, which the same packet also implies.
+/// `PET_BAR_UPDATE_COOLDOWN`, which the same packet also implies.
 ///
 /// Raised beside [`PetBarChanged`] rather than instead of it because the panel
-/// registers for both and its cooldown handler is a different body — the same
-/// split `ACTIONBAR_UPDATE_COOLDOWN` makes against `ACTIONBAR_SLOT_CHANGED`.
+/// registers for both and runs a different handler for the cooldown. This is
+/// the same split as `ACTIONBAR_UPDATE_COOLDOWN` and `ACTIONBAR_SLOT_CHANGED`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PetBarCooldownChanged;
 
-/// **`PET_BAR_SHOWGRID` / `PET_BAR_HIDEGRID` — a pet action is on the cursor.**
+/// `PET_BAR_SHOWGRID` / `PET_BAR_HIDEGRID`: a pet action is on the cursor.
 ///
-/// The pet bar's own pair of [`ActionbarShowGrid`], raised on the same edge
-/// rule and load-bearing for the same reason: `PetActionBar_ShowGrid` counts,
-/// and a hidden empty button takes no mouse, so without the show there is
-/// nowhere on the bar to drop what is being carried.
+/// The pet bar's equivalent of [`ActionbarShowGrid`], raised on the same edge
+/// rule and needed for the same reason. `PetActionBar_ShowGrid` counts, and a
+/// hidden empty button takes no mouse input, so without the show there is
+/// nowhere on the bar to drop the carried action.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PetBarShowGrid;
 
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PetBarHideGrid;
 
-/// `CONFIRM_PET_UNLEARN` — a pet trainer is asking whether to reset the pet's
-/// skills. **`arg1` is the cost in copper**: `UIParent.lua:540` answers with
+/// `CONFIRM_PET_UNLEARN`: a pet trainer is asking whether to reset the pet's
+/// skills. `arg1` is the cost in copper. `UIParent.lua:540` answers with
 /// `StaticPopup_Show("CONFIRM_PET_UNLEARN")` and then
 /// `MoneyFrame_Update(dialog.."MoneyFrame", arg1)`, and the box's Accept calls
-/// `ConfirmPetUnlearn()`. The pet's guid stays in C — see
-/// [`super::untrainer`], the same arrangement [`ConfirmBinder`] keeps.
+/// `ConfirmPetUnlearn()`. The pet's guid is kept outside Lua; see
+/// [`super::untrainer`], which uses the same arrangement as [`ConfirmBinder`].
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ConfirmPetUnlearn {
     /// What resetting the skills costs, in copper.
     pub cost: u32,
 }
 
-/// `UPDATE_SHAPESHIFT_FORMS` — the stance bar's list changed: a form was
+/// `UPDATE_SHAPESHIFT_FORMS`: the stance bar's list changed: a form was
 /// learned, unlearned, or replaced by a higher rank.
 ///
-/// The reference maintains the spell-id array incrementally on each learn and
-/// unlearn and fires this after re-sorting it (event `0x183`);
-/// this client rebuilds the list off the spellbook version and fires on a
-/// difference, which reaches the same states through the same event.
+/// The 1.12.1 client raises this after each learn or unlearn that changes the
+/// sorted list of forms. This client rebuilds the list from the spellbook
+/// version and raises the event when the list differs, which produces the same
+/// states and the same event.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UpdateShapeshiftForms;
 
-/// **The pet said something** — `SMSG_PET_ACTION_SOUND`, an internal edge with
-/// no FrameXML name. `talk` is a [`vale_protocol::play::pet::pet_talk`]
-/// selector; the only reader is `sound::combat`, which routes it onto the
-/// unit's bark channel.
+/// The pet played a sound: `SMSG_PET_ACTION_SOUND`, an internal message with no
+/// FrameXML name. `talk` is a [`vale_protocol::play::pet::pet_talk`] selector;
+/// the only reader is `sound::combat`, which plays it on the unit's bark
+/// channel.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PetTalkHeard {
     pub pet: u64,
     pub talk: u32,
 }
 
-/// …and its goodbye — `SMSG_PET_DISMISS_SOUND`, likewise internal. The packet
-/// names a model and a place because the pet itself is already gone.
+/// The pet's dismissal sound: `SMSG_PET_DISMISS_SOUND`, also internal. The
+/// packet names a model and a position because the pet itself is already gone.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PetDismissHeard(pub vale_protocol::play::pet::PetDismissSound);
 
-/// `UNIT_PET_EXPERIENCE` — the pet's experience bar moved.
+/// `UNIT_PET_EXPERIENCE`: the pet's experience changed.
 ///
 /// `PetPaperDollFrame_OnEvent` answers it with `PetExpBar_Update()` alone and
 /// reads no argument, so the message carries none. Raised by the vitals watch
-/// when `UNIT_FIELD_PETEXPERIENCE` or `PETNEXTLEVELEXP` moves — nothing on the
-/// wire announces it apart from the field update itself.
+/// when `UNIT_FIELD_PETEXPERIENCE` or `PETNEXTLEVELEXP` changes; no packet
+/// announces it apart from the field update itself.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UnitPetExperience;
 
-/// `UNIT_PET_TRAINING_POINTS` — the pet's training points or loyalty moved.
+/// `UNIT_PET_TRAINING_POINTS`: the pet's training points or loyalty changed.
 ///
 /// `arg1` is `"pet"`, because the paper doll's `OnEvent` falls through its
-/// named branches to `elseif ( arg1 == "pet" ) then PetPaperDollFrame_Update()`
-/// — the full redraw, which is also what re-reads `GetPetLoyalty`. That is why
-/// a loyalty-level change raises this too: the panel has no loyalty event of
-/// its own.
+/// named branches to `elseif ( arg1 == "pet" ) then PetPaperDollFrame_Update()`,
+/// the full redraw, which also re-reads `GetPetLoyalty`. A loyalty-level change
+/// therefore raises this too; the panel has no loyalty event of its own.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UnitPetTrainingPoints;
 
-/// `SPELL_UPDATE_COOLDOWN` — the spellbook's own half of
+/// `SPELL_UPDATE_COOLDOWN`: the spellbook's counterpart of
 /// [`ActionbarUpdateCooldown`].
 ///
-/// Two names for one fact, and the split is the game's: an action button
-/// listens for the bar's and a spell button for this one, so a client that
-/// raises only the first has a spellbook whose cooldown swirls never move.
-/// Written beside its sibling everywhere, which is why they are never out of
-/// step.
+/// FrameXML uses two names for one change: an action button listens for the
+/// bar's event and a spell button for this one. A client that raises only the
+/// first leaves the spellbook's cooldown swirls stopped. This is written beside
+/// its sibling at every call, so the two stay in step.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SpellUpdateCooldown;
 
-/// `CURRENT_SPELL_CAST_CHANGED` — what is being cast is now something else.
+/// `CURRENT_SPELL_CAST_CHANGED`: the spell being cast is now a different one.
 ///
-/// `SpellButton_UpdateSelection` is the only reader in the shipped directory:
-/// it is what puts the pressed border on the spell currently going out. Carries
-/// nothing, because the reader re-asks `IsCurrentCast` per button.
+/// `SpellButton_UpdateSelection` is the only reader in the shipped FrameXML; it
+/// puts the pressed border on the spell currently being cast. Carries nothing,
+/// because the reader re-asks `IsCurrentCast` per button.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct CurrentSpellCastChanged;
 
-/// `ACTIONBAR_UPDATE_STATE` — a button's *checked* state changed: auto-attack
+/// `ACTIONBAR_UPDATE_STATE`: a button's checked state changed: auto-attack
 /// turned on or off.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ActionbarUpdateState;
 
-/// **`ACTIONBAR_UPDATE_USABLE` — whether the buttons can be pressed is now a
-/// different answer**, which for this client means the power moved.
+/// `ACTIONBAR_UPDATE_USABLE`: whether the buttons can be pressed may have
+/// changed, which for this client means the player's power changed.
 ///
-/// It is the *only* thing that re-runs `ActionButton_UpdateUsable` while a
-/// session is going. That function is what draws the three states —
-/// white for usable, **blue** for merely unaffordable, grey for neither — and
-/// [`super::api::is_usable_action`] has been able to answer it since the bar was
-/// written; what was missing was any event that made a button ask again.
-/// `ActionButton_Update` runs it once when a slot's contents change and
-/// `PLAYER_TARGET_CHANGED`/`PLAYER_AURAS_CHANGED` re-run it on their own edges,
-/// so a mage who spent their mana kept a bar of white icons until they clicked
-/// something else. That is the "spells that should be greyed out are not"
-/// report, and the missing half was this name rather than the reading.
+/// It is the only event that re-runs `ActionButton_UpdateUsable` during a
+/// session. That function draws the three states: white for usable, blue for
+/// unaffordable only, grey for neither. [`super::api::is_usable_action`]
+/// answers the question; this event makes a button ask it again.
+/// `ActionButton_Update` runs it once when a slot's contents change, and
+/// `PLAYER_TARGET_CHANGED`/`PLAYER_AURAS_CHANGED` re-run it on their own edges.
+/// Without this event a mage who spent their mana kept a bar of white icons
+/// until one of those other edges occurred.
 ///
-/// **Carries nothing**, like its two neighbours: one cast can make a dozen
-/// buttons unaffordable at once, so there is no useful "which" to send and every
-/// button re-asks for itself.
+/// Carries nothing, like its two neighbours. One cast can make a dozen buttons
+/// unaffordable at once, so there is no single button to name and every button
+/// re-asks for itself.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ActionbarUpdateUsable;
 
-/// **`START_AUTOREPEAT_SPELL` / `STOP_AUTOREPEAT_SPELL` — the ranged loop is
-/// running, or it has stopped.**
+/// `START_AUTOREPEAT_SPELL` / `STOP_AUTOREPEAT_SPELL`: the ranged auto-repeat
+/// started or stopped.
 ///
-/// The two ends of Auto Shot, and they are the *only* thing that makes an
-/// action button flash for a spell: `ActionButton_OnEvent` answers the first
-/// with `ActionButton_StartFlash()` if `IsAutoRepeatAction(id)` and the second
+/// These are the start and end of Auto Shot, and the only events that make an
+/// action button flash for a spell. `ActionButton_OnEvent` answers the first
+/// with `ActionButton_StartFlash()` if `IsAutoRepeatAction(id)`, and the second
 /// with `ActionButton_StopFlash()` unless the button is the attack toggle,
-/// which has a flash of its own to keep. Without the pair a hunter's Auto Shot
-/// is indistinguishable from a button nobody pressed — and pressing it a second
-/// time to stop it looks like it did nothing at all.
+/// which keeps its own flash. Without the pair a hunter's Auto Shot button
+/// looks unpressed, and pressing it again to stop it shows no change.
 ///
-/// **Neither carries anything**, which is `ActionButton.lua`'s own reading: the
-/// arm re-asks `IsAutoRepeatAction` for the button it is on rather than
-/// comparing a spell id, so twelve buttons answer for themselves and the event
-/// says only that the answer has changed.
+/// Neither carries anything, matching `ActionButton.lua`: the handler re-asks
+/// `IsAutoRepeatAction` for its own button rather than comparing a spell id, so
+/// each of the twelve buttons answers for itself.
 ///
-/// Raised by [`super::action`], which owns the state — the start is this
-/// client's own decision (a cast the server never acknowledges as anything
-/// special) and the stop is `SMSG_CANCEL_AUTO_REPEAT`.
+/// Raised by [`super::action`], which owns the state. This client decides the
+/// start (the server does not acknowledge the cast as special), and the stop is
+/// `SMSG_CANCEL_AUTO_REPEAT`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct StartAutorepeatSpell;
 
@@ -418,162 +396,159 @@ pub struct StartAutorepeatSpell;
 #[derive(Message, Debug, Clone, Copy)]
 pub struct StopAutorepeatSpell;
 
-/// `SPELLCAST_START` — arg1 is the spell's name, arg2 its duration in
-/// milliseconds, in the game's own order.
+/// `SPELLCAST_START`: arg1 is the spell's name, arg2 its duration in
+/// milliseconds, in FrameXML's order.
 #[derive(Message, Debug, Clone)]
 pub struct SpellcastStart {
     pub name: String,
     pub duration_ms: u32,
 }
 
-/// `SPELLCAST_STOP` — the cast finished, one way or another.
+/// `SPELLCAST_STOP`: the cast finished, one way or another.
 ///
-/// The real client sends this for a *completed* cast and sends
-/// [`SpellcastFailed`] or [`SpellcastInterrupted`] for the two ways it does not
-/// complete; `CastingBarFrame_OnEvent` branches on which, to colour the bar
+/// The 1.12.1 client raises this for a completed cast and raises
+/// [`SpellcastFailed`] or [`SpellcastInterrupted`] for the two ways a cast does
+/// not complete. `CastingBarFrame_OnEvent` branches on which, to colour the bar
 /// before it fades. All three end the bar.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SpellcastStop;
 
-/// `SPELLCAST_FAILED` — refused, by the server or by the client before the send.
+/// `SPELLCAST_FAILED`: refused, by the server or by the client before the send.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SpellcastFailed;
 
-/// `SPELLCAST_INTERRUPTED` — a cast that had started was stopped by something
+/// `SPELLCAST_INTERRUPTED`: a cast that had started was stopped by something
 /// that happened to the caster.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SpellcastInterrupted;
 
-/// **`SPELLCAST_DELAYED` — arg1 is how much *longer* the cast will take**, in
-/// milliseconds, and it is a difference rather than a new length.
+/// `SPELLCAST_DELAYED`: arg1 is how much longer the cast will take, in
+/// milliseconds. It is a difference, not a new length.
 ///
-/// The pushback: `CastingBarFrame_OnEvent`'s own arm slides **both** ends of the
-/// bar by `arg1 / 1000` and re-states its range, so the fill sits where it is
-/// and the finish line moves away — which is what a cast being knocked back
-/// looks like in the real client. It is the fifth of the eight names
-/// `CastingBarFrame_OnLoad` registers and the last of them nothing here raised.
+/// This is spell pushback. `CastingBarFrame_OnEvent`'s handler moves both ends
+/// of the bar by `arg1 / 1000` and resets its range, so the fill stays where it
+/// is and the end moves away, as in the 1.12.1 client. It is the fifth of the
+/// eight names `CastingBarFrame_OnLoad` registers.
 ///
-/// The distinction from [`SpellcastChannelUpdate`] is worth keeping straight:
-/// that one restates *what is left* of a channel and this one says *how much was
-/// added* to a cast. Neither number is the other's.
+/// [`SpellcastChannelUpdate`] restates what is left of a channel; this event
+/// states how much was added to a cast. The two numbers are not
+/// interchangeable.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SpellcastDelayed {
     pub delay_ms: u32,
 }
 
-/// **`SPELLCAST_CHANNEL_START` — arg1 is the duration and arg2 the name**,
-/// which is the other way round from [`SpellcastStart`].
+/// `SPELLCAST_CHANNEL_START`: arg1 is the duration and arg2 the name, the
+/// reverse of [`SpellcastStart`].
 ///
-/// That is not a slip here: `CastingBarFrame_OnEvent` reads
-/// `this.duration = arg1 / 1000` and `CastingBarText:SetText(arg2)` on the
-/// channel branch and the reverse two branches above it, in the same file. The
-/// module comment has recorded the inconsistency since before anything raised
-/// this event; getting it the "sensible" way round puts a number where the
-/// spell's name goes.
+/// `CastingBarFrame_OnEvent` reads `this.duration = arg1 / 1000` and
+/// `CastingBarText:SetText(arg2)` on the channel branch, and the reverse two
+/// branches above it, in the same file. Raising the arguments in
+/// [`SpellcastStart`]'s order puts a number where the spell's name goes.
 #[derive(Message, Debug, Clone)]
 pub struct SpellcastChannelStart {
     pub duration_ms: u32,
     pub name: String,
 }
 
-/// `SPELLCAST_CHANNEL_UPDATE` — arg1 is what is left, in milliseconds.
+/// `SPELLCAST_CHANNEL_UPDATE`: arg1 is the time left, in milliseconds.
 ///
-/// The bar keeps its *original* span and slides both ends, which is
-/// `CastingBarFrame_OnEvent`'s own arithmetic — a channel that is pushed back
-/// does not get a longer bar, it gets a bar that has run less far.
+/// The bar keeps its original span and moves both ends, following
+/// `CastingBarFrame_OnEvent`'s arithmetic. A channel that is pushed back does
+/// not get a longer bar; its bar shows less elapsed.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SpellcastChannelUpdate {
     pub remaining_ms: u32,
 }
 
-/// `SPELLCAST_CHANNEL_STOP` — no args. The channel is over, however it ended.
+/// `SPELLCAST_CHANNEL_STOP`: no args. The channel is over, however it ended.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SpellcastChannelStop;
 
-/// **`MIRROR_TIMER_START` — a bar the server counts down for us**, with the six
-/// arguments `MirrorTimer_Show` takes.
+/// `MIRROR_TIMER_START`: a bar the server counts down, with the six arguments
+/// `MirrorTimer_Show` takes.
 ///
-/// `UIParent.lua` is what registers it, and its arm is a bare
-/// `MirrorTimer_Show(arg1, arg2, arg3, arg4, arg5, arg6)` — so the order here is
-/// that function's signature, `(timer, value, maxvalue, scale, paused, label)`,
-/// and not a choice. `arg1` is a **string**: the three names are the client's
-/// own table and they key `MirrorTimerColors`. See
-/// [`vale_protocol::play::timers`] and [`super::timers`], which is what fills this.
+/// `UIParent.lua` registers it, and its handler is a bare
+/// `MirrorTimer_Show(arg1, arg2, arg3, arg4, arg5, arg6)`, so the order here is
+/// that function's signature, `(timer, value, maxvalue, scale, paused, label)`.
+/// `arg1` is a string: one of the three timer names the 1.12.1 client uses,
+/// which key `MirrorTimerColors`. See [`vale_protocol::play::timers`] and
+/// [`super::timers`], which fills this.
 #[derive(Message, Debug, Clone)]
 pub struct MirrorTimerStart {
     pub timer: String,
     pub remaining_ms: u32,
     pub duration_ms: u32,
-    /// Seconds of bar per second, **signed**: negative drains.
+    /// Seconds of bar per second, signed: negative drains.
     pub scale: i32,
     pub paused: bool,
-    /// Already resolved out of `GlobalStrings.lua`; empty for a key the file
-    /// does not carry, which is the reference's own behaviour.
+    /// Already resolved from `GlobalStrings.lua`; empty for a key the file does
+    /// not carry, as in the 1.12.1 client.
     pub label: String,
 }
 
-/// **The quest conversation's five, and the log's two.**
+/// `QUEST_GREETING`, the first of the quest dialog's five events; the quest
+/// log has two more.
 ///
-/// None of them carries an argument — which is the game's own shape and not a
-/// simplification: `QuestFrame_OnEvent` answers each by calling
-/// `QuestFrame_Update`, which re-reads everything through `GetTitleText`,
-/// `GetQuestText` and the rest. The packet's contents reach the panel through
-/// those reads, not through `arg1`.
+/// None of them carries an argument, matching FrameXML. `QuestFrame_OnEvent`
+/// answers each by calling `QuestFrame_Update`, which re-reads everything
+/// through `GetTitleText`, `GetQuestText` and the rest. The packet's contents
+/// reach the panel through those calls, not through `arg1`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct QuestGreetingEvent;
 
-/// `QUEST_DETAIL` — the page before accepting.
+/// `QUEST_DETAIL`: the page shown before accepting.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct QuestDetail;
 
-/// `QUEST_PROGRESS` — one in the log, not finished.
+/// `QUEST_PROGRESS`: a quest in the log that is not finished.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct QuestProgressEvent;
 
-/// `QUEST_COMPLETE` — …and one that is, with its rewards.
+/// `QUEST_COMPLETE`: a quest in the log that is finished, with its rewards.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct QuestCompleteEvent;
 
-/// **`QUEST_FINISHED` — the conversation is over**, and the only thing that
-/// closes the panel: `QuestFrame_OnEvent`'s arm for it is `HideUIPanel(this)`.
+/// `QUEST_FINISHED`: the quest dialog is over. This is the only event that
+/// closes the panel: `QuestFrame_OnEvent`'s handler for it is
+/// `HideUIPanel(this)`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct QuestFinished;
 
-/// `QUEST_ITEM_UPDATE` — an objective moved while a page is open, so the item
+/// `QUEST_ITEM_UPDATE`: an objective changed while a page is open, so the item
 /// counts on it are stale.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct QuestItemUpdate;
 
-/// **`QUEST_LOG_UPDATE` — the log changed**, or the text behind it arrived.
+/// `QUEST_LOG_UPDATE`: the log changed, or the text behind it arrived.
 ///
-/// Raised for both, which is not over-eager: a template landing changes nothing
-/// in the update fields and everything on the screen, so a panel told only
-/// about the fields would draw a list of numbered blanks and never redraw it.
+/// Raised for both. A quest template arriving changes nothing in the update
+/// fields but changes what the panel shows, so a panel told only about field
+/// changes would draw a list of numbered blank rows and never redraw it.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct QuestLogUpdate;
 
-/// **The gossip window's two and the merchant's three.** None carries an
-/// argument: each panel re-reads everything through its own C surface, exactly
-/// as the quest events do.
+/// `GOSSIP_SHOW`, the first of the gossip window's two events; the merchant
+/// has three more. None carries an argument: each panel re-reads everything
+/// through its own API functions, as the quest panel does.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct GossipShow;
 
-/// `GOSSIP_CLOSED` — the window is gone, by either side's hand.
+/// `GOSSIP_CLOSED`: the window was closed, by the client or by the server.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct GossipClosed;
 
-/// `CONFIRM_BINDER` — an innkeeper is asking to be made home. **`arg1` is the
-/// place's name**, which the popup formats into `"Do you want to make %s your
-/// new home?"`.
+/// `CONFIRM_BINDER`: an innkeeper is asking to be made the character's home.
+/// `arg1` is the place's name, which the popup formats into `"Do you want to
+/// make %s your new home?"`.
 ///
-/// `UIParent.lua:547` is the only handler and it is one line —
-/// `StaticPopup_Show("CONFIRM_BINDER", arg1)` — whose Accept calls
-/// `ConfirmBinder()`. So this event is the whole of the client's half of the
-/// bind: without it the gossip option closes its window and nothing else
-/// happens, which is how it was reported.
+/// `UIParent.lua:547` is the only handler. It is one line,
+/// `StaticPopup_Show("CONFIRM_BINDER", arg1)`, and the popup's Accept calls
+/// `ConfirmBinder()`. Without this event the gossip option closes its window
+/// and nothing else happens.
 ///
-/// The **guid** rides along beside the name because `ConfirmBinder` has to name
-/// the innkeeper on the wire and Lua never sees it — see
+/// The guid is carried beside the name because `ConfirmBinder` has to name the
+/// innkeeper on the wire and Lua never sees it; see
 /// [`vale_protocol::play::bindpoint`].
 #[derive(Message, Debug, Clone)]
 pub struct ConfirmBinder {
@@ -583,69 +558,78 @@ pub struct ConfirmBinder {
     pub guid: u64,
 }
 
-/// `DUEL_REQUESTED` — **another player has challenged us**. `arg1` is their
-/// name, which `UIParent.lua` passes to `StaticPopup_Show("DUEL_REQUESTED",
-/// arg1)` and the popup formats into `"%s has challenged you to a duel."`.
-/// Raised only for a challenger in view — see [`super::duel`].
+/// `DUEL_REQUESTED`: another player has challenged the player to a duel.
+/// `arg1` is the challenger's name, which `UIParent.lua` passes to
+/// `StaticPopup_Show("DUEL_REQUESTED", arg1)` and the popup formats into
+/// `"%s has challenged you to a duel."`. Raised only for a challenger in view;
+/// see [`super::duel`].
 #[derive(Message, Debug, Clone)]
 pub struct DuelRequested(pub String);
 
-/// `DUEL_OUTOFBOUNDS` — we have left the flag's area. The handler shows the
-/// ten-second forfeit popup.
+/// `DUEL_OUTOFBOUNDS`: the player has left the duel flag's area. The handler
+/// shows the ten-second forfeit popup.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct DuelOutOfBounds;
 
-/// `DUEL_INBOUNDS` — …and come back, which hides it.
+/// `DUEL_INBOUNDS`: the player has returned to the area, which hides the
+/// popup.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct DuelInBounds;
 
-/// `DUEL_FINISHED` — the duel is over, however it ended. The handler hides
+/// `DUEL_FINISHED`: the duel is over, however it ended. The handler hides
 /// both duel popups.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct DuelFinished;
 
-/// `CONFIRM_SUMMON` — somebody wants to bring us to them. No arguments: the
+/// `INSPECT_HONOR_UPDATE`: the inspected player's honor tab data has arrived.
+/// No arguments: `InspectHonorFrame` reads `GetInspectHonorData`. See
+/// [`super::inspect`].
+#[derive(Message, Debug, Clone, Copy)]
+pub struct InspectHonorUpdate;
+
+/// `CONFIRM_SUMMON`: another player is summoning the player. No arguments: the
 /// popup reads the three `GetSummonConfirm*` functions instead. See
 /// [`super::summon`].
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ConfirmSummon;
 
-/// `TIME_PLAYED_MSG` — `/played` answered. `arg1` is the total and `arg2` this
-/// level's, both in seconds, and `ChatFrame_DisplayTimePlayed` words them.
+/// `TIME_PLAYED_MSG`: the answer to `/played`. `arg1` is the total and `arg2`
+/// the time at this level, both in seconds, and `ChatFrame_DisplayTimePlayed`
+/// formats them.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct TimePlayedMsg {
     pub total: u32,
     pub level: u32,
 }
 
-/// `ITEM_TEXT_BEGIN` — **something is being read**, and its title and material
-/// are known before a word of it has arrived.
+/// `ITEM_TEXT_BEGIN`: the player started reading an item or object, and its
+/// title and material are known before any of its text has arrived.
 ///
-/// `ItemTextFrame_OnEvent` uses it to set the title and hide everything else,
-/// which is why it is a separate event from the words landing: the window is
-/// framed first and filled afterwards. See [`super::pagetext`].
+/// `ItemTextFrame_OnEvent` uses it to set the title and hide everything else.
+/// It is separate from the text arriving because the window is set up first and
+/// filled afterwards. See [`super::pagetext`].
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ItemTextBegin;
 
-/// `ITEM_TEXT_READY` — a page arrived, or the shown one changed. This is what
-/// puts the panel on the screen: its handler ends in `ShowUIPanel(this)`.
+/// `ITEM_TEXT_READY`: a page arrived, or the shown page changed. This event
+/// shows the panel: its handler ends in `ShowUIPanel(this)`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ItemTextReady;
 
-/// `ITEM_TEXT_CLOSED` — the book is shut.
+/// `ITEM_TEXT_CLOSED`: the text window was closed.
 ///
-/// **`ITEM_TEXT_TRANSLATION` has no type here on purpose**: it is the progress
-/// bar for a page in a language the character cannot read, and the 1.12 server
-/// has no translation to send. The panel registers it and nothing raises it,
-/// which is also true of the reference. See [`super::pagetext`].
+/// `ITEM_TEXT_TRANSLATION` has no type here. It is the progress bar for a page
+/// in a language the character cannot read, and the 1.12 server has no
+/// translation to send. The panel registers it and nothing raises it, which is
+/// also true of the 1.12.1 client. See [`super::pagetext`].
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ItemTextClosed;
 
-/// `MERCHANT_SHOW` — the shop opened.
+/// `MERCHANT_SHOW`: the merchant window opened.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct MerchantShow;
 
-/// `MERCHANT_UPDATE` — a row changed: stock moved, or a name arrived.
+/// `MERCHANT_UPDATE`: a row changed: stock changed, or an item name arrived.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct MerchantUpdate;
 
@@ -653,204 +637,202 @@ pub struct MerchantUpdate;
 #[derive(Message, Debug, Clone, Copy)]
 pub struct MerchantClosed;
 
-/// `PARTY_MEMBERS_CHANGED` — **"look again"**, not "somebody joined".
+/// `PARTY_MEMBERS_CHANGED`: the party roster may have changed and readers must
+/// re-read it. It does not mean that a member joined.
 ///
-/// The server re-sends `SMSG_GROUP_LIST` whole on every change, so the roster
-/// has no incremental form and neither does this: `PartyMemberFrame_OnEvent`
+/// The server re-sends `SMSG_GROUP_LIST` whole on every change, so neither the
+/// roster nor this event has an incremental form. `PartyMemberFrame_OnEvent`
 /// answers it by rebuilding every frame from `GetPartyMember(i)`. See
-/// [`crate::interface::party`], which is what decides that a member going AFK is
-/// *not* one of these.
+/// [`crate::interface::party`], which decides that a member going AFK does not
+/// raise this.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PartyMembersChanged;
 
-/// `RAID_ROSTER_UPDATE` — **the raid's own "look again"**, beside
-/// [`PartyMembersChanged`] rather than instead of it.
+/// `RAID_ROSTER_UPDATE`: the raid roster may have changed. Raised beside
+/// [`PartyMembersChanged`], not instead of it.
 ///
-/// The game raises both off the same `SMSG_GROUP_LIST`, and the two have
-/// different audiences: `PartyMemberFrame_OnEvent` answers the party's and
+/// The 1.12.1 client raises both from the same `SMSG_GROUP_LIST`, and they have
+/// different readers. `PartyMemberFrame_OnEvent` answers the party event;
 /// `RaidFrame_OnEvent` answers this one by loading `Blizzard_RaidUI` and
-/// rebuilding forty buttons. `UIParent.lua` also answers it by re-deciding
-/// whether the party frames are on screen at all, which is why a client that
-/// raises only the party's name leaves five party frames standing over a raid.
+/// rebuilding forty buttons. `UIParent.lua` also answers it by deciding again
+/// whether the party frames are shown at all, so a client that raises only the
+/// party event leaves five party frames on screen during a raid.
 ///
-/// **Raised whenever the raid roster could have moved, converting included** —
-/// see [`crate::interface::raid`], which is where the difference between
-/// "the membership moved" and "somebody went AFK" is decided.
+/// Raised whenever the raid roster could have changed, including conversion
+/// from party to raid. See [`crate::interface::raid`], which separates a
+/// membership change from a member going AFK.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct RaidRosterUpdate;
 
-/// `READY_CHECK` — somebody with the authority to has started one.
+/// `READY_CHECK`: a group leader or assistant has started a ready check.
 ///
-/// **No arguments**, which is the thing about it: `MSG_RAID_READY_CHECK`'s
-/// broadcast form has no body at all, so `ShowReadyCheck` finds out who asked by
-/// walking the roster for the row whose rank is 2. Registered by `UIParent.lua`
-/// and answered by that one call.
+/// No arguments. `MSG_RAID_READY_CHECK`'s broadcast form has no body, so
+/// `ShowReadyCheck` finds who asked by searching the roster for the row whose
+/// rank is 2. Registered by `UIParent.lua` and answered by that one call.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ReadyCheck;
 
-/// `SKILL_LINES_CHANGED` — **"the skills list moved"**, and nothing more
-/// specific.
+/// `SKILL_LINES_CHANGED`: the skills list changed, with no detail.
 ///
 /// `SkillFrame_OnLoad` registers it beside `CHARACTER_POINTS_CHANGED` and
 /// answers either by rebuilding the whole panel, so there is no incremental
-/// form of this and nothing would read one. Raised for every cause: a rank
-/// moving, a line learned or unlearned, a level gained, or the archives opening
-/// after the character did. The same "look again" shape
-/// [`PartyMembersChanged`] has.
+/// form and nothing would read one. Raised for every cause: a rank changing, a
+/// line learned or unlearned, a level gained, or the archives finishing loading
+/// after the character entered the world. [`PartyMembersChanged`] has the same
+/// re-read-everything form.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SkillLinesChanged;
 
-/// `CHARACTER_POINTS_CHANGED` — **"the unspent point counters moved"**.
+/// `CHARACTER_POINTS_CHANGED`: the unspent point counters changed.
 ///
-/// `PLAYER_CHARACTER_POINTS1` or `2`, which are the talent and profession pools
-/// — see [`vale_protocol::state::objects::Entity::character_points`].
+/// These are `PLAYER_CHARACTER_POINTS1` and `2`, the talent and profession
+/// pools; see [`vale_protocol::state::objects::Entity::character_points`].
 ///
-/// Registered by three panels in the shipped directory and answered by all
-/// three with a whole rebuild: `TalentFrame` (beside `SPELLS_CHANGED`, because
-/// spending a point moves both), `SkillFrame`, and `PetStable`. So there is no
-/// incremental form of this and nothing would read one — the same "look again"
-/// shape [`SkillLinesChanged`] has.
+/// Three panels in the shipped FrameXML register it and all three answer with
+/// a whole rebuild: `TalentFrame` (beside `SPELLS_CHANGED`, because spending a
+/// point changes both), `SkillFrame`, and `PetStable`. There is no incremental
+/// form, as with [`SkillLinesChanged`].
 ///
-/// **It carries two arguments and they are *deltas*, not totals**, formatted
-/// `"%d%d"`: `arg1` is the change in unspent talent points
+/// It carries two arguments, and they are deltas, not totals, formatted
+/// `"%d%d"`. `arg1` is the change in unspent talent points
 /// (`PLAYER_CHARACTER_POINTS1`) and `arg2` the change in unspent profession
-/// points, so the order is talents first. That is not decoration: **`ChatFrame_OnEvent` reads `arg2`**
-/// and prints "you have earned N new skill points" off it, so an event raised
-/// with no arguments takes the default chat frame down on every level-up. Which
-/// is exactly what `--audit --events` reported the first time this was raised
-/// bare.
+/// points, so talents come first. `ChatFrame_OnEvent` reads `arg2` and prints
+/// "you have earned N new skill points" from it, so raising the event with no
+/// arguments makes the default chat frame's handler fail on every level-up.
+/// `--audit --events` reported that failure when the event was raised without
+/// arguments.
 ///
-/// The two panels that register it — `TalentFrame` and `SkillFrame` — read
-/// neither argument and rebuild whole.
+/// `TalentFrame` and `SkillFrame` read neither argument and rebuild whole.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct CharacterPointsChanged {
-    /// The change in unspent **talent** points since the last raise.
+    /// The change in unspent talent points since the last raise.
     pub talent: i32,
-    /// …and in unspent **profession** points, which is the one the chat frame
-    /// speaks about.
+    /// The change in unspent profession points, which is the value the chat
+    /// frame reports.
     pub profession: i32,
 }
 
-/// `UPDATE_FACTION` — **"the reputation list moved"**, and nothing more
-/// specific than that.
+/// `UPDATE_FACTION`: the reputation list changed, with no detail.
 ///
-/// The reference raises it from exactly one place, the end of the panel's own
-/// recount, so every cause — the login packet, a standing moving, a
-/// faction met, the crossed swords, a heading collapsed, a row filed inactive —
-/// arrives under this one name with no arguments. `ReputationFrame_OnEvent`
-/// answers it by rebuilding, and only **if the frame is visible**, which is why
-/// raising it freely costs nothing.
+/// The 1.12.1 client raises it in one situation, after recounting the
+/// reputation list. Every cause (the login packet, a standing change, a faction
+/// met, the at-war flag, a heading collapsed, a row moved to inactive) arrives
+/// under this one name with no arguments. `ReputationFrame_OnEvent` answers it
+/// by rebuilding, and only if the frame is visible, so raising it often costs
+/// nothing.
 ///
-/// Two other things listen: `ReputationWatchBar_Update` through
-/// `MainMenuBar.lua`, which is the bar over the action bar, and
-/// `TokenFrame`-less 1.12 nothing else.
+/// One other handler listens: `ReputationWatchBar_Update` through
+/// `MainMenuBar.lua`, the bar above the action bar. 1.12 has no `TokenFrame`
+/// and no other reader.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UpdateFaction;
 
-/// `FRIENDLIST_UPDATE` — **"the friends list moved"**, and, like
-/// [`UpdateFaction`], nothing more specific than that.
+/// `FRIENDLIST_UPDATE`: the friends list changed, with no detail, like
+/// [`UpdateFaction`].
 ///
-/// Raised by everything that touches the list: the login packet, an add, a
+/// Raised by everything that changes the list: the login packet, an add, a
 /// removal, a friend logging in or out, and a name query answering for a guid
-/// that was drawing as *Unknown*. `FriendsList_Update` rebuilds every row from
-/// `GetFriendInfo`, so raising it freely costs a redraw of fifteen buttons.
+/// that was shown as Unknown. `FriendsList_Update` rebuilds every row from
+/// `GetFriendInfo`, so each raise costs a redraw of fifteen buttons.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct FriendListUpdate;
 
-/// `IGNORELIST_UPDATE` — the same statement about the other list.
+/// `IGNORELIST_UPDATE`: the ignore list changed, with no detail.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct IgnoreListUpdate;
 
-/// `WHO_LIST_UPDATE` — a `/who` was answered.
+/// `WHO_LIST_UPDATE`: a `/who` was answered.
 ///
-/// `FriendsFrame_OnEvent` rebuilds the list **and calls `FriendsFrame_Update`**,
-/// which is what selects the Who tab — so this is also what makes a `/who`
-/// typed into the chat frame open the panel on the right page.
+/// `FriendsFrame_OnEvent` rebuilds the list and calls `FriendsFrame_Update`,
+/// which selects the Who tab. A `/who` typed into the chat frame therefore opens
+/// the panel on the Who tab.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct WhoListUpdate;
 
-/// `FRIENDLIST_SHOW` — **open the panel on the friends tab**, which is a
-/// different statement from [`FriendListUpdate`].
+/// `FRIENDLIST_SHOW`: open the panel on the friends tab. This is different
+/// from [`FriendListUpdate`].
 ///
-/// `ShowFriends()` is `/friends` with no name, and the reference answers it by
-/// asking the server for the list; this is what the answer raises when somebody
-/// asked to *see* it rather than when it merely changed.
+/// `ShowFriends()` is `/friends` with no name, and the 1.12.1 client answers it
+/// by asking the server for the list. This event is raised when that answer
+/// arrives for a request to show the list, rather than when the list changed.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct FriendListShow;
 
-/// `PARTY_LEADER_CHANGED` — who wears the crown. Raised off the roster's own
-/// leader guid rather than off `SMSG_GROUP_SET_LEADER`, which names a *name*.
+/// `PARTY_LEADER_CHANGED`: the party leader changed. Raised from the roster's
+/// leader guid rather than from `SMSG_GROUP_SET_LEADER`, which carries a name.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PartyLeaderChanged;
 
-/// `PARTY_LOOT_METHOD_CHANGED` — the loot rule or its threshold moved.
+/// `PARTY_LOOT_METHOD_CHANGED`: the loot method or its threshold changed.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PartyLootMethodChanged;
 
-/// `PARTY_INVITE_REQUEST` — somebody wants us in their party, and `arg1` is
-/// their name.
+/// `PARTY_INVITE_REQUEST`: another player invited the player to a party, and
+/// `arg1` is their name.
 ///
-/// `UIParent_OnEvent`'s arm is `StaticPopup_Show("PARTY_INVITE")`, which is why
-/// this client needs no popup of its own: the box is the game's, and its Accept
+/// `UIParent_OnEvent`'s handler is `StaticPopup_Show("PARTY_INVITE")`, so this
+/// client needs no popup of its own. The popup is FrameXML's, and its Accept
 /// and Decline call `AcceptGroup()` and `DeclineGroup()`.
 #[derive(Message, Debug, Clone)]
 pub struct PartyInviteRequest {
     pub from: String,
 }
 
-/// `TRAINER_SHOW` — the training window opened. **What answers it is a
-/// load-on-demand addon**, not a `FrameXML` frame: `UIParent_OnEvent` calls
+/// `TRAINER_SHOW`: the training window opened. A load-on-demand addon answers
+/// it, not a `FrameXML` frame: `UIParent_OnEvent` calls
 /// `ClassTrainerFrame_LoadUI()` and only then `ClassTrainerFrame_Show()`. See
 /// [`crate::interface::trainer`].
 #[derive(Message, Debug, Clone, Copy)]
 pub struct TrainerShow;
 
-/// `TRAINER_UPDATE` — the rows changed: a filter moved, a line collapsed, or a
-/// service was learned. Raised by all three of the client's filter setters,
-/// each of which ends in it.
+/// `TRAINER_UPDATE`: the rows changed: a filter changed, a line collapsed, or a
+/// service was learned. Each of the three trainer filter setters raises it.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct TrainerUpdate;
 
-/// `TRADE_SKILL_SHOW` — a profession opened: our own `SMSG_SPELL_GO` released
-/// a spell whose `Effect[0]` is 47 with `EffectMiscValue[0]` 0. `UIParent.lua`
-/// answers it with `TradeSkillFrame_LoadUI()` and only then
-/// `TradeSkillFrame_Show()`. See [`super::tradeskill`], and
-/// `vale_assets::tables::tradeskill` for how the deciding column was pinned.
+/// `TRADE_SKILL_SHOW`: a profession window opened. The player's own
+/// `SMSG_SPELL_GO` completed a spell whose `Effect[0]` is 47 with
+/// `EffectMiscValue[0]` 0. `UIParent.lua` answers it with
+/// `TradeSkillFrame_LoadUI()` and only then `TradeSkillFrame_Show()`. See
+/// [`super::tradeskill`], and `vale_assets::tables::tradeskill` for how the
+/// deciding column was identified.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct TradeSkillShow;
 
-/// `TRADE_SKILL_UPDATE` — the rows changed: a rank moved, a reagent count
-/// moved, a created item's template arrived, a filter or a collapse was
-/// pressed. The reference raises it from the recount and from
-/// every item-cache callback the build armed, which is the same "look again"
-/// shape `TRAINER_UPDATE` has.
+/// `TRADE_SKILL_UPDATE`: the rows changed: a rank changed, a reagent count
+/// changed, a created item's template arrived, or a filter or collapse was
+/// pressed. The 1.12.1 client raises it after recounting the list and whenever
+/// an item it requested for the list arrives. It has the same re-read form as
+/// `TRAINER_UPDATE`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct TradeSkillUpdate;
 
-/// `TRADE_SKILL_CLOSE` — `CloseTradeSkill()` (event 0x13b), and
-/// the same opening spell cast again while its window is up.
+/// `TRADE_SKILL_CLOSE`: raised by `CloseTradeSkill()`, and by casting the same
+/// opening spell again while its window is shown.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct TradeSkillClose;
 
-/// `CRAFT_SHOW` — the craft window's own [`TradeSkillShow`]: the released
-/// spell's `EffectMiscValue[0]` was non-zero, which in 5875's data is
+/// `CRAFT_SHOW`: the craft window's equivalent of [`TradeSkillShow`]. The
+/// completed spell's `EffectMiscValue[0]` was non-zero, which in 5875's data is
 /// Enchanting (3) and Beast Training (1). See
 /// `vale_assets::tables::tradeskill::TRAINING_KIND`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct CraftShow;
 
-/// `CRAFT_UPDATE` — the craft rows changed, on [`TradeSkillUpdate`]'s terms.
+/// `CRAFT_UPDATE`: the craft rows changed, on the same terms as
+/// [`TradeSkillUpdate`].
 #[derive(Message, Debug, Clone, Copy)]
 pub struct CraftUpdate;
 
-/// `CRAFT_CLOSE` — `CloseCraft()` (event 0x169), and the opener
-/// cast again (the cast's own toggle).
+/// `CRAFT_CLOSE`: raised by `CloseCraft()`, and by casting the opening spell
+/// again, which toggles the window.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct CraftClose;
 
-/// `UPDATE_TRADESKILL_RECAST` — the repeat counter moved. The reference fires
-/// it from the one setter (spell and count) and from the clear; `TradeSkillFrame_OnEvent` answers it by
-/// putting `GetTradeskillRepeatCount()` back in the input box.
+/// `UPDATE_TRADESKILL_RECAST`: the repeat counter changed. The 1.12.1 client
+/// raises it when the repeat spell and count are set and when they are
+/// cleared. `TradeSkillFrame_OnEvent` answers it by putting
+/// `GetTradeskillRepeatCount()` back in the input box.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UpdateTradeskillRecast;
 
@@ -858,36 +840,36 @@ pub struct UpdateTradeskillRecast;
 #[derive(Message, Debug, Clone, Copy)]
 pub struct TrainerClosed;
 
-/// **The stable master's four.** `PetStable.lua` registers all of them and
-/// none carries an argument: the panel re-reads the whole window through its
-/// own eight C functions on every one.
+/// `PET_STABLE_SHOW`, the first of the stable master's four events.
+/// `PetStable.lua` registers all four and none carries an argument: the panel
+/// re-reads the whole window through its eight API functions on each one.
 ///
-/// `PET_STABLE_SHOW` is the only one that opens the frame — its `OnEvent` calls
-/// `ShowUIPanel(this)` — and `PET_STABLE_UPDATE_PAPERDOLL` is the odd one, in
-/// that its whole body is `SetPetStablePaperdoll(PetStableModel)` and nothing
-/// else.
+/// `PET_STABLE_SHOW` is the only one that opens the frame; its `OnEvent` calls
+/// `ShowUIPanel(this)`. The handler for `PET_STABLE_UPDATE_PAPERDOLL` is only
+/// `SetPetStablePaperdoll(PetStableModel)`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PetStableShow;
 
-/// `PET_STABLE_UPDATE` — the list changed: it arrived, or a verb succeeded.
+/// `PET_STABLE_UPDATE`: the list changed: it arrived, or a stable action
+/// succeeded.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PetStableUpdate;
 
-/// `PET_STABLE_UPDATE_PAPERDOLL` — re-point the `<PlayerModel>` and nothing
-/// else.
+/// `PET_STABLE_UPDATE_PAPERDOLL`: point the `<PlayerModel>` at the selected pet,
+/// and nothing else.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PetStableUpdatePaperdoll;
 
-/// `PET_STABLE_CLOSED` — the window is gone, by either side's hand. Its
-/// `OnEvent` arm is `HideUIPanel(this)`.
+/// `PET_STABLE_CLOSED`: the window was closed, by the client or by the server.
+/// Its `OnEvent` handler is `HideUIPanel(this)`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PetStableClosed;
 
-/// **The bank's four.** `BankFrame.lua` registers all of them: two open and
-/// close the frame, two redraw it.
+/// `BANKFRAME_OPENED`, the first of the bank's four events. `BankFrame.lua`
+/// registers all four: two open and close the frame, two redraw it.
 ///
-/// `BANKFRAME_OPENED` is `ShowUIPanel(this)` plus `UpdateBagSlotStatus`, and
-/// every square's own `OnEvent` redraws on it too; `BANKFRAME_CLOSED` is
+/// `BANKFRAME_OPENED` runs `ShowUIPanel(this)` plus `UpdateBagSlotStatus`, and
+/// each slot button's own `OnEvent` redraws on it too; `BANKFRAME_CLOSED` runs
 /// `HideUIPanel`. See [`crate::interface::bank`] for what raises them.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct BankframeOpened;
@@ -895,228 +877,209 @@ pub struct BankframeOpened;
 #[derive(Message, Debug, Clone, Copy)]
 pub struct BankframeClosed;
 
-/// `PLAYERBANKSLOTS_CHANGED` — a square in the bank, or one of its six bag
-/// slots, holds something else. What the thirty bank buttons redraw on. The
-/// argument is the inventory slot id (40..69) of the first square that
-/// moved, as the reference passes one; no shipped frame reads it. Raised
-/// off the inventory diff — [`crate::interface::items`] — because the
-/// bank is fields and never a packet.
+/// `PLAYERBANKSLOTS_CHANGED`: a bank slot, or one of the bank's six bag slots,
+/// holds something else. The thirty bank buttons redraw on it. The argument is
+/// the inventory slot id (40..69) of the first slot that changed, as the 1.12.1
+/// client passes one; no shipped frame reads it. Raised from the inventory diff
+/// in [`crate::interface::items`], because the bank's contents arrive as update
+/// fields, never as a packet.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerbankslotsChanged(pub u32);
 
-/// `PLAYERBANKBAGSLOTS_CHANGED` — the bought-slot count moved, which is the
-/// third byte of `PLAYER_BYTES_2` and the only thing a successful purchase
-/// sends. `BankFrame_OnEvent` answers with `UpdateBagSlotStatus`.
+/// `PLAYERBANKBAGSLOTS_CHANGED`: the purchased bank bag slot count changed.
+/// That count is the third byte of `PLAYER_BYTES_2`, and its change is the
+/// only thing a successful purchase sends. `BankFrame_OnEvent` answers with
+/// `UpdateBagSlotStatus`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerbankbagslotsChanged;
 
-// --- the box on the corner ---
+// ---- Mail events ----
 //
-// Eight names, and the index each one has in the client's own event table is
-// stated because it is what pinned their order: `MAIL_SHOW` is `0x19a`,
-// `MAIL_CLOSED` `0x19b`, `SEND_MAIL_MONEY_CHANGED` `0x19c`,
-// `SEND_MAIL_COD_CHANGED` `0x19d`, `MAIL_SEND_INFO_UPDATE` `0x19e` and
-// `MAIL_INBOX_UPDATE` `0x1a0`. See [`crate::interface::mail`].
+// Eight names. See [`crate::interface::mail`].
 
-/// **`MAIL_SHOW` — a mailbox was clicked.** Raised by the *client*, not by a
-/// packet: `GameObject::Use` has an empty arm for a mailbox, so this is the
-/// whole of what opening one is. `MailFrame_OnEvent` answers it with
-/// `ShowUIPanel`, `SendMailFrame_Update`, tab 1 and `CheckInbox()`.
+/// `MAIL_SHOW`: a mailbox was clicked. The client raises this itself, not in
+/// response to a packet: vmangos's `GameObject::Use` does nothing for a
+/// mailbox, so this event is all that opening one does. `MailFrame_OnEvent`
+/// answers it with `ShowUIPanel`, `SendMailFrame_Update`, tab 1 and
+/// `CheckInbox()`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct MailShow;
 
-/// `MAIL_CLOSED` — the window went down, by the close button or by walking
-/// away. `HideUIPanel(MailFrame)` and nothing else.
+/// `MAIL_CLOSED`: the window was closed, by the close button or by walking
+/// away. The handler is `HideUIPanel(MailFrame)` alone.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct MailClosed;
 
-/// **`MAIL_INBOX_UPDATE` — the list moved**, or was asked for and refused.
+/// `MAIL_INBOX_UPDATE`: the inbox list changed, or a request for it was
+/// declined.
 ///
-/// Raised on a fresh `SMSG_MAIL_LIST_RESULT`, on a letter's words arriving, and
-/// — the case that is easy to miss — by `CheckInbox()` itself when its own
-/// 60-second limit declines to ask. The panel called it expecting the list to
-/// appear, and without the event the rows it already has are never redrawn.
+/// Raised on a new `SMSG_MAIL_LIST_RESULT`, on a letter's text arriving, and by
+/// `CheckInbox()` itself when its 60-second limit declines to send a request.
+/// The panel called `CheckInbox()` expecting the list, and without the event
+/// the rows it already has are never redrawn.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct MailInboxUpdate;
 
-/// `MAIL_SEND_INFO_UPDATE` — what is attached to the draft changed.
+/// `MAIL_SEND_INFO_UPDATE`: the draft's attachment changed.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct MailSendInfoUpdate;
 
-/// `MAIL_SEND_SUCCESS` — the letter went. `SendMailFrame_Reset`, a page-turn
-/// sound, and a hop back to the inbox tab if this was a reply.
+/// `MAIL_SEND_SUCCESS`: the letter was sent. The handler runs
+/// `SendMailFrame_Reset`, plays a page-turn sound, and returns to the inbox tab
+/// if this was a reply.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct MailSendSuccess;
 
-/// **`MAIL_FAILED` — and it is the only thing that re-enables the Send
-/// button.**
+/// `MAIL_FAILED`: sending failed. This is the only event that re-enables the
+/// Send button.
 ///
 /// `SendMailMailButton_OnClick` ends in `this:Disable()`, so a refusal that
-/// raises nothing leaves the button dead for the rest of the session. That is
-/// why this is a separate name from `MAIL_SEND_SUCCESS` rather than one event
-/// with an outcome argument.
+/// raises nothing leaves the button disabled for the rest of the session. For
+/// that reason this is a separate name from `MAIL_SEND_SUCCESS` rather than one
+/// event with an outcome argument.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct MailFailed;
 
-/// `SEND_MAIL_MONEY_CHANGED` — `SetSendMailMoney` stored an amount.
+/// `SEND_MAIL_MONEY_CHANGED`: `SetSendMailMoney` stored an amount.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SendMailMoneyChanged;
 
-/// `SEND_MAIL_COD_CHANGED` — …and `SetSendMailCOD` did.
+/// `SEND_MAIL_COD_CHANGED`: `SetSendMailCOD` stored an amount.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SendMailCodChanged;
 
-/// **`CLOSE_INBOX_ITEM` — the open letter is gone**, carrying its mail id.
+/// `CLOSE_INBOX_ITEM`: the open letter was removed, carrying its mail id.
 ///
 /// `MailFrame_OnEvent` compares `arg1` against `InboxFrame.openMailID` and
-/// hides `OpenMailFrame` only when they match, so the id is not decoration: a
-/// letter deleted from a list of ten must not close a different one somebody is
-/// reading.
+/// hides `OpenMailFrame` only when they match. A letter deleted from a list of
+/// ten must not close a different letter the player is reading.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct CloseInboxItem(pub u32);
 
-/// **`UPDATE_PENDING_MAIL` — the envelope on the minimap.**
+/// `UPDATE_PENDING_MAIL`: the new-mail envelope on the minimap may need to
+/// show or hide.
 ///
 /// `MiniMapMailFrame`'s only event, answered by `HasNewMail()` and a
 /// `Show`/`Hide`. Raised when `MSG_QUERY_NEXT_MAIL_TIME` answers, when
-/// `SMSG_RECEIVED_MAIL` arrives, and when the client's own countdown reaches
-/// zero — see [`crate::interface::mail`].
+/// `SMSG_RECEIVED_MAIL` arrives, and when the client's countdown to the next
+/// mail reaches zero; see [`crate::interface::mail`].
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UpdatePendingMail;
 
-/// **`QUEST_WATCH_UPDATE` — one quest's objectives moved**, carrying its
-/// **quest log index** rather than its id.
+/// `QUEST_WATCH_UPDATE`: one quest's objectives changed. Carries the quest log
+/// index, not the quest id.
 ///
 /// `QuestLog_OnEvent` passes `arg1` straight to `AutoQuestWatch_Update`, which
-/// looks the row up with `GetQuestLogTitle`, so an id here would track the
-/// wrong quest — and silently, since the index is a valid argument. See
+/// looks the row up with `GetQuestLogTitle`. An id here would track the wrong
+/// quest with no error, because the id is also a valid index. See
 /// [`crate::interface::quest`], where the conversion happens.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct QuestWatchUpdate(pub u32);
 
-/// **`TAXIMAP_OPENED` — a flight master's map is up.** No arguments:
-/// `TaxiFrame_OnEvent` re-reads `NumTaxiNodes()` and every node's type from
-/// scratch, and ends in the `ShowUIPanel(this)` that puts the panel on screen.
-/// See [`crate::interface::taxi`].
+/// `TAXIMAP_OPENED`: a flight master's map is open. No arguments:
+/// `TaxiFrame_OnEvent` re-reads `NumTaxiNodes()` and every node's type, and
+/// ends in the `ShowUIPanel(this)` that shows the panel. See
+/// [`crate::interface::taxi`].
 #[derive(Message, Debug, Clone, Copy)]
 pub struct TaximapOpened;
 
-/// `TAXIMAP_CLOSED` — …and the frame's own answer is `HideUIPanel(this)`, so
-/// this is the only way a *packet* could take the window down. Nothing on the
-/// wire ever does; what raises it is `CloseTaxiMap()`.
+/// `TAXIMAP_CLOSED`: the frame's handler is `HideUIPanel(this)`, so this event
+/// is how the client closes the window. No packet raises it; `CloseTaxiMap()`
+/// does.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct TaximapClosed;
 
-/// **`LOOT_OPENED` — a body has a window on it.** No arguments: the interface
-/// re-reads `GetNumLootItems()` in `LootFrame_OnShow`, which is what
-/// `ShowUIPanel(LootFrame)` then triggers.
+/// `LOOT_OPENED`: a loot window opened on a corpse or object. No arguments:
+/// `ShowUIPanel(LootFrame)` triggers `LootFrame_OnShow`, which re-reads
+/// `GetNumLootItems()`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct LootOpened;
 
-/// **`LOOT_SLOT_CLEARED` — arg1 is the *row*, one-based, as the interface
-/// counts.**
+/// `LOOT_SLOT_CLEARED`: arg1 is the row, one-based, as the interface counts
+/// rows.
 ///
-/// Not the server's index into its own loot table, which is what the packet
-/// carries: `LootFrame_OnEvent` subtracts the page offset from `arg1` and hides
-/// `LootButton<n>`, so a sparse server index hides the wrong button or none at
-/// all. The crossing happens once, in `vale_protocol::play::loot::Loot::remove`.
+/// It is not the server's index into its loot table, which is what the packet
+/// carries. `LootFrame_OnEvent` subtracts the page offset from `arg1` and hides
+/// `LootButton<n>`, so a sparse server index hides the wrong button or none.
+/// The conversion happens once, in `vale_protocol::play::loot::Loot::remove`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct LootSlotCleared {
     pub row: usize,
 }
 
-/// **`LOOT_CLOSED` — the server agrees the body is shut.**
+/// `LOOT_CLOSED`: the server has confirmed the loot window is closed.
 ///
-/// Raised on `SMSG_LOOT_RELEASE_RESPONSE` and never on the client's own send:
-/// `HandleLootReleaseOpcode` discards the guid it is given and releases whatever
-/// it last recorded, so that packet is the only statement that the body is free.
+/// Raised on `SMSG_LOOT_RELEASE_RESPONSE`, never on the client's own release
+/// request. vmangos's `HandleLootReleaseOpcode` ignores the guid it is given and
+/// releases whatever it last recorded, so the response is the only statement
+/// that the loot is released.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct LootClosed;
 
-/// **`START_LOOT_ROLL` — a group roll has opened, and a frame goes up.**
+/// `START_LOOT_ROLL`: a group roll has started, and a roll frame is shown.
 ///
-/// `arg1` is the roll id and `arg2` the countdown in milliseconds:
-/// `UIParent.lua`'s arm is `GroupLootFrame_OpenNewFrame(arg1, arg2)`, which
-/// hands the second straight to `SetMinMaxValues(0, rollTime)`.
+/// `arg1` is the roll id and `arg2` the countdown in milliseconds.
+/// `UIParent.lua`'s handler is `GroupLootFrame_OpenNewFrame(arg1, arg2)`, which
+/// passes the second straight to `SetMinMaxValues(0, rollTime)`.
 ///
-/// **The id is the client's own**, not anything on the wire — see
-/// [`crate::interface::lootroll`], which is where the two namings cross.
+/// The roll id is assigned by the client, not taken from the wire; see
+/// [`crate::interface::lootroll`], which maps between the two.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct StartLootRoll {
     pub id: u32,
     pub countdown_ms: u32,
 }
 
-/// **`CANCEL_LOOT_ROLL` — that frame comes down.** `arg1` is the roll id, and
+/// `CANCEL_LOOT_ROLL`: the roll frame closes. `arg1` is the roll id, and
 /// `GroupLootFrame_OnEvent` compares it against its own `rollID` before hiding
-/// anything, so the number has to be the same one the start carried.
+/// anything, so it must be the id the start carried.
 ///
-/// Raised three ways and only one of them is the server's: the roll ended, the
-/// player voted (on the press rather than on the answer), or the
-/// roll outlived its clock with nothing coming back.
+/// Raised in three cases, only one of which comes from the server: the roll
+/// ended, the player voted (on the press, not on the server's answer), or the
+/// roll's countdown expired with no answer.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct CancelLootRoll {
     pub id: u32,
 }
 
-/// **`CONFIRM_LOOT_ROLL` — are you sure? That item binds.**
+/// `CONFIRM_LOOT_ROLL`: asks the player to confirm a roll on an item that
+/// binds when picked up.
 ///
-/// `arg1` is the roll id and `arg2` the vote, and `UIParent.lua` puts both into
-/// a `StaticPopup_Show("CONFIRM_LOOT_ROLL")` whose accept calls
-/// `ConfirmLootRoll(data, data2)`. **Nothing has gone out at this point** — the
-/// press that raised this sent no packet at all. See
-/// [`crate::interface::lootroll`].
+/// `arg1` is the roll id and `arg2` the vote. `UIParent.lua` passes both to
+/// `StaticPopup_Show("CONFIRM_LOOT_ROLL")`, whose Accept calls
+/// `ConfirmLootRoll(data, data2)`. No packet has been sent at this point; the
+/// press that raised this sent nothing. See [`crate::interface::lootroll`].
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ConfirmLootRoll {
     pub id: u32,
     pub vote: vale_protocol::play::lootroll::RollVote,
 }
 
-/// `MIRROR_TIMER_STOP` — that bar goes away. arg1 is the same **name** the start
-/// carried, which is what `MirrorTimerFrame_OnEvent` compares against
+/// `MIRROR_TIMER_STOP`: the timer bar is removed. arg1 is the same name the
+/// start carried, which `MirrorTimerFrame_OnEvent` compares against
 /// `this.timer` before hiding anything.
 #[derive(Message, Debug, Clone)]
 pub struct MirrorTimerStop {
     pub timer: String,
 }
 
-/// `MIRROR_TIMER_PAUSE` — **the one event in the game whose shipped handler
-/// cannot work.**
+/// `MIRROR_TIMER_PAUSE`: the shipped handler for this event cannot work.
 ///
 /// `MirrorTimerFrame_OnEvent` returns early unless `arg1 == this.timer` (a name)
-/// and then reads `arg1 > 0` (a flag). One argument, two incompatible readings;
-/// vmangos says so in a comment of its own and answers a pause with a full
-/// start resend rather than this. The flag is what the client passes, so the
-/// flag is what this carries — being faithful to the packet rather than to
-/// Blizzard's handler.
+/// and then reads `arg1 > 0` (a flag). One argument cannot satisfy both
+/// readings. vmangos notes this in a comment and answers a pause with a full
+/// start packet instead. The 1.12.1 client passes the flag, so this carries the
+/// flag, matching the packet rather than the FrameXML handler.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct MirrorTimerPause {
     pub paused: bool,
 }
 
-/// `VARIABLES_LOADED` — the saved variables are in, whatever there were of them.
+/// `PLAYER_ENTER_COMBAT`: the player's own melee auto-attack has started.
 ///
-/// **This client has no `WTF` at all, and the event is still true.** 1.12 raises
-/// it once at startup, after reading `SavedVariables` and before there is a
-/// world, and the directory does not treat it as "a file was found": it treats
-/// it as *the moment the option globals are final*, which is why four frames use
-/// it to catch up with values their own `OnLoad` could not read yet. With no
-/// cache the finals are the defaults FrameXML itself just set — so the moment it
-/// names is the end of the load, which is exactly where [`crate::lua::host`]
-/// raises it.
-///
-/// It is [`PlayerEnteringWorld`]'s twin and predates it, so it is **delivered
-/// first**, and it costs two widgets to skip: `UIOptionsFrameCombatTextDropDown`
-/// and `UIOptionsFrameTargetofTargetDropDown` call their own `_OnLoad` from
-/// nowhere else, and an uninitialised `UIDropDownMenuTemplate` keeps the
-/// template's placeholder 40-pixel width. Both drew as blank stubs on the
-/// interface options panel.
-/// `PLAYER_ENTER_COMBAT` — **your own melee auto-attack has started.**
-///
-/// Not "something is fighting you", which is what the name suggests and what
-/// makes it easy to raise from the wrong place: its only consumer in the whole
-/// of `Interface\FrameXML\` is `ActionButton_OnEvent`, which answers it with
-/// `ActionButton_StartFlash()` **for the attack button only** —
+/// It does not mean that something is attacking the player. Its only consumer
+/// in `Interface\FrameXML\` is `ActionButton_OnEvent`, which answers it with
+/// `ActionButton_StartFlash()` for the attack button only:
 ///
 /// ```lua
 /// elseif ( event == "PLAYER_ENTER_COMBAT" ) then
@@ -1124,534 +1087,535 @@ pub struct MirrorTimerPause {
 ///         ActionButton_StartFlash();
 /// ```
 ///
-/// — so the event means exactly what `IsAttackAction and IsCurrentAction`
-/// means, and the flash is the pulsing Attack button every melee player reads
-/// as "you are swinging".
+/// So the event means what `IsAttackAction and IsCurrentAction` means, and the
+/// flash is the pulsing Attack button that shows the player is auto-attacking.
 ///
-/// **That mapping is a reading and not a measurement.** The two names sit in a
-/// table rather than at a call site, so what raises them is not known; what
-/// supports the reading is the consumer above and the pair's own symmetry with [`PlayerLeaveCombat`]. It is raised here from
-/// `SMSG_ATTACKSTART`/`SMSG_ATTACKSTOP` about the player, which is the same
-/// transition `IsCurrentAction` already answers from — so the flash and the
-/// checked border cannot disagree, whatever the reading turns out to be.
+/// This meaning is inferred, not observed. It rests on the consumer above and
+/// on the pair's symmetry with [`PlayerLeaveCombat`]. It is raised here from
+/// `SMSG_ATTACKSTART`/`SMSG_ATTACKSTOP` about the player, the same transition
+/// `IsCurrentAction` answers from, so the flash and the checked border always
+/// agree.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerEnterCombat;
 
-/// `PLAYER_LEAVE_COMBAT` — …and stopped. See [`PlayerEnterCombat`].
+/// `PLAYER_LEAVE_COMBAT`: the player's melee auto-attack stopped. See
+/// [`PlayerEnterCombat`].
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerLeaveCombat;
 
+/// `VARIABLES_LOADED`: the saved variables have been loaded, if there were
+/// any.
+///
+/// This client has no `WTF` directory, and the event is still raised. 1.12
+/// raises it once at startup, after reading `SavedVariables` and before entering
+/// a world. FrameXML treats it as the point at which the option globals are
+/// final, not as a sign that a file was found; four frames use it to apply
+/// values their `OnLoad` could not read yet. With no saved file, the final
+/// values are the defaults FrameXML has just set, so the point it marks is the
+/// end of the load, which is where [`crate::lua::host`] raises it.
+///
+/// It is delivered before [`PlayerEnteringWorld`]. Two widgets depend on it:
+/// `UIOptionsFrameCombatTextDropDown` and
+/// `UIOptionsFrameTargetofTargetDropDown` call their `_OnLoad` only from this
+/// event, and an uninitialised `UIDropDownMenuTemplate` keeps the template's
+/// placeholder 40-pixel width. Without the event both show as blank stubs on
+/// the interface options panel.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct VariablesLoaded;
 
-/// `UPDATE_BINDINGS` — **a key was bound to something else.**
+/// `UPDATE_BINDINGS`: a key binding changed.
 ///
-/// Registered by `ActionButton.lua` (line 116) and by nothing else in the
-/// directory, and what it does there is one line: re-read
-/// `GetBindingKey("ACTIONBUTTONn")` and re-draw the little grey label in the
-/// corner of the button. So it is the whole of what makes the key-bindings
-/// panel's OK button *visible* — without it a rebound bar key works and the bar
-/// keeps drawing the old letter until the next login.
+/// `ActionButton.lua` (line 116) registers it, and nothing else in FrameXML
+/// does. Its handler re-reads `GetBindingKey("ACTIONBUTTONn")` and redraws the
+/// small grey key label in the button's corner. Without it a rebound bar key
+/// works but the bar shows the old key until the next login.
 ///
-/// Raised by [`crate::settings::keybindings`] off
-/// [`crate::lua::panels::keybindings::Keys::version`], which is bumped by every
-/// write the panel makes, so one press of OK is one raise and a session that
-/// never opens the panel never sees it.
+/// Raised by [`crate::settings::keybindings`] from
+/// [`crate::lua::panels::keybindings::Keys::version`], which every write from
+/// the panel increments. One press of OK raises it once, and a session that
+/// never opens the panel never raises it.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UpdateBindings;
 
-/// `CVAR_UPDATE` — **a setting changed, and the panels that watch it should
-/// look again.**
+/// `CVAR_UPDATE`: a setting changed, and the panels that watch it re-read it.
 ///
-/// Raised by `SetCVar` and only when it is given its **third** argument, which
-/// is the name to raise under — see [`crate::lua::api::cvars`], where the rule
-/// and its address are. `arg1` is that name and `arg2` the new value, both
-/// strings.
+/// `SetCVar` raises it only when given its third argument, which is the name to
+/// raise under; see [`crate::lua::api::cvars`] for the rule. `arg1` is that
+/// name and `arg2` the new value, both strings.
 ///
-/// The name is the options table's own key rather than the CVar's:
+/// The name is the options table's key, not the CVar's:
 /// `TextStatusBar_OnEvent` compares `arg1` against `STATUS_BAR_TEXT` while the
-/// setting is `statusBarText`. That is what the reference passes and it is why
-/// this carries a name at all rather than deriving one.
+/// setting is `statusBarText`. The 1.12.1 client passes that key, so this
+/// message carries the name rather than deriving it.
 #[derive(Message, Debug, Clone)]
 pub struct CVarUpdate {
     /// `SetCVar`'s third argument.
     pub name: String,
-    /// …and the value it was set to.
+    /// The value the CVar was set to.
     pub value: String,
 }
 
-/// `PLAYER_ENTERING_WORLD` — the player exists in a world now.
+/// `PLAYER_ENTERING_WORLD`: the player now exists in a world.
 ///
-/// The real client fires it on every login and teleport, and it is the event
-/// half the directory initialises itself on: `PlayerFrame_OnEvent` runs
-/// `PlayerFrame_Update` off it, which is what first fills the health bar,
-/// the portrait and the level text. Written by [`super::vitals`] when the
-/// player entity first resolves.
+/// The 1.12.1 client raises it on every login and teleport, and about half of
+/// FrameXML initialises itself on it. `PlayerFrame_OnEvent` runs
+/// `PlayerFrame_Update` on it, which first fills the health bar, the portrait
+/// and the level text. Written by [`super::vitals`] when the player entity first
+/// resolves.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerEnteringWorld;
 
-/// `PLAYER_LEAVING_WORLD` — the session has ended and the world is going away.
+/// `PLAYER_LEAVING_WORLD`: the session has ended and the world is being
+/// removed.
 ///
-/// The bookend of [`PlayerEnteringWorld`], and it is a real event of the game's
-/// rather than a hook invented here: 1.12 raises it on logout and on the way
-/// into a teleport, and it is the last thing the interface hears before the C
-/// side takes the world down.
+/// The counterpart of [`PlayerEnteringWorld`], and an event 1.12 itself
+/// raises, on logout and before a teleport. It is the last event the interface
+/// receives before the client unloads the world.
 ///
-/// **It is also this client's one teardown signal**, which is why it is a
-/// message and not a flag. Logging out used to leave everything standing: the
-/// interface kept the last character's frames, the action bar kept its slots and
-/// the target kept a guid on a map nobody was on — all of it silently corrected
-/// on the *next* login, or not at all. Each directory now resets its own state
-/// off this, the same way [`crate::render::residency::leave_world`] despawns the
-/// world off `WorldStatus`.
+/// It is also this client's teardown signal, so it is a message and not a
+/// flag. Without it, logging out left the previous state in place: the
+/// interface kept the last character's frames, the action bar kept its slots,
+/// and the target kept a guid on a map the player had left, until the next
+/// login corrected some of it. Each module now resets its own state on this
+/// event, as [`crate::render::residency::leave_world`] despawns the world on
+/// `WorldStatus`.
 ///
-/// Written by [`super::leaving`], once, on the frame the session goes away.
+/// Written by [`super::leaving`], once, on the frame the session ends.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerLeavingWorld;
 
-/// `PLAYER_CAMPING` — **a logout has been accepted and is counting down.**
+/// `PLAYER_CAMPING`: a logout has been accepted and is counting down.
 ///
-/// `UIParent_OnEvent` answers it with `StaticPopup_Show("CAMP")`, which is the
-/// twenty-second box with a Cancel button on it — and that box is the *whole*
-/// of what the player sees between pressing Logout and the character screen, so
-/// an unraised `PLAYER_CAMPING` is a button that appears to do nothing for
-/// twenty seconds and then throws you out.
+/// `UIParent_OnEvent` answers it with `StaticPopup_Show("CAMP")`, the
+/// twenty-second popup with a Cancel button. That popup is all the player sees
+/// between pressing Logout and the character screen; without this event the
+/// Logout button appears to do nothing for twenty seconds and then logs out.
 ///
-/// Raised only for a **delayed** logout: an instant one (a tavern, a city) is
-/// already over by the time the popup would draw, and the real client does not
-/// flash one. See [`super::logout`].
+/// Raised only for a delayed logout. An instant logout (in an inn or a city) is
+/// over before the popup would draw, and the 1.12.1 client does not show one.
+/// See [`super::logout`].
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerCamping;
 
-/// `PLAYER_QUITING` — the same thing for Exit Game, and the game's own
-/// spelling of it (one `t`).
+/// `PLAYER_QUITING`: the same as [`PlayerCamping`] for Exit Game, in the
+/// game's spelling (one `t`).
 ///
-/// `StaticPopupDialogs["QUIT"]` differs from CAMP in one way that matters: its
-/// first button is `QUIT_NOW` and calls `ForceQuit()`, so a player can leave
-/// without waiting out the server's clock.
+/// `StaticPopupDialogs["QUIT"]` differs from `CAMP` in one way: its first
+/// button is `QUIT_NOW` and calls `ForceQuit()`, so a player can leave without
+/// waiting for the server's countdown.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerQuiting;
 
-/// `LOGOUT_CANCEL` — the request was given back, and both popups come down.
+/// `LOGOUT_CANCEL`: the logout request was cancelled, and both popups close.
 ///
-/// Raised on `SMSG_LOGOUT_CANCEL_ACK` **and** on a refusal, which is a stated
-/// join rather than the wire's own shape: a refused request leaves nothing
-/// pending, and the interface has no other name for "whatever box is up, take
-/// it away". See [`super::logout`].
+/// Raised on `SMSG_LOGOUT_CANCEL_ACK` and also on a refusal. This client
+/// combines the two cases; the wire does not. A refused request leaves nothing
+/// pending, and the interface has no other event that closes whichever popup
+/// is shown. See [`super::logout`].
 #[derive(Message, Debug, Clone, Copy)]
 pub struct LogoutCancel;
 
-/// `PLAYER_DEAD` — **health has reached zero and the spirit is still in the
-/// body.**
+/// `PLAYER_DEAD`: health has reached zero and the spirit has not been
+/// released.
 ///
-/// `UIParent_OnEvent`'s arm is the whole of the death experience: it closes
-/// every window and puts `StaticPopup_Show("DEATH")` up, which is the Release
-/// Spirit box. It guards on `GetReleaseTimeRemaining()` being non-zero or `-1`
-/// first, so the two answers that C function can give are load-bearing —
-/// see [`super::death::Dying::release_remaining`].
+/// `UIParent_OnEvent`'s handler closes every window and calls
+/// `StaticPopup_Show("DEATH")`, the Release Spirit popup. It first checks that
+/// `GetReleaseTimeRemaining()` is non-zero or `-1`, so both of those return
+/// values matter; see [`super::death::Dying::release_remaining`].
 ///
-/// Raised off the field moving, because **nothing on the wire says a player
-/// died**; see [`super::death`].
+/// Raised when the health field changes, because no packet states that a
+/// player died; see [`super::death`].
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerDead;
 
-/// `PLAYER_ALIVE` — and it does **not** mean "alive again", which is the trap.
+/// `PLAYER_ALIVE`: raised when the spirit is released and when the character
+/// is resurrected. It does not mean only "alive again".
 ///
-/// 1.12 raises it when the spirit is *released* as well as when the character
-/// comes back, and `UIParent_OnEvent` answers it by hiding the `DEATH` box —
-/// which only makes sense for the first of those. A ghost is alive to every
-/// other rule in the game (its health is 1), so the name is the game's own
-/// reading rather than a mistake in it. [`PlayerUnghost`] is the one that means
-/// "no longer dead in any sense".
+/// `UIParent_OnEvent` answers it by hiding the `DEATH` popup, which applies to
+/// the release case. A ghost counts as alive for every other rule in the game
+/// (its health is 1), so the name is consistent with the game's rules.
+/// [`PlayerUnghost`] is the event that means "no longer dead in any sense".
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerAlive;
 
-/// `PLAYER_UNGHOST` — the character is standing up, by whichever of the four
-/// routes (the corpse, a resurrection accepted, a spirit healer, a soulstone).
+/// `PLAYER_UNGHOST`: the character is resurrected, by any of the four routes
+/// (the corpse, an accepted resurrection, a spirit healer, a soulstone).
 ///
-/// `UIParent_OnEvent` hides all three resurrect boxes and both skinned boxes on
-/// it: it is the interface's "whatever is up about being dead, take it away".
+/// `UIParent_OnEvent` hides all three resurrect popups and both skinned popups
+/// on it, closing anything shown about being dead.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerUnghost;
 
-/// `CORPSE_IN_RANGE` — **the ghost is standing on its own body.**
+/// `CORPSE_IN_RANGE`: the ghost is within reclaim range of its corpse.
 ///
-/// It has no packet: the client measures against
-/// [`vale_protocol::play::death::CORPSE_RECLAIM_RADIUS`], which is the same 39
-/// yards the server re-checks. `UIParent_OnEvent` shows `RECOVER_CORPSE`, whose
-/// Accept is `RetrieveCorpse()`.
+/// No packet raises it. The client measures against
+/// [`vale_protocol::play::death::CORPSE_RECLAIM_RADIUS`], the same 39 yards the
+/// server checks again. `UIParent_OnEvent` shows `RECOVER_CORPSE`, whose Accept
+/// is `RetrieveCorpse()`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct CorpseInRange;
 
-/// `CORPSE_OUT_OF_RANGE` — …and has walked off it again, which takes the box
-/// away.
+/// `CORPSE_OUT_OF_RANGE`: the ghost has moved out of reclaim range, which
+/// closes the popup.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct CorpseOutOfRange;
 
-/// `RESURRECT_REQUEST` — somebody has offered. **`arg1` is the caster's name**,
-/// which the box formats into its own sentence.
+/// `RESURRECT_REQUEST`: another player has offered a resurrection. `arg1` is
+/// the caster's name, which the popup formats into its text.
 ///
-/// `UIParent_OnEvent` picks one of three popups off `ResurrectHasSickness()` and
-/// `ResurrectHasTimer()`, both of which are C functions answering from the
-/// offer — see [`super::death`].
+/// `UIParent_OnEvent` picks one of three popups from `ResurrectHasSickness()`
+/// and `ResurrectHasTimer()`, both API functions that answer from the offer;
+/// see [`super::death`].
 #[derive(Message, Debug, Clone)]
 pub struct ResurrectRequest(pub String);
 
-/// `CONFIRM_XP_LOSS` — **a spirit healer has offered**, which is
+/// `CONFIRM_XP_LOSS`: a spirit healer has offered a resurrection, which is
 /// `SMSG_SPIRIT_HEALER_CONFIRM` arriving. `UIParent_OnEvent` answers it with
-/// `GetResSicknessDuration()` and opens `XP_LOSS` or `XP_LOSS_NO_SICKNESS` on
-/// the answer; the box's Accept is `AcceptXPLoss()` and its `OnUpdate` closes
-/// it the moment `CheckSpiritHealerDist()` says no. See
+/// `GetResSicknessDuration()` and opens `XP_LOSS` or `XP_LOSS_NO_SICKNESS`
+/// depending on the result. The popup's Accept is `AcceptXPLoss()`, and its
+/// `OnUpdate` closes it as soon as `CheckSpiritHealerDist()` returns false. See
 /// [`super::death`], which raises it.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ConfirmXpLoss;
 
-// --- the trade window: `TradeFrame.lua`'s six, and the popup's two ---
+// ---- Trade window events: six from `TradeFrame.lua`, two for the popup ----
 //
-// Every one raised by [`super::trade`], off the two packets the
-// family has. `0x13f`..`0x146` in the client's own table, which is where the
-// eight names were read.
+// All raised by [`super::trade`], from the two trade packets.
 
-/// `TRADE_REQUEST` — somebody asked; `arg1` is their name, straight into
-/// `StaticPopup_Show("TRADE", arg1)` and its "Trade with %s?". **Declared and
-/// never raised**: the real client answers a request at once and the window
-/// opens on both sides, so the popup is never seen — see
-/// [`super::trade`]. Kept so the probe and the manifest know the
-/// name is the game's.
+/// `TRADE_REQUEST`: another player asked to trade; `arg1` is their name, passed
+/// to `StaticPopup_Show("TRADE", arg1)` and its "Trade with %s?". Declared and
+/// never raised: the 1.12.1 client accepts a request at once and the window
+/// opens on both sides, so the popup is never seen; see [`super::trade`]. Kept
+/// so the probe and the manifest know the name is the game's.
 #[derive(Message, Debug, Clone)]
 pub struct TradeRequest(pub String);
 
-/// `TRADE_REQUEST_CANCEL` — …and stopped asking. Never raised, as above.
+/// `TRADE_REQUEST_CANCEL`: the other player withdrew the request. Never
+/// raised, as above.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct TradeRequestCancel;
 
-/// `TRADE_SHOW` — the window opens, on both sides at once.
+/// `TRADE_SHOW`: the trade window opens, on both sides at once.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct TradeShow;
 
-/// `TRADE_CLOSED` — …and closes: complete, cancelled, or refused.
+/// `TRADE_CLOSED`: the trade window closes: complete, cancelled, or refused.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct TradeClosed;
 
-/// `TRADE_UPDATE` — redraw everything. Registered by the frame and raised by
-/// nothing here: the per-slot events below are what an offer moves.
+/// `TRADE_UPDATE`: redraw everything. Registered by the frame and not raised
+/// here: an offer change raises the per-slot events below instead.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct TradeUpdate;
 
-/// `TRADE_ACCEPT_UPDATE` — `arg1` our accept, `arg2` theirs, each 0 or 1,
-/// straight into `TradeFrame_SetAcceptState`.
+/// `TRADE_ACCEPT_UPDATE`: `arg1` is the player's accept and `arg2` the other
+/// side's, each 0 or 1, passed straight to `TradeFrame_SetAcceptState`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct TradeAcceptUpdate {
     pub player: bool,
     pub target: bool,
 }
 
-/// `TRADE_PLAYER_ITEM_CHANGED` — one of our seven squares, `arg1` its id 1..7.
+/// `TRADE_PLAYER_ITEM_CHANGED`: one of the player's seven trade slots changed;
+/// `arg1` is its id, 1..7.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TradePlayerItemChanged(pub u8);
 
-/// `TRADE_TARGET_ITEM_CHANGED` — …and one of theirs.
+/// `TRADE_TARGET_ITEM_CHANGED`: one of the other side's seven trade slots
+/// changed.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TradeTargetItemChanged(pub u8);
 
-/// `TRADE_MONEY_CHANGED` — their money moved; `MoneyFrame_OnEvent` re-reads
-/// `GetTargetTradeMoney` on it for the `TARGET_TRADE` frame.
+/// `TRADE_MONEY_CHANGED`: the other side's money offer changed;
+/// `MoneyFrame_OnEvent` re-reads `GetTargetTradeMoney` on it for the
+/// `TARGET_TRADE` frame.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct TradeMoneyChanged;
 
-/// `PLAYER_TRADE_MONEY` — …and ours, which the same handler answers for the
-/// `PLAYER_TRADE` kind.
+/// `PLAYER_TRADE_MONEY`: the player's own money offer changed, which the same
+/// handler answers for the `PLAYER_TRADE` frame.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerTradeMoney;
 
-/// `ZONE_CHANGED_NEW_AREA` — the *zone* changed, Elwynn Forest to Westfall.
+/// `ZONE_CHANGED_NEW_AREA`: the zone changed, for example Elwynn Forest to
+/// Westfall.
 ///
-/// The coarsest of the three place events and the one the world map listens on
-/// (`WorldMapFrame_OnEvent`'s `WORLD_MAP_UPDATE` sibling). Written by
-/// [`super::worldmap`], which polls the ground because nothing in the protocol
-/// says where a character is below the map id.
+/// The coarsest of the three location events and the one the world map listens
+/// on (beside `WORLD_MAP_UPDATE` in `WorldMapFrame_OnEvent`). Written by
+/// [`super::worldmap`], which samples the terrain under the player because no
+/// packet states the player's location below the map id.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ZoneChangedNewArea;
 
-/// `ZONE_CHANGED` — the sub-area changed, which happens far more often: every
-/// named clearing, road and building has its own `AreaTable` row.
+/// `ZONE_CHANGED`: the sub-area changed. This happens far more often, because
+/// every named clearing, road and building has its own `AreaTable` row.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ZoneChanged;
 
-/// `MINIMAP_ZONE_CHANGED` — either of the two above. A separate name because the
-/// minimap's title bar redraws on it and on nothing else.
+/// `MINIMAP_ZONE_CHANGED`: either of the two above changed. It is a separate
+/// name because the minimap's title bar redraws on it and on nothing else.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct MinimapZoneChanged;
 
-/// `WORLD_MAP_UPDATE` — the parchment being shown is different, so anything
-/// drawn on it is stale.
+/// `WORLD_MAP_UPDATE`: the map being shown is different, so anything drawn on
+/// it is stale.
 ///
-/// `WorldMapFrame_OnEvent` re-runs `WorldMapFrame_Update` off it, which is what
-/// re-textures the twelve detail tiles; the drop-downs read it through their own
-/// `OnShow`. Written whenever [`super::worldmap::WorldMapState::view`] moves —
-/// by the poll at a login, and by `SetMapZoom`/`ZoomOut`/`SetMapToCurrentZone`
-/// from the interface itself.
+/// `WorldMapFrame_OnEvent` re-runs `WorldMapFrame_Update` on it, which
+/// re-textures the twelve detail tiles; the drop-downs read the map through
+/// their own `OnShow`. Written whenever
+/// [`super::worldmap::WorldMapState::view`] changes: by the location check at
+/// login, and by `SetMapZoom`/`ZoomOut`/`SetMapToCurrentZone` from the
+/// interface.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct WorldMapUpdate;
 
-/// `UNIT_HEALTH` — a unit's health is different. `arg1` is the unit token,
-/// which is how `UnitFrameHealthBar_Update` decides whether the news is about
-/// *its* unit.
+/// `UNIT_HEALTH`: a unit's health changed. `arg1` is the unit token, which
+/// `UnitFrameHealthBar_Update` uses to decide whether the event is about its
+/// own unit.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UnitHealthChanged(pub super::api::UnitId);
 
-/// `UNIT_MAXHEALTH` — the ceiling moved, which resizes the bar rather than
-/// refilling it.
+/// `UNIT_MAXHEALTH`: the maximum health changed, which resizes the bar rather
+/// than refilling it.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UnitMaxHealthChanged(pub super::api::UnitId);
 
 /// `UNIT_MANA` / `UNIT_RAGE` / `UNIT_FOCUS` / `UNIT_ENERGY` / `UNIT_HAPPINESS`,
-/// and their `UNIT_MAX*` siblings — **the event is named for the power it
-/// carries**, which is the game's own shape: `UnitFrameManaBar_Initialize`
-/// registers all ten and the frame re-reads whichever arrives. `arg1` is the
-/// unit token.
+/// and their `UNIT_MAX*` counterparts. The event is named for the power it
+/// carries, as in FrameXML: `UnitFrameManaBar_Initialize` registers all ten and
+/// the frame re-reads whichever arrives. `arg1` is the unit token.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UnitPowerChanged {
     pub unit: super::api::UnitId,
-    /// The wire's power type — 0 mana, 1 rage, 2 focus, 3 energy, 4 happiness.
+    /// The wire's power type: 0 mana, 1 rage, 2 focus, 3 energy, 4 happiness.
     pub power: u8,
-    /// Whether the *maximum* moved rather than the value.
+    /// Whether the maximum changed rather than the value.
     pub max: bool,
 }
 
-/// `UNIT_DISPLAYPOWER` — what kind of power the unit runs on changed (a druid
-/// shapeshifting, a target swap between a warrior and a mage). This is the
-/// event `UnitFrame_UpdateManaType` recolours the bar on.
+/// `UNIT_DISPLAYPOWER`: the kind of power the unit uses changed (a druid
+/// shapeshifting, or a target change between a warrior and a mage).
+/// `UnitFrame_UpdateManaType` recolours the bar on this event.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UnitDisplaypowerChanged(pub super::api::UnitId);
 
-/// `UNIT_NAME_UPDATE` — what `UnitName` answers for this token is different.
+/// `UNIT_NAME_UPDATE`: the value `UnitName` returns for this token changed.
 ///
-/// A name is the one vital that routinely resolves *late*: another player's or
-/// a creature's crosses the wire a query round-trip after the unit does, so a
-/// plate filled on `PLAYER_TARGET_CHANGED` alone shows the fallback for ever.
-/// `UnitFrame_OnEvent` re-reads the name on this, and `CharacterFrame`'s
-/// "Name" placeholder fills off the same event.
+/// A name is the one unit value that routinely arrives late: another player's
+/// or a creature's name arrives one query round trip after the unit does, so a
+/// unit frame filled only on `PLAYER_TARGET_CHANGED` shows the fallback
+/// permanently. `UnitFrame_OnEvent` re-reads the name on this, and
+/// `CharacterFrame`'s "Name" placeholder fills on the same event.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UnitNameUpdate(pub super::api::UnitId);
 
-/// `BAG_UPDATE` — **the contents of one bag are different.** `arg1` is the bag
-/// id: 0 the backpack, 1..4 the worn bags, -2 the key ring.
+/// `BAG_UPDATE`: the contents of one bag changed. `arg1` is the bag id: 0 the
+/// backpack, 1..4 the equipped bags, -2 the key ring.
 ///
-/// The only thing an open `ContainerFrame` redraws on, and it is *addressed*:
-/// `ContainerFrame_OnEvent`'s first branch is
+/// This is the only event an open `ContainerFrame` redraws on, and it is
+/// addressed to one bag. `ContainerFrame_OnEvent`'s first branch is
 /// `if ( this:IsShown() and this:GetID() == arg1 )`, so an event carrying the
-/// wrong bag redraws nothing at all and one carrying no argument redraws
-/// nothing either. Raised once per bag whose contents moved rather than once
-/// per change, which is what keeps a stack split from redrawing five frames.
+/// wrong bag, or no argument, redraws nothing. Raised once per bag whose
+/// contents changed rather than once per change, so a stack split does not
+/// redraw five frames.
 ///
-/// **`PaperDollItemSlotButton_OnEvent` also listens for it**, which is why a
-/// bag id and not a slot: the paper doll's own bag buttons are the same four
-/// containers seen from the other side.
+/// `PaperDollItemSlotButton_OnEvent` also listens for it, so the argument is a
+/// bag id and not a slot: the paper doll's bag buttons are the same four
+/// containers.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct BagUpdate(pub i32);
 
-/// `UNIT_INVENTORY_CHANGED` — **what a unit is carrying is different.** `arg1` is
-/// the unit token, and `PaperDollItemSlotButton_OnEvent` compares it against
-/// `"player"` on its first line before doing anything.
+/// `UNIT_INVENTORY_CHANGED`: the items a unit holds changed. `arg1` is the unit
+/// token, and `PaperDollItemSlotButton_OnEvent` compares it against `"player"`
+/// on its first line.
 ///
-/// Distinct from [`BagUpdate`] on purpose: the twenty-four paper-doll buttons
-/// redraw on this one and the bag frames on the other, so a client that raised
-/// only one of the two has either an equipment sheet or a set of bags that
-/// never updates — and each looks correct until something moves.
+/// Separate from [`BagUpdate`]: the twenty-four paper-doll buttons redraw on
+/// this one and the bag frames on the other. A client that raised only one of
+/// the two would leave either the equipment sheet or the bags never updating.
 ///
-/// **It is not only the worn slots**, which is what this said for two rounds and
-/// what the *word* "inventory" invites. `ActionButton_Update` — the only thing
-/// that re-runs `ActionButton_UpdateCount`, and therefore the only thing that
-/// re-reads `GetActionCount` — registers this event and no other that a bag
-/// change could move: there is no `BAG_UPDATE` on an action button. So a stack
-/// of potions on the bar kept the number it was drawn with however many were
-/// drunk, which is the "item counts do not get updated" report, and the shipped
-/// file is what says the event's scope is everything the character holds.
+/// It covers everything the character holds, not only the equipped slots.
+/// `ActionButton_Update`, the only function that re-runs
+/// `ActionButton_UpdateCount` and therefore re-reads `GetActionCount`, registers
+/// this event and no other event that a bag change raises; an action button has
+/// no `BAG_UPDATE`. When this event covered only equipped slots, a stack of
+/// potions on the bar kept its drawn count however many were used.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UnitInventoryChanged(pub super::api::UnitId);
 
-/// **`UNIT_QUEST_LOG_CHANGED` — a quest objective's *number* moved**, and
-/// `arg1` is the unit token. `QuestLog_OnEvent` tests it against `"player"` and
-/// then runs `QuestLog_Update()`, `QuestWatch_Update()` and, if the panel is
-/// open, `QuestLog_UpdateQuestDetails(1)` — the same three `QUEST_LOG_UPDATE`
-/// runs.
+/// `UNIT_QUEST_LOG_CHANGED`: a quest objective's count changed, and `arg1` is
+/// the unit token. `QuestLog_OnEvent` tests it against `"player"` and then runs
+/// `QuestLog_Update()`, `QuestWatch_Update()` and, if the panel is open,
+/// `QuestLog_UpdateQuestDetails(1)`, the same three calls `QUEST_LOG_UPDATE`
+/// makes.
 ///
-/// **It exists because an item objective has no packet behind it.** vmangos'
+/// It exists because an item objective has no packet behind it. vmangos's
 /// `ItemRemovedQuestCheck` writes `m_itemcount[j]` on the server and sends
-/// nothing at all — no `SetQuestSlotCounter`, no message — so destroying a
-/// quest item moves a number on screen with no word from the wire whatsoever.
-/// The count the tracker draws comes off the bags
-/// (`GetQuestLogLeaderBoard`), so it was already *correct* the
-/// moment the inventory rebuilt; there was simply nothing to tell the interface
-/// to look again, and `QuestWatchFrame` kept the line it had drawn. That is the
-/// report *"deleting items does not update tracking"* in full: not a wrong
-/// number, a stale redraw.
+/// nothing (no `SetQuestSlotCounter`, no message), so destroying a quest item
+/// changes a count on screen with no packet. The count the tracker draws comes
+/// from the bags (`GetQuestLogLeaderBoard`), so it is already correct once the
+/// inventory is rebuilt. Without this event nothing tells the interface to
+/// redraw, and `QuestWatchFrame` keeps the line it had drawn.
 ///
-/// Raised on the **edge**, by [`super::quest::follow_item_objectives`],
-/// which holds the counts a quest actually asks about — an event on every bag
-/// move would be a full quest log and tracker rebuild every time a stack of
-/// cloth changed.
+/// Raised on the edge by [`super::quest::follow_item_objectives`], which holds
+/// the counts the active quests ask about. Raising it on every bag change would
+/// rebuild the quest log and tracker every time any stack changed.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UnitQuestLogChanged(pub super::api::UnitId);
 
-/// **`ITEM_LOCK_CHANGED` — a square's item is now on the cursor, or is not any
-/// more.**
+/// `ITEM_LOCK_CHANGED`: an item slot's item was picked up onto the cursor, or
+/// put back.
 ///
-/// No arguments at all in 5875, and both of its two readers re-walk everything
-/// they own: `ContainerFrame_OnEvent` answers it with a whole
-/// `ContainerFrame_Update` of every visible bag and
-/// `PaperDollItemSlotButton_OnEvent` with `PaperDollItemSlotButton_UpdateLock`.
+/// It has no arguments in 5875, and both readers redraw everything they own:
+/// `ContainerFrame_OnEvent` answers it with a full `ContainerFrame_Update` of
+/// every visible bag, and `PaperDollItemSlotButton_OnEvent` with
+/// `PaperDollItemSlotButton_UpdateLock`.
 ///
-/// **It is what makes a drag legible**, and this client raised nothing for it, so
-/// a picked-up item sat in its square looking exactly as it had — "they don't
-/// move until moved". The reference does not empty the square: `ContainerFrame_Update`
-/// passes the third answer of [`crate::lua::panels::container::SlotContents`] to
+/// This event shows a drag in progress. Without it, a picked-up item stayed in
+/// its slot looking unchanged. The 1.12.1 client does not empty the slot:
+/// `ContainerFrame_Update` passes the third return value of
+/// [`crate::lua::panels::container::SlotContents`] to
 /// `SetItemButtonDesaturated(button, locked, 0.5, 0.5, 0.5)`, which greys the
-/// icon to half — the item is visibly *out* of the bag rather than in two places
-/// at once. [`crate::interface::cursor::Cursor::locks`] has answered the question
-/// since the cursor existed; nothing ever asked it again.
+/// icon to half, showing the item as taken out of the bag.
+/// [`crate::interface::cursor::Cursor::locks`] answers whether a slot is locked;
+/// this event makes the frames ask.
 ///
-/// Raised on the **edge** — see `cursor::locks` — because the two handlers are a
-/// full redraw of every open bag and a per-frame raise would be one of those a
-/// frame for the length of a drag.
+/// Raised on the edge (see `cursor::locks`), because each handler redraws
+/// every open bag, and raising it per frame would do that every frame of a
+/// drag.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ItemLockChanged;
 
-/// `PLAYER_MONEY` — the coins changed.
+/// `PLAYER_MONEY`: the player's money changed.
 ///
-/// `MoneyFrame_OnEvent`'s only branch, and the backpack's own money frame is a
-/// `MoneyFrameTemplate`. Raised off `PLAYER_FIELD_COINAGE` moving, which is the
-/// whole of what the wire says about money: there is no packet for it.
+/// `MoneyFrame_OnEvent`'s only branch; the backpack's money frame is a
+/// `MoneyFrameTemplate`. Raised when `PLAYER_FIELD_COINAGE` changes, which is
+/// the only way the wire reports money; there is no packet for it.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerMoney;
 
-/// `PLAYER_AURAS_CHANGED` — **the buff bar's own event**, and the only thing
-/// the twenty-four buttons redraw on.
+/// `PLAYER_AURAS_CHANGED`: the buff bar's event, and the only event its
+/// twenty-four buttons redraw on.
 ///
-/// `BuffButton_OnLoad` registers it and nothing else; `BuffButton_OnEvent` has
-/// one branch. So a client that never raises it draws whatever the buttons held
-/// when they loaded, which is nothing at all — the icons are hidden by their own
-/// `OnLoad` and never asked again.
+/// `BuffButton_OnLoad` registers it and nothing else, and `BuffButton_OnEvent`
+/// has one branch. A client that never raises it shows the buttons as they were
+/// at load: hidden by their own `OnLoad` and never updated.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerAurasChanged;
 
-/// `UNIT_AURA` — what is on *this* unit is different. `arg1` is the token.
+/// `UNIT_AURA`: the auras on one unit changed. `arg1` is the unit token.
 ///
-/// `TargetFrame_OnEvent`'s branch runs `TargetDebuffButton_Update`, which is
-/// what fills the target plate's two rows of icons.
+/// `TargetFrame_OnEvent`'s branch runs `TargetDebuffButton_Update`, which
+/// fills the target frame's two rows of icons.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UnitAuraChanged(pub super::api::UnitId);
 
-/// `UNIT_PET` — **the unit at `arg1` has a different pet**, which is the one
-/// thing that puts a pet frame on the screen or takes it off.
+/// `UNIT_PET`: the unit at `arg1` has a different pet. This is the only event
+/// that shows or hides a pet frame.
 ///
-/// `arg1` is the **owner's** token, not the pet's, and that is the whole of how
-/// the two frames tell each other apart: `PetFrame_OnEvent` opens on
-/// `arg1 == "player"` and runs `PetFrame_Update`, which `Show`s or `Hide`s the
-/// frame off `UnitExists("pet")`; `PartyMemberFrame_OnEvent` opens on
+/// `arg1` is the owner's token, not the pet's, and the two frames use it to
+/// tell which of them the event is for. `PetFrame_OnEvent` acts on
+/// `arg1 == "player"` and runs `PetFrame_Update`, which shows or hides the frame
+/// from `UnitExists("pet")`. `PartyMemberFrame_OnEvent` acts on
 /// `arg1 == "party<n>"` and runs `PartyMemberFrame_UpdatePet`, which does the
-/// same for that member's little pet frame *and moves the member's own frame*
-/// — the party frame's anchor is 16 pixels lower with a pet under it.
+/// same for that member's small pet frame and also moves the member's own
+/// frame: the party frame's anchor is 16 pixels lower when it has a pet under
+/// it.
 ///
-/// So a client that never raises this draws no pet frame ever, and every party
-/// frame at the no-pet offset whatever is beside it. Nothing else in the ninety
-/// files calls either function after load.
+/// A client that never raises this never shows a pet frame, and draws every
+/// party frame at the no-pet offset. No other code in the ninety FrameXML files
+/// calls either function after load.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UnitPetChanged(pub super::api::UnitId);
 
-/// `UNIT_FACTION` — the unit at `arg1` stands differently towards us.
+/// `UNIT_FACTION`: the reaction of the unit at `arg1` towards the player
+/// changed.
 ///
-/// Two frames register it and they read different things off it.
-/// `TargetFrame_OnEvent` runs `TargetFrame_CheckFaction`, which is what tints
-/// the name plate red or green; `PartyMemberFrame_OnEvent` runs
-/// `PartyMemberFrame_UpdatePvPStatus`, which picks between the FFA icon, the
-/// faction icon and nothing at all.
+/// Two frames register it and read different things from it.
+/// `TargetFrame_OnEvent` runs `TargetFrame_CheckFaction`, which tints the name
+/// background red or green; `PartyMemberFrame_OnEvent` runs
+/// `PartyMemberFrame_UpdatePvPStatus`, which chooses between the FFA icon, the
+/// faction icon and no icon.
 ///
-/// **Raised on the PvP flag as well as the faction template**, because that is
-/// what the party frame's branch is about: `UNIT_FIELD_FACTIONTEMPLATE` moves
-/// once in a blue moon (a disguise, a phase) and `UNIT_FLAG_PVP` moves every
-/// time somebody flags up, which is the change a player actually watches for.
+/// Raised on the PvP flag as well as the faction template, because the party
+/// frame's branch is about PvP. `UNIT_FIELD_FACTIONTEMPLATE` changes rarely (a
+/// disguise, a phase), while `UNIT_FLAG_PVP` changes every time a player flags
+/// for PvP.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UnitFactionChanged(pub super::api::UnitId);
 
-/// `PLAYER_LEVEL_UP` — we gained a level, and 1.12's own interface says so in
-/// the chat frame rather than with a panel of its own.
+/// `PLAYER_LEVEL_UP`: the player gained a level. 1.12's interface reports it in
+/// the chat frame rather than in a panel.
 ///
-/// Raised off `SMSG_LEVELUP_INFO`, which is the only packet that states the
-/// event as opposed to the new value; see
-/// [`vale_protocol::play::spells::parse_levelup`]. The glow that goes with it is
-/// the renderer's — `world::entities::level_up` — because it is a model hung on
-/// a bone rather than anything the interface can draw.
+/// Raised on `SMSG_LEVELUP_INFO`, the only packet that states the level-up
+/// rather than the new value; see
+/// [`vale_protocol::play::spells::parse_levelup`]. The glow effect belongs to
+/// the renderer (`world::entities::level_up`), because it is a model attached
+/// to a bone, which the interface cannot draw.
 ///
-/// **Nine arguments, and every one of them is read.**
-/// `ChatFrame_OnEvent`'s branch is
-/// `(level, health, mana, talentPoints, str, agi, sta, int, spi)` and it
-/// compares `arg3` through `arg9` with `> 0` before formatting each — so a
-/// client that raised this with only the level took the handler down on its
-/// second line. It did, for one round, and `--audit --events` is what said so:
-/// "bad argument #2 to 'format' (number expected, got nil)".
+/// It has nine arguments and all of them are read. `ChatFrame_OnEvent`'s branch
+/// takes `(level, health, mana, talentPoints, str, agi, sta, int, spi)` and
+/// compares `arg3` through `arg9` with `> 0` before formatting each, so raising
+/// it with only the level makes the handler fail on its second line.
+/// `--audit --events` reported that failure as "bad argument #2 to 'format'
+/// (number expected, got nil)".
 ///
-/// **`arg4`, the talent points, is always 0 here, and that is a stated
-/// deviation.** `SMSG_LEVELUP_INFO` carries eleven deltas and none of them is
-/// a talent point; what the wire says instead is
-/// `PLAYER_CHARACTER_POINTS1` moving in the next update block, which this
-/// client does not read. The cost is the one line "You have gained 1 talent
-/// point." not appearing, and `arg4 > 0` is the interface's own guard on it.
+/// `arg4`, the talent points, is always 0 here, which differs from the 1.12.1
+/// client. `SMSG_LEVELUP_INFO` carries eleven deltas and none is a talent
+/// point; the wire reports talent points as `PLAYER_CHARACTER_POINTS1`
+/// changing in the next update block, which this client does not read here.
+/// The effect is that the line "You have gained 1 talent point." does not
+/// appear; FrameXML guards it with `arg4 > 0`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerLevelUp(pub vale_protocol::play::spells::LevelUp);
 
-/// **A noise the server asked for outright** — `SMSG_PLAY_SOUND`,
-/// `SMSG_PLAY_MUSIC` or `SMSG_PLAY_OBJECT_SOUND`.
+/// A sound the server asked to play: `SMSG_PLAY_SOUND`, `SMSG_PLAY_MUSIC` or
+/// `SMSG_PLAY_OBJECT_SOUND`.
 ///
-/// A message rather than a state, because that is what the packet is: two
-/// arrivals are two noises and there is nothing to hold between them. Read by
-/// [`crate::sound::pushed`], which is the only reader — this is not a FrameXML
-/// event and the interface has no name for it. None of the three raises
-/// anything in the game's own interface directory at all, which is what makes
-/// them the client's rather than something a panel could have done.
+/// A message rather than state, because each packet is one sound and there is
+/// nothing to keep between two of them. [`crate::sound::pushed`] is the only
+/// reader. This is not a FrameXML event and the interface has no name for it;
+/// none of the three packets raises anything in FrameXML, so the client plays
+/// them, not a panel.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SoundPushed(pub vale_protocol::play::sound::Cue);
 
-/// `UNIT_LEVEL` — the level a plate shows moved, which for this client is
-/// almost always "was unknown, now known" on the same late-resolving terms as
-/// the name. `TargetFrame_OnEvent` re-draws the level text on it.
+/// `UNIT_LEVEL`: the level shown for a unit changed. For this client that is
+/// almost always a level going from unknown to known, arriving late as names
+/// do. `TargetFrame_OnEvent` redraws the level text on it.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UnitLevelChanged(pub super::api::UnitId);
 
-/// `PLAYER_XP_UPDATE` — `PLAYER_XP` or `PLAYER_NEXT_LEVEL_XP` moved.
+/// `PLAYER_XP_UPDATE`: `PLAYER_XP` or `PLAYER_NEXT_LEVEL_XP` changed.
 ///
-/// **`arg1` is the unit token**, which is unusual for a `PLAYER_*` name and is
-/// what `MainMenuBar.xml`'s own `OnEvent` reads: it takes `arg1`/`arg2` as a
-/// CVar pair for `TextStatusBar_OnEvent` and calls `MainMenuExpBar_Update()`
-/// with neither. So the argument is carried for the handlers that do look
-/// (`"player"`, as the server only ever sends our own) rather than for that one.
+/// `arg1` is the unit token, which is unusual for a `PLAYER_*` name.
+/// `MainMenuBar.xml`'s `OnEvent` passes `arg1`/`arg2` to `TextStatusBar_OnEvent`
+/// as a CVar pair and calls `MainMenuExpBar_Update()` with neither. The
+/// argument (`"player"`, since the server sends only the player's own) is
+/// carried for handlers that read it, not for that one.
 ///
-/// The bar it drives is **hidden when its maximum is zero**
-/// (`TextStatusBar_UpdateTextString`), which is why answering `UnitXPMax` with a
-/// stub took the whole XP bar off the screen rather than emptying it.
+/// The XP bar is hidden when its maximum is zero
+/// (`TextStatusBar_UpdateTextString`), so a stub `UnitXPMax` that returned zero
+/// removed the whole XP bar rather than emptying it.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerXpUpdate;
 
-/// `UPDATE_EXHAUSTION` — `PLAYER_REST_STATE_EXPERIENCE` moved.
+/// `UPDATE_EXHAUSTION`: `PLAYER_REST_STATE_EXPERIENCE` changed.
 ///
-/// `ExhaustionTick_Update` is the only body that answers it, and what it does is
-/// place the blue tick along the XP bar at `(xp + rested) / maxXp` and hide both
-/// it and `ExhaustionLevelFillBar` when `GetXPExhaustion()` answers nothing —
-/// which is the ordinary state for a character that has been out in the world.
+/// `ExhaustionTick_Update` is the only handler. It places the blue tick along
+/// the XP bar at `(xp + rested) / maxXp`, and hides both the tick and
+/// `ExhaustionLevelFillBar` when `GetXPExhaustion()` returns nothing, which is
+/// the usual state for a character with no rested experience.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UpdateExhaustion;
 
-/// **The character sheet's news**, as one type named for the group that moved
-/// — on exactly [`UnitPowerChanged`]'s terms, and for the same reason: these
-/// are nine names for one question (`PaperDollFrame_OnEvent` re-reads a
-/// different set of four functions per name) and the panel registers all of
-/// them.
+/// The character sheet's events, as one type named by the group that changed,
+/// in the same way as [`UnitPowerChanged`]. There are nine names for one
+/// question (`PaperDollFrame_OnEvent` re-reads a different set of four
+/// functions per name), and the panel registers all of them.
 ///
-/// `arg1` is the unit token on every one, including `PLAYER_DAMAGE_DONE_MODS`
-/// — whose branch in that handler sits *inside* `if ( unit and unit ==
-/// "player" )`, so a client that sent it without one would raise an event the
-/// panel silently ignores.
+/// `arg1` is the unit token on every one, including `PLAYER_DAMAGE_DONE_MODS`,
+/// whose branch in that handler is inside `if ( unit and unit == "player" )`.
+/// Raising it without the token produces an event the panel ignores.
 ///
 /// Written by [`super::stats`], on a change, never per frame.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
@@ -1663,10 +1627,10 @@ pub struct UnitStatsChanged {
 /// Which of the nine names [`UnitStatsChanged`] fires under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatGroup {
-    /// The five attributes — `PaperDollFrame_SetStats`.
+    /// The five attributes: `PaperDollFrame_SetStats`.
     Attributes,
-    /// The seven resistances, **armour included**, which is why the panel
-    /// re-runs `PaperDollFrame_SetArmor` off this one too.
+    /// The seven resistances, armour included, so the panel also re-runs
+    /// `PaperDollFrame_SetArmor` on this one.
     Resistances,
     /// Weapon damage, and the weapon speed that divides it.
     Damage,
@@ -1674,194 +1638,187 @@ pub enum StatGroup {
     AttackSpeed,
     AttackPower,
     RangedAttackPower,
-    /// The **weapon skill**, which is what `UNIT_ATTACK` means here: the only
-    /// thing `PaperDollFrame_OnEvent` does with it is
+    /// The weapon skill, which is what `UNIT_ATTACK` means here: the only thing
+    /// `PaperDollFrame_OnEvent` does with it is
     /// `PaperDollFrame_SetAttackBothHands`.
     WeaponSkill,
-    /// `PLAYER_DAMAGE_DONE_MODS` — the three per-school damage-done fields,
-    /// which are half of what `UnitDamage` answers.
+    /// `PLAYER_DAMAGE_DONE_MODS`: the three per-school damage-done fields, which
+    /// are half of what `UnitDamage` returns.
     DamageDoneMods,
 }
 
-/// `CHAT_MSG_SAY` and its twenty-five siblings — **one type whose name is the
-/// kind of line it carries**, on exactly [`UnitPowerChanged`]'s terms.
+/// `CHAT_MSG_SAY` and its twenty-five siblings: one type whose event name is
+/// the kind of line it carries, in the same way as [`UnitPowerChanged`].
 ///
-/// The names are `ChatFrame.lua`'s own `ChatTypeGroup` table, which is the
-/// authority for both halves of this: the event a kind arrives under
-/// (`CHAT_MSG_MONSTER_WHISPER`) and the group a chat window subscribes by
-/// (`CREATURE`). Nothing here is invented — see [`super::chat`], which does the
-/// mapping and is where the argument order is written down.
+/// The names come from `ChatFrame.lua`'s `ChatTypeGroup` table, which defines
+/// both the event a kind arrives under (`CHAT_MSG_MONSTER_WHISPER`) and the
+/// group a chat window subscribes by (`CREATURE`). See [`super::chat`], which
+/// does the mapping and documents the argument order.
 ///
-/// **Ten arguments, and not one of them may be nil.** `ChatFrame_OnEvent`
-/// opens with `strlen(arg4)` and goes on to `strlen(arg6)`, `strlen(arg3)` and
-/// `strlen(arg2)` before it has decided what kind of line this is, so a client
-/// that sent only the two arguments a say actually uses would take the handler
-/// down on the first line of every message. The empty string is the real
-/// client's own answer for a field a kind does not have. The five a channel
-/// line fills — `arg4`, `arg5`, `arg7`, `arg8`, `arg9`, `arg10` — are its
-/// last fields, and `Default` is every one of them empty.
+/// It has ten arguments, and none may be nil. `ChatFrame_OnEvent` starts with
+/// `strlen(arg4)` and then calls `strlen(arg6)`, `strlen(arg3)` and
+/// `strlen(arg2)` before it has decided what kind of line this is, so raising
+/// only the two arguments a say uses makes the handler fail on the first line
+/// of every message. The 1.12.1 client passes the empty string for a field a
+/// kind does not have. The fields a channel line fills (`arg4`, `arg5`, `arg7`,
+/// `arg8`, `arg9`, `arg10`) are the last fields of the struct, and `Default`
+/// leaves every one of them empty.
 #[derive(Message, Debug, Clone, Default)]
 pub struct ChatMessageReceived {
-    /// The event name, already resolved — `"CHAT_MSG_SAY"`. Static because the
-    /// set is closed and `RegisterEvent` matches on the string.
+    /// The event name, already resolved, for example `"CHAT_MSG_SAY"`. Static
+    /// because the set is closed and `RegisterEvent` matches on the string.
     pub event: &'static str,
-    /// `arg1` — what was said.
+    /// `arg1`: the message text.
     pub text: String,
-    /// `arg2` — who said it, or `""` for the server's own output.
+    /// `arg2`: the sender, or `""` for the server's own output.
     pub author: String,
-    /// `arg6` — the speaker's flag: `""`, `"AFK"`, `"DND"` or `"GM"`. The
+    /// `arg6`: the sender's flag: `""`, `"AFK"`, `"DND"` or `"GM"`. The
     /// handler looks up `CHAT_FLAG_<this>` in `GlobalStrings.lua`, so the
     /// spelling is the game's rather than a code.
     pub flag: &'static str,
-    /// `arg4` — the channel with its number (`"1. General"`), and `""` for
-    /// everything that is not a channel. Its *length* is what the handler
-    /// branches on.
+    /// `arg4`: the channel with its number (`"1. General"`), and `""` for
+    /// everything that is not a channel. The handler branches on its length.
     pub channel: String,
-    /// `arg5` — the second person in a channel notice: who kicked, banned or
+    /// `arg5`: the second player in a channel notice: who kicked, banned or
     /// unbanned `arg2`. `""` otherwise.
     pub target: String,
-    /// `arg7` — the `ChatChannels.dbc` row of a zone channel, which is how
-    /// the chat frame matches `General - Westfall` to the `General` it was
+    /// `arg7`: the `ChatChannels.dbc` row of a zone channel, which the chat
+    /// frame uses to match `General - Westfall` to the `General` it was
     /// registered for. 0 for a custom channel and for everything else.
     pub zone_channel: u32,
-    /// `arg8` — the channel's number, `ChatTypeInfo["CHANNEL"..arg8]`.
+    /// `arg8`: the channel's number, `ChatTypeInfo["CHANNEL"..arg8]`.
     pub number: u32,
-    /// `arg9` — the channel's bare name, `General - Elwynn Forest`, which
-    /// the frame compares against its list for a custom channel.
+    /// `arg9`: the channel's full name, `General - Elwynn Forest`, which the
+    /// frame compares against its list for a custom channel.
     pub channel_name: String,
-    /// `arg10` — the instance number a split channel carries; 0 from vmangos.
+    /// `arg10`: the instance number a split channel carries; 0 from vmangos.
     pub instance: u32,
 }
 
 /// One `arg1`..`argN` value, as the interface receives it.
 ///
-/// Two shapes, because the game only ever sends two: a number and a string.
-/// Deliberately **not** an `mlua::Value` — `interface/` does not depend on the
-/// interpreter, for the same reason `assets/` does not depend on Bevy.
+/// Two variants, because the game sends only two kinds: a number and a string.
+/// It is not an `mlua::Value`: `interface/` does not depend on the interpreter,
+/// for the same reason `assets/` does not depend on Bevy.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EventArg {
     Number(f64),
     Text(String),
 }
 
-// --- `Interface\GlueXML\`: the screens before the world ---
+// ---- `Interface\GlueXML\` events: the screens before entering the world ----
 //
-// Six names, every one of them read out of a `RegisterEvent` call in the glue's
-// own files, and every one raised off a real edge of
-// [`crate::world::session::Session`] rather than on a timer. See
-// [`crate::glue::glue`], which is where the edges are noticed.
+// Six names, each read from a `RegisterEvent` call in the GlueXML files, and
+// each raised on a state change of [`crate::world::session::Session`] rather
+// than on a timer. See [`crate::glue::glue`], which detects the changes.
 
-/// `FRAMES_LOADED` — the glue's own "the tree is up", and the only thing that
-/// runs `LocalizeFrames()`.
+/// `FRAMES_LOADED`: GlueXML has finished loading its frames. It is the only
+/// event that runs `LocalizeFrames()`.
 ///
-/// `GlueParent_OnEvent`'s first arm, and the localisation pass it calls is what
+/// It is `GlueParent_OnEvent`'s first branch, and the localisation pass it calls
 /// re-anchors and re-captions the screens for a locale. Raised once, by the
-/// loader, immediately after `Interface\GlueXML\` finishes — which is exactly
-/// what the name says and what the real client does.
+/// loader, immediately after `Interface\GlueXML\` finishes, as the 1.12.1
+/// client does.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct FramesLoaded;
 
-/// `ADDON_LIST_UPDATE` — the addon board has been seeded, so `GetNumAddOns()`
+/// `ADDON_LIST_UPDATE`: the addon list has been filled, so `GetNumAddOns()`
 /// answers. `CharacterSelect_OnEvent` calls `UpdateAddonButton()` on it, which
-/// is what shows the AddOns button. Raised by `crate::settings::addons` once
-/// per host it seeds.
+/// shows the AddOns button. Raised by `crate::settings::addons` once per Lua
+/// host it fills.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct AddonListUpdate;
 
-/// `SET_GLUE_SCREEN` — **the client telling the interface to change screen**,
-/// with the screen's key in `arg1`.
+/// `SET_GLUE_SCREEN`: the client tells the interface to change screen, with
+/// the screen's key in `arg1`.
 ///
-/// This is the one that makes the login screen give way to character select, and
-/// its shape is worth stating because it is backwards from what it looks like:
-/// the *interface* does not decide. `GlueParent_OnEvent` calls
+/// This event moves the login screen to character select. The interface does
+/// not decide the screen; the client does. `GlueParent_OnEvent` calls
 /// `GlueScreenExit(GetCurrentGlueScreenName(), arg1)`, which fades
 /// `AccountLoginUI` out over half a second and only then calls
-/// `SetGlueScreen(arg1)` — so raising this with `"charselect"` is what a
-/// successful logon looks like from inside the interface, fade and all.
+/// `SetGlueScreen(arg1)`. Raising this with `"charselect"` is therefore how a
+/// successful logon appears to the interface, including the fade.
 ///
-/// The keys are `GlueScreenInfo`'s own: `login`, `charselect`, `charcreate`,
+/// The keys are those of `GlueScreenInfo`: `login`, `charselect`, `charcreate`,
 /// `realmwizard`, `patchdownload`, `movie`, `credits`.
 #[derive(Message, Debug, Clone)]
 pub struct SetGlueScreen(pub String);
 
-/// `CHARACTER_LIST_UPDATE` — the character list is different, or has arrived.
+/// `CHARACTER_LIST_UPDATE`: the character list changed, or has arrived.
 ///
 /// `CharacterSelect_OnEvent` runs `UpdateCharacterList()` on it, which is the
-/// whole of how the ten row buttons get their names, levels and zones.
+/// only way the ten row buttons get their names, levels and zones.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct CharacterListUpdate;
 
-/// `UPDATE_SELECTED_CHARACTER` — the highlight moved, **`arg1` one-based, 0 for
-/// none**.
+/// `UPDATE_SELECTED_CHARACTER`: the selected row changed; `arg1` is one-based,
+/// 0 for none.
 ///
-/// The reply the client owes `SelectCharacter(i)`: the interface asks and does
-/// not move its own highlight, so an unanswered `SelectCharacter` is a click
-/// that does nothing at all. `CharacterSelect_OnEvent` writes the name into
+/// The client's reply to `SelectCharacter(i)`. The interface asks and does not
+/// move its own highlight, so a `SelectCharacter` with no reply is a click that
+/// does nothing. `CharacterSelect_OnEvent` writes the name into
 /// `CharSelectCharacterName` and calls `UpdateCharacterSelection()`.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct UpdateSelectedCharacter(pub usize);
 
-/// `SELECT_FIRST_CHARACTER` — pick row 1, which is what the real client raises
-/// when a character screen opens with nothing selected.
+/// `SELECT_FIRST_CHARACTER`: select row 1. The 1.12.1 client raises this when a
+/// character screen opens with nothing selected.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SelectFirstCharacter;
 
-/// `DISCONNECTED_FROM_SERVER` — the socket went away.
+/// `DISCONNECTED_FROM_SERVER`: the connection to the server closed.
 ///
-/// `GlueParent_OnEvent` answers it by going back to the login screen and showing
-/// the `DISCONNECTED` dialog, which is the right picture for a handshake that
-/// lapsed while a character screen sat open — the failure
-/// [`crate::world::session::keep_selection_alive`] exists to prevent and this is
-/// what it looks like when prevention fails.
+/// `GlueParent_OnEvent` answers it by returning to the login screen and showing
+/// the `DISCONNECTED` dialog. That is the correct result when the connection
+/// times out while a character screen is open, which is the failure
+/// [`crate::world::session::keep_selection_alive`] exists to prevent.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct DisconnectedFromServer;
 
-/// `OPEN_STATUS_DIALOG` — **put a `GlueDialog` up**, with the dialog's *kind* in
-/// `arg1` and the text already resolved in `arg2`.
+/// `OPEN_STATUS_DIALOG`: show a `GlueDialog`, with the dialog's kind in `arg1`
+/// and the text already resolved in `arg2`.
 ///
-/// The glue's own modal, and the only one there is: `GlueDialog_OnEvent` answers
-/// this with `GlueDialog_Show(arg1, arg2, arg3)`, and `GlueDialogTypes` is a
-/// table of seven kinds keyed by that first string. Two of them are what a
-/// session edge ever needs — `"CANCEL"`, one button reading Cancel, which is
-/// what is shown *while* something is in flight, and `"OKAY"`, which is what a
-/// failure ends on.
+/// This is GlueXML's only modal dialog. `GlueDialog_OnEvent` answers this with
+/// `GlueDialog_Show(arg1, arg2, arg3)`, and `GlueDialogTypes` is a table of
+/// seven kinds keyed by that first string. A session state change needs two of
+/// them: `"CANCEL"`, one button reading Cancel, shown while a request is in
+/// progress, and `"OKAY"`, shown when a request fails.
 ///
-/// **`arg2` is text and not a key**, which is worth stating because it is the
-/// one place this client could have taken a shortcut: `GlueDialog_Show` puts
-/// `arg2` straight into `GlueDialogText:SetText`, so a key sent here draws the
-/// key. The resolution happens in [`crate::glue::glue`], against
-/// `Interface\GlueXML\GlueStrings.lua` — the directory's own words, on the same
-/// terms as every other message this client shows.
+/// `arg2` is text, not a key. `GlueDialog_Show` passes `arg2` straight to
+/// `GlueDialogText:SetText`, so a key sent here is drawn as the key. The
+/// resolution happens in [`crate::glue::glue`], against
+/// `Interface\GlueXML\GlueStrings.lua`, as for every other message this client
+/// shows.
 ///
-/// The third value the real client sometimes passes (`arg3`, a *global name*
-/// for `OKAY_WITH_URL`'s `LaunchURL(getglobal(GlueDialog.data))`) is
-/// deliberately absent: this client's `LaunchURL` opens nothing, so the five
-/// codes that would use it show the same text on a plain `OKAY`.
+/// The 1.12.1 client sometimes passes a third value (`arg3`, a global variable
+/// name for `OKAY_WITH_URL`'s `LaunchURL(getglobal(GlueDialog.data))`). This
+/// client omits it: its `LaunchURL` opens nothing, so the five codes that would
+/// use it show the same text in a plain `OKAY` dialog.
 #[derive(Message, Debug, Clone)]
 pub struct OpenStatusDialog {
-    /// `GlueDialogTypes`' key — `"OKAY"`, `"CANCEL"`.
+    /// The `GlueDialogTypes` key: `"OKAY"`, `"CANCEL"`.
     pub which: &'static str,
-    /// The sentence, resolved.
+    /// The resolved text.
     pub text: String,
 }
 
-/// `CLOSE_STATUS_DIALOG` — take it down again.
+/// `CLOSE_STATUS_DIALOG`: hide the status dialog.
 ///
-/// One line in `GlueDialog_OnEvent` (`GlueDialog:Hide()`) and the only way a
-/// dialog this client raised comes off without the player pressing anything —
-/// which is what a logon that *succeeded* needs, since the connecting dialog is
-/// still up when the character list arrives.
+/// One line in `GlueDialog_OnEvent` (`GlueDialog:Hide()`), and the only way a
+/// dialog this client raised closes without the player pressing a button. A
+/// successful logon needs it, because the connecting dialog is still shown when
+/// the character list arrives.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct CloseStatusDialog;
 
-/// The game's own name for an event, and the arguments it carries.
+/// The game's name for an event, and the arguments it carries.
 ///
-/// **The name is the whole of the contract.** `frame:RegisterEvent("…")` takes a
+/// The name is the only link to a handler. `frame:RegisterEvent("…")` takes a
 /// string, so a name spelled differently here is an event no addon and no
-/// FrameXML file can ever receive — which is why every one of them is quoted
-/// from the archive file named in the type's own doc comment.
+/// FrameXML file can receive. Every name is therefore quoted from the archive file named in
+/// the type's doc comment.
 pub trait GameEvent {
-    /// `"PLAYER_TARGET_CHANGED"`. Upper snake case, always.
+    /// For example `"PLAYER_TARGET_CHANGED"`. Always upper snake case.
     const EVENT: &'static str;
 
     /// `arg1`..`argN`, in the game's order. Most events have none.
@@ -1869,8 +1826,8 @@ pub trait GameEvent {
         Vec::new()
     }
 
-    /// The name this *instance* fires under — [`Self::EVENT`] for every type
-    /// but [`UnitPowerChanged`], whose name is the power it carries.
+    /// The name this instance is raised under: [`Self::EVENT`] for every type
+    /// except [`UnitPowerChanged`], whose name is the power it carries.
     fn name(&self) -> &'static str {
         Self::EVENT
     }
@@ -1898,7 +1855,7 @@ impl GameEvent for CharacterListUpdate {
 impl GameEvent for UpdateSelectedCharacter {
     const EVENT: &'static str = "UPDATE_SELECTED_CHARACTER";
     fn args(&self) -> Vec<EventArg> {
-        // **A number, and `arg1 == 0` is the "nothing selected" branch** —
+        // A number; `arg1 == 0` is the "nothing selected" branch.
         // `CharacterSelect_OnEvent` compares it against 0 before it looks the
         // row up, so a nil here is an error rather than an empty name.
         vec![EventArg::Number(self.0 as f64)]
@@ -1974,8 +1931,8 @@ impl GameEvent for ActionbarHideGrid {
 
 impl GameEvent for DeleteItemConfirm {
     const EVENT: &'static str = "DELETE_ITEM_CONFIRM";
-    /// `(name, quality)` — `UIParent_OnEvent` reads the second to choose which
-    /// of the two boxes to open.
+    /// `(name, quality)`. `UIParent_OnEvent` reads the second to choose which
+    /// of the two popups to open.
     fn args(&self) -> Vec<EventArg> {
         vec![
             EventArg::Text(self.name.clone()),
@@ -2002,7 +1959,7 @@ impl GameEvent for UnitPetExperience {
 
 impl GameEvent for UnitPetTrainingPoints {
     const EVENT: &'static str = "UNIT_PET_TRAINING_POINTS";
-    /// `"pet"` — the paper doll's fall-through branch is
+    /// `"pet"`. The paper doll's fall-through branch is
     /// `elseif ( arg1 == "pet" )`, and that branch is the full redraw.
     fn args(&self) -> Vec<EventArg> {
         vec![EventArg::Text(super::api::UnitId::Pet.token().to_string())]
@@ -2023,7 +1980,7 @@ impl GameEvent for PetBarHideGrid {
 
 impl GameEvent for ConfirmPetUnlearn {
     const EVENT: &'static str = "CONFIRM_PET_UNLEARN";
-    /// One argument, the cost — `UIParent.lua`'s handler feeds it straight to
+    /// One argument, the cost. `UIParent.lua`'s handler passes it straight to
     /// `MoneyFrame_Update`.
     fn args(&self) -> Vec<EventArg> {
         vec![EventArg::Number(f64::from(self.cost))]
@@ -2064,9 +2021,9 @@ impl GameEvent for ItemLockChanged {
 
 impl GameEvent for SpellcastStart {
     const EVENT: &'static str = "SPELLCAST_START";
-    /// **`(name, duration)`, and the sibling channel event is the other way
-    /// round** — see the module comment. Transcribed from
-    /// `CastingBarFrame_OnEvent`'s own use of `arg1`/`arg2`, not chosen here.
+    /// `(name, duration)`. The channel event uses the reverse order; see the
+    /// module comment. The order follows `CastingBarFrame_OnEvent`'s use of
+    /// `arg1`/`arg2`.
     fn args(&self) -> Vec<EventArg> {
         vec![
             EventArg::Text(self.name.clone()),
@@ -2089,7 +2046,7 @@ impl GameEvent for SpellcastInterrupted {
 
 impl GameEvent for SpellcastDelayed {
     const EVENT: &'static str = "SPELLCAST_DELAYED";
-    /// One argument, and it is the *added* time — `this.startTime + arg1/1000`.
+    /// One argument, the added time: `this.startTime + arg1/1000`.
     fn args(&self) -> Vec<EventArg> {
         vec![EventArg::Number(f64::from(self.delay_ms))]
     }
@@ -2097,9 +2054,8 @@ impl GameEvent for SpellcastDelayed {
 
 impl GameEvent for SpellcastChannelStart {
     const EVENT: &'static str = "SPELLCAST_CHANNEL_START";
-    /// **`(duration, name)` — the reverse of `SPELLCAST_START`'s pair.** See the
-    /// type's own comment; this is `CastingBarFrame_OnEvent`'s reading and not a
-    /// choice.
+    /// `(duration, name)`, the reverse of `SPELLCAST_START`'s pair. See the
+    /// type's comment; the order follows `CastingBarFrame_OnEvent`.
     fn args(&self) -> Vec<EventArg> {
         vec![
             EventArg::Number(f64::from(self.duration_ms)),
@@ -2121,7 +2077,8 @@ impl GameEvent for SpellcastChannelStop {
 
 impl GameEvent for MirrorTimerStart {
     const EVENT: &'static str = "MIRROR_TIMER_START";
-    /// `MirrorTimer_Show`'s own six, in its own order — see the type's comment.
+    /// `MirrorTimer_Show`'s six parameters, in its order. See the type's
+    /// comment.
     fn args(&self) -> Vec<EventArg> {
         vec![
             EventArg::Text(self.timer.clone()),
@@ -2164,9 +2121,9 @@ impl GameEvent for GossipClosed {
 }
 impl GameEvent for ConfirmBinder {
     const EVENT: &'static str = "CONFIRM_BINDER";
-    /// One argument, the place — the popup's `%s`. The guid is not passed:
-    /// `UIParent.lua` would have nothing to do with it, and `ConfirmBinder()`
-    /// takes no arguments because the reference keeps the guid in C.
+    /// One argument, the place, which fills the popup's `%s`. The guid is not
+    /// passed: `UIParent.lua` does not use it, and `ConfirmBinder()` takes no
+    /// arguments because the 1.12.1 client keeps the guid outside Lua.
     fn args(&self) -> Vec<EventArg> {
         vec![EventArg::Text(self.place.clone())]
     }
@@ -2188,6 +2145,9 @@ impl GameEvent for DuelFinished {
 }
 impl GameEvent for ConfirmSummon {
     const EVENT: &'static str = "CONFIRM_SUMMON";
+}
+impl GameEvent for InspectHonorUpdate {
+    const EVENT: &'static str = "INSPECT_HONOR_UPDATE";
 }
 impl GameEvent for TimePlayedMsg {
     const EVENT: &'static str = "TIME_PLAYED_MSG";
@@ -2248,8 +2208,7 @@ impl GameEvent for SkillLinesChanged {
 }
 impl GameEvent for CharacterPointsChanged {
     const EVENT: &'static str = "CHARACTER_POINTS_CHANGED";
-    /// Talents then professions — see the type's own comment, where the push
-    /// order is.
+    /// Talents, then professions. The type's comment explains the order.
     fn args(&self) -> Vec<EventArg> {
         vec![
             EventArg::Number(f64::from(self.talent)),
@@ -2406,8 +2365,8 @@ impl GameEvent for ConfirmLootRoll {
     fn args(&self) -> Vec<EventArg> {
         vec![
             EventArg::Number(f64::from(self.id)),
-            // **The vote's own byte**, because `ConfirmLootRoll(data, data2)`
-            // hands it straight back and the round trip has to survive it.
+            // The vote's wire byte, because `ConfirmLootRoll(data, data2)`
+            // passes it straight back and it must survive the round trip.
             EventArg::Number(f64::from(self.vote.byte())),
         ]
     }
@@ -2482,9 +2441,9 @@ impl GameEvent for PlayerCamping {
 }
 
 impl GameEvent for PlayerQuiting {
-    /// The game's own spelling, one `t`. `UIParent.lua` registers
-    /// `"PLAYER_QUITING"` and a name is matched as text, so the correct
-    /// spelling would reach nobody.
+    /// The game's spelling, with one `t`. `UIParent.lua` registers
+    /// `"PLAYER_QUITING"` and names are matched as text, so the standard
+    /// English spelling would match no handler.
     const EVENT: &'static str = "PLAYER_QUITING";
 }
 
@@ -2574,9 +2533,9 @@ impl GameEvent for PlayerTradeMoney {
 
 impl GameEvent for ResurrectRequest {
     const EVENT: &'static str = "RESURRECT_REQUEST";
-    /// One argument, the caster's name — `StaticPopup_Show("RESURRECT", arg1)`
-    /// passes it straight through as the dialog's `data`, which its `text` is
-    /// then formatted with.
+    /// One argument, the caster's name. `StaticPopup_Show("RESURRECT", arg1)`
+    /// passes it through as the dialog's `data`, which its `text` is then
+    /// formatted with.
     fn args(&self) -> Vec<EventArg> {
         vec![EventArg::Text(self.0.clone())]
     }
@@ -2598,9 +2557,9 @@ impl GameEvent for UnitNameUpdate {
 
 impl GameEvent for BagUpdate {
     const EVENT: &'static str = "BAG_UPDATE";
-    /// **The bag id, as a number** — `this:GetID() == arg1` is an equality
-    /// against a frame id, so a string here matches nothing and the frame
-    /// silently never refreshes.
+    /// The bag id, as a number. `this:GetID() == arg1` compares against a
+    /// frame id, so a string here matches nothing and the frame never
+    /// refreshes, with no error.
     fn args(&self) -> Vec<EventArg> {
         vec![EventArg::Number(f64::from(self.0))]
     }
@@ -2658,8 +2617,8 @@ impl GameEvent for UnitFactionChanged {
 
 impl GameEvent for PlayerLevelUp {
     const EVENT: &'static str = "PLAYER_LEVEL_UP";
-    /// In the order `ChatFrame_OnEvent` reads them — see the type's own comment
-    /// for the one that is always zero and why.
+    /// In the order `ChatFrame_OnEvent` reads them. See the type's comment for
+    /// the argument that is always zero, and why.
     fn args(&self) -> Vec<EventArg> {
         let n = |value: u32| EventArg::Number(f64::from(value));
         let mut args = vec![n(self.0.level), n(self.0.health), n(self.0.mana), n(0)];
@@ -2687,14 +2646,16 @@ impl GameEvent for UnitMaxHealthChanged {
 }
 
 impl GameEvent for UnitPowerChanged {
-    /// The commonest of the ten; [`Self::name`] is the one that fires.
+    /// The most common of the ten; [`Self::name`] gives the name actually
+    /// raised.
     const EVENT: &'static str = "UNIT_MANA";
     fn args(&self) -> Vec<EventArg> {
         vec![EventArg::Text(self.unit.token().to_string())]
     }
-    /// The wire's power type, spelled the way `UnitFrameManaBar_Initialize`
-    /// registers it. An unknown type fires as mana rather than silently, since
-    /// a wrong bar beats a stuck one.
+    /// The wire's power type, spelled as `UnitFrameManaBar_Initialize`
+    /// registers it. An unknown type is raised as mana rather than dropped,
+    /// because a bar showing the wrong power is better than a bar that never
+    /// updates.
     fn name(&self) -> &'static str {
         match (self.power, self.max) {
             (1, false) => "UNIT_RAGE",
@@ -2712,15 +2673,15 @@ impl GameEvent for UnitPowerChanged {
 }
 
 impl GameEvent for UnitStatsChanged {
-    /// The first of the nine; [`Self::name`] is the one that fires.
+    /// The first of the nine; [`Self::name`] gives the name actually raised.
     const EVENT: &'static str = "UNIT_STATS";
     fn args(&self) -> Vec<EventArg> {
         vec![EventArg::Text(self.unit.token().to_string())]
     }
-    /// The names `PaperDollFrame_OnLoad` registers, spelled the way it spells
-    /// them — `UNIT_RANGEDDAMAGE` has no underscore in the middle and
-    /// `UNIT_RANGED_ATTACK_POWER` has two, which is the game's own
-    /// inconsistency and the only spelling `RegisterEvent` will match.
+    /// The names `PaperDollFrame_OnLoad` registers, spelled as it spells them.
+    /// `UNIT_RANGEDDAMAGE` has no underscore in the middle and
+    /// `UNIT_RANGED_ATTACK_POWER` has two. The inconsistency is the game's, and
+    /// these are the only spellings `RegisterEvent` matches.
     fn name(&self) -> &'static str {
         match self.what {
             StatGroup::Attributes => "UNIT_STATS",
@@ -2737,17 +2698,17 @@ impl GameEvent for UnitStatsChanged {
 }
 
 impl GameEvent for ChatMessageReceived {
-    /// Never used to fire one — see [`GameEvent::name`], which is the whole
-    /// point of this type. Present because the trait requires it, and
-    /// `CHAT_MSG_SAY` is the honest representative of the set.
+    /// Never used to raise an event; [`GameEvent::name`] gives the name
+    /// actually raised. Present because the trait requires it, and
+    /// `CHAT_MSG_SAY` is a representative member of the set.
     const EVENT: &'static str = "CHAT_MSG_SAY";
 
     fn name(&self) -> &'static str {
         self.event
     }
 
-    /// **`arg1`..`arg9`, in the game's order**, transcribed from the reads
-    /// `ChatFrame_OnEvent` makes rather than from a wiki:
+    /// `arg1`..`arg9`, in the game's order, taken from the arguments
+    /// `ChatFrame_OnEvent` reads:
     ///
     /// ```text
     /// arg1  the text            arg6  the AFK/DND/GM flag
@@ -2757,13 +2718,13 @@ impl GameEvent for ChatMessageReceived {
     /// arg5  the target
     /// ```
     ///
-    /// **`arg3` is empty rather than a language name**, which is a stated
-    /// deviation with a small visible consequence: the handler prefixes
-    /// `"[Orcish] "` when the language is neither `"Universal"` nor the
-    /// player's own, and an empty string takes the plain branch. Getting it
-    /// right wants `Languages.dbc`, which nothing in this client reads; getting
-    /// it wrong the other way — sending the wire's id as a string — would put
-    /// `"[7] "` in front of every sentence a friend says.
+    /// `arg3` is empty rather than a language name, which differs from the
+    /// 1.12.1 client. The handler prefixes `"[Orcish] "` when the language is
+    /// neither `"Universal"` nor the player's own, and an empty string takes the
+    /// plain branch, so no prefix is shown. The correct name needs
+    /// `Languages.dbc`, which this client does not read. Sending the wire's id
+    /// as a string instead would put `"[7] "` in front of every line another
+    /// player says.
     fn args(&self) -> Vec<EventArg> {
         let text = |s: &str| EventArg::Text(s.to_string());
         vec![
@@ -2788,18 +2749,17 @@ impl GameEvent for UnitDisplaypowerChanged {
     }
 }
 
-/// Every event this client fires, as one reader.
+/// Every event this client raises, as one reader.
 ///
-/// A [`SystemParam`] rather than nine parameters on the one system that wants
-/// them all, and bundled here rather than in [`crate::lua`] for the reason the
-/// module comment gives: adding an event should be one file's work.
+/// A [`SystemParam`] rather than one parameter per event on the system that
+/// reads them all, and defined here rather than in [`crate::lua`] so that
+/// adding an event changes one file.
 ///
-/// **Each reader has its own cursor**, which is what makes this safe to hold
-/// alongside any other consumer — the egui stand-in used to read
-/// `UiErrorMessage` beside it and neither starved the other. Nothing else reads
-/// them today (the game's own `UIErrorsFrame` is what shows them now), and the
-/// property is kept because an addon-facing event with one consumer is one
-/// change away from having two. See `two_readers_each_see_every_message`.
+/// Each reader has its own cursor, so this can be held alongside any other
+/// consumer without either missing messages. No other system reads these
+/// messages now (`UIErrorsFrame` shows the error messages), but the property
+/// is kept so that a second consumer can be added. See
+/// `two_readers_each_see_every_message`.
 #[derive(SystemParam)]
 pub struct GameEventReaders<'w, 's> {
     ui_error: MessageReader<'w, 's, UiErrorMessage>,
@@ -2902,6 +2862,7 @@ pub struct GameEventReaders<'w, 's> {
     duel_in_bounds: MessageReader<'w, 's, DuelInBounds>,
     duel_finished: MessageReader<'w, 's, DuelFinished>,
     confirm_summon: MessageReader<'w, 's, ConfirmSummon>,
+    inspect_honor: MessageReader<'w, 's, InspectHonorUpdate>,
     time_played: MessageReader<'w, 's, TimePlayedMsg>,
     item_text_begin: MessageReader<'w, 's, ItemTextBegin>,
     item_text_ready: MessageReader<'w, 's, ItemTextReady>,
@@ -2962,8 +2923,8 @@ pub struct GameEventReaders<'w, 's> {
     mirror_start: MessageReader<'w, 's, MirrorTimerStart>,
     mirror_stop: MessageReader<'w, 's, MirrorTimerStop>,
     mirror_pause: MessageReader<'w, 's, MirrorTimerPause>,
-    // The glue's six — see the note at the end of [`GameEventReaders::drain`],
-    // where the order they are taken in is.
+    // The GlueXML events. The end of [`GameEventReaders::drain`] gives the
+    // order they are taken in.
     frames_loaded: MessageReader<'w, 's, FramesLoaded>,
     addon_list: MessageReader<'w, 's, AddonListUpdate>,
     glue_screen: MessageReader<'w, 's, SetGlueScreen>,
@@ -2976,22 +2937,22 @@ pub struct GameEventReaders<'w, 's> {
 }
 
 impl GameEventReaders<'_, '_> {
-    /// Everything written since this param last looked, as `(name, args)`.
+    /// Everything written since this param last read, as `(name, args)`.
     ///
-    /// **The order between two different event types is this function's, not the
-    /// world's**, and that is a stated approximation rather than an oversight:
-    /// nine independent message queues carry no shared sequence number, so there
-    /// is nothing to sort by. Within one type the order is the write order,
-    /// which is the half that matters — two `ACTIONBAR_SLOT_CHANGED` for the
-    /// same slot must not swap.
+    /// The order between two different event types is set by this function,
+    /// not by when they were written. This is an approximation: the separate
+    /// message queues carry no shared sequence number, so there is nothing to
+    /// sort by. Within one type the order is the write order, which is the order
+    /// that matters: two `ACTIONBAR_SLOT_CHANGED` for the same slot must not
+    /// swap.
     ///
-    /// The type order below is the order the real client's own C code raises
-    /// them in as far as it can be told: the news about the world first, then
-    /// the bar, then the cast.
+    /// The type order below follows the order the 1.12.1 client raises them in,
+    /// as far as it is known: events about the world first, then the action
+    /// bar, then the cast.
     pub fn drain(&mut self) -> Vec<(&'static str, Vec<EventArg>)> {
         let mut out: Vec<(&'static str, Vec<EventArg>)> = Vec::new();
-        // One closure per type rather than a loop, because each `read` is a
-        // different concrete type — there is no trait object over a reader.
+        // One macro call per type rather than a loop, because each `read` is a
+        // different concrete type; there is no trait object over a reader.
         macro_rules! take {
             ($field:ident, $ty:ty) => {
                 for message in self.$field.read() {
@@ -3001,51 +2962,51 @@ impl GameEventReaders<'_, '_> {
                 }
             };
         }
-        // **Before the world, because that is the order the client fires them
-        // in** — the saved variables are read at startup and the world is
-        // entered afterwards, and `UIOptionsFrame`'s two dropdowns initialise on
-        // the first while `PlayerFrame` fills itself on the second.
-        // **Before the bar's own state event**, which is the order the two are
-        // written in and the order the button wants: the flash is started off
-        // the combat pair and `ActionButton_StartFlash` ends in
-        // `ActionButton_UpdateState`, so a checked border arriving first would
-        // simply be redrawn.
+        // The combat pair comes before `ACTIONBAR_UPDATE_STATE`, which is the
+        // order they are written in and the order the button needs. The flash
+        // starts on the combat pair, and `ActionButton_StartFlash` ends in
+        // `ActionButton_UpdateState`, so a checked border delivered first would
+        // only be redrawn.
         take!(enter_combat, PlayerEnterCombat);
         take!(leave_combat, PlayerLeaveCombat);
+        // `VARIABLES_LOADED` comes before `PLAYER_ENTERING_WORLD`, the order the
+        // client raises them in: saved variables are read at startup and the
+        // world is entered afterwards. `UIOptionsFrame`'s two dropdowns
+        // initialise on the first, and `PlayerFrame` fills itself on the second.
         take!(variables_loaded, VariablesLoaded);
-        // …and beside it, for the same reason: a setting changing is news about
-        // the *client* rather than about the world, and the panels that watch
-        // one redraw off it.
+        // A setting change is about the client rather than the world, so it is
+        // taken beside `VARIABLES_LOADED`. The panels that watch a setting
+        // redraw on it.
         take!(cvar_update, CVarUpdate);
-        // …and beside *that*, for the same reason again: a key moving is news
-        // about the client and not about the world, and the one frame that
-        // listens re-draws a label off it.
+        // A key binding change is also about the client rather than the world.
+        // The one frame that listens redraws a label on it.
         take!(update_bindings, UpdateBindings);
         take!(entering_world, PlayerEnteringWorld);
-        // **The place, before anything that reads a place name.** The three
-        // zone names and the map's own — `ZONE_CHANGED_NEW_AREA` is the coarse
-        // one and `MINIMAP_ZONE_CHANGED` the one the minimap's title redraws on.
+        // The location events, before anything that reads a location name.
+        // `ZONE_CHANGED_NEW_AREA` is the coarse one, and `MINIMAP_ZONE_CHANGED`
+        // is the one the minimap's title redraws on.
         take!(zone_new_area, ZoneChangedNewArea);
         take!(zone_changed, ZoneChanged);
         take!(minimap_zone, MinimapZoneChanged);
         take!(world_map_update, WorldMapUpdate);
-        // **Before anything the teardown then throws away.** The interface is
-        // told it is leaving while its frames still exist; `lua::host` unloads
-        // the directory after this has been delivered.
+        // `PLAYER_LEAVING_WORLD` comes before anything the teardown discards.
+        // The interface is told it is leaving while its frames still exist;
+        // `lua::host` unloads FrameXML after this has been delivered.
         take!(leaving_world, PlayerLeavingWorld);
-        // **The three about leaving, and the cancel last of them.** A refusal
-        // raises `LOGOUT_CANCEL` in the same drain that would otherwise have
-        // raised `PLAYER_CAMPING`, and the box has to be taken down after it
-        // would have gone up rather than before.
+        // The three logout events, with the cancel last. A refusal raises
+        // `LOGOUT_CANCEL` in the same drain that would otherwise have raised
+        // `PLAYER_CAMPING`, and the popup must be closed after it is shown, not
+        // before.
         take!(camping, PlayerCamping);
         take!(quiting, PlayerQuiting);
         take!(logout_cancel, LogoutCancel);
-        // **The death's own five, in the order the state moves through them**:
-        // dead, then released (which is what `PLAYER_ALIVE` means here), then
-        // standing up. The corpse-range pair after them, because the box they
-        // raise is one `StaticPopup_Show("DEATH")` `cancels`, and the offer last
-        // of all: `StaticPopup_Show` refuses a `whileDead` dialog unless the
-        // player already *is* dead, so the news that they are has to land first.
+        // The three death-state events, in the order the state passes through
+        // them: dead, then released (which is what `PLAYER_ALIVE` means here),
+        // then resurrected. The corpse-range pair comes after them, because the
+        // popup they show is one that `StaticPopup_Show("DEATH")` cancels. The
+        // resurrection offers come last: `StaticPopup_Show` refuses a
+        // `whileDead` dialog unless the player is already dead, so the death
+        // event must be delivered first.
         take!(player_dead, PlayerDead);
         take!(player_alive, PlayerAlive);
         take!(player_unghost, PlayerUnghost);
@@ -3063,20 +3024,10 @@ impl GameEventReaders<'_, '_> {
         take!(trade_target_item_changed, TradeTargetItemChanged);
         take!(trade_money_changed, TradeMoneyChanged);
         take!(player_trade_money, PlayerTradeMoney);
-        // **The stop before the start**, which is the one order that matters
-        // between the three: `MirrorTimer_Show` claims the first *free* frame,
-        // so a bar that is being replaced has to release its frame before the
-        // replacement looks for one — otherwise a breath meter restated while a
-        // fatigue meter is up takes the second frame and the first is left
-        // drawing a stale bar for ever.
-        // **The loot window's three, opened first and closed last**, which is
-        // the order a body actually moves through them — and the clear between,
-        // because `LootFrame_OnEvent`'s arm for it returns early unless the
-        // frame is already visible.
-        // **The log before the pages, and the finish last of all.** A page
-        // opens on top of whatever the log says, and `QUEST_FINISHED` hides the
-        // panel — so a finish raised before the page that replaced it would
-        // hide a window that is about to be filled.
+        // The quest log events before the dialog pages, and `QUEST_FINISHED`
+        // last. A page opens on top of whatever the log shows, and
+        // `QUEST_FINISHED` hides the panel, so a finish delivered before the
+        // page that replaced it would hide a window that is about to be filled.
         take!(quest_log, QuestLogUpdate);
         take!(quest_item, QuestItemUpdate);
         take!(quest_greeting, QuestGreetingEvent);
@@ -3084,19 +3035,17 @@ impl GameEventReaders<'_, '_> {
         take!(quest_progress, QuestProgressEvent);
         take!(quest_complete, QuestCompleteEvent);
         take!(quest_finished, QuestFinished);
-        // The NPC windows': shows before closes, so a window replaced in one
-        // frame closes after its replacement opened — `GossipFrame_OnEvent`'s
-        // `GOSSIP_CLOSED` arm is an unconditional hide.
+        // The NPC windows' show events come before their close events (taken
+        // further down), so a window replaced in one frame closes after its
+        // replacement opened. `GossipFrame_OnEvent`'s `GOSSIP_CLOSED` branch
+        // hides the frame unconditionally.
         take!(gossip_show, GossipShow);
         take!(merchant_show, MerchantShow);
         take!(merchant_update, MerchantUpdate);
-        // The party's four. Membership before the leader, because
-        // `PartyMemberFrame_UpdateLeader` reads a frame the rebuild may have
-        // just shown.
         take!(update_faction, UpdateFaction);
-        // **`FRIENDLIST_SHOW` before `FRIENDLIST_UPDATE`**, which is the order
-        // `FriendsFrame_OnEvent` needs: the first arm rebuilds the list *and*
-        // calls `FriendsFrame_Update`, so raising it after the plain update
+        // `FRIENDLIST_SHOW` comes before `FRIENDLIST_UPDATE`, which is the order
+        // `FriendsFrame_OnEvent` needs. The first branch rebuilds the list and
+        // also calls `FriendsFrame_Update`, so raising it after the plain update
         // would rebuild twice and select the tab a frame late.
         take!(friend_list_show, FriendListShow);
         take!(friend_list, FriendListUpdate);
@@ -3104,10 +3053,13 @@ impl GameEventReaders<'_, '_> {
         take!(who_list, WhoListUpdate);
         take!(skill_lines, SkillLinesChanged);
         take!(character_points, CharacterPointsChanged);
+        // The party events. Membership comes before the leader, because
+        // `PartyMemberFrame_UpdateLeader` reads a frame the rebuild may have
+        // just shown.
         take!(party_members, PartyMembersChanged);
-        // …and the raid's own, **after** the party's: `UIParent.lua` answers
-        // this one by deciding whether the party frames belong on screen, and it
-        // has to read a roster the line above has already applied.
+        // The raid roster comes after the party's: `UIParent.lua` answers it by
+        // deciding whether the party frames are shown, and it must read a
+        // roster the line above has already applied.
         take!(raid_roster, RaidRosterUpdate);
         take!(ready_check, ReadyCheck);
         take!(party_leader, PartyLeaderChanged);
@@ -3115,9 +3067,9 @@ impl GameEventReaders<'_, '_> {
         take!(party_invite, PartyInviteRequest);
         take!(trainer_show, TrainerShow);
         take!(trainer_update, TrainerUpdate);
-        // The two profession windows', on the same shows-before-closes terms —
-        // and the show before the update, so a window that opened and rebuilt
-        // in one frame fills after `UIParent.lua` has loaded its addon.
+        // The two profession windows, with show events before close events as
+        // above, and the show before the update, so a window that opened and
+        // rebuilt in one frame fills after `UIParent.lua` has loaded its addon.
         take!(tradeskill_show, TradeSkillShow);
         take!(tradeskill_update, TradeSkillUpdate);
         take!(craft_show, CraftShow);
@@ -3125,26 +3077,26 @@ impl GameEventReaders<'_, '_> {
         take!(tradeskill_recast, UpdateTradeskillRecast);
         take!(gossip_closed, GossipClosed);
         take!(confirm_binder, ConfirmBinder);
-        // **The request before the bounds before the end**, which is the order
-        // the three popups are shown and hidden in: `DUEL_FINISHED` hides both
+        // The duel events: request, then bounds, then finish, which is the
+        // order the popups are shown and hidden in. `DUEL_FINISHED` hides both
         // of the others, so raised first it would hide nothing.
         take!(duel_requested, DuelRequested);
         take!(duel_out_of_bounds, DuelOutOfBounds);
         take!(duel_in_bounds, DuelInBounds);
         take!(duel_finished, DuelFinished);
         take!(confirm_summon, ConfirmSummon);
+        take!(inspect_honor, InspectHonorUpdate);
         take!(time_played, TimePlayedMsg);
-        // **Begin before ready before closed**, which is the order the panel is
-        // written against: the first frames the window, the second fills it and
-        // shows it, and the third takes it down.
+        // The item text events: begin, then ready, then closed, the order the
+        // panel expects. The first sets up the window, the second fills and
+        // shows it, and the third hides it.
         take!(item_text_begin, ItemTextBegin);
         take!(item_text_ready, ItemTextReady);
         take!(item_text_closed, ItemTextClosed);
         take!(merchant_closed, MerchantClosed);
-        // **The mail window's own eight, show before update before close** —
-        // the order every other panel in this list keeps, and for the same
-        // reason: `MAIL_SHOW` is what puts the frame on screen and
-        // `MAIL_INBOX_UPDATE` is what fills it.
+        // The mail window's events: show, then updates, then close, the order
+        // the other panels in this list use. `MAIL_SHOW` shows the frame and
+        // `MAIL_INBOX_UPDATE` fills it.
         take!(mail_show, MailShow);
         take!(mail_send_info, MailSendInfoUpdate);
         take!(mail_money, SendMailMoneyChanged);
@@ -3155,17 +3107,16 @@ impl GameEventReaders<'_, '_> {
         take!(mail_pending, UpdatePendingMail);
         take!(mail_close_item, CloseInboxItem);
         take!(quest_watch, QuestWatchUpdate);
-        // **The stable's four, show before update before paperdoll before
-        // close** — `PET_STABLE_SHOW` is what puts the frame on the screen and
-        // `PET_STABLE_UPDATE` is what fills it, the same order the mail window
-        // above keeps.
+        // The stable's four events: show, update, paperdoll, close.
+        // `PET_STABLE_SHOW` shows the frame and `PET_STABLE_UPDATE` fills it,
+        // the same order as the mail window above.
         take!(pet_stable_show, PetStableShow);
         take!(pet_stable_update, PetStableUpdate);
         take!(pet_stable_paperdoll, PetStableUpdatePaperdoll);
         take!(pet_stable_closed, PetStableClosed);
-        // **The bank's four, opened before redrawn before closed** — the
-        // squares redraw on the open as well, so the order only matters for
-        // a purchase landing on the frame the window opened.
+        // The bank's four events: opened, then the two redraws, then closed.
+        // The slot buttons also redraw on the open, so the order matters only
+        // for a purchase that arrives in the same frame the window opened.
         take!(bankframe_opened, BankframeOpened);
         take!(playerbankslots_changed, PlayerbankslotsChanged);
         take!(playerbankbagslots_changed, PlayerbankbagslotsChanged);
@@ -3176,118 +3127,128 @@ impl GameEventReaders<'_, '_> {
         take!(craft_close, CraftClose);
         take!(taxi_opened, TaximapOpened);
         take!(taxi_closed, TaximapClosed);
+        // The loot window's three events: opened first, closed last, and the
+        // slot clear between, because `LootFrame_OnEvent`'s branch for it
+        // returns early unless the frame is already visible.
         take!(loot_opened, LootOpened);
         take!(loot_cleared, LootSlotCleared);
         take!(loot_closed, LootClosed);
-        // **The cancel before the start**, which is the order a promotion
-        // happens in: a frame is freed and then reused, and the four frames are
-        // picked by `IsVisible()`. Raised the other way round, a fifth roll
-        // would find all four still showing and be dropped by the shipped Lua.
+        // The roll cancel comes before the roll start. A roll frame is freed and
+        // then reused, and the four frames are chosen by `IsVisible()`. In the
+        // other order, a fifth roll would find all four still shown and the
+        // shipped Lua would drop it.
         take!(roll_cancelled, CancelLootRoll);
         take!(roll_started, StartLootRoll);
         take!(roll_confirm, ConfirmLootRoll);
+        // The mirror timer stop comes before the start; this is the only order
+        // that matters among the three. `MirrorTimer_Show` takes the first free
+        // frame, so a bar being replaced must release its frame before the
+        // replacement looks for one. Otherwise a breath bar restated while a
+        // fatigue bar is shown takes the second frame, and the first keeps
+        // drawing a stale bar permanently.
         take!(mirror_stop, MirrorTimerStop);
         take!(mirror_start, MirrorTimerStart);
         take!(mirror_pause, MirrorTimerPause);
         take!(ui_error, UiErrorMessage);
         take!(ui_info, UiInfoMessage);
         take!(target_changed, PlayerTargetChanged);
-        // **After the target change and never before the plate is filled.** Its
-        // one handler recolours `GameTooltipTextLeft1`, so it has to arrive with
-        // the line already holding this unit's name — see
-        // [`MouseoverUnitChanged`].
+        // `UPDATE_MOUSEOVER_UNIT` comes after the target change, and never
+        // before the tooltip is filled. Its one handler recolours
+        // `GameTooltipTextLeft1`, so the line must already hold this unit's
+        // name; see [`MouseoverUnitChanged`].
         take!(mouseover, MouseoverUnitChanged);
         take!(unit_name, UnitNameUpdate);
         take!(unit_level, UnitLevelChanged);
-        // …and the two the XP bar is drawn from, beside the level for the same
-        // reason: a ding moves all three in one block.
+        // The two XP bar events, beside the level because a level-up changes
+        // all three in one update block.
         take!(player_xp, PlayerXpUpdate);
         take!(exhaustion, UpdateExhaustion);
-        // **The level-up before the auras**, because gaining one applies a
-        // handful of them (and the chat line about it belongs with the news
-        // rather than after the icons).
+        // The level-up comes before the auras, because gaining a level applies
+        // several auras, and the chat line about the level-up should come
+        // before the aura icons change.
         take!(level_up, PlayerLevelUp);
         take!(player_auras, PlayerAurasChanged);
         take!(unit_aura, UnitAuraChanged);
-        // **The pet before the vitals**, because `UNIT_PET` is what *shows* the
-        // frame whose bars the next three events move: a health event that
-        // arrives first lands on a hidden frame and is not repeated.
+        // `UNIT_PET` comes before the health and power events, because it shows
+        // the frame whose bars those events update. A health event delivered
+        // first reaches a hidden frame and is not repeated.
         take!(unit_pet, UnitPetChanged);
         take!(unit_faction, UnitFactionChanged);
         take!(unit_health, UnitHealthChanged);
         take!(unit_max_health, UnitMaxHealthChanged);
         take!(unit_displaypower, UnitDisplaypowerChanged);
         take!(unit_power, UnitPowerChanged);
-        // The character sheet's nine, after the vitals and before the book —
-        // they are news about the same unit one layer down.
+        // The character sheet's nine events, after health and power and before
+        // the spellbook; they describe the same unit in more detail.
         take!(unit_stats, UnitStatsChanged);
-        // **The equipment before the bags**, because moving an item from a bag
-        // to a slot is both, and the paper doll's `OnEvent` is what fills the
-        // slot the bag frame is about to report empty.
-        // **The lock before both of them**, because it is the *earlier* half of
-        // the same gesture: a pick-up raises only this one and the move it
-        // becomes raises the two below a round trip later. Delivering it after
-        // them would grey a square in the frame the item had already left it.
+        // `ITEM_LOCK_CHANGED` comes before the equipment and bag events, because
+        // it is the earlier half of the same action: a pick-up raises only this
+        // one, and the move it becomes raises the two below a round trip later.
+        // Delivering it after them would grey a slot in the frame the item had
+        // already left.
+        //
+        // The equipment event comes before the bag events, because moving an
+        // item from a bag to an equipment slot raises both, and the paper doll's
+        // `OnEvent` fills the slot that the bag frame then reports empty.
         take!(item_lock, ItemLockChanged);
         take!(unit_inventory, UnitInventoryChanged);
         take!(unit_quest_log, UnitQuestLogChanged);
         take!(bag_update, BagUpdate);
         take!(player_money, PlayerMoney);
-        // **The book before the bar**, because a slot's spell is a row in it:
-        // `SPELLS_CHANGED` is what the client raises when the *set* changed and
-        // `ACTIONBAR_SLOT_CHANGED` when a button's contents did, and the second
-        // is downstream of the first at a login.
+        // The spellbook comes before the action bar, because a slot's spell is a
+        // row in the book. The client raises `SPELLS_CHANGED` when the set of
+        // spells changed and `ACTIONBAR_SLOT_CHANGED` when a button's contents
+        // changed, and at login the second depends on the first.
         take!(spells_changed, SpellsChanged);
-        // **The pet's bar before its cooldowns**, for the reason the two
-        // action-bar names above are in that order: the cooldown handler indexes
-        // the slots the first one drew.
+        // The pet bar comes before its cooldowns, for the same reason the
+        // action bar's slot event comes before its cooldown event below: the
+        // cooldown handler indexes the slots the first event drew.
         take!(pet_bar, PetBarChanged);
         take!(pet_bar_cooldown, PetBarCooldownChanged);
-        // **The pet grid after the bar's own news**, for the reason the action
-        // bar's pair is: `PetActionBar_ShowGrid` shows buttons an update would
-        // hide, so a show delivered first is undone by the update behind it.
+        // The pet grid events come after the pet bar update, as the action bar's
+        // pair does: `PetActionBar_ShowGrid` shows buttons an update would hide,
+        // so a show delivered first is undone by the update after it.
         take!(pet_bar_show_grid, PetBarShowGrid);
         take!(pet_bar_hide_grid, PetBarHideGrid);
         take!(confirm_pet_unlearn, ConfirmPetUnlearn);
-        // **The form list before the bonus bar**, because a learned form can
-        // move both and `BonusActionBar_OnEvent` reads `GetBonusBarOffset()`
+        // The form list comes before the bonus bar, because a learned form can
+        // change both, and `BonusActionBar_OnEvent` reads `GetBonusBarOffset()`
         // when the second arrives.
         take!(shapeshift_forms, UpdateShapeshiftForms);
-        // The paper doll's two, after the bar for the same reason the cooldowns
-        // are: their handlers read what the bar's redraw established.
+        // The pet paper doll's two events, after the pet bar for the same reason
+        // as the cooldowns: their handlers read what the bar's redraw set up.
         take!(pet_experience, UnitPetExperience);
         take!(pet_training, UnitPetTrainingPoints);
         take!(slot_changed, ActionbarSlotChanged);
-        // **The page before the slots' own news**, because a page change is a
-        // restatement of what all twelve buttons hold rather than a change to
-        // any one of them.
+        // The page change restates what all twelve buttons hold rather than
+        // changing any one of them.
         take!(page_changed, ActionbarPageChanged);
         take!(bonus_changed, ActionbarBonusChanged);
-        // **The grid's two after the slot news and never interleaved with it.**
-        // `ActionButton_OnEvent` answers `ACTIONBAR_SHOWGRID` by *showing* a
-        // button that `ACTIONBAR_SLOT_CHANGED` would have hidden a moment
-        // earlier, so a show delivered first is undone by the update behind it.
+        // The two grid events come after the slot events and are never
+        // interleaved with them. `ActionButton_OnEvent` answers
+        // `ACTIONBAR_SHOWGRID` by showing a button that `ACTIONBAR_SLOT_CHANGED`
+        // would hide, so a show delivered first is undone by the update after
+        // it.
         take!(show_grid, ActionbarShowGrid);
         take!(hide_grid, ActionbarHideGrid);
-        // **After the grid**, because the two arrive together when a carried
-        // item is dropped on the world: the bar puts its empty buttons away and
-        // *then* the box asking about the item goes up.
+        // `DELETE_ITEM_CONFIRM` comes after the grid events, because both arrive
+        // together when a carried item is dropped on the world: the bar hides
+        // its empty buttons and then the popup about the item is shown.
         take!(delete_item, DeleteItemConfirm);
         take!(state, ActionbarUpdateState);
         take!(cooldown, ActionbarUpdateCooldown);
-        // **After the cooldown, because they share a handler arm.**
-        // `ActionButton_OnEvent` answers `ACTIONBAR_UPDATE_USABLE` and
-        // `ACTIONBAR_UPDATE_COOLDOWN` with the identical pair of calls, so the
-        // only thing the order decides is which of the two is the redundant one
-        // when both arrive — and a cast moves the cooldown first.
+        // `ACTIONBAR_UPDATE_USABLE` comes after the cooldown event, because
+        // `ActionButton_OnEvent` answers both with the same pair of calls. The
+        // order only decides which of the two is redundant when both arrive,
+        // and a cast changes the cooldown first.
         take!(usable, ActionbarUpdateUsable);
-        // **After `ACTIONBAR_UPDATE_STATE`, and this is the one order that
-        // matters between the four.** Both arrive on the press that starts a
-        // volley; `ActionButton_UpdateState` re-reads `IsCurrentAction` and
-        // `IsAutoRepeatAction` together and would settle the checked border,
-        // while the flash is a *clock* the flash event starts — so a stop
-        // delivered before the state change leaves the button flashing against
-        // a state that says it should not.
+        // The auto-repeat pair comes after `ACTIONBAR_UPDATE_STATE`; this is the
+        // only order among these four that matters. Both arrive on the press
+        // that starts Auto Shot. `ActionButton_UpdateState` re-reads
+        // `IsCurrentAction` and `IsAutoRepeatAction` together and sets the
+        // checked border, while the flash is a timer the flash event starts. A
+        // stop delivered before the state change leaves the button flashing
+        // while its state says it should not.
         take!(autorepeat_start, StartAutorepeatSpell);
         take!(autorepeat_stop, StopAutorepeatSpell);
         take!(spell_cooldown, SpellUpdateCooldown);
@@ -3300,20 +3261,20 @@ impl GameEventReaders<'_, '_> {
         take!(channel_start, SpellcastChannelStart);
         take!(channel_update, SpellcastChannelUpdate);
         take!(channel_stop, SpellcastChannelStop);
-        // **Chat last**, so a line about something is delivered after the news
-        // that it happened — the order the real client's own combat text keeps.
+        // Chat comes last, so a line about an event is delivered after the event
+        // itself, as in the 1.12.1 client's combat text.
         take!(chat, ChatMessageReceived);
 
-        // --- and the glue's six, whose order between themselves matters ---
+        // ---- GlueXML events, whose order among themselves matters ----
         //
-        // `FRAMES_LOADED` first because `LocalizeFrames()` re-captions the
-        // screens and everything after it draws with the result. Then the screen
-        // change, because `SET_GLUE_SCREEN` *shows* `CharacterSelect`, which
-        // fires its own `OnShow` — and `CharacterSelect_OnShow` reads the list
-        // itself, so the list events after it are a refresh of a populated panel
-        // rather than the thing that populates it. `DISCONNECTED_FROM_SERVER`
-        // last: it puts the login screen back, and anything queued behind it
-        // would be news about a character screen that has just gone.
+        // `FRAMES_LOADED` comes first because `LocalizeFrames()` re-captions the
+        // screens and everything after it draws with the result. The screen
+        // change comes next, because `SET_GLUE_SCREEN` shows `CharacterSelect`,
+        // which runs its `OnShow`, and `CharacterSelect_OnShow` reads the list
+        // itself. The list events after it refresh a populated panel rather
+        // than populate it. `DISCONNECTED_FROM_SERVER` comes last: it returns to
+        // the login screen, and anything queued after it would be about a
+        // character screen that has closed.
         take!(frames_loaded, FramesLoaded);
         take!(addon_list, AddonListUpdate);
         take!(glue_screen, SetGlueScreen);
@@ -3321,24 +3282,25 @@ impl GameEventReaders<'_, '_> {
         take!(first_character, SelectFirstCharacter);
         take!(selected_character, UpdateSelectedCharacter);
         take!(disconnected, DisconnectedFromServer);
-        // **The dialog last, and the close before the open.** Both are raised on
-        // the same session edge — a logon that failed closes the "Connecting"
-        // box and opens the "Unable to connect" one — and `GlueDialog_OnEvent`'s
-        // `CLOSE_STATUS_DIALOG` arm is an unconditional `Hide()`, so the other
-        // order shows the failure for one frame and then hides it.
+        // The dialog events come last, with the close before the open. Both are
+        // raised on the same session change (a failed logon closes the
+        // "Connecting" dialog and opens the "Unable to connect" one), and
+        // `GlueDialog_OnEvent`'s `CLOSE_STATUS_DIALOG` branch is an
+        // unconditional `Hide()`, so the other order shows the failure for one
+        // frame and then hides it.
         take!(close_dialog, CloseStatusDialog);
         take!(open_dialog, OpenStatusDialog);
         out
     }
 }
 
-/// Every event name this client can fire, for the check that counts the gap
-/// against what the interface asks to be told about.
+/// Every event name this client can raise, for the check that counts the
+/// events the interface registers for but this client never raises.
 ///
-/// A list rather than something derived, on the same terms as
-/// [`crate::lua::api::verbs::REGISTERED`]: the point of it is to be *comparable* with
-/// the set of names a `RegisterEvent` call passed in.
-pub const FIRED: [&str; 259] = [
+/// A hand-written list rather than a derived one, like
+/// [`crate::lua::api::verbs::REGISTERED`], so that it can be compared with the
+/// set of names passed to `RegisterEvent`.
+pub const FIRED: [&str; 260] = [
     PlayerDead::EVENT,
     PlayerAlive::EVENT,
     PlayerUnghost::EVENT,
@@ -3399,9 +3361,9 @@ pub const FIRED: [&str; 259] = [
     SpellcastChannelStart::EVENT,
     SpellcastChannelUpdate::EVENT,
     SpellcastChannelStop::EVENT,
-    // The three bars the server counts down — see [`super::timers`]. Two of
-    // them are registered by `MirrorTimer.lua` itself and the start by
-    // `UIParent.lua`, which is the only file that ever calls `MirrorTimer_Show`.
+    // The three mirror timer events; see [`super::timers`]. `MirrorTimer.lua`
+    // registers two of them, and `UIParent.lua`, the only file that calls
+    // `MirrorTimer_Show`, registers the start.
     MirrorTimerStart::EVENT,
     QuestGreetingEvent::EVENT,
     QuestDetail::EVENT,
@@ -3418,6 +3380,7 @@ pub const FIRED: [&str; 259] = [
     DuelInBounds::EVENT,
     DuelFinished::EVENT,
     ConfirmSummon::EVENT,
+    InspectHonorUpdate::EVENT,
     TimePlayedMsg::EVENT,
     ItemTextBegin::EVENT,
     ItemTextReady::EVENT,
@@ -3494,10 +3457,11 @@ pub const FIRED: [&str; 259] = [
     UnitHealthChanged::EVENT,
     UnitMaxHealthChanged::EVENT,
     UnitDisplaypowerChanged::EVENT,
-    // **The nine names the character sheet registers**, one type — see
+    // The nine names the character sheet registers, raised by one type; see
     // `UnitStatsChanged::name`, and `PaperDollFrame_OnLoad` for the spelling.
+    // The other eight follow `PlayerMoney::EVENT` below.
     UnitStatsChanged::EVENT,
-    // …and the three the bags and the paper doll's item buttons run on.
+    // The events the bags and the paper doll's item buttons update on.
     BagUpdate::EVENT,
     UnitInventoryChanged::EVENT,
     UnitQuestLogChanged::EVENT,
@@ -3511,7 +3475,7 @@ pub const FIRED: [&str; 259] = [
     "UNIT_RANGED_ATTACK_POWER",
     "UNIT_ATTACK",
     "PLAYER_DAMAGE_DONE_MODS",
-    // The ten names one type fires under — see `UnitPowerChanged::name`.
+    // The ten names one type is raised under; see `UnitPowerChanged::name`.
     "UNIT_MANA",
     "UNIT_MAXMANA",
     "UNIT_RAGE",
@@ -3522,25 +3486,26 @@ pub const FIRED: [&str; 259] = [
     "UNIT_MAXENERGY",
     "UNIT_HAPPINESS",
     "UNIT_MAXHAPPINESS",
-    // Not a message type: the host raises it itself, once, at the end of
-    // `LuaHost::load_interface` — it is "the chat windows exist now", and the
-    // only thing that applies a chat window's colour and alpha listens for it.
+    // Not a message type: the Lua host raises it once, at the end of
+    // `LuaHost::load_interface`, to say the chat windows now exist. The only
+    // code that applies a chat window's colour and alpha listens for it.
     "UPDATE_CHAT_WINDOWS",
     // Not a message type either: `lua::panels::addons::load_with` raises it
     // with the addon's name as `arg1` after each addon's files and saved
-    // variables have run, at login and from `LoadAddOn`. It is the event
-    // every third-party addon initialises on.
+    // variables have run, at login and from `LoadAddOn`. Third-party addons
+    // initialise on it.
     "ADDON_LOADED",
-    // …and its neighbour, raised the same way and in the same place, once per
-    // chat type: `(name, r, g, b)`. It is the *only* thing that ever writes
-    // `ChatTypeInfo[type].r/g/b`, so without it every line in the game draws
-    // white. The colours are the client's own — `super::chat::DEFAULT_COLOURS`.
+    // Raised in the same way and from the same place as `UPDATE_CHAT_WINDOWS`,
+    // once per chat type: `(name, r, g, b)`. It is the only thing that writes
+    // `ChatTypeInfo[type].r/g/b`, so without it every chat line is white. The
+    // colours are the 1.12.1 client's defaults, in
+    // `super::chat::DEFAULT_COLOURS`.
     "UPDATE_CHAT_COLOR",
-    // **The twenty-six names one type fires under** — see
-    // [`ChatMessageReceived`] and [`super::chat::event_name`], which is where
-    // the mapping from the wire's kind byte lives. Listed in the order
-    // `ChatFrame.lua`'s own `ChatTypeGroup` declares its groups, and checked
-    // against that mapping by `every_kind_maps_to_an_event_the_client_lists_as_fired`.
+    // The twenty-six names one type is raised under; see
+    // [`ChatMessageReceived`] and [`super::chat::event_name`], which maps the
+    // wire's kind byte to a name. Listed in the order `ChatFrame.lua`'s
+    // `ChatTypeGroup` declares its groups, and checked against that mapping by
+    // `every_kind_maps_to_an_event_the_client_lists_as_fired`.
     "CHAT_MSG_SAY",
     "CHAT_MSG_EMOTE",
     "CHAT_MSG_TEXT_EMOTE",
@@ -3567,17 +3532,17 @@ pub const FIRED: [&str; 259] = [
     "CHAT_MSG_IGNORED",
     "CHAT_MSG_SKILL",
     "CHAT_MSG_LOOT",
-    // **…and the forty-five the *combat log* fires under**, which are the
-    // same mechanism and a different producer: `super::log` composes a
-    // sentence and writes a [`ChatMessageReceived`] under one of these, and
-    // `ChatFrame.lua` routes it by the same `ChatTypeGroup` table the
-    // twenty-six above go through.
+    // The forty-five names the combat log is raised under. They use the same
+    // mechanism from a different producer: `super::log` composes a sentence
+    // and writes a [`ChatMessageReceived`] under one of these, and
+    // `ChatFrame.lua` routes it through the same `ChatTypeGroup` table as the
+    // twenty-six above.
     //
     // Listed in chat type id order rather than alphabetically, because that is
-    // the order `vale_assets::interface::chattype::TYPES` holds them in and
-    // the order the six routing tables step through — see
-    // `every_window_the_combat_log_can_route_to_is_listed_as_fired`, which is
-    // what keeps this block and those tables from drifting apart.
+    // the order `vale_assets::interface::chattype::TYPES` holds them in and the
+    // order the six routing tables follow.
+    // `every_window_the_combat_log_can_route_to_is_listed_as_fired` keeps this
+    // block and those tables consistent.
     "CHAT_MSG_COMBAT_SELF_HITS",
     "CHAT_MSG_COMBAT_SELF_MISSES",
     "CHAT_MSG_COMBAT_PET_HITS",
@@ -3623,16 +3588,16 @@ pub const FIRED: [&str; 259] = [
     "CHAT_MSG_SPELL_PERIODIC_HOSTILEPLAYER_BUFFS",
     "CHAT_MSG_SPELL_PERIODIC_CREATURE_DAMAGE",
     "CHAT_MSG_SPELL_PERIODIC_CREATURE_BUFFS",
-    // **The five `Interface\GlueXML\` registers**, which are a different
-    // directory's events and are listed here for the same reason all the rest
-    // are: [`FIRED`] is what `--audit --events` walks and what the unfired-event
-    // count is measured against, and the glue's frames register through the same
-    // `RegisterEvent` the interface's do.
+    // The `Interface\GlueXML\` events. They belong to a different directory and
+    // are listed here for the same reason as the rest: `--audit --events` walks
+    // [`FIRED`] and counts unraised events against it, and the GlueXML frames
+    // register through the same `RegisterEvent` as FrameXML's.
     //
-    // `GlueParent_OnLoad` takes `FRAMES_LOADED` and `SET_GLUE_SCREEN`;
-    // `CharacterSelect_OnLoad` takes `CHARACTER_LIST_UPDATE`,
+    // `GlueParent_OnLoad` registers `FRAMES_LOADED` and `SET_GLUE_SCREEN`;
+    // `CharacterSelect_OnLoad` registers `CHARACTER_LIST_UPDATE`,
     // `UPDATE_SELECTED_CHARACTER` and `SELECT_FIRST_CHARACTER`. Each is raised
-    // by [`crate::glue::glue`] off a real edge of the session rather than on a timer.
+    // by [`crate::glue::glue`] on a session state change rather than on a
+    // timer.
     FramesLoaded::EVENT,
     AddonListUpdate::EVENT,
     SetGlueScreen::EVENT,
@@ -3640,20 +3605,20 @@ pub const FIRED: [&str; 259] = [
     UpdateSelectedCharacter::EVENT,
     SelectFirstCharacter::EVENT,
     DisconnectedFromServer::EVENT,
-    // …and `GlueDialog_OnLoad`'s three, of which this client raises two.
-    // `UPDATE_STATUS_DIALOG` is the reference's progress line — "Authenticating",
-    // "Handshaking" — and there is nothing here to report it from: this client's
-    // logon is one blocking call on the task pool with no states in between.
+    // `GlueDialog_OnLoad` registers three events, of which this client raises
+    // two. `UPDATE_STATUS_DIALOG` is the 1.12.1 client's progress line
+    // ("Authenticating", "Handshaking"), and this client has no source for it:
+    // its logon is one blocking call on the task pool with no intermediate
+    // states.
     OpenStatusDialog::EVENT,
     CloseStatusDialog::EVENT,
 ];
 
-/// Register every one of them.
+/// Registers every message type in this module.
 ///
-/// A message type with no `add_message` is not an error and not a warning — the
-/// writer simply drops it — so the list here has to stay in step with the types
-/// above. `every_event_this_module_defines_is_registered` is the test that says
-/// so.
+/// A message type with no `add_message` produces no error and no warning; the
+/// writer drops the message. This list must therefore match the types above.
+/// `every_event_this_module_defines_is_registered` checks it.
 pub(crate) fn register(app: &mut App) {
     app.add_message::<UiErrorMessage>()
         .add_message::<UiInfoMessage>()
@@ -3702,6 +3667,7 @@ pub(crate) fn register(app: &mut App) {
         .add_message::<DuelInBounds>()
         .add_message::<DuelFinished>()
         .add_message::<ConfirmSummon>()
+        .add_message::<InspectHonorUpdate>()
         .add_message::<TimePlayedMsg>()
         .add_message::<ItemTextBegin>()
         .add_message::<ItemTextReady>()
@@ -3818,7 +3784,8 @@ pub(crate) fn register(app: &mut App) {
         .add_message::<UnitQuestLogChanged>()
         .add_message::<PlayerMoney>()
         .add_message::<ChatMessageReceived>()
-        // …and the glue's six, which are the same mechanism one screen earlier.
+        // The GlueXML events, which use the same mechanism before the world is
+        // entered.
         .add_message::<FramesLoaded>()
         .add_message::<AddonListUpdate>()
         .add_message::<SetGlueScreen>()
@@ -3835,11 +3802,10 @@ mod tests {
     use super::*;
     use bevy::ecs::message::Messages as MessageQueue;
 
-    /// **A message type nobody registered is silently discarded**, which is the
-    /// failure this test exists for: `MessageWriter::write` on an unregistered
-    /// type does not panic and does not log, so the symptom is a frame that never
-    /// updates and no error anywhere. Adding a type above without a line in
-    /// [`register`] is exactly that bug.
+    /// A message type that is not registered is discarded without an error.
+    /// `MessageWriter::write` on an unregistered type does not panic and does
+    /// not log, so the symptom is a frame that never updates. This test catches
+    /// a type added above without a line in [`register`].
     #[test]
     fn every_event_this_module_defines_is_registered() {
         let mut app = App::new();
@@ -3873,11 +3839,11 @@ mod tests {
         assert!(app.world().get_resource::<MessageQueue<ChatMessageReceived>>().is_some());
     }
 
-    /// **A power event is named for the power it carries**, which is the game's
-    /// own shape — `UnitFrameManaBar_Initialize` registers ten names and the
-    /// frame re-reads on whichever arrives. A rage tick delivered as
-    /// `UNIT_MANA` still updates the bar (the handler re-reads either way), but
-    /// an addon registering only `UNIT_RAGE` would never hear it.
+    /// A power event is named for the power it carries, as in FrameXML:
+    /// `UnitFrameManaBar_Initialize` registers ten names and the frame re-reads
+    /// on whichever arrives. A rage change delivered as `UNIT_MANA` still
+    /// updates the bar (the handler re-reads either way), but an addon
+    /// registered only for `UNIT_RAGE` would never receive it.
     #[test]
     fn a_power_event_is_named_for_its_power() {
         use super::super::api::UnitId;
@@ -3885,14 +3851,14 @@ mod tests {
         assert_eq!(rage.name(), "UNIT_RAGE");
         let max_energy = UnitPowerChanged { unit: UnitId::Target, power: 3, max: true };
         assert_eq!(max_energy.name(), "UNIT_MAXENERGY");
-        // …the token rides in arg1, which is what `unit == statusbar.unit`
-        // compares against.
+        // The token is in arg1, which `unit == statusbar.unit` compares
+        // against.
         assert_eq!(rage.args(), vec![EventArg::Text("player".to_string())]);
-        // …an unknown power fires as mana rather than not at all.
+        // An unknown power is raised as mana rather than not at all.
         let odd = UnitPowerChanged { unit: UnitId::Player, power: 9, max: false };
         assert_eq!(odd.name(), "UNIT_MANA");
-        // …and every name any instance can fire under is in [`FIRED`], which is
-        // the list `vale framexml` counts the gap against.
+        // Every name any instance can be raised under is in [`FIRED`], the list
+        // `vale framexml` counts unraised events against.
         for power in 0..=4u8 {
             for max in [false, true] {
                 let name = UnitPowerChanged { unit: UnitId::Player, power, max }.name();
@@ -3901,14 +3867,13 @@ mod tests {
         }
     }
 
-    /// **The property the whole module exists for**: two readers each see every
-    /// message, and neither takes it from the other.
+    /// Two readers each see every message, and neither takes it from the other.
+    /// This module exists to provide that property.
     ///
-    /// This is the one thing a drained queue cannot do — `Messages::take()` empties
-    /// it — and it is what `RegisterEvent` means. A target frame and an action
-    /// button both register `PLAYER_TARGET_CHANGED`; if the first to run consumed
-    /// it, the bar would grey out only on the frames the target frame happened not
-    /// to look.
+    /// A drained queue cannot do this (`Messages::take()` empties it), and it is
+    /// what `RegisterEvent` requires. A target frame and an action button both
+    /// register `PLAYER_TARGET_CHANGED`; if the first to run consumed the
+    /// message, the action button would never see it and would not grey out.
     #[test]
     fn two_readers_each_see_every_message() {
         let mut queue = MessageQueue::<PlayerTargetChanged>::default();
@@ -3923,17 +3888,17 @@ mod tests {
             2,
             "the second reader must not have been starved by the first"
         );
-        // …and each cursor only advances once: a re-read sees nothing new.
+        // Each cursor advances only once: a second read sees nothing new.
         assert_eq!(target_frame.read(&queue).count(), 0);
     }
 
-    /// **Every event name is upper snake case and distinct**, which is the shape
-    /// every name in `Interface\FrameXML\` has.
+    /// Every event name is upper snake case, as every name in
+    /// `Interface\FrameXML\` is, and no name appears twice.
     ///
-    /// The distinctness is the load-bearing half: two types sharing a name would
-    /// deliver one type's arguments under the other's contract, and the frame
-    /// that registered for it reads `arg1` as whichever arrived — a wrong string
-    /// in a bar rather than an error anywhere.
+    /// Distinctness is the more important check. Two types sharing a name would
+    /// deliver one type's arguments where the other's are expected, and the
+    /// registered frame reads `arg1` from whichever arrived, which shows a wrong
+    /// string with no error.
     #[test]
     fn the_names_are_the_games_shape_and_none_repeats() {
         for name in FIRED {
@@ -3946,10 +3911,10 @@ mod tests {
         }
     }
 
-    /// **The arguments are the game's, in the game's order.** `SPELLCAST_START`
-    /// is `(name, ms)` because `CastingBarFrame_OnEvent` reads `arg1` as the text
-    /// and `arg2 / 1000` as the length; swapping them draws a bar labelled with a
-    /// number for a spell called "1500".
+    /// The arguments are the game's, in the game's order. `SPELLCAST_START` is
+    /// `(name, ms)` because `CastingBarFrame_OnEvent` reads `arg1` as the text
+    /// and `arg2 / 1000` as the length. Swapping them draws a bar labelled with
+    /// a number, such as "1500".
     #[test]
     fn a_spellcast_carries_its_name_then_its_length() {
         let start = SpellcastStart {
@@ -3963,8 +3928,8 @@ mod tests {
                 EventArg::Number(3500.0)
             ]
         );
-        // …and an event the game gives no arguments really has none, rather than
-        // a nil placeholder: `arg1` must be *unset* for these.
+        // An event with no arguments in the game has none here, not a nil
+        // placeholder: `arg1` must be unset for these.
         assert!(SpellcastStop.args().is_empty());
         assert!(PlayerTargetChanged.args().is_empty());
         assert_eq!(
@@ -3974,15 +3939,15 @@ mod tests {
         );
     }
 
-    /// **A message type nobody *drains* is as silent as one nobody
-    /// registered.** [`register`] and [`GameEventReaders`] are two lists of the
-    /// same types, and this round added a type to one of them and not the
-    /// other: the nine stat events were written, registered, listed in
-    /// [`FIRED`] — and never delivered, with nothing anywhere to say so.
+    /// A message type that is never drained is lost without an error, as an
+    /// unregistered one is. [`register`] and [`GameEventReaders`] are two lists
+    /// of the same types, and a type can be added to one and not the other. The
+    /// nine stat events were once written, registered and listed in [`FIRED`]
+    /// but had no `take!`, so they were never delivered and nothing reported it.
     ///
-    /// One assertion per group rather than a count, so a missing `take!` names
-    /// itself; the *names* are asserted too, because that is the whole of what
-    /// a `RegisterEvent` can match.
+    /// One assertion per group rather than a count, so a missing `take!` is
+    /// named. The names are asserted too, because the name is all a
+    /// `RegisterEvent` can match.
     #[test]
     fn every_stat_group_reaches_the_drain_under_its_own_name() {
         use super::super::api::UnitId;
@@ -4022,15 +3987,14 @@ mod tests {
         }
     }
 
-    /// **`VARIABLES_LOADED` reaches the interface, and it reaches it first.**
+    /// `VARIABLES_LOADED` reaches the interface, before `PLAYER_ENTERING_WORLD`.
     ///
-    /// The order is the client's own — the saved variables are read at startup
-    /// and the world is entered afterwards — and it is not decoration:
-    /// `UIParent.lua`'s `PLAYER_ENTERING_WORLD` arm spends option globals that
-    /// four frames catch up with on the earlier event, so delivering them the
-    /// other way round runs the second on values the first was about to change.
-    /// Both are written in the same tick by [`crate::lua::host`], so nothing but
-    /// the drain's own order decides it.
+    /// This is the 1.12.1 client's order: saved variables are read at startup
+    /// and the world is entered afterwards. `UIParent.lua`'s
+    /// `PLAYER_ENTERING_WORLD` handler uses option globals that four frames
+    /// update on the earlier event, so the reverse order runs the second handler
+    /// on values the first was about to change. [`crate::lua::host`] writes both
+    /// in the same tick, so only the drain's order decides it.
     #[test]
     fn the_variables_are_loaded_before_the_world_is_entered() {
         use bevy::ecs::system::RunSystemOnce;
@@ -4038,7 +4002,7 @@ mod tests {
         assert!(FIRED.contains(&"VARIABLES_LOADED"));
         let mut app = App::new();
         register(&mut app);
-        // Written in the opposite order on purpose: the drain decides, not the
+        // Written in the opposite order: the drain decides the order, not the
         // writer.
         app.world_mut().write_message(PlayerEnteringWorld);
         app.world_mut().write_message(VariablesLoaded);
@@ -4058,15 +4022,13 @@ mod tests {
         assert!(drained.iter().any(|(name, args)| *name == "VARIABLES_LOADED" && args.is_empty()));
     }
 
-    /// **`UPDATE_BINDINGS` reaches the drain**, which is the whole of what
-    /// re-draws a bar button's grey hotkey label after a rebind.
+    /// `UPDATE_BINDINGS` reaches the drain. It is the only event that redraws an
+    /// action button's grey hotkey label after a rebind.
     ///
-    /// The name is the only thing that matters here and it is the thing that
-    /// can be wrong in four places at once — the message type, the reader on
+    /// The name can be wrong in four places: the message type, the reader on
     /// [`GameEventReaders`], the `take!` line and [`FIRED`]. `ActionButton.lua`
-    /// is the only frame in the directory that registers for it, so a name that
-    /// never arrives is a bar that keeps drawing the key you just unbound with
-    /// nothing anywhere saying why.
+    /// is the only FrameXML frame that registers for it, so if it never arrives
+    /// the bar keeps showing the old key and no error is reported.
     #[test]
     fn a_rebind_reaches_the_interface_under_its_own_name() {
         use bevy::ecs::system::RunSystemOnce;
@@ -4085,8 +4047,8 @@ mod tests {
         );
     }
 
-    /// Slot 0 is "every slot", which is `ActionButton.lua`'s own convention and
-    /// not a sentinel this client chose — see [`ActionbarSlotChanged`].
+    /// Slot 0 means every slot. This is `ActionButton.lua`'s convention, not a
+    /// value this client chose; see [`ActionbarSlotChanged`].
     #[test]
     fn slot_zero_means_the_whole_bar() {
         let whole_bar = ActionbarSlotChanged(ALL_SLOTS);

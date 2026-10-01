@@ -26,9 +26,9 @@ use std::time::{Duration, Instant};
 /// A framed world packet: an opcode as it appeared on the wire, plus its body.
 ///
 /// The opcode is kept as a raw `u32` rather than an [`Opcode`] because the
-/// server legitimately sends opcodes this client has not implemented; turning
-/// those into a hard error would break the session for no reason. Use
-/// [`Packet::opcode`] to match on the ones we know.
+/// server sends opcodes this client has not implemented, and treating those as
+/// errors would end the session. Use [`Packet::opcode`] to match on the known
+/// ones.
 #[derive(Debug, Clone)]
 pub struct Packet {
     pub code: u32,
@@ -36,7 +36,7 @@ pub struct Packet {
 }
 
 impl Packet {
-    /// The opcode, if it is one we know about.
+    /// The opcode, if this client knows it.
     pub fn opcode(&self) -> Option<Opcode> {
         Opcode::from_code(self.code)
     }
@@ -51,14 +51,14 @@ impl Packet {
     }
 }
 
-/// **What has actually crossed the socket**, in bytes and in packets.
+/// The bytes and packets that have crossed the socket.
 ///
-/// Counted at the two funnels — [`WorldSession::take_packet`] frames every
-/// inbound packet and [`WorldSession::send`] writes every outbound one — rather
-/// than beside the dispatch, because those are the only two places that see the
-/// *wire* rather than the client's reading of it. The difference is not
-/// academic: `recv_until` discards packets before they ever reach
-/// `apply_packet`, and a header is four bytes that no body length includes.
+/// Counted at the two funnels, [`WorldSession::take_packet`] (frames every
+/// inbound packet) and [`WorldSession::send`] (writes every outbound one),
+/// rather than beside the dispatch. Those are the only two places that see the
+/// wire rather than the client's reading of it: `recv_until` discards packets
+/// before they reach `apply_packet`, and the four-byte header is not included
+/// in any body length.
 ///
 /// The bytes are what this client framed and wrote, which is the payload and
 /// its header and not the TCP or IP overhead beneath them.
@@ -72,10 +72,9 @@ pub struct WireCounts {
 
 /// One opcode's share of that traffic.
 ///
-/// `handled` is meaningful for the inbound half only, and it is the number that
-/// matters: an opcode arriving a thousand times with nothing reading it is a
-/// whole subject this client is deaf to, and it looks identical from every other
-/// counter to one that never arrives at all.
+/// `handled` is meaningful for the inbound half only. It separates an opcode
+/// that arrives and is read from one that arrives and is ignored; every other
+/// counter shows an ignored opcode the same way as one that never arrives.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OpcodeFlow {
     pub count: u32,
@@ -83,33 +82,33 @@ pub struct OpcodeFlow {
     pub handled: bool,
 }
 
-/// **The wire, opcode by opcode**, as the debug panel reads it.
+/// Per-opcode wire traffic, as the debug panel reads it.
 ///
 /// Published behind an `Arc` and rebuilt a few times a second rather than
-/// copied into every status snapshot: the renderer asks for
-/// [`crate::socket::session::SessionStatus`] once a frame, and a `BTreeMap` of a
-/// hundred opcode names cloned a hundred times a second to learn nothing is
-/// exactly the trade `LiveSession::world_ms` was split out to avoid.
+/// copied into every status snapshot. The renderer asks for
+/// [`crate::socket::session::SessionStatus`] once a frame, and cloning a
+/// `BTreeMap` of a hundred opcode names at that rate is the cost
+/// `LiveSession::world_ms` was split out to avoid.
 ///
-/// **The names are resolved here and not while counting.** `Packet::name` is a
-/// `format!` — it allocates a `String` per call — so keying the live tables by
-/// name would have put an allocation on the path every packet in the session
-/// takes. They are counted by raw opcode and named once per rebuild, which is
-/// five times a second against a stream that can carry hundreds.
+/// The names are resolved when this is built, not while counting.
+/// `Packet::name` is a `format!` that allocates a `String` per call, so keying
+/// the live tables by name would put an allocation on every packet's path. The
+/// tables are counted by raw opcode and named once per rebuild, five times a
+/// second, against a stream that can carry hundreds of packets a second.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Traffic {
     pub wire: WireCounts,
     /// Every opcode the dispatch saw, and whether anything read it.
     pub inbound: std::collections::BTreeMap<String, OpcodeFlow>,
-    /// …and every one this client sent. `handled` is always true here; a
-    /// packet we wrote is by definition one we meant to.
+    /// Every opcode this client sent. `handled` is always true here, because
+    /// this client wrote each of these packets.
     pub outbound: std::collections::BTreeMap<String, OpcodeFlow>,
 }
 
 /// Name the rows of a table counted by raw opcode.
 ///
-/// The one place a `Traffic` is built from the two live tables — see its own
-/// note on why they are keyed by number.
+/// The only place a `Traffic` is built from the two live tables. See
+/// [`Traffic`] for why they are keyed by number.
 pub fn named(counted: &std::collections::BTreeMap<u32, OpcodeFlow>) -> std::collections::BTreeMap<String, OpcodeFlow> {
     counted
         .iter()
@@ -119,10 +118,9 @@ pub fn named(counted: &std::collections::BTreeMap<u32, OpcodeFlow>) -> std::coll
 
 /// One packet kept whole, so that its body can be read a byte at a time.
 ///
-/// The counters above say how much of each opcode crossed the wire. They cannot
-/// say what any one packet contained, which is the question every parser bug in
-/// this project has started from: a field taken at the wrong offset produces a
-/// plausible value and no diagnostic.
+/// The counters above say how much of each opcode crossed the wire, not what
+/// any one packet contained. A parser that reads a field at the wrong offset
+/// produces a plausible value and no diagnostic, so finding it needs the body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapturedPacket {
     /// Position in the capture order, counting both directions. The two funnels
@@ -149,23 +147,23 @@ impl CapturedPacket {
 
 /// How many packets the capture ring holds. The oldest is dropped to make room.
 ///
-/// A busy realm sends a few hundred packets a second, so this is a few seconds
-/// of stream — long enough to hold the packet that preceded a visible fault and
-/// short enough that a snapshot of it is not a measurable copy.
+/// A busy realm sends a few hundred packets a second, so this holds a few
+/// seconds of stream: enough to keep the packets that preceded a visible fault,
+/// and small enough that copying a snapshot has no measurable cost.
 pub const CAPTURE_PACKETS: usize = 512;
 
 /// How much of each body is kept.
 ///
-/// `SMSG_UPDATE_OBJECT` runs to tens of kilobytes and the fields that matter in
-/// a hand-read are near the front. Keeping the whole of every packet would make
-/// the ring a megabyte and the snapshot a real cost.
+/// `SMSG_UPDATE_OBJECT` runs to tens of kilobytes, and the fields read by hand
+/// are near the front. Keeping every packet whole would make the ring about a
+/// megabyte and make each snapshot expensive.
 pub const CAPTURE_BODY_BYTES: usize = 512;
 
 /// The recent-packet ring, shared by the two funnels that fill it.
 ///
 /// Both the inbound framing and the outbound write run on the session thread,
-/// so the ordering here is the wire's. It is shared rather than kept per-funnel
-/// because two rings would have to be merged, and there is no timestamp
+/// so the order here is the wire order. It is one shared ring rather than one
+/// per funnel because two rings would have to be merged, and no timestamp is
 /// precise enough to merge them by.
 ///
 /// Disarmed, this costs one relaxed atomic load per packet. Armed, it costs a
@@ -180,8 +178,9 @@ pub struct Capture {
 #[derive(Debug, Default)]
 struct CaptureRing {
     packets: std::collections::VecDeque<CapturedPacket>,
-    /// Packets seen since the capture was armed, which is what says whether the
-    /// ring is a window onto a longer stream or the whole of it.
+    /// Packets seen since the capture was armed. Compared with the ring's
+    /// length, it shows whether the ring holds the whole stream or only its
+    /// most recent part.
     seen: u64,
     /// When the capture was armed. `None` while it has never been.
     since: Option<Instant>,
@@ -242,13 +241,13 @@ impl Capture {
     }
 }
 
-/// The capture as a reader sees it — published into
+/// A copy of the capture for readers, published into
 /// [`crate::socket::session::SessionStatus`] behind an `Arc`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CaptureSnapshot {
     pub armed: bool,
     /// Packets seen since the capture was armed. Greater than `packets.len()`
-    /// once the ring has wrapped, which is what says the list is a window.
+    /// once the ring has wrapped, which means older packets were dropped.
     pub seen: u64,
     /// The ring's contents, oldest first.
     pub packets: Vec<CapturedPacket>,
@@ -281,30 +280,30 @@ pub struct WorldSession {
     /// Whether the socket is polled rather than blocking. See
     /// [`WorldSession::set_nonblocking`].
     nonblocking: bool,
-    /// **What has crossed the socket**, counted at the two funnels — see
-    /// [`WireCounts`], and [`WorldSession::wire`], which is the only reader.
+    /// The bytes and packets that have crossed the socket, counted at the two
+    /// funnels. See [`WireCounts`]; [`WorldSession::wire`] is the only reader.
     wire: WireCounts,
-    /// …and the same thing per opcode, for the half this side writes. Keyed by
-    /// raw opcode rather than by name — see [`Traffic`], where the reason is.
-    /// The inbound half is counted at the dispatch instead, where "did anything
-    /// read it" is knowable — see `handler::PumpStats::traffic`.
+    /// The outbound traffic per opcode. Keyed by raw opcode rather than by
+    /// name; [`Traffic`] gives the reason. The inbound half is counted at the
+    /// dispatch instead, where it is known whether a handler read the packet;
+    /// see `handler::PumpStats::traffic`.
     sent: std::collections::BTreeMap<u32, OpcodeFlow>,
     /// What the handshake saw, in order.
     ///
-    /// **A library does not print.** This used to be five `println!`s, which put
-    /// `[world] server seed = 0x…` on the Bevy client's stdout at every login
-    /// and gave the CLI no way to format or suppress it. The facts are worth
-    /// keeping — the seed and the pre-login chatter are the first things to look
-    /// at when a handshake stalls — so they are recorded and the caller decides
-    /// what to do with them. Failures are not in here: those are `io::Error`
-    /// and already carry their own message.
+    /// The library does not print. These lines were once five `println!`s,
+    /// which put `[world] server seed = 0x…` on the Bevy client's stdout at
+    /// every login and gave the CLI no way to format or suppress it. The seed
+    /// and the pre-login packets are the first things to check when a
+    /// handshake stalls, so they are recorded and the caller decides what to do
+    /// with them. Failures are not recorded here: they are `io::Error` values
+    /// with their own message.
     handshake: Vec<String>,
-    /// The recent-packet ring both funnels fill — see [`Capture`].
+    /// The recent-packet ring both funnels fill. See [`Capture`].
     ///
     /// Shared with the dispatch, which fills the inbound half from the same
     /// ring so that the two directions interleave in wire order. Disarmed by
-    /// default: it is a diagnostic, and one relaxed atomic load per packet is
-    /// what it costs while nobody is looking.
+    /// default because it is a diagnostic; while disarmed it costs one relaxed
+    /// atomic load per packet.
     capture: std::sync::Arc<Capture>,
 }
 
@@ -315,26 +314,26 @@ const RX_COMPACT_THRESHOLD: usize = 64 * 1024;
 /// Gap between attempts when polling a non-blocking socket.
 const POLL_INTERVAL: Duration = Duration::from_millis(2);
 
-/// **How long to wait for the world server to accept the connection**, and
-/// then for it to finish the handshake. See `socket::auth`'s pair, which are
-/// the same two numbers for the same two reasons — this is the second half of
-/// the same login and it had the same hole.
+/// How long to wait for the world server to accept the connection, and then
+/// for it to finish the handshake. `socket::auth` has the same two timeouts
+/// with the same values for the same reasons: this is the second half of the
+/// same login, and without them it could also wait indefinitely.
 ///
-/// The handshake budget covers the *whole* of it rather than one read: the
-/// server legitimately sends pre-login chatter (`SMSG_ADDON_INFO` and friends)
-/// before `SMSG_AUTH_RESPONSE`, so a per-read timeout would be renewed by
-/// traffic that is not progress.
+/// The handshake timeout covers the whole handshake rather than one read. The
+/// server sends pre-login packets (`SMSG_ADDON_INFO` and others) before
+/// `SMSG_AUTH_RESPONSE`, so a per-read timeout would be renewed by traffic
+/// that does not advance the handshake.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Open a socket to the world server that **cannot block for ever**, the same
-/// shape as `socket::auth`'s `open_logon`.
+/// Open a socket to the world server with a connect timeout, so the call cannot
+/// block indefinitely. The same structure as `socket::auth`'s `open_logon`.
 ///
-/// The address is the one the *realm row* advertised, so it is as likely to be
-/// unreachable as any other: `realmd.realmlist` naming a host this machine
-/// cannot see is the ordinary private-server misconfiguration, and without a
-/// connect timeout it costs the operating system's own SYN budget — 21 seconds
-/// on Windows — before the screen says anything.
+/// The address is the one the realm row advertised, and it may be unreachable:
+/// a `realmd.realmlist` entry naming a host this machine cannot see is a
+/// common private-server misconfiguration. Without a connect timeout the wait
+/// lasts the operating system's SYN retry period, 21 seconds on Windows, before
+/// the screen shows anything.
 fn open_world(addr: &str) -> io::Result<TcpStream> {
     let mut last = None;
     for resolved in addr.to_socket_addrs()? {
@@ -379,9 +378,9 @@ impl WorldSession {
         Self::connect_within(world_addr, account, session_key, client, HANDSHAKE_TIMEOUT)
     }
 
-    /// …with the handshake budget stated, which is [`connect_as`] plus the one
-    /// parameter a test needs: reproducing "the server accepted and said
-    /// nothing" at fifteen seconds a go is not a unit test.
+    /// [`connect_as`] with the handshake timeout as a parameter. A test needs
+    /// it to reproduce a server that accepts and never answers without waiting
+    /// the default fifteen seconds.
     ///
     /// [`connect_as`]: Self::connect_as
     pub fn connect_within(
@@ -406,14 +405,13 @@ impl WorldSession {
             capture: std::sync::Arc::new(Capture::default()),
         };
 
-        // **The handshake is on a clock**, because every read below is a
-        // blocking one and a server that accepts the socket and then goes quiet
-        // would park this call for ever — see `socket::auth`'s `REPLY_TIMEOUT`,
-        // which is the same bug one round trip earlier and the one that was
-        // actually reported.
+        // The handshake has a deadline because every read below blocks, and a
+        // server that accepts the socket and then sends nothing would block
+        // this call indefinitely. `socket::auth`'s `REPLY_TIMEOUT` handles the
+        // same failure one round trip earlier, where it was first reported.
         let deadline = Instant::now() + budget;
 
-        // ---- SMSG_AUTH_CHALLENGE (plaintext) — grab the server seed -------
+        // ---- SMSG_AUTH_CHALLENGE (plaintext): read the server seed -------
         let challenge = session.recv_by(deadline)?;
         if !challenge.is(Opcode::SMSG_AUTH_CHALLENGE) {
             return Err(err(format!(
@@ -431,9 +429,9 @@ impl WorldSession {
             session_digest(&account_upper, client_seed, server_seed, &session_key);
 
         // No addon block: vmangos validates auth before parsing addons, so its
-        // absence does not block login. If the server ever drops the socket
-        // immediately after this packet, a missing (zlib) addon block is the
-        // first thing to suspect.
+        // absence does not block login. If the server drops the socket
+        // immediately after this packet, check the missing (zlib) addon block
+        // first.
         session.send(
             Opcode::CMSG_AUTH_SESSION,
             &auth_session_body(client.build, &account_upper, client_seed, &digest),
@@ -442,11 +440,11 @@ impl WorldSession {
         // Encryption turns on immediately after the plaintext auth session.
         session.crypt.enable(session_key);
 
-        // ---- wait for SMSG_AUTH_RESPONSE = AUTH_OK ------------------------
+        // ---- SMSG_AUTH_RESPONSE: wait for AUTH_OK ------------------------
         loop {
             let pkt = session.recv_by(deadline)?;
             if !pkt.is(Opcode::SMSG_AUTH_RESPONSE) {
-                // e.g. SMSG_ADDON_INFO or other pre-login chatter.
+                // For example SMSG_ADDON_INFO or another pre-login packet.
                 session
                     .handshake
                     .push(format!("pre-login {} — {} bytes", pkt.name(), pkt.body.len()));
@@ -463,10 +461,10 @@ impl WorldSession {
                 Some(WorldResult::WaitQueue) => {
                     session.handshake.push("in login queue, waiting".into());
                 }
-                // **The byte travels with the sentence** — see
-                // [`crate::codes::Refusal`]. A world refusal indexes its own
-                // `AUTH_*` key, which is a different table from realmd's and is
-                // exactly why the two codes are separate enums.
+                // The error carries the raw code byte as well as the message;
+                // see [`crate::codes::Refusal`]. A world refusal indexes its own
+                // `AUTH_*` key, a different table from realmd's, which is why
+                // the two codes are separate enums.
                 other => {
                     return Err(crate::codes::Refusal::World(code).into_error(format!(
                         "auth response {} — not Ok",
@@ -491,11 +489,10 @@ impl WorldSession {
 
         let mut out = header;
         out.extend_from_slice(body);
-        // **Counted before the write rather than after it.** A short write is
-        // retried inside `write_all` and a failed one takes the session down,
-        // so "what this client asked the socket to carry" is the only number
-        // with a single unambiguous moment — and it is the one a net read-out
-        // is about.
+        // Counted before the write rather than after it. A short write is
+        // retried inside `write_all` and a failed one ends the session, so the
+        // bytes this client handed to the socket is the only count with one
+        // well-defined moment, and it is the count the network readout shows.
         self.wire.packets_out += 1;
         self.wire.bytes_out += out.len() as u64;
         self.capture.note(opcode.code(), body, false);
@@ -511,10 +508,10 @@ impl WorldSession {
 
     /// `write_all`, but tolerant of a non-blocking socket.
     ///
-    /// Client packets are tens of bytes against a socket buffer measured in
-    /// tens of kilobytes, so a short write is close to impossible — but
-    /// `write_all` on a non-blocking socket turns one into a hard error, and a
-    /// half-written *ciphered header* would desynchronise the stream for good.
+    /// Client packets are tens of bytes and the socket buffer is tens of
+    /// kilobytes, so a short write is unlikely. But `write_all` on a
+    /// non-blocking socket turns one into an error, and a half-written ciphered
+    /// header would desynchronise the stream permanently.
     fn write_all(&mut self, mut buf: &[u8]) -> io::Result<()> {
         while !buf.is_empty() {
             match self.stream.write(buf) {
@@ -555,10 +552,10 @@ impl WorldSession {
         let body = self.rx[self.rx_pos..self.rx_pos + body_len].to_vec();
         self.rx_pos += body_len;
         self.pending = None;
-        // **The one place every inbound packet is framed**, which is why the
-        // wire counters live here rather than beside the dispatch: `recv_until`
-        // throws packets away before `apply_packet` ever sees them, and the
-        // four-byte header is not in any body length.
+        // Every inbound packet is framed here and nowhere else, so the wire
+        // counters are updated here rather than beside the dispatch:
+        // `recv_until` discards packets before `apply_packet` sees them, and
+        // the four-byte header is not in any body length.
         self.wire.packets_in += 1;
         self.wire.bytes_in += (body.len() + 4) as u64;
         // Captured here rather than at the dispatch for the same reason the
@@ -569,40 +566,41 @@ impl WorldSession {
         Some(Packet { code, body })
     }
 
-    /// What has crossed this socket — see [`WireCounts`].
+    /// The bytes and packets that have crossed this socket. See
+    /// [`WireCounts`].
     pub fn wire(&self) -> WireCounts {
         self.wire
     }
 
-    /// …and the outbound half of it opcode by opcode, named. Built rather than
-    /// borrowed because the one caller is publishing it into a snapshot behind
-    /// a lock, and because the names are resolved on the way out — see
+    /// The outbound traffic per opcode, keyed by opcode name. Returned as a new
+    /// map rather than a borrow because the only caller publishes it into a
+    /// snapshot behind a lock, and because the names are resolved here. See
     /// [`Traffic`].
     pub fn sent(&self) -> std::collections::BTreeMap<String, OpcodeFlow> {
         named(&self.sent)
     }
 
-    /// The recent-packet ring, for the dispatch to fill the inbound half of and
-    /// for the session loop to arm and read — see [`Capture`].
+    /// The recent-packet ring. The dispatch fills its inbound half, and the
+    /// session loop arms and reads it. See [`Capture`].
     pub fn capture(&self) -> std::sync::Arc<Capture> {
         std::sync::Arc::clone(&self.capture)
     }
 
     /// Switch between a blocking socket and a polled one.
     ///
-    /// **Windows needs this.** A blocking `recv` with `SO_RCVTIMEO` that times
-    /// out repeatedly — which is exactly what a 20 Hz client loop does on a
-    /// quiet socket — eventually fails with `WSA_IO_PENDING` (os error 997) and
-    /// takes the session down with it. Winsock only really supports that option
-    /// for the occasional timeout, not as a polling mechanism.
+    /// Required on Windows. A blocking `recv` with `SO_RCVTIMEO` that times out
+    /// repeatedly, as a 20 Hz session tick does on a quiet socket, eventually
+    /// fails with `WSA_IO_PENDING` (os error 997) and ends the session. Winsock
+    /// supports that option for an occasional timeout, not as a polling
+    /// mechanism.
     ///
     /// In non-blocking mode [`WorldSession::fill`] does the waiting itself, so
     /// `next_packet`'s contract is unchanged either way.
     pub fn set_nonblocking(&mut self, nonblocking: bool) -> io::Result<()> {
         if nonblocking {
-            // Belt and braces: leaving a timeout set on a non-blocking socket
-            // has no effect, but clearing it removes the option that caused the
-            // trouble in the first place.
+            // A timeout set on a non-blocking socket has no effect, but
+            // clearing it removes the option that caused the os error 997
+            // failure.
             self.stream.set_read_timeout(None)?;
             self.timeout = None;
         }
@@ -613,9 +611,9 @@ impl WorldSession {
 
     /// Pull whatever the socket has into the receive buffer.
     ///
-    /// `wait` of `None` blocks. Returns the number of bytes read; zero means
-    /// the wait elapsed with nothing to show for it, which is not an error —
-    /// a quiet world server is the normal state.
+    /// `wait` of `None` blocks. Returns the number of bytes read. Zero means
+    /// the wait elapsed with no data, which is not an error: a quiet world
+    /// server is the normal state.
     fn fill(&mut self, wait: Option<Duration>) -> io::Result<usize> {
         // Reclaim the consumed prefix rather than growing forever.
         if self.rx_pos > 0 && (self.rx_pos >= RX_COMPACT_THRESHOLD || self.rx_pos == self.rx.len())
@@ -629,8 +627,8 @@ impl WorldSession {
         }
 
         if self.timeout != wait {
-            // A zero timeout means "block forever" to the OS, so anything this
-            // small is rounded up rather than silently turned into a hang.
+            // The OS treats a zero timeout as "block forever", so a timeout
+            // below 1 ms is rounded up to 1 ms.
             let effective = wait.map(|d| d.max(Duration::from_millis(1)));
             self.stream.set_read_timeout(effective)?;
             self.timeout = wait;
@@ -656,8 +654,9 @@ impl WorldSession {
         }
     }
 
-    /// One read attempt. `Ok(0)` means "nothing available", never end-of-file —
-    /// a real EOF is an error, because the world stream does not end politely.
+    /// One read attempt. `Ok(0)` means "nothing available", never end-of-file.
+    /// An EOF is returned as an error, because a world session has no orderly
+    /// end of stream.
     fn read_once(&mut self) -> io::Result<usize> {
         let mut buf = [0u8; 16 * 1024];
         match self.stream.read(&mut buf) {
@@ -683,10 +682,10 @@ impl WorldSession {
 
     /// The next packet, or [`io::ErrorKind::TimedOut`] once `deadline` passes.
     ///
-    /// **Only the handshake uses this**, and the deadline is the whole
-    /// handshake rather than one read — see [`HANDSHAKE_TIMEOUT`]. A live
-    /// session wants [`Self::next_packet`], whose quiet socket is an answer
-    /// rather than a failure.
+    /// Only the handshake uses this, and the deadline covers the whole
+    /// handshake rather than one read; see [`HANDSHAKE_TIMEOUT`]. A live
+    /// session uses [`Self::next_packet`], which treats a quiet socket as a
+    /// result rather than a failure.
     fn recv_by(&mut self, deadline: Instant) -> io::Result<Packet> {
         loop {
             if let Some(p) = self.take_packet() {
@@ -705,8 +704,8 @@ impl WorldSession {
 
     /// The next packet, waiting at most `wait` for one to turn up.
     ///
-    /// `Ok(None)` means the socket was quiet — the expected outcome most times
-    /// a live loop asks. Anything already buffered is returned without waiting.
+    /// `Ok(None)` means the socket was quiet, which is the usual result when a
+    /// live loop asks. Anything already buffered is returned without waiting.
     pub fn next_packet(&mut self, wait: Duration) -> io::Result<Option<Packet>> {
         if let Some(p) = self.take_packet() {
             return Ok(Some(p));
@@ -717,18 +716,19 @@ impl WorldSession {
         Ok(self.take_packet())
     }
 
-    /// Read packets until one matching `want` arrives, **discarding the rest**.
+    /// Read packets until one matching `want` arrives, discarding the rest.
     ///
-    /// The discarding is the point to be careful about: those packets do not
-    /// reach [`crate::socket::handler::apply_packet`] and are counted nowhere. That is
-    /// tolerable only because the one caller is [`Self::char_enum`], which runs
-    /// before `CMSG_PLAYER_LOGIN` — the client is not in the world yet, so
-    /// nothing dropped here describes anything it is tracking. **Do not reach
-    /// for this once the world burst has started**; it is a hole, and a packet
-    /// swallowed there would be invisible.
+    /// The discarded packets do not reach
+    /// [`crate::socket::handler::apply_packet`] and are not counted by the
+    /// dispatch. This is acceptable only because the one caller is
+    /// [`Self::char_enum`], which runs before `CMSG_PLAYER_LOGIN`: the client
+    /// is not in the world yet, so no discarded packet describes anything it
+    /// tracks. Do not call this after the world burst has started, because a
+    /// packet discarded there would be lost without a trace.
     ///
-    /// What was skipped is recorded rather than printed, on the same terms as
-    /// the handshake: it is the first thing to look at when this hangs.
+    /// Each skipped packet is recorded in the handshake log rather than
+    /// printed, for the same reason as the handshake's: it is the first thing
+    /// to check when this hangs.
     pub fn recv_until(&mut self, want: Opcode) -> io::Result<Packet> {
         loop {
             let pkt = self.recv()?;
@@ -743,18 +743,18 @@ impl WorldSession {
         }
     }
 
-    /// …and the same thing with a deadline on it, for a caller that is holding
-    /// a **frame** open rather than a task.
+    /// [`Self::recv_until`] with a deadline, for a caller that blocks a frame
+    /// rather than a task.
     ///
-    /// [`Self::recv_until`] blocks for ever, which is right for the two
-    /// exchanges that run on the task pool and wrong for the one that runs on
-    /// the render thread: `CMSG_CHAR_CREATE` is answered from a database write
-    /// and the window is stopped until it comes back. See
-    /// `crate::play::charcreate::create_character`, which says why that one is not a
-    /// task.
+    /// [`Self::recv_until`] blocks indefinitely. That suits the two exchanges
+    /// that run on the task pool, but not the one that runs on the render
+    /// thread: `CMSG_CHAR_CREATE` is answered after a database write, and the
+    /// window does not update until the answer arrives. See
+    /// `crate::play::charcreate::create_character` for why that exchange is not
+    /// a task.
     ///
-    /// The elapsed budget is the *whole* wait rather than per packet, so a
-    /// server that keeps sending something else cannot extend it indefinitely.
+    /// The timeout covers the whole wait rather than each packet, so a server
+    /// that keeps sending other packets cannot extend it.
     pub fn recv_until_within(&mut self, want: Opcode, wait: Duration) -> io::Result<Packet> {
         match self.try_recv_until_within(want, wait)? {
             Some(pkt) => Ok(pkt),
@@ -762,16 +762,17 @@ impl WorldSession {
         }
     }
 
-    /// …and the same wait again for a caller to whom **silence is an answer**.
+    /// [`Self::recv_until_within`] for a caller that treats no reply as a
+    /// valid answer.
     ///
-    /// `Ok(None)` is the deadline passing; an `Err` is the socket. The two are
-    /// one `io::Error` in [`Self::recv_until_within`] and that is right for
-    /// every exchange the server always answers — but not for every exchange.
-    /// `HandleCharDeleteOpcode` has **three** paths that `return` without
-    /// sending anything at all (a character still loaded, a guid it cannot find,
-    /// a guid belonging to another account), so a delete that goes quiet is the
-    /// server declining rather than the connection going away, and treating it
-    /// as the latter throws away a working character screen. See
+    /// `Ok(None)` means the deadline passed; an `Err` is a socket error.
+    /// [`Self::recv_until_within`] returns both as one `io::Error`, which is
+    /// correct for exchanges the server always answers. Character deletion is
+    /// not one: vmangos `HandleCharDeleteOpcode` has three paths that `return`
+    /// without sending anything (a character still loaded, a guid it cannot
+    /// find, a guid belonging to another account). A delete with no reply is
+    /// the server declining, not the connection closing, and treating it as a
+    /// closed connection would discard a working character screen. See
     /// [`crate::play::charcreate::delete_character`].
     pub fn try_recv_until_within(
         &mut self,
@@ -805,13 +806,12 @@ impl WorldSession {
         Ok(parse_char_enum(&pkt.body))
     }
 
-    /// **Which world server this actually is**, as the socket sees it.
+    /// The world server's address as the socket reports it.
     ///
     /// Not the configured string: a realmlist line and a realm-list entry can
-    /// name one machine two ways — `localhost` against `127.0.0.1` — and
-    /// anything keyed by the *name* would then keep two of whatever it is
-    /// keying. `None` if the socket cannot say, which
-    /// on a live connection it always can.
+    /// name one machine two ways (`localhost` and `127.0.0.1`), and anything
+    /// keyed by the name would then keep two entries for one server. `None` if
+    /// the socket cannot report it, which does not happen on a live connection.
     pub fn peer_address(&self) -> Option<String> {
         self.stream.peer_addr().ok().map(|a| a.to_string())
     }
@@ -830,10 +830,10 @@ impl WorldSession {
 
     /// Send everything a handler queued while the world lock was held.
     ///
-    /// See [`crate::socket::handler`]: a reply is *collected* rather than written,
-    /// because a socket write under that lock blocks every reader on network
-    /// latency. This is where it actually goes out, and the caller has released
-    /// the lock by then.
+    /// See [`crate::socket::handler`]: a reply is queued rather than written,
+    /// because a socket write under that lock makes every reader wait on
+    /// network latency. This method writes the queued replies, after the caller
+    /// has released the lock.
     pub fn flush(&mut self, replies: &mut Replies) -> io::Result<()> {
         for (opcode, body) in replies.take() {
             self.send(opcode, &body)?;
@@ -844,14 +844,14 @@ impl WorldSession {
     /// Read packets for up to `budget`, folding object updates into `world`.
     ///
     /// Returns once the server goes quiet for `idle_timeout` or the budget
-    /// expires — the world stream never "ends", so a caller-supplied stopping
-    /// condition is mandatory.
+    /// expires. The world stream has no end, so the caller must supply the
+    /// stopping condition.
     ///
-    /// **A snapshot still answers the packets that must be answered.** It has no
-    /// [`crate::socket::handler::LocalState`] — there is no simulation here to resync —
-    /// but a teleport left unacknowledged holds the *session*, not just the
-    /// position, so the replies go out. Before the dispatch was unified this
-    /// path did not handle those packets at all.
+    /// A snapshot still answers the packets that require an answer. It has no
+    /// [`crate::socket::handler::LocalState`], because there is no simulation
+    /// here to resync, but an unacknowledged teleport stalls the whole session,
+    /// not only the position, so the replies are sent. Before the dispatch was
+    /// unified, this path did not handle those packets.
     pub fn pump(
         &mut self,
         world: &mut ObjectManager,
@@ -881,9 +881,10 @@ impl WorldSession {
         Ok(stats)
     }
 
-    /// Ask what a creature entry actually is. The answer arrives asynchronously
-    /// as `SMSG_CREATURE_QUERY_RESPONSE` and is picked up by [`Self::pump`],
-    /// so send a batch and then pump once rather than blocking per entry.
+    /// Ask the server for a creature entry's template. The answer arrives
+    /// asynchronously as `SMSG_CREATURE_QUERY_RESPONSE` and is picked up by
+    /// [`Self::pump`], so send a batch and then pump once rather than blocking
+    /// per entry.
     pub fn query_creature(&mut self, entry: u32, guid: u64) -> io::Result<()> {
         self.send(
             Opcode::CMSG_CREATURE_QUERY,
@@ -903,8 +904,8 @@ impl WorldSession {
         Ok(pending.len())
     }
 
-    /// The same for the items players are wearing, whose *appearance* only the
-    /// server can name — `Item.dbc` is not in the 1.12 archives.
+    /// The same for the items players are wearing. Only the server can give
+    /// an item's appearance, because `Item.dbc` is not in the 1.12 archives.
     pub fn request_unknown_items(&mut self, world: &ObjectManager) -> io::Result<usize> {
         let pending = world.unresolved_item_entries();
         for entry in &pending {
@@ -916,8 +917,8 @@ impl WorldSession {
         Ok(pending.len())
     }
 
-    /// The same for the *players* in view, who are named by GUID rather than by
-    /// entry — they have no template to share.
+    /// The same for the players in view. They are queried by GUID rather than
+    /// by entry, because players have no template.
     pub fn request_unknown_players(&mut self, world: &ObjectManager) -> io::Result<usize> {
         let pending = world.unresolved_player_guids();
         for guid in &pending {
@@ -926,7 +927,7 @@ impl WorldSession {
         Ok(pending.len())
     }
 
-    /// The same for game objects — chests, doors, mailboxes, campfires.
+    /// The same for game objects: chests, doors, mailboxes, campfires.
     pub fn request_unknown_gameobjects(&mut self, world: &ObjectManager) -> io::Result<usize> {
         let pending = world.unresolved_gameobject_entries();
         for (entry, guid) in &pending {
@@ -945,11 +946,12 @@ impl WorldSession {
 
     /// Tell the server which unit this client is driving.
     ///
-    /// **Movement does not work without this.** `Player::GetConfirmedMover`
-    /// opens with `if (!m_session->GetClientMoverGuid()) return nullptr;` — the
-    /// comment beside it reads "no mover client side, is this a fake client?" —
-    /// and `HandleMovementOpcodes` returns immediately on a null mover. Every
-    /// `MSG_MOVE_*` is then dropped in silence: no error, no kick, nothing moves.
+    /// Movement does not work without this. In vmangos,
+    /// `Player::GetConfirmedMover` opens with
+    /// `if (!m_session->GetClientMoverGuid()) return nullptr;` (commented "no
+    /// mover client side, is this a fake client?"), and `HandleMovementOpcodes`
+    /// returns immediately on a null mover. Every `MSG_MOVE_*` is then dropped
+    /// with no error and no disconnect, and nothing moves.
     ///
     /// The GUID is a plain u64 here, not the packed form (`recvData >> guid`
     /// on an `ObjectGuid` reads `uint64` in 1.12).
@@ -959,31 +961,30 @@ impl WorldSession {
 
     /// Send one `MSG_MOVE_*` packet.
     ///
-    /// Unlike the server's own relay of these packets, the client's copy has no
-    /// GUID prefix — the server already knows who is talking.
+    /// Unlike the server's relay of these packets, the client's copy has no
+    /// GUID prefix, because the server knows which session sent it.
     pub fn send_movement(&mut self, opcode: Opcode, info: &MovementInfo) -> io::Result<()> {
         self.send(opcode, &info.to_bytes())
     }
 
     /// Start swinging at a unit, and stop again.
     ///
-    /// `HandleAttackSwingOpcode` is `recv_data >> guid` on an `ObjectGuid`, so a
-    /// plain u64 and not the packed form — the same asymmetry as
+    /// vmangos `HandleAttackSwingOpcode` reads `recv_data >> guid` on an
+    /// `ObjectGuid`, so the body is a plain u64, not the packed form, as for
     /// `CMSG_SET_ACTIVE_MOVER` and `CMSG_NAME_QUERY`. No selection is needed
     /// first; the handler resolves the GUID against the map itself.
     ///
-    /// This exists to make the *server* fight back. A creature that has a victim
-    /// is the only way to see the packets an attacking unit generates — a chase
-    /// spline, `UPDATEFLAG_MELEE_ATTACKING`, `SMSG_ATTACKERSTATEUPDATE` — and
-    /// they cannot be observed by walking around.
+    /// This exists to make a server creature attack back. Only a creature with
+    /// a victim generates the packets of an attacking unit (a chase spline,
+    /// `UPDATEFLAG_MELEE_ATTACKING`, `SMSG_ATTACKERSTATEUPDATE`), and they
+    /// cannot be observed by walking around.
     pub fn attack_swing(&mut self, guid: u64) -> io::Result<()> {
         self.send(Opcode::CMSG_ATTACKSWING, &plain_guid_body(guid))
     }
 
-    /// **`CMSG_RESET_INSTANCES`** — an empty body, and the opcode is the whole
-    /// message.
+    /// `CMSG_RESET_INSTANCES`, with an empty body.
     ///
-    /// `HandleResetInstancesOpcode` reads nothing at all: it resets the group's
+    /// vmangos `HandleResetInstancesOpcode` reads nothing: it resets the group's
     /// bindings when the caller leads one and the player's otherwise. There is
     /// no acknowledgement; the only thing that can come back is
     /// `SMSG_INSTANCE_RESET_FAILED`.
@@ -995,53 +996,54 @@ impl WorldSession {
         self.send(Opcode::CMSG_ATTACKSTOP, &[])
     }
 
-    /// **Stop the ranged auto-repeat** — Auto Shot, a wand's Shoot.
+    /// Stop the ranged auto-repeat spell (Auto Shot, a wand's Shoot).
     ///
-    /// An empty body: `HandleCancelAutoRepeatSpellOpcode` reads nothing at all
-    /// and is `GetMover()->InterruptSpell(CURRENT_AUTOREPEAT_SPELL)`, so the
-    /// opcode *is* the message, the same way each of the five
-    /// `SMSG_ATTACKSWING_*` refusals is.
+    /// An empty body. vmangos `HandleCancelAutoRepeatSpellOpcode` reads nothing
+    /// and calls `GetMover()->InterruptSpell(CURRENT_AUTOREPEAT_SPELL)`, so the
+    /// opcode alone is the message, as with each of the five
+    /// `SMSG_ATTACKSWING_*` refusals.
     ///
-    /// **There is no matching "start".** One auto-repeat spell is begun by an
-    /// ordinary `CMSG_CAST_SPELL` — `Spell::prepare` sees
-    /// `IsAutoRepeatRangedSpell()` and files it in `CURRENT_AUTOREPEAT_SPELL`
+    /// There is no matching start opcode. An auto-repeat spell is started by an
+    /// ordinary `CMSG_CAST_SPELL`: `Spell::prepare` sees
+    /// `IsAutoRepeatRangedSpell()` and stores it in `CURRENT_AUTOREPEAT_SPELL`
     /// instead of casting it, and `Unit::_UpdateAutoRepeatSpell` then fires a
-    /// triggered copy on the ranged attack timer for as long as it stands. So
-    /// the loop's two ends are asymmetric on the wire: a cast starts it and
-    /// this stops it, and without this a client can only ever turn Auto Shot
-    /// **on**.
+    /// triggered copy on the ranged attack timer until it is cancelled. A cast
+    /// starts the repeat and this packet stops it; without this packet a client
+    /// can turn Auto Shot on but never off.
     pub fn cancel_auto_repeat(&mut self) -> io::Result<()> {
         self.send(Opcode::CMSG_CANCEL_AUTO_REPEAT_SPELL, &[])
     }
 
-    /// **Draw or put away the weapons** — and the direction of this packet is
-    /// the whole point of it.
+    /// Draw or put away the weapons. The client decides the sheath state and
+    /// sends it to the server, not the other way round.
     ///
-    /// `UNIT_FIELD_BYTES_2` byte 0 reads like a field the server owns. It is
-    /// not: `HandleSetSheathedOpcode` is the *only* thing in vmangos that writes
-    /// a `Player`'s, so for our own character the update field is an **echo of
-    /// this packet** and never its source. A client that waits for the server to
-    /// draw its weapon waits for ever, which is exactly how this client came to
-    /// fight everything in the game with its fists. `vale_assets::look::sheath` is
-    /// where the decision is made, and when.
+    /// `UNIT_FIELD_BYTES_2` byte 0 looks like a field the server owns, but
+    /// `HandleSetSheathedOpcode` is the only code in vmangos that writes it for
+    /// a `Player`. For the player's own character the update field is an echo
+    /// of this packet, never its source. A client that waits for the server to
+    /// draw its weapon never draws it; this client did that once, and its
+    /// character fought unarmed. `vale_assets::look::sheath` decides the state
+    /// and when to send it.
     ///
-    /// `u32 sheathed`, and vmangos drops the packet silently for anything at or
-    /// above [`MAX_SHEATH_STATE`] — so an out-of-range value is not refused, it
-    /// just leaves the two ends disagreeing. Clamped by the caller.
+    /// The body is `u32 sheathed`. vmangos drops the packet without a reply for
+    /// any value at or above [`MAX_SHEATH_STATE`], so an out-of-range value is
+    /// not refused; it leaves the client and server disagreeing. The caller
+    /// clamps it.
     pub fn set_sheathed(&mut self, state: u32) -> io::Result<()> {
         self.send(Opcode::CMSG_SETSHEATHED, &set_sheathed_body(state))
     }
 
-    /// Tell the server which unit is selected — **a plain u64, like the two
-    /// above it**.
+    /// Tell the server which unit is selected. The body is a plain u64, as for
+    /// `CMSG_SET_ACTIVE_MOVER` and `CMSG_ATTACKSWING`.
     ///
-    /// This does not *make* a selection. The client's own target is decided the
-    /// instant the player clicks and the ring appears with no round trip; what
-    /// this buys is everything the server does with knowing: it writes the guid
-    /// into our `UNIT_FIELD_TARGET` so other people see who we are looking at,
-    /// makes the target's faction visible on the reputation list, drops combo
-    /// points when a rogue or druid switches, and re-aims an auto-shot.
-    /// `HandleSetSelectionOpcode` reads `recv_data >> guid` on an `ObjectGuid`.
+    /// This does not make the selection. The client sets its target when the
+    /// player clicks, and the selection ring appears with no round trip. This
+    /// packet lets the server act on the selection: it writes the guid into the
+    /// player's `UNIT_FIELD_TARGET` so other players see the target, makes the
+    /// target's faction visible on the reputation list, drops combo points when
+    /// a rogue or druid switches target, and re-aims an auto-shot.
+    /// vmangos `HandleSetSelectionOpcode` reads `recv_data >> guid` on an
+    /// `ObjectGuid`.
     ///
     /// Zero is a legitimate value and means "nothing selected".
     pub fn set_selection(&mut self, guid: u64) -> io::Result<()> {
@@ -1050,14 +1052,14 @@ impl WorldSession {
 
     /// Cast a spell, at a unit or at nobody.
     ///
-    /// **The target block is a mask and the mask may be empty.** See
-    /// [`crate::play::spells::CastTarget`]: a spell that names its own targets — every
-    /// self-buff in the game — is sent with `TARGET_FLAG_SELF`, which is zero
-    /// and carries no guid, and shipping the current selection with one instead
-    /// is how Ice Armor comes back "Invalid target".
+    /// The target block is a mask, and the mask may be empty. See
+    /// [`crate::play::spells::CastTarget`]: a spell that chooses its own
+    /// targets, such as every self-buff, is sent with `TARGET_FLAG_SELF`, which
+    /// is zero and carries no guid. Sending the current selection instead makes
+    /// the server answer Ice Armor with "Invalid target".
     ///
-    /// The server answers `SMSG_CAST_RESULT` either way, and only then the
-    /// ordinary `SMSG_SPELL_START`/`SMSG_SPELL_GO` that everybody else's cast
+    /// The server answers `SMSG_CAST_RESULT` in both cases, followed by the
+    /// same `SMSG_SPELL_START`/`SMSG_SPELL_GO` that any other unit's cast
     /// produces.
     pub fn cast_spell(
         &mut self,
@@ -1078,11 +1080,12 @@ impl WorldSession {
         )
     }
 
-    /// Drop a buff we are carrying — `BuffButton_OnClick`'s right-click.
+    /// Remove a buff on the player, as `BuffButton_OnClick` does on a
+    /// right-click.
     ///
-    /// See [`crate::play::spells::cancel_aura_body`] for why this takes a spell id
-    /// where every other aura packet is slot-keyed, and for what the server does
-    /// with one it will not honour (nothing, silently).
+    /// See [`crate::play::spells::cancel_aura_body`] for why this takes a spell
+    /// id where every other aura packet is keyed by slot, and for what the
+    /// server does with a request it will not honour (nothing, with no reply).
     pub fn cancel_aura(&mut self, spell_id: u32) -> io::Result<()> {
         self.send(
             Opcode::CMSG_CANCEL_AURA,
@@ -1090,16 +1093,16 @@ impl WorldSession {
         )
     }
 
-    /// **Remember what is on this button** — `CMSG_SET_ACTION_BUTTON`.
+    /// Store an action button's contents on the server:
+    /// `CMSG_SET_ACTION_BUTTON`.
     ///
-    /// The one packet in the game whose whole content is a client decision: the
-    /// bar is the client's state and this asks the server to store it for the
-    /// next login. It is answered with nothing at all, so there is no echo to
-    /// wait for and no failure to report — see
-    /// [`crate::play::spells::set_action_button_body`], and note that a *removal* is
-    /// this same packet with a zero word rather than a different one.
+    /// The action bar is client state, and this packet asks the server to keep
+    /// it for the next login. The server sends no reply, so there is no echo to
+    /// wait for and no failure to report. See
+    /// [`crate::play::spells::set_action_button_body`]. Clearing a button is
+    /// this same packet with a zero word, not a different opcode.
     ///
-    /// The slot is **zero-based**, matching `SMSG_ACTION_BUTTONS`' own indexing.
+    /// The slot is zero-based, matching the indexing of `SMSG_ACTION_BUTTONS`.
     pub fn set_action_button(&mut self, slot: u8, packed: u32) -> io::Result<()> {
         self.send(
             Opcode::CMSG_SET_ACTION_BUTTON,
@@ -1107,11 +1110,10 @@ impl WorldSession {
         )
     }
 
-    /// **Remember which extra action bars are on** — `CMSG_SET_ACTIONBAR_TOGGLES`.
+    /// Store which extra action bars are shown: `CMSG_SET_ACTIONBAR_TOGGLES`.
     ///
-    /// The same shape as [`Self::set_action_button`] and for the same reason —
-    /// the layout is the client's and the server is only being told — but with
-    /// one difference worth knowing: this one *does* come back, as
+    /// Like [`Self::set_action_button`], the layout is client state and the
+    /// server only stores it. Unlike it, this value comes back, as
     /// `PLAYER_FIELD_BYTES` byte 2 in the next values block. See
     /// [`crate::play::spells::set_actionbar_toggles_body`].
     pub fn set_actionbar_toggles(&mut self, mask: u8) -> io::Result<()> {
@@ -1121,12 +1123,13 @@ impl WorldSession {
         )
     }
 
-    /// **Right-click something that is carried** — `CMSG_USE_ITEM`.
+    /// Use a carried item (a right-click in a bag): `CMSG_USE_ITEM`.
     ///
-    /// The pair is the *server's* numbering, not the interface's; see
-    /// [`crate::play::items::server_container_slot`], which is the one place the two
-    /// are crossed. `spell_index` names which of the prototype's five spell
-    /// blocks fires — see [`crate::play::items::use_item_body`].
+    /// The `(bag, slot)` pair uses the server's numbering, not the interface's;
+    /// [`crate::play::items::server_container_slot`] is the only place one is
+    /// converted to the other. `spell_index` selects which of the item
+    /// prototype's five spell blocks fires; see
+    /// [`crate::play::items::use_item_body`].
     pub fn use_item(
         &mut self,
         bag: u8,
@@ -1140,11 +1143,11 @@ impl WorldSession {
         )
     }
 
-    /// **The quest conversation**, one method for eight opcodes.
+    /// The quest-giver and quest-log packets: one method for nine opcodes.
     ///
-    /// The opcode is chosen here rather than at the caller for the reason
-    /// `move_item` gives: which one to send is arithmetic on the verb, and a
-    /// caller that picked would be a second place that had to know the mapping.
+    /// The opcode is chosen here rather than by the caller, for the reason
+    /// given on `move_item`: the opcode follows from the verb, and a caller
+    /// that chose it would be a second place that has to know the mapping.
     pub fn quest(&mut self, verb: crate::socket::session::QuestVerb) -> io::Result<()> {
         use crate::socket::session::QuestVerb as V;
         let (opcode, body) = match verb {
@@ -1189,18 +1192,19 @@ impl WorldSession {
         self.send(opcode, &body)
     }
 
-    /// **Use a game object** — `CMSG_GAMEOBJ_USE`, one guid, no reply.
+    /// Use a game object: `CMSG_GAMEOBJ_USE`, one guid, no reply.
     ///
-    /// See [`crate::play::object`] for what comes of it, which is never an
-    /// answer to this packet: a door changes its update field, a chest opens a
-    /// loot window, a vein starts a gathering cast, and a locked anything says
-    /// so through the message table.
+    /// See [`crate::play::object`] for the results, none of which is a reply to
+    /// this packet: a door changes its update field, a chest opens a loot
+    /// window, a vein starts a gathering cast, and a locked object reports it
+    /// through the message table.
     pub fn use_object(&mut self, guid: u64) -> io::Result<()> {
         self.send(Opcode::CMSG_GAMEOBJ_USE, &crate::play::object::use_body(guid))
     }
 
-    /// **The gossip and vendor conversation**, one method for seven opcodes —
-    /// the same shape as [`WorldSession::quest`] and for the same reason.
+    /// The gossip, vendor, binder, page-text, trainer, stable and bank packets:
+    /// one method for nineteen opcodes, structured like [`WorldSession::quest`]
+    /// for the same reason.
     pub fn npc(&mut self, verb: crate::socket::session::NpcVerb) -> io::Result<()> {
         use crate::socket::session::NpcVerb as V;
         let (opcode, body) = match verb {
@@ -1248,7 +1252,8 @@ impl WorldSession {
                 Opcode::CMSG_REPAIR_ITEM,
                 crate::play::gossip::repair_item_body(vendor, item),
             ),
-            // …and the trainer's two, which share this family's bare-guid hello.
+            // The trainer's two. The list request is the same bare guid as the
+            // other openers in this method.
             V::TrainerList(guid) => {
                 (Opcode::CMSG_TRAINER_LIST, crate::play::gossip::guid_body(guid))
             }
@@ -1256,9 +1261,8 @@ impl WorldSession {
                 Opcode::CMSG_TRAINER_BUY_SPELL,
                 crate::play::trainer::buy_spell_body(trainer, spell),
             ),
-            // …and the stable master's five, four of which are the bare guid
-            // again and two of which add a pet number. See
-            // [`crate::play::stable`].
+            // The stable master's five. Three are the bare guid and two add a
+            // pet number. See [`crate::play::stable`].
             V::StableList(guid) => (
                 Opcode::MSG_LIST_STABLED_PETS,
                 crate::play::stable::list_stabled_pets_body(guid),
@@ -1279,7 +1283,7 @@ impl WorldSession {
                 Opcode::CMSG_BUY_STABLE_SLOT,
                 crate::play::stable::buy_stable_slot_body(guid),
             ),
-            // …and the banker's two, both the bare guid. See [`crate::play::bank`].
+            // The banker's two, both the bare guid. See [`crate::play::bank`].
             V::BankerActivate(guid) => (
                 Opcode::CMSG_BANKER_ACTIVATE,
                 crate::play::bank::banker_activate_body(guid),
@@ -1292,8 +1296,8 @@ impl WorldSession {
         self.send(opcode, &body)
     }
 
-    /// **Everything a player can tell a pet**, one method for nine opcodes —
-    /// the same shape as [`WorldSession::npc`].
+    /// The pet command packets: one method for nine opcodes, structured like
+    /// [`WorldSession::npc`].
     ///
     /// By reference rather than by value because two of the nine carry a heap
     /// allocation: a rename carries a name and a set-action carries a list.
@@ -1317,7 +1321,8 @@ impl WorldSession {
                 Opcode::CMSG_PET_SPELL_AUTOCAST,
                 pet::pet_spell_autocast_body(*guid, *spell_id, *on),
             ),
-            // Three opcodes and one body — see [`crate::play::pet::pet_guid_body`].
+            // Three opcodes with one body layout. See
+            // [`crate::play::pet::pet_guid_body`].
             V::StopAttack(guid) => (Opcode::CMSG_PET_STOP_ATTACK, pet::pet_guid_body(*guid)),
             V::Abandon(guid) => (Opcode::CMSG_PET_ABANDON, pet::pet_guid_body(*guid)),
             V::Unlearn(guid) => (Opcode::CMSG_PET_UNLEARN, pet::pet_guid_body(*guid)),
@@ -1333,15 +1338,15 @@ impl WorldSession {
         self.send(opcode, &body)
     }
 
-    /// **The flight master's three verbs** — see
-    /// [`crate::socket::session::TaxiVerb`] and [`crate::play::taxi`], which owns the bodies.
+    /// The flight master packets. See [`crate::socket::session::TaxiVerb`] and
+    /// [`crate::play::taxi`], which builds the bodies.
     ///
-    /// By reference for the same reason [`WorldSession::party`] is: the express
-    /// flight carries a route.
+    /// Takes the verb by reference, as [`WorldSession::party`] does, because
+    /// the express flight carries a route.
     pub fn taxi(&mut self, verb: &crate::socket::session::TaxiVerb) -> io::Result<()> {
         use crate::socket::session::TaxiVerb as V;
         let (opcode, body) = match verb {
-            // Both openers are the bare guid every hello in this family is.
+            // Both openers are a bare guid, like the other NPC openers.
             V::QueryNodes(guid) => (
                 Opcode::CMSG_TAXIQUERYAVAILABLENODES,
                 crate::play::gossip::guid_body(*guid),
@@ -1362,19 +1367,18 @@ impl WorldSession {
         self.send(opcode, &body)
     }
 
-    /// **The group's verbs, party and raid together** — see
-    /// [`crate::socket::session::PartyVerb`] and [`crate::play::group`], which
-    /// owns the bodies.
+    /// The party and raid packets. See [`crate::socket::session::PartyVerb`]
+    /// and [`crate::play::group`], which builds the bodies.
     ///
-    /// By reference rather than by value, which is this family's one difference
-    /// from the seven above it: four of the verbs carry a name.
+    /// Takes the verb by reference rather than by value because four of the
+    /// verbs carry a name.
     pub fn party(&mut self, verb: &crate::socket::session::PartyVerb) -> io::Result<()> {
         use crate::socket::session::PartyVerb as V;
         let (opcode, body) = match verb {
             V::Invite(name) => (Opcode::CMSG_GROUP_INVITE, crate::play::group::invite_body(name)),
             V::Accept => (Opcode::CMSG_GROUP_ACCEPT, crate::play::group::EMPTY.to_vec()),
             V::Decline => (Opcode::CMSG_GROUP_DECLINE, crate::play::group::EMPTY.to_vec()),
-            // **Leaving and disbanding are one opcode** — see [`V::Leave`].
+            // Leaving and disbanding use one opcode. See [`V::Leave`].
             V::Leave => (Opcode::CMSG_GROUP_DISBAND, crate::play::group::EMPTY.to_vec()),
             V::Uninvite(name) => (
                 Opcode::CMSG_GROUP_UNINVITE,
@@ -1392,7 +1396,8 @@ impl WorldSession {
                 Opcode::CMSG_REQUEST_PARTY_MEMBER_STATS,
                 crate::play::group::request_stats_body(*guid),
             ),
-            // **Empty, like the three above it** — see [`V::ConvertToRaid`].
+            // An empty body, like Accept, Decline and Leave. See
+            // [`V::ConvertToRaid`].
             V::ConvertToRaid => (
                 Opcode::CMSG_GROUP_RAID_CONVERT,
                 crate::play::group::EMPTY.to_vec(),
@@ -1409,7 +1414,7 @@ impl WorldSession {
                 Opcode::CMSG_GROUP_ASSISTANT_LEADER,
                 crate::play::group::assistant_leader_body(*guid, *assistant),
             ),
-            // **One opcode, told apart by its length** — see
+            // One opcode for both; the body length tells them apart. See
             // [`crate::play::group::ReadyCheck`].
             V::StartReadyCheck => (
                 Opcode::MSG_RAID_READY_CHECK,
@@ -1423,9 +1428,9 @@ impl WorldSession {
         self.send(opcode, &body)
     }
 
-    /// **The reputation panel's three** — see
+    /// The reputation panel's three packets. See
     /// [`crate::socket::session::ReputationVerb`] and
-    /// [`crate::play::reputation`], which owns the bodies.
+    /// [`crate::play::reputation`], which builds the bodies.
     pub fn reputation(
         &mut self,
         verb: crate::socket::session::ReputationVerb,
@@ -1448,12 +1453,12 @@ impl WorldSession {
         self.send(opcode, &body)
     }
 
-    /// **The social panel's six** — see
+    /// The social panel's six packets. See
     /// [`crate::socket::session::SocialVerb`].
     ///
-    /// By reference rather than by value because three of the six carry a string
-    /// and one carries a whole search, and this is the one place they are turned
-    /// into bytes.
+    /// Takes the verb by reference rather than by value because three of the
+    /// six carry a string and one carries a whole search, and this is the only
+    /// place they are serialised.
     pub fn social(&mut self, verb: &crate::socket::session::SocialVerb) -> io::Result<()> {
         use crate::socket::session::SocialVerb as V;
         let (opcode, body) = match verb {
@@ -1479,9 +1484,10 @@ impl WorldSession {
         self.send(opcode, &body)
     }
 
-    /// **The chat frame's sixteen channel verbs** — see
+    /// The chat frame's sixteen channel packets. See
     /// [`crate::socket::session::ChannelVerb`] and [`crate::play::channels`],
-    /// which owns the bodies. Eight of them are one layout, name and player.
+    /// which builds the bodies. Eight of them share one layout: channel name
+    /// and player name.
     pub fn channel(&mut self, verb: &crate::socket::session::ChannelVerb) -> io::Result<()> {
         use crate::play::channels as c;
         use crate::socket::session::ChannelVerb as V;
@@ -1518,14 +1524,8 @@ impl WorldSession {
         self.send(opcode, &body)
     }
 
-    /// **The mail window's nine** — see [`crate::socket::session::MailVerb`] and
-    /// [`crate::play::mail`], which owns the bodies.
-    ///
-    /// By reference because a send carries three strings. Five of the nine are
-    /// the same twelve bytes under five different opcodes, which is the whole
-    /// reason the match below looks repetitive: the opcode *is* the verb.
-    /// **The trade window's ten verbs**, one method for ten opcodes — the
-    /// same shape as [`WorldSession::mail`]. See [`crate::play::trade`].
+    /// The trade window's packets: one method for ten opcodes, structured like
+    /// [`WorldSession::mail`]. See [`crate::play::trade`].
     pub fn trade(&mut self, verb: crate::socket::session::TradeVerb) -> io::Result<()> {
         use crate::play::trade as t;
         use crate::socket::session::TradeVerb as V;
@@ -1553,6 +1553,12 @@ impl WorldSession {
         self.send(opcode, &body)
     }
 
+    /// The mail window's ten packets. See [`crate::socket::session::MailVerb`]
+    /// and [`crate::play::mail`], which builds the bodies.
+    ///
+    /// Takes the verb by reference because a send carries three strings. Five
+    /// of the ten are the same twelve-byte body under five different opcodes,
+    /// so in the match below the opcode alone distinguishes them.
     pub fn mail(&mut self, verb: &crate::socket::session::MailVerb) -> io::Result<()> {
         use crate::socket::session::MailVerb as V;
         let letter = |mailbox: u64, mail_id: u32| crate::play::mail::mail_id_body(mailbox, mail_id);
@@ -1604,14 +1610,13 @@ impl WorldSession {
         self.send(opcode, &body)
     }
 
-    /// **Spend a talent point** — `CMSG_LEARN_TALENT`.
+    /// Spend a talent point: `CMSG_LEARN_TALENT`.
     ///
-    /// `rank` is **zero-based**, and the whole of what is checked before it is
-    /// sent is that the talent is not already maxed —
-    /// `vale_assets::tables::talent::TalentTree::learn` owns that gate,
-    /// which is the client's own single test. Everything else is
-    /// `Player::LearnTalent`'s, and a refusal comes back as silence: see
-    /// [`crate::play::talents`].
+    /// `rank` is zero-based. The only check before sending is that the talent
+    /// is not already at its maximum rank, which is the only check the 1.12.1
+    /// client makes; `vale_assets::tables::talent::TalentTree::learn` performs
+    /// it. vmangos `Player::LearnTalent` makes every other check, and a refusal
+    /// produces no reply. See [`crate::play::talents`].
     pub fn learn_talent(&mut self, talent_id: u32, rank: u32) -> io::Result<()> {
         self.send(
             Opcode::CMSG_LEARN_TALENT,
@@ -1619,19 +1624,19 @@ impl WorldSession {
         )
     }
 
-    /// **Open the window on a body** — `CMSG_LOOT`.
+    /// Open the loot window on a corpse or object: `CMSG_LOOT`.
     ///
-    /// What comes back is `SMSG_LOOT_RESPONSE`, which is also how the server
-    /// refuses; see [`crate::play::loot`].
+    /// The reply is `SMSG_LOOT_RESPONSE`, which also carries a refusal; see
+    /// [`crate::play::loot`].
     pub fn loot(&mut self, guid: u64) -> io::Result<()> {
         self.send(Opcode::CMSG_LOOT, &crate::play::loot::loot_body(guid))
     }
 
-    /// …and close it — `CMSG_LOOT_RELEASE`.
+    /// Close the loot window: `CMSG_LOOT_RELEASE`.
     ///
-    /// The guid is a formality: `HandleLootReleaseOpcode` reads it and throws it
-    /// away in favour of its own record. The window shuts when
-    /// `SMSG_LOOT_RELEASE_RESPONSE` comes back, not here.
+    /// The server ignores the guid: vmangos `HandleLootReleaseOpcode` reads it
+    /// and uses its own record of the open loot instead. The window closes when
+    /// `SMSG_LOOT_RELEASE_RESPONSE` arrives, not when this is sent.
     pub fn loot_release(&mut self, guid: u64) -> io::Result<()> {
         self.send(
             Opcode::CMSG_LOOT_RELEASE,
@@ -1639,7 +1644,7 @@ impl WorldSession {
         )
     }
 
-    /// …take one row — `CMSG_AUTOSTORE_LOOT_ITEM`, by the **server's** index.
+    /// Take one loot row: `CMSG_AUTOSTORE_LOOT_ITEM`, by the server's index.
     pub fn loot_item(&mut self, index: u8) -> io::Result<()> {
         self.send(
             Opcode::CMSG_AUTOSTORE_LOOT_ITEM,
@@ -1647,16 +1652,16 @@ impl WorldSession {
         )
     }
 
-    /// …and the coins — `CMSG_LOOT_MONEY`, which has no body at all.
+    /// Take the loot's money: `CMSG_LOOT_MONEY`, which has no body.
     pub fn loot_money(&mut self) -> io::Result<()> {
         self.send(Opcode::CMSG_LOOT_MONEY, &[])
     }
 
-    /// …and vote in a group roll — `CMSG_LOOT_ROLL`.
+    /// Vote in a group loot roll: `CMSG_LOOT_ROLL`.
     ///
-    /// **Named by the body and the slot**, never by the `rollID` the interface
-    /// uses: that id is a counter this client keeps and the server has never
-    /// heard of it. See [`crate::play::lootroll`].
+    /// The roll is identified by the looted object's guid and the item slot,
+    /// never by the interface's `rollID`, which is a counter this client keeps
+    /// and the server does not know. See [`crate::play::lootroll`].
     pub fn loot_roll(
         &mut self,
         guid: u64,
@@ -1669,8 +1674,9 @@ impl WorldSession {
         )
     }
 
-    /// …and right-click something that is *worn* rather than used —
-    /// `CMSG_AUTOEQUIP_ITEM`, which is the other half of the same click.
+    /// Equip a carried item: `CMSG_AUTOEQUIP_ITEM`. This is what a right-click
+    /// in a bag sends for an equippable item, where [`Self::use_item`] covers a
+    /// usable one.
     pub fn auto_equip_item(&mut self, bag: u8, slot: u8) -> io::Result<()> {
         self.send(
             Opcode::CMSG_AUTOEQUIP_ITEM,
@@ -1678,8 +1684,8 @@ impl WorldSession {
         )
     }
 
-    /// **Open something that holds loot** — `CMSG_OPEN_ITEM`. See
-    /// [`crate::play::items::open_item_body`], where the four refusals are.
+    /// Open a carried item that holds loot: `CMSG_OPEN_ITEM`. See
+    /// [`crate::play::items::open_item_body`], which lists the four refusals.
     pub fn open_item(&mut self, bag: u8, slot: u8) -> io::Result<()> {
         self.send(
             Opcode::CMSG_OPEN_ITEM,
@@ -1687,9 +1693,9 @@ impl WorldSession {
         )
     }
 
-    /// **Across the bank counter** — `CMSG_AUTOSTORE_BANK_ITEM` for a source
-    /// in the bank and `CMSG_AUTOBANK_ITEM` for one in the bags, which is the
-    /// same fork `HandleAutoStoreBankItemOpcode` makes on the server. See
+    /// Move an item between the bank and the bags: `CMSG_AUTOSTORE_BANK_ITEM`
+    /// for a source in the bank, `CMSG_AUTOBANK_ITEM` for a source in the bags.
+    /// vmangos `HandleAutoStoreBankItemOpcode` makes the same distinction. See
     /// [`crate::play::bank`].
     pub fn bank_item(&mut self, bag: u8, slot: u8) -> io::Result<()> {
         let opcode = if crate::play::items::is_bank_position(bag, slot) {
@@ -1700,18 +1706,19 @@ impl WorldSession {
         self.send(opcode, &crate::play::bank::bank_move_body(bag, slot))
     }
 
-    /// …and the third thing a right-click on a bag square can be: ammo is
-    /// *loaded*, not worn — `CMSG_SET_AMMO`. See
-    /// [`crate::play::items::set_ammo_body`].
+    /// Load ammunition: `CMSG_SET_AMMO`. This is the third result of a
+    /// right-click in a bag, besides use and equip, because ammunition is
+    /// loaded, not worn. See [`crate::play::items::set_ammo_body`].
     pub fn set_ammo(&mut self, entry: u32) -> io::Result<()> {
         self.send(Opcode::CMSG_SET_AMMO, &crate::play::items::set_ammo_body(entry))
     }
 
-    /// **Move an item**, in whichever of the five shapes the two ends call for.
+    /// Move an item, with whichever of five opcodes the source and destination
+    /// require.
     ///
-    /// The opcode is chosen here rather than at the caller because the choice is
-    /// arithmetic on the arguments — see [`crate::socket::session::Command::MoveItem`],
-    /// which is where the table is:
+    /// The opcode is chosen here rather than by the caller because it follows
+    /// from the arguments. [`crate::socket::session::Command::MoveItem`] has the
+    /// table:
     ///
     /// ```text
     /// no destination            CMSG_DESTROYITEM
@@ -1721,11 +1728,10 @@ impl WorldSession {
     /// otherwise                 CMSG_SWAP_ITEM
     /// ```
     ///
-    /// **The two swap bodies are the opposite way round on the wire**, which is
-    /// the trap this function exists to make unrepeatable: `CMSG_SWAP_INV_ITEM`
-    /// is source-then-destination and `CMSG_SWAP_ITEM` is
-    /// destination-then-source, and getting it wrong moves the wrong item to the
-    /// wrong place rather than erroring.
+    /// The two swap bodies order their fields in opposite directions:
+    /// `CMSG_SWAP_INV_ITEM` is source then destination, and `CMSG_SWAP_ITEM` is
+    /// destination then source. Reversing either moves the wrong item to the
+    /// wrong place with no error, so the ordering is kept in this one function.
     pub fn move_item(
         &mut self,
         src_bag: u8,
@@ -1764,43 +1770,43 @@ impl WorldSession {
         )
     }
 
-    /// **Ask to leave** — `CMSG_LOGOUT_REQUEST`, and **the body is empty**.
+    /// Request logout: `CMSG_LOGOUT_REQUEST`, with an empty body.
     ///
-    /// What comes back is `SMSG_LOGOUT_RESPONSE`, which may refuse; see
-    /// [`crate::play::logout`] for the three reasons and for why nothing here starts
-    /// a timer of its own.
+    /// The reply is `SMSG_LOGOUT_RESPONSE`, which may refuse. See
+    /// [`crate::play::logout`] for the three refusal reasons and for why this
+    /// method starts no timer of its own.
     pub fn logout_request(&mut self) -> io::Result<()> {
         self.send(Opcode::CMSG_LOGOUT_REQUEST, &[])
     }
 
-    /// …and take it back — `CMSG_LOGOUT_CANCEL`, empty as well.
+    /// Cancel a logout request: `CMSG_LOGOUT_CANCEL`, also with an empty body.
     ///
-    /// Worth sending even when this client thinks nothing is pending:
-    /// `HandleLogoutCancelOpcode` is what stands the character back up and
-    /// clears `UNIT_FLAG_STUNNED`, and a client that skipped it because its own
-    /// record had lapsed would leave the character rooted where it sat.
+    /// Send it even when this client has no pending logout recorded. vmangos
+    /// `HandleLogoutCancelOpcode` stands the character up and clears
+    /// `UNIT_FLAG_STUNNED`; a client that skipped it because its own record had
+    /// expired would leave the character sitting and unable to move.
     pub fn logout_cancel(&mut self) -> io::Result<()> {
         self.send(Opcode::CMSG_LOGOUT_CANCEL, &[])
     }
 
-    /// **Release the spirit** — `CMSG_REPOP_REQUEST`, and the body is empty.
+    /// Release the spirit: `CMSG_REPOP_REQUEST`, with an empty body.
     ///
-    /// It is empty *on purpose*: `HandleRepopRequestOpcode`'s first line is a
-    /// commented-out `read_skip<uint8>()` with the note "client crash" beside
-    /// it, so the 5875 client sends nothing here and a byte would desynchronise
-    /// the stream.
+    /// The body must be empty. The first line of vmangos
+    /// `HandleRepopRequestOpcode` is a commented-out `read_skip<uint8>()` with
+    /// the note "client crash", so the 5875 client sends nothing here and an
+    /// extra byte would desynchronise the stream.
     pub fn repop_request(&mut self) -> io::Result<()> {
         self.send(Opcode::CMSG_REPOP_REQUEST, &[])
     }
 
-    /// **Where is the body?** — `MSG_CORPSE_QUERY`, empty, answered under the
-    /// same opcode.
+    /// Ask for the corpse's location: `MSG_CORPSE_QUERY`, with an empty body,
+    /// answered under the same opcode.
     pub fn corpse_query(&mut self) -> io::Result<()> {
         self.send(Opcode::MSG_CORPSE_QUERY, &[])
     }
 
-    /// **Stand up on the body** — `CMSG_RECLAIM_CORPSE`, carrying our own guid,
-    /// which the server reads and then never uses. See
+    /// Resurrect at the corpse: `CMSG_RECLAIM_CORPSE`, carrying the player's
+    /// own guid, which the server reads and does not use. See
     /// [`crate::play::death::reclaim_corpse_body`].
     pub fn reclaim_corpse(&mut self, guid: u64) -> io::Result<()> {
         self.send(
@@ -1809,7 +1815,7 @@ impl WorldSession {
         )
     }
 
-    /// Answer a resurrection offer — `CMSG_RESURRECT_RESPONSE`.
+    /// Answer a resurrection offer: `CMSG_RESURRECT_RESPONSE`.
     pub fn resurrect_response(&mut self, caster: u64, accept: bool) -> io::Result<()> {
         self.send(
             Opcode::CMSG_RESURRECT_RESPONSE,
@@ -1817,7 +1823,7 @@ impl WorldSession {
         )
     }
 
-    /// Answer a duel — `CMSG_DUEL_ACCEPTED` or `CMSG_DUEL_CANCELLED`.
+    /// Answer a duel: `CMSG_DUEL_ACCEPTED` or `CMSG_DUEL_CANCELLED`.
     pub fn duel_answer(&mut self, arbiter: u64, accept: bool) -> io::Result<()> {
         let opcode = if accept {
             Opcode::CMSG_DUEL_ACCEPTED
@@ -1827,7 +1833,7 @@ impl WorldSession {
         self.send(opcode, &crate::play::duel::duel_answer_body(arbiter))
     }
 
-    /// Accept a summon — `CMSG_SUMMON_RESPONSE`.
+    /// Accept a summon: `CMSG_SUMMON_RESPONSE`.
     pub fn summon_response(&mut self, summoner: u64) -> io::Result<()> {
         self.send(
             Opcode::CMSG_SUMMON_RESPONSE,
@@ -1835,12 +1841,23 @@ impl WorldSession {
         )
     }
 
-    /// Ask for the played time — `CMSG_PLAYED_TIME`, bodiless.
+    /// Ask for the played time: `CMSG_PLAYED_TIME`, with no body.
     pub fn request_played_time(&mut self) -> io::Result<()> {
         self.send(Opcode::CMSG_PLAYED_TIME, &[])
     }
 
-    /// Take the spirit healer's offer — `CMSG_SPIRIT_HEALER_ACTIVATE`.
+    /// Inspect a player: `CMSG_INSPECT`, whose body is the guid.
+    pub fn inspect(&mut self, guid: u64) -> io::Result<()> {
+        self.send(Opcode::CMSG_INSPECT, &crate::play::inspect::inspect_body(guid))
+    }
+
+    /// Ask for an inspected player's honor: `MSG_INSPECT_HONOR_STATS`, whose
+    /// body is the guid.
+    pub fn inspect_honor(&mut self, guid: u64) -> io::Result<()> {
+        self.send(Opcode::MSG_INSPECT_HONOR_STATS, &crate::play::inspect::inspect_body(guid))
+    }
+
+    /// Take the spirit healer's offer: `CMSG_SPIRIT_HEALER_ACTIVATE`.
     pub fn spirit_healer_activate(&mut self, healer: u64) -> io::Result<()> {
         self.send(
             Opcode::CMSG_SPIRIT_HEALER_ACTIVATE,
@@ -1848,15 +1865,15 @@ impl WorldSession {
         )
     }
 
-    /// Play a text emote — `/dance`, `/wave`, `/bow`.
+    /// Play a text emote such as `/dance`, `/wave` or `/bow`.
     ///
-    /// **This exists for the same reason [`Self::attack_swing`] does: to make
-    /// the server say something it otherwise only says about other people.**
-    /// `SMSG_EMOTE` is the one packet in the game that comes close to naming an
-    /// animation, and without a way to provoke one, "this client does not
-    /// animate emotes" and "nobody emoted" are the same empty screen.
+    /// This exists for the same reason as [`Self::attack_swing`]: to make the
+    /// server send, about this player, a packet it otherwise sends only about
+    /// other units. `SMSG_EMOTE` is the packet closest to naming an animation.
+    /// Without a way to trigger one, a client that does not animate emotes
+    /// looks the same as one where nobody emoted.
     ///
-    /// See [`text_emote_body`] for what the three fields are.
+    /// See [`crate::play::emotetext::text_emote_body`] for the three fields.
     pub fn text_emote(&mut self, text_emote: u32, emote_num: u32, target: u64) -> io::Result<()> {
         self.send(
             Opcode::CMSG_TEXT_EMOTE,
@@ -1864,11 +1881,11 @@ impl WorldSession {
         )
     }
 
-    /// Say something — or, with a leading `.`, ask the server to do something.
+    /// Send a chat message, or, with a leading `.`, a server command.
     ///
     /// The language is a parameter and not a default because the server refuses
-    /// both `LANG_UNIVERSAL` and any language the character has not learned, and
-    /// both refusals are silent. See [`crate::play::chat`].
+    /// both `LANG_UNIVERSAL` and any language the character has not learned,
+    /// and sends no reply for either refusal. See [`crate::play::chat`].
     pub fn say(
         &mut self,
         kind: crate::play::chat::ChatType,
@@ -1884,25 +1901,24 @@ impl WorldSession {
 }
 
 // ---------------------------------------------------------------------------
-// Outbound bodies
+// Outbound packet bodies
 //
-// **Every packet body this client sends is built by a free function**, and the
-// `WorldSession` methods above are one-line conveniences over
-// `send(opcode, &body)`. There used to be two conventions — bodies inlined into
-// eight methods with a `Writer`, and four `*_body()` functions in `query.rs` —
-// and both were used inside a single loop in `resolve_names`, so the next one
-// was a coin flip.
+// Every packet body this client sends is built by a free function, and the
+// `WorldSession` methods above are one-line wrappers over
+// `send(opcode, &body)`. There were once two conventions, bodies inlined into
+// eight methods with a `Writer` and four `*_body()` functions in `query.rs`,
+// and both were used inside a single loop in `resolve_names`.
 //
-// It is not only tidiness. A body welded to a socket cannot be unit-tested, and
-// **the acks cannot be built by a method at all**: `crate::socket::handler` composes
-// them with no socket to hand, because a reply is queued under the world lock
-// and sent after it is released. The rule is that a body lives beside the thing
-// it is about — movement bodies in `movement.rs` next to their parsers, query
+// A body built inside a socket method cannot be unit-tested, and the
+// acknowledgements cannot be built by a method at all: `crate::socket::handler`
+// builds them without a socket, because a reply is queued under the world lock
+// and sent after the lock is released. Each body lives beside the code it
+// concerns: movement bodies in `movement.rs` next to their parsers, query
 // bodies in `query.rs`, and the session's own here.
 // ---------------------------------------------------------------------------
 
-/// `CMSG_AUTH_SESSION`: the build we claim to be, the account, our seed and the
-/// digest proving we hold the session key.
+/// `CMSG_AUTH_SESSION`: the client build, the account, the client seed and the
+/// digest that proves the client holds the session key.
 fn auth_session_body(build: u16, account_upper: &str, client_seed: u32, digest: &[u8]) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(build as u32)
@@ -1920,58 +1936,62 @@ fn player_login_body(guid: u64) -> Vec<u8> {
     w.buf
 }
 
-/// `CMSG_PING`: a sequence number the server echoes, and our current latency.
+/// `CMSG_PING`: a sequence number the server echoes, and the client's current
+/// latency.
 fn ping_body(sequence: u32, latency: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(sequence).u32(latency);
     w.buf
 }
 
-/// A body that is one **plain** u64 guid: `CMSG_SET_ACTIVE_MOVER`,
+/// A body that is one plain u64 guid: `CMSG_SET_ACTIVE_MOVER`,
 /// `CMSG_ATTACKSWING` and `CMSG_SET_SELECTION`.
 ///
-/// Both read `recvData >> guid` on an `ObjectGuid`, which is `uint64` in 1.12 —
-/// **not** the packed form the same guid takes inside an update block. GUIDs are
-/// packed except where they are not, and these are two of the places they are
-/// not; sending the packed form here is a body the server reads as garbage.
+/// Their vmangos handlers read `recvData >> guid` on an `ObjectGuid`, which is
+/// `uint64` in 1.12, not the packed form the same guid takes inside an update
+/// block. Most guids on the wire are packed; these are not, and a packed guid
+/// here is misread by the server.
 pub(crate) fn plain_guid_body(guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.buf
 }
 
-/// `MAX_SHEATH_STATE` — vmangos' bound on the value in `CMSG_SETSHEATHED`.
+/// `MAX_SHEATH_STATE`: vmangos' upper bound on the value in
+/// `CMSG_SETSHEATHED`.
 ///
-/// A constant rather than a literal for the usual reason, and one specific one:
-/// `HandleSetSheathedOpcode` **returns without answering** for anything at or
-/// above it. There is no refusal packet, so a client that sends 3 has simply
-/// desynchronised itself from the server with nothing on the wire to say so.
+/// vmangos `HandleSetSheathedOpcode` returns without answering for any value at
+/// or above it. There is no refusal packet, so a client that sends 3 is out of
+/// step with the server and nothing on the wire shows it.
 pub const MAX_SHEATH_STATE: u8 = 3;
 
-/// Body for `CMSG_SETSHEATHED`: one `u32`, and that is the whole packet.
+/// Body for `CMSG_SETSHEATHED`: one `u32` and nothing else.
 ///
-/// A `u32` for a value whose whole range is 0..2 is worth stating, because the
-/// obvious guess is the `u8` the update field holds — and vmangos reads
-/// `recv_data >> sheathed` into a `uint32`, so a one-byte body under-runs and is
-/// dropped with no error at either end.
+/// The value ranges over 0..2 and the update field holds it as a `u8`, but
+/// vmangos reads `recv_data >> sheathed` into a `uint32`. A one-byte body
+/// under-runs and is dropped with no error at either end.
 pub fn set_sheathed_body(state: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(state);
     w.buf
 }
 
-/// Body for `CMSG_TEXT_EMOTE`: `u32 textEmote`, `u32 emoteNum`, plain `u64`
-/// target guid.
-///
-/// **The id is an `EmotesText.dbc` row, not an `Emotes.dbc` one.**
-/// `HandleTextEmoteOpcode` looks it up there and takes the row's `textid`,
-/// which is what it broadcasts in `SMSG_EMOTE` — so the id going out and the id
-/// coming back are from two different tables and are not equal. 34 is
-/// `TEXTEMOTE_DANCE` and comes back as `Emotes` row 10, `STATE_DANCE`.
-///
-/// `emoteNum` selects between the several phrasings a text emote has ("you
-/// dance", "you dance with X") and does not touch the animation. The target is
-/// looked up on the map and may be zero, which is an emote at nobody.
+// The `CMSG_TEXT_EMOTE` body is built by
+// `crate::play::emotetext::text_emote_body`: `u32 textEmote`, `u32 emoteNum`,
+// plain `u64` target guid.
+//
+// The id is an `EmotesText.dbc` row, not an `Emotes.dbc` row. vmangos
+// `HandleTextEmoteOpcode` looks it up there and takes the row's `textid`, which
+// it broadcasts in `SMSG_EMOTE`, so the id sent and the id received come from
+// two different tables and are not equal. 34 is `TEXTEMOTE_DANCE` and comes
+// back as `Emotes` row 10, `STATE_DANCE`.
+//
+// `emoteNum` selects between a text emote's phrasings ("you dance", "you dance
+// with X") and does not affect the animation. The target is looked up on the
+// map and may be zero, which is an emote with no target.
+
+/// Whether a socket error means only that no data was ready: `WouldBlock` or
+/// `TimedOut`.
 fn is_timeout(e: &io::Error) -> bool {
     matches!(
         e.kind(),
@@ -2006,61 +2026,62 @@ pub struct CharListEntry {
     pub class: u8,
     pub gender: u8,
     pub level: u8,
-    /// `skin, face, hairStyle, hairColour, facialHair` — the five bytes
-    /// `PLAYER_BYTES` and `PLAYER_BYTES_2` carry once there *is* a world.
+    /// `skin, face, hairStyle, hairColour, facialHair`: the five bytes that
+    /// `PLAYER_BYTES` and `PLAYER_BYTES_2` carry once the character is in the
+    /// world.
     ///
-    /// **Read rather than skipped, because character select draws the
-    /// character.** Everything else about the plinth is derivable (the model is
-    /// the race's, the wardrobe is below), but a face and a hairstyle are not:
-    /// without them every character on the list is skin 0, face 0, bald. Kept as
-    /// the five raw bytes rather than as `vale_assets::look::character::Appearance`
-    /// because this crate does not depend on that one — the client assembles it
-    /// in one line.
+    /// Read rather than skipped, because character select draws the character.
+    /// The model comes from the race and the clothing from `equipment`, but the
+    /// face and hairstyle come only from these bytes; without them every
+    /// character on the list is drawn with skin 0, face 0 and no hair. Kept as
+    /// the five raw bytes rather than as
+    /// `vale_assets::look::character::Appearance` because this crate does not
+    /// depend on `vale_assets`; the client builds the `Appearance` in one line.
     pub appearance: [u8; 5],
     pub zone: u32,
     pub map: u32,
     pub x: f32,
     pub y: f32,
     pub z: f32,
-    /// `characters.character_flags`, verbatim — see [`CharListEntry::GHOST`].
+    /// `characters.character_flags`, unchanged. See [`CharListEntry::GHOST`].
     pub flags: u32,
-    /// **What the character is wearing**, as `(ItemDisplayInfo id,
-    /// InventoryType)` per slot, zeroes where the slot is empty.
+    /// The character's equipment, as `(ItemDisplayInfo id, InventoryType)` per
+    /// slot, with zeroes where the slot is empty.
     ///
-    /// The one place in this protocol where a wardrobe arrives *already
-    /// resolved*: `Player::BuildEnumData` writes `proto->DisplayInfoID` and
-    /// `proto->InventoryType` outright, where `PLAYER_VISIBLE_ITEM_n_0` in the
-    /// world carries an item **entry** that costs a `CMSG_ITEM_QUERY_SINGLE`
-    /// round trip. So character select can dress the character on the frame the
-    /// list arrives.
+    /// This is the only place in the protocol where equipment arrives with its
+    /// display ids already resolved: vmangos `Player::BuildEnumData` writes
+    /// `proto->DisplayInfoID` and `proto->InventoryType` directly, while
+    /// `PLAYER_VISIBLE_ITEM_n_0` in the world carries an item entry that needs
+    /// a `CMSG_ITEM_QUERY_SINGLE` round trip. Character select can therefore
+    /// dress the character on the frame the list arrives.
     ///
-    /// What it does **not** carry is the item's class, subclass and sheath
-    /// type — the three fields that decide where a *put-away* weapon hangs.
-    /// Those live in the item template, `Item.dbc` is not in the 1.12 archives,
-    /// and no packet on this screen can fetch them.
+    /// It does not carry the item's class, subclass or sheath type, the three
+    /// fields that decide where a put-away weapon hangs. Those are in the item
+    /// template, `Item.dbc` is not in the 1.12 archives, and no packet on this
+    /// screen can fetch them.
     ///
-    /// **That used to be recorded here as the reason the plinth's character has
-    /// empty hands, and the inference was wrong.** Nothing on character select
-    /// is ever put away: the reference's dressing loop hands its weapon attacher
-    /// a sheath type of 0 and a clear "put away" flag, so both hands take a hand
-    /// point, and the only thing it asks about the item is
-    /// `inventoryType == 14`, which is right here. The ranged slot (index 17) is
-    /// skipped outright. See `vale_assets::tables::item::Weapon::from_char_enum`.
+    /// Character select does not need them, and their absence is not why a
+    /// character-select model would have empty hands. The 1.12.1 client draws
+    /// no weapon on character select as put away: both weapons are attached at
+    /// hand points, and the only item property it uses is
+    /// `inventoryType == 14` (shield), which this list carries. It skips the
+    /// ranged slot (index 17). See
+    /// `vale_assets::tables::item::Weapon::from_char_enum`.
     ///
-    /// **The index is the equipment slot and it is load-bearing**: 15 is the
-    /// main hand and 16 the off hand, and no inventory type distinguishes them —
-    /// a one-hand sword is `INVTYPE_WEAPON` in either. So this stays a
-    /// positional list with its empty slots in it rather than being compacted.
+    /// The index is the equipment slot, and the code depends on it: 15 is the
+    /// main hand and 16 the off hand, and no inventory type distinguishes them
+    /// (a one-hand sword is `INVTYPE_WEAPON` in either). So this stays a
+    /// positional list including its empty slots rather than being compacted.
     pub equipment: Vec<(u32, u8)>,
 }
 
 impl CharListEntry {
-    /// `CHARACTER_FLAG_GHOST` — the character is dead, and the row reads
+    /// `CHARACTER_FLAG_GHOST`: the character is dead, and the row reads
     /// `<name> (Ghost)`. `GetCharacterInfo`'s eighth return value.
     pub const GHOST: u32 = 0x0000_2000;
-    /// `CHARACTER_FLAG_HIDE_HELM` / `_HIDE_CLOAK` — the two "do not draw this
-    /// slot" ticks from the interface's own options, which the *server* stores
-    /// and which decide what stands on the plinth.
+    /// `CHARACTER_FLAG_HIDE_HELM` / `_HIDE_CLOAK`: the interface options that
+    /// hide the helm and the cloak. The server stores them, and they decide
+    /// what the character-select model wears.
     pub const HIDE_HELM: u32 = 0x0000_0400;
     pub const HIDE_CLOAK: u32 = 0x0000_0800;
 
@@ -2080,21 +2101,20 @@ impl CharListEntry {
 /// vmangos `Player::BuildEnumData` loops `slot < INVENTORY_SLOT_BAG_START + 1`,
 /// i.e. 19 equipment slots plus the first bag.
 ///
-/// Each is **five bytes** — `u32 displayId` then `u8 inventoryType` — and there
-/// is deliberately no per-slot enchantment field in 1.12; that is added in 2.4.
-/// Assuming otherwise overruns the packet by 80 bytes per character and
-/// desynchronises every entry after the first, which is what
-/// `a_second_character_parses_after_the_first` is for.
+/// Each slot is five bytes, `u32 displayId` then `u8 inventoryType`. 1.12 has
+/// no per-slot enchantment field; 2.4 adds one. Reading one overruns the packet
+/// by 80 bytes per character and misaligns every entry after the first, which
+/// `a_second_character_parses_after_the_first` tests.
 const CHAR_ENUM_EQUIPMENT_SLOTS: usize = 20;
 
-/// Parse `SMSG_CHAR_ENUM`. Only the pet block is skipped now, and it must still
-/// be *consumed exactly* or the next character misparses.
+/// Parse `SMSG_CHAR_ENUM`. Only the pet block is skipped, and it must still be
+/// consumed exactly or the next character is misread.
 ///
-/// **The appearance and the equipment used to be skipped too**, and that was the
-/// whole reason character select showed an empty plinth: the five appearance
-/// bytes and the twenty `(display id, inventory type)` pairs are the only
-/// statement anywhere of what a character on this screen looks like. Reading
-/// them costs nothing — they were already being stepped over.
+/// The parser once skipped the appearance and the equipment too, and character
+/// select showed an empty model as a result: the five appearance bytes and the
+/// twenty `(display id, inventory type)` pairs are the only data about how a
+/// character on this screen looks. Reading them costs nothing extra, because
+/// the parser had to step over them anyway.
 fn parse_char_enum(body: &[u8]) -> Vec<CharListEntry> {
     let mut r = Reader::new(body);
     let count = r.u8();
@@ -2109,8 +2129,8 @@ fn parse_char_enum(body: &[u8]) -> Vec<CharListEntry> {
         let race = r.u8();
         let class = r.u8();
         let gender = r.u8();
-        // skin, face, hair style, hair colour, facial hair — in that order, and
-        // the order is the one `Player::BuildEnumData` writes them in.
+        // Skin, face, hair style, hair colour, facial hair: the order in which
+        // vmangos `Player::BuildEnumData` writes them.
         let appearance = [r.u8(), r.u8(), r.u8(), r.u8(), r.u8()];
         let level = r.u8();
         let zone = r.u32();
@@ -2152,8 +2172,8 @@ fn err(msg: String) -> io::Error {
     io::Error::new(io::ErrorKind::Other, msg)
 }
 
-/// Backwards-compatible entry point: connect and immediately enumerate
-/// characters.
+/// Connect and immediately enumerate characters. Kept for backwards
+/// compatibility.
 pub fn enter(
     world_addr: &str,
     account: &str,
@@ -2167,9 +2187,8 @@ pub fn enter(
 mod capture_tests {
     use super::*;
 
-    /// **Disarmed, the ring records nothing at all**, which is what makes it
-    /// affordable on the framing path: the whole cost is the atomic load in
-    /// [`Capture::armed`].
+    /// A disarmed ring records nothing, so its only cost on the framing path
+    /// is the atomic load in [`Capture::armed`].
     #[test]
     fn a_disarmed_capture_records_nothing() {
         let capture = Capture::default();
@@ -2181,9 +2200,9 @@ mod capture_tests {
         assert!(!snapshot.armed);
     }
 
-    /// **Both directions land in one ring, in the order they were noted**, which
-    /// is the whole reason there is one ring rather than two: the two funnels
-    /// run on the same thread and no timestamp is fine enough to merge them by.
+    /// Both directions go into one ring, in the order they were noted. That is
+    /// why there is one ring rather than two: the two funnels run on the same
+    /// thread, and no timestamp is fine enough to merge two rings by.
     #[test]
     fn the_two_directions_interleave_in_wire_order() {
         let capture = Capture::default();
@@ -2201,14 +2220,14 @@ mod capture_tests {
             .map(|p| (p.sequence, p.inbound, p.body[0]))
             .collect();
         assert_eq!(order, [(0, true, 1), (1, false, 2), (2, true, 3)]);
-        // …and the names are resolved on the way in, so a reader needs no
+        // The names are resolved when a packet is noted, so a reader needs no
         // opcode table of its own.
         assert_eq!(snapshot.packets[1].name, "CMSG_PING");
     }
 
-    /// **The ring drops its oldest and says so.** `seen` outrunning the kept
-    /// count is what tells a reader the list is a window onto a longer capture
-    /// rather than the whole of it.
+    /// The ring drops its oldest packet when full, and `seen` records the
+    /// drop. `seen` exceeding the kept count tells a reader that the list holds
+    /// only the most recent part of a longer capture.
     #[test]
     fn the_ring_is_bounded_and_reports_what_it_dropped() {
         let capture = Capture::default();
@@ -2223,9 +2242,9 @@ mod capture_tests {
         assert_eq!(snapshot.packets[0].sequence, 40);
     }
 
-    /// **A long body is cut and the true length is kept beside it.**
+    /// A long body is truncated and its true length is kept beside it.
     /// `SMSG_UPDATE_OBJECT` runs to tens of kilobytes; keeping every byte would
-    /// make the ring a megabyte and its snapshot a real cost.
+    /// make the ring about a megabyte and each snapshot expensive.
     #[test]
     fn a_long_body_is_truncated_and_says_its_real_length() {
         let capture = Capture::default();
@@ -2238,18 +2257,18 @@ mod capture_tests {
         assert_eq!(packet.length, CAPTURE_BODY_BYTES * 3);
         assert!(packet.truncated());
 
-        // …and a short one is not marked truncated, which is what the byte
-        // view's own note is gated on.
+        // A short body is not marked truncated. The byte view shows its
+        // truncation note only when this is set.
         capture.note(Opcode::CMSG_PING.code(), &[1, 2], false);
         let short = capture.snapshot().packets.pop().expect("the second packet");
         assert_eq!(short.length, 2);
         assert!(!short.truncated());
     }
 
-    /// **Arming clears the ring; disarming does not.** A capture always begins
+    /// Arming clears the ring; disarming does not. A capture always begins
     /// empty, so its sequence numbers start at zero and cannot be confused with
-    /// a previous run's — and the packets that preceded a fault are exactly the
-    /// ones wanted after the box is unticked.
+    /// a previous capture's. Disarming keeps the packets, because the ones that
+    /// preceded a fault are the ones wanted after the checkbox is cleared.
     #[test]
     fn arming_clears_the_ring_and_disarming_keeps_it() {
         let capture = Capture::default();
@@ -2280,21 +2299,21 @@ mod tests {
     use super::*;
     use std::net::TcpListener;
 
-    /// **A world server that accepts the socket and says nothing gives up**,
-    /// which is the second half of the "endless connecting to server" bug: the
-    /// handshake below `connect_as` is four blocking reads, and without a
-    /// deadline the whole login parks on a pool thread that dropping the task
-    /// cannot even stop.
+    /// Connecting to a world server that accepts the socket and sends nothing
+    /// fails with `TimedOut`. This is the world-server half of the "endless
+    /// connecting to server" bug: the handshake below `connect_as` is four
+    /// blocking reads, and without a deadline the login blocks a pool thread
+    /// that dropping the task cannot stop.
     ///
-    /// The budget is a parameter for exactly this — see
-    /// [`WorldSession::connect_within`] — because reproducing it at the shipped
-    /// fifteen seconds is not a unit test.
+    /// The timeout is a parameter of [`WorldSession::connect_within`] for this
+    /// test, because waiting the default fifteen seconds is too slow for a unit
+    /// test.
     #[test]
     fn a_world_server_that_never_answers_is_given_up_on() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
         let port = listener.local_addr().unwrap().port();
-        // Accepted by the backlog and never answered, which is the shape a
-        // wedged or throttling server presents.
+        // The connection is accepted by the backlog and never answered, as
+        // with a hung or throttling server.
         let started = Instant::now();
         let outcome = WorldSession::connect_within(
             &format!("127.0.0.1:{port}"),
@@ -2312,7 +2331,8 @@ mod tests {
         );
     }
 
-    /// One character, byte for byte as `Player::BuildEnumData` writes one.
+    /// One character, byte for byte as vmangos `Player::BuildEnumData` writes
+    /// one.
     fn character_bytes(w: &mut Writer, guid: u32, name: &str, flags: u32) {
         w.u32(guid).u32(0); // guid
         w.buf.extend_from_slice(name.as_bytes());
@@ -2327,8 +2347,8 @@ mod tests {
         w.u8(0); // first login
         w.u32(0).u32(0).u32(0); // pet
         for slot in 0..CHAR_ENUM_EQUIPMENT_SLOTS {
-            // Slot 0 is the head, slot 4 the chest; the rest are empty, which is
-            // the commonest shape and the one a reader must not choke on.
+            // Slot 0 is the head, slot 4 the chest; the rest are empty. Mostly
+            // empty slots are the common case, and the parser must handle them.
             match slot {
                 0 => w.u32(21_549).u8(1),
                 4 => w.u32(31_051).u8(5),
@@ -2337,13 +2357,13 @@ mod tests {
         }
     }
 
-    /// **The three blocks this parser used to step over**: the five appearance
-    /// bytes, the flag word and the twenty-slot wardrobe.
+    /// The three blocks this parser once skipped: the five appearance bytes,
+    /// the flag word and the twenty equipment slots.
     ///
-    /// All three are what character select *draws*, so a misread here is a
-    /// plinth with the wrong face, no gear, or a `(Ghost)` that never appears.
-    /// The body is assembled rather than captured because a capture would pin
-    /// one account's characters; what wants pinning is the layout.
+    /// Character select draws all three, so a misread shows as the wrong face,
+    /// no equipment, or a missing `(Ghost)`. The body is built in the test
+    /// rather than captured, because a capture would fix one account's
+    /// characters, and the test is about the layout.
     #[test]
     fn a_character_row_carries_its_appearance_its_flags_and_its_wardrobe() {
         let mut w = Writer::new();
@@ -2367,12 +2387,12 @@ mod tests {
         assert_eq!(row.equipment[19], (0, 0), "the last slot is the first bag");
     }
 
-    /// **The second character in the list is where a block-size error shows.**
+    /// A block-size error shows in the second character of the list.
     ///
-    /// A per-character body read one byte long or short leaves every entry after
-    /// the first misaligned — the classic version of this is the 2.4 enchant
-    /// field, which is 80 bytes a character and turns the rest of the list into
-    /// noise. An account with one character never notices.
+    /// A per-character body read one byte long or short misaligns every entry
+    /// after the first. The usual case is the 2.4 enchantment field, 80 bytes
+    /// per character, which makes the rest of the list unreadable. An account
+    /// with one character does not show the error.
     #[test]
     fn a_second_character_parses_after_the_first() {
         let mut w = Writer::new();
@@ -2389,13 +2409,12 @@ mod tests {
         assert_eq!(rows[1].equipment[4], (31_051, 5));
     }
 
-    /// **`CMSG_SETSHEATHED` is a `u32`, not the byte the update field holds.**
+    /// `CMSG_SETSHEATHED` is a `u32`, not the byte the update field holds.
     ///
-    /// The obvious mistake is the interesting one: `UNIT_FIELD_BYTES_2` byte 0
-    /// is where this value ends up, so writing one byte reads as correct — and
-    /// vmangos' `recv_data >> sheathed` under-runs on a 1-byte body and drops
-    /// the packet with nothing said at either end. The failure mode is a weapon
-    /// that other players never see drawn.
+    /// The value ends up in `UNIT_FIELD_BYTES_2` byte 0, so a one-byte body
+    /// looks correct, but vmangos' `recv_data >> sheathed` under-runs on it and
+    /// drops the packet with no error at either end. Other players then never
+    /// see the weapon drawn.
     #[test]
     fn the_sheath_body_is_four_bytes() {
         assert_eq!(set_sheathed_body(1), vec![1, 0, 0, 0]);

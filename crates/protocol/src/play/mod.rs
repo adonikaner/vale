@@ -1,65 +1,74 @@
-//! **What is *played* on that world**, one file per subject.
+//! Packets for play in the world, one file per subject.
 //!
-//! Everything here is the same shape: a packet or two in, a parse with no state
-//! and no socket, and something the game layer can read. The dispatch that
-//! reaches them is [`super::socket::handler`] and there is only one.
+//! Every module here has the same shape: one or two packets in, a parse that
+//! holds no state and no socket, and a value the game layer reads. The one
+//! dispatch that calls them is [`super::socket::handler`].
 //!
 //! ```text
-//! action.rs      what a unit is visibly *doing*: the swing, the emote, the cast
-//! sound.rs       …and the five the server plays *at* you with nothing else
-//!                behind them: a scripted noise, a music track, a noise at an
-//!                object, and the two that put a SpellVisualKit on a unit
-//! combatlog.rs   …and the nine packets a fight is only *narrated* by: the
-//!                experience, the killing blow, the drowning, the shield that
-//!                answered, every way a spell missed, and a tick
-//! spells.rs      …and what *we* can do: the book, the bar, the cooldowns
-//! stats.rs       …and what a character *is*: the sheet's twenty fields
-//! skills.rs      …and what it has *learned*: 128 slots, holes and all
-//! talents.rs     …and what it *chose*, which no packet states at all
-//! items.rs       …and what it is carrying: three objects deep through fields
-//! wdb.rs         …and the answers that outlive a logout: this client's own
-//!                WDB\ caches, one file per kind of query
-//! loot.rs        what is on a body
-//! lootroll.rs    …and, in a group, the roll that decides who gets it
-//! object.rs      …and the one packet that opens the door, the chest and the vein
-//! pagetext.rs    …and the one that opens the *sign*: the page chain behind a
-//!                plaque, a tombstone and a book on a stand
-//! quest.rs       the log, and the page in front of a giver
-//! gossip.rs      talking to one
-//! trainer.rs     …and what one will teach you
-//! mail.rs        …and the box on the corner: the inbox, a letter, and sending one
-//! taxi.rs        …and how you leave: four packets and a map
-//! reputation.rs  …and what it has earned: four packets and three verbs
-//! pet.rs         …and what is with you: the bar, the mood, the name, and the
-//!                ten orders — the packet family two of the nine classes are
-//!                unplayable without
-//! stable.rs      …and where a hunter leaves one: five packets, two slots, and
-//!                a slot byte that is one-based on the wire and zero-based in
-//!                the panel
-//! bank.rs        …and where anyone leaves anything: a window that is a guid,
-//!                a slot that is a byte, and two packets that share a body
-//! trade.rs       …and handing something to another player: twelve opcodes,
-//!                seven slots a side, and both offers stated by the server
-//! group.rs       who is with you
-//! social.rs      …and who you know: the two lists, and the /who search
-//! channels.rs    …and the rooms everybody talks in: General, Trade, /join
-//! chat.rs        SMSG_MESSAGECHAT both ways, and the GM commands it carries
-//! emotetext.rs   …and /dance both ways: the text emote, whose words the client composes
-//! death.rs       dying, and getting up again — none of it announced
-//! duel.rs        …and fighting another player by agreement: the flag, the
-//!                countdown, the boundary and the result
-//! summon.rs      …and being fetched across the world by one: an offer and a yes
-//! played.rs      …and how long the character has been played, which is /played
-//! logout.rs      …and leaving on purpose, on the server's own clock
-//! timers.rs      the three bars it counts down for you
-//! time.rs        …and the world's own clock, said once
-//! weather.rs     …and what its sky is doing: one packet, a grade, a ramp
-//! explored.rs    which sub-regions the character has walked into
-//! areatrigger.rs the one packet this client volunteers, and its refusal
-//! bindpoint.rs   where the hearthstone returns you, and the innkeeper who
-//!                changes it — a confirmation the client has to answer before
-//!                anything is bound at all
-//! charcreate.rs  making a character, and unmaking one
+//! action.rs      what a unit is visibly doing: the melee swing, the emote, the
+//!                spell cast
+//! sound.rs       the five packets the server sends with no other content: a
+//!                scripted sound, a music track, a sound at an object, and the
+//!                two that play a SpellVisualKit on a unit
+//! combatlog.rs   the nine packets that only feed the combat log: experience,
+//!                the killing blow, environmental damage such as drowning, a
+//!                damage shield's reply, every kind of spell miss, and a
+//!                periodic tick
+//! spells.rs      the player's own spells: the spellbook, the action bar, the
+//!                cooldowns
+//! stats.rs       the character sheet's twenty fields
+//! skills.rs      the 128 skill slots, empty slots included
+//! talents.rs     spending a talent point; no packet states which talents
+//!                were chosen
+//! items.rs       what the character carries, read through three layers of
+//!                update fields
+//! wdb.rs         the client's WDB\ caches, which keep query answers across a
+//!                logout, one file per kind of query
+//! loot.rs        the loot window of a corpse
+//! lootroll.rs    the group-loot roll that decides who gets an item
+//! object.rs      the one packet that uses a game object: a door, a chest, an
+//!                ore vein
+//! pagetext.rs    the page chain read from a sign, a plaque, a tombstone or a
+//!                book on a stand
+//! quest.rs       the quest log, and a quest giver's pages
+//! gossip.rs      talking to an NPC
+//! trainer.rs     the trainer's list of services, and buying one
+//! mail.rs        the mailbox: the inbox, one letter, and sending a letter
+//! taxi.rs        flight paths: four packets and a map
+//! reputation.rs  reputation: four packets in and three commands out
+//! pet.rs         the pet's action bar, happiness, name and ten commands; the
+//!                hunter and warlock classes need this packet family
+//! stable.rs      the stable master: five packets and two slots; the slot byte
+//!                is one-based on the wire and zero-based in the panel
+//! bank.rs        the bank: the window is a banker guid, a slot is a byte, and
+//!                two packets share one body
+//! trade.rs       trading with another player: twelve opcodes, seven slots a
+//!                side, and the server states both offers
+//! group.rs       the party
+//! social.rs      the friends list, the ignore list, and the /who search
+//! channels.rs    chat channels: General, Trade, and /join
+//! chat.rs        SMSG_MESSAGECHAT and CMSG_MESSAGECHAT, and the GM commands
+//!                sent as chat
+//! emotetext.rs   text emotes such as /dance, both ways; the client composes
+//!                the emote's words
+//! death.rs       dying and resurrecting; no packet announces a death, only
+//!                health reaching zero
+//! duel.rs        a duel: the flag, the countdown, the boundary and the result
+//! summon.rs      being summoned by another player: an offer and an accept
+//! inspect.rs     inspecting another player: the request, and the honor tab's
+//!                separate request and answer
+//! played.rs      the /played time
+//! logout.rs      logging out, timed by the server
+//! timers.rs      the three mirror timer bars the server counts down
+//! time.rs        the world clock, sent once at login
+//! weather.rs     the weather: one packet with a type, a grade and a ramp
+//! explored.rs    which sub-regions the character has explored
+//! areatrigger.rs CMSG_AREATRIGGER, the one packet the client sends unprompted,
+//!                and the server's refusal, SMSG_TRANSFER_ABORTED
+//! bindpoint.rs   the hearthstone's bind point, and the innkeeper who changes
+//!                it; the client must answer a confirmation before the bind
+//!                happens
+//! charcreate.rs  creating and deleting a character
 //! ```
 
 pub mod action;
@@ -74,6 +83,7 @@ pub mod combatlog;
 pub mod death;
 pub mod duel;
 pub mod explored;
+pub mod inspect;
 pub mod gossip;
 pub mod group;
 pub mod items;

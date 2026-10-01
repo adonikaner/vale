@@ -937,6 +937,7 @@ impl super::panels::mail::MailAnswers for Login {
 
 impl super::panels::trade::TradeAnswers for Login {}
 impl super::panels::summon::SummonAnswers for Login {}
+impl super::panels::inspect::InspectAnswers for Login {}
 
 /// A bank with no bank bag slots bought, which is every default. See
 /// [`super::panels::bank`].
@@ -4397,6 +4398,7 @@ impl super::panels::mail::MailAnswers for Ticking {
 
 impl super::panels::trade::TradeAnswers for Ticking {}
 impl super::panels::summon::SummonAnswers for Ticking {}
+impl super::panels::inspect::InspectAnswers for Ticking {}
 
 impl super::panels::bank::BankAnswers for Ticking {}
 impl super::panels::pagetext::PageTextAnswers for Ticking {}

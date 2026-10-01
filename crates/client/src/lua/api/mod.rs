@@ -125,6 +125,7 @@ pub trait Answers:
     + super::panels::pagetext::PageTextAnswers
     + super::panels::trade::TradeAnswers
     + super::panels::summon::SummonAnswers
+    + super::panels::inspect::InspectAnswers
     + super::panels::glue::GlueAnswers
     + super::panels::spellbook::SpellbookAnswers
     + super::panels::talent::TalentAnswers
@@ -157,6 +158,7 @@ impl<T> Answers for T where
     + super::panels::pagetext::PageTextAnswers
     + super::panels::trade::TradeAnswers
     + super::panels::summon::SummonAnswers
+    + super::panels::inspect::InspectAnswers
     + super::panels::glue::GlueAnswers
     + super::panels::spellbook::SpellbookAnswers
     + super::panels::talent::TalentAnswers
@@ -436,6 +438,8 @@ pub struct Live<'a, 'w, 's> {
     pub page: &'a crate::interface::pagetext::OpenBook,
     /// The pending summon, if any. See [`crate::interface::summon`].
     pub summon: &'a crate::interface::summon::Summon,
+    /// Whom the character is inspecting. See [`crate::interface::inspect`].
+    pub inspect: &'a crate::interface::inspect::Inspect,
     /// `GlobalStrings.lua`, for the one spellbook tab whose name is a string
     /// key. See [`vale_assets::tables::book::GENERAL_NAME_KEY`]. `None` before
     /// the table has loaded, in which case the key itself is drawn.
@@ -583,6 +587,7 @@ pub struct LuaWorld<'w, 's> {
     pub dying: Res<'w, crate::interface::death::Dying>,
     pub page: Res<'w, crate::interface::pagetext::OpenBook>,
     pub summon: Res<'w, crate::interface::summon::Summon>,
+    pub inspect: Res<'w, crate::interface::inspect::Inspect>,
     pub session: Res<'w, crate::world::session::Session>,
     pub strings: Res<'w, crate::interface::messages::UiStrings>,
     pub time: Res<'w, Time>,
@@ -678,6 +683,7 @@ impl LuaWorld<'_, '_> {
             .init_resource::<crate::interface::loot::LootWindow>()
             .init_resource::<crate::interface::pagetext::OpenBook>()
             .init_resource::<crate::interface::summon::Summon>()
+            .init_resource::<crate::interface::inspect::Inspect>()
             .init_resource::<crate::interface::lootroll::LootRolls>()
             .init_resource::<crate::interface::quest::Quests>()
             .init_resource::<crate::interface::gossip::GossipWindow>()
@@ -731,6 +737,7 @@ impl LuaWorld<'_, '_> {
             auras: &self.auras,
             dying: &self.dying,
             summon: &self.summon,
+            inspect: &self.inspect,
             book: &self.book,
             strings: self.strings.get(),
             place: &self.place,
@@ -970,6 +977,20 @@ impl Live<'_, '_, '_> {
     /// local player's gear instead would look correct and be wrong.
     pub(super) fn is_player(token: &str) -> bool {
         Self::id(token) == Some(UnitId::Player)
+    }
+
+    /// The item entry another player wears in inventory slot `id`: the entry
+    /// in that slot's `PLAYER_VISIBLE_ITEM_n_0`, which every client in view
+    /// receives. Slot 1 is equipment slot 0. `None` for an empty slot, for a
+    /// unit that is not a player, and for the character itself, whose items
+    /// are objects in its own inventory.
+    pub(super) fn worn_by_other(&self, token: &str, id: u32) -> Option<u32> {
+        let unit = self.units.get(Self::id(token)?)?;
+        let world = self.world.as_ref()?;
+        let world = world.lock().unwrap_or_else(|e| e.into_inner());
+        let entries = world.get(unit.guid)?.equipment()?;
+        let entry = *entries.get(usize::try_from(id).ok()?.checked_sub(1)?)?;
+        (entry != 0).then_some(entry)
     }
 
     /// One slot's drawable state, from whatever it holds.
@@ -1899,8 +1920,8 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         scope.create_function(move |_, ()| Ok(answers.bonus_bar_offset()))?,
     )?;
 
-    // **`GetActionBarToggles()` — the four extra action bars, and it is the one
-    // read in this file that answers *four* values.**
+    // `GetActionBarToggles()`: the four extra action bars. It is the only read
+    // in this file that answers four values.
     //
     // `UIParent.lua`'s `PLAYER_ENTERING_WORLD` arm is the only caller:
     //
@@ -1909,15 +1930,14 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     // MultiActionBar_Update();
     // ```
     //
-    // — so a client that answers nothing has four frames that exist, lay out
-    // correctly and can never appear, which is exactly what this one had. Each
-    // value is `1` or `nil` rather than a boolean, because `MultiBar1_IsVisible`
-    // hands the same value back to a checkbox's `func` and `OptionsFrame` tests
-    // it against `1`.
+    // If the read answers nothing, the four frames exist and lay out correctly
+    // but never appear. Each value is `1` or `nil` rather than a boolean,
+    // because `MultiBar1_IsVisible` hands the same value back to a checkbox's
+    // `func` and `OptionsFrame` tests it against `1`.
     //
-    // The fifth toggle the *write* takes is deliberately not among them:
-    // the client's read answers four toggles and stops at four, so
-    // "Always Show ActionBars" is never read back from the wire. See
+    // The write takes a fifth toggle, "Always Show ActionBars", which is not
+    // returned here: the 1.12.1 client's read answers four toggles, so the
+    // fifth is never read back from the wire. See
     // [`vale_protocol::play::spells::multi_bar`].
     globals.set(
         "GetActionBarToggles",
@@ -1934,18 +1954,17 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         })?,
     )?;
 
-    // **`GetQuestGreenRange()` — one missing name, and it took the whole target
-    // frame with it.** `TargetFrame_CheckLevel` colours the level number through
-    // `GetDifficultyColor`, whose last question this is; with the name nil the
-    // call raised, `TargetFrame_Update` died at its *second* line, and everything
-    // after it never ran — the name plate kept its untinted art (which is the
-    // "no friendly/hostile colour" report), the classification, the dead check
-    // and `TargetPortrait:SetAlpha` never happened, and `TargetDebuffButton_Update`
-    // never got to **hide** the twenty-one aura buttons the markup ships visible
-    // (which is the "corrupted frame with blank buff slots" report). Two reports,
-    // one absent global, and it only fires when `UnitCanAttack` — so a friendly
-    // target repaired the frame and a hostile one broke it again, which is
-    // exactly the "until you select yourself or another mob" the report ends on.
+    // `GetQuestGreenRange()`: the level band below the player's in which a
+    // target is drawn green. `TargetFrame_CheckLevel` colours the level number
+    // through `GetDifficultyColor`, which calls this last. When the global was
+    // missing, the call raised and `TargetFrame_Update` stopped at its second
+    // line. Nothing after that line ran: the name plate kept its untinted art
+    // (no friendly or hostile colour), the classification, the dead check and
+    // `TargetPortrait:SetAlpha` were skipped, and `TargetDebuffButton_Update`
+    // never hid the twenty-one aura buttons the markup ships visible, so the
+    // frame showed blank buff slots. The path only runs when `UnitCanAttack`
+    // is true, so a friendly target drew the frame correctly and a hostile one
+    // broke it again.
     //
     // It is a read rather than a stub because it answers the world: the player's
     // own level indexes the table. See [`api::quest_green_range`] for the
@@ -1966,38 +1985,37 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         })?,
     )?;
     unit!("UnitName", |t| answers.unit_name(t));
-    // **The same name, with the PvP rank title in front of it** — "Sergeant
-    // Bram". This client models no honour rank at all (`PLAYER_FIELD_*` for
-    // the ranks is unread, and the rank titles are `PVP_RANK_*` in
-    // `GlobalStrings.lua`), so it is the bare name, which is exactly what the
-    // real client answers for a character below rank 1 — and that is most of
-    // them. A **stated deviation**, not an alias: the day the rank is read this
-    // has a prefix to compose.
+    // `UnitPVPName`: the name with the PvP rank title in front of it, as in
+    // "Sergeant Bram". This client models no honour rank (the `PLAYER_FIELD_*`
+    // rank fields are unread, and the rank titles are `PVP_RANK_*` in
+    // `GlobalStrings.lua`), so it answers the bare name. The 1.12.1 client
+    // answers the same for a character below rank 1, which is most
+    // characters. This is a stated deviation, not an alias: once the rank is
+    // read, this read must add the prefix.
     //
     // It is here rather than in [`self::stubs`] because it answers the world.
     // `CharacterFrame_OnShow`'s third line is `CharacterNameText:SetText(
-    // UnitPVPName("player"))`, and with the name nil that body died there —
-    // which is why the character sheet's title bar read "Name", the placeholder
-    // its own `<FontString text="Name">` carries.
+    // UnitPVPName("player"))`. With the name nil, that function raised there
+    // and the character sheet's title bar kept the placeholder "Name" from its
+    // `<FontString text="Name">`.
     unit!("UnitPVPName", |t| answers.unit_name(t));
     unit!("UnitLevel", |t| answers.unit_level(t));
-    // **The one read `ReputationFrame_Update` makes before its loop**, and the
-    // whole of why that panel drew fifteen empty bars: a nil here raised on
-    // line 44 and every `Hide()` after it was never reached.
+    // `UnitSex` is the one read `ReputationFrame_Update` makes before its loop.
+    // A nil here raised on line 44, every `Hide()` after it was skipped, and
+    // the panel drew fifteen empty bars.
     unit!("UnitSex", |t| answers.unit_sex(t));
     unit!("UnitHealth", |t| answers.unit_health(t));
     unit!("UnitHealthMax", |t| answers.unit_health_max(t));
     unit!("UnitMana", |t| answers.unit_mana(t));
-    // **The XP bar's two numbers, and its maximum is what decides it is drawn
-    // at all.** `MainMenuExpBar_Update` feeds both to `SetMinMaxValues` and
-    // `TextStatusBar_UpdateTextString` **hides** a bar whose maximum is zero —
-    // so while these were stubs the game's own code took the whole XP bar off
-    // the screen, which is the "XP bar is missing entirely" report.
+    // The XP bar's two numbers. The maximum decides whether the bar is drawn:
+    // `MainMenuExpBar_Update` feeds both to `SetMinMaxValues`, and
+    // `TextStatusBar_UpdateTextString` hides a bar whose maximum is zero. While
+    // these were stubs answering zero, the XP bar was not drawn at all.
     unit!("UnitXP", |t| answers.unit_experience(t).0);
     unit!("UnitXPMax", |t| answers.unit_experience(t).1);
     unit!("UnitManaMax", |t| answers.unit_mana_max(t));
-    // **The two unspent-point pools**, which is the one read the talent panel
-    // and the skills panel share. Both are numbers rather than nil for a unit
+    // `UnitCharacterPoints`: the two unspent-point pools. The talent panel and
+    // the skills panel both read it. Both are numbers rather than nil for a unit
     // that is not there: `TalentFrame_UpdateTalentPoints` puts the first
     // straight into a `FontString` and `SkillFrame_UpdateSkills` compares the
     // second, and neither guards. See [`super::panels::talent`].
@@ -2007,32 +2025,32 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
             Ok(answers.unit_character_points(token.as_deref().unwrap_or("")))
         })?,
     )?;
-    // **A unit that is not there still runs on mana**, and the reason is the
-    // directory rather than a preference. `PetFrame`, `TargetofTargetFrame` and
+    // `UnitPowerType` answers mana (`0`) for a unit that is not there, because
+    // the interface code requires it. `PetFrame`, `TargetofTargetFrame` and
     // the four `PartyMemberFrame`s all call `UnitFrame_UpdateManaType` from
-    // their own `OnLoad`, at a login where none of those units exists, and the
-    // next line is `ManaBarColor[UnitPowerType(unit)].r` — so a client that
-    // answered nil there would break six of its own frames on every login, and
-    // 1.12's does not. `0` is `ManaBarColor`'s own first row.
+    // their `OnLoad`, at a login where none of those units exists, and the
+    // next line is `ManaBarColor[UnitPowerType(unit)].r`. A nil answer would
+    // raise in all six frames on every login; the 1.12.1 client's does not.
+    // `0` is `ManaBarColor`'s first row.
     unit!("UnitPowerType", |t| answers.unit_power_type(t).unwrap_or(0));
-    // **Only a party member can be disconnected.** Every unit the world knows
-    // about is connected by construction, which is the reference's answer too —
-    // and the roster's status byte is the only thing that says otherwise for a
-    // member across the zone. It was a constant `1` until the party arrived,
-    // and `UnitFrameManaBar_Update` greys the whole bar out on a nil, so the
-    // shape is unchanged for everything but `party<n>`.
+    // Only a party member can be disconnected. Every unit the world knows
+    // about is connected, and the 1.12.1 client answers the same. The party
+    // roster's status byte is the only source that says otherwise, for a
+    // member in another zone. The read answered a constant `1` before party
+    // support existed, and `UnitFrameManaBar_Update` greys the whole bar on a
+    // nil, so the answer is unchanged for every token but `party<n>`.
     unit!("UnitIsConnected", |t| one_or_nil(
         answers.unit_is_connected(t)
     ));
     unit!("UnitIsDead", |t| one_or_nil(answers.unit_is_dead(t)));
-    // **The three are three different answers now**, and the deviation this
-    // comment used to record is retired: a corpse run really is "ghost and not
-    // dead" (`PLAYER_FLAGS_GHOST`, health 1) and the client models it, so
-    // `UnitIsDeadOrGhost` is the union rather than a synonym for the first.
-    // Both `FriendsFrameAddFriendButton` and `PetitionFrameRenameButton` open
-    // with it, and a dead-or-ghost check is the game's own way of refusing an
-    // action to a corpse — which a ghost, walking about with 1 hit point, would
-    // otherwise have passed.
+    // `UnitIsDead`, `UnitIsGhost` and `UnitIsDeadOrGhost` give three separate
+    // answers. During a corpse run the player is a ghost and not dead
+    // (`PLAYER_FLAGS_GHOST`, health 1), and this client models that, so
+    // `UnitIsDeadOrGhost` is the union of the other two. Both
+    // `FriendsFrameAddFriendButton` and `PetitionFrameRenameButton` open with
+    // it. The interface uses a dead-or-ghost check to refuse an action to a
+    // corpse; a check on `UnitIsDead` alone would pass a ghost, which has 1
+    // hit point.
     unit!("UnitIsGhost", |t| one_or_nil(answers.unit_is_ghost(t)));
     unit!("UnitIsDeadOrGhost", |t| one_or_nil(
         answers.unit_is_dead(t) || answers.unit_is_ghost(t)
@@ -2041,8 +2059,9 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         answers.unit_affecting_combat(t)
     ));
 
-    // **Being dead: the two clocks and the offer** — written into [`Held`]
-    // rather than registered here. See that type, which says why these five
+    // The death reads (the release and corpse-recovery clocks, and the
+    // resurrection offer) are written into [`Held`] rather than registered
+    // here. See that type, which says why these five
     // cannot be scoped functions like every other read in this file.
     *held.borrow_mut() = HeldReads {
         release: answers.release_time_remaining(),
@@ -2051,8 +2070,8 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         sickness: answers.resurrect_has_sickness(),
         timer: answers.resurrect_has_timer(),
     };
-    // …and the spirit healer's two, which are scoped because both are called
-    // *during* a chunk rather than stored by one: `UIParent_OnEvent` reads the
+    // The spirit healer's two reads are scoped functions, because both are
+    // called during a chunk rather than stored by one: `UIParent_OnEvent` reads the
     // duration on `CONFIRM_XP_LOSS`, and the `XP_LOSS` box's `OnUpdate` asks
     // the distance every tick. See [`Answers::res_sickness_duration`].
     globals.set(
@@ -2073,18 +2092,17 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         })?,
     )?;
 
-    // **Friend or foe — five names and one reading.** All of them take two
-    // tokens, so they take the same shape as `UnitIsUnit` above rather than the
-    // `unit!` macro's.
+    // Friend or foe: five names answered from one reaction rank. All of them
+    // take two tokens, so they use the `pair!` macro, shaped like `UnitIsUnit`
+    // above, rather than `unit!`.
     //
-    // These were stubs answering nil for nine rounds, and the note left with
-    // them said the cost was "a target frame draws no attackable border". It was
-    // larger than that: `TargetDebuffButton_Update` branches on
-    // `UnitIsFriend("player", "target")` to decide **where the aura rows go**,
-    // so with it nil every target in the game took the hostile layout and a
-    // friendly target's buffs were drawn 46 units — two rows — below the frame
-    // they belong under. That is the standing example of this directory's own
-    // first rule: a constant answer is indistinguishable from a working one.
+    // These were stubs answering nil. Besides the missing attackable border on
+    // the target frame, `TargetDebuffButton_Update` branches on
+    // `UnitIsFriend("player", "target")` to decide where the aura rows go, so
+    // with it nil every target took the hostile layout and a friendly target's
+    // buffs were drawn 46 units (two rows) below the frame. This is an example
+    // of this directory's first rule: a constant answer cannot be told apart
+    // from a working one.
     macro_rules! pair {
         ($name:literal, |$a:ident, $b:ident| $body:expr) => {{
             let f = scope.create_function(move |_, (a, b): (Option<String>, Option<String>)| {
@@ -2096,12 +2114,12 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         }};
     }
 
-    // **The rank, and it is an index rather than a measurement.**
-    // `TargetFrame_CheckFaction`'s only use of it is `UnitReactionColor[reaction]`
-    // — an eight-row table that is red at 1..2, orange at 3, yellow at 4 and
-    // green at 5..8 — and the value is the reaction plus one, so
-    // this is the rank the rule answers with `1` added and nothing else.
-    // `nil` for an absent unit, which that body has its own arm for.
+    // `UnitReaction`: the rank, used as an index rather than a measurement.
+    // `TargetFrame_CheckFaction` uses it only as `UnitReactionColor[reaction]`,
+    // an eight-row table that is red at 1..2, orange at 3, yellow at 4 and
+    // green at 5..8. The value is the reaction rank plus one, with no other
+    // change. It is `nil` for an absent unit, which that function handles in a
+    // separate branch.
     use vale_assets::tables::faction::Reaction;
     pair!("UnitReaction", |a, b| answers
         .unit_rank(a, b)
@@ -2115,17 +2133,17 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     pair!("UnitCanAttack", |a, b| one_or_nil(
         answers.unit_can_attack(a, b)
     ));
-    // **`UnitCanAssist` and `UnitCanCooperate` are the friendly reading, and
-    // that is a stated deviation rather than an alias.** The game's two are
-    // narrower than "friendly": cooperate is may-we-party-trade-and-duel, which
-    // turns on the other party being a player of a faction group we can group
-    // with, and assist is may-I-heal-you. Every consumer in the directory asks
-    // them about a *player* target (`UnitPopup`'s trade and invite entries,
-    // `FriendsFrame`'s add-friend), and for a player the friendly reading and
-    // the real one agree — a hostile-faction player is not friendly and cannot
-    // be cooperated with either. What it gets wrong is a friendly *creature*,
-    // which answers yes here and no in the real client; nothing in 1.12's own
-    // interface asks about one.
+    // `UnitCanAssist` and `UnitCanCooperate` answer "friendly". This is a
+    // stated deviation, not an alias. In the 1.12.1 client both are narrower:
+    // cooperate means the two may party, trade and duel, which requires the
+    // other unit to be a player of a faction group that can group with ours,
+    // and assist means one may heal the other. Every caller in the interface
+    // asks about a player target (`UnitPopup`'s trade and invite entries,
+    // `FriendsFrame`'s add-friend), and for a player the friendly answer and
+    // the real one agree: a hostile-faction player is neither friendly nor
+    // cooperative. The answer differs for a friendly creature, which is yes
+    // here and no in the 1.12.1 client; no 1.12.1 interface code asks about
+    // one.
     pair!("UnitCanAssist", |a, b| one_or_nil(
         answers.unit_rank(a, b).map(Reaction::from) == Some(Reaction::Friendly)
     ));
@@ -2135,26 +2153,24 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     unit!("UnitPlayerControlled", |t| one_or_nil(
         answers.unit_player_controlled(t)
     ));
-    // **`UnitIsPlayer` is the same fact for this client and a different one in
-    // the real game**: the game's answer is false for a *pet*, which is
-    // player-controlled and is not a player, and this client has no pet — which
-    // is exactly the deviation [`Units::player_controlled`] already records
-    // against itself. Two names off one reading, and the day a pet exists both
-    // change together.
+    // `UnitIsPlayer` answers the same as `UnitPlayerControlled` here. In the
+    // 1.12.1 client they differ for a pet, which is player-controlled but not
+    // a player. This client has no pet; [`Units::player_controlled`] records
+    // that deviation. When pets are added, both reads must change together.
     unit!("UnitIsPlayer", |t| one_or_nil(
         answers.unit_player_controlled(t)
     ));
-    // …and the three the plate and the target frame's border are made of. All
-    // three left [`self::stubs`] this round: `UnitClassification` was answering
-    // the constant `"normal"`, which drew the ordinary border round every elite
-    // in the game, and the other two were nil.
+    // The three reads the name plate and the target frame's border are built
+    // from. They were in [`self::stubs`]: `UnitClassification` answered the constant
+    // `"normal"`, which drew the ordinary border round every elite, and the
+    // other two answered nil.
     unit!("UnitIsPVP", |t| one_or_nil(answers.unit_is_pvp(t)));
-    // **Two returns, and the *first* is the one that matters.**
-    // `PartyMemberFrame_UpdatePvPStatus` concatenates it into a texture path,
-    // so an English word is required there whatever the client's locale — which
+    // `UnitFactionGroup` returns two values; the interface relies on the
+    // first. `PartyMemberFrame_UpdatePvPStatus` concatenates it into a texture
+    // path, so it must be the English word whatever the client's locale. That
     // is why `FactionGroup.dbc` carries `internalName` beside the eight
-    // localised ones at all.
-    // Two returns, so this one cannot go through `unit!` — that macro answers a
+    // localised names.
+    // Two returns, so this one cannot go through `unit!`, which answers a
     // single value.
     globals.set(
         "UnitFactionGroup",
@@ -2168,36 +2184,39 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     unit!("UnitCreatureType", |t| answers.unit_creature_type(t));
     unit!("UnitClassification", |t| answers.unit_classification(t));
 
-    // **The spell cursor's two reads.** `UnitFrame_OnEnter` is
+    // The spell cursor's two reads, `SpellIsTargeting` and
+    // `SpellCanTargetUnit`. `UnitFrame_OnEnter` is
     // `if SpellIsTargeting() then SetCursor(SpellCanTargetUnit(this.unit) and
-    // "CAST_CURSOR" or "CAST_ERROR_CURSOR") end` — the interface asking which
-    // pointer to show over a *unit frame*, where this client's own world pick
-    // (`interface::target::spell_cursor_validity`) answers the same question about the
-    // 3D scene. `SetCursor` itself is still a stub, so what changes on screen
-    // today is the world half; the frames' answers are correct and unused.
+    // "CAST_CURSOR" or "CAST_ERROR_CURSOR") end`: the interface chooses the
+    // pointer over a unit frame. This client's world pick
+    // (`interface::target::spell_cursor_validity`) answers the same question
+    // for the 3D scene. `SetCursor` is still a stub, so only the world pick
+    // changes the pointer on screen; the frames' answers are correct but
+    // unused.
     let f = scope.create_function(|_, ()| Ok(one_or_nil(answers.spell_is_targeting())))?;
     globals.set("SpellIsTargeting", f)?;
 
-    // --- **`ToggleGameMenu`'s three, which answer *and* act** ---
+    // --- `ToggleGameMenu`'s three reads that also act ---
     //
-    // Escape is `TOGGLEGAMEMENU` in the game's own shipped defaults, and its
-    // body is a seven-branch `elseif` chain: `StaticPopup_EscapePressed()`,
-    // `OptionsFrame`, `GameMenuFrame`, `CloseMenus()`, `SpellStopCasting()`,
-    // `SpellStopTargeting()`, `CloseAllWindows()`, `ClearTarget()` — and only
-    // if none of them did anything does the menu open.
+    // Escape is bound to `TOGGLEGAMEMENU` in the game's shipped defaults, and
+    // that binding's body is a seven-branch `elseif` chain:
+    // `StaticPopup_EscapePressed()`, `OptionsFrame`, `GameMenuFrame`,
+    // `CloseMenus()`, `SpellStopCasting()`, `SpellStopTargeting()`,
+    // `CloseAllWindows()`, `ClearTarget()`. The menu opens only if none of
+    // them did anything.
     //
-    // **The return value is the whole point**, which is why these are here and
-    // not in [`self::verbs`]: `elseif ( SpellStopCasting() )` means *I
-    // cancelled a cast, so do not open the menu*, so a verb answering nil would
-    // open the game menu on every Escape including mid-cast. They are the shape
-    // `PutItemInBag` already has — a read off the world with a write pushed on
-    // the same queue a verb writes to.
+    // These three are here and not in [`self::verbs`] because the chain uses
+    // their return value: `elseif ( SpellStopCasting() )` means "a cast was
+    // cancelled, so do not open the menu". A verb answering nil would open the
+    // game menu on every Escape, including mid-cast. They have the same shape
+    // as `PutItemInBag`: a read off the world, plus a write pushed on the
+    // queue verbs write to.
     //
-    // This client read `just_pressed(KeyCode::Escape)` in two other files for
-    // all three of these until the key-bindings panel landed, which meant
-    // Escape did three things at once and could be rebound away from none of
-    // them. See `interface::action::stop_casting` and
-    // `interface::target`'s `ClearTarget` arm.
+    // Before the key-bindings panel, two other files read
+    // `just_pressed(KeyCode::Escape)` for all three actions. Escape then did
+    // all three at once, and none of them could be rebound. See
+    // `interface::action::stop_casting` and `interface::target`'s
+    // `ClearTarget` arm.
     {
         let queue = std::rc::Rc::clone(queue);
         let f = scope.create_function(move |_, ()| {
@@ -2220,18 +2239,17 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
             }
             Ok(one_or_nil(targeting))
         })?;
-        // **Registered here rather than in `verbs.rs`, where it used to be.**
-        // It was a plain verb answering nothing, and nothing noticed because
-        // its only call site outside this chain — `SpellButton_OnClick`'s own
-        // `else` — throws the answer away. Inside the chain it is load-bearing.
+        // Registered here rather than in `verbs.rs`. As a verb it answered
+        // nothing, which made no difference to its only caller outside this
+        // chain, `SpellButton_OnClick`'s `else` branch, because that caller
+        // discards the answer. The chain uses it.
         globals.set("SpellStopTargeting", f)?;
     }
     {
         let queue = std::rc::Rc::clone(queue);
         let f = scope.create_function(move |_, ()| {
-            // **`UnitExists("target")` is the reading**, which is the same
-            // question the chain's own branch is asking and needs no state of
-            // its own.
+            // The answer is `UnitExists("target")`, which is the question the
+            // chain's branch asks. It needs no state of its own.
             let had = answers.unit_exists("target");
             if had {
                 queue.borrow_mut().push(crate::input::bindings::Binding::ClearTarget);
@@ -2254,18 +2272,18 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     slot!("IsAutoRepeatAction", |s| one_or_nil(
         answers.is_auto_repeat_action(s)
     ));
-    // **The range pair, and the second of them is the one place in this file
-    // where `nil` and `0` are not the same answer.** `ActionButton_OnUpdate`
-    // tests `IsActionInRange(button) == 0` for the red hotkey and `== 1` for the
-    // range dot, so an unanswerable question — no target, or a unit the renderer
-    // has not placed — must come back nil and not `one_or_nil(false)`, which is
-    // the same nil arrived at by a route that also swallows a real "out of
-    // range". Hence `Option<bool>` all the way down rather than a bool.
+    // The range pair. `IsActionInRange` is the one read in this file where
+    // `nil` and `0` are different answers. `ActionButton_OnUpdate` tests
+    // `IsActionInRange(button) == 0` for the red hotkey and `== 1` for the
+    // range dot, so an unanswerable question (no target, or a unit the
+    // renderer has not placed) must return nil. `one_or_nil(false)` would also
+    // return nil, but it would turn a real "out of range" into nil too. The
+    // answer is therefore `Option<bool>` all the way down rather than a bool.
     slot!("ActionHasRange", |s| one_or_nil(answers.action_has_range(s)));
     slot!("IsActionInRange", |s| answers
         .is_action_in_range(s)
         .map(u32::from));
-    // The item slot's own three — the count under the icon, and the green
+    // The item slot's three reads: the count under the icon, and the green
     // border round it. `GetActionCount` answers a number for every slot and
     // `ActionButton_UpdateCount` writes it only under a button the first of
     // these says yes to, so the two belong together.
@@ -2287,9 +2305,9 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         (one_or_nil(usable), one_or_nil(not_enough_mana))
     });
 
-    // The spellbook's seven, in their own file — one subject, one module, the
-    // same rule the rest of this directory follows. The character sheet's
-    // fourteen are the next of them.
+    // Each panel's reads live in that panel's own module, one subject per
+    // module, as elsewhere in this directory. The spellbook has seven; the
+    // character sheet (`paperdoll`) has fourteen.
     super::panels::spellbook::install(lua, scope, answers)?;
     super::panels::auras::install(lua, scope, answers)?;
     super::panels::paperdoll::install(lua, scope, answers)?;
@@ -2301,42 +2319,45 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     super::panels::merchant::install(lua, scope, answers, queue)?;
     super::panels::mail::install(lua, scope, answers)?;
     super::panels::trainer::install(lua, scope, answers)?;
-    // …and the stable master's seven, one of which aims a `<PlayerModel>` and
-    // is scoped for that reason — see [`super::panels::stable`].
+    // The stable master's seven reads. One of them aims a `<PlayerModel>` and
+    // is scoped for that reason; see [`super::panels::stable`].
     super::panels::stable::install(lua, scope, answers)?;
-    // …and the bank's three, whose thirty buttons otherwise read the paper
-    // doll's — see [`super::panels::bank`].
+    // The bank's three reads. Without them the bank's thirty buttons would
+    // read the paper doll's; see [`super::panels::bank`].
     super::panels::bank::install(lua, scope, answers)?;
-    // …and the six a sign, a plaque or a book asks — the one window in the
-    // directory whose subject is a thing. See [`super::panels::pagetext`].
+    // The six reads a sign, a plaque or a book makes. This is the one window
+    // in the directory whose subject is an object; see
+    // [`super::panels::pagetext`].
     super::panels::pagetext::install(lua, scope, answers)?;
-    // …and the summon popup's three. See [`super::panels::summon`].
+    // The summon popup's three reads. See [`super::panels::summon`].
     super::panels::summon::install(lua, scope, answers)?;
+    // The inspect window's four reads. See [`super::panels::inspect`].
+    super::panels::inspect::install(lua, scope, answers)?;
     super::panels::trade::install(lua, scope, answers)?;
-    // …and the two profession windows, whose create buttons ride the same
-    // queue the bags' drag does — see [`super::panels::tradeskill`].
+    // The two profession windows. Their create buttons push onto the same
+    // queue the bags' drag uses; see [`super::panels::tradeskill`].
     super::panels::tradeskill::install(lua, scope, answers, queue)?;
     super::panels::craft::install(lua, scope, answers, queue)?;
     super::panels::talent::install(lua, scope, answers)?;
     super::panels::taxi::install(lua, scope, answers)?;
     super::panels::worldmap::install(lua, scope, answers)?;
-    // …and who else is in the group, which is the one unit subject whose
-    // members may not be in the world at all — see [`super::panels::party`].
+    // The party reads. The party is the one unit subject whose members may
+    // not be in the world at all; see [`super::panels::party`].
     super::panels::party::install(lua, scope, answers)?;
-    // …and the raid's eight, which are the same roster asked a different set of
-    // questions — see [`super::panels::raid`].
+    // The raid's eight reads, which ask different questions of the same
+    // roster; see [`super::panels::raid`].
     super::panels::raid::install(lua, scope, answers)?;
-    // …and their pets, which are the one unit family whose token is derived
-    // from another unit's fields rather than held — see [`super::panels::pet`].
+    // Group members' pets. Their tokens are derived from another unit's
+    // fields rather than held; see [`super::panels::pet`].
     super::panels::pet::install(lua, scope, answers)?;
     super::panels::shapeshift::install(lua, scope, answers)?;
-    // …and the two screens before there is a world, whose reads are about a
-    // session that has not started — see [`super::panels::glue`].
+    // The two screens shown before there is a world. Their reads are about a
+    // session that has not started; see [`super::panels::glue`].
     super::panels::glue::install(lua, scope, answers)?;
 
-    // …and the two tooltip populations, which are the same kind of read one
-    // level down: they answer *onto a widget* rather than into an expression,
-    // but the value still has to be the world's at the moment of the call.
+    // The two tooltip populations. They answer onto a widget rather than
+    // into an expression, but the value must still be the world's at the
+    // moment of the call.
     super::widgets::tooltip::install_scoped(lua, scope, answers)?;
 
     Ok(())
@@ -2356,22 +2377,22 @@ pub(crate) mod tests {
     pub struct StubUnit {
         pub token: String,
         pub name: String,
-        /// **The zone line a party member's plate gets**, empty for every other
-        /// unit — see [`crate::interface::api::UnitTip::zone`].
+        /// The zone line on a party member's plate. Empty for every other
+        /// unit. See [`crate::interface::api::UnitTip::zone`].
         pub zone: String,
         pub level: i32,
         pub health: u32,
         pub health_max: u32,
         pub dead: bool,
-        /// `UnitIsGhost` — released, which is not the same as [`Self::dead`].
+        /// `UnitIsGhost`: released, which is not the same as [`Self::dead`].
         pub ghost: bool,
         pub in_combat: bool,
-        /// The identity `UnitIsUnit` compares — two tokens naming one creature
+        /// The identity `UnitIsUnit` compares. Two tokens naming one creature
         /// share it, which is how `TARGETSELF`'s branch is tested.
         pub guid: u64,
-        /// `UnitPlayerControlled` — a person behind it rather than the server.
+        /// `UnitPlayerControlled`: a player controls it rather than the server.
         pub player: bool,
-        /// The three the unit plate's second and fourth lines are made of: a
+        /// The three fields the unit plate's second and fourth lines are built from: a
         /// `CreatureType.dbc` row, a classification (0 normal … 4 rare), and the
         /// PvP flag. Zero and false is a plain, unflagged creature.
         pub creature_type: u32,
@@ -2391,7 +2412,7 @@ pub(crate) mod tests {
         pub not_enough_mana: bool,
         pub attack: bool,
         pub current: bool,
-        /// Whether this slot is the ranged attack currently repeating — the
+        /// Whether this slot is the ranged attack currently repeating: the
         /// state `ActionButton_UpdateState` reads beside [`Self::current`].
         pub auto_repeat: bool,
         /// The item half of a slot: how many are carried, whether the stack
@@ -2401,12 +2422,11 @@ pub(crate) mod tests {
         pub count: u32,
         pub consumable: bool,
         pub equipped: bool,
-        /// The range pair, and it is **two** fields for one subject because the
-        /// interface reads three states out of them: no range at all, in range,
-        /// out of range. `in_range` is `None` for a slot that has a range and
-        /// nothing to measure it against — no target — which is the answer a
-        /// single bool cannot express and the reason the trait method returns an
-        /// `Option`.
+        /// The range pair. It is two fields because the interface reads three
+        /// states from them: no range at all, in range, and out of range.
+        /// `in_range` is `None` for a slot that has a range and nothing to
+        /// measure it against (no target). A single bool cannot express that,
+        /// so the trait method returns an `Option`.
         pub has_range: bool,
         pub in_range: Option<bool>,
     }
@@ -2418,85 +2438,85 @@ pub(crate) mod tests {
         pub passive: bool,
     }
 
-    /// A stub world, which is the second thing [`Answers`] bought — see the
-    /// module comment. Everything a test needs to set is a public field.
+    /// A stub world. [`Answers`] being a trait is what makes it possible; see
+    /// the module comment. Everything a test needs to set is a public field.
     #[derive(Default)]
     pub struct Stub {
         pub now: f64,
         pub units: Vec<StubUnit>,
         pub actions: Vec<StubAction>,
-        /// The book, flat, in the order [`vale_assets::tables::book`] would have
-        /// sorted it — a test states the order it wants rather than building one.
+        /// The book, flat, in the order [`vale_assets::tables::book`] would
+        /// sort it. A test states the order it wants rather than building one.
         pub spells: Vec<StubSpell>,
         /// `(name, offset, count)` per tab, which is what `GetSpellTabInfo`
-        /// answers. Not derived from `spells`: the whole thing the panel's
-        /// arithmetic stands on is that these two agree, so a test that wants to
-        /// check the agreement has to be able to state both.
+        /// answers. Not derived from `spells`: the panel's arithmetic depends
+        /// on these two agreeing, so a test that checks the agreement must be
+        /// able to state both.
         pub tabs: Vec<(String, usize, usize)>,
         /// `(token, aura)` pairs in the order they were added, which is the
-        /// order the player's own bar keeps — see [`crate::interface::auras`].
+        /// order the player's own bar keeps. See [`crate::interface::auras`].
         pub auras: Vec<(String, crate::lua::panels::auras::AuraInfo)>,
-        /// The character sheet's block, for whoever answers `"player"` — built
-        /// by [`Stub::stats`] out of real update fields, so the tests over
+        /// The character sheet's block, for whichever unit answers `"player"`.
+        /// [`Stub::stats`] builds it from real update fields, so the tests over
         /// `lua::paperdoll` exercise the same decode the client runs.
         pub stats: Option<vale_protocol::play::stats::UnitStats>,
-        /// What every item answers for its cooldown — see
+        /// What every item answers for its cooldown. See
         /// [`Stub::container_item_cooldown`]. `(0, 0, false)` by `Default`,
         /// which is the "nothing there" triple with the swirl disabled.
         pub item_cooldown: (f64, f64, bool),
-        /// **Which of the four extra action bars are on**, as the same
-        /// `multi_bar` mask the wire carries. `0` by `Default`, which is a fresh
-        /// account: four bars off. See [`super::ActionAnswers::action_bar_toggles`].
+        /// Which of the four extra action bars are on, as the `multi_bar`
+        /// mask the wire carries. `0` by `Default`, which is a fresh account
+        /// with all four bars off. See [`super::ActionAnswers::action_bar_toggles`].
         pub bar_toggles: u8,
-        /// **The rows of an open loot window**, one-based when read, with the
-        /// coins first if there are any — see [`super::loot`]. Empty by
-        /// `Default`, which is the "nothing has been right-clicked" state and
-        /// what `GetNumLootItems` answers 0 for.
+        /// The rows of an open loot window, one-based when read, with the
+        /// coins first if there are any. See [`super::loot`]. Empty by
+        /// `Default`: nothing has been looted, and `GetNumLootItems` answers 0.
         pub loot: Vec<crate::lua::panels::loot::LootRow>,
-        /// **…and the one group roll a test may have open**, under id 0 — which
-        /// is a real id, since the roll counter starts there. `None` by
-        /// `Default`, which is what every id answers nothing for.
+        /// The one group roll a test may have open, under id 0. Id 0 is a real
+        /// id, since the roll counter starts there. `None` by `Default`, so
+        /// every id answers nothing.
         pub roll: Option<crate::lua::panels::lootroll::RollItem>,
-        /// Parallel to [`Stub::auras`] — see [`Stub::buff`].
+        /// Parallel to [`Stub::auras`]. See [`Stub::buff`].
         helpful: Vec<bool>,
         /// How every unit in this world stands towards every other. One value
-        /// rather than a matrix because the questions the directory asks are
-        /// all `("player", "target")` in one order or the other, and a test that
-        /// wants the other reading builds a second world.
+        /// rather than a matrix, because the directory only asks about
+        /// `("player", "target")` in one order or the other; a test that
+        /// wants a different standing builds a second world.
         standing: vale_assets::tables::faction::Reaction,
-        /// What `UpdateMapHighlight` answers. `None` is the ordinary case — the
+        /// What `UpdateMapHighlight` answers. `None` is the ordinary case: the
         /// pointer over open water, and every point on a zone map.
         highlight: Option<crate::lua::panels::worldmap::Highlight>,
-        /// …and the explored overlays on it. Empty is the ordinary case — a
-        /// client with no world, and a zone nobody has walked.
+        /// The explored overlays on the map. Empty is the ordinary case: a
+        /// client with no world, or a zone nobody has walked.
         overlays: Vec<crate::lua::panels::worldmap::OverlayArt>,
-        /// **The party**: `(name, is the leader)` per member, in `party1..N`
+        /// The party: `(name, is the leader)` per member, in `party1..N`
         /// order. Empty is a solo character, which is what most of this
-        /// directory's tests are.
+        /// directory's tests use.
         party: Vec<(String, bool)>,
-        /// **The raid**: `(name, subgroup byte)` for the members the server
-        /// names, *without* the local player — who is appended as the last slot
-        /// by [`crate::interface::raid`]'s rule, and by this stub's own
-        /// answer for the same reason. Empty is a party.
+        /// The raid: `(name, subgroup byte)` for the members the server
+        /// names, without the local player. [`crate::interface::raid`]
+        /// appends the local player as the last slot, and this stub's answer
+        /// does the same. Empty means a party, not a raid.
         raid: Vec<(String, u8)>,
-        /// **Being dead**, as five plain fields — the two clocks and the three
-        /// halves of an offer. Flat rather than an `Option<ResurrectOffer>`
-        /// because every test that touches them states one number.
+        /// Death state, as five plain fields: the two clocks and the three
+        /// parts of a resurrection offer. Flat rather than an
+        /// `Option<ResurrectOffer>` because every test that touches them sets
+        /// one value.
         release_remaining: i32,
         recovery_delay: i32,
         offerer: Option<String>,
         offer_sickness: bool,
         offer_timer: bool,
-        /// **The bags: `(bag id, [(entry, count)])`**, one-based when read.
-        /// An entry of 0 is an empty slot, which is how a bag with a hole in
+        /// The bags: `(bag id, [(entry, count)])`, one-based when read.
+        /// An entry of 0 is an empty slot, which is how a bag with a gap in
         /// the middle is written.
         containers: Vec<(i32, Vec<(u32, u32)>)>,
-        /// `(inventory slot id, entry, count)` — the worn slots, in the
+        /// `(inventory slot id, entry, count)`: the worn slots, in the
         /// interface's numbering.
         worn: Vec<(u32, u32, u32)>,
-        /// Which item is *in* each bag slot, for `GetBagName`.
+        /// Which item occupies each bag slot, for `GetBagName`.
         bag_entries: Vec<(i32, u32)>,
-        /// **Templates, kept apart from the slots on purpose** — see
+        /// Item templates, kept separate from the slots deliberately. See
         /// [`Stub::bags`]. A slot whose entry is not here is a stack whose
         /// `CMSG_ITEM_QUERY_SINGLE` has not come back, which is the state every
         /// bag is in for the first second of a login.
@@ -2512,20 +2532,20 @@ pub(crate) mod tests {
         pub icon: String,
         pub quality: u32,
         pub inventory_type: u32,
-        /// …and the two the *requirement* lines are drawn from, which the stub
-        /// carries because their whole point is the colour they are drawn in.
+        /// The two fields the requirement lines are drawn from. The stub
+        /// carries them so tests can check the colour those lines are drawn in.
         pub required_level: u32,
         pub level_met: bool,
     }
 
     impl Stub {
-        /// **A character carrying something** — a backpack with twenty linen
-        /// in slot one and an unresolved stack in slot two, a worn sword, and
+        /// A character carrying items: a backpack with twenty linen in slot
+        /// one and an unresolved stack in slot two, a worn sword, and
         /// templates for two of the three.
         ///
-        /// The third is deliberately template-less: it is what makes the
-        /// `-1` quality and the missing icon checkable, and it is the state
-        /// every bag is in for the first second of a login. See
+        /// The third has no template on purpose. That makes the `-1` quality
+        /// and the missing icon checkable, and it is the state every bag is in
+        /// for the first second of a login. See
         /// [`crate::interface::items`], where the two-phase fill is written up.
         pub fn bags(mut self) -> Stub {
             self.containers = vec![(0, vec![(2589, 20), (858, 5)]), (1, vec![])];
@@ -2549,9 +2569,9 @@ pub(crate) mod tests {
                     required_level: 0,
                     level_met: true,
                 },
-                // **A potion the character is too low for**, which is the
-                // report the requirement lines were added for: the level is
-                // stated and it is *not* met, so the plate must say so in red.
+                // A potion whose required level the character does not meet.
+                // The requirement lines were added for this case: the level is
+                // stated and not met, so the plate must show it in red.
                 StubTemplate {
                     entry: 20004,
                     name: "Major Troll's Blood Potion".into(),
@@ -2573,13 +2593,13 @@ pub(crate) mod tests {
                 .map(|(_, slots)| slots.as_slice())
         }
 
-        /// One container slot, **one-based**, `None` for an empty one.
+        /// One container slot, one-based, `None` for an empty one.
         fn stub_slot(&self, bag: i32, slot: usize) -> Option<(u32, u32)> {
             let held = *self.container(bag)?.get(slot.checked_sub(1)?)?;
             (held.0 != 0).then_some(held)
         }
 
-        /// …and one worn slot.
+        /// One worn slot.
         fn stub_worn(&self, id: u32) -> Option<(u32, u32)> {
             self.worn
                 .iter()
@@ -2601,8 +2621,8 @@ pub(crate) mod tests {
                 quality: template.map_or(-1, |t| t.quality as i32),
                 readable: false,
                 broken: false,
-                // Nothing is on the stub's cursor: a lock is a state only a
-                // real drag reaches, and `cursor_has_item` below says so once.
+                // Nothing is on the stub's cursor. Only a real drag locks a
+                // slot, and `cursor_has_item` below answers false.
                 locked: false,
             }
         }
@@ -2621,20 +2641,20 @@ pub(crate) mod tests {
                 in_combat: false,
                 guid,
                 player: false,
-                // A plain unflagged humanoid, which is the ordinary case and
-                // the one every existing test was written against.
+                // A plain unflagged humanoid, the ordinary case, which the
+                // existing tests assume.
                 creature_type: 7,
                 classification: 0,
                 pvp: false,
                 sub_name: String::new(),
-                // Empty, which is every unit but a group mate somewhere else.
+                // Empty for every unit except a group member in another zone.
                 zone: String::new(),
             });
             self
         }
 
-        /// **Where the unit added last is standing**, for the one plate line
-        /// that only a party member gets.
+        /// Sets the zone of the unit added last, for the plate line that only
+        /// a party member gets.
         pub fn in_zone(mut self, zone: &str) -> Stub {
             if let Some(unit) = self.units.last_mut() {
                 unit.zone = zone.to_string();
@@ -2642,8 +2662,8 @@ pub(crate) mod tests {
             self
         }
 
-        /// …and the three the unit plate's own lines are made of, for the tests
-        /// that are about the plate rather than about the unit.
+        /// Sets the fields the unit plate's lines are built from, on the unit
+        /// added last, for tests about the plate rather than the unit.
         pub fn described(
             mut self,
             sub_name: &str,
@@ -2660,8 +2680,8 @@ pub(crate) mod tests {
             self
         }
 
-        /// Make the unit added last a **player**, which is the branch that
-        /// composes "Human Warrior" out of a race and a class.
+        /// Makes the unit added last a player. A player's plate composes
+        /// "Human Warrior" from a race and a class.
         pub fn player_controlled(mut self) -> Stub {
             if let Some(unit) = self.units.last_mut() {
                 unit.player = true;
@@ -2670,16 +2690,16 @@ pub(crate) mod tests {
             self
         }
 
-        /// **How this world's units stand towards each other** — the one fact
-        /// `UnitIsFriend`, `UnitIsEnemy`, `UnitReaction` and `UnitCanAttack` are
-        /// all answered from.
+        /// Sets how this world's units stand towards each other.
+        /// `UnitIsFriend`, `UnitIsEnemy`, `UnitReaction` and `UnitCanAttack`
+        /// are all answered from this one value.
         pub fn standing(mut self, standing: vale_assets::tables::faction::Reaction) -> Stub {
             self.standing = standing;
             self
         }
 
-        /// **What the pointer is over on the world map**, name and art — the
-        /// two halves `WorldMapButton_OnUpdate` reads as one call.
+        /// Sets what the pointer is over on the world map: the name and the
+        /// art, which `WorldMapButton_OnUpdate` reads in one call.
         pub fn highlight(
             mut self,
             name: &str,
@@ -2704,14 +2724,14 @@ pub(crate) mod tests {
             self
         }
 
-        /// **The explored overlays on the parchment**, for the two reads
-        /// `WorldMapFrame_Update` walks them with.
+        /// Sets the explored overlays on the map, for the two reads
+        /// `WorldMapFrame_Update` iterates them with.
         pub fn overlays(mut self, overlays: Vec<crate::lua::panels::worldmap::OverlayArt>) -> Stub {
             self.overlays = overlays;
             self
         }
 
-        /// **The party the reads answer off**, one entry per `party<n>`.
+        /// Sets the party the reads answer from, one entry per `party<n>`.
         pub fn party(mut self, members: &[(&str, bool)], count: usize) -> Stub {
             let _ = count;
             self.party = members
@@ -2721,11 +2741,11 @@ pub(crate) mod tests {
             self
         }
 
-        /// **A raid**, as the server's own list plus one: the members named
-        /// here are `raid1..N` and the *local player* is `raid<N+1>`, which is
-        /// the join the wire does not make — see
-        /// [`crate::interface::raid`]. `own_flags` is our own subgroup byte,
-        /// which is the only place the reader's column is stated.
+        /// Sets a raid: the server's list plus the local player. The members
+        /// named here are `raid1..N` and the local player is `raid<N+1>`; the
+        /// wire does not include the local player in the list. See
+        /// [`crate::interface::raid`]. `own_flags` is the local player's
+        /// subgroup byte, the only place the local player's column is stated.
         pub fn raid(mut self, members: &[(&str, u8)], own_flags: u8) -> Stub {
             self.raid = members
                 .iter()
@@ -2735,9 +2755,9 @@ pub(crate) mod tests {
             self
         }
 
-        /// **A highlight with a name and no art** — a zone map's answer, which
-        /// is the other of the two shapes `UpdateMapHighlight` has and the one
-        /// that hides `WorldMapHighlight`.
+        /// Sets a highlight with a name and no art. This is a zone map's
+        /// answer, the second of `UpdateMapHighlight`'s two shapes, and it
+        /// hides `WorldMapHighlight`.
         pub fn named_highlight(mut self, name: &str) -> Stub {
             self.highlight = Some(crate::lua::panels::worldmap::Highlight {
                 name: name.to_string(),
@@ -2754,8 +2774,8 @@ pub(crate) mod tests {
             self
         }
 
-        /// A tab, and the spells on it — appended, so the offsets follow from
-        /// the order the calls are made in the way a real book's do.
+        /// Appends a tab and its spells. The offsets follow from the order of
+        /// the calls, as a real book's do.
         pub fn tab(mut self, name: &str, spells: &[(&str, &str)]) -> Stub {
             self.tabs
                 .push((name.to_string(), self.spells.len(), spells.len()));
@@ -2782,19 +2802,19 @@ pub(crate) mod tests {
                 count: 0,
                 consumable: false,
                 equipped: false,
-                // No range and nothing to measure — the untinted, dotless
-                // button, which is what a spell like Battle Shout draws and
-                // what a test that is not about range wants.
+                // No range and nothing to measure: the untinted button with no
+                // range dot. A spell like Battle Shout draws this, and tests
+                // that are not about range use it.
                 has_range: false,
                 in_range: None,
             });
             self
         }
 
-        /// …and the same slot with a range on it. `in_range` is the whole point
-        /// of the pair: `Some(false)` is the red hotkey and `None` is a range
-        /// the client cannot measure right now, which the interface draws
-        /// differently — see [`crate::interface::api::is_action_in_range`].
+        /// The same slot with a range on it. `Some(false)` in `in_range` is the
+        /// red hotkey; `None` is a range the client cannot measure right now,
+        /// which the interface draws differently. See
+        /// [`crate::interface::api::is_action_in_range`].
         pub fn ranged_action(mut self, slot: u8, text: &str, in_range: Option<bool>) -> Stub {
             self = self.action(slot, text);
             if let Some(action) = self.actions.last_mut() {
@@ -2804,8 +2824,8 @@ pub(crate) mod tests {
             self
         }
 
-        /// **A level-60 character sheet's worth of update fields**, decoded
-        /// the way the client decodes a real one — 60 Strength with a +10/-4
+        /// A level-60 character sheet's update fields, decoded the way the
+        /// client decodes a real one: 60 Strength with a +10/-4
         /// pair on it, 1000 armour, 50 fire resistance with a +10, 200 attack
         /// power, a 2.9-second weapon, 300 sword skill and 300 defense with a
         /// +5. Answered for `"player"` only.
@@ -2884,10 +2904,10 @@ pub(crate) mod tests {
 
     impl crate::lua::panels::container::ContainerAnswers for Stub {
 
-        // **The bags**, out of the three flat lists [`Stub::bags`] fills. The
-        // stub keeps *slots* and *templates* apart exactly as the client does,
-        // so a test can put a stack in a bag whose template has not arrived —
-        // which is the state every bag is in for the first second of a login.
+        // The bags, from the three flat lists [`Stub::bags`] fills. The stub
+        // keeps slots and templates apart as the client does, so a test can
+        // put a stack in a bag whose template has not arrived, which is the
+        // state every bag is in for the first second of a login.
         fn container_num_slots(&self, bag: i32) -> usize {
             self.container(bag).map_or(0, <[_]>::len)
         }
@@ -2907,10 +2927,10 @@ pub(crate) mod tests {
                 &template.name,
             ))
         }
-        /// **The `item_cooldown` field, verbatim, whatever the slot holds.** A
-        /// test that is about a swirl states the triple it wants; the *join*
-        /// from a slot to an item to a spell to a record is the live world's
-        /// and is checked there.
+        /// Returns the `item_cooldown` field unchanged, whatever the slot
+        /// holds. A test about the cooldown swirl states the triple it wants.
+        /// The lookup from slot to item to spell to cooldown record belongs to
+        /// the live world and is tested there.
         fn container_item_cooldown(&self, _bag: i32, _slot: usize) -> (f64, f64, bool) {
             self.item_cooldown
         }
@@ -2943,8 +2963,8 @@ pub(crate) mod tests {
             ))
         }
         fn inventory_slot_info(&self, name: &str) -> Option<(u32, String, bool)> {
-            // The two rows the tests name, with the same shape the real table
-            // gives them — see [`vale_assets::tables::inventory`].
+            // The two rows the tests name, in the shape the real table gives
+            // them. See [`vale_assets::tables::inventory`].
             match name {
                 "HeadSlot" => Some((1, "art-head".into(), false)),
                 "RangedSlot" => Some((
@@ -3026,8 +3046,8 @@ pub(crate) mod tests {
 
     impl crate::lua::panels::quest::QuestAnswers for Stub {
 
-        // **Empty by default**, which is what the tests in this directory want: a
-        // stub world has no conversation and no log unless the test states one.
+        // Empty by default: a stub world has no quest conversation and no
+        // quest log unless the test states one.
         fn quest_greeting_text(&self) -> String {
             String::new()
         }
@@ -3101,7 +3121,7 @@ pub(crate) mod tests {
             None
         }
     
-        // …and an untracked one, which is every quest in a log nobody has
+        // No quest is watched, which is the state of a log nobody has
         // right-clicked.
         fn quest_watch_count(&self) -> usize {
             0
@@ -3119,7 +3139,7 @@ pub(crate) mod tests {
     impl crate::lua::panels::gossip::GossipAnswers for Stub {
 
 
-        // --- talking to an NPC: a probe-sized shop and menu ---
+        // --- NPC gossip: a small sample greeting, menu and quest list ---
         fn gossip_text(&self) -> String {
             "Probe greeting.".to_string()
         }
@@ -3161,10 +3181,9 @@ pub(crate) mod tests {
         fn merchant_max_stack(&self, _row: usize) -> u32 {
             5
         }
-        /// **Two rows, sold in the order the world sold them** — enough for a
-        /// test to tell "the last one" from "the first one", which is the whole
-        /// of what the front tab's `GetBuybackItemInfo(GetNumBuybackItems())`
-        /// depends on.
+        /// Two rows, in the order they were sold. That lets a test tell the
+        /// last row from the first, which is what the front tab's
+        /// `GetBuybackItemInfo(GetNumBuybackItems())` depends on.
         fn buyback_rows(&self) -> usize {
             2
         }
@@ -3195,8 +3214,8 @@ pub(crate) mod tests {
     }
 
     impl crate::lua::panels::taxi::TaxiAnswers for Stub {
-        // …and a probe-sized flight map: where you are, and one place one hop
-        // away. The numbers are the ones `lua::taxi`'s own tests read back.
+        // A small sample flight map: the current node, and one node one hop
+        // away. `lua::taxi`'s tests read these numbers back.
         fn taxi_nodes(&self) -> usize {
             2
         }
@@ -3231,9 +3250,9 @@ pub(crate) mod tests {
     }
 
     impl crate::lua::panels::tradeskill::TradeSkillAnswers for Stub {
-        // **A sample profession**, so the panel probes exercise the window:
-        // one header, one recipe under it, one reagent half-met. The shapes
-        // mirror what a real Blacksmithing line answers.
+        // A sample profession, so the panel probes exercise the window: one
+        // header, one recipe under it, one reagent half-met. The shapes match
+        // what a real Blacksmithing line answers.
         fn trade_line(&self) -> Option<(String, u32, u32)> {
             Some(("Stubsmithing".to_string(), 150, 300))
         }
@@ -3322,8 +3341,8 @@ pub(crate) mod tests {
     }
 
     impl crate::lua::panels::craft::CraftAnswers for Stub {
-        // **A sample Enchanting window**, one recipe, no header — the flat
-        // shape the craft list really has.
+        // A sample Enchanting window: one recipe and no header, which is the
+        // flat shape the craft list has.
         fn craft_name(&self) -> Option<String> {
             Some("Enchanting".to_string())
         }
@@ -3395,9 +3414,8 @@ pub(crate) mod tests {
     }
 
     impl crate::lua::panels::mail::MailAnswers for Stub {
-        // **An empty mailbox**, which is what a character who has never been
-        // sent anything has — and the shape the panel's own tests check the
-        // zero-versus-nil answers against.
+        // An empty mailbox, as a character who has never been sent anything
+        // has. The panel's tests check the zero-versus-nil answers against it.
         fn mail_count(&self) -> usize {
             0
         }
@@ -3448,12 +3466,16 @@ pub(crate) mod tests {
         }
 }
 
-    /// …and a probe-sized stable: one slot bought, a pet in the current stall
-    /// and one in the bought stall, so `PetStable_Update` walks the occupied,
-    /// the bought-but-empty and the unbought branches in one pass.
-    /// …and a shut trade window, which is every default.
+    /// A shut trade window, which is every default. The summon, inspect, bank
+    /// and page-text impls below also take the defaults.
+    ///
+    /// The `StableAnswers` impl after them is a small sample stable: one slot
+    /// bought, a pet in the current stall and one in the bought stall, so
+    /// `PetStable_Update` runs its occupied, bought-but-empty and unbought
+    /// branches in one pass.
     impl crate::lua::panels::trade::TradeAnswers for Stub {}
     impl crate::lua::panels::summon::SummonAnswers for Stub {}
+    impl crate::lua::panels::inspect::InspectAnswers for Stub {}
     impl crate::lua::panels::bank::BankAnswers for Stub {}
     impl crate::lua::panels::pagetext::PageTextAnswers for Stub {}
 
@@ -3499,7 +3521,8 @@ pub(crate) mod tests {
 
     impl crate::lua::panels::trainer::TrainerAnswers for Stub {
 
-        // …and a probe-sized trainer: a header and a green spell under it.
+        // A small sample trainer: a header and an available (green) spell
+        // under it.
         fn trainer_rows(&self) -> usize {
             2
         }
@@ -3584,9 +3607,9 @@ pub(crate) mod tests {
 
     impl crate::lua::panels::worldmap::MapAnswers for Stub {
 
-        // **The map: a client with no world.** Every one of these is the answer
-        // a character screen gives, which is the state these tests run in and
-        // the one the "nothing" answers on the trait are written for.
+        // The map for a client with no world. Each method gives the answer a
+        // character screen gives. These tests run in that state, and the
+        // trait's "nothing" answers are written for it.
         fn current_map_view(&self) -> vale_assets::tables::worldmap::MapView {
             vale_assets::tables::worldmap::MapView::default()
         }
@@ -3625,8 +3648,8 @@ pub(crate) mod tests {
         }
     }
 
-    /// **No pet**, which is the ordinary case and the one every non-pet test in
-    /// this file is written against. The pet reads have their own doubles in
+    /// No pet. This is the ordinary case, and every non-pet test in this file
+    /// assumes it. The pet reads have their own doubles in
     /// [`crate::lua::audit`].
     impl crate::lua::panels::pet::PetAnswers for Stub {
         fn has_pet_ui(&self) -> (bool, bool) {
@@ -3682,9 +3705,9 @@ pub(crate) mod tests {
         }
     }
 
-    /// **No forms**, which is every class but four and is what the bare
-    /// interpreter's tests are about — the stance bar has its own double in
-    /// [`crate::lua::audit`].
+    /// No forms, which is true of every class but four and is the case the
+    /// bare interpreter's tests cover. The stance bar has its own test double
+    /// in [`crate::lua::audit`].
     impl crate::lua::panels::shapeshift::ShapeshiftAnswers for Stub {
         fn shapeshift_form_count(&self) -> usize {
             0
@@ -3711,9 +3734,9 @@ pub(crate) mod tests {
             let (name, flags) = self.raid.get(index.checked_sub(1)?)?;
             Some(crate::lua::panels::raid::RaidRow {
                 name: name.clone(),
-                // **The last row leads**, which is the local player: a stub
-                // where `raid1` led would never exercise the branch a raid
-                // panel spends its whole time in.
+                // The last row, the local player, is the leader. If `raid1`
+                // led, the stub would never exercise the branch the raid panel
+                // takes most of the time.
                 rank: vale_protocol::play::group::rank_of(
                     index as u64,
                     self.raid.len() as u64,
@@ -3773,8 +3796,8 @@ pub(crate) mod tests {
     }
 
     impl crate::lua::panels::glue::GlueAnswers for Stub {
-        // **No handshake**, which is what the client holds at a login screen
-        // and in the world — the two states this stub stands in for.
+        // No handshake data, which is what the client holds at a login screen
+        // and in the world, the two states this stub stands in for.
         fn character_count(&self) -> usize {
             0
         }
@@ -3792,12 +3815,11 @@ pub(crate) mod tests {
         }
     }
 
-    /// **Nothing at all**, which is the only honest talent tree for a stub
-    /// world with no class in it — `GetNumTalentTabs()` answering 0 is exactly
-    /// what a character below the level that has any reads.
+    /// No talent tree, because the stub world has no class. `GetNumTalentTabs()`
+    /// answering 0 is also what a character below the talent level reads.
     ///
-    /// The *populated* case is [`crate::lua::audit`]'s `Login`, which is where
-    /// the panel is actually driven.
+    /// The populated case is [`crate::lua::audit`]'s `Login`, which drives the
+    /// panel.
     impl crate::lua::panels::talent::TalentAnswers for Stub {
         fn num_talent_tabs(&self) -> usize {
             0
@@ -3865,8 +3887,8 @@ pub(crate) mod tests {
 
     impl crate::lua::panels::auras::AuraAnswers for Stub {
         fn player_buff(&self, index: usize, filter: &str) -> i32 {
-            // The stub's own filter is the two halves and nothing else, which
-            // is what every shipped button passes.
+            // The stub's filter only distinguishes helpful from harmful,
+            // which is all any shipped button passes.
             let want = !filter.eq_ignore_ascii_case("HARMFUL");
             self.auras
                 .iter()
@@ -3887,8 +3909,8 @@ pub(crate) mod tests {
             helpful: bool,
         ) -> Option<crate::lua::panels::auras::AuraInfo> {
             let token = token.to_ascii_lowercase();
-            // Only the two tokens the live client keeps lists for, so the
-            // "a unit with no list answers nothing" test means something.
+            // Only the tokens the live client keeps aura lists for, so the
+            // "a unit with no list answers nothing" test has a unit to fail on.
             if !matches!(token.as_str(), "player" | "target" | "targettarget") {
                 return None;
             }
@@ -3912,7 +3934,7 @@ pub(crate) mod tests {
             self.bar_toggles
         }
         /// A fixed, fully-populated tip for any filled slot, so the tooltip
-        /// tests can assert on every line the law composes.
+        /// tests can assert on every line the tooltip rule composes.
         fn action_tooltip(&self, slot: u8) -> Option<crate::interface::api::SpellTip> {
             self.slot(slot).map(|action| crate::interface::api::SpellTip {
                 talent_rank: None,
@@ -3927,9 +3949,8 @@ pub(crate) mod tests {
                 reagents: vec![("Rune of Teleportation".to_string(), 2)],
             })
         }
-        /// **No stub slot is an item**, so a bar plate here is always the
-        /// spell's — which is what keeps the tooltip tests below asserting on
-        /// the composition they are about.
+        /// No stub slot holds an item, so a bar plate here is always the
+        /// spell's. The tooltip tests below rely on that.
         fn action_item_tooltip(&self, _: u8) -> Option<crate::interface::api::ItemTip> {
             None
         }
@@ -3994,8 +4015,8 @@ pub(crate) mod tests {
         fn game_time(&self) -> (u32, u32) {
             (12, 0)
         }
-        /// The reference's own fallback for a character with no bind point,
-        /// which is what a harness with no session is.
+        /// The 1.12.1 client's text for a character with no bind point, which
+        /// is the state of a harness with no session.
         fn bind_location(&self) -> String {
             "your inn".to_string()
         }
@@ -4071,7 +4092,7 @@ pub(crate) mod tests {
                 _ => false,
             }
         }
-        /// The player's, and nobody else's — see [`Stub::stats`].
+        /// Only the player has stats. See [`Stub::stats`].
         fn unit_stats(&self, token: &str) -> Option<vale_protocol::play::stats::UnitStats> {
             (token.eq_ignore_ascii_case("player")).then_some(self.stats).flatten()
         }
@@ -4092,8 +4113,9 @@ pub(crate) mod tests {
         fn unit_classification(&self, token: &str) -> &'static str {
             super::classification_word(self.find(token).map_or(0, |unit| unit.classification))
         }
-        /// No side: the tests here are about creatures and the two the
-        /// interface asks about are answered in [`crate::lua::audit`].
+        /// No faction group: the tests here are about creatures, and the
+        /// faction-group cases the interface asks about are tested in
+        /// [`crate::lua::audit`].
         fn unit_faction_group(&self, _token: &str) -> Option<(String, String)> {
             None
         }
@@ -4120,9 +4142,9 @@ pub(crate) mod tests {
         fn unit_is_connected(&self, _: &str) -> bool {
             true
         }
-        /// Whatever [`Stub::standing`] was told, and `None` for a token this
-        /// world has no unit at — which is the answer that matters, since every
-        /// consumer in the directory has a separate arm for it.
+        /// The value set with [`Stub::standing`], or `None` for a token with
+        /// no unit in this world. Every caller in the directory has a separate
+        /// branch for `None`.
         fn unit_rank(&self, a: &str, b: &str) -> Option<vale_assets::tables::faction::Rank> {
             use vale_assets::tables::faction::{Rank, Reaction};
             self.find(a)?;
@@ -4143,12 +4165,12 @@ pub(crate) mod tests {
         }
     }
 
-    /// Run a chunk with the reads installed, and get its `return` back as a
-    /// string — which is the shortest way to assert on what Lua actually saw.
+    /// Runs a chunk with the reads installed and returns its `return` value
+    /// as a string, which lets a test assert on what Lua saw.
     pub fn eval(answers: &dyn Answers, chunk: &str) -> String {
         let lua = mlua::Lua::new();
-        // The five held reads are registered once on the state, exactly as
-        // `LuaHost::new` does it — see [`Held`].
+        // The five held reads are registered once on the state, as
+        // `LuaHost::new` does. See [`Held`].
         let (held, queue) = held_for_test(&lua);
         lua.scope(|scope| {
             install(&lua, scope, answers, &held, &queue)?;
@@ -4158,9 +4180,9 @@ pub(crate) mod tests {
         .expect("the chunk runs")
     }
 
-    /// **A read is answered during the call**, which is the whole claim of this
-    /// module: the value comes back into a Lua expression rather than onto a
-    /// queue somebody drains later.
+    /// A read is answered during the call. This is the property this module
+    /// provides: the value comes back into a Lua expression rather than onto a
+    /// queue drained later.
     #[test]
     fn a_read_answers_inside_the_expression() {
         let world = Stub::default().unit("target", "Kobold Vermin", 7);
@@ -4170,39 +4192,39 @@ pub(crate) mod tests {
         );
     }
 
-    /// **A boolean is `1` or `nil`, not `true`/`false`** — the game's own shape,
-    /// and the one an addon can compare against. See the module comment.
+    /// A boolean is `1` or `nil`, not `true`/`false`. This is the game's shape,
+    /// and addons compare against it. See the module comment.
     #[test]
     fn a_boolean_comes_back_as_the_games_one_or_nil() {
         let world = Stub::default().unit("player", "Alden", 1);
         assert_eq!(eval(&world, r#"return UnitExists("player")"#), "Integer(1)");
         assert_eq!(eval(&world, r#"return UnitExists("target")"#), "Nil");
-        // …and the comparison that only works if it really is a number.
+        // This comparison only holds if the value is a number.
         assert_eq!(
             eval(&world, r#"return UnitExists("player") == 1"#),
             "Boolean(true)"
         );
     }
 
-    /// **`GetActionBarToggles()` answers four values in the interface's own
-    /// order**, and the order is the whole of what this test is for.
+    /// `GetActionBarToggles()` answers four values in the interface's order.
+    /// This test checks the order.
     ///
-    /// `UIParent.lua` assigns them straight across —
-    /// `SHOW_MULTI_ACTIONBAR_1, ..._2, ..._3, ..._4 = GetActionBarToggles()` —
-    /// and `MultiActionBar_Update` spends the four on the bottom-left, the
-    /// bottom-right, the right and the left column in that order. So a
-    /// transposition here does not fail: it puts the right number of bars on the
-    /// screen in the wrong places, and only a relog would ever show it up.
+    /// `UIParent.lua` assigns them in sequence,
+    /// `SHOW_MULTI_ACTIONBAR_1, ..._2, ..._3, ..._4 = GetActionBarToggles()`,
+    /// and `MultiActionBar_Update` uses the four for the bottom-left, the
+    /// bottom-right, the right and the left column in that order. A swapped
+    /// pair raises no error: it shows the right number of bars in the wrong
+    /// places, which would only be visible after a relog.
     #[test]
     fn the_four_extra_bars_come_back_in_the_interfaces_own_order() {
         use vale_protocol::play::spells::multi_bar;
         let one = |mask: u8| Stub { bar_toggles: mask, ..Default::default() };
         let read = "local a, b, c, d = GetActionBarToggles(); \
                     return tostring(a)..tostring(b)..tostring(c)..tostring(d)";
-        // A fresh character: four bars off, four nils — which is what
-        // `MultiActionBar_Update`'s `else` branch hides on.
+        // A fresh character: four bars off, four nils, on which
+        // `MultiActionBar_Update`'s `else` branch hides each bar.
         assert_eq!(eval(&one(0), read), r#"String("nilnilnilnil")"#);
-        // …and one at a time, each landing on its own return.
+        // One bar at a time, each on its own return value.
         assert_eq!(eval(&one(multi_bar::BOTTOM_LEFT), read), r#"String("1nilnilnil")"#);
         assert_eq!(eval(&one(multi_bar::BOTTOM_RIGHT), read), r#"String("nil1nilnil")"#);
         assert_eq!(eval(&one(multi_bar::RIGHT), read), r#"String("nilnil1nil")"#);
@@ -4210,9 +4232,10 @@ pub(crate) mod tests {
         assert_eq!(eval(&one(multi_bar::ALL), read), r#"String("1111")"#);
     }
 
-    /// …and each of the four is **`1` rather than `true`**, for the reason the
-    /// boolean test above gives — `MultiBar1_IsVisible` hands its answer to an
-    /// options checkbox, and `OptionsFrame` tests those against `1`.
+    /// Each of the four extra-bar values is `1` rather than `true`, for the
+    /// reason the boolean test above gives: `MultiBar1_IsVisible` hands its
+    /// answer to an options checkbox, and `OptionsFrame` tests those against
+    /// `1`.
     #[test]
     fn an_extra_bar_that_is_on_is_the_number_one() {
         let world = Stub {
@@ -4225,8 +4248,8 @@ pub(crate) mod tests {
         );
     }
 
-    /// **An absent unit is `nil`, never `""`** — `if ( UnitName(u) )` is how
-    /// FrameXML asks whether a unit is there, and an empty string is true.
+    /// An absent unit is `nil`, never `""`. FrameXML asks whether a unit is
+    /// there with `if ( UnitName(u) )`, and an empty string is true in Lua.
     #[test]
     fn an_absent_unit_is_nil_rather_than_empty() {
         let world = Stub::default();
@@ -4235,18 +4258,17 @@ pub(crate) mod tests {
             eval(&world, r#"if ( UnitName("target") ) then return 1 else return 0 end"#),
             "Integer(0)"
         );
-        // A token this client has no state for at all is the same answer as an
-        // empty one, rather than an error.
+        // A token this client has no state for answers the same as an empty
+        // one, rather than raising an error.
         assert_eq!(eval(&world, r#"return UnitName("party3")"#), "Nil");
-        // …and a call with no argument, which addons write.
+        // A call with no argument, which addons make, also answers nil.
         assert_eq!(eval(&world, "return UnitName()"), "Nil");
     }
 
-    /// **`TargetDebuffButton_Update`'s own branch**, which is where a nil
-    /// `UnitIsFriend` cost a picture: the whole of what decides whether a
-    /// target's *buffs* sit against the frame or two rows under its debuffs is
-    /// this one call, and answering nothing put every friendly target in the
-    /// game on the hostile layout.
+    /// The branch in `TargetDebuffButton_Update` that lays out the aura rows.
+    /// This one `UnitIsFriend` call decides whether a target's buffs sit
+    /// against the frame or two rows under its debuffs. When it answered nil,
+    /// every friendly target took the hostile layout.
     #[test]
     fn a_friendly_target_answers_the_branch_the_aura_rows_are_laid_out_on() {
         use vale_assets::tables::faction::Reaction;
@@ -4265,8 +4287,8 @@ pub(crate) mod tests {
             .unit("target", "Kobold Vermin", 7)
             .standing(Reaction::Hostile);
         assert_eq!(eval(&hostile, branch), r#"String("debuffs first")"#);
-        // …and `TargetFrame_OnShow`'s three-way, whose first arm is the other
-        // name: a neutral critter is neither.
+        // `TargetFrame_OnShow` has a three-way branch whose first case asks
+        // `UnitIsEnemy`. A neutral critter is neither enemy nor friend.
         assert_eq!(
             eval(&hostile, r#"return UnitIsEnemy("target", "player")"#),
             "Integer(1)"
@@ -4283,8 +4305,8 @@ pub(crate) mod tests {
             eval(&neutral, r#"return UnitIsFriend("player", "target")"#),
             "Nil"
         );
-        // **…and it is still attackable**, which is the surprising half of the
-        // rule `vale_assets::tables::faction::Reaction::is_attackable` states: a
+        // A neutral unit is still attackable, as
+        // `vale_assets::tables::faction::Reaction::is_attackable` states. A
         // client that required hostility could not attack a rabbit.
         assert_eq!(
             eval(&neutral, r#"return UnitCanAttack("player", "target")"#),
@@ -4292,11 +4314,11 @@ pub(crate) mod tests {
         );
     }
 
-    /// **`UnitReaction` is an index into `UnitReactionColor`**, and the three
-    /// rows this client can name are the three colours the game paints: red at
-    /// 2, yellow at 4, green at 5. A unit that is not there answers `nil`, which
-    /// `TargetFrame_CheckFaction` has its own arm for — and which the constant
-    /// `4` this replaces could never produce.
+    /// `UnitReaction` is an index into `UnitReactionColor`. The three rows
+    /// this client can produce are the game's three colours: red at 2, yellow
+    /// at 4, green at 5. A unit that is not there answers `nil`, which
+    /// `TargetFrame_CheckFaction` handles in a separate branch. The constant
+    /// `4` this read used to answer could not produce `nil`.
     #[test]
     fn the_reaction_is_the_row_of_the_colour_it_means() {
         use vale_assets::tables::faction::Reaction;
@@ -4313,9 +4335,9 @@ pub(crate) mod tests {
         assert_eq!(eval(&Stub::default(), read), "Nil");
     }
 
-    /// `UnitPlayerControlled` — the first branch of `TargetFrame_CheckFaction`,
-    /// which is what puts a *player* target's name plate on the PvP colours
-    /// instead of the reaction's.
+    /// `UnitPlayerControlled` is the first branch of `TargetFrame_CheckFaction`.
+    /// It gives a player target's name plate the PvP colours instead of the
+    /// reaction colours.
     #[test]
     fn a_player_target_is_player_controlled_and_a_creature_is_not() {
         let world = Stub::default()
@@ -4332,8 +4354,8 @@ pub(crate) mod tests {
         );
     }
 
-    /// **`TARGETSELF`'s read, on the real body's terms**: two absent tokens are
-    /// not the same unit.
+    /// The `UnitIsUnit` read in the `TARGETSELF` binding's body: two absent
+    /// tokens are not the same unit.
     #[test]
     fn two_absent_tokens_are_not_the_same_unit() {
         let world = Stub::default().unit("player", "Alden", 1);
@@ -4347,10 +4369,10 @@ pub(crate) mod tests {
         );
     }
 
-    /// **The cooldown comes back as the game's three values**, which is what
-    /// `local start, duration, enable = GetActionCooldown(n)` needs — a single
-    /// value silently leaves `duration` nil and every cooldown swirl at zero
-    /// length.
+    /// The cooldown comes back as the game's three values, which
+    /// `local start, duration, enable = GetActionCooldown(n)` needs. A single
+    /// value would leave `duration` nil without an error, and every cooldown
+    /// swirl would have zero length.
     #[test]
     fn the_cooldown_is_three_return_values() {
         let mut world = Stub::default().action(1, "Rend");
@@ -4362,8 +4384,8 @@ pub(crate) mod tests {
             ),
             r#"String("100/6/1")"#
         );
-        // …and the same for the usable pair, whose second value is the whole
-        // reason a button can read blue rather than grey.
+        // The same for the usable pair. Its second value is what makes a
+        // button draw blue (not enough mana) rather than grey.
         let mut unaffordable = Stub::default().action(2, "Battle Shout");
         unaffordable.actions[0].usable = false;
         unaffordable.actions[0].not_enough_mana = true;
@@ -4376,13 +4398,13 @@ pub(crate) mod tests {
         );
     }
 
-    /// **`IsActionInRange` has three answers and the interface tells them
-    /// apart by `== 1` and `== 0`**, so a bool would be a bug that draws
-    /// plausibly: `ActionButton_OnUpdate` reads `nil` as "say nothing" and `0`
-    /// as "colour the hotkey red", and `one_or_nil(false)` collapses the two.
+    /// `IsActionInRange` has three answers, and the interface tells them apart
+    /// with `== 1` and `== 0`. A bool would produce a wrong but plausible
+    /// picture: `ActionButton_OnUpdate` reads `nil` as "show nothing" and `0`
+    /// as "colour the hotkey red", and `one_or_nil(false)` turns both into nil.
     ///
-    /// Asserted on the raw values rather than on truthiness, because that
-    /// collapse is exactly what Lua's own `if` would hide.
+    /// The test asserts on the raw values rather than on truthiness, because
+    /// Lua's `if` treats `nil` and `false` alike and would hide the difference.
     #[test]
     fn the_range_read_answers_one_zero_and_nil() {
         let inside = Stub::default().ranged_action(1, "Fireball", Some(true));
@@ -4391,8 +4413,8 @@ pub(crate) mod tests {
 
         let outside = Stub::default().ranged_action(1, "Fireball", Some(false));
         assert_eq!(eval(&outside, "return IsActionInRange(1)"), "Integer(0)");
-        // The distinction the whole signature exists for: an explicit 0 is not
-        // the same value as nothing, and the interface compares against both.
+        // The `Option<bool>` signature exists for this: an explicit 0 is not
+        // the same value as nil, and the interface compares against both.
         assert_eq!(
             eval(
                 &outside,
@@ -4401,8 +4423,8 @@ pub(crate) mod tests {
             "Integer(1)"
         );
 
-        // A range the client cannot measure — nothing targeted — and a slot with
-        // no range at all both answer nil, and neither draws a dot.
+        // A range the client cannot measure (nothing targeted) and a slot with
+        // no range both answer nil, and neither draws a dot.
         let unmeasurable = Stub::default().ranged_action(1, "Fireball", None);
         assert_eq!(eval(&unmeasurable, "return IsActionInRange(1)"), "Nil");
         assert_eq!(eval(&unmeasurable, "return ActionHasRange(1)"), "Integer(1)");
@@ -4412,8 +4434,8 @@ pub(crate) mod tests {
         assert_eq!(eval(&rangeless, "return ActionHasRange(1)"), "Nil");
     }
 
-    /// **`GetTime` is the base every timer is in.** Not a wall clock and not a
-    /// second origin — see [`crate::interface::api::get_time`].
+    /// `GetTime` is the time base every timer uses. It is not a wall clock and
+    /// has no second origin. See [`crate::interface::api::get_time`].
     #[test]
     fn get_time_is_the_clock_the_bars_scrub_against() {
         let world = Stub {
@@ -4423,13 +4445,13 @@ pub(crate) mod tests {
         assert_eq!(eval(&world, "return GetTime()"), "Number(1234.5)");
     }
 
-    /// **`GetGameTime` is the world's clock and returns two numbers**, which is
-    /// what `GameTime.lua` unpacks into `hour, minute`.
+    /// `GetGameTime` is the world's clock and returns two numbers, which
+    /// `GameTime.lua` unpacks into `hour, minute`.
     ///
-    /// Asserted as two values rather than one, because a single return reads in
+    /// The test asserts two values rather than one. A single return reads in
     /// Lua as the hour with a `nil` minute, and the frame's arithmetic
-    /// (`hour * 60 + minute`) raises rather than drawing wrongly — which the
-    /// load probe would report and the panel probe would not.
+    /// (`hour * 60 + minute`) then raises. The load probe would report that
+    /// error and the panel probe would not.
     #[test]
     fn the_game_clock_answers_an_hour_and_a_minute() {
         let world = Stub::default();
@@ -4439,13 +4461,13 @@ pub(crate) mod tests {
         );
     }
 
-    /// **`GetQuestGreenRange` is the player's, whoever is targeted** — no
-    /// argument, and the table is indexed by *our* level and nothing else.
+    /// `GetQuestGreenRange` is about the player, whoever is targeted. It takes
+    /// no argument, and the table is indexed by the player's level only.
     ///
-    /// The interface calls it inside `GetDifficultyColor(targetLevel)`, which is
-    /// enough to read it as being about the target; it is not. The level the
-    /// colour is *for* is the argument, and this is the width of the green band
-    /// under the player.
+    /// The interface calls it inside `GetDifficultyColor(targetLevel)`, which
+    /// can make it look like a read about the target. It is not: the target's
+    /// level is the argument to `GetDifficultyColor`, and this read is the
+    /// width of the green band below the player's level.
     #[test]
     fn the_green_range_reads_the_players_level_and_not_the_targets() {
         let mut world = Stub::default().unit("player", "Alden", 1);
@@ -4454,22 +4476,23 @@ pub(crate) mod tests {
         world.units[1].level = 42;
         assert_eq!(eval(&world, "return GetQuestGreenRange()"), "Integer(7)");
 
-        // Drop the player twenty levels and the band narrows, with the target
-        // untouched — which is the direction that proves which unit it reads.
+        // Lowering the player's level narrows the band while the target is
+        // unchanged, which shows the read uses the player's level.
         world.units[0].level = 39;
         assert_eq!(eval(&world, "return GetQuestGreenRange()"), "Integer(5)");
     }
 
-    /// **The whole of `GetDifficultyColor`'s cascade, on the directory's own
-    /// body** — because the bug this closes was not in the arithmetic, it was
-    /// that the last question in the chain had no answer at all.
+    /// All of `GetDifficultyColor`'s branches, using the interface's own
+    /// function body. The failure this test guards against was not in the
+    /// arithmetic: the last call in the chain, `GetQuestGreenRange`, was not
+    /// defined.
     ///
-    /// `QuestLogFrame.lua`'s five branches are transcribed here rather than
-    /// loaded, which is deliberate: a test that loads 175 files to reach four
-    /// comparisons is an acceptance run, and that is what `--audit --events` is.
-    /// What this pins is the pair — that a level 18 below the player reaches the
-    /// grey branch *and gets there*, which before this round raised on a nil
-    /// global and took `TargetFrame_Update` down with it.
+    /// `QuestLogFrame.lua`'s five branches are copied here rather than
+    /// loaded, deliberately: a test that loads 175 files to reach four
+    /// comparisons is an acceptance run, and `--audit --events` is that run.
+    /// The test checks that a target 18 levels below the player reaches the
+    /// grey branch without raising. When `GetQuestGreenRange` was missing,
+    /// this path raised on the nil global and stopped `TargetFrame_Update`.
     #[test]
     fn a_target_far_below_the_player_reaches_the_grey_branch_rather_than_raising() {
         let mut world = Stub::default().unit("player", "Alden", 1);
@@ -4485,15 +4508,15 @@ pub(crate) mod tests {
         "#;
         assert_eq!(eval(&world, cascade), "String(\"trivial\")");
 
-        // …and the boundary the table decides: 60 - 7 = 53 is still green, 52 is
-        // grey. Nothing else in the cascade can move that line.
+        // The boundary the table decides: 60 - 7 = 53 is still green, 52 is
+        // grey. No other branch can move that boundary.
         let at = |level: i32| cascade.replace("local level = 42", &format!("local level = {level}"));
         assert_eq!(eval(&world, &at(53)), "String(\"standard\")");
         assert_eq!(eval(&world, &at(52)), "String(\"trivial\")");
     }
 
-    /// A slot outside the bar answers "nothing there" rather than pointing at
-    /// the first button — and neither `0` nor a missing argument is a slot.
+    /// A slot outside the bar answers "nothing there" rather than reading the
+    /// first button. Neither `0` nor a missing argument is a slot.
     #[test]
     fn a_slot_outside_the_bar_is_empty() {
         let world = Stub::default().action(1, "Rend");
@@ -4503,23 +4526,13 @@ pub(crate) mod tests {
         assert_eq!(eval(&world, "return HasAction()"), "Nil");
     }
 
-    /// **[`READS`] and what [`install`] registers are the same set** — checked in
-    /// both directions, and the list is sorted.
+    /// The 1.12.1 client's boolean coercion, case by case. See
+    /// [`to_boolean`], where the rule is written out.
     ///
-    /// One direction was checked here for two rounds and the other was not, and
-    /// the missing half cost exactly what it was always going to: `UnitName` was
-    /// registered from the first day and absent from the list, so `vale
-    /// bindings` reported 18 reads where there were 19. That error is in the safe
-    /// direction — a client that looks *less* complete than it is — which is
-    /// precisely why nothing noticed it for two rounds.
-    ///
-    /// **The client's own boolean coercion**, case by case — see
-    /// [`to_boolean`], where the switch is written out.
-    ///
-    /// The rows that matter are the two Lua gets wrong: `0` and `"false"` are
-    /// **false** here and true under `lua_toboolean`, and the directory writes
-    /// both. Getting them wrong drew a checked border on every action button and
-    /// every spell in the book.
+    /// The important cases are the two where Lua differs: `0` and `"false"`
+    /// are false here and true under `lua_toboolean`, and the interface code
+    /// passes both. Treating them as true drew a checked border on every
+    /// action button and every spell in the book.
     #[test]
     fn the_boolean_coercion_is_the_clients_and_not_luas() {
         let t = |v: mlua::Value| to_boolean(Some(&v), true);
@@ -4550,15 +4563,15 @@ pub(crate) mod tests {
         for no in ["0", "false", "FALSE", "no", "N", "f", "nil"] {
             assert!(!s(no), "{no}");
         }
-        // …and the four the string compares catch, which are outside the
-        // class table's `'0'..'y'` window or fall to `2` inside it.
+        // The four strings whose first character does not decide, and which
+        // the case-insensitive compares catch.
         assert!(!s("off"));
         assert!(!s("disabled"));
         assert!(s("on"));
         assert!(s("enabled"));
 
-        // Anything else — including the empty string — takes the caller's own
-        // default, which every widget setter in the client pushes as true.
+        // Anything else, including the empty string, takes the caller's
+        // default, which every widget setter in the client sets to true.
         assert!(s(""));
         assert!(s("wombat"));
         let lua = mlua::Lua::new();
@@ -4567,9 +4580,17 @@ pub(crate) mod tests {
         assert!(t(mlua::Value::Table(lua.create_table().expect("a table"))));
     }
 
-    /// The reverse test is a diff of the globals table across the install rather
-    /// than a second hand-written list, because a second hand-written list has
-    /// the same failure as the first.
+    /// [`READS`] and what [`install`] registers are the same set, checked in
+    /// both directions, and the list is sorted.
+    ///
+    /// The check used to run in one direction only. `UnitName` was registered
+    /// but missing from the list, so `vale bindings` reported 18 reads where
+    /// there were 19. The error made the client look less complete than it
+    /// was, so no other check caught it.
+    ///
+    /// The reverse direction is a diff of the globals table across the install
+    /// rather than a second hand-written list, because a second hand-written
+    /// list can fall out of date in the same way as the first.
     #[test]
     fn the_list_and_the_registration_are_the_same_set() {
         for name in READS {
@@ -4586,10 +4607,10 @@ pub(crate) mod tests {
         let world = Stub::default();
         let lua = mlua::Lua::new();
         let before = global_names(&lua);
-        // **Registered after the snapshot on purpose.** These five are
-        // persistent rather than scoped ([`Held`]) but they are still `READS`
-        // this client answers, so they have to appear in the difference the
-        // check below compares against the list.
+        // Registered after the snapshot deliberately. These five are
+        // persistent rather than scoped ([`Held`]), but they are still reads
+        // in `READS`, so they must appear in the difference the check below
+        // compares against the list.
         let (held, queue) = held_for_test(&lua);
         let installed = lua
             .scope(|scope| {
@@ -4599,9 +4620,10 @@ pub(crate) mod tests {
             .expect("the scope runs");
         let mut added: Vec<String> = installed.difference(&before).cloned().collect();
         added.sort();
-        // **Both lists**, because `install` also opens the spellbook's — one
-        // scope, two files, and the check has to cover what the scope really
-        // holds rather than what this file put in it.
+        // Every panel's list as well as this file's, because `install` also
+        // registers each panel module's reads into the same scope. The check
+        // must cover everything the scope holds, not only what this file
+        // added.
         let mut claimed: Vec<String> = READS
             .iter()
             .chain(crate::lua::panels::spellbook::READS.iter())
@@ -4618,6 +4640,7 @@ pub(crate) mod tests {
             .chain(crate::lua::panels::pagetext::READS.iter())
             .chain(crate::lua::panels::trade::READS.iter())
             .chain(crate::lua::panels::summon::READS.iter())
+            .chain(crate::lua::panels::inspect::READS.iter())
             .chain(crate::lua::panels::loot::READS.iter())
             .chain(crate::lua::panels::lootroll::READS.iter())
             .chain(crate::lua::panels::quest::READS.iter())
@@ -4650,114 +4673,115 @@ pub(crate) mod tests {
 }
 
 
-/// **What the interface may ask about the action bar**, and about a spell
-/// waiting to be aimed.
+/// What the interface may ask about the action bar, and about a spell waiting
+/// to be aimed.
 ///
-/// Split from [`UnitAnswers`] rather than left beside it because they are two
-/// subjects that happened to share a file: one is about a creature in the
-/// world, the other about twelve slots and a cursor. Both stay in this module
-/// because their `Live` bodies read `crate::interface::action` and there is no
-/// `lua::action` for them to move to — the bar's own registration is here.
+/// Separate from [`UnitAnswers`] because the two traits have different
+/// subjects: one is about a creature in the world, the other about twelve
+/// slots and a cursor. Both stay in this module because their `Live` bodies
+/// read `crate::interface::action`, there is no `lua::action` module, and the
+/// bar's registration is here.
 pub trait ActionAnswers {
 
     // --- the action bar ---
 
     fn has_action(&self, slot: u8) -> bool;
-    /// `GetBonusBarOffset` — 0 for the ordinary bar, 1..4 for a form's own.
+    /// `GetBonusBarOffset`: 0 for the ordinary bar, 1..4 for a form's bar.
     /// See [`crate::interface::action::ActionBar::bonus_bar`].
     fn bonus_bar_offset(&self) -> u8;
-    /// `GetActionBarToggles` — which of the four **extra** bars are switched on,
+    /// `GetActionBarToggles`: which of the four extra bars are switched on,
     /// as a mask of [`vale_protocol::play::spells::multi_bar`] bits.
     ///
-    /// A mask rather than the four values the Lua call returns, because the four
-    /// are a *presentation* of one byte the server keeps: splitting them here
-    /// would put the bit order in three implementations instead of one. See
+    /// A mask rather than the four values the Lua call returns, because the
+    /// four come from one byte the server keeps. Splitting them here would put
+    /// the bit order in three implementations instead of one. See
     /// [`crate::interface::action::ActionBar::toggles`].
     fn action_bar_toggles(&self) -> u8;
-    /// `GameTooltip:SetAction` — the data the spell tooltip is composed from,
-    /// or `None` for a slot with nothing to say. See
+    /// `GameTooltip:SetAction`: the data the spell tooltip is composed from,
+    /// or `None` for a slot with no tooltip. See
     /// [`crate::interface::api::action_tooltip`].
     fn action_tooltip(&self, slot: u8) -> Option<api::SpellTip>;
-    /// …and the same call for a slot holding an **item**, which is a different
-    /// plate entirely. `None` for a spell slot, so the two cannot both answer.
+    /// The same call for a slot holding an item, which uses a different
+    /// plate. `None` for a spell slot, so the two cannot both answer.
     fn action_item_tooltip(&self, slot: u8) -> Option<api::ItemTip>;
     fn action_text(&self, slot: u8) -> Option<String>;
     fn action_texture(&self, slot: u8) -> Option<String>;
     /// `(start, duration, enable)`, in [`Answers::now`]'s base.
     fn action_cooldown(&self, slot: u8) -> (f64, f64, bool);
-    /// `(usable, not_enough_mana)` — the game's own pair, and the reason a
-    /// button can read blue rather than grey.
+    /// `(usable, not_enough_mana)`: the game's pair. The second value is what
+    /// makes a button draw blue rather than grey.
     fn action_usable(&self, slot: u8) -> (bool, bool);
     fn is_attack_action(&self, slot: u8) -> bool;
     fn is_current_action(&self, slot: u8) -> bool;
-    /// `IsAutoRepeatAction` — is this the ranged attack currently repeating?
-    /// Beside [`Self::is_current_action`] because `ActionButton.lua` asks the
-    /// two together; see [`crate::interface::api::is_auto_repeat_action`].
+    /// `IsAutoRepeatAction`: whether this slot is the ranged attack currently
+    /// repeating. Placed beside [`Self::is_current_action`] because
+    /// `ActionButton.lua` asks the two together; see
+    /// [`crate::interface::api::is_auto_repeat_action`].
     fn is_auto_repeat_action(&self, slot: u8) -> bool;
-    /// `ActionHasRange` — is range a question about this button at all? See
+    /// `ActionHasRange`: whether this button has a range at all. See
     /// [`crate::interface::api::action_has_range`].
     fn action_has_range(&self, slot: u8) -> bool;
-    /// `IsActionInRange` — **three answers, not two**: `Some(true)`,
-    /// `Some(false)` and `None`, which the interface reads as `1`, `0` and
-    /// `nil` and treats as three different things. See
+    /// `IsActionInRange`: three answers, `Some(true)`, `Some(false)` and
+    /// `None`, which the interface reads as `1`, `0` and `nil` and treats as
+    /// three different states. See
     /// [`crate::interface::api::is_action_in_range`].
     fn is_action_in_range(&self, slot: u8) -> Option<bool>;
-    /// `IsConsumableAction` — does `ActionButton_UpdateCount` write a stack
-    /// count under this button? The rule is the item's, not the bar's; see
-    /// [`vale_protocol::state::query::ItemInfo::is_consumable`].
+    /// `IsConsumableAction`: whether `ActionButton_UpdateCount` writes a stack
+    /// count under this button. The rule depends on the item, not the bar;
+    /// see [`vale_protocol::state::query::ItemInfo::is_consumable`].
     fn is_consumable_action(&self, slot: u8) -> bool;
-    /// `IsEquippedAction` — is the item in this slot being worn? The green
-    /// border round the button.
+    /// `IsEquippedAction`: whether the item in this slot is being worn. It
+    /// draws the green border round the button.
     fn is_equipped_action(&self, slot: u8) -> bool;
-    /// `GetActionCount` — how many of the slot's item the character carries,
+    /// `GetActionCount`: how many of the slot's item the character carries,
     /// across every container and the worn slots. `0` for a spell or a macro,
-    /// which is what the real client answers and what
-    /// [`Self::is_consumable_action`] keeps off the screen.
+    /// as in the 1.12.1 client; [`Self::is_consumable_action`] keeps that
+    /// zero from being drawn.
     fn action_count(&self, slot: u8) -> u32;
 
-    // --- the spell cursor ---
+    // --- Spell targeting cursor ---
     //
-    // 1.12's targeting mode, and the interface's half of it is exactly these two
-    // reads plus two writes. `UnitFrame_OnEnter` asks both to choose between
+    // The interface's side of 1.12.1's targeting mode is these two reads plus
+    // two writes. `UnitFrame_OnEnter` asks both to choose between
     // `SetCursor("CAST_CURSOR")` and `SetCursor("CAST_ERROR_CURSOR")`, and
     // `TargetFrame_OnClick` asks the first to decide whether a click casts or
     // retargets. See [`crate::interface::action::SpellTargeting`].
 
-    /// `SpellIsTargeting()` — is a cast waiting to be pointed at something?
+    /// `SpellIsTargeting()`: whether a cast is waiting for a target.
     fn spell_is_targeting(&self) -> bool;
-    /// **Is there a cast to stop?** — the read behind `SpellStopCasting()`,
-    /// which answers whether it cancelled anything and is what decides whether
-    /// `ToggleGameMenu`'s chain stops at that branch or goes on to open the
-    /// menu.
+    /// Whether there is a cast to stop: the read behind `SpellStopCasting()`.
+    /// That call answers whether it cancelled anything, and the answer decides
+    /// whether `ToggleGameMenu`'s chain stops at that branch or goes on to
+    /// open the menu.
     ///
-    /// All three of the states a cancel can end: a wind-up in progress, a
-    /// channel, and an *ask* the server has not answered yet — the third
-    /// matters because the bar waits for `SMSG_SPELL_START`, so there is a
-    /// round trip in which a player who presses Escape means it and nothing is
-    /// yet "casting". See [`crate::interface::action::Casting`].
+    /// True in all three states a cancel can end: a cast in progress, a
+    /// channel, and a cast request the server has not answered yet. The third
+    /// is needed because the bar waits for `SMSG_SPELL_START`, so for one
+    /// round trip a player pressing Escape intends to cancel while nothing is
+    /// "casting" yet. See [`crate::interface::action::Casting`].
     fn spell_is_casting(&self) -> bool;
-    /// `SpellCanTargetUnit(unit)` — would the waiting cast take *this* one?
+    /// `SpellCanTargetUnit(unit)`: whether the waiting cast would accept this
+    /// unit.
     ///
-    /// **False when nothing is waiting**, which is the directory's own reading:
-    /// every call site is already inside an `if SpellIsTargeting()`.
+    /// False when nothing is waiting. Every caller in the interface code
+    /// already checks `if SpellIsTargeting()` first.
     fn spell_can_target_unit(&self, token: &str) -> bool;
 }
 
 impl Live<'_, '_, '_> {
-    /// **The spell an item slot's cooldown is actually on.**
+    /// The spell that holds an item slot's cooldown.
     ///
     /// A bar slot holding an item carries only the entry (`SMSG_ACTION_BUTTONS`
-    /// carries nothing else), so the swirl's timer has to be found the long way:
+    /// carries nothing else), so the swirl's timer is found through a chain:
     /// entry -> the item's cached template -> its on-use spell -> `Spell.dbc`.
-    /// The timer itself is on that spell's **category** — every healing potion in
-    /// the game shares one — which is why asking about the entry would find
-    /// nothing even if this client kept per-item timers.
+    /// The timer is on that spell's category, which every healing potion in
+    /// the game shares, so a lookup by entry would find nothing even if this
+    /// client kept per-item timers.
     ///
-    /// `None` for three real states, and all three draw no swirl, which is right:
-    /// the slot is not an item, the template has not arrived yet (every item's
-    /// prototype is a round trip away — see
-    /// [`crate::interface::items`]), or the item has no on-use spell at
-    /// all, which is a garment sitting on the bar.
+    /// `None` in three states, and each correctly draws no swirl: the slot is
+    /// not an item; the template has not arrived yet (every item's template
+    /// takes a server round trip, see [`crate::interface::items`]); or the
+    /// item has no on-use spell, such as a garment placed on the bar.
     fn item_action_spell(&self, slot: u8) -> Option<vale_assets::tables::spellbook::SpellInfo> {
         let entry = api::action_item(self.bar, slot)?;
         let template = self.inventory.template(entry)?;
@@ -4788,8 +4812,8 @@ impl ActionAnswers for Live<'_, '_, '_> {
             slot,
             &api::TipContext {
                 level: self.tip_level(),
-                // A *spell* plate has no requirement lines; see
-                // [`Self::item_context`], which is the one that pays for them.
+                // A spell plate has no requirement lines, so race and class
+                // are unused. [`Self::item_context`] fills them for items.
                 race: 0,
                 class: 0,
                 catalog: self.tables.as_ref().and_then(|t| t.spellbook()),
@@ -4799,10 +4823,10 @@ impl ActionAnswers for Live<'_, '_, '_> {
         )
     }
 
-    /// **The item plate for a bar slot** — composed from the template alone,
-    /// with no stack behind it, because a bar slot names an entry and not a
-    /// square: the same entry may sit in three bags and there is no one stack
-    /// to report a count or a durability off.
+    /// The item plate for a bar slot, composed from the template alone with
+    /// no stack. A bar slot names an entry, not a bag square: the same entry
+    /// may sit in three bags, so there is no single stack to take a count or
+    /// a durability from.
     fn action_item_tooltip(&self, slot: u8) -> Option<api::ItemTip> {
         self.tip_from(api::action_item(self.bar, slot)?, None)
     }
@@ -4811,11 +4835,11 @@ impl ActionAnswers for Live<'_, '_, '_> {
         api::get_action_text(self.bar, slot)
     }
 
-    /// **A spell's icon or an item's**, which is one line of branch and the
-    /// whole of whether a mount on the bar is drawn at all. An item slot has no
-    /// `SpellInfo` in it, so the spell path answers `None` and
-    /// `ActionButton_Update` hides the icon — which is what an item button
-    /// looked like: an empty quickslot that did nothing.
+    /// A spell's icon or an item's. This branch decides whether an item on
+    /// the bar, such as a mount, is drawn at all. An item slot has no
+    /// `SpellInfo`, so the spell path answers `None` and `ActionButton_Update`
+    /// hides the icon. Without the item branch, an item button showed as an
+    /// empty slot.
     fn action_texture(&self, slot: u8) -> Option<String> {
         if let Some(entry) = api::action_item(self.bar, slot) {
             let template = self.inventory.template(entry)?;
@@ -4824,9 +4848,9 @@ impl ActionAnswers for Live<'_, '_, '_> {
         api::get_action_texture(self.bar, slot).map(str::to_string)
     }
 
-    /// …and the same split for the swirl: **an item's cooldown is its `ON_USE`
-    /// spell's**, through the same clocks a bag square reads it through, so the
-    /// two cannot run at different rates.
+    /// The same split for the cooldown swirl. An item's cooldown is its
+    /// `ON_USE` spell's, read through the same clocks a bag square uses, so
+    /// the bar and the bag cannot show different timers.
     fn action_cooldown(&self, slot: u8) -> (f64, f64, bool) {
         if let Some(entry) = api::action_item(self.bar, slot) {
             return self.item_cooldown(Some(entry));
@@ -4859,14 +4883,14 @@ impl ActionAnswers for Live<'_, '_, '_> {
             slot,
             self.attacking,
             self.casting.next_swing,
-            // **The cast in flight, which is `Casting`'s own answer to "is one
-            // running"** — `started` is set at the send and cleared when the
-            // cast lands, is interrupted or is refused, which is exactly when
-            // the border should go out. The same pair
-            // [`crate::lua::panels::spellbook`] asks for a book button.
+            // The cast in flight, from `Casting`. `started` is set when the
+            // cast is sent and cleared when it lands, is interrupted or is
+            // refused, which is when the border should go out.
+            // [`crate::lua::panels::spellbook`] asks the same pair for a book
+            // button.
             self.casting.started.map(|_| self.casting.spell_id),
-            // …and the cursor waiting to be pointed at something, which is the
-            // reference's own gate — see [`api::is_current_action`].
+            // The spell waiting on the targeting cursor. The 1.12.1 client
+            // also lights the border for it; see [`api::is_current_action`].
             self.targeting.spell(),
         )
     }
@@ -4916,12 +4940,12 @@ impl ActionAnswers for Live<'_, '_, '_> {
     }
 
     fn spell_can_target_unit(&self, token: &str) -> bool {
-        // Re-asked through the same [`resolve_aim`] the click will run, rather
-        // than off a cached answer — see
-        // [`crate::interface::target::spell_cursor_validity`], which asks the same
-        // question about the *world* pick and for the same reason. `Unit(_)` is
-        // the only yes: a spell that would bind implicitly is not one this frame
-        // can be the target of.
+        // Answered through the same [`resolve_aim`] the click will run, rather
+        // than from a cached answer. See
+        // [`crate::interface::target::spell_cursor_validity`], which asks the
+        // same question about the world pick, for the same reason. Only
+        // `Unit(_)` is a yes: a spell that would bind its target implicitly
+        // cannot take this frame's unit as its target.
         let answer = || {
             let tables = self.tables.as_ref()?;
             let info = tables.spellbook()?.info(self.targeting.spell()?)?;

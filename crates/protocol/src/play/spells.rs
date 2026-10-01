@@ -1,43 +1,48 @@
-//! **What this character can do, and what the server says back when it tries.**
+//! The player's spellbook, action bar and cooldowns, and the server's answers
+//! to a cast or a swing.
 //!
-//! [`crate::play::action`] is what a unit is visibly *doing* — packets about anybody,
-//! inbound only, that drive an animation. This is the other half: the spellbook
-//! the server hands us at login, the action bar it remembers for us, the
-//! cooldowns that gate the buttons, and the two packets that answer a press —
-//! `SMSG_CAST_RESULT` for a spell and the five `SMSG_ATTACKSWING_*` refusals for
-//! a swing. Plus the outbound bodies, because a body lives beside the thing it
-//! is about.
+//! [`crate::play::action`] covers what a unit is visibly doing: inbound
+//! packets about any unit that drive an animation. This module covers the
+//! rest: the spellbook the server sends at login, the action bar it stores
+//! for the player, the cooldowns that gate the buttons, and the two packets
+//! that answer a key press, `SMSG_CAST_RESULT` for a spell and the five
+//! `SMSG_ATTACKSWING_*` refusals for a swing. It also holds the outbound
+//! bodies, which are kept beside the subject they belong to.
 //!
-//! Three things here are worth knowing before touching any of it.
+//! Three facts apply to the whole module.
 //!
-//! **The failure code is an index, not a value.** `SMSG_CAST_RESULT` carries one
-//! byte, and what it names is a *position* in an enum the client and the server
-//! agree on by construction — [`CAST_FAILURE_KEYS`] is that enum in order, and
-//! an off-by-one there does not fail, it says "Out of range" when the server
-//! said "Not enough mana". The list is 146 long for build 5875 and it is
-//! transcribed from vmangos' `SpellCastResult`; every `#if` guard in that header
-//! is `> CLIENT_BUILD_1_x` for an x below 1.12, so **1.12 gets all of them** and
-//! declaration order is the wire value. Two independent readings agree on the
-//! length: vmangos' enum, and the 146-entry name table the client itself
-//! carries.
+//! The failure code is an index, not a value. `SMSG_CAST_RESULT` carries one
+//! byte, and it names a position in an enum the client and the server share.
+//! [`CAST_FAILURE_KEYS`] is that enum in order. An off-by-one there does not
+//! fail; it shows "Out of range" when the server said "Not enough mana". The
+//! list has 146 entries for build 5875 and is copied from vmangos'
+//! `SpellCastResult`. Every `#if` guard in that header is `> CLIENT_BUILD_1_x`
+//! for an x below 1.12, so 1.12 includes every entry and declaration order is
+//! the wire value. The 1.12.1 client also recognises 146 reasons, so two
+//! independent sources agree on the length.
 //!
-//! **The message is the game's own.** The keys above are `GlobalStrings.lua`
-//! keys — `Interface\FrameXML\GlobalStrings.lua` is in the archives, 4,592 of
-//! them — so nothing in this client invents the words "You are too far away!".
-//! See `vale_assets::interface::strings`. A key that is *absent* displays as nothing,
-//! which is the client's own behaviour for the three hidden reasons.
+//! The messages are the game's own. The keys above are `GlobalStrings.lua`
+//! keys; `Interface\FrameXML\GlobalStrings.lua` is in the archives and has
+//! 4,592 of them, so this client does not supply text such as "You are too
+//! far away!". See `vale_assets::interface::strings`. A reason with no key
+//! shows nothing, which is what the 1.12.1 client does for the three hidden
+//! reasons.
 //!
-//! **A cast's target block is a mask, not a guid.** `SpellCastTargets::read`
-//! begins with a `u16` and reads only what the mask claims; the three shapes
-//! this client sends are `TARGET_FLAG_SELF` (which is **zero**, and carries
-//! nothing at all — the server fills the target in from the spell's own implicit
-//! targeting), `TARGET_FLAG_UNIT` followed by a *packed* guid, and
-//! `TARGET_FLAG_DEST_LOCATION` followed by three bare `f32`s and **no guid in
-//! front of them in this build**. Sending a selection with a self-cast is the
-//! "Invalid target" bug; sending a plain guid where a packed one belongs is
-//! eight bytes read as one; and sending a *unit* where a destination belongs is
-//! the quiet one — the server substitutes the caster's own position rather than
-//! refusing, so the spell lands underfoot and reports success.
+//! A cast's target block is a mask, not a guid. `SpellCastTargets::read`
+//! starts with a `u16` and reads only what the mask names. This client sends
+//! three shapes:
+//!
+//! * `TARGET_FLAG_SELF`, which is zero and carries nothing; the server fills
+//!   in the target from the spell's implicit targeting.
+//! * `TARGET_FLAG_UNIT` followed by a packed guid.
+//! * `TARGET_FLAG_DEST_LOCATION` followed by three bare `f32`s, with no guid
+//!   before them in this build.
+//!
+//! Sending the current selection with a self-cast causes "Invalid target".
+//! Sending a plain guid where a packed one belongs makes the server read eight
+//! bytes as one. Sending a unit where a destination belongs produces no error:
+//! the server substitutes the caster's own position, so the spell lands at the
+//! caster's feet and reports success.
 //!
 //! Source: vmangos `Handlers/SpellHandler.cpp` (`HandleCastSpellOpcode`),
 //! `Spells/Spell.cpp` (`SpellCastTargets::read`, `Spell::SendCastResult`),
@@ -50,12 +55,12 @@ use crate::bytes::{Reader, Writer};
 // The spellbook
 // ---------------------------------------------------------------------------
 
-/// `SMSG_INITIAL_SPELLS`: every spell this character knows, said once at login.
+/// `SMSG_INITIAL_SPELLS`: every spell this character knows, sent once at login.
 ///
-/// **Nothing else ever states the spellbook.** It arrives in the login burst,
-/// and after that the server only sends *differences* (`SMSG_LEARNED_SPELL`,
-/// `SMSG_REMOVED_SPELL`), so a client that misses this packet has an empty
-/// action bar for the whole session and no error anywhere.
+/// No other packet states the whole spellbook. This one arrives in the login
+/// burst, and afterwards the server sends only changes (`SMSG_LEARNED_SPELL`,
+/// `SMSG_REMOVED_SPELL`). A client that misses this packet has an empty action
+/// bar for the whole session and reports no error.
 ///
 /// ```text
 /// u8  unknown (0)
@@ -65,9 +70,8 @@ use crate::bytes::{Reader, Writer};
 /// (u16 spellId, u16 itemId, u16 category, u32 spellMs, u32 categoryMs) x n
 /// ```
 ///
-/// **The spell ids are `u16` here**, alone among the places this client meets a
-/// spell id — every other one is a `u32`. 1.12's spell ids fit, and the packet
-/// predates them not fitting.
+/// The spell ids are `u16` here. Every other place this client reads a spell
+/// id uses a `u32`. All 1.12 spell ids fit in 16 bits.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Spellbook {
     /// In the order the server listed them, which is the order the character
@@ -83,9 +87,9 @@ pub struct Spellbook {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InitialCooldown {
     pub spell_id: u32,
-    /// The item that started it, for an item-use cooldown, and 0 for a plain
-    /// spell. A cooldown record is keyed on the *pair* — the same trinket used
-    /// twice shares one record and two different trinkets casting one spell do
+    /// The item that started the cooldown, for an item-use cooldown, and 0 for a
+    /// plain spell. A cooldown record is keyed on the pair: the same trinket used
+    /// twice shares one record, and two different trinkets casting one spell do
     /// not.
     pub item_id: u32,
     /// `Spell.dbc`'s category: the shared bucket a whole family recovers on
@@ -93,10 +97,10 @@ pub struct InitialCooldown {
     pub category: u32,
     /// Milliseconds left on the spell's own recovery.
     pub spell_ms: u32,
-    /// …and on the category's. **The top bit is a flag, not a duration**:
-    /// `SendInitialSpells` sets `0x80000000` on a permanent cooldown (and puts
-    /// 1 ms in `spell_ms` beside it), which is a spell that never comes back
-    /// this session rather than one that comes back in 24 days.
+    /// Milliseconds left on the category's recovery. The top bit is a flag, not
+    /// part of the duration: `SendInitialSpells` sets `0x80000000` on a permanent
+    /// cooldown (and puts 1 ms in `spell_ms` beside it). Such a spell does not
+    /// become ready again this session; it does not mean 24 days.
     pub category_ms: u32,
 }
 
@@ -111,9 +115,9 @@ impl InitialCooldown {
     }
 }
 
-/// A sanity bound on the two counted arrays. Both are `u16` off the wire and a
-/// packet read at the wrong offset produces an enormous one; refusing is better
-/// than allocating on a number that came from nowhere.
+/// A sanity bound on the two counted arrays. Both counts are `u16`s from the
+/// wire, and a packet read at the wrong offset produces a very large one. The
+/// parser refuses such a packet rather than allocating for an invalid count.
 const MAX_SPELLS: u16 = 4096;
 
 pub fn parse_initial_spells(body: &[u8]) -> Option<Spellbook> {
@@ -160,16 +164,15 @@ pub fn parse_initial_spells(body: &[u8]) -> Option<Spellbook> {
 // The action bar
 // ---------------------------------------------------------------------------
 
-/// How many buttons the server remembers. `MAX_ACTION_BUTTONS` in
-/// `Objects/Player.h`; the packet is exactly this many `u32`s with no count in
-/// front of it, so the number *is* the framing.
+/// How many buttons the server stores. `MAX_ACTION_BUTTONS` in
+/// `Objects/Player.h`. The packet is exactly this many `u32`s with no count in
+/// front, so this number is the packet's framing.
 pub const ACTION_BUTTONS: usize = 120;
 
 /// One occupied slot of `SMSG_ACTION_BUTTONS`.
 ///
-/// The word is packed: the low 24 bits are what the button *does* and the top
-/// byte is what kind of thing that is. An empty slot is a zero word and is not
-/// reported here at all.
+/// The word is packed: the low 24 bits are the action and the top byte is the
+/// kind of action. An empty slot is a zero word and is not reported here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActionButton {
     /// 0..[`ACTION_BUTTONS`], the position in the bar.
@@ -181,16 +184,16 @@ pub struct ActionButton {
 }
 
 impl ActionButton {
-    /// **This button as one word**, which is the only form the wire has —
-    /// [`parse_action_buttons`]' inverse, and what
-    /// [`set_action_button_body`] sends.
+    /// This button as one packed word, which is the only form the wire uses. The
+    /// inverse of [`parse_action_buttons`], and what [`set_action_button_body`]
+    /// sends.
     ///
-    /// The kind is the top byte and the action the low 24 bits, so a caller
-    /// cannot pack the two the wrong way round in two places. The action is
-    /// masked rather than asserted: `Player::IsActionButtonDataValid` refuses
-    /// anything at or above `MAX_ACTION_BUTTON_ACTION_VALUE` outright, so a
-    /// value that would collide with the kind byte is a refusal either way and
-    /// truncating it here keeps the packing total.
+    /// The kind is the top byte and the action the low 24 bits. Packing in one
+    /// function means a caller cannot swap the two. The action is masked rather
+    /// than asserted: `Player::IsActionButtonDataValid` refuses any value at or
+    /// above `MAX_ACTION_BUTTON_ACTION_VALUE`, so a value that would overlap the
+    /// kind byte is refused either way, and truncating it here keeps the function
+    /// defined for every input.
     pub fn packed(action: u32, kind: u8) -> u32 {
         (action & 0x00FF_FFFF) | (u32::from(kind) << 24)
     }
@@ -199,30 +202,31 @@ impl ActionButton {
 /// `enum ActionButtonType` — the top byte of the packed word.
 pub mod action_kind {
     pub const SPELL: u8 = 0x00;
-    /// "click?", says the header beside it.
+    /// vmangos' header comments this value as "click?".
     pub const CLICK: u8 = 0x01;
     pub const MACRO: u8 = 0x40;
     pub const CLICK_MACRO: u8 = 0x41;
     pub const ITEM: u8 = 0x80;
 }
 
-/// `CMSG_SET_ACTION_BUTTON`: `u8 slot`, `u32 packed` — **and the packet is sent
-/// for a removal too**, with a zero word.
+/// `CMSG_SET_ACTION_BUTTON`: `u8 slot`, `u32 packed`. The packet is also sent
+/// for a removal, with a zero word.
 ///
-/// The bar is the *client's* state and this is how the server is told to
-/// remember it; nothing comes back. `HandleSetActionButtonOpcode` reads exactly
+/// The action bar is client state, and this packet tells the server to store
+/// it. The server sends no reply. `HandleSetActionButtonOpcode` reads exactly
 /// these five bytes, treats a zero word as `removeActionButton(slot)`, and
-/// otherwise validates the pair — a spell the character does not know, a passive
-/// one, or an item entry with no prototype is dropped in silence.
+/// otherwise validates the pair. A spell the character does not know, a
+/// passive spell, or an item entry with no prototype is dropped without a
+/// reply.
 ///
-/// **The slot is zero-based here**, as it is in the packet the server sends
-/// back at login, and one-based everywhere the interface touches it. The
-/// crossing is the caller's; see [`crate::play::spells::ACTION_BUTTONS`] for the
-/// bound, which `u8` does not quite express (120 fits, 250 does not).
+/// The slot is zero-based here, as it is in the packet the server sends at
+/// login, and one-based everywhere in the interface. The caller converts. See
+/// [`crate::play::spells::ACTION_BUTTONS`] for the bound, which `u8` does not
+/// express exactly (120 fits, 250 does not).
 ///
-/// The same as the client's own sender, which writes the slot as a byte and then `actionButtons[slot]` as a dword — the same array
-/// [`parse_action_buttons`] fills — before firing `ACTIONBAR_SLOT_CHANGED` with
-/// `slot + 1`.
+/// The 1.12.1 client sends the same five bytes: the slot as a byte, then the
+/// slot's packed word as a `u32`, the same word [`parse_action_buttons`]
+/// reads. It then raises `ACTIONBAR_SLOT_CHANGED` with `slot + 1`.
 pub fn set_action_button_body(slot: u8, packed: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u8(slot);
@@ -230,19 +234,19 @@ pub fn set_action_button_body(slot: u8, packed: u32) -> Vec<u8> {
     w.buf
 }
 
-/// **Which bit of `PLAYER_FIELD_BYTES`' third byte is which extra bar**, and the
-/// order is the interface's own argument order rather than the screen's.
+/// Which bit of `PLAYER_FIELD_BYTES`' third byte is which extra action bar.
+/// The order is the interface's argument order, not the screen order.
 ///
-/// `SetActionBarToggles(a, b, c, d, alwaysShow)` is called from exactly one place
-/// in `Interface\FrameXML\` — `UIOptionsFrame_Save` — and the client packs its
-/// first four arguments into bits 0..3 in order. `MultiActionBars.lua` then spends those four
-/// numbers on the four frames, which is where the names come from.
+/// `SetActionBarToggles(a, b, c, d, alwaysShow)` is called from one place in
+/// `Interface\FrameXML\`, `UIOptionsFrame_Save`. The client packs the first
+/// four arguments into bits 0..3 in order. `MultiActionBars.lua` assigns those
+/// four values to the four frames, which is where the names come from.
 ///
-/// **The fifth argument goes nowhere.** `ALWAYS_SHOW_MULTIBARS` — the "Always
-/// Show ActionBars" checkbox — is passed to the C function and the C function
-/// stops at four bits, so it is a saved *variable* rather than a saved field and
-/// this client owes it nothing. Stated because a five-bit mask reads perfectly
-/// plausibly and would set a bit the server hands straight back.
+/// The fifth argument is not sent. `ALWAYS_SHOW_MULTIBARS`, the "Always Show
+/// ActionBars" checkbox, is passed to `SetActionBarToggles`, but the client
+/// packs only four bits. It is a saved variable rather than a saved field, and
+/// this client does not send it. A five-bit mask would look correct and would
+/// set a bit the server returns unchanged.
 pub mod multi_bar {
     /// `SHOW_MULTI_ACTIONBAR_1` — `MultiBarBottomLeft`, slots 61..72
     /// (`BOTTOMLEFT_ACTIONBAR_PAGE` is 6).
@@ -253,32 +257,33 @@ pub mod multi_bar {
     pub const RIGHT: u8 = 0x04;
     /// `SHOW_MULTI_ACTIONBAR_4` — `MultiBarLeft`, slots 37..48.
     ///
-    /// **It is not shown on its own**: `MultiActionBar_Update` draws the left
-    /// column only when bit 2 is set as well, which is the file's own
-    /// `SHOW_MULTI_ACTIONBAR_3 and SHOW_MULTI_ACTIONBAR_4`. The bit still means
-    /// what it says; the conjunction is the interface's.
+    /// It is not shown alone: `MultiActionBar_Update` draws the left column only
+    /// when bit 2 is also set, which that file writes as
+    /// `SHOW_MULTI_ACTIONBAR_3 and SHOW_MULTI_ACTIONBAR_4`. The bit keeps its own
+    /// meaning; the condition is applied by the interface.
     pub const LEFT: u8 = 0x08;
     /// The four of them, for a mask that cannot carry the fifth argument.
     pub const ALL: u8 = BOTTOM_LEFT | BOTTOM_RIGHT | RIGHT | LEFT;
 }
 
-/// `CMSG_SET_ACTIONBAR_TOGGLES`: **one byte, and that is the whole packet**.
+/// `CMSG_SET_ACTIONBAR_TOGGLES`: one byte, which is the whole packet.
 ///
-/// The mask of [`multi_bar`] bits, which the server stores in
-/// `PLAYER_FIELD_BYTES` byte 2 and hands back in the next values block — so the
-/// four bars survive a logout, and are the one piece of interface layout in 1.12
-/// that does. Nothing is answered: `HandleSetActionBarTogglesOpcode` is a
-/// `SetByteValue` and a return.
+/// The mask of [`multi_bar`] bits. The server stores it in
+/// `PLAYER_FIELD_BYTES` byte 2 and returns it in the next values block, so the
+/// four bars survive a logout. They are the only piece of interface layout in
+/// 1.12 that does. The server sends no reply:
+/// `HandleSetActionBarTogglesOpcode` calls `SetByteValue` and returns.
 ///
-/// **Nothing local is written here either**, which is the opposite of
-/// [`set_action_button_body`]'s rule and is the client's own: it packs the
-/// four Lua arguments, sends, and does not touch the player object. The
-/// interface has already moved the frames itself (`MultiActionBar_Update` runs
-/// from the checkbox's `OnClick`, not from the save), so the field is only ever
-/// read again at the *next* `PLAYER_ENTERING_WORLD`.
+/// No local state is written either, which is the opposite of
+/// [`set_action_button_body`]'s rule. The 1.12.1 client does the same: it
+/// sends the four Lua arguments as the mask and does not change its own copy
+/// of the field. The interface has already moved the frames itself
+/// (`MultiActionBar_Update` runs from the checkbox's `OnClick`, not from the
+/// save), so the field is read again only at the next
+/// `PLAYER_ENTERING_WORLD`.
 ///
-/// The high four bits are masked off rather than trusted — see [`multi_bar`] for
-/// the fifth argument that looks like it belongs in them and does not.
+/// The high four bits are masked off. See [`multi_bar`] for the fifth
+/// argument, which looks as if it belongs in them and does not.
 pub fn set_actionbar_toggles_body(mask: u8) -> Vec<u8> {
     let mut w = Writer::new();
     w.u8(mask & multi_bar::ALL);
@@ -288,7 +293,7 @@ pub fn set_actionbar_toggles_body(mask: u8) -> Vec<u8> {
 /// Parse `SMSG_ACTION_BUTTONS`, keeping only the occupied slots.
 ///
 /// A short body is read as far as it goes rather than refused: the bar is
-/// cosmetic state and half of one is strictly better than none.
+/// display state, and a partial bar is better than none.
 pub fn parse_action_buttons(body: &[u8]) -> Vec<ActionButton> {
     let mut r = Reader::new(body);
     let mut buttons = Vec::new();
@@ -309,25 +314,26 @@ pub fn parse_action_buttons(body: &[u8]) -> Vec<ActionButton> {
     buttons
 }
 
-/// The pseudo-spell every character carries in slot 1: **Attack**.
+/// The pseudo-spell every character has in slot 1: Attack.
 ///
 /// It is not a cast. Pressing it sends `CMSG_ATTACKSWING` at the current
-/// selection and toggles melee; `CMSG_CAST_SPELL` with this id would be refused
+/// selection and toggles melee. `CMSG_CAST_SPELL` with this id would be refused
 /// by `HandleCastSpellOpcode`'s "which he shouldn't have" branch. 6603 is the
-/// only spell in the game carrying `SPELL_EFFECT_ATTACK`, which is how the real
-/// client recognises it.
+/// only spell in the game with `SPELL_EFFECT_ATTACK`, and the 1.12.1 client
+/// identifies the Attack button by that effect.
 pub const SPELL_ATTACK: u32 = 6603;
 
 // ---------------------------------------------------------------------------
 // Cooldowns
 // ---------------------------------------------------------------------------
 
-/// `SMSG_SPELL_COOLDOWN`: the server's **override** path for cooldowns.
+/// `SMSG_SPELL_COOLDOWN`: the server's override path for cooldowns.
 ///
-/// Not the ordinary one. A plain cast's own recovery is computed by the client
-/// from `Spell.dbc` and started when its `SMSG_SPELL_GO` comes back — vmangos
-/// sends no packet for it at all. This is what arrives for a school lockout (a
-/// counterspell), a pet's list, or a GM's reset, and it may name several spells.
+/// It is not the ordinary path. A plain cast's own recovery is computed by the
+/// client from `Spell.dbc` and started when its `SMSG_SPELL_GO` comes back;
+/// vmangos sends no packet for it. This packet arrives for a school lockout (a
+/// counterspell), a pet's spell list, or a GM's reset, and it may name several
+/// spells.
 ///
 /// ```text
 /// u64 guid                 whose cooldowns these are
@@ -353,14 +359,14 @@ pub fn parse_spell_cooldowns(body: &[u8]) -> Option<SpellCooldowns> {
     Some(SpellCooldowns { guid, entries })
 }
 
-/// `SMSG_COOLDOWN_EVENT`: **start the cooldown that was parked**.
+/// `SMSG_COOLDOWN_EVENT`: start a cooldown that was held.
 ///
-/// The other half of `SPELL_ATTR_COOLDOWN_ON_EVENT` — Stealth and Feign Death
-/// take their recovery when they *break*, not when they are cast, so the client
-/// inserts the record on hold and this releases it. `u32 spellId`, then a plain
-/// `u64` guid, in that order (the guid is second here and first in
-/// `SMSG_SPELL_COOLDOWN`, which is the sort of asymmetry that reads as a
-/// cooldown on spell 0).
+/// The second half of `SPELL_ATTR_COOLDOWN_ON_EVENT`. Stealth and Feign Death
+/// start their recovery when they end, not when they are cast, so the client
+/// inserts the record on hold and this packet starts it. The body is
+/// `u32 spellId`, then a plain `u64` guid. The guid is second here and first
+/// in `SMSG_SPELL_COOLDOWN`; reading it in the wrong order produces a cooldown
+/// on spell 0.
 pub fn parse_cooldown_event(body: &[u8]) -> Option<(u32, u64)> {
     let mut r = Reader::new(body);
     if !r.has(4 + 8) {
@@ -370,37 +376,36 @@ pub fn parse_cooldown_event(body: &[u8]) -> Option<(u32, u64)> {
     Some((spell_id, r.u64()))
 }
 
-/// `SMSG_CLEAR_COOLDOWN`: **this cooldown is over now**, whatever it had left.
+/// `SMSG_CLEAR_COOLDOWN`: this cooldown has ended, however long it had left.
 ///
-/// The half of the cooldown conversation this client had never read, and the
-/// one that makes a school lockout look wrong. `Player::LockOutSpells` sends
-/// `SMSG_SPELL_COOLDOWN` naming every spell of the school and its full
-/// duration; `Player::RemoveSpellLockout` sends **one of these per spell** when
-/// the lockout is lifted early. Ignore them and every swirl runs to the full
-/// length the lockout was *stated* at, which is right about as often as it is
-/// wrong — the "displays inconsistently" report.
+/// Without this packet a school lockout displays wrongly.
+/// `Player::LockOutSpells` sends `SMSG_SPELL_COOLDOWN` naming every spell of
+/// the school with the full duration; `Player::RemoveSpellLockout` sends one
+/// of these per spell when the lockout is lifted early. A client that ignores
+/// them runs every cooldown sweep to the full stated length of the lockout,
+/// which is right only when the lockout runs its course. This was reported as
+/// the cooldown displaying inconsistently.
 ///
-/// It is not only interrupts. vmangos sends it from four places
-/// (`Player.cpp:22354`, `:22365`, `:22381`, `:22469`) — any cooldown removal,
-/// the warlock Ritual of Doom fix-up, and the no-cooldown cheat.
+/// It is not sent only for interrupts. vmangos sends it from four places
+/// (`Player.cpp:22354`, `:22365`, `:22381`, `:22469`): any cooldown removal,
+/// the warlock Ritual of Doom correction, and the no-cooldown cheat.
 ///
-/// ## The layout is a reading, and it is one that cannot lie quietly
+/// ## How the field order was determined, and why a wrong order is safe
 ///
-/// `u32 spellId` then `u64 guid`, which is [`parse_cooldown_event`]'s shape —
-/// the same server, the same subject, the fields in the order
-/// `SendClearCooldown(spellId, target)` assigns them. What is *not* measured is
-/// the serialiser itself: `WorldPackets::Spell::ClearCooldown` is a packet class
-/// this session could not fetch, and the client's `SMSG_CLEAR_COOLDOWN` handler
-/// was not checked.
+/// `u32 spellId` then `u64 guid`, the same shape as [`parse_cooldown_event`]:
+/// the same server, the same subject, and the fields in the order
+/// `SendClearCooldown(spellId, target)` assigns them. The serialiser itself is
+/// not confirmed: `WorldPackets::Spell::ClearCooldown` is a packet class that
+/// could not be fetched, and the layout has not been confirmed against the
+/// 1.12.1 client.
 ///
-/// Two things make the reading safe rather than merely likely. **The body must
-/// be exactly twelve bytes** — a `u64`-first layout would still be twelve, so
-/// that is not the check — and **the caller compares the guid against the
-/// player's own**, which the server always sends. Reversed, the "guid" would be
-/// a spell id in its low half and would not match, so a wrong reading refuses
-/// every packet instead of clearing a random spell. That is the direction to be
-/// wrong in, and it is visible: the refusals land in the session's warning
-/// channel.
+/// Two checks make a wrong reading safe. The body must be exactly twelve
+/// bytes; a `u64`-first layout would also be twelve, so this check alone does
+/// not decide the order. The caller also compares the guid against the
+/// player's own, which the server always sends. With the fields reversed, the
+/// guid would hold a spell id in its low half and would not match, so a wrong
+/// reading refuses every packet rather than clearing a random spell. The
+/// refusals appear in the session's warning channel.
 pub fn parse_clear_cooldown(body: &[u8]) -> Option<(u32, u64)> {
     if body.len() != 4 + 8 {
         return None;
@@ -414,14 +419,14 @@ pub fn parse_clear_cooldown(body: &[u8]) -> Option<(u32, u64)> {
 // What the server says about a press
 // ---------------------------------------------------------------------------
 
-/// `SMSG_CAST_RESULT`: the answer to our own `CMSG_CAST_SPELL`.
+/// `SMSG_CAST_RESULT`: the answer to the player's own `CMSG_CAST_SPELL`.
 ///
-/// **Sent on success as well as on failure**, which is why the failure is an
-/// `Option` rather than the packet being one: `status` is 0 for "the cast was
-/// accepted" and 2 for "it was not", and the reason byte only follows the 2.
-/// A success carries nothing the client needs — the cast itself arrives as
-/// `SMSG_SPELL_START`/`SMSG_SPELL_GO` like anybody else's — but its *absence*
-/// is what tells a cast bar to keep running.
+/// Sent on success as well as on failure, so the failure is an `Option` and
+/// the packet is not. `status` is 0 when the cast was accepted and 2 when it
+/// was not, and the reason byte follows only the 2. A success carries nothing
+/// the client needs, since the cast itself arrives as
+/// `SMSG_SPELL_START`/`SMSG_SPELL_GO` like any other unit's. Because a success
+/// is not a failure, the cast bar keeps running when one arrives.
 ///
 /// ```text
 /// u32 spellId
@@ -434,33 +439,33 @@ pub struct CastResult {
     pub spell_id: u32,
     /// `None` when the cast was accepted.
     pub failure: Option<u8>,
-    /// **What the refusal is about**, for the three reasons that say so.
+    /// The equipment the refusal is about, for the three reasons that carry it.
     ///
-    /// See [`EquipRequirement`]: without it the message is drawn with its own
-    /// `%s` still in it, which is what the warrior report was.
+    /// See [`EquipRequirement`]: without it the message is shown with its `%s`
+    /// still in it, which is what warriors reported.
     pub requirement: Option<EquipRequirement>,
 }
 
-/// The gear a refused cast wanted, as `Spell::SendCastResult` states it.
+/// The equipment a refused cast required, as `Spell::SendCastResult` sends it.
 ///
-/// **This is the argument to a `%s`, and it is the whole reason the tail is
-/// read at all.** `GlobalStrings.lua` spells the three equipped-item refusals
-/// as `"Must have a %s equipped"` and its two per-hand variants, so a client
-/// that stops at the reason byte draws the placeholder verbatim — which is
-/// exactly what a warrior pressing Rend without a weapon used to see.
+/// This is the argument to a `%s`, and the reason the tail is read.
+/// `GlobalStrings.lua` writes the three equipped-item refusals as
+/// `"Must have a %s equipped"` and two per-hand variants, so a client that
+/// stops at the reason byte shows the placeholder verbatim. A warrior pressing
+/// Rend without a weapon used to see that.
 ///
-/// The values are the *spell's* own `Spell.dbc` columns rather than anything
-/// about the character, which is why one number can name the requirement: the
-/// server is quoting the row it just checked against.
+/// The values are the spell's own `Spell.dbc` columns, not facts about the
+/// character, which is why one value can name the requirement: the server
+/// copies the row it just checked against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EquipRequirement {
     /// `EquippedItemClass` — an `ItemClass.dbc` id ("Weapon", "Armor").
     pub class: u32,
-    /// `EquippedItemSubClassMask` — a **mask** of `ItemSubClass.dbc` subclasses,
-    /// so a spell that takes any one-handed weapon sets several bits at once.
+    /// `EquippedItemSubClassMask` — a mask of `ItemSubClass.dbc` subclasses, so a
+    /// spell that accepts any one-handed weapon sets several bits at once.
     pub subclass_mask: u32,
-    /// `EquippedItemInventoryTypeMask`, unread here: naming a slot is what the
-    /// *reason byte* already does (main hand, off hand, either).
+    /// `EquippedItemInventoryTypeMask`, not read here: the reason byte already
+    /// names the slot (main hand, off hand, either).
     pub inventory_type_mask: u32,
 }
 
@@ -469,11 +474,11 @@ const CAST_STATUS_FAILED: u8 = 2;
 
 /// The three reasons whose tail is the equipment trio above.
 ///
-/// vmangos writes it under `SPELL_FAILED_EQUIPPED_ITEM_CLASS` and its two
-/// per-hand variants and under nothing else — the other three cases in that
+/// vmangos writes the trio under `SPELL_FAILED_EQUIPPED_ITEM_CLASS` and its
+/// two per-hand variants and under nothing else. The other three cases in that
 /// `switch` (`NOT_READY`, `REQUIRES_SPELL_FOCUS`, `REQUIRES_AREA`) each write a
-/// single `u32` this client has no table to name yet, so they are deliberately
-/// left unread rather than parsed into a number nobody can turn into words.
+/// single `u32` that this client has no table to name yet, so they are left
+/// unread rather than parsed into a number that cannot be shown as text.
 const EQUIPPED_ITEM_CLASS: u8 = 0x19;
 const EQUIPPED_ITEM_CLASS_MAINHAND: u8 = 0x1a;
 const EQUIPPED_ITEM_CLASS_OFFHAND: u8 = 0x1b;
@@ -508,12 +513,12 @@ pub fn parse_cast_result(body: &[u8]) -> Option<CastResult> {
     Some(CastResult { spell_id, failure, requirement })
 }
 
-/// `SMSG_SPELL_FAILED_OTHER`: a cast in progress was **interrupted**.
+/// `SMSG_SPELL_FAILED_OTHER`: a cast in progress was interrupted.
 ///
-/// `u64` caster guid — plain, not packed — then `u32 spellId`. vmangos never
-/// sends `SMSG_SPELL_FAILURE` at all; `Spell::SendInterrupted` sends this, and
-/// it is what stops a wind-up animation that would otherwise be held for the
-/// whole of a cast bar that has already been cancelled.
+/// `u64` caster guid (plain, not packed), then `u32 spellId`. vmangos never
+/// sends `SMSG_SPELL_FAILURE`; `Spell::SendInterrupted` sends this packet. It
+/// stops a cast animation that would otherwise be held for the whole length of
+/// a cast bar that has already been cancelled.
 pub fn parse_spell_failed_other(body: &[u8]) -> Option<(u64, u32)> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4) {
@@ -523,60 +528,61 @@ pub fn parse_spell_failed_other(body: &[u8]) -> Option<(u64, u32)> {
     Some((guid, r.u32()))
 }
 
-/// `SMSG_LEARNED_SPELL`: one more spell — **`{u16 spellId, int16 actionBarSlot}`**,
-/// not one `u32`.
+/// `SMSG_LEARNED_SPELL`: one new spell, as `{u16 spellId, int16
+/// actionBarSlot}`, not one `u32`.
 ///
-/// **The spellbook is stated once and amended afterwards.** A trainer visit, a
-/// level-up and a quest reward all arrive this way, so a client that reads only
-/// `SMSG_INITIAL_SPELLS` has a spellbook that is correct at login and quietly
-/// stale for the rest of the session.
+/// The spellbook is stated once and changed afterwards. A trainer visit, a
+/// level-up and a quest reward all arrive this way, so a client that reads
+/// only `SMSG_INITIAL_SPELLS` has a spellbook that is correct at login and
+/// out of date for the rest of the session.
 ///
-/// **This was read as a single `u32` for a long time and never misbehaved**,
-/// which is the interesting half. `LearnedSpell::AppendBodyTo` writes the id as
-/// a `uint16` and then a second `int16` its own comment calls "not used";
-/// vmangos leaves that field at its `= 0` initialiser and never assigns it, so
-/// the four bytes little-endian *are* the id and the wrong read produced the
-/// right answer on every packet this project has ever seen. It is corrected
-/// because the next server to put anything in that field would turn every
-/// learned spell into an id above 65,536 — a failure that would present as "the
-/// trainer did nothing" with no parse error anywhere.
+/// This packet was read as a single `u32` for a long time with no visible
+/// error. `LearnedSpell::AppendBodyTo` writes the id as a `uint16` and then an
+/// `int16` that its own comment calls "not used". vmangos leaves that field at
+/// its `= 0` initialiser and never assigns it, so the four bytes read
+/// little-endian equal the id, and the wrong read gave the right answer on
+/// every packet this project has received. It is corrected because a server
+/// that put any value in that field would turn every learned spell into an id
+/// above 65,536. That failure would appear as "the trainer did nothing" with
+/// no parse error.
 ///
-/// The trailing field is deliberately not returned: nothing in the 1.12 client
-/// reads it either.
+/// The trailing field is not returned, because the 1.12.1 client does not use
+/// it either.
 pub fn parse_learned_spell(body: &[u8]) -> Option<u32> {
     let mut r = Reader::new(body);
     r.has(2).then(|| u32::from(r.u16()))
 }
 
-/// `SMSG_REMOVED_SPELL`: one fewer, and it is **two bytes** where the packet
-/// above it is four. `RemovedSpell::AppendBodyTo` writes `uint16(spellId)` and
-/// stops.
+/// `SMSG_REMOVED_SPELL`: one spell removed. The body is two bytes, where the
+/// packet above is four. `RemovedSpell::AppendBodyTo` writes `uint16(spellId)`
+/// and nothing else.
 pub fn parse_removed_spell(body: &[u8]) -> Option<u32> {
     let mut r = Reader::new(body);
     r.has(2).then(|| u32::from(r.u16()))
 }
 
-/// `SMSG_SUPERCEDED_SPELL`: **a higher rank replaced a lower one**, `{u16 old,
+/// `SMSG_SUPERCEDED_SPELL`: a higher rank replaced a lower one, as `{u16 old,
 /// u16 new}`.
 ///
-/// This is the packet that keeps an action bar from rotting, and it had never
-/// been read. The server's own comment beside the send is "new spell replace old
-/// in action bars and spell book" — the swap is the *client's* to perform, and a
-/// client that ignores this leaves the superseded id sitting in `character_action`
-/// for ever, because nothing ever restates the bar (see [`parse_action_buttons`]).
+/// This packet keeps action bar buttons pointing at known spells, and this
+/// client did not read it before. The server's comment beside the send is "new
+/// spell replace old in action bars and spell book": the client performs the
+/// replacement. A client that ignores the packet leaves the superseded id in
+/// `character_action` permanently, because no packet restates the bar (see
+/// [`parse_action_buttons`]).
 ///
-/// **What that costs is not cosmetic.** `HandleCastSpellOpcode` refuses a spell
-/// the character does not have *active* — which a superseded rank is — and
-/// returns with **no reply at all**, so pressing the stale button did nothing and
-/// wedged the pending record until [`super::super::socket::handler`]'s deadline
-/// let it go. Measured against the running server on this project's own warrior
+/// The effect is not only visual. `HandleCastSpellOpcode` refuses a spell the
+/// character does not have active, which a superseded rank is not, and returns
+/// with no reply. Pressing the old button did nothing, and the pending record
+/// stayed set until [`super::super::socket::handler`]'s deadline released it.
+/// Measured against the running server on this project's warrior
 /// (`characters.character_action` against `characters.character_spell`, guid
-/// 378): button 73 held Heroic Strike 11566 with only 11567 active, button 75
-/// Rend 11572 against 11573.
+/// 378): button 73 held Heroic Strike 11566 with only 11567 active, and button
+/// 75 held Rend 11572 with 11573 active.
 ///
-/// Both ids are truncated to 16 bits by the server
-/// (`SupercededSpell::AppendBodyTo`), which is the same narrowing
-/// `SMSG_INITIAL_SPELLS` applies to every id it lists, so nothing is lost: no
+/// The server truncates both ids to 16 bits
+/// (`SupercededSpell::AppendBodyTo`), the same narrowing
+/// `SMSG_INITIAL_SPELLS` applies to every id it lists. Nothing is lost: no
 /// 1.12 spell id reaches 65,536.
 pub fn parse_superceded_spell(body: &[u8]) -> Option<(u32, u32)> {
     let mut r = Reader::new(body);
@@ -587,20 +593,20 @@ pub fn parse_superceded_spell(body: &[u8]) -> Option<(u32, u32)> {
     Some((old, u32::from(r.u16())))
 }
 
-/// Something the server said about **what this character just tried to do**.
+/// Something the server said about what this character just tried to do.
 ///
-/// A queue of these is drained by whoever is showing the interface, on exactly
-/// the terms `ObjectManager::take_chat` is: each of them is an *event* that has
-/// to be acted on once, rather than state that can be read again. A cast that
-/// failed, a swing that was refused, a cooldown that started — none of them
-/// leaves any other trace, which is the same argument the swing counters make
-/// from the other side.
-/// **Not `Copy`, and not `Eq`.** Every variant was a handful of numbers until
-/// `SMSG_RESURRECT_REQUEST` arrived carrying the caster's *name* and
-/// `MSG_CORPSE_QUERY` a place with floats in it. Both are real parts of their
-/// packets — the name is what the game's own `RESURRECT_REQUEST` popup says, and
-/// nothing else on the wire carries it for a creature caster — so the derive is
-/// what gives, rather than the shape of the event.
+/// The interface drains a queue of these, in the same way as
+/// `ObjectManager::take_chat`: each is an event to act on once, not state that
+/// can be read again. A failed cast, a refused swing, a started cooldown:
+/// none of them leaves any other trace. The swing counters rely on the same
+/// reasoning.
+///
+/// Not `Copy` and not `Eq`. Every variant was a few numbers until
+/// `SMSG_RESURRECT_REQUEST` added the caster's name and `MSG_CORPSE_QUERY`
+/// added a position with floats. Both are real parts of their packets: the
+/// name is what the game's `RESURRECT_REQUEST` popup shows, and no other
+/// packet carries it for a creature caster, so the derives were dropped
+/// rather than those fields.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlayerEvent {
     /// `CMSG_CAST_SPELL` was accepted. The cast itself arrives as
@@ -618,150 +624,146 @@ pub enum PlayerEvent {
     },
     /// A cast in progress was interrupted — ours if the guid is ours.
     CastInterrupted { guid: u64, spell_id: u32 },
-    /// **`SMSG_SPELL_START` naming *us* as the caster: the server has taken the
-    /// cast, and this is what puts the bar up.**
+    /// `SMSG_SPELL_START` naming the player as the caster: the server has accepted
+    /// the cast, and this shows the cast bar.
     ///
-    /// vmangos says so in its own comment — `// will show cast bar` above the
-    /// `SendSpellStart()` in `Spell::prepare` — and the 1.12 client agrees from
-    /// the other side: `SPELLCAST_START` (event 337) is raised in exactly one
-    /// place, and that place is the body of this packet's handler. Nothing on
-    /// the press path raises it.
+    /// vmangos states this in its comment `// will show cast bar` above the
+    /// `SendSpellStart()` in `Spell::prepare`. The 1.12.1 client agrees: it
+    /// raises `SPELLCAST_START` only when this packet arrives, and nothing on the
+    /// key-press path raises it.
     ///
-    /// **Sent for an instant too**, with `cast_time_ms` of zero: `prepare` sends
-    /// it for every non-triggered spell whatever its cast time, and the
-    /// `SMSG_SPELL_GO` follows immediately. So this is the packet that starts a
-    /// cast's *animation* as well, for us exactly as for anybody else.
+    /// Also sent for an instant cast, with `cast_time_ms` of zero: `prepare`
+    /// sends it for every non-triggered spell whatever its cast time, and the
+    /// `SMSG_SPELL_GO` follows immediately. This packet therefore also starts the
+    /// cast animation, for the player as for any other unit.
     CastStarted { spell_id: u32, cast_time_ms: u32 },
-    /// **`SMSG_SPELL_GO` naming *us* as the caster: a spell of ours went off.**
+    /// `SMSG_SPELL_GO` naming the player as the caster: one of the player's
+    /// spells was released.
     ///
-    /// Not the same statement as [`Self::CastAccepted`], which is
-    /// `SMSG_CAST_RESULT` and arrives when the server *takes* the request. For
-    /// nearly every spell the two are a wind-up apart and nothing needs the
-    /// second; for the one family whose whole point is that the two are far
-    /// apart — a **next-swing** ability, which is accepted at the press and
-    /// released when the weapon lands, possibly seconds later — this is the only
-    /// thing on the wire that says the queue emptied.
+    /// Not the same event as [`Self::CastAccepted`], which is `SMSG_CAST_RESULT`
+    /// and arrives when the server accepts the request. For nearly every spell
+    /// the two are one cast time apart and nothing needs the second. For a
+    /// next-swing ability the gap is large: it is accepted at the key press and
+    /// released when the weapon hits, possibly seconds later. This packet is the
+    /// only one that says the queued swing has been used.
     ///
-    /// The world already reads the same packet for everybody's animations
-    /// (`ObjectManager::apply_cast`); this is the caster-filtered edge on the
-    /// queue the interface reads, which is a different reader with a different
-    /// need — the same split [`Self::ChannelStart`] documents.
+    /// The world already reads the same packet for every unit's animations
+    /// (`ObjectManager::apply_cast`). This variant is the caster-filtered event on
+    /// the queue the interface reads, which is a separate reader with a separate
+    /// need; [`Self::ChannelStart`] describes the same split.
     CastReleased { spell_id: u32 },
-    /// **`SMSG_SPELL_DELAYED`: our cast was knocked back, by this many
-    /// milliseconds.**
+    /// `SMSG_SPELL_DELAYED`: the player's cast was pushed back by this many
+    /// milliseconds.
     ///
-    /// The one packet that says a cast is going to take longer than it said it
-    /// would, and the interface has its own name for it —
-    /// `CastingBarFrame_OnLoad` registers `SPELLCAST_DELAYED` and its arm slides
-    /// both ends of the bar by `arg1 / 1000`. Without it a pushed-back cast runs
-    /// its bar out and sits at full while the server is still casting, which is
-    /// the "stuck casting" half of the report.
+    /// The only packet that says a cast will take longer than first stated. The
+    /// interface has its own event for it: `CastingBarFrame_OnLoad` registers
+    /// `SPELLCAST_DELAYED`, and its handler moves both ends of the bar by
+    /// `arg1 / 1000`. Without it, a pushed-back cast's bar fills and stays full
+    /// while the server is still casting, which was reported as "stuck casting".
     ///
-    /// Caster-only on the wire, so there is no guid here: what the handler does
-    /// with the one in the body is check it, and what reaches the interface is
-    /// only ever about us. See [`parse_spell_delayed`].
+    /// Only the caster receives this packet, so the variant has no guid: the
+    /// handler checks the guid in the body, and the event reaching the interface
+    /// is always about the player. See [`parse_spell_delayed`].
     CastDelayed { delay_ms: u32 },
-    /// **`MSG_CHANNEL_START`: a channel of ours has begun, and for how long.**
+    /// `MSG_CHANNEL_START`: one of the player's channelled spells has started,
+    /// and how long it lasts.
     ///
-    /// Beside the two above rather than folded into `CastAccepted`, because a
-    /// channel is the one cast whose *length* arrives in its own packet after
-    /// the fact: the wire says `SMSG_SPELL_GO` immediately and nothing about a
-    /// bar, so the interface has nothing to show until this lands. The world's
-    /// copy of it drives the held pose
-    /// ([`crate::state::objects::ObjectManager::apply_channel_start`]); this is the
-    /// same news on the queue the interface reads, which is a different reader
-    /// with a different need.
+    /// Kept separate from `CastAccepted` because a channel is the one cast whose
+    /// length arrives in a later packet: `SMSG_SPELL_GO` arrives at once and says
+    /// nothing about a bar, so the interface has nothing to show until this
+    /// arrives. The world's copy drives the held pose
+    /// ([`crate::state::objects::ObjectManager::apply_channel_start`]). This
+    /// variant is the same information on the queue the interface reads, which
+    /// is a separate reader with a separate need.
     ChannelStart { spell_id: u32, duration_ms: u32 },
-    /// `MSG_CHANNEL_UPDATE`: how much of it is left. **Zero is the end**, which
-    /// is what an interrupted or completed channel sends.
+    /// `MSG_CHANNEL_UPDATE`: the time left on the channel. Zero means it ended,
+    /// which is what an interrupted or completed channel sends.
     ChannelUpdate { remaining_ms: u32 },
     /// `CMSG_ATTACKSWING` was refused; the swing did not start.
     AttackRefused(AttackRefusal),
-    /// **`SMSG_CANCEL_AUTO_REPEAT`: the ranged loop has stopped.**
+    /// `SMSG_CANCEL_AUTO_REPEAT`: the ranged auto-repeat has stopped.
     ///
-    /// An empty body — the opcode is the message — and it is the *only* thing
-    /// the server ever says about an auto-repeat. There is no "it started"
-    /// packet, because starting one is an ordinary `CMSG_CAST_SPELL` this
-    /// client sent itself; every other end is here.
+    /// The body is empty; the opcode is the message. It is the only packet the
+    /// server sends about an auto-repeat. There is no start packet, because
+    /// starting one is an ordinary `CMSG_CAST_SPELL` this client sent itself.
+    /// Every end arrives here.
     ///
-    /// And it has more senders than the player's own cancel:
-    /// `SpellCaster::InterruptSpell` routes *every* stop through
-    /// `Player::SendAutoRepeatCancel` — the target dying, walking out of range,
-    /// a `CheckCast` that stops passing, and (for a wand, category 351) simply
-    /// moving. So a client that only cleared its own state on its own press
-    /// would keep flashing the button through a fight that had already ended.
+    /// It is sent for more than the player's own cancel:
+    /// `SpellCaster::InterruptSpell` sends every stop through
+    /// `Player::SendAutoRepeatCancel`, including the target dying, moving out of
+    /// range, a `CheckCast` that stops passing, and, for a wand (category 351),
+    /// moving at all. A client that cleared its state only on its own key press
+    /// would keep the button flashing after the fight had ended.
     ///
-    /// On the queue rather than in [`crate::socket::session::SessionStatus`] because it
-    /// is an edge: what it changes is a state this client set locally, and two
+    /// On the queue rather than in [`crate::socket::session::SessionStatus`]
+    /// because it is an edge: it changes state this client set locally, and two
     /// arrivals mean two stops.
     AutoRepeatCancelled,
-    /// **A sound the server decided to play**, and the only thing on the wire
-    /// that says so — `SMSG_PLAY_SOUND`, `SMSG_PLAY_MUSIC` and
-    /// `SMSG_PLAY_OBJECT_SOUND`. See [`crate::play::sound`].
+    /// A sound the server chose to play: `SMSG_PLAY_SOUND`, `SMSG_PLAY_MUSIC` and
+    /// `SMSG_PLAY_OBJECT_SOUND`, the only packets that say so. See
+    /// [`crate::play::sound`].
     ///
-    /// On this queue rather than in [`crate::socket::session::SessionStatus`] because
-    /// there is no state to hold: two arrivals are two noises, and a status
-    /// field would collapse them into one. The same argument
-    /// [`Self::AutoRepeatCancelled`] makes.
+    /// On this queue rather than in [`crate::socket::session::SessionStatus`]
+    /// because there is no state to hold: two arrivals are two sounds, and a
+    /// status field would merge them into one. [`Self::AutoRepeatCancelled`]
+    /// uses the same reasoning.
     ///
-    /// **Not on an entity, unlike the two spell visuals**, even though one of
-    /// the three names an object. A sound is played *at this client* — the
-    /// server chose the audience by who it sent the packet to — where a visual
-    /// is a thing that becomes true about a unit and stays true for as long as
-    /// its models are up. The object's guid is a *position*, and it is carried
-    /// as one.
+    /// Not stored on an entity, unlike the two spell visuals, although one of the
+    /// three opcodes names an object. A sound is played at this client, and the
+    /// server chose the listeners by choosing whom to send the packet to. A
+    /// visual is a property of a unit that lasts as long as its models are
+    /// loaded. The object's guid is used only as a position, and is carried as
+    /// one.
     PlaySound(crate::play::sound::Cue),
-    /// **An item arrived in a bag** — `SMSG_ITEM_PUSH_RESULT`, and the only
-    /// packet that says so whatever brought it. See [`crate::play::items::ItemPush`].
+    /// An item arrived in a bag: `SMSG_ITEM_PUSH_RESULT`, the only packet that
+    /// says so, whatever the source. See [`crate::play::items::ItemPush`].
     ///
-    /// On this queue rather than in [`crate::socket::session::SessionStatus`] for the
-    /// reason every event here is: the inventory *state* is already update
-    /// fields and already arrives, and what this adds is the edge — that a
-    /// stack growing by three was a loot rather than a purchase.
+    /// On this queue rather than in [`crate::socket::session::SessionStatus`]
+    /// for the reason every event here is: the inventory state already arrives as
+    /// update fields, and this packet adds the event, for example that a stack
+    /// grew by three because of loot rather than a purchase.
     ///
-    /// **Carries the guid rather than being filtered to us**, because it is
-    /// broadcast to the whole group for a loot and the reader has to know whose
-    /// bag it went into.
+    /// Carries the guid rather than being filtered to the player, because for
+    /// loot it is sent to the whole group and the reader needs to know whose bag
+    /// received the item.
     ItemReceived(crate::play::items::ItemPush),
-    /// **A bar the server counts down for us has started or been restated** —
-    /// the breath meter and its two siblings. See [`crate::play::timers`].
+    /// A timer bar the server counts down for the player has started or been
+    /// restated: the breath bar and its two siblings. See [`crate::play::timers`].
     ///
-    /// On this queue rather than in [`crate::socket::session::SessionStatus`] for the
-    /// same reason the cancel above is: what the interface does with it is
-    /// `MirrorTimer_Show`, which *claims a frame*, and two arrivals are two
-    /// statements about the bar even when every field matches. Reading it as
-    /// state would also lose the one thing the packet is for — the server
-    /// resends a start to say "paused", because its own pause event is
-    /// unusable.
+    /// On this queue rather than in [`crate::socket::session::SessionStatus`]
+    /// for the same reason as the cancel above: the interface answers with
+    /// `MirrorTimer_Show`, which takes a frame, and two arrivals are two
+    /// statements about the bar even when every field matches. Storing it as
+    /// state would also lose the packet's main use: the server sends a start
+    /// again to mean "paused", because the FrameXML pause handler cannot work.
     MirrorTimerStarted(crate::play::timers::MirrorTimerStart),
     /// …and the same bar hidden. `SMSG_STOP_MIRROR_TIMER`, one `u32`.
     MirrorTimerStopped { timer: crate::play::timers::MirrorTimer },
-    /// …and frozen where it stands. **The shipped handler for this cannot
-    /// work** — see [`crate::play::timers`] — and it is read anyway, because what is
-    /// faithful is the packet.
+    /// The same bar frozen at its current value. The game's FrameXML handler for
+    /// this event cannot work (see [`crate::play::timers`]); the packet is read
+    /// anyway so that the event matches the wire.
     MirrorTimerPaused {
         timer: crate::play::timers::MirrorTimer,
         paused: bool,
     },
-    /// The server started or refreshed a cooldown: milliseconds from now.
-    /// **Not the ordinary path** — see [`parse_spell_cooldowns`].
+    /// The server started or refreshed a cooldown: milliseconds from now. This is
+    /// not the ordinary path; see [`parse_spell_cooldowns`].
     CooldownStarted { spell_id: u32, ms: u32 },
     /// A parked cooldown was released (`SPELL_ATTR_COOLDOWN_ON_EVENT`).
     CooldownReleased { spell_id: u32 },
-    /// `SMSG_CLEAR_COOLDOWN` — **this one is over**, whatever it had left. See
-    /// [`parse_clear_cooldown`], and note that this is a *removal* where
-    /// [`Self::CooldownReleased`] is a start: the two names are one letter
-    /// apart and mean opposite things.
+    /// `SMSG_CLEAR_COOLDOWN`: this cooldown has ended, however long it had left.
+    /// See [`parse_clear_cooldown`]. This is a removal, whereas
+    /// [`Self::CooldownReleased`] is a start; the two names are similar and mean
+    /// opposite things.
     CooldownCleared { spell_id: u32 },
-    /// **The pet refused an order** — `SMSG_PET_ACTION_FEEDBACK`, one byte,
-    /// and the whole packet is which sentence to say. See
-    /// [`crate::play::pet::feedback`].
+    /// The pet refused an order: `SMSG_PET_ACTION_FEEDBACK`, one byte that
+    /// selects which message to show. See [`crate::play::pet::feedback`].
     ///
     /// On this queue rather than in the session status for the reason every
-    /// edge here is: two refusals of the same order are two messages, and a
-    /// field holding the last one would say it once.
+    /// event here is: two refusals of the same order are two messages, and a
+    /// field holding the last one would show it once.
     PetFeedback(u8),
-    /// …and refused a *cast*, which is the pet's own `SMSG_CAST_RESULT`:
+    /// The pet refused a cast, which is the pet's own `SMSG_CAST_RESULT`.
     /// `reason` indexes the same 146-entry table.
     PetCastFailed { spell_id: u32, reason: u8 },
     /// `SMSG_PET_TAME_FAILURE` — a `PetTameFailureReason`.
@@ -782,60 +784,59 @@ pub enum PlayerEvent {
     /// The spellbook changed after login.
     SpellLearned(u32),
     SpellRemoved(u32),
-    /// **A rank was replaced by a higher one** — `SMSG_SUPERCEDED_SPELL`, and
-    /// the one spellbook delta that is also a *bar* delta.
+    /// A spell rank was replaced by a higher one: `SMSG_SUPERCEDED_SPELL`, the one
+    /// spellbook change that also changes the action bar.
     ///
-    /// `slots` is which action-bar slots held the old id and now hold the new
-    /// one, already swapped in [`crate::state::objects::ObjectManager`]'s own copy.
-    /// It is carried rather than re-derived because the bar is allowed to hold
-    /// the same spell twice and may already have held `new` elsewhere, so "which
-    /// slots have `new` in them now" is not the same question as "which slots
-    /// did this packet change".
+    /// `slots` lists the action bar slots that held the old id and now hold the
+    /// new one, already updated in [`crate::state::objects::ObjectManager`]'s
+    /// copy. It is carried rather than recomputed because the bar may hold the
+    /// same spell twice and may already have held `new` in another slot, so the
+    /// slots that now hold `new` are not the same as the slots this packet
+    /// changed.
     ///
-    /// The reader owes the server a `CMSG_SET_ACTION_BUTTON` per slot: the bar
-    /// is client state the server only stores, so a swap that is not sent back
-    /// is one that comes undone at the next login. See
+    /// The reader must send the server a `CMSG_SET_ACTION_BUTTON` per slot: the
+    /// bar is client state that the server only stores, so a replacement that is
+    /// not sent back is undone at the next login. See
     /// [`set_action_button_body`].
     SpellSuperceded { old: u32, new: u32, slots: Vec<u8> },
-    /// **We gained a level** — `SMSG_LEVELUP_INFO`, and it is the only thing
-    /// that says so. `UNIT_FIELD_LEVEL` moving is not the same statement: it
-    /// moves at every login and for every creature that streams into view.
+    /// The player gained a level: `SMSG_LEVELUP_INFO`, the only packet that says
+    /// so. A change in `UNIT_FIELD_LEVEL` does not mean the same thing: it changes
+    /// at every login and for every creature that comes into view.
     LevelUp(LevelUp),
-    /// **The server declined to move us** — `SMSG_TRANSFER_ABORTED`, and it is
-    /// the only thing that ever says an instance portal did nothing on purpose.
+    /// The server declined to transfer the player: `SMSG_TRANSFER_ABORTED`, the
+    /// only packet that says an instance portal was refused deliberately.
     ///
     /// Carries the raw byte rather than a decoded reason, because three of the
-    /// codes are deliberately silent and only the reader knows whether it wants
-    /// to say so; [`crate::play::areatrigger::TransferAbort::from_code`] is the
-    /// decode, and `None` from it is "show nothing", which is the client's own
+    /// codes show nothing and only the reader decides whether to show a message.
+    /// [`crate::play::areatrigger::TransferAbort::from_code`] decodes it, and
+    /// `None` from it means "show nothing", which is the 1.12.1 client's
     /// behaviour rather than an unhandled case.
     ///
-    /// On this queue for the same reason the logout states below are: it is an
-    /// edge — two refusals of two portals are two statements, and every field
-    /// of them matches.
+    /// On this queue for the same reason as the logout states below: it is an
+    /// edge. Two refusals at two portals are two events with identical fields.
     TransferAborted { reason: u8 },
-    /// **The server is about to move us to another map** —
-    /// `SMSG_TRANSFER_PENDING`, whose whole purpose is to raise the loading
-    /// screen a moment before the old world is torn down.
+    /// The server is about to transfer the player to another map:
+    /// `SMSG_TRANSFER_PENDING`, whose purpose is to show the loading screen just
+    /// before the old world is unloaded.
     ///
-    /// The twin of [`Self::TransferAborted`] on the way *in*, and an edge for
-    /// the same reason: two teleports to the same map are two statements, and
-    /// a client that noticed the change by watching `map_id` instead would
-    /// notice it only after `SMSG_NEW_WORLD` — which is the far side of the
-    /// gap the screen exists to cover. See
+    /// The counterpart of [`Self::TransferAborted`] for a transfer that goes
+    /// ahead, and an edge for the same reason: two teleports to the same map are
+    /// two events. A client that detected the change by watching `map_id` would
+    /// detect it only after `SMSG_NEW_WORLD`, which is after the gap the loading
+    /// screen exists to cover. See
     /// [`crate::state::movement::parse_transfer_pending`].
     TransferPending { map_id: u32 },
-    /// **What the server said about leaving** — see [`crate::play::logout`], which
-    /// owns the four packets and the reason the client does not hold the clock.
+    /// What the server said about logging out. See [`crate::play::logout`], which
+    /// owns the four packets and explains why the client does not keep the timer.
     ///
-    /// On this queue rather than in [`crate::socket::session::SessionStatus`] because
-    /// each of the four is an *edge*: `PLAYER_CAMPING` is raised once when the
-    /// request is taken and `LOGOUT_CANCEL` once when it is given back, and a
-    /// state a reader polls cannot tell one arrival from two.
+    /// On this queue rather than in [`crate::socket::session::SessionStatus`]
+    /// because each of the four is an edge: `PLAYER_CAMPING` is raised once when
+    /// the request is accepted and `LOGOUT_CANCEL` once when it is cancelled, and
+    /// a polled state cannot distinguish one arrival from two.
     Logout(crate::play::logout::Logout),
-    /// **How long before the body may be taken back** —
-    /// `SMSG_CORPSE_RECLAIM_DELAY`, in milliseconds, said once at the moment of
-    /// release and never restated. See [`crate::play::death`].
+    /// How long before the corpse can be reclaimed:
+    /// `SMSG_CORPSE_RECLAIM_DELAY`, in milliseconds, sent once at release and
+    /// never restated. See [`crate::play::death`].
     CorpseReclaimDelay { ms: u32 },
     /// Where the body is, or `None` for "there isn't one" — the reply to our own
     /// `MSG_CORPSE_QUERY`. An answer to a question, so it belongs on the queue
@@ -848,54 +849,54 @@ pub enum PlayerEvent {
     /// durability and brings sickness: `SMSG_SPIRIT_HEALER_CONFIRM`, whose
     /// whole body is the healer's guid.
     SpiritHealerOffered { healer: u64 },
-    /// **An item verb was refused** — `SMSG_INVENTORY_CHANGE_FAILURE`, the
-    /// answer every right-click, equip and swap shares. See
-    /// [`crate::play::items::InventoryFailure`], which carries the reason and the one
-    /// number any of them takes.
+    /// An item action was refused: `SMSG_INVENTORY_CHANGE_FAILURE`, the answer
+    /// shared by every right-click, equip and swap. See
+    /// [`crate::play::items::InventoryFailure`], which carries the reason and the
+    /// one number some reasons take.
     ///
-    /// On this queue rather than in the world, because it is an *edge* about an
-    /// action the player just took and there is no state it changes: the item
-    /// stayed exactly where it was, which is the point.
+    /// On this queue rather than in the world, because it is an edge about an
+    /// action the player just took and it changes no state: the item stayed where
+    /// it was.
     InventoryFailed(crate::play::items::InventoryFailure),
-    /// **A loot window opened** — `SMSG_LOOT_RESPONSE`, which is also how the
-    /// server *refuses* to open one. See [`crate::play::loot`], where the byte that
-    /// tells the two apart is.
+    /// A loot window opened: `SMSG_LOOT_RESPONSE`, which is also how the server
+    /// refuses to open one. See [`crate::play::loot`], which holds the byte that
+    /// distinguishes the two.
     ///
-    /// On this queue rather than in the world for the reason the whole family
-    /// is an edge: the interface's answer is `ShowUIPanel(LootFrame)`, and a
-    /// second arrival about the same corpse is a second window rather than a
-    /// value that happens to match.
+    /// On this queue rather than in the world because the whole loot family is
+    /// edges: the interface answers with `ShowUIPanel(LootFrame)`, and a second
+    /// arrival about the same corpse opens a second window rather than repeating
+    /// a value.
     LootOpened(crate::play::loot::Loot),
-    /// One row is gone — `SMSG_LOOT_REMOVED`, by the **server's** index. It
-    /// arrives for a row somebody else took as well as for one we took.
+    /// One row was removed: `SMSG_LOOT_REMOVED`, by the server's index. It arrives
+    /// for a row another player took as well as for one the player took.
     LootRemoved { index: u8 },
-    /// The coins are gone from the window — `SMSG_LOOT_CLEAR_MONEY`, no body.
-    /// **Not the same statement as [`Self::LootMoneyGained`]**, and conflating
-    /// them leaves a coin row on every other group member's screen.
+    /// The coins were removed from the window: `SMSG_LOOT_CLEAR_MONEY`, no body.
+    /// Not the same event as [`Self::LootMoneyGained`]; treating them as one
+    /// leaves a coin row on every other group member's screen.
     LootMoneyCleared,
-    /// …and *your share*, in copper — `SMSG_LOOT_MONEY_NOTIFY`.
+    /// The player's share of the coins, in copper: `SMSG_LOOT_MONEY_NOTIFY`.
     LootMoneyGained { copper: u32 },
-    /// **The server agrees the window is shut** — `SMSG_LOOT_RELEASE_RESPONSE`.
-    /// The client's own `CMSG_LOOT_RELEASE` is not what closes it; see
-    /// [`crate::play::loot`].
+    /// The server confirms the loot window is closed:
+    /// `SMSG_LOOT_RELEASE_RESPONSE`. The client's own `CMSG_LOOT_RELEASE` does not
+    /// close it; see [`crate::play::loot`].
     LootClosed { guid: u64 },
-    /// **A group roll has opened on one row** — `SMSG_LOOT_START_ROLL`, and the
-    /// four below are the rest of that family. See [`crate::play::lootroll`],
-    /// where the whole subject is, including why the id the interface uses is
-    /// not on the wire at all.
+    /// A group roll has started on one row: `SMSG_LOOT_START_ROLL`. The four
+    /// variants below are the rest of that family. See [`crate::play::lootroll`],
+    /// which covers the subject, including why the id the interface uses is not
+    /// on the wire.
     ///
-    /// On this queue rather than in the world for the same reason the loot
-    /// window is: a roll is an edge with a clock on it, and a second start
-    /// naming the same `(guid, slot)` is a second roll on a respawned body
-    /// rather than a value that happens to match.
+    /// On this queue rather than in the world for the same reason as the loot
+    /// window: a roll is an edge with a timer, and a second start naming the same
+    /// `(guid, slot)` is a second roll on a respawned corpse rather than a
+    /// repeated value.
     LootRollStarted(crate::play::lootroll::RollStart),
     /// `SMSG_LOOT_ROLL` — somebody chose, or somebody's dice landed. Sent to
     /// everyone eligible, so it arrives for our own vote too.
     LootRollCast(crate::play::lootroll::RollCast),
     /// `SMSG_LOOT_ROLL_WON` — and the item is already in the winner's bags.
     LootRollWon(crate::play::lootroll::RollWon),
-    /// `SMSG_LOOT_ALL_PASSED` — **the one ending that leaves the item on the
-    /// body**, and the only statement that its row is clickable again.
+    /// `SMSG_LOOT_ALL_PASSED`: the one outcome that leaves the item on the
+    /// corpse, and the only statement that its row can be clicked again.
     LootRollAllPassed(crate::play::lootroll::RollAllPassed),
 
     // --- quests ---
@@ -905,58 +906,56 @@ pub enum PlayerEvent {
     // identical fields is a second page of dialogue, not a value that happens
     // to match, so none of them can be read as state.
 
-    /// **What is over a giver's head** — `SMSG_QUESTGIVER_STATUS`, one guid and
-    /// one of eight answers.
+    /// The quest marker over a quest giver: `SMSG_QUESTGIVER_STATUS`, one guid
+    /// and one of eight values.
     ///
-    /// The one member of this family that *is* also state — the mark stays over
-    /// the head until it changes — but it arrives as an edge and the world is
-    /// where it is kept; see [`crate::state::objects::ObjectManager::quest_status`].
+    /// The one member of this family that is also state (the marker stays until
+    /// it changes). It arrives as an edge and is stored in the world; see
+    /// [`crate::state::objects::ObjectManager::quest_status`].
     QuestStatus {
         guid: u64,
         status: crate::play::quest::DialogStatus,
     },
-    /// `SMSG_QUESTGIVER_QUEST_LIST` — the greeting, and what is on offer.
+    /// `SMSG_QUESTGIVER_QUEST_LIST`: the greeting and the quests on offer.
     ///
-    /// **The four page variants are boxed and the rest are not.** A
-    /// `QuestTemplate` is 384 bytes of strings and arrays where an
-    /// `AttackRefused` is one; unboxed, every value on this queue — and there is
-    /// one per packet the session reads — would be as wide as the widest member,
-    /// which is also the one that arrives least often.
+    /// The four page variants are boxed and the others are not. A `QuestTemplate`
+    /// is 384 bytes of strings and arrays, where an `AttackRefused` is one byte.
+    /// Unboxed, every value on this queue (one per packet the session reads)
+    /// would be as large as the largest variant, which is also the least
+    /// frequent.
     QuestGreeting(Box<crate::play::quest::QuestGreeting>),
     /// `SMSG_QUESTGIVER_QUEST_DETAILS` — the page before you accept.
     QuestDetails(Box<crate::play::quest::QuestDetails>),
-    /// `SMSG_QUESTGIVER_OFFER_REWARD` — …and the one when it is done.
+    /// `SMSG_QUESTGIVER_OFFER_REWARD`: the page shown when the quest is complete.
     QuestReward(Box<crate::play::quest::QuestReward>),
-    /// `SMSG_QUESTGIVER_REQUEST_ITEMS` — …or the one when it is not. **Not sent
-    /// for every unfinished quest**; see [`crate::play::quest::QuestProgress`].
+    /// `SMSG_QUESTGIVER_REQUEST_ITEMS`: the page shown when it is not. Not sent
+    /// for every unfinished quest; see [`crate::play::quest::QuestProgress`].
     QuestProgress(Box<crate::play::quest::QuestProgress>),
     /// `SMSG_QUESTGIVER_QUEST_COMPLETE` — what handing it in paid.
     QuestComplete(crate::play::quest::QuestComplete),
-    /// `SMSG_QUEST_QUERY_RESPONSE` — what a quest *is*. Cached per id, exactly
-    /// as an item template is.
+    /// `SMSG_QUEST_QUERY_RESPONSE`: the quest's definition. Cached per id, in the
+    /// same way as an item template.
     QuestTemplate(Box<crate::play::quest::QuestTemplate>),
     /// `SMSG_QUESTUPDATE_ADD_KILL` — one more of something.
     QuestKill(crate::play::quest::QuestKill),
-    /// **`SMSG_QUESTUPDATE_ADD_ITEM` — an item objective moved**, as
-    /// `(entry, added)` plus the bag count at the moment it arrived. See
-    /// [`crate::play::quest::parse_quest_item`]: the second word is an
-    /// increment and the count on screen is the client's own arithmetic over
-    /// its bags.
+    /// `SMSG_QUESTUPDATE_ADD_ITEM`: an item objective changed, as
+    /// `(entry, added)` plus the bag count when it arrived. See
+    /// [`crate::play::quest::parse_quest_item`]: the second word is an increment,
+    /// and the count on screen is computed by the client from its bags.
     ///
-    /// **`have` is carried rather than looked up by the reader**, because it is
-    /// only correct on the session thread — see
-    /// [`crate::socket::handler::player::quest_item`], which is where the
-    /// argument is.
+    /// `have` is carried rather than looked up by the reader, because it is
+    /// correct only on the session thread. See
+    /// [`crate::socket::handler::player::quest_item`] for the reasoning.
     QuestItem { entry: u32, added: u32, have: u32 },
-    /// `SMSG_QUESTUPDATE_COMPLETE` — every objective is done. **The log's own
-    /// state bit says so too**; this is the edge that plays the sound and
-    /// writes the chat line.
+    /// `SMSG_QUESTUPDATE_COMPLETE`: every objective is done. The quest log's
+    /// state bit also says so; this event plays the sound and writes the chat
+    /// line.
     QuestObjectivesDone { quest_id: u32 },
     /// `SMSG_QUESTUPDATE_FAILED` and its timer twin.
     QuestFailed { quest_id: u32, timed_out: bool },
-    /// `SMSG_QUESTGIVER_QUEST_INVALID` — **a reason, not a quest id**, and the
-    /// difference matters: `SendCanTakeQuestResponse` writes the refusal code
-    /// where every other packet in this family writes an id.
+    /// `SMSG_QUESTGIVER_QUEST_INVALID`: a reason, not a quest id.
+    /// `SendCanTakeQuestResponse` writes the refusal code where every other
+    /// packet in this family writes an id.
     QuestRefused { reason: u32 },
 
     // --- talking to an NPC ---
@@ -964,18 +963,18 @@ pub enum PlayerEvent {
     // See [`crate::play::gossip`]. The same edge argument as the quest family's: a
     // second identical menu is a second page of conversation.
 
-    /// `SMSG_GOSSIP_MESSAGE` — the menu, whose *text* is a round trip behind.
+    /// `SMSG_GOSSIP_MESSAGE`: the menu. Its text needs one more request.
     GossipShow(Box<crate::play::gossip::GossipMenu>),
-    /// `SMSG_GAMEOBJECT_PAGETEXT` — **this thing has pages**, and the packet
-    /// says nothing else: the page id is in the template the client already
-    /// holds. See [`crate::play::pagetext`].
+    /// `SMSG_GAMEOBJECT_PAGETEXT`: this object has pages. The packet says nothing
+    /// else; the page id is in the template the client already holds. See
+    /// [`crate::play::pagetext`].
     GameObjectPageText { guid: u64 },
     /// `SMSG_PAGE_TEXT_QUERY_RESPONSE` — one page, and the id of the next.
     /// The server answers the whole chain in a burst, so these arrive several
     /// at a time and each names its successor.
     PageText(crate::play::pagetext::Page),
-    /// `SMSG_GOSSIP_POI` — **a place named on the world map**, and the client
-    /// keeps exactly one. See [`crate::play::gossip::parse_gossip_poi`].
+    /// `SMSG_GOSSIP_POI`: a place marked on the world map. The client keeps
+    /// exactly one. See [`crate::play::gossip::parse_gossip_poi`].
     GossipPoi {
         flags: u32,
         position: (f32, f32),
@@ -988,22 +987,21 @@ pub enum PlayerEvent {
     /// `SMSG_NPC_TEXT_UPDATE` — the words a menu's text id stood for.
     NpcText { text_id: u32, text: String },
 
-    /// **`SMSG_BINDER_CONFIRM` — an innkeeper is asking to be made home.**
+    /// `SMSG_BINDER_CONFIRM`: an innkeeper asks whether to set the player's home.
     ///
-    /// The guid is the innkeeper's and it has to be carried through: the answer
-    /// is `CMSG_BINDER_ACTIVATE` naming that same guid, which
+    /// The guid is the innkeeper's and must be kept: the answer is
+    /// `CMSG_BINDER_ACTIVATE` naming the same guid, which
     /// `HandleBinderActivateOpcode` looks up with `GetNPCIfCanInteractWith(…,
-    /// UNIT_NPC_FLAG_INNKEEPER)` and drops without a word if it does not match
-    /// an innkeeper in range.
+    /// UNIT_NPC_FLAG_INNKEEPER)`. It drops the request without a reply if the
+    /// guid is not an innkeeper in range.
     ///
-    /// **Nothing is bound when this arrives.** vmangos closes the gossip window
-    /// *before* sending it, so a client that drops this gets the whole visible
-    /// effect of the click — the window shuts — and no bind at all. See
-    /// [`crate::play::bindpoint`].
+    /// Nothing is bound when this arrives. vmangos closes the gossip window
+    /// before sending it, so a client that drops this packet shows the window
+    /// closing and sets no home. See [`crate::play::bindpoint`].
     BinderConfirm { guid: u64 },
-    /// `SMSG_PLAYERBOUND` — it went through, and this is the area it was set
-    /// to. `SMSG_BINDPOINTUPDATE` carries the same area id and the position
-    /// beside it; this is the one that says *who* bound us.
+    /// `SMSG_PLAYERBOUND`: the bind succeeded, at this area.
+    /// `SMSG_BINDPOINTUPDATE` carries the same area id with the position; this
+    /// packet says which innkeeper set it.
     PlayerBound { guid: u64, area_id: u32 },
     /// `SMSG_DUEL_REQUESTED` — a duel was asked for, by us or at us. Which of
     /// the two is the initiator guid against our own; see [`crate::play::duel`].
@@ -1024,6 +1022,9 @@ pub enum PlayerEvent {
     SummonRequest(crate::play::summon::SummonRequest),
     /// `SMSG_PLAYED_TIME` — `/played` answered, in seconds.
     PlayedTime { total: u32, level: u32 },
+    /// `MSG_INSPECT_HONOR_STATS` — the honor tab of the player being
+    /// inspected. See [`crate::play::inspect`].
+    InspectHonor(crate::play::inspect::InspectHonor),
     /// `SMSG_FISH_NOT_HOOKED` / `SMSG_FISH_ESCAPED` — the bobber was clicked
     /// with nothing on it, or too late. `true` is escaped. Both are bodiless and
     /// each is one line of the message table.
@@ -1041,17 +1042,17 @@ pub enum PlayerEvent {
         entry: u32,
         reason: Option<crate::play::gossip::BuyFailure>,
     },
-    /// `SMSG_SELL_ITEM` — a sale refused. **The success has no packet**: money
-    /// and the item's removal arrive as ordinary update fields.
+    /// `SMSG_SELL_ITEM`: a sale was refused. A successful sale has no packet: the
+    /// money and the item's removal arrive as ordinary update fields.
     SellFailed {
         item: u64,
         reason: Option<crate::play::gossip::SellFailure>,
     },
     /// `SMSG_TRAINER_LIST` — what an NPC will teach. See [`crate::play::trainer`].
     TrainerShow(Box<crate::play::trainer::TrainerList>),
-    /// `SMSG_TRAINER_BUY_SUCCEEDED` — a service was learned. **The spell itself
-    /// arrives separately**, as an ordinary `SMSG_LEARNED_SPELL`, so this only
-    /// says which row to re-colour.
+    /// `SMSG_TRAINER_BUY_SUCCEEDED`: a service was learned. The spell itself
+    /// arrives separately as an ordinary `SMSG_LEARNED_SPELL`, so this packet only
+    /// says which row to recolour.
     TrainerBought { spell: u32 },
     /// `SMSG_TRAINER_BUY_FAILED` — …or was not, and why.
     TrainerBuyFailed {
@@ -1093,8 +1094,8 @@ pub enum PlayerEvent {
     //
     // See [`crate::play::group`]. Five of the six are edges rather than state: an
     // invitation is a popup, a decline is a chat line, a refusal is a message.
-    // Only [`Self::GroupList`] is the roster, and it arrives *whole* every time
-    // anything about the group moves.
+    // Only [`Self::GroupList`] is the roster, and it arrives complete every time
+    // anything about the group changes.
 
     /// `SMSG_GROUP_INVITE` — somebody is asking us to join theirs. The body is
     /// their name and nothing else, and it is what the popup says.
@@ -1102,15 +1103,15 @@ pub enum PlayerEvent {
     /// `SMSG_GROUP_DECLINE` — somebody we invited said no. Only the inviter is
     /// told.
     GroupDecline { name: String },
-    /// `SMSG_GROUP_LIST` — **the whole roster**, everybody but us. Boxed for the
-    /// reason `TrainerShow` is: a party of four with names is the largest
-    /// variant here by an order of magnitude.
+    /// `SMSG_GROUP_LIST`: the whole roster, everybody except the player. Boxed
+    /// for the same reason as `TrainerShow`: a party of four with names is the
+    /// largest variant here by an order of magnitude.
     GroupList(Box<crate::play::group::GroupList>),
-    /// `SMSG_GROUP_DESTROYED` — the party is over. **No body, and it is not the
-    /// same packet as an empty roster**: the server never sends one of those.
+    /// `SMSG_GROUP_DESTROYED`: the party has ended. No body, and not the same as
+    /// an empty roster, which the server never sends.
     GroupDestroyed,
-    /// `SMSG_GROUP_SET_LEADER` — who leads now, **by name**, where the request
-    /// that caused it was by guid.
+    /// `SMSG_GROUP_SET_LEADER`: the new leader, by name, although the request
+    /// that caused it named a guid.
     GroupNewLeader { name: String },
     /// `SMSG_PARTY_COMMAND_RESULT` — what came of an invite or a leave, as an
     /// index into `GlobalStrings.lua` and the name it applies to.
@@ -1118,79 +1119,77 @@ pub enum PlayerEvent {
     /// `SMSG_PARTY_MEMBER_STATS` / `_FULL` — a member's health, mana, level and
     /// zone, for the ones too far away to be in the object manager at all.
     PartyMemberStats(crate::play::group::PartyMemberStats),
-    /// `MSG_RAID_READY_CHECK` — **one opcode carrying two different pieces of
-    /// news**, told apart by whether it has a body. See
-    /// [`crate::play::group::ReadyCheck`].
+    /// `MSG_RAID_READY_CHECK`: one opcode with two meanings, distinguished by
+    /// whether it has a body. See [`crate::play::group::ReadyCheck`].
     RaidReadyCheck(crate::play::group::ReadyCheck),
 
     // --- reputation ---
     //
     // See [`crate::play::reputation`]. All four are statements about the 64
-    // reputation-list slots and none of them is drawable on its own: the
-    // standings are deltas from a `Faction.dbc` base, and which rows exist at
-    // all is a rule the client keeps to itself.
+    // reputation-list slots, and none can be displayed on its own: the standings
+    // are deltas from a `Faction.dbc` base, and which rows exist is decided by a
+    // rule the client applies and the packets do not carry.
 
-    /// `SMSG_INITIALIZE_FACTIONS` — **the whole standing table**, 64 slots,
-    /// replacing whatever was held. Boxed for the same reason `GroupList` is:
-    /// 64 pairs is 512 bytes and every other variant here is a handful.
+    /// `SMSG_INITIALIZE_FACTIONS`: the whole standing table, 64 slots, replacing
+    /// whatever was held. Boxed for the same reason as `GroupList`: 64 pairs is
+    /// 512 bytes and every other variant here is a few.
     FactionsInitialized(Box<crate::play::reputation::FactionStates>),
     /// `SMSG_SET_FACTION_STANDING` — one or more slots' deltas moved. A list
     /// rather than a pair, because reputation spills onto parent factions and
     /// arrives as one packet naming both.
     FactionStandings(Vec<(u32, i32)>),
-    /// `SMSG_SET_FACTION_VISIBLE` — a faction met for the first time, which is
-    /// a *new row* on the panel rather than a change to one.
+    /// `SMSG_SET_FACTION_VISIBLE`: a faction met for the first time, which adds a
+    /// row to the panel rather than changing one.
     FactionVisible { reputation_list_id: u32 },
     /// `SMSG_SET_FACTION_ATWAR` — the server's own statement about the box, and
     /// the whole flag byte rather than a boolean.
     FactionAtWar { reputation_list_id: u32, flags: u8 },
-    /// `SMSG_SET_FORCED_REACTIONS` — the **whole** forced-reaction map, as
+    /// `SMSG_SET_FORCED_REACTIONS`: the whole forced-reaction map, as
     /// `(factionId, rank)`, replacing whatever was held. See
-    /// [`crate::play::reputation::parse_forced_reactions`], which says why a
+    /// [`crate::play::reputation::parse_forced_reactions`], which explains why a
     /// merge would be wrong.
     ForcedReactions(Vec<(u32, u32)>),
 
-    /// **`SMSG_EXPLORATION_EXPERIENCE` — a new place, and what it paid.**
+    /// `SMSG_EXPLORATION_EXPERIENCE`: a newly discovered area, and the experience
+    /// it gave.
     ///
-    /// `{u32 areaId, u32 xp}`, and it is the *only* announcement a discovery
-    /// makes: `PLAYER_EXPLORED_ZONES` moving is a `PRIVATE` field with no event
-    /// of its own, so a client that does not read this has a world map that
-    /// fills in silently and a "Discovered:" line that never appears.
+    /// `{u32 areaId, u32 xp}`. It is the only announcement of a discovery:
+    /// `PLAYER_EXPLORED_ZONES` is a `PRIVATE` field with no event of its own, so a
+    /// client that does not read this packet fills in the world map silently and
+    /// never shows a "Discovered:" line.
     ///
-    /// **Sent even when the experience is zero** — vmangos says so in its own
-    /// comment a line above the call (`Player.cpp`, "Exploration packet should
-    /// be sent even if no XP is gained"), which is what makes it a reliable edge
-    /// rather than a level-dependent one.
+    /// Sent even when the experience is zero. vmangos' comment above the call
+    /// (`Player.cpp`, "Exploration packet should be sent even if no XP is
+    /// gained") says so, so the event does not depend on the player's level.
     Discovered { area: u32, experience: u32 },
 
     // --- the flight master ---
     //
-    // See [`crate::play::taxi`]. Three edges and no state: the map arrives whole and
-    // is replaced whole, and the flight it buys is an `SMSG_MONSTER_MOVE` that
-    // reaches the mover through an entirely different arm.
+    // See [`crate::play::taxi`]. Three edges and no state: the map arrives whole
+    // and is replaced whole, and the flight it buys is an `SMSG_MONSTER_MOVE`
+    // that reaches the movement code through a separate path.
     /// `SMSG_SHOWTAXINODES` — the flight map: a master, the node under it, and
     /// the 256-bit mask of everywhere this character has been.
     TaxiShow(crate::play::taxi::TaxiMenu),
     /// `SMSG_TAXINODE_STATUS` — whether this master's own node is known. Also
     /// the second half of a discovery, in which case the byte is already 1.
     TaxiNodeStatus { guid: u64, known: bool },
-    /// **`SMSG_NEW_TAXI_PATH` — a flight point discovered, and it has no body.**
-    /// The whole packet is the fact that it arrived; what it is *for* is the
-    /// `TaxiNodeDiscovered` sound and, in the reference, a refresh of whatever
-    /// map is open.
+    /// `SMSG_NEW_TAXI_PATH`: a flight point was discovered. The packet has no
+    /// body; its arrival is the whole message. It plays the `TaxiNodeDiscovered`
+    /// sound and, in the 1.12.1 client, refreshes any open map.
     NewTaxiPath,
     /// `SMSG_ACTIVATETAXIREPLY` — yes, or one of twelve reasons why not.
     TaxiReply(crate::play::taxi::TaxiReply),
 
-    // --- who you know ---
+    // --- friends, ignore list and /who ---
     //
-    // See [`crate::play::social`]. The two lists are guids with no names in
-    // them, so none of the three is drawable until `CMSG_NAME_QUERY` has
-    // answered — which is why they are events carrying the wire's own contents
-    // rather than anything resolved.
-    /// `SMSG_FRIEND_LIST` — **the whole friends list**, replacing whatever was
-    /// held. It arrives once, at login: every later change is a
-    /// [`Self::FriendStatus`] and nothing re-sends this.
+    // See [`crate::play::social`]. The two lists are guids without names, so
+    // none of the three can be displayed until `CMSG_NAME_QUERY` has answered.
+    // That is why they are events carrying the packet's contents rather than
+    // resolved values.
+    /// `SMSG_FRIEND_LIST`: the whole friends list, replacing whatever was held.
+    /// It arrives once, at login. Every later change is a [`Self::FriendStatus`]
+    /// and nothing sends this again.
     FriendList(Vec<crate::play::social::Friend>),
     /// `SMSG_IGNORE_LIST` — the same statement about the ignore list, and the
     /// same once-only arrival.
@@ -1201,14 +1200,14 @@ pub enum PlayerEvent {
     /// `SMSG_WHO` — the search's answer, and the online total behind it.
     WhoResults(crate::play::social::WhoResults),
 
-    // --- what is in the box on the corner ---
+    // --- mail ---
     //
-    // See [`crate::play::mail`]. Like the two social lists, none of this is
-    // drawable on arrival: a letter's sender is a guid `CMSG_NAME_QUERY` has
-    // to answer for, and its words are a second round trip of their own.
-    /// `SMSG_MAIL_LIST_RESULT` — **the whole inbox**, replacing whatever was
-    /// held. Boxed for the reason [`Self::TrainerShow`] is: it is by some way
-    /// the widest variant in this enum and it arrives once a minute at most.
+    // See [`crate::play::mail`]. As with the two social lists, none of this can
+    // be displayed on arrival: a letter's sender is a guid that `CMSG_NAME_QUERY`
+    // has to resolve, and its text needs a second request.
+    /// `SMSG_MAIL_LIST_RESULT`: the whole inbox, replacing whatever was held.
+    /// Boxed for the same reason as [`Self::TrainerShow`]: it is by far the
+    /// largest variant in this enum and arrives at most once a minute.
     MailList(Box<Vec<crate::play::mail::MailHeader>>),
 
     // --- the trade window ---
@@ -1227,9 +1226,8 @@ pub enum PlayerEvent {
     /// `SMSG_RECEIVED_MAIL` — something has arrived. The packet's own arrival
     /// is the whole of its content.
     MailReceived,
-    /// `MSG_QUERY_NEXT_MAIL_TIME` — seconds until the next letter, where **0
-    /// means one is already waiting**; see
-    /// [`crate::play::mail::parse_next_mail_time`].
+    /// `MSG_QUERY_NEXT_MAIL_TIME`: seconds until the next letter, where 0 means
+    /// one is already waiting; see [`crate::play::mail::parse_next_mail_time`].
     MailNextTime(f32),
     /// `SMSG_ITEM_TEXT_QUERY_RESPONSE` — the words of one letter, by the text
     /// id that was asked for.
@@ -1241,7 +1239,7 @@ pub enum PlayerEvent {
     /// `SMSG_TEXT_EMOTE` — somebody's `/dance`; see [`crate::play::emotetext`].
     TextEmote(Box<crate::play::emotetext::TextEmote>),
 
-    // ---- what the character may hold, and what a talent does to a spell ----
+    // ---- proficiency and spell modifiers ----
     /// `SMSG_SET_PROFICIENCY` — one item class's whole mask; see
     /// [`crate::play::skills::Proficiency`]. Replaces that class, never merges.
     Proficiency(crate::play::skills::Proficiency),
@@ -1253,14 +1251,13 @@ pub enum PlayerEvent {
 
 /// Why a `CMSG_ATTACKSWING` was refused.
 ///
-/// **The melee counterpart of a cast result, and it is five opcodes rather than
-/// one field.** There is no body to read on any of them — the opcode *is* the
-/// message — so this is the whole of the packet.
+/// The melee counterpart of a cast result, sent as five opcodes rather than
+/// one field. None of them has a body; the opcode is the message, so this
+/// enum is the whole packet.
 ///
-/// The strings are the game's own (`GlobalStrings.lua`), and the two that
-/// matter are the two the player sees constantly: walk up to a mob and swing
-/// and you get `BADATTACKPOS` until you are inside melee range, and swing with
-/// your back turned and you get `BADATTACKFACING`.
+/// The strings are the game's own (`GlobalStrings.lua`). Two of them appear
+/// often: swinging at a mob from outside melee range gives `BADATTACKPOS`,
+/// and swinging while facing away gives `BADATTACKFACING`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttackRefusal {
     NotInRange,
@@ -1284,12 +1281,11 @@ impl AttackRefusal {
         })
     }
 
-    /// The `GlobalStrings.lua` key for what to show the player.
+    /// The `GlobalStrings.lua` key for the message shown to the player.
     ///
     /// `ERR_BADATTACKPOS` is "You are too far away!" and `ERR_BADATTACKFACING`
-    /// is "You are facing the wrong way!" — the two lines every player of this
-    /// game has read a thousand times, and neither of them is a string this
-    /// client made up.
+    /// is "You are facing the wrong way!". Both are the game's own strings, not
+    /// text this client supplies.
     pub fn key(self) -> &'static str {
         match self {
             AttackRefusal::NotInRange => "ERR_BADATTACKPOS",
@@ -1301,13 +1297,13 @@ impl AttackRefusal {
     }
 }
 
-/// `SMSG_ATTACKSTART`: a unit has begun auto-attacking another.
+/// `SMSG_ATTACKSTART`: a unit has started auto-attacking another.
 ///
-/// Two **plain** guids, attacker then victim (`Unit::SendMeleeAttackStart`
-/// streams `GetObjectGuid()` twice with no packing). Broadcast to everyone in
-/// sight, so this is how the client knows a creature two hundred yards of
-/// packets away has engaged — and, for the local player, it is the server's
-/// confirmation that the swing we asked for took.
+/// Two plain guids, attacker then victim (`Unit::SendMeleeAttackStart`
+/// writes `GetObjectGuid()` twice with no packing). Sent to every client in
+/// range, so this is how the client learns that a distant creature has
+/// started a fight. For the local player it is the server's confirmation
+/// that the requested swing started.
 pub fn parse_attack_start(body: &[u8]) -> Option<(u64, u64)> {
     let mut r = Reader::new(body);
     if !r.has(16) {
@@ -1317,12 +1313,13 @@ pub fn parse_attack_start(body: &[u8]) -> Option<(u64, u64)> {
     Some((attacker, r.u64()))
 }
 
-/// `MSG_CHANNEL_START`: a channelled spell has begun, and how long it runs.
+/// `MSG_CHANNEL_START`: a channelled spell has started, and how long it lasts.
 ///
-/// `{u32 spellId, u32 durationMs}` — `Spell::SendChannelStart` in vmangos, sent
-/// with `SendDirectMessage` and therefore **only to the caster**. There is no
-/// broadcast form: what another player's channel looks like is
-/// `UNIT_CHANNEL_SPELL` in their update block, which this client does not read.
+/// `{u32 spellId, u32 durationMs}`, from `Spell::SendChannelStart` in vmangos,
+/// sent with `SendDirectMessage` and therefore only to the caster. There is no
+/// broadcast form: another player's channel is shown by
+/// `UNIT_CHANNEL_SPELL` in their update block, which this client does not
+/// read.
 pub fn parse_channel_start(body: &[u8]) -> Option<(u32, u32)> {
     let mut r = Reader::new(body);
     if !r.has(8) {
@@ -1334,16 +1331,16 @@ pub fn parse_channel_start(body: &[u8]) -> Option<(u32, u32)> {
 
 /// `SMSG_SPELL_DELAYED`: the cast in progress was pushed back by damage.
 ///
-/// `{u64 caster, u32 delayMs}` — `Spell::Delayed` streams an `ObjectGuid`
-/// **plain** (there is no `GetPackGUID()` on this one) and then the delay. Sent
-/// with `SendDirectMessage` and only when the caster is a player, so it is ours
-/// by construction; the guid is read and checked anyway, exactly as
-/// [`parse_spell_cooldowns`]' is, because "ours by construction" is a property
-/// of today's server rather than of the packet.
+/// `{u64 caster, u32 delayMs}`. `Spell::Delayed` writes an `ObjectGuid`
+/// plain (there is no `GetPackGUID()` on this one) and then the delay. It is
+/// sent with `SendDirectMessage` and only when the caster is a player, so it
+/// is always about the player. The guid is read and checked anyway, as in
+/// [`parse_spell_cooldowns`], because that guarantee comes from the current
+/// server rather than from the packet format.
 ///
-/// **The delay is a difference, not a new length.** vmangos adds it to `m_timer`
-/// and clamps at the spell's own cast time, so a cast can be pushed back several
-/// times and each packet says only how much this one moved it.
+/// The delay is a difference, not a new length. vmangos adds it to `m_timer`
+/// and clamps at the spell's cast time, so a cast can be pushed back several
+/// times and each packet gives only the amount of that pushback.
 pub fn parse_spell_delayed(body: &[u8]) -> Option<(u64, u32)> {
     let mut r = Reader::new(body);
     if !r.has(12) {
@@ -1353,23 +1350,23 @@ pub fn parse_spell_delayed(body: &[u8]) -> Option<(u64, u32)> {
     Some((guid, r.u32()))
 }
 
-/// `MSG_CHANNEL_UPDATE`: how much of it is left.
+/// `MSG_CHANNEL_UPDATE`: the time left on the channel.
 ///
-/// `{u32 remainingMs}`, and **zero means it is over** — an interrupted or
-/// cancelled channel sends one of these rather than anything of its own.
+/// `{u32 remainingMs}`. Zero means the channel has ended; an interrupted or
+/// cancelled channel sends this packet with zero rather than a packet of its
+/// own.
 pub fn parse_channel_update(body: &[u8]) -> Option<u32> {
     let mut r = Reader::new(body);
     r.has(4).then(|| r.u32())
 }
 
-/// `SMSG_ATTACKSTOP`: …and has stopped.
+/// `SMSG_ATTACKSTOP`: a unit has stopped auto-attacking.
 ///
-/// **Packed guids here, where `SMSG_ATTACKSTART` has plain ones.** Both are one
-/// function apart in `Unit.cpp` and they disagree, which is exactly the sort of
-/// thing that is cheap to check and expensive to assume. The victim may be a
-/// packed *zero* (`SendAttackStop(nullptr)` writes an empty `PackedGuid`), which
-/// is the server saying "stop attacking, no particular target" — the answer to
-/// a swing at something friendly or already dead.
+/// This packet has packed guids, where `SMSG_ATTACKSTART` has plain ones. The
+/// two functions are adjacent in `Unit.cpp` and use different encodings. The
+/// victim may be a packed zero (`SendAttackStop(nullptr)` writes an empty
+/// `PackedGuid`), which means "stop attacking, no particular target": the
+/// answer to a swing at a friendly or dead unit.
 pub fn parse_attack_stop(body: &[u8]) -> Option<(u64, u64)> {
     let mut r = Reader::new(body);
     if !r.has(1) {
@@ -1390,52 +1387,52 @@ pub fn parse_attack_stop(body: &[u8]) -> Option<(u64, u64)> {
 /// cannot yet aim at — an item, a gameobject, a corpse, a string. The three here
 /// are the three this client can send.
 pub mod target_flag {
-    /// **Zero, and it means "no target block at all".** `SpellCastTargets::read`
-    /// tests the whole mask for equality with this before it reads anything, so
-    /// a self-cast is two bytes on the wire and the server fills the rest in
-    /// from the spell's own implicit targeting.
+    /// Zero, meaning there is no target block. `SpellCastTargets::read` compares
+    /// the whole mask with this value before reading anything, so a self-cast is
+    /// two bytes on the wire and the server fills in the target from the spell's
+    /// implicit targeting.
     pub const SELF: u16 = 0x0000;
     /// A packed unit guid follows.
     pub const UNIT: u16 = 0x0002;
-    /// **Three plain `f32`s follow and nothing else** — no guid, in any build.
-    /// This is the placed half of a cast: Blizzard, Flamestrike, Rain of Fire.
-    /// `SpellCastTargets::read` validates them with `IsValidMapCoord` and throws
-    /// the whole packet out if they fail, so a `NaN` here is a disconnection
+    /// Three plain `f32`s follow and nothing else; no guid in any build. This is
+    /// the ground-targeted form of a cast: Blizzard, Flamestrike, Rain of Fire.
+    /// `SpellCastTargets::read` validates them with `IsValidMapCoord` and rejects
+    /// the whole packet if they fail, so a `NaN` here causes a disconnection
     /// rather than a refusal.
     pub const DEST_LOCATION: u16 = 0x0040;
-    /// **A packed *game object* guid follows** — a chest, an ore vein, a herb.
+    /// A packed game object guid follows: a chest, an ore vein, a herb.
     ///
     /// `0x0800`, from vmangos' `SpellCastTargetFlags`, where it is
-    /// `TARGET_FLAG_GAMEOBJECT` and sits between `TARGET_FLAG_UNIT_DEAD`
-    /// (`0x400`) and `TARGET_FLAG_TRADE_ITEM` (`0x1000`). Worth naming its
-    /// neighbours: the block is a bitmask of sixteen flags of which this client
-    /// sends four, and the two either side of this one are a *corpse* and an
-    /// *item* — both of which also carry a guid, so a wrong flag here is a
-    /// well-formed packet the server reads as being about something else.
+    /// `TARGET_FLAG_GAMEOBJECT`, between `TARGET_FLAG_UNIT_DEAD` (`0x400`) and
+    /// `TARGET_FLAG_TRADE_ITEM` (`0x1000`). The neighbours matter: the block is a
+    /// bitmask of sixteen flags of which this client sends four, and the two on
+    /// either side of this one are a corpse and an item. Both also carry a guid,
+    /// so a wrong flag here produces a well-formed packet that the server reads
+    /// as being about a different object.
     ///
-    /// It exists because **a chest is not opened by `CMSG_GAMEOBJ_USE`**: see
-    /// `vale_assets::look::object`, where the server arm that does nothing
-    /// is quoted. Gathering a herb is a spell cast at the plant.
+    /// It exists because a chest is not opened by `CMSG_GAMEOBJ_USE`: see
+    /// `vale_assets::look::object`, which quotes the server code that does
+    /// nothing for it. Gathering a herb is a spell cast at the plant.
     pub const GAMEOBJECT: u16 = 0x0800;
-    /// **A packed *item* guid follows** — the weapon an imbue goes on.
+    /// A packed item guid follows: the weapon an imbue is applied to.
     ///
     /// `0x0010`, from vmangos' `SpellCastTargetFlags`, read as a packed guid in
-    /// `SpellCastTargets::read` like every other guid in the block. It is the
-    /// bit `Spell::ValidateExplicitTargetMask` insists on for any spell whose
-    /// `Spell.dbc` `Targets` column carries it, which is why Rockbiter Weapon
-    /// sent as anything else is refused — and, before this existed, why it was
-    /// refused *locally* as "Invalid target".
+    /// `SpellCastTargets::read` like every other guid in the block.
+    /// `Spell::ValidateExplicitTargetMask` requires this bit for any spell whose
+    /// `Spell.dbc` `Targets` column has it. That is why Rockbiter Weapon sent with
+    /// any other target is refused, and why, before this flag existed here, it was
+    /// refused locally as "Invalid target".
     ///
-    /// The item is picked by the client rather than pointed at: see
+    /// The client selects the item; the player does not point at it. See
     /// `vale_assets::tables::spellbook::CastAim::Item`.
     pub const ITEM: u16 = 0x0010;
-    /// **A square in the trade window follows**, and what follows is a *slot
-    /// number* packed like a guid rather than a guid.
+    /// A trade window slot follows, as a slot number packed like a guid rather
+    /// than a guid.
     ///
     /// `0x1000`, the neighbour above [`GAMEOBJECT`]. See
-    /// [`super::CastTarget::TradeSlot`], where the server's own reading of it is
-    /// quoted: only `TRADE_SLOT_NONTRADED` is accepted, and while the trade is
-    /// still open the cast is *stored* rather than performed.
+    /// [`super::CastTarget::TradeSlot`], which quotes how the server reads it:
+    /// only `TRADE_SLOT_NONTRADED` is accepted, and while the trade is still open
+    /// the cast is stored rather than performed.
     pub const TRADE_ITEM: u16 = 0x1000;
 }
 
@@ -1446,43 +1443,42 @@ pub enum CastTarget {
     SelfImplicit,
     /// This unit, whoever it is — including ourselves.
     Unit(u64),
-    /// **A place, in the server's own axes and yards** — `x, y, z`, which for a
-    /// ground-targeted spell is the point the player clicked on the floor. See
-    /// [`target_flag::DEST_LOCATION`].
+    /// A position in the server's axes and yards, `x, y, z`. For a
+    /// ground-targeted spell it is the point the player clicked on the ground.
+    /// See [`target_flag::DEST_LOCATION`].
     ///
-    /// The client is the only thing that can produce it: nothing in the protocol
-    /// asks where the pointer is, and vmangos' `Spell::SetTargetMap` falls back
-    /// to *the caster's own position* when the flag is absent — so a placed
-    /// spell sent without one lands underfoot rather than being refused.
+    /// Only the client can produce it: no packet asks where the pointer is, and
+    /// vmangos' `Spell::SetTargetMap` falls back to the caster's own position when
+    /// the flag is absent. A ground-targeted spell sent without it lands at the
+    /// caster's feet rather than being refused.
     Dest([f32; 3]),
-    /// **A square in the trade window**, and it is the one target that is not an
-    /// object at all: the "guid" written is the **trade slot number**.
+    /// A trade window slot. It is the one target that is not an object: the
+    /// "guid" written is the trade slot number.
     ///
-    /// `Spell::CheckCast`'s last clause reads it as
+    /// The last clause of `Spell::CheckCast` reads it as
     /// `TradeSlots(m_targets.getItemTargetGuid().GetRawValue())` and refuses
-    /// anything but `TRADE_SLOT_NONTRADED` with `SPELL_FAILED_ITEM_NOT_READY`;
-    /// with the trade still open it then **stores** the spell against the trade
-    /// and answers `SPELL_FAILED_DONT_REPORT`, which is why an enchant aimed at
-    /// the "will not be traded" square produces no visible answer and lands only
-    /// when both sides accept. The echo comes back as
+    /// anything but `TRADE_SLOT_NONTRADED` with `SPELL_FAILED_ITEM_NOT_READY`.
+    /// While the trade is open it then stores the spell against the trade and
+    /// answers `SPELL_FAILED_DONT_REPORT`. That is why an enchant aimed at the
+    /// "will not be traded" slot produces no visible answer and is applied only
+    /// when both sides accept. The server reports it back in
     /// `SMSG_TRADE_STATUS_EXTENDED`'s `spell` field, which
     /// [`crate::play::trade::TradeOffer::spell`] already carries.
     TradeSlot(u8),
-    /// **A game object** — the ore vein, the herb, the chest a lock is on.
+    /// A game object: an ore vein, a herb, a locked chest.
     ///
-    /// The only target kind this client sends that is not a unit or a place, and
-    /// the only one that is ever *implied* rather than chosen: the player clicks
-    /// the plant, and the spell is picked from the lock rather than from a bar.
-    /// See `vale_assets::look::object::opener`.
+    /// The only target kind this client sends that is not a unit or a position,
+    /// and the only one chosen by the client rather than the player: the player
+    /// clicks the plant, and the spell is taken from the lock rather than from a
+    /// button. See `vale_assets::look::object::opener`.
     Object(u64),
-    /// **An item in the bags or on the body** — the weapon a Rockbiter goes on,
-    /// the blade a sharpening stone is dragged down.
+    /// An item in the bags or equipped: the weapon Rockbiter is applied to, the
+    /// blade a sharpening stone is used on.
     ///
-    /// Chosen by the client rather than by the player for every spell that
-    /// carries `SPELL_ATTR_HELD_ITEM_ONLY`, which vmangos comments *"Client
-    /// automatically selects item from mainhand slot as a cast target"*. See
-    /// `vale_assets::tables::spellbook::CastAim::Item`, which is where that
-    /// choice is made.
+    /// The client chooses it, not the player, for every spell with
+    /// `SPELL_ATTR_HELD_ITEM_ONLY`; vmangos' comment on that flag is "Client
+    /// automatically selects item from mainhand slot as a cast target". See
+    /// `vale_assets::tables::spellbook::CastAim::Item`, which makes that choice.
     Item(u64),
 }
 
@@ -1497,11 +1493,11 @@ pub fn cast_spell_body(spell_id: u32, target: CastTarget) -> Vec<u8> {
     w.buf
 }
 
-/// The target block itself, which `CMSG_USE_ITEM` carries too.
+/// The target block itself, which `CMSG_USE_ITEM` also carries.
 ///
-/// One writer rather than two, because the two opcodes read through the *same*
-/// `SpellCastTargets::read` on the server and a block that disagreed between
-/// them would be a packet the server throws out with no message at all.
+/// One writer for both, because both opcodes are read through the same
+/// `SpellCastTargets::read` on the server, and a block that differed between
+/// them would produce a packet the server rejects with no message.
 pub(crate) fn write_cast_target(w: &mut Writer, target: CastTarget) {
     match target {
         CastTarget::SelfImplicit => {
@@ -1527,8 +1523,8 @@ pub(crate) fn write_cast_target(w: &mut Writer, target: CastTarget) {
             w.u16(target_flag::ITEM);
             w.packed_guid(guid);
         }
-        // …and so is the trade square's slot number, which is read through the
-        // same `readPackGUID` and is a *number* rather than a guid. See
+        // The trade slot number is also read through the same `readPackGUID`,
+        // although it is a number rather than a guid. See
         // [`CastTarget::TradeSlot`].
         CastTarget::TradeSlot(slot) => {
             w.u16(target_flag::TRADE_ITEM);
@@ -1544,18 +1540,18 @@ pub fn cancel_cast_body(spell_id: u32) -> Vec<u8> {
     w.buf
 }
 
-/// `CMSG_CANCEL_AURA`: **drop a buff we are carrying**, `u32 spellId`.
+/// `CMSG_CANCEL_AURA`: remove a buff the player has, `u32 spellId`.
 ///
-/// The same one-field shape as the cast cancel and a different question — this
-/// is `BuffButton_OnClick`'s right-click, and it is the only thing the interface
-/// can *do* to an aura.
+/// The same one-field shape as the cast cancel, for a different request. This
+/// is `BuffButton_OnClick`'s right-click, and it is the only action the
+/// interface can take on an aura.
 ///
-/// **A spell id, not a slot**, which is worth stating because every other aura
-/// packet in 1.12 is slot-keyed: `WorldSession::HandleCancelAuraOpcode` reads
-/// one `uint32` and looks the spell up. The server refuses on its own terms —
-/// a negative aura, or one carrying `SPELL_ATTR_NO_AURA_CANCEL` — and says
-/// nothing when it does, so the client's own `AFLAG_CANCELABLE` check is what
-/// keeps a right-click on a debuff from being a packet that vanishes.
+/// A spell id, not a slot, although every other aura packet in 1.12 is keyed
+/// by slot: `WorldSession::HandleCancelAuraOpcode` reads one `uint32` and
+/// looks the spell up. The server refuses a negative aura or one with
+/// `SPELL_ATTR_NO_AURA_CANCEL`, and sends nothing when it does, so the
+/// client-side `AFLAG_CANCELABLE` check is what stops a right-click on a
+/// debuff from sending a packet that has no effect.
 pub fn cancel_aura_body(spell_id: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(spell_id);
@@ -1564,15 +1560,15 @@ pub fn cancel_aura_body(spell_id: u32) -> Vec<u8> {
 
 /// `SMSG_UPDATE_AURA_DURATION`: `u8 slot`, `u32 remaining ms`.
 ///
-/// **Five bytes, and the only statement the 1.12 protocol makes about how long
-/// a buff has left.** It carries no spell id — the slot is the whole of the
-/// join — and `SpellAuraHolder::UpdateAuraDuration` sends it only when the
-/// aura's *target* is a player, and returns early for a permanent one. So:
+/// Five bytes, and the only statement in the 1.12 protocol of how long a buff
+/// has left. It carries no spell id; the slot is the only key.
+/// `SpellAuraHolder::UpdateAuraDuration` sends it only when the aura's target
+/// is a player, and not at all for a permanent aura. So:
 ///
-/// * a buff on somebody else has no timer and never will, which is why the
-///   game's own target and party frames draw none;
-/// * an aura this never arrives for is **until cancelled**, which is exactly
-///   `GetPlayerBuff`'s second return.
+/// * a buff on another unit has no timer, which is why the game's own target
+///   and party frames draw none;
+/// * an aura for which this packet never arrives lasts until cancelled, which
+///   is `GetPlayerBuff`'s second return value.
 pub fn parse_aura_duration(body: &[u8]) -> Option<(u8, u32)> {
     let mut r = Reader::new(body);
     if !r.has(1 + 4) {
@@ -1582,7 +1578,7 @@ pub fn parse_aura_duration(body: &[u8]) -> Option<(u8, u32)> {
     Some((slot, r.u32()))
 }
 
-/// `SMSG_LEVELUP_INFO`: the level reached, and what it bought.
+/// `SMSG_LEVELUP_INFO`: the level reached, and what it gave.
 ///
 /// ```text
 /// u32 level
@@ -1591,19 +1587,19 @@ pub fn parse_aura_duration(body: &[u8]) -> Option<(u8, u32)> {
 /// u32 statGained[5]      strength, agility, stamina, intellect, spirit
 /// ```
 ///
-/// `Player::GiveLevel` writes exactly that — the mana and four literal zeroes,
+/// `Player::GiveLevel` writes exactly that: the mana and four literal zeroes,
 /// then the five stat deltas against `GetCreateStat`. Forty-eight bytes.
 ///
-/// **Every number after the first is a delta**, and all of them are read here
-/// rather than just the level, because `ChatFrame_OnEvent`'s `PLAYER_LEVEL_UP`
-/// branch is nine arguments long and compares `arg3` through `arg9` with `> 0`
-/// before formatting each — so a client that raised the event with only the
-/// level took the handler down on its second line. (It did, for one round;
-/// `--audit --events` is what said so.)
+/// Every number after the first is a delta. All of them are read, not only
+/// the level, because `ChatFrame_OnEvent`'s `PLAYER_LEVEL_UP` branch takes
+/// nine arguments and compares `arg3` through `arg9` with `> 0` before
+/// formatting each. When this client raised the event with only the level,
+/// the handler failed on its second line; `--audit --events` reported the
+/// failure.
 ///
-/// The packet is also the only thing that says a level-up **happened** as
-/// opposed to that the level is now different: `UNIT_FIELD_LEVEL` moves when a
-/// target is selected, when a creature streams in, and at every login.
+/// The packet is also the only statement that a level-up happened, as
+/// opposed to the level being different: `UNIT_FIELD_LEVEL` changes when a
+/// target is selected, when a creature comes into view, and at every login.
 pub fn parse_levelup(body: &[u8]) -> Option<LevelUp> {
     let mut r = Reader::new(body);
     if !r.has(4 * 12) {
@@ -1631,11 +1627,10 @@ pub struct LevelUp {
     pub level: u32,
     /// Hit points gained.
     pub health: u32,
-    /// …and mana, which is **zero for a class that does not run on it** — the
-    /// server writes the mana delta only when `GetPowerType() == POWER_MANA`.
-    /// That zero is load-bearing rather than incidental: it is what makes the
-    /// chat line read "You have gained 42 hit points." for a warrior and "…and
-    /// 30 mana." for a mage, off the same handler.
+    /// Mana gained, which is zero for a class that does not use mana: the server
+    /// writes the mana delta only when `GetPowerType() == POWER_MANA`. The zero
+    /// is required: it makes the same FrameXML handler print "You have gained 42
+    /// hit points." for a warrior and "…and 30 mana." for a mage.
     pub mana: u32,
     /// Strength, agility, stamina, intellect, spirit — in that order, which is
     /// `SPELL_STAT0_NAME`..`SPELL_STAT4_NAME`'s.
@@ -1648,16 +1643,16 @@ pub struct LevelUp {
 
 /// Wire reason -> the `GlobalStrings.lua` key that names it.
 ///
-/// **Position is the whole meaning of this table.** See the module comment: the
-/// byte on the wire is an index into `SpellCastResult`'s declaration order, and
-/// for build 5875 that order is exactly this list. Do not sort it, do not
-/// insert into it, and do not "tidy" a name — the name is a lookup key in a file
-/// shipped inside the MPQs.
+/// Position is the meaning of this table. See the module comment: the byte on
+/// the wire is an index into `SpellCastResult`'s declaration order, and for
+/// build 5875 that order is exactly this list. Do not sort it, insert into it,
+/// or rename an entry; each name is a lookup key in a file shipped inside the
+/// MPQs.
 ///
 /// Three of the reasons name a key `GlobalStrings.lua` does not contain
 /// (`AUTOTRACK_INTERRUPTED`, `HUNGER_SATIATED`, `THIRST_SATIATED`, and the
-/// happiness case of `NO_POWER`). That is not a gap in the transcription: the
-/// client displays nothing for them, and a missing key is how it does it.
+/// happiness case of `NO_POWER`). This is not an error in the copy: the
+/// client shows nothing for them, and a missing key is how it does so.
 pub const CAST_FAILURE_KEYS: [&str; 146] = [
     "SPELL_FAILED_AFFECTING_COMBAT",             // 0x00 You are in combat
     "SPELL_FAILED_ALREADY_AT_FULL_HEALTH",       // 0x01 You are already at full Health.
@@ -1807,11 +1802,11 @@ pub const CAST_FAILURE_KEYS: [&str; 146] = [
     "SPELL_FAILED_UNKNOWN",                      // 0x91 Unknown reason
 ];
 
-/// **`SPELL_FAILED_OUT_OF_RANGE`** — the one reason worth *measuring* rather
-/// than only saying, because it is the server stating a distance this client
-/// can state too. Named rather than written as `0x59` at the call site, which
-/// is this repo's standing rule for anything on the wire; the table above is
-/// the authority for the number.
+/// `SPELL_FAILED_OUT_OF_RANGE`: the one reason that is measured as well as
+/// shown, because the server is stating a distance this client can also
+/// compute. Named rather than written as `0x59` at the call site, which is
+/// this repository's rule for any wire value; the table above is the source
+/// of the number.
 ///
 /// Read by `crate::game::combat::desync` in the renderer.
 pub const SPELL_FAILED_OUT_OF_RANGE: u8 = 0x59;
@@ -1831,21 +1826,21 @@ pub fn cast_failure_key(reason: u8) -> Option<&'static str> {
 }
 
 
-/// **A talent's arithmetic, as the server states it** —
+/// A talent's modifier as the server states it:
 /// `SMSG_SET_FLAT_SPELL_MODIFIER` and `SMSG_SET_PCT_SPELL_MODIFIER`, three
 /// bytes and a signed dword each.
 ///
-/// One packet per **bit**, not per talent: `Player::SendSpellMod` loops over the
-/// 64 bits of the modifier's `SpellFamilyFlags` mask and sends the running total
-/// for each bit that is in it. So a talent affecting six spells is six packets,
-/// each carrying the sum of every modifier this character has for that bit and
-/// that operation — which is why a reader **replaces** rather than accumulates.
-/// Getting that backwards doubles a talent every time it is re-sent, and it is
-/// re-sent on every login and every talent change.
+/// One packet per bit, not per talent: `Player::SendSpellMod` loops over the
+/// 64 bits of the modifier's `SpellFamilyFlags` mask and sends the running
+/// total for each bit that is set. A talent affecting six spells sends six
+/// packets, each carrying the sum of every modifier this character has for
+/// that bit and that operation. A reader therefore replaces rather than
+/// accumulates. Accumulating doubles a talent every time it is re-sent, and it
+/// is re-sent at every login and every talent change.
 ///
-/// The two opcodes differ only in what the number means: flat is added, percent
-/// is a percentage added to 100. Both are signed, and a negative percent is how
-/// every cast-time and cost reduction in the game is written.
+/// The two opcodes differ only in what the number means: flat is added, and
+/// percent is a percentage added to 100. Both are signed, and every cast-time
+/// and cost reduction in the game is a negative percent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpellModifier {
     /// Which bit of a spell's `SpellFamilyFlags` this is about, `0..63`.
@@ -1858,16 +1853,16 @@ pub struct SpellModifier {
     pub percent: bool,
 }
 
-/// **The `SpellModOp` values this client reads**, by their vmangos names.
+/// The `SpellModOp` values this client reads, by their vmangos names.
 ///
-/// The enum runs to 32 and the server sends every one of them; these five are
-/// the ones that change a number the client itself prints or predicts. The rest
-/// are the server's arithmetic — damage, threat, crit chance, proc chance — and
-/// nothing here would be able to check a value it had modified.
+/// The enum has 32 values and the server sends all of them. These five change
+/// a number the client itself shows or predicts. The rest are the server's
+/// own calculations (damage, threat, crit chance, proc chance), and this
+/// client has no value of its own to apply them to.
 pub mod spell_mod_op {
-    /// How long the aura lasts.
+    /// How long the aura lasts, which is the `$d` a description prints.
     pub const DURATION: u8 = 1;
-    /// The `$d` and the cast bar's own length.
+    /// How far the spell reaches.
     pub const RANGE: u8 = 5;
     /// The wind-up.
     pub const CASTING_TIME: u8 = 10;
@@ -1899,9 +1894,9 @@ mod tests {
     use super::*;
     use crate::bytes::Writer;
 
-    /// **`SMSG_UPDATE_AURA_DURATION` is five bytes, and the first is a byte.**
+    /// `SMSG_UPDATE_AURA_DURATION` is five bytes, and the first is a byte.
     /// Reading the slot as a `u32` puts every timer on slot 0 and reads the
-    /// duration three bytes short — a plausible number under the wrong icon.
+    /// duration three bytes short: a plausible number under the wrong icon.
     #[test]
     fn an_aura_duration_is_a_slot_byte_and_a_millisecond_word() {
         let mut w = Writer::new();
@@ -1913,11 +1908,11 @@ mod tests {
         assert_eq!(parse_aura_duration(&[4, 0, 0]), None);
     }
 
-    /// **`SMSG_LEVELUP_INFO` is twelve words and the interface reads nine of
-    /// them.** The four zero powers between the mana and the stats are the trap:
-    /// a reader that took the stats from directly after the mana would report
-    /// every level-up as granting nothing at all, which is exactly the shape
-    /// `arg5 > 0` hides.
+    /// `SMSG_LEVELUP_INFO` is twelve words and the interface reads nine of them.
+    /// The four zero powers between the mana and the stats must be skipped: a
+    /// reader that took the stats directly after the mana would report every
+    /// level-up as granting nothing, and the `arg5 > 0` checks would hide the
+    /// error.
     #[test]
     fn a_level_up_carries_its_health_its_mana_and_five_stats() {
         let mut w = Writer::new();
@@ -1939,8 +1934,8 @@ mod tests {
         assert_eq!(parse_levelup(&w.buf[..40]), None);
     }
 
-    /// The buff cancel is a **spell id**, where every other aura packet in 1.12
-    /// is keyed by slot — see [`cancel_aura_body`].
+    /// The buff cancel is keyed by spell id, where every other aura packet in 1.12
+    /// is keyed by slot. See [`cancel_aura_body`].
     #[test]
     fn the_buff_cancel_names_a_spell_and_not_a_slot() {
         assert_eq!(cancel_aura_body(168), vec![168, 0, 0, 0]);
@@ -1964,9 +1959,9 @@ mod tests {
         assert!(book.cooldowns.is_empty());
     }
 
-    /// **The three spellbook deltas disagree about width**, and each one is a
-    /// different length: superseded is two `u16`s, learned is a `u16` and a
-    /// trailing field, removed is a bare `u16`.
+    /// The three spellbook change packets use different widths and lengths:
+    /// superseded is two `u16`s, learned is a `u16` and a trailing field, and
+    /// removed is a single `u16`.
     #[test]
     fn the_three_spellbook_deltas_are_three_different_lengths() {
         let mut w = Writer::new();
@@ -1974,30 +1969,30 @@ mod tests {
         assert_eq!(parse_superceded_spell(&w.buf), Some((11566, 11567)));
 
         // Heroic Strike Rank 7 -> Rank 8, the pair measured on this project's
-        // own warrior (`vale spellbook 11566` names the ranks — not 8 and
-        // 9, which is the label rather than the id).
-        // A body a byte short is refused rather than read crooked.
+        // warrior. `vale spellbook 11566` names the ranks: 7 and 8, not 8 and 9.
+        // The rank number is the label, not the spell id.
+        // A body one byte short is refused rather than misread.
         assert_eq!(parse_superceded_spell(&w.buf[..3]), None);
         assert_eq!(parse_superceded_spell(&[]), None);
 
         assert_eq!(parse_removed_spell(&[0x2e, 0x2d]), Some(11566));
     }
 
-    /// **`SMSG_LEARNED_SPELL` is a `u16` and a second field, not a `u32`.**
+    /// `SMSG_LEARNED_SPELL` is a `u16` and a second field, not a `u32`.
     ///
     /// It was read as a `u32` here for a long time and gave the right answer
     /// every time, because vmangos never assigns the trailing `actionBarSlot`
-    /// and a zero high half makes the two readings agree. This pins the
-    /// difference by putting something in that field: the `u32` reading would
-    /// answer 0x0005_2D2E — 339,758 — and resolve to no spell at all.
+    /// and a zero high half makes the two readings equal. This test puts a value
+    /// in that field: the `u32` reading would give 0x0005_2D2E (339,758), which is
+    /// no spell.
     #[test]
     fn a_learned_spell_is_the_low_half_and_the_slot_beside_it_is_not_part_of_it() {
         let mut w = Writer::new();
         w.u16(11567).u16(5);
         assert_eq!(parse_learned_spell(&w.buf), Some(11567));
 
-        // …and the ordinary packet, where that field is zero, reads the same —
-        // which is why the wrong width was invisible.
+        // The ordinary packet, where that field is zero, reads the same either way,
+        // which is why the wrong width produced no visible error.
         let mut plain = Writer::new();
         plain.u16(11567).u16(0);
         assert_eq!(parse_learned_spell(&plain.buf), Some(11567));
@@ -2038,9 +2033,9 @@ mod tests {
         assert!(book.cooldowns.is_empty());
     }
 
-    /// The permanent marker is a *flag* in the top bit of the category
-    /// duration. Read as a duration it is 24 days, which is indistinguishable
-    /// from "ready" to anything that only looks at whether it has elapsed.
+    /// The permanent marker is a flag in the top bit of the category duration.
+    /// Read as a duration it is 24 days, which looks the same as "ready" to code
+    /// that checks only whether it has elapsed.
     #[test]
     fn a_permanent_cooldown_is_a_flag_and_not_a_duration() {
         let cd = InitialCooldown {
@@ -2074,10 +2069,9 @@ mod tests {
         );
     }
 
-    /// …and the same word, written back. **The kind is the top byte in both
-    /// directions**, which is the one thing a second packing could get wrong —
-    /// and would get wrong invisibly, since `HandleSetActionButtonOpcode` drops
-    /// an unknown type without answering.
+    /// The same word, written back. The kind is the top byte in both directions.
+    /// A second packing function could get that wrong without any visible error,
+    /// since `HandleSetActionButtonOpcode` drops an unknown type without a reply.
     #[test]
     fn a_slot_is_written_back_in_the_shape_it_arrived() {
         // Round-trip: pack what the parser produced and it is the same word.
@@ -2097,18 +2091,18 @@ mod tests {
             set_action_button_body(0, ActionButton::packed(6948, action_kind::ITEM)),
             vec![0, 0x24, 0x1b, 0x00, 0x80]
         );
-        // **A removal is the same packet with a zero word**, not the absence of
-        // one — the server's own `if (!packetData)` branch.
+        // A removal is the same packet with a zero word, not the absence of a
+        // packet; this is the server's `if (!packetData)` branch.
         assert_eq!(set_action_button_body(11, 0), vec![11, 0, 0, 0, 0]);
     }
 
-    /// **The four extra bars are four bits of one byte, and the order is the
-    /// interface's argument order.**
+    /// The four extra bars are four bits of one byte, in the interface's argument
+    /// order.
     ///
-    /// Pinned as *values* rather than as an enum, because the whole packet is
-    /// this byte and a transposition would be invisible: switching bars 1 and 2
-    /// puts the same two rows of buttons on the screen in the wrong two places,
-    /// with no error anywhere and no way to notice until a relog moved them.
+    /// Tested as values rather than as an enum, because the whole packet is this
+    /// byte and a transposition would not be visible: swapping bars 1 and 2 puts
+    /// the same two rows of buttons on screen in each other's places, with no
+    /// error, and the change shows only after a relog.
     #[test]
     fn the_four_extra_bars_are_the_low_four_bits() {
         assert_eq!(multi_bar::BOTTOM_LEFT, 1);
@@ -2125,20 +2119,18 @@ mod tests {
         );
     }
 
-    /// **A fifth bit cannot get onto the wire**, which is the one mistake this
-    /// packet invites: `SetActionBarToggles` takes *five* Lua arguments and the
-    /// client packs four, so "Always Show
-    /// ActionBars" is a saved variable rather than a saved field. A mask that
-    /// carried it would set a bit in `PLAYER_FIELD_BYTES` that the server hands
-    /// straight back and nothing ever reads.
+    /// A fifth bit cannot be sent. `SetActionBarToggles` takes five Lua arguments
+    /// and the client packs four, so "Always Show ActionBars" is a saved variable
+    /// rather than a saved field. A mask that carried it would set a bit in
+    /// `PLAYER_FIELD_BYTES` that the server returns unchanged and nothing reads.
     #[test]
     fn the_always_show_flag_is_not_a_fifth_bit() {
         assert_eq!(set_actionbar_toggles_body(0xFF), vec![0x0F]);
         assert_eq!(set_actionbar_toggles_body(0x10), vec![0]);
     }
 
-    /// **A cast result is sent on success too.** Treating the packet's arrival
-    /// as a failure cancels every cast bar the moment it starts.
+    /// A cast result is also sent on success. Treating every arrival as a failure
+    /// would cancel every cast bar as soon as it appears.
     #[test]
     fn a_cast_result_says_accepted_as_well_as_refused() {
         let mut ok = Writer::new();
@@ -2156,9 +2148,9 @@ mod tests {
         assert_eq!(result.requirement, None, "this reason carries no tail");
     }
 
-    /// **The three equipped-item refusals carry the argument to their own
-    /// `%s`**, and reading it is the whole of the warrior report: drawn without
-    /// it, `SPELL_FAILED_EQUIPPED_ITEM_CLASS_MAINHAND` reads "Must have a %s
+    /// The three equipped-item refusals carry the argument to their `%s`, and
+    /// this is what warriors reported: shown without it,
+    /// `SPELL_FAILED_EQUIPPED_ITEM_CLASS_MAINHAND` reads "Must have a %s
     /// equipped in the main hand" on screen.
     #[test]
     fn the_equipped_item_refusals_carry_the_gear_they_wanted() {
@@ -2180,33 +2172,33 @@ mod tests {
             Some("SPELL_FAILED_EQUIPPED_ITEM_CLASS_MAINHAND")
         );
 
-        // **A truncated tail is not half an argument.** A body that stops after
-        // the reason byte must answer `None` rather than naming whatever the
-        // reader ran off into — the requirement is three `u32`s or it is
-        // nothing.
+        // A truncated tail is not read as a partial argument. A body that ends after
+        // the reason byte must give `None` rather than reading past the end; the
+        // requirement is three `u32`s or nothing.
         let mut short = Writer::new();
         short.u32(772).u8(2).u8(0x1a).u32(2);
         let result = parse_cast_result(&short.buf).expect("a result");
         assert_eq!(result.failure, Some(0x1a), "the reason still reads");
         assert_eq!(result.requirement, None);
 
-        // …and a reason that is *not* one of the three never reads a tail, even
-        // when bytes happen to follow it.
+        // A reason that is not one of the three never reads a tail, even when bytes
+        // follow it.
         let mut other = Writer::new();
         other.u32(772).u8(2).u8(0x12).u32(2).u32(4).u32(0);
         assert_eq!(parse_cast_result(&other.buf).expect("a result").requirement, None);
     }
 
-    /// The table is an index and its length is the check. 146 for build 5875,
-    /// agreed on by vmangos' enum and by the client's own name table.
+    /// The table is an index, so its length is the check: 146 for build 5875,
+    /// the count in vmangos' enum and the number of reasons the 1.12.1 client
+    /// recognises.
     #[test]
     fn the_failure_table_is_the_1_12_enum_in_order() {
         assert_eq!(CAST_FAILURE_KEYS.len(), 146);
         assert_eq!(cast_failure_key(0x00), Some("SPELL_FAILED_AFFECTING_COMBAT"));
         assert_eq!(cast_failure_key(0x59), Some("SPELL_FAILED_OUT_OF_RANGE"));
-        // …and the named constant is the same code, which is the whole reason
-        // it is named: a call site testing the wrong byte would measure nothing
-        // and report nothing, silently.
+        // The named constant is the same code. It is named so that a call site
+        // cannot test the wrong byte; a wrong byte would measure nothing and report
+        // no error.
         assert_eq!(
             cast_failure_key(SPELL_FAILED_OUT_OF_RANGE),
             Some("SPELL_FAILED_OUT_OF_RANGE")
@@ -2215,13 +2207,13 @@ mod tests {
         // Off the end is silence rather than a panic or a wrong message.
         assert_eq!(cast_failure_key(0x92), None);
         assert_eq!(cast_failure_key(0xFF), None);
-        // …and the one the client is documented never to display.
+        // The reason the client never displays.
         assert_eq!(cast_failure_key(DONT_REPORT), None);
     }
 
-    /// **A self-cast carries no guid at all.** The mask is zero and the body is
-    /// six bytes; shipping the current selection instead is what turns Ice
-    /// Armor into "Invalid target".
+    /// A self-cast carries no guid. The mask is zero and the body is six bytes.
+    /// Sending the current selection instead makes Ice Armor fail with "Invalid
+    /// target".
     #[test]
     fn a_self_cast_sends_no_target_and_a_unit_cast_sends_a_packed_one() {
         assert_eq!(
@@ -2233,18 +2225,18 @@ mod tests {
         let mut expected = Writer::new();
         expected.u32(133).u16(target_flag::UNIT).packed_guid(0xF130_0000_0001_2345);
         assert_eq!(body, expected.buf);
-        // And the guid really is the packed form: a plain one would be eight
-        // bytes with no mask in front.
+        // The guid is in packed form: a plain guid would be eight bytes with no mask
+        // in front.
         assert_eq!(body.len(), 4 + 2 + 1 + 5);
     }
 
-    /// **A placed cast is three bare floats and no guid** — the shape
+    /// A ground-targeted cast is three bare floats and no guid: the shape
     /// `SpellCastTargets::read` reads for `TARGET_FLAG_DEST_LOCATION`, in that
-    /// order and in the server's own axes.
+    /// order and in the server's axes.
     ///
-    /// The length is the assertion that matters: 3.x puts a packed guid in front
-    /// of the coordinates and 1.12 does not, so a body four bytes longer than
-    /// this is a packet the server reads off the end of and drops.
+    /// The length is the important assertion: 3.x puts a packed guid in front of
+    /// the coordinates and 1.12 does not, so a body four bytes longer than this
+    /// is read past its end by the server and dropped.
     #[test]
     fn a_placed_cast_sends_three_floats_and_no_guid() {
         // Blizzard, somewhere in Elwynn.
@@ -2259,8 +2251,8 @@ mod tests {
         assert_eq!(body, expected.buf);
         assert_eq!(body.len(), 4 + 2 + 12);
 
-        // …and the item verb writes the *same* block, because both opcodes end
-        // in the same `SpellCastTargets::read` on the server.
+        // The item use packet writes the same block, because both opcodes are read by
+        // the same `SpellCastTargets::read` on the server.
         let used = crate::play::items::use_item_body(255, 23, 0, CastTarget::Dest([1.0, 2.0, 3.0]));
         assert_eq!(&used[3..], &cast_spell_body(0, CastTarget::Dest([1.0, 2.0, 3.0]))[4..]);
     }
@@ -2316,18 +2308,17 @@ mod tests {
         assert_eq!(AttackRefusal::BadFacing.key(), "ERR_BADATTACKFACING");
         assert_eq!(AttackRefusal::of(Opcode::SMSG_ATTACKSTOP), None);
     }
-    /// **What a moved bar slot sends is what comes back at the next login.**
+    /// A moved action bar slot sends the word that comes back at the next login.
     ///
-    /// The round trip a drag-and-drop depends on, as far as it can be checked
+    /// The round trip that drag-and-drop depends on, as far as it can be checked
     /// without a server: the word `set_action_button_body` sends is the word
-    /// `parse_action_buttons` reads, and vmangos'
-    /// `HandleSetActionButtonOpcode` splits it with the same two macros —
-    /// `ACTION_BUTTON_ACTION` is the low 24 bits and `ACTION_BUTTON_TYPE` the
-    /// top byte.
+    /// `parse_action_buttons` reads, and vmangos' `HandleSetActionButtonOpcode`
+    /// splits it with the same two macros: `ACTION_BUTTON_ACTION` is the low 24
+    /// bits and `ACTION_BUTTON_TYPE` the top byte.
     ///
-    /// **A zero word is a removal on both sides**, which is the half that is
-    /// easy to leave out: `if (!packet.packetData) removeActionButton(button)`,
-    /// and this client sends exactly that for a slot a pick-up emptied.
+    /// A zero word is a removal on both sides:
+    /// `if (!packet.packetData) removeActionButton(button)`. This client sends a
+    /// zero word for a slot emptied by a pick-up.
     #[test]
     fn a_moved_slot_round_trips_through_the_packed_word() {
         // A spell, an item and a macro — the three kinds a slot can hold.
@@ -2342,8 +2333,8 @@ mod tests {
             assert_eq!(body[0], 11, "zero-based on the wire");
             assert_eq!(u32::from_le_bytes([body[1], body[2], body[3], body[4]]), packed);
 
-            // …and the server's own split, which is what it stores and hands
-            // back in `SMSG_ACTION_BUTTONS`.
+            // The server's own split, which is what it stores and sends back in
+            // `SMSG_ACTION_BUTTONS`.
             assert_eq!(packed & 0x00FF_FFFF, action, "ACTION_BUTTON_ACTION");
             assert_eq!((packed >> 24) as u8, kind, "ACTION_BUTTON_TYPE");
         }
@@ -2353,8 +2344,8 @@ mod tests {
         assert_eq!(set_action_button_body(11, 0)[1..], [0, 0, 0, 0]);
     }
 
-    /// **Three bytes and a signed dword**, and the two opcodes differ only in
-    /// what the number means — see [`SpellModifier`].
+    /// Three bytes and a signed dword. The two opcodes differ only in what the
+    /// number means; see [`SpellModifier`].
     #[test]
     fn a_spell_modifier_is_a_bit_an_operation_and_a_signed_total() {
         let body = |bit: u8, op: u8, value: i32| {
@@ -2372,16 +2363,16 @@ mod tests {
             parse_spell_modifier(&body(3, spell_mod_op::COST, -20), true).expect("percent");
         assert!(pct.percent);
         assert_eq!(pct.value, -20);
-        // **A bit outside the mask's 64 is refused**, because filing it under a
-        // wrapped index would modify the wrong spells.
+        // A bit outside the mask's 64 is refused, because filing it under a wrapped
+        // index would modify the wrong spells.
         assert!(parse_spell_modifier(&body(64, 0, 1), false).is_none());
         assert!(parse_spell_modifier(&body(63, 0, 1), false).is_some());
-        // …and a short body is not one.
+        // A short body is also refused.
         assert!(parse_spell_modifier(&[0, 0, 0, 0, 0], false).is_none());
     }
 
-    /// **The trade square's "guid" is a slot number** — see
-    /// [`CastTarget::TradeSlot`], whose note carries the server's own reading.
+    /// The trade slot's "guid" is a slot number. See [`CastTarget::TradeSlot`],
+    /// which quotes how the server reads it.
     #[test]
     fn a_trade_slot_target_writes_the_slot_where_a_guid_would_go() {
         let body = cast_spell_body(7418, CastTarget::TradeSlot(6));
