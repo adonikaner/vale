@@ -803,7 +803,44 @@ impl WorldSession {
     pub fn char_enum(&mut self) -> io::Result<Vec<CharListEntry>> {
         self.send(Opcode::CMSG_CHAR_ENUM, &[])?;
         let pkt = self.recv_until(Opcode::SMSG_CHAR_ENUM)?;
-        Ok(parse_char_enum(&pkt.body))
+        let mut characters = parse_char_enum(&pkt.body);
+        self.resolve_emblems(&mut characters)?;
+        Ok(characters)
+    }
+
+    /// Fill in [`CharListEntry::emblem`] for every character in a guild: one
+    /// `CMSG_GUILD_QUERY` per distinct guild id.
+    ///
+    /// vmangos answers a guild it does not have with
+    /// `SMSG_GUILD_COMMAND_RESULT` and no query response, so each wait has a
+    /// deadline and a guild with no answer leaves its characters without an
+    /// emblem. A socket error is returned; a missing answer is not an error.
+    fn resolve_emblems(&mut self, characters: &mut [CharListEntry]) -> io::Result<()> {
+        /// How long one guild's answer is waited for. The server answers from
+        /// memory, so a second is a bound on a refusal and not a normal wait.
+        const WAIT: Duration = Duration::from_secs(1);
+        let mut asked: Vec<(u32, Option<crate::play::guild::Emblem>)> = Vec::new();
+        for index in 0..characters.len() {
+            let guild = characters[index].guild;
+            if guild == 0 {
+                continue;
+            }
+            let emblem = match asked.iter().find(|(id, _)| *id == guild) {
+                Some((_, emblem)) => *emblem,
+                None => {
+                    self.send(Opcode::CMSG_GUILD_QUERY, &crate::play::guild::query_body(guild))?;
+                    let emblem = self
+                        .try_recv_until_within(Opcode::SMSG_GUILD_QUERY_RESPONSE, WAIT)?
+                        .and_then(|pkt| crate::play::guild::parse_query(&pkt.body))
+                        .filter(|query| query.id == guild)
+                        .map(|query| query.emblem);
+                    asked.push((guild, emblem));
+                    emblem
+                }
+            };
+            characters[index].emblem = emblem;
+        }
+        Ok(())
     }
 
     /// The world server's address as the socket reports it.
@@ -2143,6 +2180,15 @@ pub struct CharListEntry {
     /// (a one-hand sword is `INVTYPE_WEAPON` in either). So this stays a
     /// positional list including its empty slots rather than being compacted.
     pub equipment: Vec<(u32, u8)>,
+    /// The id of the character's guild, 0 for none.
+    pub guild: u32,
+    /// That guild's emblem, which a guild tabard on the character-select
+    /// model is painted with. The list carries the id only;
+    /// [`WorldSession::char_enum`] asks for the emblem with
+    /// `CMSG_GUILD_QUERY`, which the server answers before a character is in
+    /// the world. `None` for a character in no guild and for a guild the
+    /// server did not answer for.
+    pub emblem: Option<crate::play::guild::Emblem>,
 }
 
 impl CharListEntry {
@@ -2208,7 +2254,7 @@ fn parse_char_enum(body: &[u8]) -> Vec<CharListEntry> {
         let x = r.f32();
         let y = r.f32();
         let z = r.f32();
-        let _guild_id = r.u32();
+        let guild = r.u32();
         let flags = r.u32();
         let _first_login = r.u8();
         let _pet_display_id = r.u32();
@@ -2233,6 +2279,8 @@ fn parse_char_enum(body: &[u8]) -> Vec<CharListEntry> {
             z,
             flags,
             equipment,
+            guild,
+            emblem: None,
         });
     }
     out
