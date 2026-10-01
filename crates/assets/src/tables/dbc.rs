@@ -470,6 +470,10 @@ pub struct DisplayTables {
     /// [`crate::tables::itemset`]. An absent file is an empty table, and an
     /// item plate then draws no set block.
     item_sets: crate::tables::itemset::ItemSets,
+    /// `ItemVisuals.dbc` and `ItemVisualEffects.dbc`: the models a held item's
+    /// visual hangs on it. See [`crate::tables::itemvisual`]. An absent file
+    /// is an empty table, and no held item carries a glow.
+    item_visuals: crate::tables::itemvisual::ItemVisuals,
 }
 
 mod display_fields {
@@ -766,6 +770,10 @@ impl DisplayTables {
             item_sets: crate::tables::itemset::ItemSets::parse(
                 &read("ItemSet").unwrap_or_default(),
             ),
+            item_visuals: crate::tables::itemvisual::ItemVisuals::parse(
+                &read("ItemVisuals").unwrap_or_default(),
+                &read("ItemVisualEffects").unwrap_or_default(),
+            ),
         })
     }
 
@@ -782,6 +790,12 @@ impl DisplayTables {
     /// `ItemSet.dbc`: see [`crate::tables::itemset`].
     pub fn item_sets(&self) -> &crate::tables::itemset::ItemSets {
         &self.item_sets
+    }
+
+    /// `ItemVisuals.dbc` and `ItemVisualEffects.dbc`: see
+    /// [`crate::tables::itemvisual`].
+    pub fn item_visuals(&self) -> &crate::tables::itemvisual::ItemVisuals {
+        &self.item_visuals
     }
 
     /// `PageTextMaterial.dbc`; see [`crate::tables::pagetext`]. Empty without

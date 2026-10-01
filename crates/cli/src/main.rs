@@ -46,6 +46,8 @@
 //! itemset.rs     an item plate's set block, enchantment lines and random
 //!                suffixes, from ItemSet, SpellItemEnchantment and
 //!                ItemRandomProperties
+//! itemvisual.rs  the glows and flames on held items, from ItemVisuals,
+//!                ItemVisualEffects and the two columns that name them
 //! attach.rs      the item models attached to a bone rather than drawn as
 //!                part of the skin
 //! anim.rs        every creature model: bones, sequences, poses
@@ -185,6 +187,7 @@ mod spawns;
 mod waypoints;
 mod navmesh;
 mod itemset;
+mod itemvisual;
 mod itemtemplate;
 mod questtemplate;
 mod spelltemplate;
@@ -239,6 +242,7 @@ const SUBCOMMANDS: &[&str] = &[
     "char",
     "item",
     "itemset",
+    "itemvisual",
     "attach",
     "anim",
     "emote",
@@ -364,6 +368,9 @@ fn main() {
         // Three forms: the census, one set, or `suffix <id>` for one random
         // property. See `cli::itemset`.
         Some("itemset") => itemset::cmd_itemset(&cfg, arg(1), arg(2)),
+        // The census, or one display id with an optional enchantment. See
+        // `cli::itemvisual`.
+        Some("itemvisual") => itemvisual::cmd_itemvisual(&cfg, arg(1), arg(2)),
         Some("attach") => attach::cmd_attach(&cfg, id(1)),
         Some("anim") => anim::cmd_anim(&cfg, arg(1)),
         Some("emote") => emote::cmd_emote(&cfg),

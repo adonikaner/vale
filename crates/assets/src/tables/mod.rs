@@ -34,6 +34,8 @@
 //! enchant.rs    what an enchantment on an item is called, and what a random
 //!               suffix is called and adds
 //! itemset.rs    the pieces of an item set, and which bonuses are active
+//! itemvisual.rs the glows and flames on a held item, and whether its own or
+//!               an enchantment's is drawn
 //! pagetext.rs   what a sign or a book is written on: six names the page
 //!               window builds four texture paths out of
 //! repair.rs     what it costs to repair a worn item
@@ -80,6 +82,7 @@ pub mod foliage;
 pub mod inventory;
 pub mod item;
 pub mod itemset;
+pub mod itemvisual;
 pub mod itemsound;
 pub mod light;
 pub mod loading;

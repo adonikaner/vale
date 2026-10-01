@@ -250,6 +250,9 @@ pub(crate) fn hang_model(
         since: now,
         tinted,
         tints: attached.tints.clone(),
+        points: attached.attachments.clone(),
+        nested: Vec::new(),
+        pending: Vec::new(),
     }
 }
 

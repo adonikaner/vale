@@ -30,6 +30,12 @@
 //!
 //! Enchantment columns 5 and 6 of `ItemRandomProperties` are zero on all 2,012
 //! rows, and column 4 is set on 22.
+//!
+//! Column 22 of `SpellItemEnchantment` is an `ItemVisuals.dbc` id: the glow or
+//! flame the enchantment puts on a held weapon. 102 of the 1,460 rows set it:
+//! the poisons, the shaman weapon imbues, Crusader, Fiery Weapon, the
+//! sharpening stones and the oils. See [`crate::tables::itemvisual`] for how
+//! the 1.12.1 client chooses between it and the item's own visual.
 
 use std::collections::HashMap;
 
@@ -38,6 +44,7 @@ use super::dbc::Dbc;
 mod enchantment_fields {
     pub const ID: usize = 0;
     pub const NAME: usize = 13;
+    pub const ITEM_VISUAL: usize = 22;
 }
 
 mod property_fields {
@@ -47,15 +54,21 @@ mod property_fields {
     pub const SUFFIX: usize = 7;
 }
 
-/// `SpellItemEnchantment.dbc`, as an id to its name.
+/// `SpellItemEnchantment.dbc`: each id's name, and the item visual of the
+/// rows that have one.
 #[derive(Debug, Clone, Default)]
-pub struct Enchantments(HashMap<u32, String>);
+pub struct Enchantments {
+    names: HashMap<u32, String>,
+    /// Only the rows whose column 22 is not zero.
+    visuals: HashMap<u32, u32>,
+}
 
 impl Enchantments {
     /// Parse, tolerating an absent or damaged file. Without the table an item
-    /// draws no enchantment lines.
+    /// draws no enchantment lines and no enchantment glows.
     pub fn parse(bytes: &[u8]) -> Enchantments {
         let mut names = HashMap::new();
+        let mut visuals = HashMap::new();
         if let Ok(table) = Dbc::parse(bytes) {
             for record in 0..table.record_count {
                 let (Some(id), Some(name)) = (
@@ -65,24 +78,42 @@ impl Enchantments {
                     continue;
                 };
                 names.insert(id, name);
+                let visual = table
+                    .u32_at(record, enchantment_fields::ITEM_VISUAL)
+                    .unwrap_or(0);
+                if visual != 0 {
+                    visuals.insert(id, visual);
+                }
             }
         }
-        Enchantments(names)
+        Enchantments { names, visuals }
     }
 
     /// The name an enchantment id draws as. The 1.12.1 client looks up the
     /// absolute value, so a negative id names the same row; see [`ink`] for
     /// what the sign changes.
     pub fn name(&self, id: i32) -> Option<&str> {
-        self.0.get(&id.unsigned_abs()).map(String::as_str)
+        self.names.get(&id.unsigned_abs()).map(String::as_str)
+    }
+
+    /// The `ItemVisuals.dbc` id an enchantment puts on a held item, or 0 for
+    /// none. Column 22 is read as stored: one row (2605) holds `0xFFFFFFFF`,
+    /// which names no `ItemVisuals` row and so draws nothing.
+    pub fn item_visual(&self, id: u32) -> u32 {
+        self.visuals.get(&id).copied().unwrap_or(0)
+    }
+
+    /// How many rows set an item visual.
+    pub fn with_visual(&self) -> usize {
+        self.visuals.len()
     }
 
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.names.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.names.is_empty()
     }
 }
 
@@ -272,6 +303,20 @@ mod tests {
         assert_eq!(table.get(1100).unwrap().enchantments, [84, 70, 0, 0, 0]);
         assert_eq!(table.suffix(0), None);
         assert_eq!(table.suffix(-1100), None);
+    }
+
+    /// Column 22 is the item visual, kept only where it is set.
+    #[test]
+    fn an_enchantment_row_may_name_an_item_visual() {
+        let strings = b"\0Crusader\0+5 Stamina\0";
+        let mut crusader = row(1900, 1, 24, 13);
+        crusader[22] = 103;
+        let stamina = row(66, 10, 24, 13);
+        let table = Enchantments::parse(&dbc(&[crusader, stamina], 24, strings));
+        assert_eq!(table.item_visual(1900), 103);
+        assert_eq!(table.item_visual(66), 0);
+        assert_eq!(table.item_visual(7), 0);
+        assert_eq!(table.with_visual(), 1);
     }
 
     /// No file is no rows rather than a failure.

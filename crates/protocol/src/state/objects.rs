@@ -721,7 +721,7 @@ impl Entity {
         )
     }
 
-    /// Health, level and display id read from the *unit* field block.
+    /// Health, level and display id read from the unit field block.
     ///
     /// These return `None` for non-units on purpose: field indices overlap
     /// between object types, so reading `unit::HEALTH` off a game object would
@@ -1314,6 +1314,31 @@ impl Entity {
             equipment[EQUIPMENT_SLOT_MAINHAND + 1],
             equipment[EQUIPMENT_SLOT_MAINHAND + 2],
         ])
+    }
+
+    /// The enchantment ids on the three weapon slots' items, in the order
+    /// [`Self::weapon_entries`] uses, seven per slot.
+    ///
+    /// The seven words after `PLAYER_VISIBLE_ITEM_n_0` are the item's
+    /// enchantment slots. vmangos writes the first two, the permanent and the
+    /// temporary enchantment, in `Player::SetVisibleItemSlot` and again in
+    /// `Player::ApplyEnchantment` whenever one is applied or removed, so a
+    /// shaman's Flametongue reaches every player in view. All zero for a unit
+    /// that is not a player: a creature's weapon fields carry no enchantment.
+    pub fn weapon_enchantments(&self) -> [[u32; 7]; 3] {
+        const EQUIPMENT_SLOT_MAINHAND: u16 = 15;
+        let mut out = [[0u32; 7]; 3];
+        if self.object_type != Some(ObjectType::Player) {
+            return out;
+        }
+        for (hand, slots) in out.iter_mut().enumerate() {
+            let base = fields::player::VISIBLE_ITEM_1_0
+                + (EQUIPMENT_SLOT_MAINHAND + hand as u16) * VISIBLE_ITEM_STRIDE;
+            for (slot, id) in slots.iter_mut().enumerate() {
+                *id = self.field(base + 1 + slot as u16).unwrap_or(0);
+            }
+        }
+        out
     }
 
     /// What this unit is riding, as a `CreatureDisplayInfo` id:
@@ -3715,14 +3740,15 @@ impl ObjectManager {
         }
     }
 
-    /// **The client's half of `CMSG_PET_SET_ACTION`**, applied at the send.
+    /// The client-side effect of `CMSG_PET_SET_ACTION`, applied when it is
+    /// sent.
     ///
-    /// The server stores the move and answers nothing (`HandlePetSetAction`
-    /// ends at `SetActionBar`; no packet), so the drag has to land in this copy
-    /// or the next rebuild restates the bar as it was before the drop. Each
-    /// entry is `(position, packed)` — the same pair the wire carries, one for
-    /// a removal and two for a move. See [`crate::play::pet::pet_set_action_body`],
-    /// where the length-is-the-count rule is.
+    /// The server stores the move and sends no reply (`HandlePetSetAction`
+    /// ends at `SetActionBar`). The drag must therefore be recorded in this
+    /// copy, or the next rebuild restores the bar as it was before the drop.
+    /// Each entry is `(position, packed)`, the same pair the packet carries:
+    /// one entry for a removal, two for a move. The rule that the body length
+    /// gives the entry count is at [`crate::play::pet::pet_set_action_body`].
     pub fn apply_pet_set_action(&mut self, moves: &[(u32, u32)]) {
         use crate::play::pet::PetAction;
         if self.pet.pet == 0 {
@@ -3744,8 +3770,8 @@ impl ObjectManager {
         }
     }
 
-    /// **`CMSG_PET_STOP_ATTACK`'s half** — the attack flag goes, and the bar
-    /// redraws with the attack button up.
+    /// The client-side effect of `CMSG_PET_STOP_ATTACK`: the attack flag is
+    /// cleared and the bar redraws with the attack button released.
     pub fn apply_pet_stop_attack(&mut self) {
         if self.pet_attacking {
             self.pet_attacking = false;
@@ -3753,11 +3779,12 @@ impl ObjectManager {
         }
     }
 
-    /// **`SMSG_PET_MODE`** — the four state bytes on their own.
+    /// `SMSG_PET_MODE`: the four state bytes without the rest of the bar.
     ///
-    /// Applied only to the pet the bar is about. The packet also arrives for a
-    /// charm this client is not driving, and writing that over the bar's own
-    /// state would leave the panel showing another unit's mood.
+    /// Applied only to the pet the bar belongs to. The packet also arrives for
+    /// a charmed unit this client is not controlling, and writing that over the
+    /// bar's state would make the panel show another unit's react and command
+    /// state.
     pub fn apply_pet_mode(&mut self, mode: crate::play::pet::PetMode) {
         if self.pet.pet != mode.pet || self.pet.pet == 0 {
             return;
@@ -3766,8 +3793,8 @@ impl ObjectManager {
             && self.pet.command == mode.command
             && self.pet.flags == mode.flags
         {
-            // The server restating what it already said must not rebuild the
-            // panel — the same rule `apply_spell_change` keeps.
+            // A repeat of the current state does not rebuild the panel. This
+            // is the same rule `apply_spell_change` follows.
             return;
         }
         self.pet.react = mode.react;
@@ -3776,15 +3803,16 @@ impl ObjectManager {
         self.pet_version = self.pet_version.wrapping_add(1);
     }
 
-    /// **The client's half of `CMSG_PET_SPELL_AUTOCAST`**, applied at the send.
+    /// The client-side effect of `CMSG_PET_SPELL_AUTOCAST`, applied when it is
+    /// sent.
     ///
-    /// vmangos records the toggle and answers nothing
-    /// (`HandlePetSpellAutocastOpcode` ends at `SetSpellAutocast`; no packet),
-    /// so a client that waits for the server never sees the dot move — and the
-    /// next press reads the stale state and sends the same toggle again. The
-    /// bar and the spellbook list both carry the spell, so both are flipped.
-    /// A passive is left alone, which is the server's own refusal
-    /// (`IsAutocastable`) applied locally.
+    /// vmangos records the toggle and sends no reply
+    /// (`HandlePetSpellAutocastOpcode` ends at `SetSpellAutocast`). A client
+    /// that waits for the server therefore never shows the autocast marker
+    /// change, and the next press reads the old state and sends the same
+    /// toggle again. The bar and the spellbook list both hold the spell, so
+    /// both are updated. A passive spell is not changed, which applies the
+    /// server's `IsAutocastable` check locally.
     pub fn apply_pet_autocast(&mut self, spell_id: u32, on: bool) {
         use crate::play::pet::active_state;
         let wanted = match on {
@@ -3807,7 +3835,7 @@ impl ObjectManager {
         }
     }
 
-    /// **The pet's given name**, keyed by pet number.
+    /// Records the pet's given name, keyed by pet number.
     ///
     /// The timestamp is stored even when the name did not change, because it is
     /// what settles the re-ask latch in [`Self::unresolved_pet_names`].
@@ -3822,23 +3850,23 @@ impl ObjectManager {
         }
     }
 
-    /// **The pet's name, if it needs asking for** — `(pet_number, guid)`,
-    /// because the packet wants both and only the *number* is the key.
+    /// The pet whose name must be queried, as `(pet_number, guid)`. The query
+    /// packet needs both; the cache is keyed by the number only.
     ///
-    /// **Derived rather than queued**, and that is what makes it correct at both
-    /// ends of a summon: `SMSG_PET_SPELLS` arrives *before* the pet's create
-    /// block, so a set filled when the bar landed would be filled with a number
-    /// nothing knew yet — and the create block alone is not enough either,
-    /// because a pet that is merely in view is not ours. Asking off the two
-    /// together costs one map lookup on the query beat and cannot be early.
+    /// The answer is derived from current state rather than taken from a
+    /// queue. `SMSG_PET_SPELLS` arrives before the pet's create block, so a
+    /// set filled when the bar arrived would hold a number with no entity
+    /// yet. The create block alone is not enough either, because a pet that is
+    /// only in view does not belong to this player. Deriving the answer from
+    /// both costs one map lookup per query beat and cannot fire too early.
     ///
-    /// **Asked once per number per timestamp and not retried.** A rename moves
-    /// `UNIT_FIELD_PET_NAME_TIMESTAMP` (vmangos `HandlePetRename` writes
-    /// `time(nullptr)` into it after the name change), which is the one
-    /// statement on the wire that the cached name went stale — so a timestamp
-    /// the cache does not hold is asked about once, and a server that declines
-    /// to answer is not asked again until the field moves again. The cost of a
-    /// miss is a panel showing the species name it already has.
+    /// Each number is queried once per timestamp and not retried. A rename
+    /// changes `UNIT_FIELD_PET_NAME_TIMESTAMP` (vmangos `HandlePetRename`
+    /// writes `time(nullptr)` into it after the name change), and that field
+    /// is the only signal on the wire that the cached name is out of date. A
+    /// timestamp the cache does not hold is queried once; a server that does
+    /// not answer is not asked again until the field changes. If the query is
+    /// missed, the panel keeps showing the species name it already has.
     pub fn unresolved_pet_names(&mut self) -> Vec<(u32, u64)> {
         let guid = self.pet.pet;
         if guid == 0 {
@@ -3884,14 +3912,12 @@ impl ObjectManager {
         });
     }
 
-    /// **A rank replaced by a higher one** — `SMSG_SUPERCEDED_SPELL`, which is
-    /// two edits rather than one: the book *and* every bar slot holding the old
-    /// id.
+    /// `SMSG_SUPERCEDED_SPELL`: a spell rank replaced by a higher one. This is
+    /// two edits: the spellbook, and every bar slot that holds the old id.
     ///
-    /// Doing only the book is what this client did by omission for its whole
-    /// life, and it is worse than doing nothing: the button keeps working as a
-    /// picture and stops working as a button, because the server refuses a spell
-    /// the character no longer has *active* and refuses it **silently**. See
+    /// Updating only the spellbook leaves a bar button that still shows the
+    /// icon but no longer casts: the server refuses a spell the character no
+    /// longer has active, and sends no error when it does. See
     /// [`crate::play::spells::parse_superceded_spell`].
     ///
     /// The old id is removed rather than merely deactivated. vmangos keeps it
@@ -3899,13 +3925,14 @@ impl ObjectManager {
     /// nothing on this side can press an inactive spell, and `known` is what
     /// both the book and the bar filter against.
     ///
-    /// Returns the slots that changed, which the caller owes the server — see
-    /// [`crate::play::spells::PlayerEvent::SpellSuperceded`].
+    /// The slots that changed are reported in
+    /// [`crate::play::spells::PlayerEvent::SpellSuperceded`], and the caller
+    /// must send them to the server.
     pub fn apply_superceded_spell(&mut self, old: u32, new: u32) {
         use crate::play::spells::action_kind;
 
-        // Only spell buttons: an item entry or a macro index that happens to
-        // equal a spell id is a different thing wearing the same number.
+        // Only spell buttons: an item entry or a macro index can equal a spell
+        // id and still refer to something else.
         let mut slots: Vec<u8> = Vec::new();
         for button in &mut self.action_buttons {
             if button.kind == action_kind::SPELL && button.action == old {
@@ -3918,9 +3945,9 @@ impl ObjectManager {
         if !self.spellbook.known.contains(&new) {
             self.spellbook.known.push(new);
         }
-        // **Bumped even when no slot moved**, unlike `set_action_button`: the
-        // book itself changed, and the book is what the version latches a
-        // rebuild on.
+        // Incremented even when no slot changed, unlike `set_action_button`:
+        // the spellbook changed, and readers rebuild from the spellbook when
+        // the version changes.
         self.spellbook_version = self.spellbook_version.wrapping_add(1);
         self.note_event(crate::play::spells::PlayerEvent::SpellSuperceded { old, new, slots });
     }
@@ -3931,42 +3958,43 @@ impl ObjectManager {
         self.spellbook_version = self.spellbook_version.wrapping_add(1);
     }
 
-    /// **…and one slot the *client* just changed**, which is the other half of
-    /// the same field and the only one the server never states.
+    /// One action bar slot changed by this client. The server never states
+    /// this change.
     ///
-    /// The bar is client state that the server merely stores: `CMSG_SET_ACTION_BUTTON`
-    /// is acknowledged with nothing at all and `SMSG_ACTION_BUTTONS` arrives once,
-    /// at login. So a drop onto a button has to be recorded here as well as sent,
-    /// or the next time anything rebuilds from this list the change is gone — and
-    /// "gone at the next level-up" is exactly the shape of bug this project keeps
-    /// paying for, because it looks like it worked.
+    /// The bar is client state that the server only stores:
+    /// `CMSG_SET_ACTION_BUTTON` has no reply, and `SMSG_ACTION_BUTTONS` arrives
+    /// once, at login. A drop onto a button must therefore be recorded here as
+    /// well as sent. Otherwise the next rebuild from this list, for example at
+    /// a level-up, loses the change, although the bar looked correct until
+    /// then.
     ///
-    /// A `kind` of `None` empties the slot. **The version is deliberately not
-    /// bumped**: it is the latch a reader rebuilds the *whole* bar on, and this
-    /// caller has already applied its own one-slot change — bumping it would make
-    /// every such drop cost 120 DBC lookups.
+    /// A `kind` of `None` empties the slot. The version is not incremented. A
+    /// reader rebuilds the whole bar when the version changes, and this caller
+    /// has already applied its own one-slot change; incrementing it would make
+    /// each drop cost 120 DBC lookups.
     pub fn set_action_button(&mut self, slot: u8, action: u32, kind: Option<u8>) {
         self.action_buttons.retain(|button| button.slot != slot);
         if let Some(kind) = kind {
             self.action_buttons.push(crate::play::spells::ActionButton { slot, action, kind });
-            // Ascending, the order `parse_action_buttons` produces — nothing
-            // reads it positionally today and a list that is sorted in one code
-            // path and not the other is a difference waiting to be depended on.
+            // Ascending, the order `parse_action_buttons` produces. Nothing
+            // reads the list by position today; sorting here keeps both code
+            // paths producing the same order so that nothing comes to depend
+            // on a difference.
             self.action_buttons.sort_by_key(|button| button.slot);
         }
     }
 
-    /// `SMSG_ATTACKSTART` / `SMSG_ATTACKSTOP` — recorded on the **attacker**, and
-    /// on ourselves as well when the attacker is us.
+    /// `SMSG_ATTACKSTART` / `SMSG_ATTACKSTOP`: recorded on the attacker, and
+    /// also on the manager itself when the attacker is the local player.
     ///
-    /// **Both are broadcast to everyone in sight**, and that is the point rather
-    /// than noise to be filtered out: this is the only thing in the protocol
-    /// that says a unit is *swinging at* something, and it is what the ready
-    /// stance is drawn from ([`Entity::attacking`]). It used to be dropped for
-    /// everyone but the local player, on the reasoning that
-    /// `UNIT_FLAG_IN_COMBAT` covered the rest — which put every unit that had a
-    /// fight anywhere near it into its combat guard, including one being shot at
-    /// from across a room and one running away.
+    /// Both packets are broadcast to every client in sight, and both are kept
+    /// for every unit. They are the only statement in the protocol that a unit
+    /// is swinging at something, and the ready stance is drawn from them
+    /// ([`Entity::attacking`]). This code previously dropped them for every
+    /// unit except the local player and used `UNIT_FLAG_IN_COMBAT` for the
+    /// rest. That put every unit near a fight into its combat stance,
+    /// including a unit being shot at from across a room and a unit running
+    /// away.
     pub fn apply_attack_state(&mut self, attacker: u64, victim: Option<u64>) {
         let victim = victim.filter(|guid| *guid != 0);
         if let Some(unit) = self.entities.get_mut(&attacker) {
@@ -3977,20 +4005,20 @@ impl ObjectManager {
         }
     }
 
-    /// `MSG_CHANNEL_START` — a channelled spell has begun on the local player.
+    /// `MSG_CHANNEL_START`: a channelled spell has begun on the local player.
     ///
-    /// **A channel is a duration, not an animation**, and this is the packet
-    /// that carries it: `{u32 spell, u32 milliseconds}`, sent by
-    /// `Spell::SendChannelStart` with `SendDirectMessage` and therefore **only
-    /// to the caster**. `SMSG_SPELL_GO` has already fired by the time it
-    /// arrives and put whatever `SMSG_SPELL_START` said in the cast bar — which
-    /// for a channel is nothing at all, so an Evocation was drawn as an instant
-    /// release and the held pose was never seen.
+    /// A channel is a duration, and this packet carries it:
+    /// `{u32 spell, u32 milliseconds}`, sent by `Spell::SendChannelStart` with
+    /// `SendDirectMessage`, so only the caster receives it. `SMSG_SPELL_GO` has
+    /// already arrived by then, and the cast bar holds what `SMSG_SPELL_START`
+    /// stated, which for a channel is nothing. Without this packet an
+    /// Evocation was drawn as an instant release and the held pose was never
+    /// shown.
     ///
-    /// Folded into the *cast* counters rather than given a third pair of its
-    /// own, because from the animation's side that is exactly what it is: a
-    /// wind-up held for a stated time. `SpellVisual`'s channel kit is what
-    /// supplies the pose — see `vale_assets::tables::spell`.
+    /// The channel is recorded in the cast counters rather than in a third
+    /// pair of its own, because for the animation it is a wind-up held for a
+    /// stated time. The pose comes from `SpellVisual`'s channel kit; see
+    /// `vale_assets::tables::spell`.
     pub fn apply_channel_start(&mut self, spell_id: u32, duration_ms: u32) {
         let Some(guid) = self.player_guid else {
             return;
@@ -4001,18 +4029,18 @@ impl ObjectManager {
         unit.casts_begun = unit.casts_begun.wrapping_add(1);
         unit.cast_time_ms = duration_ms;
         unit.last_spell = spell_id;
-        // **The half that says this begin came *after* a release**, which is the
-        // whole of why a channel is drawn at all — see
+        // This counter records that the begin came after a release, which is
+        // what makes the channel drawn at all; see
         // [`Entity::casts_channelled`].
         unit.casts_channelled = unit.casts_channelled.wrapping_add(1);
     }
 
-    /// `MSG_CHANNEL_UPDATE` — how much of the channel is left, in milliseconds.
+    /// `MSG_CHANNEL_UPDATE`: the time left in the channel, in milliseconds.
     ///
-    /// Zero is the server saying it is over, which is what an interrupted
-    /// Evocation sends. Anything else re-states the remaining time without
-    /// restarting the pose, so it is **not** a new cast: the counter is left
-    /// alone and only the clock moves.
+    /// Zero means the channel is over, which is what an interrupted Evocation
+    /// sends. Any other value restates the remaining time without restarting
+    /// the pose. It is not a new cast: the begin counter is unchanged and only
+    /// `cast_time_ms` is written.
     pub fn apply_channel_update(&mut self, remaining_ms: u32) {
         let Some(guid) = self.player_guid else {
             return;
@@ -4028,12 +4056,13 @@ impl ObjectManager {
 
     /// Who a chat line is from, resolved as far as this client can.
     ///
-    /// **A player's line carries a GUID and no name** (`BuildChatPacket` writes
-    /// one only for the monster types), on the assumption that the client already
-    /// knows who that is — true of anyone in view, and false of a guild member on
-    /// another continent. So the chain is: the name in the packet, then the
-    /// `CMSG_NAME_QUERY` cache, then the entity if it is one we can see, and
-    /// finally the GUID itself. Never blank, and never a lie.
+    /// A player's chat line carries a GUID and no name (`BuildChatPacket`
+    /// writes a name only for the monster types). The server assumes the
+    /// client already knows the sender, which is true of anyone in view and
+    /// false of a guild member on another continent. The lookup order is: the
+    /// name in the packet, the `CMSG_NAME_QUERY` cache, the entity if it is in
+    /// view, and finally the GUID itself. The result is never blank and never
+    /// names the wrong sender.
     pub fn chat_sender(&self, message: &crate::play::chat::ChatMessage) -> String {
         if let Some(name) = &message.sender_name {
             return name.clone();
@@ -4053,11 +4082,10 @@ impl ObjectManager {
     /// Record one melee swing.
     ///
     /// Both ends are counted, because both animate: the attacker swings and the
-    /// victim flinches. A blow that missed still swings — that is the whole
-    /// point of a miss being visible — so only the flinch is conditional, and
-    /// the condition is the server's own (`HITINFO_AFFECTS_VICTIM`, whose
-    /// comment in `UnitDefines.h` reads "no being hit animation on victim
-    /// without it").
+    /// victim flinches. A blow that missed still swings, so that the miss is
+    /// visible. Only the flinch is conditional, and the condition is the
+    /// server's (`HITINFO_AFFECTS_VICTIM`, whose comment in `UnitDefines.h`
+    /// reads "no being hit animation on victim without it").
     ///
     /// Neither unit is created if it is not already known: a swing landing on
     /// something out of sight is not a reason to invent an entity with no
@@ -4067,20 +4095,19 @@ impl ObjectManager {
         if let Some(attacker) = self.entities.get_mut(&attack.attacker) {
             attacker.swings_thrown = attacker.swings_thrown.wrapping_add(1);
             attacker.last_swing_info = attack.hit_info;
-            // **The victim state goes on both ends**, because the two ends read
-            // it for two different questions: the victim's picks its reaction
-            // animation, the attacker's picks which column of its weapon's
-            // sound row the blow lands in.
+            // The victim state is stored on both ends, because each end uses it
+            // for something different: the victim's copy picks its reaction
+            // animation, and the attacker's copy picks which column of its
+            // weapon's sound row the blow plays.
             attacker.last_swing_state = attack.victim_state;
             attacker.last_swing_victim = attack.victim;
             attacker.last_swing_damage = attack.damage;
         }
-        // **A dodge, a parry and a block are not "hits", and they are exactly
-        // the reactions worth drawing.** `hit_the_victim` gates on
-        // `HITINFO_AFFECTS_VICTIM`, which the server does not set for a blow
-        // that never connected — so a victim counter driven by it alone leaves
-        // a character standing perfectly still through everything they
-        // successfully defended against, which is most of a fight.
+        // A dodge, a parry and a block are not hits, but each has a reaction
+        // animation. `hit_the_victim` tests `HITINFO_AFFECTS_VICTIM`, which the
+        // server does not set for a blow that did not connect. A victim counter
+        // driven by that test alone leaves a character standing still through
+        // every blow it defended against, which is most of a fight.
         let defended = matches!(
             attack.victim_state,
             victim_state::DODGE | victim_state::PARRY | victim_state::BLOCKS
@@ -4092,11 +4119,13 @@ impl ObjectManager {
                 victim.last_blow_info = attack.hit_info;
             }
         }
-        // **The floating number's own channel, and it is the *victim's*.**
-        // Separate from `blows_taken` above, which is an animation counter and
-        // is gated on the blow having connected: a miss and a dodge draw a word
-        // and must reach the reader. Gated on the *attacker* instead, which is
-        // the reference's own refusal — see [`Entity::damage_taken`].
+        // The floating combat number has its own counter, stored on the
+        // victim. It is separate from `blows_taken` above, which is an
+        // animation counter and requires the blow to have connected: a miss
+        // and a dodge are drawn as words and must reach the reader. This
+        // counter tests the attacker instead, because the 1.12.1 client shows
+        // these numbers only when the source is the player or the player's
+        // pet; see [`Entity::damage_taken`].
         if self.player_guid == Some(attack.attacker) {
             if let Some(victim) = self.entities.get_mut(&attack.victim) {
                 victim.damage_taken = victim.damage_taken.wrapping_add(1);
@@ -4109,17 +4138,17 @@ impl ObjectManager {
         }
     }
 
-    /// `SMSG_SPELLNONMELEEDAMAGELOG` — **a spell landed on somebody**, or a
-    /// damage-over-time ticked.
+    /// `SMSG_SPELLNONMELEEDAMAGELOG`: a spell hit a unit, or a damage-over-time
+    /// effect ticked.
     ///
-    /// Recorded on the same channel a swing is, for [`Entity::damage_taken`]'s
-    /// reason, and under the same gate: the reference's producer refuses unless
-    /// the source is the player or their pet, so a fight across the
-    /// field raises nothing.
+    /// Recorded in the same counter as a swing, for the reason given at
+    /// [`Entity::damage_taken`], and under the same condition: the 1.12.1
+    /// client shows the number only when the source is the player or the
+    /// player's pet, so a fight elsewhere in view records nothing.
     ///
-    /// **A full absorb or resist still counts.** The damage is zero and the
-    /// flags say why, which is a *word* rather than a number — dropping it here
-    /// would silently lose every "Immune" and every "Resist" a spell draws.
+    /// A full absorb or resist still counts. The damage is zero and the flags
+    /// give the reason, which is drawn as a word. Dropping it here would lose
+    /// every "Immune" and "Resist" a spell draws.
     pub fn apply_spell_damage(&mut self, log: &crate::play::action::SpellDamage) {
         if self.player_guid != Some(log.caster) {
             return;
@@ -4135,12 +4164,12 @@ impl ObjectManager {
         victim.healed = false;
     }
 
-    /// `SMSG_SPELLHEALLOG` — **a heal landed on somebody**, which is a number
-    /// over their head like any other.
+    /// `SMSG_SPELLHEALLOG`: a heal landed on a unit, drawn as a number over
+    /// its head like damage.
     ///
-    /// The same channel again, with the amount as the damage and the spell
-    /// named. What tells the reader it is a heal is [`Entity::healed`]: this is
-    /// the only door that sets it.
+    /// Recorded in the same counter, with the amount as the damage and the
+    /// spell id set. The reader tells a heal apart by [`Entity::healed`], and
+    /// this method is the only one that sets it.
     pub fn apply_spell_heal(&mut self, log: &crate::play::action::SpellHeal) {
         if self.player_guid != Some(log.healer) {
             return;
@@ -4162,10 +4191,11 @@ impl ObjectManager {
 
     /// Record an AI reaction against the creature that had it.
     ///
-    /// **Not created if it is not already known**, for the same reason a swing
-    /// is not: `SMSG_AI_REACTION` is broadcast to everyone in sight of the
-    /// creature, which is a larger set than everyone the creature is in sight
-    /// of, and a bark from an unplaced unit would be voiced at the map origin.
+    /// The creature is not created if it is not already known, for the same
+    /// reason as in [`Self::apply_attack`]. `SMSG_AI_REACTION` is broadcast to
+    /// every client in sight of the creature, which is a larger set than the
+    /// clients the creature is in sight of, and a sound from a unit with no
+    /// position would play at the map origin.
     pub fn apply_ai_reaction(&mut self, reaction: &crate::play::action::AiReaction) {
         if let Some(unit) = self.entities.get_mut(&reaction.guid) {
             unit.reactions = unit.reactions.wrapping_add(1);
@@ -4181,20 +4211,19 @@ impl ObjectManager {
         }
     }
 
-    /// **A `SpellVisualKit` the server wants played on a unit** —
+    /// A `SpellVisualKit` the server wants played on a unit:
     /// `SMSG_PLAY_SPELL_VISUAL` when `impact` is false, `SMSG_PLAY_SPELL_IMPACT`
-    /// when it is. See [`crate::play::sound`] for the two bodies and the two
-    /// callers that are not a GM command.
+    /// when it is true. See [`crate::play::sound`] for the two packet bodies
+    /// and the two server callers that are not a GM command.
     ///
-    /// **Unlike every other applier here it does not create the entity**, and
-    /// that is the reference's own behaviour rather than a shortcut: vmangos'
-    /// comment on the sibling packet — *"ignored by client if unit is not
-    /// loaded"* — says the 1.12 client drops a visual for a guid it has never
-    /// heard of. There is nowhere to draw it and nothing to attach it to, and
-    /// an entity conjured from a kit id would be a unit with no position, no
-    /// model and no create block, which the renderer would have to filter out
-    /// again one layer up. Matches [`Self::apply_emote`], which is the same
-    /// shape of statement.
+    /// Unlike the appliers that create a missing entity, this one does not,
+    /// which matches the 1.12.1 client. vmangos' comment on the sibling packet,
+    /// "ignored by client if unit is not loaded", says the client drops a
+    /// visual for a guid it does not know. There is no position to draw it at
+    /// and no model to attach it to. An entity created from a kit id would be
+    /// a unit with no position, no model and no create block, which the
+    /// renderer would have to filter out. [`Self::apply_emote`] handles its
+    /// packet the same way.
     pub fn apply_spell_visual(&mut self, guid: u64, kit: u32, impact: bool) {
         let Some(unit) = self.entities.get_mut(&guid) else {
             return;
@@ -4208,27 +4237,26 @@ impl ObjectManager {
         }
     }
 
-    /// **A cast this unit was doing is over without having landed** — refused,
+    /// A cast this unit was making ended without landing: refused,
     /// interrupted, or cancelled by the player.
     ///
-    /// See [`Entity::casts_cancelled`] for why this is a counter of its own
-    /// rather than a rollback of the two the press moved, and for the three
-    /// packets that reach it.
+    /// See [`Entity::casts_cancelled`] for why this is a separate counter
+    /// rather than a rollback of the two counters the press moved, and for the
+    /// three packets that call it.
     ///
-    /// **It is now only ever about art the *server* started**, which is what
-    /// makes the guard below the whole of it: since this client stopped drawing
-    /// its own cast at the press (see [`Self::apply_cast`]), a refusal that
-    /// arrives before any `SMSG_SPELL_START` has nothing to take down, and
-    /// `unit.last_spell` still naming the previous cast is exactly the case the
-    /// guard exists for.
+    /// It only ever concerns cast art the server started. This client does not
+    /// draw its own cast at the press (see [`Self::apply_cast`]), so a refusal
+    /// that arrives before any `SMSG_SPELL_START` has nothing to remove. In
+    /// that case `unit.last_spell` still names the previous cast, and the
+    /// guard below ignores the refusal.
     pub fn apply_cast_cancelled(&mut self, caster: u64, spell_id: u32) {
         let Some(unit) = self.entities.get_mut(&caster) else {
             return;
         };
-        // **Only about the cast that is actually up.** A failure for a spell
-        // this unit is not showing is an answer to something already finished —
-        // a refusal that arrives after the release has been drawn and adopted —
-        // and taking the art down on it would cut off whatever *is* playing.
+        // Only the cast currently shown is cancelled. A failure for a spell
+        // this unit is not showing refers to a cast that has already finished,
+        // for example a refusal that arrives after the release was drawn.
+        // Removing the art on it would cut off whatever is playing now.
         if unit.last_spell != spell_id {
             return;
         }
@@ -4241,29 +4269,28 @@ impl ObjectManager {
     /// and "has anything happened since I last looked" is the only question a
     /// clockless world state can answer.
     ///
-    /// **The local player is in here on the same terms as everybody else**, and
-    /// that is a rule this client got wrong for several rounds. There used to be
-    /// a `predict_own_cast` beside this, bumping both counters at the *press* so
-    /// the arm moved without waiting a round trip, with an echo-swallowing slot
-    /// to stop the server's answer playing it twice. 5875 does not do that:
-    /// `SPELLCAST_START` is raised in exactly one place and that
-    /// place is `SMSG_SPELL_START`'s handler, vmangos comments its own
-    /// `SendSpellStart()` with `// will show cast bar`, and the press path
-    /// sets a pending record, starts the global cooldown and sends —
-    /// and draws nothing. Predicting it meant a refused cast played a wind-up
-    /// and a release that never happened, which is what "the animation plays but
-    /// the spell was not really cast" is.
+    /// The local player is handled the same way as every other unit. An
+    /// earlier `predict_own_cast` incremented both counters at the press, so
+    /// the arm moved without waiting a round trip, and kept a slot to ignore
+    /// the server's echo so the cast did not play twice. The 1.12.1 client
+    /// (build 5875) does not draw a cast at the press. It raises
+    /// `SPELLCAST_START` only on receiving `SMSG_SPELL_START`, and vmangos
+    /// comments its `SendSpellStart()` with `// will show cast bar`. At the
+    /// press the client records the pending cast, starts the global cooldown
+    /// and sends the request, and draws nothing. With the prediction, a
+    /// refused cast played a wind-up and a release for a spell that was never
+    /// cast.
     pub fn apply_cast(&mut self, cast: &crate::play::action::SpellCast, start: bool) {
         let Some(unit) = self.entities.get_mut(&cast.caster) else {
             return;
         };
-        // Written for both halves, because both need it: the wind-up and the
-        // release are two animations off the same spell's visual.
+        // Written for both the start and the release, because the wind-up and
+        // the release are two animations from the same spell's visual.
         unit.last_spell = cast.spell_id;
         if start {
-            // The server's own `m_timer` is authoritative for how long the pose
-            // is held, whether or not the animation was already played — the
-            // press only had the spell's base cast time to go on.
+            // The server's `m_timer` decides how long the pose is held, whether
+            // or not the animation has already started. At the press only the
+            // spell's base cast time was known.
             unit.cast_time_ms = cast.cast_time_ms;
             // The wind-up carries no hit list at all, so writing the target for
             // both would clear it the moment the next spell started.
@@ -4273,52 +4300,54 @@ impl ObjectManager {
         unit.last_spell_target = cast.target();
         unit.last_spell_targets.clear();
         unit.last_spell_targets.extend_from_slice(&cast.hits);
-        // …and the same spell into the ring, so that a second release arriving
-        // before the renderer next looks does not take the first one's art with
-        // it. See [`Entity::recent_spells`], where Charge is the measurement.
+        // The spell is also pushed into the ring, so that a second release
+        // arriving before the renderer next reads does not replace the first
+        // one's art. See [`Entity::recent_spells`], where Charge is the
+        // measured case.
         unit.recent_spells.rotate_left(1);
         unit.recent_spells[RECENT_SPELLS - 1] = cast.spell_id;
-        // Two counters for one packet, and they answer different questions —
-        // see [`Entity::casts_landed`], which is what the *hit* list is read on.
+        // Two counters for one packet, used for different purposes. The hit
+        // list is read when [`Entity::casts_landed`] changes.
         unit.casts_landed = unit.casts_landed.wrapping_add(1);
         unit.casts_released = unit.casts_released.wrapping_add(1);
     }
 
     /// `SMSG_SPELL_DELAYED`: the cast in progress was knocked back.
     ///
-    /// **The one packet that restates a cast's length after it has begun.**
-    /// vmangos' `Spell::Delayed` adds `GetNextDelayAtDamageMsTime()` to
-    /// `m_timer` when the caster takes damage — 500 ms, then 1,000, then 3,000
-    /// — and sends this to the caster alone. Everything the client is holding
-    /// for that cast is running on a clock started by `SMSG_SPELL_START`'s
-    /// `m_timer`, so without this the wind-up pose, the art on the caster's
-    /// hands and the bar all end while the server is still casting: the "stuck
-    /// casting a spell that was interrupted" report is that gap seen from the
-    /// other side.
+    /// This is the only packet that restates a cast's length after it has
+    /// begun. vmangos' `Spell::Delayed` adds `GetNextDelayAtDamageMsTime()` to
+    /// `m_timer` when the caster takes damage (500 ms, then 1,000, then 3,000)
+    /// and sends this packet to the caster only. Everything this client holds
+    /// for the cast runs on a clock started from `SMSG_SPELL_START`'s
+    /// `m_timer`. Without this packet the wind-up pose, the art on the caster's
+    /// hands and the cast bar all end while the server is still casting. The
+    /// report of a character stuck casting a spell that was interrupted
+    /// describes the same mismatch.
     ///
-    /// A counter rather than a new absolute length, because the packet is a
-    /// *difference* and the consumers each hold their own deadline — see
-    /// [`Entity::casts_delayed`].
+    /// Recorded as a counter rather than a new absolute length, because the
+    /// packet states a difference and each consumer holds its own deadline;
+    /// see [`Entity::casts_delayed`].
     pub fn apply_cast_delayed(&mut self, guid: u64, delay_ms: u32) {
         let Some(unit) = self.entities.get_mut(&guid) else {
             return;
         };
         unit.casts_delayed = unit.casts_delayed.wrapping_add(1);
         unit.last_cast_delay_ms = delay_ms;
-        // The server's own `m_timer` is what the wind-up was armed with, so the
-        // restated length is kept here too: anything that reads the field after
-        // this reads the cast's true remaining shape rather than its original.
+        // The wind-up was started with the server's `m_timer`, so the restated
+        // length is stored here as well. A later reader of the field gets the
+        // cast's current length rather than its original one.
         unit.cast_time_ms = unit.cast_time_ms.saturating_add(delay_ms);
     }
 
     /// Apply a `MSG_MOVE_*` broadcast: another player moved.
     ///
-    /// The position in the block is authoritative *as of that packet*, and the
-    /// flags say what they are doing next, which [`Self::advance`] then
-    /// dead-reckons. A player's own broadcast never comes back to them
-    /// (`SendMovementMessageToSet` excludes the sender), but the guard is cheap
-    /// and the alternative — the server's half-second-old position fighting the
-    /// live simulation — would be a jitter that is miserable to diagnose.
+    /// The position in the block is correct as of that packet, and the flags
+    /// say what the player is doing next, which [`Self::advance`] then
+    /// dead-reckons. A player's own broadcast is not sent back to them
+    /// (`SendMovementMessageToSet` excludes the sender). The guard costs
+    /// little, and without it a half-second-old server position would
+    /// conflict with the live simulation and cause jitter that is hard to
+    /// diagnose.
     pub fn apply_movement(&mut self, guid: u64, info: &MovementInfo) {
         if Some(guid) == self.player_guid {
             return;
@@ -4337,8 +4366,9 @@ impl ObjectManager {
         match moved {
             Some(moved) => self.note_jump(guid, moved, "MSG_MOVE_* broadcast"),
             None => {
-                // A garbage position here is the more dangerous kind: the flags
-                // stay, so `advance` would dead-reckon *onwards* from nowhere.
+                // A rejected position here would otherwise leave the flags in
+                // place, and `advance` would dead-reckon onwards from an
+                // invalid position. The movement block is cleared instead.
                 if let Some(entity) = self.entities.get_mut(&guid) {
                     entity.movement = None;
                 }
@@ -4347,23 +4377,23 @@ impl ObjectManager {
         }
     }
 
-    /// **One of the twelve `SMSG_SPLINE_MOVE_*` packets** — the server stating a
-    /// movement flag about a unit it controls.
+    /// One of the twelve `SMSG_SPLINE_MOVE_*` packets: the server setting or
+    /// clearing a movement flag on a unit it controls.
     ///
-    /// See [`crate::state::movement::SplineFlagChange`] for which opcode says
-    /// what, and why this family exists beside the two that already did.
+    /// See [`crate::state::movement::SplineFlagChange`] for what each opcode
+    /// means, and why this packet family exists beside the two older ones.
     ///
-    /// **It creates the entity if it has not been seen.** Every other applier
-    /// here does, and for the same reason: the ordering between an update block
-    /// and a state packet about the same guid is not guaranteed, and a root
-    /// dropped because the create block had not landed yet would never be
+    /// It creates the entity if it has not been seen, as the movement
+    /// appliers here do, for the same reason: the order of an update block and
+    /// a state packet about the same guid is not guaranteed, and a root
+    /// dropped because the create block had not arrived yet would never be
     /// restated.
     ///
-    /// **The local player is not excluded.** The server sends these only about
-    /// units no player is moving, so one naming us cannot arrive — but if one
-    /// did it would be a statement about us worth keeping, unlike
-    /// [`Self::apply_movement`], whose position we own and must not be given
-    /// back a stale copy of.
+    /// The local player is not excluded. The server sends these packets only
+    /// about units no player is moving, so one naming the local player should
+    /// not arrive. If one did, it would be a statement worth keeping. This
+    /// differs from [`Self::apply_movement`], where this client owns the
+    /// position and must not receive an older copy of it.
     pub fn apply_spline_flag(&mut self, guid: u64, change: crate::state::movement::SplineFlagChange) {
         let entity = self
             .entities
@@ -4376,78 +4406,77 @@ impl ObjectManager {
     /// whose last movement block said it was moving.
     ///
     /// A spline is walked along its own path at constant speed
-    /// ([`Spline::position_and_heading`]) rather than straight from end to end;
-    /// the client is not authoritative, but cutting the corner of a patrol route
-    /// puts a creature visibly off the path it was told to walk. The players are
-    /// dead-reckoned instead: their heartbeats are 500 ms apart, so without
-    /// extrapolation everyone else teleports twice a second.
+    /// ([`Spline::position_and_heading`]) rather than in a straight line from
+    /// end to end. The client is not authoritative, but cutting the corner of
+    /// a patrol route puts a creature visibly off the path it was sent along.
+    /// Players are dead-reckoned instead: their heartbeats are 500 ms apart,
+    /// so without extrapolation every other player jumps twice a second.
     ///
-    /// ## `world` is the same ground the local character walks on, and it is
-    /// not an optimisation
+    /// ## Why dead reckoning uses the same `world` as the local character
     ///
-    /// The dead reckoning here reproduces a stride that **another client has
-    /// already taken**, and that client ran it through its own collision: a
-    /// player holding forward against a wall stops, and their heartbeats go on
-    /// saying so. Extrapolating the same flags in a straight line is therefore
-    /// not "a small error the next packet corrects" — it is simulating a
-    /// different client, and the disagreement is unbounded in the one place it
-    /// is most visible. Half a second of run speed is 3.5 yards, so the observed
-    /// player walks *through* the wall and is yanked back on the heartbeat,
-    /// twice a second, for as long as they keep pushing at it. That is the "they
-    /// appear to constantly teleport thru it and back" report verbatim, and the
-    /// same argument covers the ground under them: a runner going up a hill has
-    /// their height re-stated by their own client every stride and by ours never.
+    /// The dead reckoning here reproduces a stride that another client has
+    /// already taken, and that client applied its own collision to it. A
+    /// player holding forward against a wall stops, and their heartbeats keep
+    /// reporting the stop. Extrapolating the same flags in a straight line
+    /// therefore simulates a different client, and the disagreement has no
+    /// bound where it is most visible. Half a second of run speed is 3.5
+    /// yards, so the observed player walks through the wall and is pulled back
+    /// on the next heartbeat, twice a second, for as long as they push against
+    /// it. This matches the report "they appear to constantly teleport thru it
+    /// and back". The ground has the same problem: a runner going up a hill
+    /// has their height restated by their own client every stride and by this
+    /// one never.
     ///
-    /// So the stride is *proposed* and the world decides where it ends, in
-    /// exactly the order [`crate::state::movement::Mover::advance`] does it for the
-    /// local character — the wall first, then the floor at the end of the stride
-    /// that actually happened. `None` is the CLI's snapshot pump and the
-    /// renderer before its first tile, and gives the straight-line behaviour
-    /// this had before.
+    /// The stride is therefore proposed and the world decides where it ends,
+    /// in the same order [`crate::state::movement::Mover::advance`] uses for
+    /// the local character: the wall first, then the floor at the end of the
+    /// stride that was actually taken. `None` is passed by the CLI's snapshot
+    /// pump and by the renderer before its first tile, and gives the earlier
+    /// straight-line behaviour.
     ///
-    /// **What is deliberately not asked**: a spline is left alone (the server
-    /// authored that path over its own geometry and is restating it), a
-    /// swimmer's height is the water's rather than the floor's, and an entity
-    /// that walks off a ledge is *held* rather than dropped — nothing here owns
-    /// their arc, they never announced one, and the server will say so within
-    /// the half-second. Only the population that is genuinely being invented
-    /// here is corrected.
+    /// Three cases are not corrected. A spline is left alone, because the
+    /// server computed that path over its own geometry and restates it. A
+    /// swimmer's height follows the water, not the floor. An entity that walks
+    /// off a ledge is held at its height rather than dropped, because nothing
+    /// here simulates its fall, it never announced one, and the server will
+    /// state the result within half a second. Only the positions this function
+    /// extrapolates are corrected.
     ///
-    /// **A step longer than a tick is sliced by the caller, not clamped here.**
-    /// `dt_ms` is walked as one stride — the wall test, the floor lookup and the
-    /// arc all happen once for it — so handing this the whole of a five-second
-    /// stall would invent a thirty-eight-yard step through a `Footing::step`
-    /// written for 0.2-yard ones. `socket::session`'s `tick_world` calls this
-    /// repeatedly in tick-sized slices instead, which is exactly what an
-    /// unstalled thread would have done and needs no rule here.
+    /// A step longer than a tick is split by the caller, not clamped here.
+    /// `dt_ms` is walked as one stride: the wall test, the floor lookup and
+    /// the arc each happen once for it. Passing a whole five-second stall
+    /// would produce a 38-yard step through a `Footing::step` written for
+    /// 0.2-yard steps. `socket::session`'s `tick_world` instead calls this
+    /// repeatedly in tick-sized slices, which is what a thread that had not
+    /// stalled would have done.
     ///
-    /// **It runs under the world lock, and the population is small on purpose.**
-    /// The two queries are asked once per *moving dead-reckoned* entity per
-    /// step, which is other players actively walking in view and nothing else —
-    /// a creature is on a spline, and a standing unit is skipped before either
-    /// question is reached. The lock order is one-way (this lock, then the
-    /// terrain's and the collision world's, neither of which can see an
-    /// `ObjectManager`), so there is no cycle to deadlock on; what is *not*
-    /// measured is what a crowded capital costs here, and the honest place to
-    /// notice it would be the session thread's step time.
+    /// This runs under the world lock, and the set of entities queried is kept
+    /// small. The two world queries are made once per moving dead-reckoned
+    /// entity per step, which means other players walking in view and nothing
+    /// else: a creature moves on a spline, and a standing unit is skipped
+    /// before either query. The lock order is one-way (this lock, then the
+    /// terrain's and the collision world's, neither of which can reach an
+    /// `ObjectManager`), so no deadlock cycle exists. The cost in a crowded
+    /// capital has not been measured; the session thread's step time is where
+    /// it would show.
     pub fn advance(&mut self, dt_ms: u32, world: Option<&dyn crate::state::movement::Footing>) {
         let dt = dt_ms as f32 / 1000.0;
         let player_guid = self.player_guid;
 
         for entity in self.entities.values_mut() {
-            // **The platforms, which are the one population here with no packet
-            // behind them.** Advanced at the top of this walk rather than in one
-            // of its own, and *before* every guard below, because none of those
-            // guards applies: a transport has no movement block, no speeds and
-            // no spline, so it would `continue` past all of them. A separate
-            // pass measured +3.0 us a step over 2,000 entities, which is one
-            // more walk of the map for one `Option` test.
+            // Transports are the only entities here whose motion no packet
+            // drives. They are advanced at the top of this loop rather than in
+            // a loop of their own, and before every guard below, because none
+            // of those guards applies: a transport has no movement block, no
+            // speeds and no spline, so it would `continue` past all of them. A
+            // separate pass measured +3.0 us per step over 2,000 entities,
+            // which is one more walk of the map for one `Option` test.
             //
-            // Unclamped, on this function's own terms — it is the world's clock
-            // and the server advanced all of it. The **wrap** is the reader's
-            // and is taken by
-            // `vale_assets::tables::transport::Transports::offset_at`, so it
-            // cannot be got wrong in two places.
+            // The phase is not clamped, as elsewhere in this function: it is
+            // the world's clock and the server advanced all of it. The reader
+            // applies the wrap, in
+            // `vale_assets::tables::transport::Transports::offset_at`, so the
+            // wrap is implemented in one place only.
             if let Some(phase) = entity.transport_phase_ms.as_mut() {
                 *phase = phase.saturating_add(u64::from(dt_ms));
             }
@@ -4459,41 +4488,41 @@ impl ObjectManager {
             let Some(info) = entity.effective_movement() else {
                 continue;
             };
-            // **Rooted units are not dead-reckoned**, and the guard is here
-            // rather than left to the moving flags because the two arrive on
-            // different packets and in either order. The server clears the
-            // moving bits itself when it roots somebody it controls
-            // (`SetRooted` calls `StopMoving` first), so for a player this is
-            // usually redundant — but a root that lands *between* a start
-            // packet and its heartbeat has nothing to clear them, and the
-            // reckoning would walk the unit on for half a second under the
-            // spell that stopped it.
+            // Rooted units are not dead-reckoned. The guard is here rather than
+            // left to the moving flags because the root and the flags arrive
+            // in different packets and in either order. The server clears the
+            // moving bits itself when it roots a unit it controls (`SetRooted`
+            // calls `StopMoving` first), so for a player this is usually
+            // redundant. A root that arrives between a start packet and its
+            // heartbeat has nothing to clear the bits, and without this guard
+            // the unit would keep walking for half a second after the spell
+            // stopped it.
             if info.has(move_flags::ROOT) || !info.is_moving() {
                 continue;
             }
-            // **In the air is a different simulation, not a faster one.** The
-            // horizontal velocity is the one frozen at take-off (the flags say
-            // nothing about it — a player who jumps while running forward and
-            // lets go of W is still travelling), and the height is the parabola
-            // `Unit::ExtrapolateMovement` walks. The alternative is what this
-            // client did until now: run speed along the facing, with z held at
+            // A unit in the air is simulated separately. The horizontal
+            // velocity is the one fixed at take-off; the flags do not describe
+            // it, and a player who jumps while running forward and releases W
+            // keeps travelling. The height follows the parabola that
+            // `Unit::ExtrapolateMovement` computes. This code previously moved
+            // an airborne unit at run speed along its facing, with z held at
             // the take-off height until the next heartbeat corrected it.
             if info.has(move_flags::JUMPING) {
                 let t0 = entity.fall_secs;
-                // The server refuses to extrapolate an arc past ten seconds and
-                // neither do we: past that the landing packet has been lost and
-                // guessing further only buries the unit.
+                // The server does not extrapolate an arc past ten seconds, and
+                // neither does this code: after that the landing packet has
+                // been lost, and extrapolating further only moves the unit
+                // below the ground.
                 if t0 > MAX_ARC_SECS {
                     continue;
                 }
                 let t1 = t0 + dt;
                 let safe = info.has(move_flags::SAFE_FALL);
                 // The jump block's `zspeed` is already in `fall_elevation`'s
-                // own frame — down-positive, so a jump arrives as -7.9558 —
-                // because the wire value *is* the fall's start velocity
-                // (`Unit::KnockBack` sends `-verticalSpeed` into this field).
-                // Negating it here is what drove every real client's jumper
-                // straight down through the floor.
+                // frame, positive downwards, so a jump arrives as -7.9558. The
+                // wire value is the fall's start velocity (`Unit::KnockBack`
+                // sends `-verticalSpeed` in this field). Negating it here moved
+                // every jumping player straight down through the floor.
                 let drop = fall_elevation(t1, safe, info.jump.z_speed)
                     - fall_elevation(t0, safe, info.jump.z_speed);
                 entity.fall_secs = t1;
@@ -4505,9 +4534,9 @@ impl ObjectManager {
                     let [x, y] = clipped(world, *position, dx, dy);
                     position.x = x;
                     position.y = y;
-                    // The arc's own height and nothing else: the jumper's client
-                    // is on this parabola too, and a floor lookup here would
-                    // stand them on the roof they are sailing over.
+                    // Only the arc's height is applied. The jumper's client
+                    // follows the same parabola, and a floor lookup here would
+                    // place them on a roof they are jumping over.
                     position.z -= drop;
                 }
                 continue;
@@ -4520,16 +4549,18 @@ impl ObjectManager {
                 let [x, y] = clipped(world, *position, heading.cos() * speed * dt, heading.sin() * speed * dt);
                 position.x = x;
                 position.y = y;
-                // A swimmer's height is the water's business — their own client
-                // is floating them at a depth this one has no packet for — and
-                // the ground under a lake is not where they are.
+                // A swimmer's height is not taken from the floor. Their own
+                // client holds them at a depth this client receives no packet
+                // for, and the ground under a lake is not where they are.
                 if !swimming {
                     if let Some(h) = world.and_then(|w| w.floor(x, y, position.z)) {
-                        // **Up a slope, never off a ledge.** A drop is left for
-                        // the server to state: nothing here owns their fall,
-                        // they never announced one, and inventing an arc would
-                        // put them under a bridge they are running across the
-                        // moment the hull below it answers first.
+                        // The unit follows the ground up a slope, and down
+                        // only by less than `FALL_THRESHOLD`, so it is not
+                        // dropped off a ledge. A drop is left for the server
+                        // to state: nothing here simulates the fall, the unit
+                        // never announced one, and inventing a fall would put
+                        // a unit running across a bridge under it whenever the
+                        // hull below answered first.
                         if h > position.z - FALL_THRESHOLD {
                             position.z = h;
                         }
@@ -4542,28 +4573,29 @@ impl ObjectManager {
             let Some(spline) = entity.spline.as_mut() else {
                 continue;
             };
-            // The whole of the step, unclamped: this is the server's own path
-            // and the server walked all of it. See the note at the top.
+            // The whole step, not clamped: this is the server's path and the
+            // server walked all of it. See the note at the top.
             spline.elapsed_ms = spline.elapsed_ms.saturating_add(dt_ms);
             // A cyclic path wraps rather than ending — see `Spline::wrap`. A
             // step longer than a whole lap would need more than one wrap, which
             // only happens if the thread stalled for the length of a patrol.
             while spline.wrap() {}
-            // **In world coordinates, which for a passenger's spline is not
-            // where the path says.** `SMSG_MONSTER_MOVE_TRANSPORT` states the
-            // path in the transport's own frame; `in_world` is the conversion
-            // and answers `None` for a transport this client is not holding, in
-            // which case the unit is left where it was rather than placed at the
-            // map's origin. See [`crate::state::movement::Spline::in_world`].
+            // The position in world coordinates, which for a passenger's
+            // spline differ from the path's coordinates.
+            // `SMSG_MONSTER_MOVE_TRANSPORT` states the path in the transport's
+            // frame. `in_world` converts it, and returns `None` for a
+            // transport this client is not tracking; the unit then stays where
+            // it was rather than being placed at the map's origin. See
+            // [`crate::state::movement::Spline::in_world`].
             let Some((position, heading)) = spline.in_world(world) else {
                 continue;
             };
             let finished = spline.finished();
 
-            // A unit faces the leg it is walking, and on arrival turns to
-            // whatever the packet asked for. The `Target` case is a creature
-            // that has just run up to you and looks at you — resolved when the
-            // packet arrived, since only the manager can see another entity.
+            // A unit faces the leg it is walking, and on arrival turns to the
+            // facing the packet requested. The `Target` case is a creature that
+            // has run up to a player and faces them. It is resolved when the
+            // packet arrives, because only the manager can see another entity.
             let orientation = if finished {
                 match spline.facing {
                     SplineFacing::Angle(a) => a,
@@ -4578,14 +4610,14 @@ impl ObjectManager {
                 heading
             };
 
-            // **Put the leg back on the ground it crosses.** The server
+            // The leg's height is taken from the ground it crosses. The server
             // states a straight line in three dimensions between two points it
-            // grounded; the hill between them is not straight, and the drawn
-            // creature floats over the hollows and wades through the rises.
-            // See [`Spline::grounded_z`], which is where the rule and the
-            // measurement behind it are — and which answers `None` for every
-            // spline whose vertical is not the ground's, so a flight, a
-            // knock-back and a map with no terrain loaded all keep the chord.
+            // placed on the ground. The terrain between them is not straight,
+            // so a creature drawn on the line floats over hollows and sinks
+            // into rises. The rule and the measurement behind it are at
+            // [`Spline::grounded_z`], which returns `None` for every spline
+            // whose height does not follow the ground: a flight, a knock-back
+            // and a map with no terrain loaded all keep the straight line.
             let z = world
                 .and_then(|world| spline.grounded_z(world, position))
                 .unwrap_or(position[2]);
@@ -4604,112 +4636,106 @@ impl ObjectManager {
         self.face_targets(dt);
     }
 
-    /// **Put a standing unit on whatever is under it**, once per statement the
-    /// server makes about where it is.
+    /// Puts a standing unit on the surface under it, once per server statement
+    /// of its position.
     ///
-    /// ## The report, and what was measured before anything was written
+    /// ## The floating-NPC report and the measurements behind this rule
     ///
-    /// *"Many NPCs appear to float. Example: Peltskinner questgiver in
-    /// Northshire."* Eagan Peltskinner is `creature.guid` 79971, a spawn with
-    /// `movement_type = 0` and `wander_distance = 0` — he never moves, so
-    /// [`crate::state::movement::Spline::grounded_z`] cannot reach him. Four
-    /// measurements, none of them from a picture:
+    /// The report was "Many NPCs appear to float. Example: Peltskinner
+    /// questgiver in Northshire." Eagan Peltskinner is `creature.guid` 79971, a
+    /// spawn with `movement_type = 0` and `wander_distance = 0`. He never
+    /// moves, so [`crate::state::movement::Spline::grounded_z`] does not apply
+    /// to him. Four measurements, none of them taken from a screenshot:
     ///
-    /// * the world database spawns him at **z = 80.9719**, and vmangos'
-    ///   `Creature::LoadFromDB` relocates an alive DB spawn to that number
-    ///   verbatim — `CreatureCreatePos::SelectFinalPoint` is a no-op without a
-    ///   `m_closeObject`. So that is what crosses the wire.
-    /// * this client's terrain answers **80.2051** there, and vmangos' own
-    ///   extracted `0004832.map`, decoded by hand through
-    ///   `GridMap::getHeightFromUint16`, answers **80.2051** as well. The two
-    ///   sides of the wire agree about the ground to four decimal places.
-    /// * `vale collision Azeroth 32 48 -8869.22 -163.237 80.9719` says
-    ///   nothing is under him: no building hull, no doodad hull, and the nearest
-    ///   drawn prop is a barrel 1.6 yards away sitting on the ground at 80.24.
-    /// * so he stands **0.767 yards in the air over bare grass**, and the
-    ///   client was drawing exactly what it was told.
+    /// * The world database spawns him at z = 80.9719. vmangos'
+    ///   `Creature::LoadFromDB` places a living DB spawn at that value
+    ///   unchanged (`CreatureCreatePos::SelectFinalPoint` does nothing without
+    ///   a `m_closeObject`), so that value is what the server sends.
+    /// * This client's terrain gives 80.2051 at that point. vmangos' extracted
+    ///   `0004832.map`, decoded by hand with `GridMap::getHeightFromUint16`,
+    ///   also gives 80.2051. The client and server agree about the ground to
+    ///   four decimal places.
+    /// * `vale collision Azeroth 32 48 -8869.22 -163.237 80.9719` finds nothing
+    ///   under him: no building hull and no doodad hull. The nearest drawn
+    ///   prop is a barrel 1.6 yards away, on the ground at 80.24.
+    /// * He therefore stands 0.767 yards above bare grass, and this client
+    ///   drew him where the server placed him.
     ///
-    /// The mode of the whole population is the same story one notch smaller:
-    /// over the 14,193 stationary ground spawns on maps 0 and 1, the commonest
-    /// gap is **+0.18**, which is the epsilon whatever generated the table
-    /// lifted every spawn by. About 7% are more than 0.3 above the terrain.
+    /// The rest of the population shows a smaller version of the same gap.
+    /// Over the 14,193 stationary ground spawns on maps 0 and 1, the most
+    /// common gap is +0.18, an offset that whatever generated the table added
+    /// to every spawn. About 7% are more than 0.3 above the terrain.
     ///
-    /// ## …and the reference puts him down, which was measured rather than read
+    /// ## What the 1.12.1 client does with the same spawn
     ///
-    /// The first draft of this shipped as a *labelled deviation*, on the
-    /// grounds that nothing in the client could be found that grounds a unit:
-    /// its own ground query is reached only from map and camera code.
+    /// A first version of this rule was marked as a deviation from the 1.12.1
+    /// client, on the assumption that the client does not ground units. That
+    /// assumption was wrong. Logged into the same vmangos server, the 1.12.1
+    /// client shows Eagan Peltskinner standing on the grass, although it
+    /// receives the same 80.9719. The client therefore grounds a standing
+    /// unit. The rule below reproduces that observed behaviour; its exact
+    /// conditions in the client are not known.
     ///
-    /// **That reading was wrong, and the experiment that settled it is the
-    /// cheap one this project keeps forgetting it can run**: log into the same
-    /// vmangos server with the 1.12.1 client and look. Eagan Peltskinner stands on
-    /// the grass in the reference, receiving the same 80.9719 over the same
-    /// wire. So the client does ground a standing unit; what has not been found
-    /// is *where*, and until it is, the rule below is a reconstruction of a
-    /// behaviour that is known to exist rather than an invention.
+    /// The bound remains, for a different reason: this client's collision is
+    /// less complete than the 1.12.1 client's. 25 of the 75 doodad models on
+    /// Northshire's tile have no collision hull, so a unit the server placed on
+    /// one of them has nothing here to be compared against. Beyond the band,
+    /// assuming the server placed the unit there on purpose is safer.
     ///
-    /// The bound stays, and its reason changes with it. It is not there because
-    /// the reference might not do this — it is there because **this client's
-    /// collision is less complete than the reference's**: 25 of the 75 doodad
-    /// models on Northshire's tile carry no hull at all, so a unit the server
-    /// stood on something this client walks through has nothing to be compared
-    /// against. Past the band, "the server meant it" is the safer reading.
+    /// [`STAND_BAND`] and these conditions complete the rule:
     ///
-    /// [`STAND_BAND`] and the exclusions are the rest of the design:
-    ///
-    /// * **only a unit that is standing** — no spline, no movement flags that
-    ///   say it is moving, not swimming, not airborne. Everything that moves is
-    ///   already handled where it moves.
-    /// * **only downwards, and only within the band.** A unit the server has
-    ///   put more than a band above what is under it is somewhere on purpose —
-    ///   a flying creature, a platform this client has no hull for, a boss on a
-    ///   dais — and is left alone. Nothing is ever lifted.
-    /// * **[`crate::state::movement::Footing::floor`]'s own answer**, so a unit
-    ///   on a building's floor is compared against *that* floor and not against
-    ///   the terrain under the building; and a building that has not streamed in
-    ///   yet answers `None`, which leaves the unit where the server put it.
-    /// * …**and what the unit's own movement flags make of it**, which is
+    /// * Only a standing unit: no spline, no movement flags that say it is
+    ///   moving, not swimming, not airborne. Moving units are handled where
+    ///   they move.
+    /// * Only downwards, and only within the band. A unit the server placed
+    ///   more than a band above the surface under it is there on purpose (a
+    ///   flying creature, a platform this client has no hull for, a boss on a
+    ///   dais) and is left alone. No unit is ever raised.
+    /// * The surface is [`crate::state::movement::Footing::floor`]'s answer, so
+    ///   a unit on a building's floor is compared against that floor and not
+    ///   against the terrain under the building. A building that has not
+    ///   streamed in yet answers `None`, which leaves the unit where the server
+    ///   put it.
+    /// * The unit's movement flags then adjust the surface, through
     ///   [`crate::state::movement::standing_surface`]: a water-walker's surface
-    ///   is the water and a hovering unit's is a yard over whichever of the two
-    ///   it stands on. Both were state this client held correctly and drew
-    ///   nothing for, and for a *standing* unit the old rule was worse than
-    ///   nothing — it pulled a water-walker down to the lake bed.
+    ///   is the water, and a hovering unit's is a yard above whichever surface
+    ///   it stands on. This client held both flags correctly but did not draw
+    ///   them, and for a standing unit the previous rule pulled a water-walker
+    ///   down to the lake bed.
     ///
-    /// The one case it gets wrong is stated rather than hidden: a unit standing
-    /// on a **hull-less prop** — a crate, a haystack, a rock the game means to
-    /// be walked through — is sunk to the ground under it. That prop is one the
-    /// player also walks through in this client, so the unit was already
-    /// standing on nothing as far as everything else here is concerned.
+    /// One known case is wrong: a unit standing on a prop with no collision
+    /// hull (a crate, a haystack, a rock the game lets players walk through) is
+    /// lowered to the ground under it. The player also walks through that prop
+    /// in this client, so the rest of this client already treats the unit as
+    /// standing on nothing.
     ///
-    /// **Cost: one [`Footing::floor`] per entity per *server position
-    /// statement***, not per step. A standing creature is stated once and then
-    /// never again, so a city's idle population pays this exactly once each —
-    /// which is why [`Entity::grounded_for`] is a latch on
-    /// [`Entity::position_updates`] rather than a bool.
+    /// Cost: one [`Footing::floor`] per entity per server position statement,
+    /// not per step. A standing creature's position is stated once, so each
+    /// idle unit in a city pays this once. [`Entity::grounded_for`] is
+    /// therefore a latch on [`Entity::position_updates`] rather than a bool.
     fn stand_on_the_ground(&mut self, world: Option<&dyn crate::state::movement::Footing>) {
         let Some(world) = world else { return };
-        // The beat is what bounds the *unanswered* population — see
-        // [`STAND_BEAT`]. An entity that has been put down costs one comparison
-        // whatever this does, so the gate is about the login burst and nothing
-        // else.
+        // The beat limits how often entities with no answer yet are retried;
+        // see [`STAND_BEAT`]. An entity already grounded costs one comparison
+        // regardless, so the gate only matters for the login burst.
         self.stand_beat = self.stand_beat.wrapping_add(1);
         if !self.stand_beat.is_multiple_of(STAND_BEAT) {
             return;
         }
         let player_guid = self.player_guid;
         for entity in self.entities.values_mut() {
-            // The live session owns the player's height and runs a whole mover
-            // over it, arcs and all.
+            // The live session owns the player's height and runs a full mover
+            // for it, including jumps and falls.
             if Some(entity.guid) == player_guid || entity.spline.is_some() {
                 continue;
             }
             if entity.grounded_for == Some(entity.position_updates) {
                 continue;
             }
-            // **The two flags that change what "the ground" means**, kept from
-            // the same accessor everything else reads — see
-            // [`crate::state::movement::standing_surface`]. Zero for a unit the
-            // server has said nothing about, which is neither of them.
+            // The two flags that change which surface the unit stands on,
+            // taken from the same accessor the rest of the code reads; see
+            // [`crate::state::movement::standing_surface`]. Zero for a unit
+            // with no movement block, which has neither flag.
             let mut flags = 0;
             if let Some(info) = entity.effective_movement() {
                 if info.is_moving()
@@ -4723,17 +4749,16 @@ impl ObjectManager {
             let Some(position) = entity.position.as_mut() else {
                 continue;
             };
-            // **Latched only on an answer.** A login burst creates every
-            // entity in view before the tiles under them have streamed, so
-            // latching a `None` would leave that whole population floating for
-            // the rest of the session — the one failure mode a latch must not
-            // have. The retry is paced by [`STAND_BEAT`] instead.
+            // The latch is set only when the world answers. A login burst
+            // creates every entity in view before the tiles under them have
+            // streamed in, so latching on `None` would leave all of them
+            // floating for the rest of the session. The retry is paced by
+            // [`STAND_BEAT`] instead.
             //
-            // **The liquid is asked only of the units that could care**, which
-            // is the near-zero fraction carrying `MOVEFLAG_WATERWALKING`: a
-            // second world query per entity per statement for a flag almost
-            // nothing in the game sets would double the cost of this pass for
-            // nobody.
+            // The liquid is queried only for units with
+            // `MOVEFLAG_WATERWALKING`, which are very few. A second world
+            // query per entity per statement for that flag would double the
+            // cost of this pass with no effect on the other units.
             let water = match flags & move_flags::WATERWALKING {
                 0 => None,
                 _ => world.liquid(position.x, position.y),
@@ -4753,39 +4778,40 @@ impl ObjectManager {
 
     /// Turn every stationary creature towards what it is attacking.
     ///
-    /// **Nothing on the wire asks for this, and that is the point.** A creature
-    /// chasing a player faces the way it is walking, which is roughly at them —
-    /// and then the chase spline finalises and `TargetedMovementGenerator`
-    /// calls `owner.SetInFront(i_target.getTarget())`, which is
-    /// `SetOrientation` and *nothing else*. No packet, no spline, no field.
-    /// Without this pass a mob is left facing wherever its last spline parked
-    /// it, and a player who strafes round it is beaten up by its shoulder —
-    /// which reads as an animation or an interpolation fault and is neither.
+    /// No packet requests this turn; the client is expected to make it. A
+    /// creature chasing a player faces the way it is walking, which is roughly
+    /// towards them. When the chase spline finishes,
+    /// `TargetedMovementGenerator` calls `owner.SetInFront(i_target.getTarget())`,
+    /// which only calls `SetOrientation`: it sends no packet, no spline and no
+    /// field. Without this pass a creature keeps facing wherever its last
+    /// spline ended, and a player who strafes around it is hit by a creature
+    /// facing sideways. That looks like an animation or interpolation fault
+    /// but is neither.
     ///
-    /// vmangos states the contract twice, and never sends anything to honour
-    /// it. `TotemAI` writes it beside the call —
-    /// `SetInFront(victim); // client change orientation by self` — and
-    /// `Object::BuildValuesUpdate` writes it beside the *field*, where a
-    /// creature that is casting has its casting target substituted into
-    /// `UNIT_FIELD_TARGET` for exactly this reason: *"This is done to make
-    /// creatures face the target they are casting on."* The server is
-    /// describing what it expects the receiver to do with the number.
+    /// vmangos states this expectation twice and never sends anything for it.
+    /// `TotemAI` writes it beside the call:
+    /// `SetInFront(victim); // client change orientation by self`.
+    /// `Object::BuildValuesUpdate` writes it beside the field, where a casting
+    /// creature's casting target is substituted into `UNIT_FIELD_TARGET` for
+    /// this reason: "This is done to make creatures face the target they are
+    /// casting on." The server expects the client to turn the creature
+    /// towards the value in that field.
     ///
-    /// Measured on a live vmangos, `vale live` → `goto`: a Carrion Lurker
-    /// finished its chase spline **169 degrees off** the bearing to the player
+    /// Measured on a live vmangos with `vale live` and `goto`: a Carrion Lurker
+    /// finished its chase spline 169 degrees off the bearing to the player
     /// standing 0.2 yards from it, and stayed there. With this pass it turns
-    /// through those 169 degrees in the 0.9 s the turn rate allows and holds at
-    /// zero.
+    /// through those 169 degrees in the 0.9 s the turn rate allows and then
+    /// holds at zero.
     ///
-    /// **Creatures only.** A player's orientation arrives for real, in their own
-    /// `MSG_MOVE_*` broadcasts, and vmangos sends a *player* a genuine
-    /// `SetFacingTo` spline where it sends a creature nothing
-    /// (`TargetedMovementGenerator.cpp`, the two branches either side of the
-    /// same `Finalized()` check). Turning them here would fight the packets.
+    /// Creatures only. A player's orientation arrives in their own
+    /// `MSG_MOVE_*` broadcasts, and vmangos sends a player a `SetFacingTo`
+    /// spline where it sends a creature nothing (`TargetedMovementGenerator.cpp`,
+    /// the two branches on either side of the same `Finalized()` check).
+    /// Turning players here would conflict with those packets.
     ///
-    /// **And stationary only**, for the same reason `apply_monster_move` puts
-    /// travel first: a unit walks forwards, so while it is moving the leg it is
-    /// walking is the answer and its target is not.
+    /// Stationary units only, for the same reason `apply_monster_move` gives
+    /// travel direction priority: a unit walks forwards, so while it moves it
+    /// faces the leg it is walking, not its target.
     fn face_targets(&mut self, dt: f32) {
         // Copied out first, because turning one entity needs another's
         // position and `values_mut` holds the map — the same reason
@@ -4801,7 +4827,7 @@ impl ObjectManager {
             let Some(target) = entity.target_guid() else {
                 continue;
             };
-            // A target out of sight is a target this client cannot place, and
+            // This client cannot place a target that is out of sight, and
             // guessing would be worse than leaving the creature as it is.
             if let Some(at) = self.entities.get(&target).and_then(|e| e.position) {
                 turns.push((entity.guid, [at.x, at.y, at.z]));
@@ -4817,11 +4843,12 @@ impl ObjectManager {
             };
             let wanted = bearing([position.x, position.y, position.z], at);
             let delta = crate::state::movement::shortest_turn(position.orientation, wanted);
-            // Rate-limited rather than snapped, and the rate is the server's own
-            // `MOVE_TURN_RATE` — pi rad/s by default, sent in every movement
-            // block, so a unit hasted or slowed to turn faster does. A snap
-            // would arrive as a single 180-degree pop: `Motion` interpolates
-            // facing, but only across one 25 ms simulation step.
+            // Rate-limited rather than set at once. The rate is the server's
+            // `MOVE_TURN_RATE`, pi rad/s by default and sent in every movement
+            // block, so a unit whose turn rate is changed turns at the changed
+            // rate. Setting the facing at once would show as a single
+            // 180-degree jump: `Motion` interpolates facing, but only across
+            // one 25 ms simulation step.
             let limit = entity.speeds.unwrap_or_default().turn_rate() * dt;
             let step = delta.clamp(-limit, limit);
             if let Some(position) = entity.position.as_mut() {
@@ -4836,8 +4863,8 @@ impl ObjectManager {
         // borrowed out of `self.entities` inside the loop.
         let mut rejected = 0u32;
         let mut jumped: Vec<(u64, f32, &'static str)> = Vec::new();
-        // …and the same for the inventory latch, since the block that moves it
-        // is often the same block that created the object it is about.
+        // The inventory latch is also collected and applied at the end, since
+        // the block that changes it is often the block that created the object.
         let mut inventory_moved = false;
         for block in &update.blocks {
             match block {
@@ -4859,18 +4886,19 @@ impl ObjectManager {
                             None => rejected += 1,
                         }
                     }
-                    // A creature that streams into view mid-walk is walking, and
-                    // the create block's inline spline is the only thing that
-                    // says so — `SMSG_MONSTER_MOVE` went out when the move
-                    // *started*, to whoever could see it then. Adopt it with the
-                    // server's own `timePassed`, so the unit picks the path up
-                    // where the server already is rather than at its start.
+                    // A creature that comes into view mid-walk is still walking,
+                    // and the create block's inline spline is the only statement
+                    // of it: `SMSG_MONSTER_MOVE` was sent when the move started,
+                    // to the clients that could see it then. The spline is
+                    // adopted with the server's `timePassed`, so the unit
+                    // continues from the server's current point on the path
+                    // rather than from its start.
                     entity.adopt_spline(movement.spline.as_ref());
-                    // **The one word that says anything about an elevator.**
-                    // Restated rather than accumulated: a fresh block is the
-                    // server's own reading of the phase, so it replaces
-                    // whatever this side had drifted to. See
-                    // [`Entity::transport_phase_ms`].
+                    // `path_progress` is the only field that states an
+                    // elevator's position. It replaces the local value rather
+                    // than being added to it: a new block is the server's
+                    // current phase, so it overrides any drift on this side.
+                    // See [`Entity::transport_phase_ms`].
                     if let Some(progress) = movement.path_progress {
                         entity.transport_phase_ms = Some(u64::from(progress));
                     }
@@ -4880,13 +4908,13 @@ impl ObjectManager {
                     for (index, value) in &values.fields {
                         entity.fields.insert(*index, *value);
                     }
-                    // …and what it did *not* carry is zero rather than unknown —
-                    // see [`Entity::created`]. Set after the fields, so the flag
-                    // and the values it qualifies are never out of step.
+                    // A field the create block did not carry is zero rather than
+                    // unknown; see [`Entity::created`]. The flag is set after
+                    // the fields, so it never disagrees with the values.
                     entity.created = true;
-                    // **A create block is the only way a new entry arrives**,
-                    // so it is one of the two things that make the query pass
-                    // worth running — see [`Self::take_query_hint`].
+                    // A create block is the only way a new entry arrives, so it
+                    // is one of the two events that request a query pass; see
+                    // [`Self::take_query_hint`].
                     self.queries_wanted = true;
                     if movement.is_self() {
                         entity.is_self = true;
@@ -4896,9 +4924,10 @@ impl ObjectManager {
                 }
 
                 UpdateBlock::Values { guid, values } => {
-                    // A values update can arrive for an object we never saw
-                    // created (e.g. we joined mid-stream); tracking it anyway is
-                    // strictly better than dropping the data.
+                    // A values update can arrive for an object whose create
+                    // block this client never received (for example after
+                    // joining mid-stream). Tracking it keeps data that would
+                    // otherwise be lost.
                     let entity = self
                         .entities
                         .entry(*guid)
@@ -4936,10 +4965,10 @@ impl ObjectManager {
 
                 UpdateBlock::OutOfRange { guids } => {
                     for g in guids {
-                        // **An item leaving is an inventory change too**, and
-                        // [`ObjectManager::remove`] is where that is decided —
-                        // for this arm and for the bare `SMSG_DESTROY_OBJECT`
-                        // alike, which is the door items actually leave by.
+                        // An item leaving is also an inventory change.
+                        // [`ObjectManager::remove`] decides that, for this arm
+                        // and for `SMSG_DESTROY_OBJECT`, which is the packet
+                        // items normally leave by.
                         self.remove(*g);
                     }
                 }
@@ -4951,8 +4980,9 @@ impl ObjectManager {
         self.rejected_positions = self.rejected_positions.saturating_add(rejected);
         if inventory_moved {
             self.inventory_version = self.inventory_version.wrapping_add(1);
-            // …and the other one: something the character carries changed, which
-            // includes the entry of a slot that has just been looted into.
+            // The second event that requests a query pass: something the
+            // character carries changed, including the entry of a slot an item
+            // was just looted into.
             self.queries_wanted = true;
         }
         for (guid, moved, source) in jumped {
@@ -4963,17 +4993,17 @@ impl ObjectManager {
 
 /// Does this block change what the character is carrying?
 ///
-/// Two cases, and they are different questions. **Any** field on an `Item` or a
-/// `Container` counts — a stack count, a durability, the entry itself — because
-/// every one of them is drawn. On the **local player** only the three slot runs
-/// count, because a player's block also carries health, power, position and
-/// twenty other things that move constantly, and treating those as an inventory
-/// change would rebuild the bags every tick and defeat the latch entirely.
+/// Two cases with different tests. Any field on an `Item` or a `Container`
+/// counts (a stack count, a durability, the entry itself), because every one
+/// of them is drawn. On the local player only the three slot ranges count, because
+/// a player's block also carries health, power, position and twenty other
+/// fields that change constantly. Treating those as inventory changes would
+/// rebuild the bags every tick and make the latch useless.
 ///
-/// It errs towards rebuilding: the ranges are checked by index rather than by
-/// meaning, so a field this client has not named that happens to sit inside one
-/// of them still triggers. That is the safe direction — a redundant rebuild
-/// costs a hash walk, a missed one costs a bag that never updates.
+/// The test errs towards rebuilding. The ranges are checked by index rather
+/// than by meaning, so an unnamed field inside one of them still triggers a
+/// rebuild. A redundant rebuild costs a hash walk; a missed one leaves a bag
+/// that never updates.
 fn touches_inventory(entity: &Entity, fields: &[(u16, u32)]) -> bool {
     if is_carried_object(entity) {
         return true;
@@ -4990,13 +5020,12 @@ fn touches_inventory(entity: &Entity, fields: &[(u16, u32)]) -> bool {
             // second. `BYTES_2` is the bank's bought-slot count, one byte of
             // a field whose other three move rarely (the rest state is one).
             //
-            // **The buyback is the third, and it is two runs.** A sale moves
-            // nothing a bag square draws *and* nothing else — the item is not
-            // destroyed, it is re-parented into
-            // `PLAYER_FIELD_VENDORBUYBACK_SLOT_n` — so without these the
-            // vendor's second tab would fill only when something unrelated
-            // moved. The price and the timestamp are adjacent runs of twelve
-            // and are covered as one.
+            // The buyback is the third range, made of two runs. A sale
+            // changes no field a bag square draws: the item is not destroyed
+            // but moved into `PLAYER_FIELD_VENDORBUYBACK_SLOT_n`. Without these
+            // runs the vendor's buyback tab would update only when an
+            // unrelated field changed. The price and the timestamp are
+            // adjacent runs of twelve and are covered as one range.
             fields.iter().any(|(index, _)| {
                 (INV_SLOT_HEAD..VENDORBUYBACK_SLOT_1).contains(index)
                     || *index == BYTES_2
@@ -5012,10 +5041,10 @@ fn touches_inventory(entity: &Entity, fields: &[(u16, u32)]) -> bool {
     }
 }
 
-/// **Is this object part of what the character is carrying?**
+/// Whether this object is part of what the character is carrying.
 ///
-/// The one test behind both the destroy latch in [`ObjectManager::remove`] and
-/// the first arm of [`touches_inventory`]. Any field on an `Item` or a
+/// The test behind both the destroy latch in [`ObjectManager::remove`] and the
+/// first arm of [`touches_inventory`]. Any field on an `Item` or a
 /// `Container` counts — a stack count, a durability, the entry itself — because
 /// every one of them is drawn.
 fn is_carried_object(entity: &Entity) -> bool {

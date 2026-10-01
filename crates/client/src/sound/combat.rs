@@ -1,74 +1,70 @@
-//! **The fight's sounds** — the swing, what it met, the wound, the death and
-//! the bark, off the same counters the pose plays its one-shots from.
+//! Combat sounds: the swing, what it met, the wound, the death and the bark,
+//! driven by the same counters the pose plays its one-shot animations from.
 //!
-//! The same edge-detection contract as `entities::Playback::note_actions`,
-//! kept separately on purpose: the pose's `Counters` memory is private to the
-//! animation and folds in state this module does not want, and two readers of
-//! one shared memory is how an event gets eaten. **The first poll records
-//! without firing** — an entity walking into view mid-fight with forty swings
-//! on its counter plays none of them — which is the same rule for the same
-//! reason.
+//! This module detects counter changes the same way as
+//! `entities::Playback::note_actions`, but keeps its own memory. The pose's
+//! `Counters` memory is private to the animation and includes state this
+//! module does not use, and two readers of one shared memory can each consume
+//! an event the other needed. The first poll records the counters without
+//! playing anything, so an entity that comes into view mid-fight with forty
+//! swings on its counter plays none of them. `note_actions` follows the same
+//! rule for the same reason.
 //!
-//! ## What plays what
+//! ## Which sound each combat event plays
 //!
-//! The tables are [`vale_assets::tables::sound`]'s and every rule below is either
-//! the file's own naming or the client's own branch:
+//! The tables are in [`vale_assets::tables::sound`]. Each rule below comes
+//! either from the naming in those tables or from what the 1.12.1 client plays:
 //!
-//! * a swing that **met nothing** — a miss, a dodge, an evade — is one of two
-//!   whooshes chosen by handedness, [`sound::COMBAT_MISS_1H`] and its 2H twin.
-//!   The client caches both by name and chooses between them on handedness
-//!   alone;
-//! * a swing that **met something** plays that weapon's `WeaponImpactSounds`
-//!   row at the slot for **what it met** — the victim's own material for a
-//!   landed blow, the shield slot for a block, the parry slot for a parry.
-//!   Four of the ten slots are the defended cases, and this client used to read
-//!   slot 0 and nothing else, so every parry and every block in the game was
-//!   silent;
-//! * a swing by something with **no weapon in its hand** — every creature in
-//!   the game, and an unarmed player — plays its own `CustomAttack` column if
-//!   it states one (`BiteMedium`, `ClawLarge`), else the fist row, which is
-//!   `Unarmed_Generic`. Before this it played nothing at all: the old code
-//!   asked for an impact only when `class == ITEM_CLASS_WEAPON`;
-//! * either way the attacker grunts — `CreatureSoundData`'s exertion;
-//! * the blow's victim voices its wound row, **the critical one on a
-//!   critical** — two live columns where one was read, plus a crushing one that
-//!   1.12 ships empty;
-//! * a blow the victim **absorbed** rings off the shield —
-//!   `HITINFO_ABSORB`'s comment in `UnitDefines.h` is literally "plays absorb
-//!   sound", and the client makes a positioned play of the one entry it means;
-//! * a death is the death row;
-//! * and a creature that notices you or engages you **barks**, off
-//!   `SMSG_AI_REACTION`, which is the only packet in the protocol whose whole
-//!   purpose is a sound.
+//! * A swing that met nothing (a miss, a dodge, an evade) plays one of two
+//!   whooshes, [`sound::COMBAT_MISS_1H`] or its 2H counterpart. The client
+//!   chooses between them on handedness alone.
+//! * A swing that met something plays that weapon's `WeaponImpactSounds` row
+//!   at the slot for what it met: the victim's material for a landed blow, the
+//!   shield slot for a block, the parry slot for a parry. Four of the ten
+//!   slots are the defended cases. This client once read slot 0 only, so every
+//!   parry and every block was silent.
+//! * A swing with no weapon in hand (every creature, and an unarmed player)
+//!   plays the attacker's `CustomAttack` column if it states one
+//!   (`BiteMedium`, `ClawLarge`), else the fist row, `Unarmed_Generic`. The
+//!   code once requested an impact only when `class == ITEM_CLASS_WEAPON`, so
+//!   these swings played nothing.
+//! * In every case the attacker plays its `CreatureSoundData` exertion.
+//! * The victim of a blow plays its wound column, or its critical wound column
+//!   on a critical hit. This client once read only one of those two columns.
+//!   A third, crushing column is empty in 1.12.
+//! * A blow the victim absorbed plays the shield absorb sound.
+//!   `HITINFO_ABSORB`'s comment in `UnitDefines.h` is "plays absorb sound",
+//!   and the client plays that one entry at the victim's position.
+//! * A death plays the death column.
+//! * A creature that notices or engages the player barks, on
+//!   `SMSG_AI_REACTION`. That packet exists only to trigger a sound.
 //!
-//! ## The bark channel
+//! ## The per-unit bark channel
 //!
-//! The client keeps a **priority channel**, one per unit: it holds the playing
-//! bark and its priority and refuses a new one whose priority is not *higher*
-//! while the old one is still going. `AI_REACTION_HOSTILE`
-//! arrives on every attack, so without that a fight is a wall of growling.
-//! [`Heard`]'s `bark` is that channel; the priorities are the reference's own
-//! table, where 0 selects `+0x28` — the aggro column — and 4 selects `+0x18`,
-//! the death one.
+//! The client keeps one priority channel per unit. It holds the playing bark
+//! and its priority, and refuses a new bark whose priority is not higher while
+//! the old one is still playing. `AI_REACTION_HOSTILE` arrives on every
+//! attack, so without the channel a fight would play a growl per swing.
+//! [`Heard`]'s `bark` is that channel. Priority 0 selects the aggro column and
+//! priority 4 the death column.
 //!
-//! ## What is still an approximation
+//! ## Known approximations
 //!
-//! **Two of the columns read here are empty in the shipped tables, and that is
-//! measured rather than assumed.** `vale sound` reports
-//! `CreatureImpactType`'s spread as `[(0, 406)]` and the crushing wound column
-//! at 0 of 406, so **every unit in 1.12 is flesh and no creature has a crushing
-//! cry** — both branches are provably inert against this data, both field
-//! indices are pinned only by their neighbours, and both are kept because they
-//! are the quantities the reference selects on. A *player's* armour is a
-//! different lookup again and has not been dug out, so a blow on one is flesh
-//! too.
+//! Two of the columns read here are empty in the shipped tables. `vale sound`
+//! reports `CreatureImpactType`'s spread as `[(0, 406)]` and the crushing
+//! wound column as stated in 0 of 406 rows, so every unit in 1.12 is flesh
+//! and no creature has a crushing cry. Both branches therefore never fire with
+//! this data, and both field indices are fixed only by their neighbouring
+//! fields. Both are kept because they are the values the client selects on. A
+//! player's armour material comes from a different lookup that has not been
+//! identified, so a blow on a player is also played as flesh.
 //!
-//! **The parry and block slots assume metal**, since what the victim parried
-//! with is not on the wire. And **the trigger is the packet rather than the
-//! clip's own event tags**: the reference fires these at `$CSS`/`$AHn`
-//! crossings mid-swing, which is the same refinement the footstep cadence
-//! wants — and the same reason the natural-weapon column is the first stated
-//! one rather than the tag's.
+//! The parry and block slots assume metal, because what the victim parried
+//! with is not in the packet. The sounds are triggered by the packet, not by
+//! the animation's event tags: the client plays them at the `$CSS`/`$AHn` tag
+//! crossings mid-swing. The footstep cadence needs the same change, and the
+//! lack of tag parsing is also why the natural-weapon column is the first
+//! stated one rather than the one the tag names.
 
 use super::mixer::{Place, Voices};
 use crate::world::session::{EntityIndex, WorldEntity};
@@ -80,19 +76,19 @@ use bevy::prelude::*;
 /// `ITEM_CLASS_WEAPON`.
 const ITEM_CLASS_WEAPON: u8 = 2;
 
-/// Subclasses swung in two hands, which is the whole of what the whoosh
-/// chooser needs: 2H axe, 2H mace, polearm, 2H sword, staff, spear.
+/// Weapon subclasses swung in two hands, which is all the whoosh choice
+/// needs: 2H axe, 2H mace, polearm, 2H sword, staff, spear.
 const TWO_HANDED: [u8; 6] = [1, 5, 6, 8, 10, 17];
 
-/// **What this entity's counters read last frame, and what it is saying.**
+/// This entity's counters as read last frame, and the bark it is playing.
 ///
-/// The counters are the edge memory. The pair under them is the unit's own
-/// **voice channel**: a bark is refused while
-/// a bark of the same or higher priority is still playing, which is what stops
-/// `AI_REACTION_HOSTILE` — sent on *every* attack — from being a growl per
-/// swing. The voice entity stands in for the reference's handle, since
-/// `PlaybackSettings::DESPAWN` takes it away when the file ends and "is it
-/// still playing" is therefore "does the entity still exist".
+/// The counters are the change-detection memory. The two fields after them
+/// are the unit's voice channel: a bark is refused while a bark of the same
+/// or higher priority is still playing, which stops `AI_REACTION_HOSTILE`
+/// (sent on every attack) from playing a growl per swing. The voice entity
+/// stands for the playing sound: `PlaybackSettings::DESPAWN` removes it when
+/// the file ends, so the bark is still playing exactly while the entity
+/// exists.
 #[derive(Component)]
 pub struct Heard {
     swings: u32,
@@ -103,39 +99,37 @@ pub struct Heard {
     bark_priority: u32,
 }
 
-/// The reference's own priorities.
+/// The bark priorities the 1.12.1 client uses.
 ///
-/// **The table's index is the state and the state is the priority**, which is
-/// why these are the numbers they are: the channel refuses a new bark whose
-/// priority is not *higher* than the one still playing, and the
-/// five entries select the five `CreatureSoundData` columns a unit can speak
-/// from. 0 is the aggro column and 4 the death one; the two pet columns sit
+/// Each value both selects a sound and ranks it: the channel refuses a new
+/// bark whose priority is not higher than the one still playing, and the five
+/// values select the five `CreatureSoundData` columns a unit can bark from.
+/// 0 is the aggro column and 4 the death column; the two pet columns are
 /// between them.
 mod bark_priority {
-    /// `AI_REACTION_ALERT` — the quietest thing on the channel.
+    /// `AI_REACTION_ALERT`, the lowest priority on the channel.
     pub const ALERT: u32 = 0;
     pub const AGGRO: u32 = 0;
-    /// **A pet ordered to cast something** — `PET_TALK_SPECIAL_SPELL`, which
-    /// the client turns into table entry **1**, reading `+0x70`.
+    /// A pet ordered to cast something: `PET_TALK_SPECIAL_SPELL`, which the
+    /// client plays at priority 1 from the pet order column.
     pub const PET_ORDER: u32 = 1;
-    /// …and ordered to attack — `PET_TALK_ATTACK`, entry **2** and `+0x6c`.
+    /// A pet ordered to attack: `PET_TALK_ATTACK`, priority 2, from the pet
+    /// attack column.
     ///
-    /// The pair is the way round the handler puts it and not the way round the
-    /// wire's own values are: talk 0 is the *order* and talk 1 the attack, and
-    /// each is passed as its value plus one. So "go get it" talks over "cast
-    /// this", which is the opposite of what the enum's order suggests.
+    /// The client maps each talk value to its value plus one: talk 0 is the
+    /// order and talk 1 the attack. So an attack order can interrupt a cast
+    /// order, which is the reverse of what the enum's order suggests.
     pub const PET_ATTACK: u32 = 2;
-    /// The one that cannot be shouted over.
+    /// The highest priority; nothing interrupts a death cry.
     pub const DEATH: u32 = 4;
 }
 
 /// The swinging weapon, as the sound tables want it: `(subclass, metal)`.
 ///
-/// **Anything that is not a weapon swings as a fist**, which covers a creature
-/// with an empty virtual-item slot, a player with bare hands, and a held
-/// off-hand tome. That is the branch this module was missing entirely: it asked
-/// for an impact only for `ITEM_CLASS_WEAPON` and let everything else land in
-/// silence.
+/// Anything that is not a weapon swings as a fist. That covers a creature with
+/// an empty virtual-item slot, a player with bare hands, and a held off-hand
+/// tome. This module once requested an impact only for `ITEM_CLASS_WEAPON`,
+/// so all of these landed without a sound.
 fn swung(weapon: &Weapon) -> (u32, bool) {
     if weapon.class != ITEM_CLASS_WEAPON {
         return (UNARMED_SUBCLASS, false);
@@ -151,25 +145,25 @@ fn two_handed(weapon: &Weapon) -> bool {
     weapon.class == ITEM_CLASS_WEAPON && TWO_HANDED.contains(&weapon.subclass)
 }
 
-/// **What the blow met** — the slot of the ten, or `None` for a swing that met
-/// nothing at all and is therefore a whoosh.
+/// The impact slot, of the ten, for what the blow met, or `None` for a swing
+/// that met nothing and therefore plays a whoosh.
 ///
-/// The victim's material only reaches the three armour slots; the block and
-/// parry slots are what the *defence* was made of, and both are assumed metal
-/// (see the module comment).
+/// The victim's material selects only among the three armour slots. The block
+/// and parry slots stand for what the defence was made of, and both are
+/// assumed metal (see the module comment).
 ///
-/// **`victim_material` is always 0 in 1.12** and that is measured rather than
-/// assumed: `vale sound` reports `CreatureImpactType`'s spread as `[(0,
-/// 406)]` — every row in the shipped table. So the chain and plate arms below
-/// are unreachable against this data and the column's index is pinned only by
-/// its neighbours. Kept because it is the quantity the reference selects a slot
-/// with, and because a reader who deletes it will re-derive it.
+/// `victim_material` is always 0 in 1.12: `vale sound` reports
+/// `CreatureImpactType`'s spread as `[(0, 406)]`, which is every row in the
+/// shipped table. So the chain and plate arms below never match with this
+/// data, and the column's index is fixed only by its neighbouring fields. The
+/// parameter is kept because it is the value the client selects a slot with,
+/// and a reader who deleted it would have to derive it again.
 fn met(victim_state: u32, hit_info: u32, victim_material: u32) -> Option<usize> {
     match victim_state {
         victim_state::BLOCKS => Some(impact_slot::SHIELD_METAL),
         victim_state::PARRY => Some(impact_slot::PARRY_METAL),
-        // A dodge, an evade, an immunity and a deflect are all "the weapon
-        // struck nothing" — the reference groups them with the miss.
+        // A dodge, an evade, an immunity and a deflect all mean the weapon
+        // struck nothing; the client plays the miss whoosh for each.
         victim_state::DODGE
         | victim_state::EVADES
         | victim_state::IS_IMMUNE
@@ -192,20 +186,19 @@ impl Plugin for CombatPlugin {
     }
 }
 
-/// **The pet said something** — `SMSG_PET_ACTION_SOUND`, which is the only
-/// packet in the protocol besides `SMSG_AI_REACTION` whose whole purpose is a
-/// noise, and the only one that names a *column* rather than a sound.
+/// Play a pet's voice line on `SMSG_PET_ACTION_SOUND`. Besides
+/// `SMSG_AI_REACTION`, it is the only packet whose sole purpose is a sound,
+/// and the only one that names a column rather than a sound.
 ///
-/// It goes on the same voice channel [`Heard::bark`] is, because that is where
-/// the reference puts it: it reads the talk value, adds one and hands it to
-/// the same priority channel the aggro and death barks use. So a
-/// pet ordered about while it is growling does not double up, and its death cry
-/// cuts everything off.
+/// It plays on the same voice channel as [`Heard::bark`], because the 1.12.1
+/// client does the same: it adds one to the talk value and uses the result as
+/// a priority on the channel the aggro and death barks use. So a pet given an
+/// order while it is growling does not play both, and its death cry
+/// interrupts everything.
 ///
-/// **vmangos sends only `PET_TALK_SPECIAL_SPELL`**, from
-/// `HandlePetActionHelper` — the attack value is sent by `Unit::Attack` on
-/// retail and by nothing here — so against this server it is the order column
-/// that will be heard and the attack one that will not.
+/// vmangos sends only `PET_TALK_SPECIAL_SPELL`, from `HandlePetActionHelper`.
+/// On retail `Unit::Attack` sends the attack value; nothing sends it here. So
+/// against this server the order column is heard and the attack column is not.
 fn pet_talk(
     mut heard: MessageReader<crate::interface::events::PetTalkHeard>,
     mut voices: Voices,
@@ -223,9 +216,9 @@ fn pet_talk(
             continue;
         };
         let Ok((world, transform, mut heard)) = speakers.get_mut(*entity) else {
-            // The pet is not in view — or has not been primed yet, which is the
-            // first-poll rule [`Heard`] keeps. Either way there is nobody to
-            // speak from and no channel to speak on.
+            // The pet is not in view, or has no `Heard` yet because of the
+            // first-poll rule [`Heard`] keeps. Either way there is no position
+            // to play from and no channel to play on.
             continue;
         };
         let Some(sounds) = world.display_id.and_then(|d| bank.unit_sounds(d)) else {
@@ -234,14 +227,14 @@ fn pet_talk(
         let (entry, priority) = match talk.talk {
             pet_talk::SPECIAL_SPELL => (sounds.pet_order, bark_priority::PET_ORDER),
             pet_talk::ATTACK => (sounds.pet_attack, bark_priority::PET_ATTACK),
-            // Anything else falls through without a branch, exactly as
-            // the four-way feedback byte does.
+            // The client plays nothing for any other talk value, as it does
+            // for the four-way feedback byte.
             _ => continue,
         };
         if entry == 0 {
-            // **The overwhelming majority of pets**: only the four warlock
-            // demons state either column in 1.12, so a hunter's wolf saying
-            // nothing here is the shipped data rather than a gap.
+            // Most pets reach here: only the four warlock demons state either
+            // column in 1.12, so a hunter's wolf playing nothing is the
+            // shipped data, not a missing feature.
             continue;
         }
         let at = Place::At(transform.translation);
@@ -249,21 +242,21 @@ fn pet_talk(
     }
 }
 
-/// …and its goodbye — `SMSG_PET_DISMISS_SOUND`, **the one sound in the game
-/// played for a unit that no longer exists.**
+/// Play a dismissed pet's sound on `SMSG_PET_DISMISS_SOUND`, the one sound
+/// played for a unit that no longer exists.
 ///
-/// Which is why it takes no channel and no entity: the pet is gone, so there is
-/// no `Heard` to hold a voice and nothing that could interrupt it. The client
-/// plays it straight at the position the packet carries, **one yard up** — the
-/// packet states where the pet's feet
-/// were and a voice belongs at its head.
+/// It uses no channel and no entity: the pet is gone, so there is no `Heard`
+/// to hold a voice and nothing that could interrupt it. The client plays it at
+/// the position the packet carries, raised by one yard, because the packet
+/// gives the position of the pet's feet and the voice belongs at its head.
 ///
-/// The row is reached by **model id** rather than display id, which is the other
-/// thing that makes this packet unlike every other: a display id is a property
-/// of something in the world, and there is nothing in the world any more. See
+/// The row is found by model id, not display id, which no other sound packet
+/// does: a display id belongs to something in the world, and the pet is no
+/// longer in the world. See
 /// [`vale_assets::tables::sound::SoundBank::model_data_sounds`].
 ///
-/// **vmangos never sends it**, so nothing on this server will ever reach here.
+/// vmangos never sends this packet, so this system does nothing against this
+/// server.
 fn pet_dismissed(
     mut heard: MessageReader<crate::interface::events::PetDismissHeard>,
     mut voices: Voices,
@@ -284,10 +277,10 @@ fn pet_dismissed(
     }
 }
 
-/// Which of the four `$AHn` columns this swing is. **Not chosen from the
-/// packet**: nothing on the wire says which attack variation a creature played,
-/// and the reference takes it from the clip's own event tag. The first stated
-/// column is taken, which is the one every creature that states any states.
+/// Which of the four `$AHn` columns this swing plays. The packet cannot choose
+/// it: nothing in it says which attack variation a creature played, and the
+/// client takes the column from the animation's event tag. This takes the
+/// first stated column, which every creature that states any column states.
 fn natural_weapon(sounds: &sound::CreatureSounds) -> Option<u32> {
     sounds.custom_attack.iter().copied().find(|&id| id != 0)
 }
@@ -298,9 +291,8 @@ fn listen(
     game: Res<crate::assets::GameAssets>,
     index: Res<EntityIndex>,
     alive: Query<(), With<AudioPlayer>>,
-    // The other end of a swing, read-only and therefore overlapping the query
-    // below without conflicting: where the victim is standing, and what it is
-    // made of.
+    // The victim of a swing: its position and its material. The query is
+    // read-only, so it may overlap the query below without a conflict.
     struck: Query<(&Transform, &WorldEntity)>,
     mut entities: Query<(Entity, &WorldEntity, &Transform, Option<&mut Heard>)>,
 ) {
@@ -316,8 +308,8 @@ fn listen(
     };
     for (id, world, transform, heard) in &mut entities {
         let Some(mut heard) = heard else {
-            // The first sighting primes and stays silent — see the module
-            // comment.
+            // The first sighting records the counters and plays nothing; see
+            // the module comment.
             commands.entity(id).insert(Heard {
                 swings: world.swings_thrown,
                 blows: world.blows_taken,
@@ -337,27 +329,27 @@ fn listen(
             let hand = usize::from(info & hit_info::LEFT_SWING != 0);
             let weapon = &world.weapons[hand];
             let crit = info & hit_info::CRITICAL_HIT != 0;
-            // **The blow is voiced where it landed**, which is the reference's
-            // own side of this — the contact family runs on the victim
-            // dispatch. The attacker's position stands in when the victim has
-            // left the world, the same fallback the impact kit takes.
+            // The blow plays at the victim's position, as in the 1.12.1
+            // client, which plays the contact sounds on the victim. The
+            // attacker's position is used when the victim has left the world,
+            // the same fallback the impact kit uses.
             let victim = victims(world.last_swing_victim);
             let landed_at = victim.map_or(at, |(place, _)| place);
-            // `HITINFO_SWINGNOHITSOUND` is the server saying "nothing at all
-            // for this one", and it is the only branch that skips the whoosh
-            // too.
+            // `HITINFO_SWINGNOHITSOUND` asks for no swing sound at all. It is
+            // the only case that also skips the whoosh.
             if info & hit_info::SWING_NO_HIT_SOUND == 0 {
                 let material = victim.map_or(0, |(_, material)| material);
                 let played = match met(world.last_swing_state, info, material) {
                     None => bank.miss_whoosh(two_handed(weapon)),
                     Some(slot) => {
                         let (subclass, metal) = swung(weapon);
-                        // **A natural weapon replaces the generic impact.** An
-                        // interpretation of which column, and stated as one: the
-                        // reference picks between the four by the clip's own
-                        // `$AHn` tag, which this client does not parse, so the
-                        // first stated column is taken. Only for a landed blow —
-                        // a parry or a block is the *defence* making the noise.
+                        // A natural weapon replaces the generic impact. The
+                        // choice of column is an approximation: the client
+                        // picks one of the four by the animation's `$AHn` tag,
+                        // which this client does not parse, so the first
+                        // stated column is taken. This applies only to a
+                        // landed blow; for a parry or a block the sound is the
+                        // defence's.
                         let natural = (subclass == UNARMED_SUBCLASS
                             && slot <= impact_slot::ARMOR_PLATE)
                             .then(|| sounds.as_ref().and_then(natural_weapon))
@@ -369,13 +361,14 @@ fn listen(
                     voices.play(&bank, entry, landed_at);
                 }
             }
-            // …and the shield eating it, which is a flag rather than a state.
+            // An absorbed blow also plays the absorb sound. Absorption is a
+            // `hit_info` flag, not a victim state.
             if info & hit_info::ABSORB != 0 {
                 if let Some(entry) = bank.entry_named(sound::ABSORB_GET_HIT).map(|e| e.id) {
                     voices.play(&bank, entry, landed_at);
                 }
             }
-            // The grunt rides the swing whatever it hit.
+            // The attacker's exertion plays on every swing, whatever it hit.
             if let Some(exertion) = sounds.map(|s| s.exertion).filter(|&s| s != 0) {
                 voices.play(&bank, exertion, at);
             }
@@ -388,14 +381,14 @@ fn listen(
             if world.last_victim_state == victim_state::NORMAL {
                 let info = world.last_blow_info;
                 let wound = sounds.and_then(|s| {
-                    // **Three columns, most specific first**, each falling back
-                    // to the plain wound: 257 rows state a critical and far
-                    // fewer state a crushing, so insisting on the exact column
-                    // would silence the blow rather than voice it plainly.
-                    // …and the crushing column is empty in 1.12 (0 of 406
-                    // rows state one, per `vale sound`), so this arm is
-                    // provably inert against the shipped data and the plain
-                    // wound is what a crushing blow voices.
+                    // Three columns, most specific first, each falling back to
+                    // the plain wound: 257 rows state a critical and fewer
+                    // state a crushing, so requiring the exact column would
+                    // silence the blow instead of playing the plain wound.
+                    // The crushing column is empty in 1.12 (0 of 406 rows
+                    // state one, per `vale sound`), so that arm never fires
+                    // with the shipped data and a crushing blow plays the
+                    // plain wound.
                     let specific = if info & hit_info::CRUSHING != 0 {
                         s.wound_crushing
                     } else if info & hit_info::CRITICAL_HIT != 0 {
@@ -416,7 +409,7 @@ fn listen(
             let voiced = match world.last_reaction {
                 ai_reaction::HOSTILE => sounds.map(|s| (s.aggro, bark_priority::AGGRO)),
                 ai_reaction::ALERT => sounds.map(|s| (s.alert, bark_priority::ALERT)),
-                // The other three fall through without a branch.
+                // The client plays nothing for the other three reactions.
                 _ => None,
             };
             if let Some((entry, priority)) = voiced.filter(|&(entry, _)| entry != 0) {
@@ -428,8 +421,8 @@ fn listen(
             heard.dead = world.dead;
             if world.dead {
                 if let Some(death) = sounds.map(|s| s.death).filter(|&s| s != 0) {
-                    // On the same channel and at the top priority, so a death
-                    // cry cuts a bark off and nothing cuts it off.
+                    // On the same channel at the highest priority, so a death
+                    // cry interrupts a bark and nothing interrupts it.
                     heard.bark(
                         &mut voices,
                         &bank,
@@ -448,9 +441,8 @@ fn listen(
 impl Heard {
     /// Take the voice channel if this bark outranks whatever is on it.
     ///
-    /// The reference stops the playing voice before starting the new one,
-    /// which is why this despawns rather than
-    /// letting two overlap.
+    /// The 1.12.1 client stops the playing voice before starting the new one,
+    /// so this despawns the old voice rather than letting the two overlap.
     #[allow(clippy::too_many_arguments)]
     fn bark(
         &mut self,
@@ -487,44 +479,45 @@ mod tests {
             inventory_type: 13,
             sheath: 3,
             material,
+            enchantments: [0; 7],
         }
     }
 
-    /// **Everything with nothing in its hand swings as a fist**, which is the
-    /// whole population this module used to leave silent: every creature in the
-    /// game has an empty virtual-item slot, and the old code asked for an
-    /// impact only when the class was `ITEM_CLASS_WEAPON`.
+    /// Anything with nothing in its hand swings as a fist. This module once
+    /// left all of these silent: every creature has an empty virtual-item
+    /// slot, and the code requested an impact only when the class was
+    /// `ITEM_CLASS_WEAPON`.
     ///
-    /// The fist row is a real row — `WeaponImpactSounds` subclass 13 resolves
-    /// to `Unarmed_Generic` — so this is a lookup that answers rather than a
-    /// sentinel.
+    /// The fist row exists in the table (`WeaponImpactSounds` subclass 13
+    /// resolves to `Unarmed_Generic`), so this lookup returns a sound rather
+    /// than a sentinel.
     #[test]
     fn a_hand_with_nothing_in_it_swings_as_a_fist() {
         assert_eq!(swung(&Weapon::default()), (UNARMED_SUBCLASS, false));
         // A shield or a held tome is class 4 and is not swung either.
         assert_eq!(swung(&weapon(4, 6, 1)), (UNARMED_SUBCLASS, false));
-        // …and a real weapon carries its own subclass and its material.
+        // A weapon carries its own subclass and its material.
         assert_eq!(swung(&weapon(2, 4, MATERIAL_METAL)), (4, true));
         assert_eq!(swung(&weapon(2, 4, 2)), (4, false), "a wooden mace is the other row");
     }
 
-    /// The whoosh's only input. Two-handedness is the *whole* of the choice
-    /// the client makes — one boolean, no crit and no third size.
+    /// The whoosh's only input. The client chooses the whoosh on
+    /// two-handedness alone: one boolean, with no critical variant and no
+    /// third size.
     #[test]
     fn the_whoosh_is_chosen_by_handedness_and_nothing_else() {
         assert!(two_handed(&weapon(2, 8, 1)), "a two-handed sword");
         assert!(two_handed(&weapon(2, 10, 2)), "a staff");
         assert!(!two_handed(&weapon(2, 15, 1)), "a dagger");
         assert!(!two_handed(&Weapon::default()), "an empty hand");
-        // Subclass 6 is a polearm and 6 is *also* a shield's subclass under
-        // class 4 — so the class has to be part of the test.
+        // Subclass 6 is a polearm under class 2 and a shield under class 4,
+        // so the test must check the class.
         assert!(!two_handed(&weapon(4, 6, 1)), "a shield is not a two-hander");
     }
 
-    /// **What the blow met**, which is the reading this module was missing: the
-    /// ten columns of a weapon row are ten materials, four of them the defended
-    /// cases, and this client used to read column 0 and nothing else — so every
-    /// parry and every block in the game was silent.
+    /// The slot for what the blow met. The ten columns of a weapon row are ten
+    /// materials, four of them the defended cases. This client once read
+    /// column 0 only, so every parry and every block was silent.
     #[test]
     fn a_parry_and_a_block_are_slots_rather_than_silence() {
         use vale_protocol::play::action::victim_state as vs;
@@ -548,8 +541,8 @@ mod tests {
         );
     }
 
-    /// The natural weapon is the first column that states anything — an
-    /// interpretation, and the reason it is a function with a comment on it.
+    /// The natural weapon is the first column that states a sound. This is an
+    /// approximation, which is why it is a separate, documented function.
     #[test]
     fn a_creatures_own_attack_is_its_first_stated_column() {
         let mut sounds = vale_assets::tables::sound::CreatureSounds::default();

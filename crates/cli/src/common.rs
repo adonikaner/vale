@@ -1,11 +1,9 @@
-//! Opening things, and naming things: the helpers every subcommand needs.
+//! Helpers shared by the subcommands: logging on, opening the archive chain,
+//! parsing the display tables, and naming races and classes.
 //!
-//! Nothing here is a command. What lands in this module is whatever more than
-//! one of them does — logging on, opening the archive chain, parsing the
-//! display tables — and the point of it being one copy is the same as
-//! everywhere else in this project: the realm choice and the missing-port
-//! fallback cannot drift apart between `login`, `live` and `dress` if there is
-//! only one of them.
+//! Nothing here is a command. This module holds the steps that more than one
+//! subcommand performs. Keeping one copy means the realm choice and the
+//! missing-port fallback cannot diverge between `login`, `live` and `dress`.
 
 use vale_assets::Assets;
 use vale_config::Config;
@@ -73,15 +71,15 @@ pub fn map_name_for(cfg: &Config, map_id: u32) -> Result<String, String> {
         .ok_or_else(|| format!("map {map_id} not in Map.dbc"))
 }
 
-/// **Refuse before the socket** when the folder has not named an account or the
-/// environment has not supplied a password.
+/// Fails before any socket is opened when the folder names no account or the
+/// environment supplies no password.
 ///
-/// This project has been bitten twice by realmd's own refusal codes pointing the
-/// wrong way — `VERSION_INVALID` blamed the client build when the password had
-/// already passed, and `WOW_FAIL_UNKNOWN_ACCOUNT` blamed the credentials for a
-/// byte-count bug. An empty password produces one of those, and the cause is
-/// neither: it is a headless run with nowhere to have got one from. Saying so
-/// here costs one `if` and saves the whole dig.
+/// realmd's refusal codes can name the wrong cause. `VERSION_INVALID` has
+/// been returned when the password had already been accepted, and
+/// `WOW_FAIL_UNKNOWN_ACCOUNT` has been returned for a byte-count bug rather
+/// than bad credentials. An empty password produces one of those codes,
+/// although the actual cause is a headless run with no password source. This
+/// check reports that cause directly.
 pub fn check_credentials(cfg: &Config) -> Result<(), String> {
     if cfg.account.is_empty() {
         return Err(format!(
@@ -117,8 +115,8 @@ pub fn open_display_tables(
     use vale_assets::tables::dbc::{dbc_path, DisplayTables};
     let mut tables =
         DisplayTables::load(|table| assets.read(&dbc_path(table)).ok()).map_err(|e| e.to_string())?;
-    // …and the world map's one file, which is not a table — see
-    // `DisplayTables::load_zone_grids`.
+    // The world map's zone grid file is loaded too, although it is not a
+    // table; see `DisplayTables::load_zone_grids`.
     tables.load_zone_grids(|path| assets.read(path).ok());
     Ok(tables)
 }
@@ -136,8 +134,9 @@ pub fn open_assets(cfg: &Config) -> Result<Assets, String> {
 }
 
 
-/// `compression/alphaDepth/alphaType` straight out of the BLP header, for the
-/// summary above — this is the classification the decoder branches on.
+/// `compression/alphaDepth/alphaType` read from the BLP header, for the
+/// texture summaries the subcommands print. The decoder selects its decoding
+/// path by these values.
 pub fn describe_blp(buf: &[u8]) -> String {
     if buf.len() < 12 || &buf[0..4] != b"BLP2" {
         return "not-blp2".to_string();
@@ -151,12 +150,15 @@ pub fn describe_blp(buf: &[u8]) -> String {
     format!("{kind} alphaDepth={} alphaType={}", buf[9], buf[10])
 }
 
-/// **What a unit is holding, as the dressing rule wants it.**
+/// Converts what a unit is holding into the `Weapon` the dressing rule takes.
 ///
-/// Shared because `login` and `dress` both ask the same question of the same
-/// two fields and a second copy of the mapping is a second answer to "which
-/// hand is this in".
-pub fn held(item: vale_protocol::state::objects::HeldItem) -> vale_assets::tables::item::Weapon {
+/// Shared because `login` and `dress` both read the same two fields, and a
+/// second copy of the mapping could give a different answer for which hand an
+/// item is in.
+pub fn held(
+    item: vale_protocol::state::objects::HeldItem,
+    enchantments: [u32; 7],
+) -> vale_assets::tables::item::Weapon {
     vale_assets::tables::item::Weapon {
         display_id: item.display_id,
         class: item.class,
@@ -164,6 +166,7 @@ pub fn held(item: vale_protocol::state::objects::HeldItem) -> vale_assets::table
         inventory_type: item.inventory_type,
         sheath: item.sheath,
         material: item.material,
+        enchantments,
     }
 }
 

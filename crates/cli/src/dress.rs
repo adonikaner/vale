@@ -5,21 +5,22 @@ use vale_config::Config;
 
 /// Every player in view, dressed the way the renderer would dress them.
 ///
-/// **The one command that crosses the two halves of this client.** Everything
-/// else checks the archives against themselves — `vale item` walks the whole
-/// wardrobe, `vale char` the whole appearance table — and neither can say
-/// what happens to the *particular* character the server describes, whose gear
-/// is a server answer and whose body is a composite of both. A garment that
-/// resolves for a male body and not a female one, or a slot whose paint order
-/// puts it under something that hides it, is invisible to every offline check
-/// and shows up here as a component with no file beside one that has one.
+/// This is the only command that combines server data with archive data.
+/// The other checks compare the archives with themselves: `vale item` walks
+/// the whole wardrobe and `vale char` the whole appearance table. Neither can
+/// show what happens to a particular character the server describes, whose
+/// gear comes from the server and whose body is built from both sources. A
+/// garment that resolves for a male body and not a female one, or a slot
+/// whose paint order puts it under something that hides it, passes every
+/// offline check and appears here as a component with no file next to one
+/// that has a file.
 ///
-/// **It calls `vale_assets::look::dress`, which is the same function the renderer
-/// calls**, rather than reproducing the decisions. That is the whole value of
-/// the command: a check that reimplements what it checks reports success on the
-/// half it happens to share. While the dressing rule lived in the renderer this
-/// one had already fallen behind by NPC gear, drawn weapons and helmet hiding —
-/// so a Gadgetzan Bruiser with bare shoulders would have printed clean.
+/// It calls `vale_assets::look::dress`, the same function the renderer
+/// calls, rather than reproducing its decisions. A check that reimplements
+/// what it checks only tests the part the two copies share. When the
+/// dressing rule lived in the renderer, this command's copy lacked NPC gear,
+/// drawn weapons and helmet hiding, so a Gadgetzan Bruiser drawn with bare
+/// shoulders would have passed.
 pub fn cmd_dress(cfg: &Config, character: Option<&str>) -> Result<(), String> {
     use vale_assets::look::character::{Appearance, CharSections};
     use vale_assets::tables::dbc::dbc_path;
@@ -77,9 +78,9 @@ pub fn cmd_dress(cfg: &Config, character: Option<&str>) -> Result<(), String> {
         );
 
         // What the server says is on each visible slot, and what it resolved to.
-        // An entry with no template yet is the race being reported rather than
-        // hidden — the query is asynchronous and the renderer rebuilds when it
-        // lands.
+        // An entry with no template yet is printed rather than skipped: the
+        // query is asynchronous, and the renderer rebuilds when the answer
+        // arrives.
         let mut equipment: Vec<(u32, u32)> = Vec::new();
         for (slot, entry) in e.equipment().unwrap_or_default().into_iter().enumerate() {
             if entry == 0 {
@@ -100,15 +101,15 @@ pub fn cmd_dress(cfg: &Config, character: Option<&str>) -> Result<(), String> {
             }
         }
 
-        // **The buffs the unit is carrying, and what each of them is drawn as.**
+        // The auras on the unit, and the model each one is drawn with.
         //
-        // The one part of the spell chain that is a *condition* rather than an
-        // event, and therefore the one part no offline check can reach:
-        // `UNIT_FIELD_AURA` is a server answer and `stateKit` is an archive
-        // answer, so only a live session crosses them. A unit with auras and no
-        // model resolving is the ordinary case — most buffs are invisible — and
-        // an aura whose model is named but absent is the failure that draws
-        // nothing while looking like it worked.
+        // An aura is the part of the spell chain that is a state rather than
+        // an event, so no offline check can test it: `UNIT_FIELD_AURA` comes
+        // from the server and `stateKit` from the archive, and only a live
+        // session has both. A unit with auras and no resolved model is the
+        // normal case, because most buffs have no visual. An aura whose model
+        // is named but missing from the archive draws nothing and reports no
+        // error.
         let auras = e.auras();
         if !auras.is_empty() {
             println!("   auras: {}", auras.len());
@@ -131,10 +132,10 @@ pub fn cmd_dress(cfg: &Config, character: Option<&str>) -> Result<(), String> {
             }
         }
 
-        // **The renderer's own decision, made by the renderer's own function.**
-        // The display id is resolved first because that is what says whether the
-        // body ships a texture or has to be composed — a shapeshifted player is
-        // wearing a creature's skin, and this is where that shows.
+        // The dressing decision, made by the function the renderer uses.
+        // The display id is resolved first because it decides whether the
+        // body has its own texture or must be composed. A shapeshifted player
+        // has a creature's skin, and this is where that appears.
         let Some(display) = e.display_id().and_then(|id| tables.creature(id)) else {
             println!("   display id resolves to no model\n");
             continue;
@@ -145,36 +146,41 @@ pub fn cmd_dress(cfg: &Config, character: Option<&str>) -> Result<(), String> {
             &Wearer {
                 appearance: Some(look),
                 equipment: &equipment,
-                // The same join the renderer makes, through the same method:
-                // a creature's weapons are in its update fields and a player's
-                // are three item entries the server has answered for.
-                weapons: om.weapons_of(e).map(held),
+                // The same lookup the renderer makes, through the same method:
+                // a creature's weapons are in its update fields, and a
+                // player's are three item entries the server has answered
+                // queries for.
+                weapons: {
+                    let held_items = om.weapons_of(e);
+                    let enchantments = e.weapon_enchantments();
+                    std::array::from_fn(|hand| held(held_items[hand], enchantments[hand]))
+                },
                 sheath_state: e.sheath_state(),
             },
         );
 
-        // **What is in the hands, and where it currently hangs.** The wardrobe
+        // What is in the hands, and where it currently hangs. The wardrobe
         // above is checked against the archive; this is checked against the
-        // *sheath state*, which is the half no file can answer — a weapon on
-        // the wrong point is in range, resolves, and draws a sword through a
+        // sheath state, which no file records. A weapon on the wrong point
+        // has a valid point number, resolves, and draws a sword through a
         // guard's leg.
         for (slot, weapon) in om.weapons_of(e).iter().enumerate() {
             if weapon.display_id == 0 {
                 continue;
             }
-            // The sheath point's side is the hand's — see `item::sheath_point`,
-            // where the client's own `(sheathType, isMainHand)` table is
-            // transcribed. Printing it per slot is what shows a dual-wielder's
-            // two identical weapons landing on opposite hips.
+            // The sheath point's side follows the hand; see
+            // `item::sheath_point`, which maps `(sheathType, isMainHand)` to a
+            // point as the 1.12.1 client does. Printing it per slot shows a
+            // dual-wielder's two identical weapons hanging on opposite hips.
             let main_hand = slot == 0;
             let index = slot;
             let slot = ["main hand", "off hand", "ranged"][slot];
             let point = vale_assets::tables::item::sheath_point(weapon.sheath, main_hand);
-            // **And which blow it throws**, which is the other half of what a
-            // weapon is and the half a wrong subclass reading breaks silently:
-            // a dagger stabs, a fist weapon punches, and the off hand has a
-            // partition of its own. See `item::WeaponAnim`.
-            let family = vale_assets::tables::item::WeaponAnim::of(&held(*weapon));
+            // The attack animation the weapon uses. A wrong subclass reading
+            // changes it without any error: a dagger stabs, a fist weapon
+            // punches, and the off hand has its own set of animations. See
+            // `item::WeaponAnim`.
+            let family = vale_assets::tables::item::WeaponAnim::of(&held(*weapon, [0; 7]));
             let blow = if index == 1 {
                 format!("off {}", family.off_attack())
             } else {
@@ -193,12 +199,13 @@ pub fn cmd_dress(cfg: &Config, character: Option<&str>) -> Result<(), String> {
                 }
             );
         }
-        // **The sheath state here is the wire's, and the renderer's is not.**
-        // Said explicitly because this is the only check that crosses the
-        // server's answers with the archives, and it would otherwise report
-        // "everything sheathed" as a pass on a client that draws its weapon the
-        // moment it attacks — `CMSG_SETSHEATHED` is the client's own decision
-        // and this tool has no animation loop to reconcile against. See
+        // The sheath state printed here is the value from the update fields,
+        // not the renderer's. The output says so because this is the only
+        // check that combines server data with the archives, and without the
+        // note it would report "everything sheathed" as a pass for a client
+        // that draws its weapon when it attacks. The client decides the
+        // sheath state and sends it in `CMSG_SETSHEATHED`, and this tool has
+        // no animation loop to compare against. See
         // `vale_assets::look::sheath`.
         println!(
             "   sheath state {} ({}) — the wire's byte, which for a *player* is an echo of\n\
@@ -245,8 +252,9 @@ pub fn cmd_dress(cfg: &Config, character: Option<&str>) -> Result<(), String> {
         for layer in &skin.layers {
             println!("      {:?}  {}", layer.region, layer.path);
         }
-        // Every component the wardrobe *names*, against what resolved: the
-        // difference is the gender fallback failing, which is silent on screen.
+        // Every component the wardrobe names, compared with what resolved. A
+        // difference means the gender fallback failed, which shows no error on
+        // screen.
         let mut missing = 0;
         if let Some(items) = tables.items() {
             for item in &dressed.worn {
@@ -295,12 +303,12 @@ pub fn cmd_dress(cfg: &Config, character: Option<&str>) -> Result<(), String> {
                 println!("   geosets: the creature rule — this display id is not a character model")
             }
         }
-        // **The half `vale dress` could not see before.** Pauldrons, a helm
-        // and whatever is in the hands are separate models rather than paint, so
-        // no amount of checking the composite mentions them — and a wearer whose
-        // helm resolves to no file is exactly as invisible as a sleeve that
-        // does. The renderer additionally drops any point its M2 lacks, which is
-        // the one thing this cannot see without loading the model.
+        // Attached models. Pauldrons, a helm and whatever is in the hands are
+        // separate models rather than texture layers, so the composite does
+        // not list them, and a helm that resolves to no file is as invisible
+        // as a missing sleeve texture. The renderer also drops any attachment
+        // point its M2 lacks, which this command cannot detect without loading
+        // the model.
         if dressed.attachments.is_empty() {
             println!("   attached: none");
         } else {

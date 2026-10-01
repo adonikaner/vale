@@ -719,6 +719,16 @@ pub struct AttachedPart {
     /// The model's own colour and transparency tracks, shared with every other
     /// wearer of it. `None` when nothing on it fades.
     tints: Option<Arc<vale_assets::world::m2::M2Tints>>,
+    /// This model's own attachment points, which [`Self::nested`] hang from.
+    points: Arc<Vec<M2Attachment>>,
+    /// Models hung on this model's points rather than on the wearer's: an
+    /// item visual's glows on a weapon. [`animate_attachment`] poses them from
+    /// this model's pose. Their roots are children of [`Self::root`], so
+    /// despawning it removes them.
+    nested: Vec<AttachedPart>,
+    /// Models asked for on this model's points whose files are still loading.
+    /// Drained by `worn::hang_nested`.
+    pending: Vec<vale_assets::tables::itemvisual::ItemEffect>,
 }
 
 /// One drawn part whose `MeshTag` is its animated colour rather than its room.
@@ -801,7 +811,29 @@ impl AttachedPart {
             since: 0.0,
             tinted: Vec::new(),
             tints: None,
+            points: Arc::new(Vec::new()),
+            nested: Vec::new(),
+            pending: Vec::new(),
         }
+    }
+
+    /// Where this attachment sits in the wearer's space when the carrying
+    /// model has no skeleton: the point and the scale, with the bone in its
+    /// bind pose. A rigid weapon's points are in its model space already.
+    pub(crate) fn unposed(&self) -> Mat4 {
+        Mat4::from_translation(crate::render::axes::to_bevy(self.offset))
+            * Mat4::from_scale(Vec3::splat(self.scale))
+    }
+
+    /// Ask for `effects` to be hung on this model's own points as each loads.
+    /// An effect on a point this model does not carry is dropped, as a wearer
+    /// drops an item for a point it lacks. Replaces anything still pending.
+    pub(crate) fn want_nested(&mut self, effects: Vec<vale_assets::tables::itemvisual::ItemEffect>) {
+        let points = &self.points;
+        self.pending = effects
+            .into_iter()
+            .filter(|effect| points.iter().any(|p| p.id == effect.point))
+            .collect();
     }
 }
 
