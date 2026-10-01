@@ -816,11 +816,31 @@ fn draw(
                         wireframe: None,
                         particles: Some(&mut edited_world.particles),
                         lights: Some(&mut editing.lights),
+                        // The item names and the item picker need the
+                        // database; without one an item column is its
+                        // number.
+                        quests: playing
+                            .server
+                            .resolve()
+                            .is_some()
+                            .then_some(&mut editing.quests),
                         hour: showing_hour,
                     },
                     &mut editing.storyboard,
                     &mut editing.stage,
                     &mut editing.lab,
+                );
+                // The reference picker, which an item column of a client
+                // table opens: the quest form's dialog, writing into the
+                // table's field.
+                quests::picker(
+                    ui.ctx(),
+                    session,
+                    &mut editing.quests,
+                    &assets,
+                    &mut editing.thumbnails,
+                    None,
+                    time.elapsed_secs_f64(),
                 );
             });
     }
@@ -1330,8 +1350,13 @@ fn draw(
     if let Some((table, id)) = row {
         if session.open_table(&assets, table) && editing.browser.follow(session, table, id) {
             editing.browser.followed_in = true;
-            *tool = Tool::Spells;
+            *tool = Tool::for_table(table);
         }
+    }
+    // A part of a workspace chosen on the strip at the head of its list.
+    let part = editing.items.switch_to.take().or_else(|| editing.browser.switch_to.take());
+    if let Some(part) = part {
+        *tool = part;
     }
     let quest = editing.items.show_quest.take().or_else(|| editing.quests.show_quest.take());
     if let Some(entry) = quest {

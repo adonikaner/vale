@@ -489,6 +489,9 @@ pub struct Items {
     /// A quest that a reference on the form was clicked through to, which
     /// opens the quest workspace.
     pub show_quest: Option<u32>,
+    /// A part of the Items workspace the strip at the head of the list asks
+    /// the shell to switch to, on [`Self::show_row`]'s terms.
+    pub switch_to: Option<super::Tool>,
 }
 
 impl Default for Items {
@@ -530,6 +533,7 @@ impl Default for Items {
             seeded: false,
             show_row: None,
             show_quest: None,
+            switch_to: None,
         }
     }
 }

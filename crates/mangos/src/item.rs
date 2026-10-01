@@ -46,7 +46,7 @@
 //!
 //! `.reload item_template` is different and it is different in the one way that
 //! matters. `HandleReloadItemTemplate` calls `ObjectMgr::LoadItemPrototypes`,
-//! which **clears the whole map** before it reads (`ObjectMgr.cpp:3792`), and
+//! which clears the whole map before it reads (`ObjectMgr.cpp:3792`), and
 //! `Item::GetProto` is a lookup by entry on every call
 //! (`Item.cpp:560`) rather than a pointer held from when the item was created.
 //! So an edited row is live for every item already in a bag, in the world and
@@ -66,7 +66,7 @@
 //! when there is none: `Player::_LoadInventory` (`Player.cpp:16811`), the
 //! mailed items (`MasterPlayer.cpp:238`), `Item::LoadLootFromDB`
 //! (`Item.cpp:534`) and the auction house (`AuctionHouseMgr.cpp:373`). So a
-//! removed item is **deleted from every character who carries it** on the next
+//! removed item is deleted from every character who carries it on the next
 //! start, which is what removing an item means and is said on the button.
 //!
 //! [`can_live`] therefore allows a removal, [`reload_is_safe`] is what an apply
@@ -85,8 +85,8 @@
 //! of it, and one `UPDATE` per entry of [`REFERENCES`].
 //!
 //! vmangos has no foreign keys and no cascade, so [`REFERENCES`] is the cascade:
-//! every column of the world database that names an item by entry. **What it
-//! cannot reach is stated rather than hidden**: the `characters` database
+//! every column of the world database that names an item by entry. What it
+//! cannot reach is stated rather than hidden: the `characters` database
 //! (`item_instance`, `character_inventory`, the mail and auction tables), which
 //! is another connection, and `Spell.dbc`'s reagent and created-item fields,
 //! which are a client file. A copy of a moved item that a character already
@@ -278,7 +278,7 @@ pub const SUBCLASS_PERMANENT: [Value; 1] = [Value { value: 0, name: "Permanent" 
 /// `ItemSubclassJunk`.
 pub const SUBCLASS_JUNK: [Value; 1] = [Value { value: 0, name: "Junk" }];
 
-/// **Which subclass list applies to a class** — see [`Kind::Subclass`].
+/// Which subclass list applies to a class — see [`Kind::Subclass`].
 ///
 /// `MaxItemSubclassValues` (`ItemPrototype.h:357`) is vmangos' own version of
 /// this, as a count per class; these are the same lists with their names on.
@@ -306,7 +306,7 @@ pub fn subclasses(class: u32) -> &'static [Value] {
     }
 }
 
-/// `InventoryType`, from `ItemPrototype.h:100`. **Where it is worn**, which is
+/// `InventoryType`, from `ItemPrototype.h:100`. Where it is worn, which is
 /// also what decides the slot its display id's models hang from — see
 /// `vale_assets::tables::item::Slot::from_inventory_type`.
 pub const INVENTORY_TYPES: [Value; 29] = [
@@ -351,8 +351,8 @@ pub const BONDING: [Value; 6] = [
     Value { value: 5, name: "Quest item (unused)" },
 ];
 
-/// `SheathTypes`, from `SharedDefines.h:215`. **Where the weapon hangs while it
-/// is not drawn**, which is a property of the item and not of the slot — see
+/// `SheathTypes`, from `SharedDefines.h:215`. Where the weapon hangs while it
+/// is not drawn, which is a property of the item and not of the slot — see
 /// `vale_assets::look::sheath`, which maps it to an attachment point.
 pub const SHEATH_TYPES: [Value; 8] = [
     Value { value: 0, name: "None" },
@@ -382,8 +382,8 @@ pub const STAT_TYPES: [Value; 8] = [
     Value { value: 2, name: "unused in 1.12" },
 ];
 
-/// `ItemSpelltriggerType`, from `ItemPrototype.h:40`. **How an item's spell is
-/// set off**, which is the difference between a potion and a trinket.
+/// `ItemSpelltriggerType`, from `ItemPrototype.h:40`. How an item's spell is
+/// set off, which is the difference between a potion and a trinket.
 pub const SPELL_TRIGGERS: [Value; 3] = [
     Value { value: 0, name: "On use" },
     Value { value: 1, name: "On equip" },
@@ -403,7 +403,7 @@ pub const DAMAGE_SCHOOLS: [Value; 7] = [
     Value { value: 6, name: "Arcane" },
 ];
 
-/// `BagFamily`, from `ItemPrototype.h:86`. **What a bag may hold**, and on an
+/// `BagFamily`, from `ItemPrototype.h:86`. What a bag may hold, and on an
 /// ordinary item what kind of bag it will go in.
 pub const BAG_FAMILIES: [Value; 10] = [
     Value { value: 0, name: "Any bag" },
@@ -450,7 +450,7 @@ pub const EXTRA_FLAGS: [Bit; 3] = [
     Bit { bit: 0x04, name: "NOT_OBTAINABLE", about: "never obtainable in vanilla" },
 ];
 
-/// **Who may equip it**, as a class mask. `Classes` from `SharedDefines.h`, as
+/// Who may equip it, as a class mask. `Classes` from `SharedDefines.h`, as
 /// bits: the value stored is `1 << (class - 1)`, and `-1` is everybody.
 pub const CLASS_MASK: [Bit; 9] = [
     Bit { bit: 0x001, name: "Warrior", about: "" },
@@ -489,7 +489,7 @@ pub const REPUTATION_RANKS: [Value; 8] = [
     Value { value: 7, name: "Exalted" },
 ];
 
-/// **What a pet will eat**, as a mask of `CreatureFamily.dbc`'s own diet bits —
+/// What a pet will eat, as a mask of `CreatureFamily.dbc`'s own diet bits —
 /// which is the same mask `vale pet` decodes from the other side. A hunter's
 /// pet eats an item when `food_type` and its family's diet share a bit.
 pub const FOOD_TYPES: [Value; 9] = [
@@ -504,7 +504,7 @@ pub const FOOD_TYPES: [Value; 9] = [
     Value { value: 8, name: "Raw fish" },
 ];
 
-/// **The parchment a readable item is drawn on** — a row of
+/// The parchment a readable item is drawn on — a row of
 /// `PageTextMaterial.dbc`, which is what the client looks the background up in.
 pub const PAGE_MATERIALS: [Value; 5] = [
     Value { value: 0, name: "None" },
@@ -514,7 +514,7 @@ pub const PAGE_MATERIALS: [Value; 5] = [
     Value { value: 4, name: "Silver" },
 ];
 
-/// **What a readable item is written in** — a row of `Languages.dbc`. `0` is
+/// What a readable item is written in — a row of `Languages.dbc`. `0` is
 /// the universal tongue, which is what every ordinary book and letter uses.
 pub const LANGUAGES: [Value; 10] = [
     Value { value: 0, name: "Universal" },
@@ -529,7 +529,7 @@ pub const LANGUAGES: [Value; 10] = [
     Value { value: 11, name: "Draconic" },
 ];
 
-/// **What the item is made of**, as `ItemPrototype.h:484` states it: a row of
+/// What the item is made of, as `ItemPrototype.h:484` states it: a row of
 /// `Material.dbc`. It is what the client picks a pick-up and put-down sound by
 /// when the display row names no sound group of its own.
 ///
@@ -553,7 +553,7 @@ pub const MATERIALS: [Value; 10] = [
 // The table
 // ---------------------------------------------------------------------------
 
-/// **`item_template`'s 129 columns**, in the order
+/// `item_template`'s 129 columns, in the order
 /// `ObjectMgr::LoadItemPrototypes` selects them (`ObjectMgr.cpp:3794`).
 ///
 /// `patch` is not among them for the reason `creature_template`'s is not: it is
@@ -676,7 +676,7 @@ pub const TEMPLATE_COLUMNS: [Column; 129] = [
     Column { name: "material", kind: Kind::Choice(&MATERIALS), group: Group::Appearance, about: "Material.dbc id: what it sounds like when picked up" },
     Column { name: "sheath", kind: Kind::Choice(&SHEATH_TYPES), group: Group::Appearance, about: "where the weapon hangs while it is not drawn" },
     Column { name: "random_property", kind: Kind::Unsigned, group: Group::Loot, about: "ItemRandomProperties.dbc id: the 'of the Bear' suffix table" },
-    Column { name: "set_id", kind: Kind::Unsigned, group: Group::Stats, about: "ItemSet.dbc id: which set it belongs to" },
+    Column { name: "set_id", kind: Kind::Ref("ItemSet"), group: Group::Stats, about: "ItemSet.dbc id: which set it belongs to" },
     Column { name: "max_durability", kind: Kind::Unsigned, group: Group::Stats, about: "how much it takes before it breaks; 0 never breaks" },
     Column { name: "area_bound", kind: Kind::Ref("AreaTable"), group: Group::Requirements, about: "AreaTable.dbc id it only works in" },
     Column { name: "map_bound", kind: Kind::Ref("Map"), group: Group::Requirements, about: "Map.dbc id it only works on" },
@@ -711,17 +711,16 @@ pub fn template_key(entry: u32, patch: u32) -> Key {
     Key::two(("entry", entry as u64), ("patch", patch as u64))
 }
 
-/// **Where an item this project creates gets its entry from.**
+/// Where an item this project creates gets its entry from.
 ///
 /// `item_template.entry` is `mediumint unsigned`, so the ceiling is
 /// [`MAX_ENTRY`] — the same number a creature guid has, arrived at from the
 /// column's own width rather than from a packed object guid.
 ///
-/// **Measured rather than assumed, and the measurement was a surprise.** The
-/// reference install's shipped items stop in the tens of thousands, but its
-/// highest `entry` is **1,000,006**: somebody's own items are already sitting
-/// at a round million, which is exactly where a first draft of this constant
-/// would have put its own. So the base is two million, and
+/// The base is measured. The reference install's shipped items stop in the
+/// tens of thousands, but its highest `entry` is 1,000,006: custom items
+/// already sit at a round million, where a base of one million would have
+/// put this project's. So the base is two million, and
 /// `crate::item::MAX_ENTRY_QUERY` is read beside it — the base is a floor and
 /// the table's own maximum is the other half, because a reserved range means
 /// nothing if the range is already in use.
@@ -730,7 +729,7 @@ pub const RESERVED_ENTRY_BASE: u32 = 2_000_000;
 /// …and the highest entry the column can hold — `mediumint unsigned`.
 pub const MAX_ENTRY: u32 = 0x00FF_FFFF;
 
-/// **Every column of a new item**, as the values a row created here starts
+/// Every column of a new item, as the values a row created here starts
 /// from.
 ///
 /// The `entry` and the `patch` are not among them: they are the key, and
@@ -742,19 +741,19 @@ pub const MAX_ENTRY: u32 = 0x00FF_FFFF;
 /// The values are the ones that produce an item a character can actually be
 /// given, which is what "new item" has to mean:
 ///
-/// * `class` **15** and `subclass` **0**, which is Junk — the one class with no
+/// * `class` 15 and `subclass` 0, which is Junk — the one class with no
 ///   requirement of any kind attached to it. A row of zeros is class 0,
 ///   *Consumable*, whose tooltip says "Use:" and whose spell list is empty.
-/// * `quality` **1** and `display_id` **0**. Zero is the one display id
+/// * `quality` 1 and `display_id` 0. Zero is the one display id
 ///   `vale_assets::tables::item` documents as meaning *nothing worn*, so a
-///   new item draws the empty-slot icon until one is picked, which is the
-///   honest picture of a row that has not chosen an appearance yet.
-/// * `stackable` **1** and `buy_count` **1**. The DDL's `buy_count` default is
+///   new item draws the empty-slot icon until one is picked, which is what
+///   a row with no appearance chosen looks like.
+/// * `stackable` 1 and `buy_count` 1. The DDL's `buy_count` default is
 ///   1 and its `stackable` default is 1; zero in either is an item a vendor
 ///   sells none of and a bag square that holds none of.
-/// * `max_durability` **0**, which is "never breaks" rather than "breaks at
+/// * `max_durability` 0, which is "never breaks" rather than "breaks at
 ///   once".
-/// * `allowable_class` and `allowable_race` **-1**, which is everybody.
+/// * `allowable_class` and `allowable_race` -1, which is everybody.
 pub fn new_item(name: &str) -> Vec<Assignment> {
     let mut out: Vec<(&'static str, String)> = vec![
         ("class", "15".to_string()),
@@ -791,13 +790,13 @@ pub fn new_item(name: &str) -> Vec<Assignment> {
         .collect()
 }
 
-/// **The statements a save emits for one row this project claims.**
+/// The statements a save emits for one row this project claims.
 ///
 /// One `UPDATE` for a row it edits and a `DELETE`/`INSERT` pair for a row it
 /// creates — the pair for [`crate::creature::statements`]' reason, which is
 /// that applying twice then means the same as applying once.
 ///
-/// **A removal is [`delete_statements`]**: every version of the item and the
+/// A removal is [`delete_statements`]: every version of the item and the
 /// rows of [`DEPENDENTS`]. It is safe on a restart and not on a reload — see
 /// the module comment and [`reload_is_safe`].
 pub fn statements(table: &str, key: &Key, life: Life, changes: &[Assignment]) -> Vec<String> {
@@ -820,7 +819,7 @@ pub fn statements(table: &str, key: &Key, life: Life, changes: &[Assignment]) ->
     }
 }
 
-/// **The rows removed with an item**, as the column each names it in.
+/// The rows removed with an item, as the column each names it in.
 ///
 /// Two kinds, and both are rows whose only subject is the item: what describes
 /// it (`locales_item`, `item_required_target`, `forbidden_items`, and
@@ -831,7 +830,7 @@ pub fn statements(table: &str, key: &Key, life: Life, changes: &[Assignment]) ->
 /// skips it, so leaving them would be a start-up log of every place the item
 /// used to be.
 ///
-/// **Left alone**, because each is a column of a row about something else:
+/// Left alone, because each is a column of a row about something else:
 /// `creature_equip_template`'s three items, `player_factionchange_items`'
 /// pairs, and `quest_template`'s and `spell_template`'s item columns. A quest
 /// that asks for or rewards a removed item still names it, and the server
@@ -861,7 +860,7 @@ pub const DEPENDENTS: [crate::row::Reference; 18] = {
     ]
 };
 
-/// **Everything a removed item takes with it**, as statements: every version
+/// Everything a removed item takes with it, as statements: every version
 /// of the template, with the patch left out of the `WHERE` so the server does
 /// not fall back to an older one, and then each of [`DEPENDENTS`].
 pub fn delete_statements(entry: u64) -> Vec<String> {
@@ -873,14 +872,14 @@ pub fn delete_statements(entry: u64) -> Vec<String> {
     out
 }
 
-/// **Whether `.reload item_template` may follow an apply of these rows.** Not
+/// Whether `.reload item_template` may follow an apply of these rows. Not
 /// when any of them removes an item — see the module comment. The server has
 /// to be restarted instead, and until it is, it still holds the prototype.
 pub fn reload_is_safe<'a>(lives: impl IntoIterator<Item = &'a Life>) -> bool {
     lives.into_iter().all(|life| *life != Life::Delete)
 }
 
-/// **Every column of the world database that names an item by entry**, read
+/// Every column of the world database that names an item by entry, read
 /// off the reference install's `information_schema` and checked against the
 /// loaders that read each one.
 ///
@@ -949,7 +948,7 @@ pub const REFERENCES: [crate::row::Reference; 55] = {
     ]
 };
 
-/// **Whether this table can hold a row that is created or removed at all.**
+/// Whether this table can hold a row that is created or removed at all.
 ///
 /// Both, for `item_template`. A removal is written only as the whole item —
 /// see [`delete_statements`] — and is safe on a restart only: see
@@ -965,7 +964,7 @@ pub fn can_live(table: &str, life: Life) -> bool {
 // The queries
 // ---------------------------------------------------------------------------
 
-/// **The columns a list row, an icon and a heading need**, as the `SELECT` the
+/// The columns a list row, an icon and a heading need, as the `SELECT` the
 /// browse and search queries share.
 ///
 /// Not `*`: the whole table is 129 columns over 24,000 rows, and the browser
@@ -990,7 +989,7 @@ fn winning_join(wow_patch: u32) -> String {
     )
 }
 
-/// **Every item the server would load**, briefly — what the browser reads once.
+/// Every item the server would load, briefly — what the browser reads once.
 pub fn all_items_query(wow_patch: u32) -> String {
     format!(
         "SELECT {BRIEF} {} ORDER BY t.`entry`",
@@ -1006,7 +1005,7 @@ pub fn brief_query(entry: u32, wow_patch: u32) -> String {
     )
 }
 
-/// **The whole row the server would load for one entry**, with its `patch`.
+/// The whole row the server would load for one entry, with its `patch`.
 ///
 /// The `patch` is selected rather than assumed, because it is half the key an
 /// edit is written under — see the module comment.
@@ -1027,7 +1026,7 @@ pub fn row_query(table: &str, key: &Key) -> String {
     )
 }
 
-/// **Whether a row is already there**, which is what an apply asks before it
+/// Whether a row is already there, which is what an apply asks before it
 /// creates one — see [`crate::creature::exists_query`], where the reason is.
 pub fn exists_query(table: &str, key: &Key) -> String {
     format!(
@@ -1037,11 +1036,11 @@ pub fn exists_query(table: &str, key: &Key) -> String {
     )
 }
 
-/// **The highest entry the table holds**, which is where a new one is numbered
+/// The highest entry the table holds, which is where a new one is numbered
 /// from when the reserved base is already in use.
 pub const MAX_ENTRY_QUERY: &str = "SELECT MAX(`entry`) AS `entry` FROM `item_template`";
 
-/// **Which items point at a display id**, for the picker's own question: is
+/// Which items point at a display id, for the picker's own question: is
 /// this appearance already in use, and by what.
 ///
 /// Capped, because a common appearance is worn by hundreds of rows and the
@@ -1058,7 +1057,7 @@ pub fn users_of_display_query(display_id: u32, wow_patch: u32, limit: usize) -> 
 mod tests {
     use super::*;
 
-    /// **The schema is `LoadItemPrototypes`' `SELECT`, column for column.**
+    /// The schema is `LoadItemPrototypes`' `SELECT`, column for column.
     ///
     /// The list in the test is the query at `ObjectMgr.cpp:3794` with the
     /// backticks taken off, and it is the check that catches the one way this
@@ -1097,7 +1096,7 @@ mod tests {
         assert_eq!(ours, SELECTED.to_vec());
     }
 
-    /// **`entry` is the only key column in the list**, and `patch` is not in it
+    /// `entry` is the only key column in the list, and `patch` is not in it
     /// at all: it is the other half of the key and [`template_key`] is where it
     /// goes. A `patch` among the columns would be a column an `INSERT` named
     /// twice.
@@ -1115,7 +1114,7 @@ mod tests {
         assert_eq!(key.where_clause(), "`entry` = 2589 AND `patch` = 0");
     }
 
-    /// **A new item names every column the table has**, which is what the
+    /// A new item names every column the table has, which is what the
     /// editor's plan refuses an `INSERT` without.
     #[test]
     fn a_new_item_names_every_editable_column() {
@@ -1147,7 +1146,7 @@ mod tests {
         assert_eq!(of("name"), "'Test Item'");
     }
 
-    /// **A removal names the entry alone**, so every content-patch version
+    /// A removal names the entry alone, so every content-patch version
     /// goes and the server cannot fall back to an older one, and it takes the
     /// rows that hand the item out with it.
     #[test]
@@ -1165,7 +1164,7 @@ mod tests {
         assert!(!sql.iter().any(|statement| statement.contains("quest_template")));
     }
 
-    /// **Every dependent is a column the cascade list already names**, which is
+    /// Every dependent is a column the cascade list already names, which is
     /// the list that was checked against the reference install's
     /// `information_schema`.
     #[test]
@@ -1182,7 +1181,7 @@ mod tests {
         }
     }
 
-    /// **A reload may not follow a removal**, and may follow anything else.
+    /// A reload may not follow a removal, and may follow anything else.
     #[test]
     fn a_removal_forbids_the_reload() {
         assert!(reload_is_safe(&[Life::Update, Life::Insert]));
@@ -1225,8 +1224,8 @@ mod tests {
         }
     }
 
-    /// **The subclass list is the class's**, which is the whole of why
-    /// [`Kind::Subclass`] exists: 0 is three different words in three classes.
+    /// The subclass list is the class's, which is why [`Kind::Subclass`]
+    /// exists: 0 is three different words in three classes.
     #[test]
     fn a_subclass_is_read_through_its_class() {
         assert_eq!(value_word(subclasses(2), 0), "Axe (one-hand)");

@@ -17,6 +17,15 @@
 //! for data, because a floating panel of loose controls looks like a debug
 //! window.
 //!
+//! ## Three workspaces draw this panel
+//!
+//! Spells, with the spell chain and the skill tables as two rows of tabs.
+//! Sets, the `ItemSet` table, which is a part of the Items workspace: the
+//! strip at the head of the list switches to the item list and back
+//! (`super::rail::parts`). Tables, whose list is every file of
+//! `DBFilesClient\` until one is chosen ([`table_list`]), and which then
+//! draws that table like any other, with a link back to the list.
+//!
 //! ## The schema decides each field's widget
 //!
 //! `vale_assets::tables::schema` says what each column is: a number, a mask, a
@@ -25,7 +34,18 @@
 //! another table with a schema, it draws that table.
 //!
 //! The schema exists because a table of 173 unnamed numeric columns cannot be
-//! edited safely.
+//! edited safely. A table with no schema is still drawn and edited
+//! ([`unschemad`]): every field as its number, with a float box where the
+//! four bytes read as a float and a text box where they are the offset of a
+//! string.
+//!
+//! ## An item column is named by the database
+//!
+//! `ItemSet`'s seventeen item columns hold `item_template` entries, and 1.12
+//! ships no item table, so the name beside one and the picker behind its `…`
+//! are the item form's: the quest tool's name cache and reference picker
+//! (`super::reference`, `super::quests::picker`). With no world database the
+//! column is its number.
 //!
 //! ## How a reference column is drawn
 //!
@@ -169,6 +189,10 @@ pub struct Workspace<'a> {
     /// in the world (see [`crate::tools::lights`]). `None` when the caller has
     /// none, which is the case in the inspector.
     pub lights: Option<&'a mut crate::tools::lights::Lights>,
+    /// The quest tool's state, which holds the item name cache and the
+    /// reference picker an item column uses. `None` when there is no world
+    /// database to name an item from, and in the inspector.
+    pub quests: Option<&'a mut crate::tools::quests::Quests>,
     /// The time of day the world is showing, in half-minutes past midnight, so
     /// a band's strip can mark the viewport's current time on it.
     /// `vale_assets::tables::light::NOON` when the caller has no clock.
@@ -180,9 +204,23 @@ impl Workspace<'_> {
     ///
     /// A spell's picture is its icon: `SpellIcon` maps an id to a path, and
     /// the spell's icon id is looked up there by `icon_by_id`. A `SpellIcon`
-    /// row's picture is its own path.
-    fn icon_of(&self, record: usize) -> Option<String> {
+    /// row's picture is its own path. A skill line's is the icon on its
+    /// spellbook tab, and an ability's is its spell's.
+    fn icon_of(&mut self, record: usize) -> Option<String> {
         match self.browser.table.as_str() {
+            "SkillLine" => {
+                let icon_id = self.session.table("SkillLine")?.u32_at(record, 21)?;
+                self.icon_by_id(icon_id)
+            }
+            "SkillLineAbility" => {
+                let spell = self.session.table("SkillLineAbility")?.u32_at(record, 2)?;
+                let at = self.browser.record_of(self.session, "Spell", spell)?;
+                let icon_id = self
+                    .session
+                    .table("Spell")?
+                    .u32_at(at, schema::SPELL_ICON_FIELD)?;
+                self.icon_by_id(icon_id)
+            }
             "Spell" => {
                 let table = self.session.table("Spell")?;
                 let icon_id = table.u32_at(record, schema::SPELL_ICON_FIELD)?;
@@ -323,6 +361,23 @@ pub fn draw(
     lab: &mut crate::lab::Lab,
 ) {
     let table_name = work.browser.table.clone();
+    // The Tables workspace with no table chosen: the list is the tables.
+    if table_name.is_empty() {
+        let all = ui.available_rect_before_wrap();
+        ui.painter().rect_filled(all, 0.0, theme::SHELL);
+        browser_panel(ui, |ui| table_list(ui, &mut work));
+        ui.add_space(24.0);
+        ui.vertical_centered(|ui| {
+            ui.label(
+                egui::RichText::new("Choose a table on the left.")
+                    .size(14.0)
+                    .color(theme::INK_DIM),
+            );
+        });
+        stage.showing = None;
+        stage.lab = false;
+        return;
+    }
     if work.session.table(&table_name).is_none() {
         ui.add_space(12.0);
         ui.label(egui::RichText::new(format!("opening {table_name}.dbc…")).color(theme::INK_DIM));
@@ -347,15 +402,7 @@ pub fn draw(
     // drawn in the inspector instead (see [`light_inspector`]), so this
     // function has one layout, and the list keeps the width that 22,360 rows
     // need.
-    egui::Panel::left("data-browser")
-        .default_size(BROWSER_WIDTH)
-        .min_size(220.0)
-        .max_size(520.0)
-        .resizable(true)
-        .frame(egui::Frame::new().fill(theme::PANEL).inner_margin(8.0))
-        .show(ui, |ui| {
-            list(ui, &mut work);
-        });
+    browser_panel(ui, |ui| list(ui, &mut work));
     // Leave a gap between the list and the form. The panel's margin ends at its
     // edge, so without a gap `< back` and the section heads touch the list's
     // border. The gap is a child `Ui` inset by [`FORM_GAP`] rather than a
@@ -368,8 +415,159 @@ pub fn draw(
     form(&mut inner, &mut work, board, stage, lab);
 }
 
-/// The left column: the chain's tabs, a search box, and the rows that match.
+/// The docked panel the list is drawn in, for the rows of a table and for
+/// the Tables workspace's list of tables.
+fn browser_panel(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
+    egui::Panel::left("data-browser")
+        .default_size(BROWSER_WIDTH)
+        .min_size(220.0)
+        .max_size(520.0)
+        .resizable(true)
+        .frame(egui::Frame::new().fill(theme::PANEL).inner_margin(8.0))
+        .show(ui, contents);
+}
+
+/// What one file of `DBFilesClient\` is to the editor and to the server, for
+/// its row in the Tables workspace's list.
+fn table_about(name: &str) -> String {
+    let fields = match schema::for_table(name) {
+        Some(_) => "named fields",
+        None => "numbered fields",
+    };
+    let rows = crate::server::rows::MAPPED
+        .iter()
+        .find(|(dbc, _)| *dbc == name)
+        .map(|(_, table)| *table);
+    match (rows, vale_mangos::datadir::server_reads_dbc(name)) {
+        (Some(table), _) => format!("{fields} · the server reads {table}"),
+        (None, true) => format!("{fields} · the server reads the file"),
+        (None, false) => format!("{fields} · not sent to the server"),
+    }
+}
+
+/// The Tables workspace's list before a table is chosen: every file of
+/// `DBFilesClient\` the archives list, searched by name.
+///
+/// A row says how the table is drawn (named fields where a schema describes
+/// it, numbered fields where none does) and how this editor sends an edit to
+/// the server: as rows of a table, as the copied file, or not at all. The
+/// last is a statement about the editor: vmangos reads some of those tables
+/// from SQL tables this editor does not write, `AreaTable` among them. The mark on the
+/// right says the project carries an edited copy.
+fn table_list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
+    if work.browser.table_names.is_none() {
+        let mut names: Vec<String> = work
+            .assets
+            .with_archive(|chain| Ok(chain.list_prefix("DBFilesClient\\")))
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|path| {
+                let file = tables::basename(path);
+                let stem = file.get(..file.len().checked_sub(4)?)?;
+                file[stem.len()..]
+                    .eq_ignore_ascii_case(".dbc")
+                    .then(|| schema::table_name(stem).to_string())
+            })
+            .collect();
+        names.sort_by_key(|name| name.to_ascii_lowercase());
+        names.dedup();
+        work.browser.table_names = Some(names);
+    }
+    let names = work.browser.table_names.clone().unwrap_or_default();
+
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("Tables")
+                .strong()
+                .size(15.0)
+                .color(theme::INK),
+        );
+        ui.label(theme::number(format!("{} files", names.len())));
+    })
+    .response
+    .on_hover_text(
+        "Every file of DBFilesClient\\ in the archives. A table with a schema opens as \
+         named fields; any other opens as numbered fields.",
+    );
+    ui.add_space(4.0);
+    let width = ui.available_width();
+    ui.add(
+        egui::TextEdit::singleline(&mut work.browser.table_query)
+            .hint_text("table name")
+            .desired_width(width),
+    );
+    ui.add_space(4.0);
+    let query = work.browser.table_query.trim().to_ascii_lowercase();
+    let matches: Vec<&String> = names
+        .iter()
+        .filter(|name| query.is_empty() || name.to_ascii_lowercase().contains(&query))
+        .collect();
+    ui.label(
+        egui::RichText::new(format!("{} shown", matches.len()))
+            .small()
+            .color(theme::INK_FAINT),
+    );
+    ui.add_space(4.0);
+
+    let mut chosen: Option<String> = None;
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show_rows(ui, ROW_HEIGHT, matches.len(), |ui, range| {
+            for at in range {
+                let name = matches[at];
+                let carried = work
+                    .session
+                    .project
+                    .path_for(&vale_assets::tables::dbc::dbc_path(name))
+                    .is_some_and(|disk| disk.exists());
+                let mark = match (work.session.unsaved_tables.contains(name), carried) {
+                    (true, _) => "unsaved",
+                    (false, true) => "edited",
+                    (false, false) => "",
+                };
+                let shape = theme::list_row(
+                    ui,
+                    theme::ListRow {
+                        title: name,
+                        sub: &table_about(name),
+                        trailing: mark,
+                        tint: theme::INK,
+                        picture: false,
+                    },
+                    false,
+                );
+                if shape.response.clicked() {
+                    chosen = Some(name.clone());
+                }
+            }
+        });
+    if let Some(name) = chosen {
+        work.browser.look_at(&name);
+    }
+}
+
+/// The left column: the workspace's parts and the chain's tabs, a search box,
+/// and the rows that match.
 fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
+    // The parts of a workspace of several tools, which for this panel is
+    // Items and Sets. The shell switches after the frame is drawn.
+    if let Some(part) = super::rail::parts(ui, work.tool) {
+        work.browser.switch_to = Some(part);
+    }
+    // The Tables workspace reaches every table from its list, so its way
+    // to another table is back to that list.
+    if work.tool == crate::tools::Tool::Tables
+        && ui
+            .add(egui::Link::new(
+                egui::RichText::new("\u{2039} Tables").color(theme::ACCENT),
+            ))
+            .on_hover_text("Back to the list of tables.")
+            .clicked()
+    {
+        work.browser.look_at(tables::ANY);
+        work.browser.back.clear();
+        return;
+    }
     // The chain's tables as tabs, like the reference tool's sidebar. A spell,
     // its visual, its kits and its effects are four tables a person switches
     // between often, so they need a way in other than following a reference.
@@ -383,15 +581,20 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         .find(|(_, table)| *table == work.browser.table)
         .map(|(_, table)| *table)
         .unwrap_or("");
+    // A single tab is not drawn, and more than a row's worth are drawn in
+    // rows: the spell workspace's chain, then its skill tables.
     let mut current = before;
-    ui.allocate_ui(egui::vec2(ui.available_width(), 24.0), |ui| {
-        let options: Vec<(&str, &'static str)> = tabs.to_vec();
-        theme::segmented(ui, &mut current, &options, |a, b| a == b);
-    });
+    if tabs.len() > 1 {
+        for row in tabs.chunks(tables::TAB_ROW) {
+            ui.allocate_ui(egui::vec2(ui.available_width(), 24.0), |ui| {
+                theme::segmented(ui, &mut current, row, |a, b| a == b);
+            });
+        }
+        ui.add_space(6.0);
+    }
     if current != before {
         work.browser.look_at(current);
     }
-    ui.add_space(6.0);
 
     let table_name = work.browser.table.clone();
     let count = work
@@ -431,7 +634,10 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     );
     ui.add_space(4.0);
 
-    let pictured = matches!(table_name.as_str(), "Spell" | "SpellIcon");
+    let pictured = matches!(
+        table_name.as_str(),
+        "Spell" | "SpellIcon" | "SkillLine" | "SkillLineAbility"
+    );
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show_rows(ui, ROW_HEIGHT, matches.len(), |ui, range| {
@@ -1587,6 +1793,7 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                 ui.label(theme::number(format!("0x{raw:06X}")).color(theme::INK_DIM));
             }
             Kind::Reference(points_at) => reference(ui, work, record, column, points_at, raw),
+            Kind::Item => item_cell(ui, work, record, column, raw),
             Kind::Text | Kind::Locale(_) => {
                 let wide = column.name.contains("Description");
                 let text = work
@@ -1661,6 +1868,59 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
             }
         }
     });
+}
+
+/// An item column: the entry, a picker over `item_template`, and the item's
+/// name as a link to the item workspace.
+///
+/// The name and the picker are the item form's, read from the world
+/// database through the quest tool's cache. Without a database the entry is
+/// drawn alone, since nothing in the archives names an item.
+fn item_cell(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column: &Column, raw: u32) {
+    use crate::tools::quests::{PickFor, Picker, Target};
+    let mut value = raw;
+    if number(ui, &mut value).changed() {
+        write(work, record, column, value);
+    }
+    let table = work.browser.table.clone();
+    let Some(quests) = work.quests.as_deref_mut() else {
+        ui.label(egui::RichText::new("item").small().color(theme::INK_FAINT))
+            .on_hover_text(
+                "An item_template entry. There is no world database to read its name from.",
+            );
+        return;
+    };
+    if ui
+        .add(
+            egui::Button::new(egui::RichText::new("…").size(13.0)).min_size(egui::vec2(24.0, 22.0)),
+        )
+        .on_hover_text("choose an item by name")
+        .clicked()
+    {
+        quests.picker = Some(Picker::new(
+            Target::Item,
+            PickFor::TableField {
+                table,
+                record,
+                field: column.field,
+                column: column.name,
+            },
+        ));
+    }
+    if raw == 0 {
+        ui.label(egui::RichText::new("none").color(theme::INK_FAINT));
+        return;
+    }
+    super::reference::name(
+        ui,
+        &mut super::reference::Resolver {
+            session: work.session,
+            assets: work.assets,
+            quests,
+        },
+        vale_mangos::item::TEMPLATE,
+        raw,
+    );
 }
 
 /// A reference column: the id, what it resolves to, and the controls to pick
@@ -2581,6 +2841,13 @@ pub fn follow_reference(work: &mut Workspace<'_>, table: &str, id: u32) {
 }
 
 /// A table with no schema: every field, numbered, with what it might be.
+///
+/// Each field is four bytes and is drawn as the number they hold. Where the
+/// column holds the offsets of strings (`tables::text_fields`), a text box
+/// edits the string; where the bytes read as a float of ordinary size, a
+/// second box edits the float. Both are readings of the same four bytes, and the number
+/// box always writes them as they are, so a field that is neither can still
+/// be set.
 fn unschemad(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
     let table_name = work.browser.table.clone();
     let Some(table) = work.session.table(&table_name) else {
@@ -2589,8 +2856,10 @@ fn unschemad(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
     let fields = table.field_count();
     theme::note(
         ui,
-        "No schema for this table yet: the columns are numbered and their types \
-         are guesses. See vale_assets::tables::schema.",
+        "No schema for this table: the columns are numbered. A text box is drawn where \
+         the column holds the offsets of strings, and a float box where the four bytes \
+         read as a float. Both are guesses about the column. See \
+         vale_assets::tables::schema.",
     );
     for field in 0..fields {
         let Some(raw) = work
@@ -2600,16 +2869,25 @@ fn unschemad(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
         else {
             continue;
         };
-        let text = work
-            .session
-            .table(&table_name)
-            .and_then(|table| table.string_at(record, field))
-            .unwrap_or_default();
+        // Whether the column holds strings is asked of the column, since a
+        // small number can be the offset of a string on one row.
+        let is_text = work
+            .browser
+            .text_fields(work.session, &table_name)
+            .get(field)
+            .copied()
+            .unwrap_or(false);
         ui.horizontal(|ui| {
             ui.add_sized(
                 egui::vec2(70.0, 22.0),
                 egui::Label::new(theme::number(format!("[{field}]"))),
             );
+            // Field 0 is the row's id, which only a new row mints.
+            if field == 0 {
+                ui.label(theme::number(format!("{raw}")));
+                ui.label(egui::RichText::new("id").small().color(theme::INK_FAINT));
+                return;
+            }
             let mut value = raw;
             if number(ui, &mut value).changed() {
                 tables::set_field(
@@ -2622,14 +2900,68 @@ fn unschemad(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
                     work.now,
                 );
             }
-            let guess = f32::from_bits(raw);
-            if raw != 0 && guess.is_finite() && guess.abs() > 1.0e-4 && guess.abs() < 1.0e6 {
-                ui.label(egui::RichText::new(format!("f32 {guess:.3}")).color(theme::INK_FAINT));
+            if is_text {
+                loose_text(ui, work, record, field);
+                return;
             }
-            if !text.is_empty() && text.is_ascii() {
-                ui.label(egui::RichText::new(format!("{text:?}")).color(theme::INK_FAINT));
+            let mut float = f32::from_bits(raw);
+            if raw != 0 && float.is_finite() && float.abs() > 1.0e-4 && float.abs() < 1.0e6 {
+                let response = ui
+                    .add_sized(
+                        egui::vec2(VALUE, 22.0),
+                        egui::DragValue::new(&mut float).speed(0.01),
+                    )
+                    .on_hover_text("The same four bytes read as a float.");
+                if response.changed() {
+                    tables::set_field(
+                        work.session,
+                        &table_name,
+                        record,
+                        field,
+                        float.to_bits(),
+                        &format!("Edit field {field}"),
+                        work.now,
+                    );
+                }
+                ui.label(egui::RichText::new("f32").small().color(theme::INK_FAINT));
             }
         });
+    }
+}
+
+/// The text box for a numbered field that holds a string, written when the
+/// box loses focus, as a schema's text column is and for the same reason:
+/// the string block is append-only.
+fn loose_text(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, field: usize) {
+    let table_name = work.browser.table.clone();
+    let text = work.browser.buffer(work.session, record, field).clone();
+    let mut editing = text.clone();
+    let width = TEXT.min((ui.available_width() - 40.0).max(140.0));
+    let response = ui.add(
+        egui::TextEdit::singleline(&mut editing)
+            .desired_width(width)
+            .min_size(egui::vec2(width, 24.0)),
+    );
+    if editing != text {
+        *work.browser.buffer(work.session, record, field) = editing.clone();
+    }
+    if response.lost_focus() {
+        let now_in_file = work
+            .session
+            .table(&table_name)
+            .and_then(|table| table.string_at(record, field))
+            .unwrap_or_default();
+        if editing != now_in_file {
+            tables::set_text(
+                work.session,
+                &table_name,
+                record,
+                field,
+                &editing,
+                &format!("Edit field {field}"),
+                work.now,
+            );
+        }
     }
 }
 

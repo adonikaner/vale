@@ -4,9 +4,10 @@
 //! ```text
 //! reload.rs      the chat wire: a GM command sent on the playtest's own
 //!                session, and the server's answer matched back to it
-//! rows.rs        the rows the server keeps of two client tables, written as a
-//!                diff of the project's DBC against the archives': Spell.dbc to
-//!                spell_template, TaxiNodes.dbc to taxi_nodes
+//! rows.rs        the rows the server keeps of three client tables, written as
+//!                a diff of the project's DBC against the archives': Spell.dbc
+//!                to spell_template, TaxiNodes.dbc to taxi_nodes,
+//!                SkillLineAbility.dbc to skill_line_ability
 //! mod.rs         `save`, the one function every subject's SQL is written by,
 //!                and the statements run when the Server panel's switch is on
 //! creatures.rs   creature_template and creature, which have no client file,
@@ -90,6 +91,7 @@
 //! ```text
 //! spell_template       .reload spell_template
 //! taxi_nodes           a restart; it has no reload
+//! skill_line_ability   a restart; it has no reload
 //! DataDir\5875\dbc     a restart; its files, TaxiPath and TaxiPathNode among
 //!                      them
 //! item_template        .reload item_template, live for every copy of the item

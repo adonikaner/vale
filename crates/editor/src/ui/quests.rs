@@ -288,6 +288,7 @@ pub(super) fn name_field(table: &str) -> Option<usize> {
         "QuestSort" | "QuestInfo" | "Emotes" | "EmotesText" | "SpellFocusObject" | "Languages" => Some(1),
         "Faction" => Some(19),
         "SkillLine" => Some(3),
+        "ItemSet" => Some(1),
         "Map" => Some(4),
         // `CreatureFamily` field 8, the same field
         // `vale_assets::tables::pet` reads the family's name from.
@@ -2145,6 +2146,7 @@ pub(super) fn picker(
             PickFor::VendorItem { table, entry } => format!("Choose an item for {table} {entry}"),
             PickFor::TrainerSpell { table, entry } => format!("Choose a spell for {table} {entry}"),
             PickFor::ScriptCell { column, .. } => format!("Choose {column}"),
+            PickFor::TableField { column, .. } => format!("Choose {column}"),
         };
         ui.label(egui::RichText::new(heading).strong().size(14.0));
 
@@ -2227,7 +2229,10 @@ pub(super) fn picker(
             }
             if matches!(
                 picker.purpose,
-                PickFor::Column { .. } | PickFor::ServerColumn(_) | PickFor::ScriptCell { .. }
+                PickFor::Column { .. }
+                    | PickFor::ServerColumn(_)
+                    | PickFor::ScriptCell { .. }
+                    | PickFor::TableField { .. }
             ) && ui
                     .button("Set to none")
                     .on_hover_text("Write 0, which for every reference here means none.")
@@ -2303,6 +2308,21 @@ pub(super) fn picker(
         {
             let value = picked.map(|hit| hit.id).unwrap_or(0);
             quests.script_pick = Some((table, *id, *row, column, value));
+            close = true;
+        }
+        (PickFor::TableField { table, record, field, column }, picked, cleared)
+            if picked.is_some() || cleared =>
+        {
+            let value = picked.map(|hit| hit.id).unwrap_or(0);
+            crate::tools::tables::set_field(
+                session,
+                table,
+                *record,
+                *field,
+                value,
+                &format!("Edit {column}"),
+                now,
+            );
             close = true;
         }
         _ => {}

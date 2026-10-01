@@ -233,6 +233,14 @@ pub enum Tool {
     /// It works during a playtest, which no other server subject except
     /// `Tool::Quests` does — see [`Tool::survives_playtest`].
     Items,
+    /// `ItemSet.dbc`: which items make up a set, and the bonuses it grants at
+    /// how many pieces — see [`tables`].
+    ///
+    /// A DBC table, edited in the table browser, and a part of the Items
+    /// workspace: the top bar shows Items for both and a strip at the head of
+    /// the list switches between them ([`Tool::parts`]). The set is a file, so
+    /// it needs no database; the item names beside its item columns do.
+    ItemSets,
     /// The server's quests: what each asks for, says and gives, and who hands
     /// it out — see [`quests`].
     ///
@@ -257,6 +265,13 @@ pub enum Tool {
     /// same reason as `Lights`, it is on the rail's World half rather than
     /// with the data editors on the top bar.
     Flightpaths,
+    /// Any DBC table, by name — see [`tables`].
+    ///
+    /// The workspace's list is the files of `DBFilesClient\`. Choosing one
+    /// opens it in the browser the spell workspace uses: as named, typed
+    /// fields where `vale_assets::tables::schema` describes the table, and
+    /// as numbered fields with guessed readings where it does not.
+    Tables,
 }
 
 /// Where a tool's controls are drawn — see [`Tool::surface`].
@@ -286,7 +301,7 @@ pub enum Surface {
 /// [`Tool::at`] enforces the list: an exhaustive `match` that does not compile
 /// until a new variant has an index, plus a test that this list is exactly
 /// those indices in order.
-pub const ALL: [Tool; 20] = [
+pub const ALL: [Tool; 22] = [
     Tool::Select,
     Tool::Terrain,
     Tool::Grade,
@@ -307,6 +322,8 @@ pub const ALL: [Tool; 20] = [
     Tool::Measure,
     Tool::Flightpaths,
     Tool::Chunks,
+    Tool::ItemSets,
+    Tool::Tables,
 ];
 
 impl Tool {
@@ -339,6 +356,8 @@ impl Tool {
             Tool::Measure => 17,
             Tool::Flightpaths => 18,
             Tool::Chunks => 19,
+            Tool::ItemSets => 20,
+            Tool::Tables => 21,
         }
     }
 
@@ -355,6 +374,9 @@ impl Tool {
             Tool::Spells => Some("Spell"),
             Tool::Lights => Some("Light"),
             Tool::Flightpaths => Some("TaxiNodes"),
+            Tool::ItemSets => Some("ItemSet"),
+            // No one table: the workspace starts on the list of them.
+            Tool::Tables => Some(tables::ANY),
             _ => None,
         }
     }
@@ -420,7 +442,9 @@ impl Tool {
     /// running and the rail still leaves it lit — see [`crate::ui::rail`].
     pub fn surface(self) -> Surface {
         match self {
-            Tool::Spells | Tool::Items | Tool::Quests => Surface::Middle,
+            Tool::Spells | Tool::Items | Tool::ItemSets | Tool::Quests | Tool::Tables => {
+                Surface::Middle
+            }
             // A light's row, a flight path node or point, a creature's spawn
             // row and a game object's are each a place in the world, so each
             // is picked with the pointer and puts its form where every other
@@ -455,7 +479,44 @@ impl Tool {
             Tool::Spells => &tables::SPELL_TABS,
             Tool::Lights => &tables::LIGHT_TABS,
             Tool::Flightpaths => &tables::TAXI_TABS,
+            Tool::ItemSets => &tables::SET_TABS,
             _ => &[],
+        }
+    }
+
+    /// The tools that make up this tool's workspace, in the order the strip
+    /// at the head of its list draws them, or an empty list for a workspace
+    /// of one tool.
+    ///
+    /// Items and Sets are one workspace of two tools because they are two
+    /// documents: an item is a row of the server's database and a set is a
+    /// DBC table, so each has its own list, form and save. The spell
+    /// workspace's skill tables are tabs of one tool instead ([`Tool::tabs`]),
+    /// since they are tables in the same browser.
+    pub fn parts(self) -> &'static [(&'static str, Tool)] {
+        match self {
+            Tool::Items | Tool::ItemSets => &[("Items", Tool::Items), ("Sets", Tool::ItemSets)],
+            _ => &[],
+        }
+    }
+
+    /// The tool the top bar's workspace control shows for this one: the
+    /// first of its [`Tool::parts`], or itself.
+    pub fn workspace(self) -> Tool {
+        self.parts().first().map(|&(_, tool)| tool).unwrap_or(self)
+    }
+
+    /// The workspace a DBC table is browsed in, for a reference followed
+    /// from another form: Sets for `ItemSet`, Spells for the spell chain and
+    /// the skill tables, and Tables for everything else.
+    pub fn for_table(table: &str) -> Tool {
+        let in_spells = table == "Spell"
+            || tables::SPELL_TABS.iter().any(|&(_, name)| name == table)
+            || tables::chain_for("Spell").contains(&table);
+        match table {
+            "ItemSet" => Tool::ItemSets,
+            _ if in_spells => Tool::Spells,
+            _ => Tool::Tables,
         }
     }
 
@@ -491,6 +552,8 @@ impl Tool {
             // quoting.
             Tool::Flightpaths => "Taxi",
             Tool::Chunks => "Chunks",
+            Tool::ItemSets => "Sets",
+            Tool::Tables => "Tables",
         }
     }
 }
@@ -947,7 +1010,9 @@ fn modes(
         | Tool::Creatures
         | Tool::GameObjects
         | Tool::Items
+        | Tool::ItemSets
         | Tool::Quests
+        | Tool::Tables
         | Tool::Flightpaths => {}
         Tool::Terrain => {
             // Unshifted digits cover the two long rows; shifted digits cover
@@ -1115,6 +1180,12 @@ mod tests {
                 );
                 continue;
             };
+            // The Tables workspace starts on no table and has no tab: its
+            // list is the tables themselves.
+            if table == tables::ANY {
+                assert!(tabs.is_empty(), "{} has tabs", tool.name());
+                continue;
+            }
             assert!(
                 !tabs.is_empty(),
                 "{} edits {table} and offers no tab",
@@ -1262,6 +1333,41 @@ mod tests {
         assert_eq!(Tool::GameObjects.server_table(), Some("gameobject"));
         assert!(!Tool::GameObjects.survives_playtest());
         assert_eq!(Tool::Terrain.surface(), Surface::World);
+    }
+
+    /// The Items workspace is two tools and every other workspace is one:
+    /// the top bar shows Items for both of its parts, and a DBC table
+    /// followed from another form opens in the workspace that holds it.
+    #[test]
+    fn a_workspace_is_its_parts_and_a_table_has_a_workspace() {
+        assert_eq!(Tool::ItemSets.workspace(), Tool::Items);
+        assert_eq!(Tool::Items.workspace(), Tool::Items);
+        assert_eq!(Tool::Items.parts(), Tool::ItemSets.parts());
+        for tool in ALL {
+            match tool.parts() {
+                [] => assert_eq!(tool.workspace(), tool),
+                parts => {
+                    assert!(parts.iter().any(|&(_, part)| part == tool), "{}", tool.name());
+                    assert!(parts.iter().all(|&(_, part)| part.covers_viewport()));
+                }
+            }
+        }
+        // Sets is a file and needs no database; Items is rows and does.
+        assert_eq!(Tool::ItemSets.table(), Some("ItemSet"));
+        assert!(Tool::ItemSets.server_table().is_none());
+        assert!(Tool::ItemSets.survives_playtest() && Tool::Tables.survives_playtest());
+
+        assert_eq!(Tool::for_table("ItemSet"), Tool::ItemSets);
+        for table in ["Spell", "SpellVisualKit", "SpellIcon", "SkillLine", "SkillLineAbility"] {
+            assert_eq!(Tool::for_table(table), Tool::Spells, "{table}");
+        }
+        for table in ["Faction", "AreaTable", "Map", "Lock"] {
+            assert_eq!(Tool::for_table(table), Tool::Tables, "{table}");
+        }
+        // The skill tables are the spell workspace's second row of tabs.
+        let tabs = Tool::Spells.tabs();
+        assert_eq!(tabs.len(), tables::TAB_ROW + 3);
+        assert_eq!(tabs[tables::TAB_ROW].1, "SkillLine");
     }
 
     /// A data subject survives a playtest whether or not it covers the

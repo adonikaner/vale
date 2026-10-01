@@ -34,7 +34,26 @@
 //! with guessed types, which is what `vale dbc <Table>` prints. That is less
 //! useful than a schema, and more useful than refusing to open the table.
 //!
+//! ## Which workspace reaches which table
+//!
+//! ```text
+//! Spells   the spell chain's four tables, and under them the three skill
+//!          tables: SkillLine, SkillLineAbility, SkillRaceClassInfo
+//! Sets     ItemSet, as a part of the Items workspace
+//! Tables   any file of DBFilesClient\, chosen from a list of all of them
+//! ```
+//!
+//! The Tables workspace starts on no table ([`ANY`]): its list is the tables
+//! themselves, and choosing one points the browser at it. A table is named
+//! by one spelling whatever case it is asked for in
+//! (`schema::table_name`), because the archives list their files in lower
+//! case and the session holds each open table under its name.
+//!
 //! ## Row labels come from the rows that reference them
+//!
+//! A table with a schema is named by its first text column. A table without
+//! one is named by a column guessed from the file ([`guess_name_field`]): the
+//! first in which the rows hold the offsets of strings.
 //!
 //! `SpellVisual` row 67 has no name column, and a list of 2,167 bare ids cannot
 //! be searched by meaning. The label is built from the tables around the row:
@@ -234,6 +253,28 @@ pub struct Browser {
     /// and lose the row. This flag tells it the change came with a
     /// destination.
     pub followed_in: bool,
+    /// The table the Tables workspace last showed, which it returns to. Empty
+    /// for the list of tables. See [`ANY`].
+    pub any: String,
+    /// What is typed into the Tables workspace's search over table names.
+    pub table_query: String,
+    /// Every file of `DBFilesClient\` the archives list, by its one name,
+    /// sorted; read once for the Tables workspace's list.
+    pub table_names: Option<Vec<String>>,
+    /// Each open table's records by id, and the revision it was built at. See
+    /// [`Self::record_of`].
+    ids: HashMap<String, (u64, HashMap<u32, usize>)>,
+    /// Which columns of the open table with no schema hold strings, and the
+    /// table and revision that was worked out for. See [`Self::text_fields`].
+    text_columns: Option<(String, u64, Vec<bool>)>,
+    /// The name column guessed for each table with no schema, kept because
+    /// the guess reads up to 64 rows and a label is asked for per row.
+    guessed: HashMap<String, Option<usize>>,
+    /// A tool a panel asks the shell to switch to, taken by the shell after
+    /// everything is drawn: the strip at the head of the Sets list asking
+    /// for Items. The panel cannot switch itself, because the tool is
+    /// borrowed while it draws.
+    pub switch_to: Option<super::Tool>,
 }
 
 impl Browser {
@@ -380,10 +421,65 @@ impl Browser {
         describe(self, session, table, record)
     }
 
+    /// The record holding `id` in an open table, through an index kept per
+    /// table and revision. `DbcFile::row_of` is a scan: asked for the spell of
+    /// each of the 5,072 abilities over `Spell`'s 22,360 rows it is 56 million
+    /// comparisons for one rebuild of the abilities' labels. Where two records
+    /// hold one id the first is answered, as `row_of` answers.
+    pub fn record_of(&mut self, session: &EditSession, table: &str, id: u32) -> Option<usize> {
+        let open = session.table(table)?;
+        let fresh = self
+            .ids
+            .get(table)
+            .is_some_and(|(revision, _)| *revision == session.table_revision);
+        if !fresh {
+            let mut records: HashMap<u32, usize> = HashMap::new();
+            for record in 0..open.record_count() {
+                if let Some(id) = open.u32_at(record, 0) {
+                    records.entry(id).or_insert(record);
+                }
+            }
+            self.ids
+                .insert(table.to_string(), (session.table_revision, records));
+        }
+        self.ids.get(table)?.1.get(&id).copied()
+    }
+
+    /// Which columns of a table with no schema hold strings, worked out once
+    /// per revision, since the form asks once per field per frame.
+    pub fn text_fields(&mut self, session: &EditSession, table: &str) -> &[bool] {
+        let fresh = self.text_columns.as_ref().is_some_and(|(had, revision, _)| {
+            had == table && *revision == session.table_revision
+        });
+        if !fresh {
+            let columns = session.table(table).map(text_fields).unwrap_or_default();
+            self.text_columns = Some((table.to_string(), session.table_revision, columns));
+        }
+        self.text_columns
+            .as_ref()
+            .map(|(_, _, columns)| columns.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// The column a table's rows are named by: the schema's first text column,
+    /// or the guess for a table with no schema. `None` for a table that is
+    /// not open and for one with no such column.
+    pub fn name_field(&mut self, session: &EditSession, table: &str) -> Option<usize> {
+        if let Some(schema) = schema::for_table(table) {
+            return label_field(schema);
+        }
+        if let Some(known) = self.guessed.get(table) {
+            return *known;
+        }
+        let guess = guess_name_field(session.table(table)?);
+        self.guessed.insert(table.to_string(), guess);
+        guess
+    }
+
     /// The label of a row by id rather than by record, for a reference column.
     /// Returns `None` when the table is not open or has no such row.
     pub fn describe_id(&mut self, session: &EditSession, table: &str, id: u32) -> Option<RowLabel> {
-        let record = session.table(table)?.row_of(id)?;
+        let record = self.record_of(session, table, id)?;
         Some(self.describe(session, table, record))
     }
 
@@ -768,15 +864,160 @@ pub fn describe(
         // reads, and field 4 is the first of the eight locale columns holding
         // the map's display name.
         "Map" => (text(1), text(4)),
+        // A skill line is named by its own name, and its heading on the
+        // skills panel says what kind of skill it is.
+        "SkillLine" => {
+            let category = session
+                .table("SkillLineCategory")
+                .and_then(|categories| categories.string_at(categories.row_of(num(1))?, 1))
+                .unwrap_or_default();
+            (text(3), category)
+        }
+        // An ability has no name of its own. It is a spell in a skill line
+        // for some classes, so the label is those three: `Fireball`, then
+        // `Rank 1 · Fire · Mage`.
+        "SkillLineAbility" => {
+            let (skill, spell) = (num(1), num(2));
+            let named = spell_label(browser, session, spell);
+            let title = match &named {
+                Some((name, _)) => name.clone(),
+                None => format!("spell {spell}"),
+            };
+            let mut parts: Vec<String> = Vec::new();
+            parts.extend(named.map(|(_, rank)| rank).filter(|rank| !rank.is_empty()));
+            parts.push(skill_name(session, skill).unwrap_or_else(|| format!("skill {skill}")));
+            let who = mask_words(&schema::SKILL_LINE_ABILITY, 4, num(4));
+            parts.extend((!who.is_empty()).then_some(who));
+            (title, parts.join(" · "))
+        }
+        // A row of this table gives a skill line to some races and classes,
+        // so it is the line's name and who gets it.
+        "SkillRaceClassInfo" => {
+            let skill = num(1);
+            let title = skill_name(session, skill).unwrap_or_else(|| format!("skill {skill}"));
+            let who: Vec<String> = [
+                mask_words(&schema::SKILL_RACE_CLASS_INFO, 3, num(3)),
+                mask_words(&schema::SKILL_RACE_CLASS_INFO, 2, num(2)),
+            ]
+            .into_iter()
+            .filter(|words| !words.is_empty())
+            .collect();
+            let sub = match who.is_empty() {
+                true => "every race and class".to_string(),
+                false => who.join(" · "),
+            };
+            (title, sub)
+        }
+        // A set is its name, and how much of the row is used: seventeen
+        // item columns and eight bonus columns, most of them empty.
+        "ItemSet" => {
+            let count = |columns: std::ops::Range<usize>| columns.filter(|&field| num(field) != 0).count();
+            let (items, bonuses) = (count(10..27), count(27..35));
+            (text(1), format!("{items} items · {bonuses} bonuses"))
+        }
         _ => (
-            schema::for_table(table_name)
-                .and_then(label_field)
+            browser
+                .name_field(session, table_name)
                 .map(text)
                 .unwrap_or_default(),
             String::new(),
         ),
     };
     RowLabel { title, sub, id }
+}
+
+/// A spell's name and rank out of the open `Spell` table.
+fn spell_label(browser: &mut Browser, session: &EditSession, id: u32) -> Option<(String, String)> {
+    use vale_assets::tables::spellbook::spell_fields;
+    let record = browser.record_of(session, "Spell", id)?;
+    let spells = session.table("Spell")?;
+    Some((
+        spells.string_at(record, spell_fields::NAME).unwrap_or_default(),
+        spells.string_at(record, spell_fields::RANK).unwrap_or_default(),
+    ))
+}
+
+/// A skill line's name out of the open `SkillLine` table.
+fn skill_name(session: &EditSession, id: u32) -> Option<String> {
+    let lines = session.table("SkillLine")?;
+    lines
+        .string_at(lines.row_of(id)?, 3)
+        .filter(|name| !name.is_empty())
+}
+
+/// A race or class mask in words: the names of its set bits, or nothing
+/// for a mask that leaves nobody out. Zero and every named bit both mean
+/// everyone.
+fn mask_words(table: &Schema, field: usize, value: u32) -> String {
+    let Some(Kind::Flags(bits)) = table.column(field).map(|column| column.kind) else {
+        return String::new();
+    };
+    let every = bits.iter().fold(0u32, |all, (bit, _, _)| all | bit);
+    if value == 0 || value & every == every {
+        return String::new();
+    }
+    schema::named_bits(value, bits).join(", ")
+}
+
+/// The string a field's value starts, when the value is the offset of a
+/// string's first byte in the table's string block: past the block's
+/// opening NUL, directly after another NUL, and printable. `None` for a
+/// value that is a number.
+pub fn string_started_at(table: &vale_edit::dbc::DbcFile, raw: u32) -> Option<String> {
+    let offset = raw as usize;
+    if offset == 0 || offset >= table.string_size() {
+        return None;
+    }
+    if table.text_at(offset - 1).as_deref() != Some("") {
+        return None;
+    }
+    table
+        .text_at(offset)
+        .filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
+}
+
+/// How many rows the guesses about a table with no schema read.
+const GUESS_ROWS: usize = 64;
+
+/// Whether a column of a table with no schema holds strings, and in how
+/// many of the sampled rows: every sampled row holds zero or the offset of
+/// a string, and the strings are not all one string.
+///
+/// The test is on the column and not on one value. A small number can be
+/// the offset of a string's first byte: `Faction.dbc`'s field 1 holds 1 on
+/// some rows, which is where the block's first string starts. A column of
+/// such numbers fails on the rows that hold any other number, and a
+/// column that holds one number throughout fails the last condition.
+fn strings_in(table: &vale_edit::dbc::DbcFile, field: usize) -> Option<usize> {
+    let rows = table.record_count().min(GUESS_ROWS);
+    let mut texts: Vec<String> = Vec::new();
+    for record in 0..rows {
+        match table.u32_at(record, field).unwrap_or(0) {
+            0 => {}
+            raw => texts.push(string_started_at(table, raw)?),
+        }
+    }
+    let held = texts.len();
+    texts.sort();
+    texts.dedup();
+    (texts.len() > 1 || (rows == 1 && held == 1)).then_some(held)
+}
+
+/// Which columns of a table with no schema hold strings, by field. Field 0
+/// is the id and never does.
+pub fn text_fields(table: &vale_edit::dbc::DbcFile) -> Vec<bool> {
+    (0..table.field_count())
+        .map(|field| field > 0 && strings_in(table, field).is_some())
+        .collect()
+}
+
+/// The column a table with no schema is named by, guessed from the file:
+/// the first column of strings in which at least half the sampled rows
+/// hold one.
+pub fn guess_name_field(table: &vale_edit::dbc::DbcFile) -> Option<usize> {
+    let rows = table.record_count().min(GUESS_ROWS);
+    (1..table.field_count())
+        .find(|&field| strings_in(table, field).is_some_and(|held| held * 2 >= rows))
 }
 
 /// The spells that reference a row of `target`, as a phrase such as
@@ -851,8 +1092,9 @@ pub fn basename(path: &str) -> &str {
 
 /// The tables a subject needs in addition to its own root table.
 ///
-/// There are three chains: the spell chain, the light chain and the flight
-/// path tables. A spell's form can be drawn from `Spell.dbc` alone, but its
+/// There are three chains (the spell chain, the light chain and the flight
+/// path tables) and the tables a skill table or an item set is labelled
+/// from. A spell's form can be drawn from `Spell.dbc` alone, but its
 /// storyboard cannot, and neither can a followed reference or a row labelled
 /// from the rows it references. These tables are opened one per frame after
 /// the subject's own; together they are smaller than `Spell.dbc`'s string
@@ -871,6 +1113,13 @@ pub fn chain_for(table: &str) -> &'static [&'static str] {
             "SpellRange",
             "SoundEntries",
             "SpellEffectCameraShakes",
+            // The skill tables, which are tabs of the spell workspace. With
+            // `SkillLineAbility` open, a spell's reverse references list the
+            // skill lines it is in.
+            "SkillLine",
+            "SkillLineAbility",
+            "SkillRaceClassInfo",
+            "SkillLineCategory",
         ],
         "Light" => &[
             "LightParams",
@@ -886,6 +1135,13 @@ pub fn chain_for(table: &str) -> &'static [&'static str] {
         // The paths and their points, which a node's form lists, and `Map` for
         // the same reason the light chain opens it.
         "TaxiNodes" => &["TaxiPath", "TaxiPathNode", "Map"],
+        // A set's bonuses are spells and its requirement is a skill line.
+        "ItemSet" => &["Spell", "SkillLine"],
+        // The skill tables, for when one is opened from the Tables
+        // workspace and the spell chain is not open: each is labelled from
+        // the others.
+        "SkillLine" => &["SkillLineCategory", "SpellIcon"],
+        "SkillLineAbility" | "SkillRaceClassInfo" => &["SkillLine", "Spell"],
         _ => &[],
     }
 }
@@ -898,15 +1154,42 @@ pub const TAXI_TABS: [(&str, &str); 3] = [
     ("Points", "TaxiPathNode"),
 ];
 
-/// The spell chain's tabs, in the order a cast reads them. Callers read the
-/// tabs through [`super::Tool::tabs`], which chooses between this,
-/// [`LIGHT_TABS`] and [`TAXI_TABS`].
-pub const SPELL_TABS: [(&str, &str); 4] = [
+/// The spell workspace's tabs: the spell chain in the order a cast reads it,
+/// then the three skill tables. The workspace draws them [`TAB_ROW`] to a
+/// row, so the chain is the first row and the skill tables the second.
+/// Callers read the tabs through [`super::Tool::tabs`], which chooses
+/// between this, [`LIGHT_TABS`], [`TAXI_TABS`] and [`SET_TABS`].
+pub const SPELL_TABS: [(&str, &str); 7] = [
     ("Spells", "Spell"),
     ("Visuals", "SpellVisual"),
     ("Kits", "SpellVisualKit"),
     ("Effects", "SpellVisualEffectName"),
+    ("Skill lines", "SkillLine"),
+    ("Abilities", "SkillLineAbility"),
+    ("Race & class", "SkillRaceClassInfo"),
 ];
+
+/// How many tabs the middle workspace draws to a row.
+pub const TAB_ROW: usize = 4;
+
+/// The Sets part of the Items workspace: one table. A single tab is not
+/// drawn; the strip above it switches between the workspace's parts.
+pub const SET_TABS: [(&str, &str); 1] = [("Sets", "ItemSet")];
+
+/// The table the Tables workspace starts on: none. Its list is the tables
+/// themselves until one is chosen. See [`super::Tool::Tables`].
+pub const ANY: &str = "";
+
+/// The one name of the table `asked` names in any case, or `None` when it is
+/// neither described nor a file of `DBFilesClient\`.
+pub fn table_named(asked: &str) -> Option<&'static str> {
+    schema::for_table(asked).map(|schema| schema.table).or_else(|| {
+        schema::TABLE_NAMES
+            .iter()
+            .find(|known| known.eq_ignore_ascii_case(asked.trim()))
+            .copied()
+    })
+}
 
 /// The light chain's tabs, in the order it resolves: a light names params, and
 /// params own bands.
@@ -1468,6 +1751,14 @@ pub fn open_tables(
     // freely after that.
     // A follow from outside the data tools arrives together with the rail's
     // change and is not undone by it; see [`Browser::followed_in`].
+    //
+    // The Tables workspace has no table of its own: it starts on the table
+    // it last showed, or on the list of tables.
+    let any = wanted == ANY;
+    let start = match any {
+        true => browser.any.clone(),
+        false => wanted.to_string(),
+    };
     let followed_in = std::mem::take(&mut browser.followed_in);
     if pointed.as_deref() != Some(wanted) && followed_in {
         *pointed = Some(wanted.to_string());
@@ -1476,27 +1767,43 @@ pub fn open_tables(
         *pointed = Some(wanted.to_string());
         // `--table` names the table `--row` refers to, and is applied once.
         //
-        // It accepts any table with a schema, not only the tool's own tabs.
-        // The tabs are four of the twenty-two tables; a table reached by
-        // following a reference (`SpellCategory`, `SpellIcon`, `SpellRange`)
-        // has no tab but can be opened. `--table` on one of those was once
-        // accepted and then ignored, which left the run on `Spell`. A name
-        // that is not a table logs a warning, as `--without` does.
+        // It accepts any table, not only the tool's own tabs. The tabs are a
+        // few of the tables; a table reached by following a reference
+        // (`SpellCategory`, `SpellIcon`, `SpellRange`) has no tab but can be
+        // opened, and so can one with no schema. `--table` on one of those
+        // was once accepted and then ignored, which left the run on `Spell`.
+        // A name that is not a table logs a warning, as `--without` does.
         match (args.table.as_deref(), browser.seeded) {
-            (Some(table), false) => match schema::for_table(table) {
-                Some(schema) => browser.look_at(schema.table),
+            (Some(table), false) => match table_named(table) {
+                Some(name) => browser.look_at(name),
                 None => {
                     warn!("--table {table}: no table by that name");
-                    browser.look_at(wanted);
+                    browser.look_at(&start);
                 }
             },
-            _ => browser.look_at(wanted),
+            _ => browser.look_at(&start),
         }
     }
+    if any {
+        browser.any = browser.table.clone();
+    }
 
-    // Open the table the browser is now pointed at.
+    // Open the table the browser is now pointed at. On the list of tables
+    // there is none.
     let open = browser.table.clone();
+    if open.is_empty() {
+        stage.showing = None;
+        stage.lab = false;
+        return;
+    }
     if !session.open_table(&assets, &open) {
+        // A file that does not open, such as one of the four zero-byte
+        // ones, returns the Tables workspace to its list. The session's
+        // status line says why.
+        if any {
+            browser.look_at(ANY);
+            browser.any.clear();
+        }
         return;
     }
 
@@ -1511,9 +1818,15 @@ pub fn open_tables(
     // the open tables only and finds nothing, so every category read `unused`
     // while 136 of the 166 are used by 22,360 spells. The reverse index is
     // only complete when every table that references the target is open.
-    if let Some(next) = std::iter::once(&wanted)
-        .chain(chain_for(wanted).iter())
-        .find(|name| !session.tables.contains_key(**name))
+    //
+    // In the Tables workspace the root is the open table itself.
+    let root: &str = match any {
+        true => &open,
+        false => wanted,
+    };
+    if let Some(next) = std::iter::once(root)
+        .chain(chain_for(root).iter().copied())
+        .find(|name| !session.tables.contains_key(*name))
     {
         session.open_table(&assets, next);
         return;
@@ -1684,6 +1997,193 @@ mod tests {
                 Some(point),
                 "point {point} maps to column {back}, which must hang from it"
             );
+        }
+    }
+
+    /// An empty table of `fields` columns, for a test to add rows to.
+    fn empty(fields: u32) -> vale_edit::dbc::DbcFile {
+        let mut bytes = b"WDBC".to_vec();
+        for word in [0u32, fields, fields * 4, 1] {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        bytes.push(0);
+        vale_edit::dbc::DbcFile::parse(&bytes).expect("an empty table")
+    }
+
+    /// Add a row with `id`, the numbers in `set` and the strings in `text`.
+    fn add(table: &mut vale_edit::dbc::DbcFile, id: u32, set: &[(usize, u32)], text: &[(usize, &str)]) {
+        let blank = table.blank_record(id);
+        let record = table.push_record(&blank).expect("a record");
+        for &(field, value) in set {
+            table.set_u32(record, field, value);
+        }
+        for &(field, value) in text {
+            table.set_string(record, field, value);
+        }
+    }
+
+    /// A session with no archives, in a project folder of its own.
+    fn session(name: &str) -> (EditSession, std::path::PathBuf) {
+        let install =
+            std::env::temp_dir().join(format!("vale-tables-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let project = vale_edit::project::Project::open(&install, "default").unwrap();
+        (EditSession::for_tests(project), install)
+    }
+
+    /// The skill tables and the item sets are labelled from the rows they
+    /// name: an ability by its spell, its skill line and its classes, a
+    /// race-and-class row by its skill line and who gets it, a set by its
+    /// name and how many of its item and bonus columns are used.
+    #[test]
+    fn the_skill_tables_and_the_sets_are_labelled_from_what_they_name() {
+        use vale_assets::tables::spellbook::spell_fields;
+        let (mut session, install) = session("labels");
+        let mut spells = empty(173);
+        add(&mut spells, 116, &[], &[(spell_fields::NAME, "Frostbolt"), (spell_fields::RANK, "Rank 1")]);
+        add(&mut spells, 133, &[], &[(spell_fields::NAME, "Fireball"), (spell_fields::RANK, "Rank 1")]);
+        let mut lines = empty(22);
+        add(&mut lines, 6, &[(1, 7)], &[(3, "Frost")]);
+        add(&mut lines, 8, &[(1, 7)], &[(3, "Fire")]);
+        let mut categories = empty(11);
+        add(&mut categories, 7, &[], &[(1, "Class Skills")]);
+        let mut abilities = empty(15);
+        add(&mut abilities, 69, &[(1, 6), (2, 116), (4, 128)], &[]);
+        add(&mut abilities, 70, &[(1, 8), (2, 999)], &[]);
+        let mut infos = empty(8);
+        add(&mut infos, 57, &[(1, 6), (2, 511), (3, 128)], &[]);
+        add(&mut infos, 58, &[(1, 8), (2, 511), (3, 1503)], &[]);
+        let mut sets = empty(45);
+        add(
+            &mut sets,
+            1,
+            &[(10, 11729), (11, 11726), (12, 11728), (27, 7514), (28, 9761), (35, 3), (36, 2)],
+            &[(1, "The Gladiator")],
+        );
+        for (name, table) in [
+            ("Spell", spells),
+            ("SkillLine", lines),
+            ("SkillLineCategory", categories),
+            ("SkillLineAbility", abilities),
+            ("SkillRaceClassInfo", infos),
+            ("ItemSet", sets),
+        ] {
+            session.tables.insert(name.to_string(), table);
+        }
+        let mut browser = Browser::default();
+        let label = |browser: &mut Browser, table: &str, record: usize| {
+            let label = describe(browser, &session, table, record);
+            (label.title, label.sub, label.id)
+        };
+        assert_eq!(
+            label(&mut browser, "SkillLineAbility", 0),
+            ("Frostbolt".to_string(), "Rank 1 · Frost · Mage".to_string(), 69)
+        );
+        // A spell the table does not hold is its number, and a mask of zero
+        // is every class and says nothing.
+        assert_eq!(
+            label(&mut browser, "SkillLineAbility", 1),
+            ("spell 999".to_string(), "Fire".to_string(), 70)
+        );
+        assert_eq!(
+            label(&mut browser, "SkillLine", 1),
+            ("Fire".to_string(), "Class Skills".to_string(), 8)
+        );
+        assert_eq!(
+            label(&mut browser, "SkillRaceClassInfo", 0),
+            ("Frost".to_string(), "Mage".to_string(), 57)
+        );
+        assert_eq!(
+            label(&mut browser, "SkillRaceClassInfo", 1),
+            ("Fire".to_string(), "every race and class".to_string(), 58)
+        );
+        assert_eq!(
+            label(&mut browser, "ItemSet", 0),
+            ("The Gladiator".to_string(), "3 items · 2 bonuses".to_string(), 1)
+        );
+        // An ability is found by its spell's name, since the index is built
+        // from the labels.
+        browser.look_at("SkillLineAbility");
+        browser.query = "frostbolt".to_string();
+        assert_eq!(browser.matches(&session), &[0]);
+        // The reverse index lists the ability under its spell and its line.
+        assert_eq!(browser.used_by(&session, "Spell", 116).len(), 1);
+        assert_eq!(browser.used_by(&session, "SkillLine", 6).len(), 2);
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// A record is found by id through the index, the first of two records
+    /// sharing one, and the index follows the table's revision.
+    #[test]
+    fn a_record_is_found_by_its_id_through_the_index() {
+        let (mut session, install) = session("ids");
+        let mut table = empty(2);
+        add(&mut table, 7, &[(1, 1)], &[]);
+        add(&mut table, 9, &[(1, 2)], &[]);
+        add(&mut table, 7, &[(1, 3)], &[]);
+        session.tables.insert("Lock".to_string(), table);
+        let mut browser = Browser::default();
+        assert_eq!(browser.record_of(&session, "Lock", 7), Some(0));
+        assert_eq!(browser.record_of(&session, "Lock", 9), Some(1));
+        assert_eq!(browser.record_of(&session, "Lock", 8), None);
+        assert_eq!(browser.record_of(&session, "Faction", 7), None, "not open");
+        let blank = session.tables["Lock"].blank_record(8);
+        session.tables.get_mut("Lock").unwrap().push_record(&blank);
+        session.table_revision += 1;
+        assert_eq!(browser.record_of(&session, "Lock", 8), Some(3));
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// The name column of a table with no schema is the first whose values
+    /// are the offsets of differing strings. A column of ones is the offset
+    /// of the block's first string on every row and is not a name.
+    #[test]
+    fn a_table_with_no_schema_is_named_by_its_first_column_of_strings() {
+        let mut table = empty(4);
+        add(&mut table, 1, &[(1, 1), (2, 40)], &[(3, "Alpha")]);
+        add(&mut table, 2, &[(1, 1), (2, 41)], &[(3, "Beta")]);
+        add(&mut table, 3, &[(1, 1), (2, 42)], &[(3, "Gamma")]);
+        assert_eq!(string_started_at(&table, 1).as_deref(), Some("Alpha"));
+        assert_eq!(string_started_at(&table, 2), None, "inside a string");
+        assert_eq!(string_started_at(&table, 0), None, "the empty string");
+        assert_eq!(string_started_at(&table, 4000), None, "past the block");
+        assert_eq!(guess_name_field(&table), Some(3));
+        assert_eq!(guess_name_field(&empty(4)), None);
+        // Field 1 holds 1 on every row, the offset of the first string, and
+        // field 2 holds numbers that are no string's offset.
+        assert_eq!(text_fields(&table), vec![false, false, false, true]);
+        // A column that holds a string's offset on one row and another
+        // number on the next is numbers.
+        let mut mixed = empty(3);
+        add(&mut mixed, 1, &[(1, 1)], &[(2, "Alpha")]);
+        add(&mut mixed, 2, &[(1, 3)], &[(2, "Beta")]);
+        assert_eq!(text_fields(&mixed), vec![false, false, true]);
+
+        let (mut session, install) = session("guess");
+        session.tables.insert("Lock".to_string(), table);
+        let mut browser = Browser::default();
+        assert_eq!(browser.name_field(&session, "Lock"), Some(3));
+        assert_eq!(describe(&mut browser, &session, "Lock", 1).title, "Beta");
+        // A described table is named by its schema, not by a guess.
+        assert_eq!(browser.name_field(&session, "ItemSet"), Some(1));
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// A table is opened under one name whatever case it is asked for in,
+    /// and a name that is no table is refused.
+    #[test]
+    fn a_table_is_named_in_any_case() {
+        assert_eq!(table_named("itemset"), Some("ItemSet"));
+        assert_eq!(table_named("Faction"), Some("Faction"));
+        assert_eq!(table_named("skilllineability"), Some("SkillLineAbility"));
+        assert_eq!(table_named("creature_template"), None);
+        // Every table the server reads as a file is spelled as the list
+        // spells it, so a copied file and an opened table are one name.
+        for name in vale_mangos::datadir::SERVER_DBCS {
+            assert_eq!(table_named(name), Some(name), "{name}");
+        }
+        for (dbc, _) in crate::server::rows::MAPPED {
+            assert_eq!(table_named(dbc), Some(dbc));
         }
     }
 

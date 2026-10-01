@@ -5,7 +5,8 @@
 //! ## Why all subjects share one panel
 //!
 //! Several subjects store their edits as rows in vmangos' database rather than
-//! as bytes in a file: the client tables (spells and flight nodes), creatures,
+//! as bytes in a file: the client tables (spells, flight nodes and skill line
+//! abilities), creatures,
 //! objects, items, quests, loot, vendors and trainers, and behaviour. Each
 //! subject used to keep these operations in its own panel. The result was three names for one operation
 //! (*Apply to the server*, *Apply*, and a checkbox in a third window for
@@ -60,6 +61,7 @@
 //! spell_template    live on .reload spell_template
 //! taxi_nodes        the server has to be restarted: it is read at startup and
 //!                   has no reload
+//! skill_line_ability  the same: read at startup, no reload
 //! item_template    live on .reload item_template, for every copy already in
 //!                   the world — LoadItemPrototypes clears its map before it
 //!                   reads and Item::GetProto is a lookup per call
@@ -301,7 +303,7 @@ impl Half {
     /// the table names are what the database shows.
     pub fn tables(self) -> &'static str {
         match self {
-            Half::Tables => "spell_template, taxi_nodes",
+            Half::Tables => "spell_template, taxi_nodes, skill_line_ability",
             Half::Creatures => "creature_template, creature, creature_movement",
             Half::GameObjects => "gameobject_template, gameobject",
             Half::Items => "item_template",
@@ -347,9 +349,11 @@ impl Half {
         match self {
             Half::Tables => {
                 "A spell is live on `.reload spell_template`, which an apply sends to a \
-                 running playtest. A flight node needs a restart: `taxi_nodes` is read at \
-                 startup and has no reload. So do the DBC files Apply copies into \
-                 DataDir\\5875\\dbc, TaxiPath and TaxiPathNode among them. A spell *removed* \
+                 running playtest. A flight node and a skill line ability need a restart: \
+                 `taxi_nodes` and `skill_line_ability` are read at startup and have no \
+                 reload. So do the DBC files Apply copies into DataDir\\5875\\dbc: \
+                 TaxiPath, TaxiPathNode, SkillLine, SkillRaceClassInfo and ItemSet among \
+                 them. A spell *removed* \
                  needs a restart too: the reload overwrites and \
                  adds, and never drops one it has already read."
             }

@@ -181,7 +181,7 @@ const GROUPS: [(&str, &[Subject]); 3] = [
 ];
 
 /// The workspaces after *World*, in the order the top bar draws them.
-const WORKSPACES: [Subject; 3] = [
+const WORKSPACES: [Subject; 4] = [
     s(
         "Spells",
         Tool::Spells,
@@ -194,7 +194,9 @@ const WORKSPACES: [Subject; 3] = [
         Tool::Items,
         "item_template: what an item is, what it does and what it is worth, with a \
          picture of what its display id looks like. A row in vmangos' database, so \
-         this needs a database connection.",
+         this needs a database connection. Its second part, Sets, is ItemSet.dbc: \
+         which items make up a set and the bonuses it grants. That is a file and \
+         needs no database.",
     ),
     s(
         "Quests",
@@ -202,6 +204,13 @@ const WORKSPACES: [Subject; 3] = [
         "quest_template and the four relation tables that say who hands a quest out \
          and who takes it: what it asks for, says and gives. Rows in vmangos' \
          database, so this needs a database connection.",
+    ),
+    s(
+        "Tables",
+        Tool::Tables,
+        "Any DBC table: the 158 files of DBFilesClient\\, chosen from a list. A \
+         table with a schema opens as named, typed fields and any other as numbered \
+         fields. The workspace replaces the viewport.",
     ),
 ];
 
@@ -448,19 +457,51 @@ pub fn workspaces(ui: &mut egui::Ui, tool: &mut Tool, rail: &mut Rail, playing: 
         };
     }
     for subject in &WORKSPACES {
-        let why = held(subject.tool, playing, server);
+        // A workspace of several parts is available when any part is, and a
+        // press opens the first part that is: Items with no database opens
+        // on Sets, which is a file.
+        let open = match subject.tool.parts() {
+            [] => held(subject.tool, playing, server).is_none().then_some(subject.tool),
+            parts => parts
+                .iter()
+                .map(|&(_, part)| part)
+                .find(|&part| held(part, playing, server).is_none()),
+        };
+        let why = match open {
+            Some(_) => None,
+            None => held(subject.tool, playing, server),
+        };
+        let lit = tool.workspace() == subject.tool;
         let response = ui.add_enabled(
             why.is_none(),
-            egui::Button::selectable(*tool == subject.tool, subject.name),
+            egui::Button::selectable(lit, subject.name),
         );
         let response = match why {
             Some(_) => response.on_disabled_hover_text(tooltip(subject, why)),
             None => response.on_hover_text(tooltip(subject, None)),
         };
-        if response.clicked() {
-            *tool = subject.tool;
+        if response.clicked() && !lit {
+            *tool = open.unwrap_or(subject.tool);
         }
     }
+}
+
+/// The strip at the head of a workspace's list that switches between the
+/// workspace's parts ([`Tool::parts`]). Draws nothing for a workspace of one
+/// tool. Answers the part pressed when it is not the one in use; the shell
+/// switches to it after the frame is drawn, since the tool is borrowed while
+/// a workspace draws.
+pub fn parts(ui: &mut egui::Ui, tool: Tool) -> Option<Tool> {
+    let parts = tool.parts();
+    if parts.is_empty() {
+        return None;
+    }
+    let mut chosen = tool;
+    ui.allocate_ui(egui::vec2(ui.available_width(), 24.0), |ui| {
+        theme::segmented(ui, &mut chosen, parts, |a, b| a == b);
+    });
+    ui.add_space(6.0);
+    (chosen != tool).then_some(chosen)
 }
 
 /// Select and Measure, drawn over the viewport's top-left corner. Answers the
@@ -521,15 +562,21 @@ mod tests {
             .collect()
     }
 
-    /// Every tool is in exactly one of the three places: a tile, a workspace,
-    /// or a corner button. A tool reachable only by a shortcut is not found by
-    /// a person who does not already know the shortcut, and a tool in two
-    /// places is two answers to where it is.
+    /// Every tool is in exactly one of the three places: a tile, a workspace
+    /// or one of its parts, or a corner button. A tool reachable only by a
+    /// shortcut is not found by a person who does not already know the
+    /// shortcut, and a tool in two places is two answers to where it is.
     #[test]
     fn every_tool_is_in_exactly_one_place() {
+        // A workspace of several tools places each of them, on the strip at
+        // the head of its list.
+        let in_workspaces = WORKSPACES.iter().flat_map(|subject| match subject.tool.parts() {
+            [] => vec![subject.tool],
+            parts => parts.iter().map(|&(_, part)| part).collect(),
+        });
         let placed: Vec<Tool> = rail_tools()
             .into_iter()
-            .chain(WORKSPACES.iter().map(|subject| subject.tool))
+            .chain(in_workspaces)
             .chain(POINTER.iter().map(|subject| subject.tool))
             .collect();
         for tool in crate::tools::ALL {

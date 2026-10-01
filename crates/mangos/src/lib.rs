@@ -6,6 +6,9 @@
 //! taxi.rs      `taxi_nodes`, the server's copy of `TaxiNodes.dbc`: an edited
 //!              flight node written as a row at build 5875, on the same terms
 //!              as a spell
+//! skills.rs    `skill_line_ability`, the server's copy of
+//!              `SkillLineAbility.dbc`: an edited ability written as a row at
+//!              build 5875, the only build the loader reads
 //! creature.rs  two tables with no client file behind them: `creature_template`,
 //!              what an NPC is, and `creature`, where one stands
 //! gameobject.rs the matching pair for game objects: `gameobject_template`,
@@ -111,6 +114,7 @@ pub mod quest;
 pub mod row;
 pub mod schema;
 pub mod scripts;
+pub mod skills;
 pub mod spell;
 pub mod sql;
 pub mod taxi;

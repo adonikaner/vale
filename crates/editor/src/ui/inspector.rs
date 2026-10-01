@@ -179,6 +179,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
                 wireframe: None,
                 particles: None,
                 lights: Some(&mut editing.lights),
+                quests: None,
                 hour: showing_hour,
             },
         ),
@@ -267,7 +268,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
         // itself is in the middle, where the viewport would be; see
         // `super::data`. This follows the shell's rule that the inspector
         // shows the selection.
-        Tool::Spells => table(
+        Tool::Spells | Tool::ItemSets | Tool::Tables => table(
             ui,
             super::data::Workspace {
                 tool,
@@ -281,6 +282,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
                 wireframe: None,
                 particles: None,
                 lights: None,
+                quests: None,
                 hour: showing_hour,
             },
         ),
@@ -2271,6 +2273,12 @@ fn wmo(
 /// than the row.
 fn table(ui: &mut egui::Ui, mut work: super::data::Workspace<'_>) {
     let name = work.browser.table.clone();
+    // The Tables workspace on its list of tables: nothing is selected.
+    if name.is_empty() {
+        theme::heading(ui, "Table");
+        theme::note(ui, "Choose a table to see its file and what a row points at.");
+        return;
+    }
     let session = &mut *work.session;
     theme::heading(ui, "Table");
     theme::row(ui, "file", |ui| {

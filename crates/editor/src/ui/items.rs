@@ -33,7 +33,7 @@
 //! icon name.
 //!
 //! A cell is a model where the row has one and an icon where it does not,
-//! and that is not a fallback — it is what the two kinds of item *are*. A
+//! and that is not a fallback: it is what the two kinds of item are. A
 //! sword, a helm and a pauldron hang geometry off the wearer and can be looked
 //! at; a shirt, a pair of gloves and a robe paint textures into the wearer's
 //! own skin and have no geometry at all, so the only picture of one that exists
@@ -251,6 +251,11 @@ pub fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>) {
 /// The left column: what there is, what matches, and the four things that are
 /// about the table rather than about a row of it.
 fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
+    // The workspace's two parts, Items and Sets. The shell switches after
+    // the frame is drawn.
+    if let Some(part) = super::rail::parts(ui, crate::tools::Tool::Items) {
+        work.items.switch_to = Some(part);
+    }
     ui.horizontal(|ui| {
         // The rail's own word. The table's name belongs on the fields that
         // are written to it, and the heading of a list is where somebody looks
@@ -1132,7 +1137,14 @@ fn link(ui: &mut egui::Ui, text: &str, colour: egui::Color32, hover: &str) -> bo
 fn is_a_dbc(table: &str) -> bool {
     matches!(
         table,
-        "Spell" | "SkillLine" | "Faction" | "Lock" | "AreaTable" | "Map" | "ItemDisplayInfo"
+        "Spell"
+            | "SkillLine"
+            | "Faction"
+            | "Lock"
+            | "AreaTable"
+            | "Map"
+            | "ItemDisplayInfo"
+            | "ItemSet"
     )
 }
 
@@ -1140,7 +1152,7 @@ fn is_a_dbc(table: &str) -> bool {
 ///
 /// Which field holds the name is per table and is `super::quests::name_field`'s
 /// measured list: 3 for `SkillLine`, 19 for `Faction`, 11 for `AreaTable`, 4 for
-/// `Map`, 120 for `Spell`. This read field 1 for any table with no schema, which
+/// `Map`, 120 for `Spell`, 1 for `ItemSet`. This read field 1 for any table with no schema, which
 /// is an integer in all four of those and drew nothing or a fragment of another
 /// row's string. A table that list does not know falls back to the schema's
 /// column called `Name` — its field, not its position in the column list,
@@ -1352,7 +1364,7 @@ fn appearance(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
         return;
     };
     // The icon beside its name, small. It is still a fact about the row and
-    // it is still what a bag shows; what it is no longer is the *picture*, for
+    // it is still what a bag shows; what it is no longer is the picture, for
     // the kind of item that has a better one.
     ui.horizontal(|ui| {
         icon_square(ui, work, look.icon.as_deref(), ICON);

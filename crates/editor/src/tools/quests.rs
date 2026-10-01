@@ -410,6 +410,11 @@ pub enum PickFor {
     /// script is written whole by `crate::tools::behaviour` and not through
     /// the row store.
     ScriptCell { table: &'static str, id: u32, row: usize, column: &'static str },
+    /// One field of one record of a DBC table: an item column of
+    /// `ItemSet.dbc`, which is the table browser's use of the same dialog.
+    /// Written through `crate::tools::tables::set_field`, as the form's own
+    /// number box writes it.
+    TableField { table: String, record: usize, field: usize, column: &'static str },
 }
 
 /// The reference picker's state — see [`crate::ui::quests`], which draws it.

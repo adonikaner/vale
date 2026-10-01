@@ -142,7 +142,8 @@ pub fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<Entry>,
             }
         }
     }
-    // The client-table rows (spells and flight nodes), whose revert file holds
+    // The client-table rows (spells, flight nodes and skill line abilities),
+    // whose revert file holds
     // one statement per entry.
     let undo = rows::Undo::open_at(project)?;
     for row in rows::plan(session, assets)?.rows {
@@ -155,6 +156,7 @@ pub fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<Entry>,
         out.push(Entry {
             subject: match row.table {
                 vale_mangos::taxi::TABLE => "flight nodes",
+                vale_mangos::skills::TABLE => "skill line abilities",
                 _ => "spells",
             }
             .to_string(),

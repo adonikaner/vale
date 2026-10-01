@@ -1,7 +1,8 @@
 //! What a save does for the server: the SQL it writes, the rows it applies,
 //! and how to take them back, for the client tables whose rows the server
 //! reads from its own SQL tables. [`MAPPED`] lists them: `Spell.dbc` becomes
-//! `spell_template`, and `TaxiNodes.dbc` becomes `taxi_nodes`.
+//! `spell_template`, `TaxiNodes.dbc` becomes `taxi_nodes`, and
+//! `SkillLineAbility.dbc` becomes `skill_line_ability`.
 //!
 //! ## The file is rewritten whole on every save
 //!
@@ -48,9 +49,12 @@
 //! and is one of two statements: a `DELETE` for a row this project is about to
 //! create, or an `UPDATE` back to the current column values for a row that
 //! already exists. A flight node is a `taxi_nodes` dev row at build 5875 on
-//! the same terms, written through `vale_mangos::taxi`. See [`Undo`], and
-//! `vale_mangos::spell::undo` and `vale_mangos::taxi::undo`, which hold
-//! the rule.
+//! the same terms, written through `vale_mangos::taxi`. A skill line ability
+//! is a `skill_line_ability` row at build 5875 with no lower build behind
+//! it, since the loader reads that build alone, so its undo is a `DELETE`
+//! only for a row this project added. See [`Undo`], and
+//! `vale_mangos::spell::undo`, `vale_mangos::taxi::undo` and
+//! `vale_mangos::skills::undo`, which hold the rule.
 //!
 //! There is no permanent apply. The durable output is the SQL file in the
 //! project folder, which can be reviewed, and Publish hands it over as a
@@ -72,6 +76,7 @@ use vale_client::assets::GameAssets;
 use vale_edit::dbc::DbcFile;
 use vale_mangos::conn::Db;
 use vale_mangos::row::Key;
+use vale_mangos::skills;
 use vale_mangos::spell::{self, Assignment};
 use vale_mangos::taxi;
 use bevy::prelude::*;
@@ -90,10 +95,15 @@ pub const REVERT_VPATH: &str = "sql\\revert.sql";
 ///
 /// Every other DBC the server reads, it reads as a file in `DataDir\5875\dbc\`, and
 /// a publish copies it there; see `super::release::copy_server_dbcs`.
-pub const MAPPED: [(&str, &str); 2] = [("Spell", spell::TABLE), ("TaxiNodes", taxi::TABLE)];
+pub const MAPPED: [(&str, &str); 3] = [
+    ("Spell", spell::TABLE),
+    ("TaxiNodes", taxi::TABLE),
+    ("SkillLineAbility", skills::TABLE),
+];
 
 /// Whether the server has a `.reload` for a mapped table. `spell_template` has
-/// one; `taxi_nodes` is read once at startup and has none.
+/// one; `taxi_nodes` and `skill_line_ability` are read once at startup and
+/// have none.
 pub fn reloadable(table: &str) -> bool {
     table == spell::TABLE
 }
@@ -104,6 +114,11 @@ pub fn refusal(dbc: &str, id: u32) -> String {
         "TaxiNodes" => format!(
             "flight node {id} cannot go to the server: node ids stop at {}",
             taxi::MAX_ID
+        ),
+        "SkillLineAbility" => format!(
+            "skill line ability {id} cannot go to the server: its id and its two spells \
+             must each be at most {}, since skill_line_ability holds them as smallints",
+            skills::MAX_SMALLINT
         ),
         _ => format!(
             "spell {id} cannot go to the server: ids above {} do not fit \
@@ -120,7 +135,7 @@ pub struct Row {
     /// The server table it lands in.
     pub table: &'static str,
     /// Which row of that table: `(entry, build)` for a spell, `(id, build)` for
-    /// a flight node. See `vale_mangos::row::Key`.
+    /// a flight node and for a skill line ability. See `vale_mangos::row::Key`.
     pub key: Key,
     /// The columns whose values this project sets.
     pub changes: Vec<Assignment>,
@@ -172,8 +187,9 @@ impl Plan {
     /// spell's description or tooltip changes the client's file and nothing on
     /// the server (see `vale_mangos::spell::IGNORED`), and a reload sent for
     /// it would report the change as live on both sides when it reached only
-    /// the client. Every `taxi_nodes` change counts as reaching the server.
-    ///
+    /// the client. Every `taxi_nodes` and `skill_line_ability` change counts
+    /// as reaching the server: a plan holds a row of either only when a
+    /// column the server reads changed.
     pub fn reaches_the_server(&self) -> bool {
         self.rows
             .iter()
@@ -182,7 +198,17 @@ impl Plan {
 
     /// Whether any row is in a table the server reads only at startup.
     pub fn needs_a_restart(&self) -> bool {
-        self.rows.iter().any(|row| !reloadable(row.table))
+        !self.read_at_startup().is_empty()
+    }
+
+    /// The tables with a row in this plan that the server reads only at
+    /// startup, in [`MAPPED`]'s order.
+    pub fn read_at_startup(&self) -> Vec<&'static str> {
+        MAPPED
+            .iter()
+            .map(|(_, table)| *table)
+            .filter(|table| !reloadable(table) && self.rows.iter().any(|row| row.table == *table))
+            .collect()
     }
 
     /// A hash of what this plan would do to the database.
@@ -331,7 +357,7 @@ pub fn save(
         Ok(work) => Some(work),
         Err(e) => {
             warn!("server: {e}");
-            session.status = format!("saved, but the spell rows were not applied: {e}");
+            session.status = format!("saved, but the server rows were not applied: {e}");
             None
         }
     }
@@ -342,9 +368,13 @@ fn line_for(plan: &Plan, applied: &Applied) -> String {
         0 => String::new(),
         n => format!(", {n} newly undoable"),
     };
-    let restart = match plan.needs_a_restart() {
-        true => " \u{2014} taxi_nodes is read at startup: restart the server",
-        false => "",
+    let restart = match plan.read_at_startup().as_slice() {
+        [] => String::new(),
+        [one] => format!(" \u{2014} {one} is read at startup: restart the server"),
+        many => format!(
+            " \u{2014} {} are read at startup: restart the server",
+            many.join(" and ")
+        ),
     };
     let undo = format!("{undo}{restart}");
     match plan.reaches_the_server() {
@@ -419,6 +449,25 @@ pub fn plan(session: &EditSession, assets: &GameAssets) -> Result<Plan, String> 
                         table: server_table,
                         key: taxi::key(entry),
                         statements: taxi::statements(was, &node),
+                        changes,
+                    });
+                }
+            }
+            "SkillLineAbility" => {
+                for entry in changed_entries(&shipped, &edited) {
+                    let changes = skills::changes(&shipped, &edited, entry);
+                    if changes.is_empty() {
+                        continue;
+                    }
+                    if !skills::fits(&edited, entry) {
+                        out.refused.push((table, entry));
+                        continue;
+                    }
+                    any = true;
+                    out.rows.push(Row {
+                        table: server_table,
+                        key: skills::key(entry),
+                        statements: skills::statements(&shipped, &edited, entry),
                         changes,
                     });
                 }
@@ -524,7 +573,8 @@ fn address(
 /// since the last apply is in no plan, and only a put-back removes its dev row.
 /// Every snapshot is then taken of a database that holds none of this project,
 /// so it is always the earliest state. The rows of this plan do not depend on
-/// each other, since each is one spell's or one flight node's dev row, so they
+/// each other, since each is one spell's, one flight node's or one skill line
+/// ability's row at build 5875, so they
 /// are snapshotted together and run as one list.
 pub fn apply_at(
     project: &vale_edit::project::Project,
@@ -563,6 +613,10 @@ pub fn apply_at(
             taxi::TABLE => {
                 let now = db.row(&taxi::dev_row_query(entry))?;
                 taxi::undo(entry, &row.changes, now.as_ref())
+            }
+            skills::TABLE => {
+                let now = db.row(&skills::dev_row_query(entry))?;
+                skills::undo(entry, &row.changes, now.as_ref())
             }
             _ => {
                 let now = db.row(&spell::dev_row_query(entry))?;
@@ -664,8 +718,8 @@ pub fn revert(
 /// finish stores the plan's signature and requests a reload for each
 /// reloadable table, but only when a change reaches a column the server reads:
 /// a reload sent for an edited tooltip would report as live a change that
-/// never reached the server. A table with no reload, `taxi_nodes`, gets a
-/// restart notice on the status line instead.
+/// never reached the server. A table with no reload (`taxi_nodes`,
+/// `skill_line_ability`) gets a restart notice on the status line instead.
 pub fn apply_work(
     session: &EditSession,
     plan: Plan,
@@ -729,7 +783,7 @@ pub fn revert_work(
                     }
                     Err(e) => {
                         warn!("server: {e}");
-                        format!("spells: {e}")
+                        format!("server rows: {e}")
                     }
                 };
             },
@@ -1083,6 +1137,32 @@ mod tests {
             assert!(path.ends_with(".dbc"), "{path}");
             assert!(path.contains(table), "{path}");
         }
+    }
+
+    /// A plan names the tables of its rows that the server reads only at
+    /// startup, in the mapped list's order, and a spell row is not one: its
+    /// table has a reload.
+    #[test]
+    fn a_plan_names_the_tables_read_at_startup() {
+        let row = |table: &'static str| Row {
+            table,
+            key: Key::two(("id", 1), ("build", 5875)),
+            changes: Vec::new(),
+            statements: Vec::new(),
+        };
+        let spells = Plan {
+            rows: vec![row(spell::TABLE)],
+            ..Plan::default()
+        };
+        assert!(spells.read_at_startup().is_empty() && !spells.needs_a_restart());
+        let mixed = Plan {
+            rows: vec![row(skills::TABLE), row(spell::TABLE), row(taxi::TABLE)],
+            ..Plan::default()
+        };
+        assert_eq!(mixed.read_at_startup(), vec![taxi::TABLE, skills::TABLE]);
+        assert!(mixed.needs_a_restart());
+        assert!(!reloadable(skills::TABLE) && !reloadable(taxi::TABLE));
+        assert!(refusal("SkillLineAbility", 70_000).contains("skill line ability 70000"));
     }
 
     /// The byte comparison finds a record whose bytes changed, and no other.

@@ -77,6 +77,11 @@ pub enum Kind {
     /// A row id in another table, named without its `.dbc`. A table browser
     /// follows this column on a click and builds reverse lookups from it.
     Reference(&'static str),
+    /// An item's entry. 1.12 ships no item table: an item is a row the server
+    /// answers a query with, so nothing in the archives resolves this number.
+    /// A form with a world database names it from `item_template`; one
+    /// without draws the number.
+    Item,
     /// A colour packed one byte per channel, red first: `0x00RRGGBB`.
     ///
     /// Separate from [`Flags`](Self::Flags) because it is drawn as a swatch
@@ -213,6 +218,14 @@ pub fn for_table(name: &str) -> Option<&'static Schema> {
 /// The flight path group: `TaxiNodes`, `TaxiPath` and `TaxiPathNode`.
 /// `TaxiPath.From` and `TaxiPath.To` refer to `TaxiNodes`, and
 /// `TaxiPathNode.Path` refers to `TaxiPath`.
+///
+/// The skill group: `SkillLine` is a skill, `SkillLineAbility` says which
+/// spells belong to it and for whom, and `SkillRaceClassInfo` says which races
+/// and classes have it. Both of the last two refer to `SkillLine`, and
+/// `SkillLineAbility` refers to `Spell` twice.
+///
+/// `ItemSet` stands alone: its items are [`Kind::Item`], its bonuses refer to
+/// `Spell` and its requirement to `SkillLine`.
 pub const ALL: &[&Schema] = &[
     &SPELL,
     &SPELL_VISUAL,
@@ -239,7 +252,73 @@ pub const ALL: &[&Schema] = &[
     &TAXI_NODES,
     &TAXI_PATH,
     &TAXI_PATH_NODE,
+    &SKILL_LINE,
+    &SKILL_LINE_ABILITY,
+    &SKILL_RACE_CLASS_INFO,
+    &ITEM_SET,
 ];
+
+/// Every file in 1.12.1's `DBFilesClient\`, by bare name: 158 of them, four
+/// of which are zero bytes long and hold no table (`CharacterCreateCameras`,
+/// `SoundCharacterMacroLines`, `SpellAuraNames`, `SpellEffectNames`).
+///
+/// The archives list their files in lower case, and a table is opened, saved
+/// and looked up by its name, so one spelling has to be the name. This is the
+/// spelling the readers in this crate and vmangos' `DBCStores.cpp` use.
+/// [`table_name`] turns any spelling into it.
+pub const TABLE_NAMES: [&str; 158] = [
+    "AnimationData", "AreaPOI", "AreaTable", "AreaTrigger", "AttackAnimKits",
+    "AttackAnimTypes", "AuctionHouse", "BankBagSlotPrices", "CameraShakes",
+    "Cfg_Categories", "Cfg_Configs", "CharacterCreateCameras",
+    "CharacterFacialHairStyles", "CharBaseInfo", "CharHairGeosets",
+    "CharHairTextures", "CharSections", "CharStartOutfit", "CharVariations",
+    "ChatChannels", "ChatProfanity", "ChrClasses", "ChrRaces", "CinematicCamera",
+    "CinematicSequences", "CreatureDisplayInfo", "CreatureDisplayInfoExtra",
+    "CreatureFamily", "CreatureModelData", "CreatureSoundData",
+    "CreatureSpellData", "CreatureType", "DeathThudLookups", "DurabilityCosts",
+    "DurabilityQuality", "Emotes", "EmotesText", "EmotesTextData",
+    "EmotesTextSound", "EnvironmentalDamage", "Exhaustion", "Faction",
+    "FactionGroup", "FactionTemplate", "FootprintTextures",
+    "FootstepTerrainLookup", "GameObjectArtKit", "GameObjectDisplayInfo",
+    "GameTips", "GMSurveyCurrentSurvey", "GMSurveyQuestions", "GMSurveySurveys",
+    "GMTicketCategory", "GroundEffectDoodad", "GroundEffectTexture",
+    "HelmetGeosetVisData", "ItemBagFamily", "ItemClass", "ItemDisplayInfo",
+    "ItemGroupSounds", "ItemPetFood", "ItemRandomProperties", "ItemSet",
+    "ItemSubClass", "ItemSubClassMask", "ItemVisualEffects", "ItemVisuals",
+    "Languages", "LanguageWords", "LFGDungeons", "Light", "LightFloatBand",
+    "LightIntBand", "LightParams", "LightSkybox", "LiquidType", "LoadingScreens",
+    "LoadingScreenTaxiSplines", "Lock", "LockType", "MailTemplate", "Map",
+    "Material", "NameGen", "NamesProfanity", "NamesReserved", "NPCSounds",
+    "Package", "PageTextMaterial", "PaperDollItemFrame", "PetLoyalty",
+    "PetPersonality", "QuestInfo", "QuestSort", "Resistances", "ServerMessages",
+    "SheatheSoundLookups", "SkillCostsData", "SkillLine", "SkillLineAbility",
+    "SkillLineCategory", "SkillRaceClassInfo", "SkillTiers", "SoundAmbience",
+    "SoundCharacterMacroLines", "SoundEntries", "SoundProviderPreferences",
+    "SoundSamplePreferences", "SoundWaterType", "SpamMessages", "Spell",
+    "SpellAuraNames", "SpellCastTimes", "SpellCategory", "SpellChainEffects",
+    "SpellDispelType", "SpellDuration", "SpellEffectCameraShakes",
+    "SpellEffectNames", "SpellFocusObject", "SpellIcon", "SpellItemEnchantment",
+    "SpellMechanic", "SpellRadius", "SpellRange", "SpellShapeshiftForm",
+    "SpellVisual", "SpellVisualEffectName", "SpellVisualKit",
+    "SpellVisualPrecastTransitions", "StableSlotPrices", "Startup_Strings",
+    "Stationery", "StringLookups", "Talent", "TalentTab", "TaxiNodes", "TaxiPath",
+    "TaxiPathNode", "TerrainType", "TerrainTypeSounds", "TransportAnimation",
+    "UISoundLookups", "UnitBlood", "UnitBloodLevels", "VideoHardware",
+    "VocalUISounds", "WeaponImpactSounds", "WeaponSwingSounds2", "WMOAreaTable",
+    "WorldMapArea", "WorldMapContinent", "WorldMapOverlay", "WorldSafeLocs",
+    "WorldStateUI", "WowError_Strings", "ZoneIntroMusicTable", "ZoneMusic",
+];
+
+/// The name a table goes by, whatever case it was asked for in: the entry of
+/// [`TABLE_NAMES`] that matches, or the name as given for a table the list
+/// does not hold, which a patch archive may add.
+pub fn table_name(name: &str) -> &str {
+    TABLE_NAMES
+        .iter()
+        .find(|known| known.eq_ignore_ascii_case(name))
+        .copied()
+        .unwrap_or(name)
+}
 
 const fn c(field: usize, name: &'static str, kind: Kind) -> Column {
     Column {
@@ -1725,6 +1804,410 @@ pub const TAXI_PATH_NODE: Schema = Schema {
     }],
 };
 
+// ---------------------------------------------------------------------------
+// The skill tables and the item sets
+// ---------------------------------------------------------------------------
+
+/// The races a mask names: bit `id - 1` for each `ChrRaces` id. The names
+/// follow vmangos' `SharedDefines.h` (`Races`).
+const RACE_BITS: &[(u32, &str, &str)] = &[
+    (0x001, "Human", ""),
+    (0x002, "Orc", ""),
+    (0x004, "Dwarf", ""),
+    (0x008, "Night Elf", ""),
+    (0x010, "Undead", ""),
+    (0x020, "Tauren", ""),
+    (0x040, "Gnome", ""),
+    (0x080, "Troll", ""),
+    (0x100, "Goblin", "Race 9, which no player character is."),
+];
+
+/// The classes a mask names: bit `id - 1` for each `ChrClasses` id. Ids 6 and
+/// 10 are no class in 1.12, so bits 0x020 and 0x200 have no name. The names
+/// follow vmangos' `SharedDefines.h` (`Classes`).
+const CLASS_BITS: &[(u32, &str, &str)] = &[
+    (0x001, "Warrior", ""),
+    (0x002, "Paladin", ""),
+    (0x004, "Hunter", ""),
+    (0x008, "Rogue", ""),
+    (0x010, "Priest", ""),
+    (0x040, "Shaman", ""),
+    (0x080, "Mage", ""),
+    (0x100, "Warlock", ""),
+    (0x400, "Druid", ""),
+];
+
+/// `SkillLine.dbc`: 123 rows of 22 fields. A row is one skill: a class
+/// specialisation, a weapon skill, a profession, a language. The indices are
+/// those [`super::skills`] reads, and the names follow vmangos'
+/// `SkillLineEntry`.
+///
+/// vmangos reads this file from `DataDir`, so an edit reaches the server as
+/// the copied file.
+pub const SKILL_LINE: Schema = Schema {
+    table: "SkillLine",
+    columns: &SKILL_LINE_COLUMNS,
+    sections: &[
+        Section {
+            name: "Skill line",
+            fields: &[0, 1, 2, 21],
+        },
+        Section {
+            name: "Name",
+            fields: &[3, 4, 5, 6, 7, 8, 9, 10, 11],
+        },
+        Section {
+            name: "Description",
+            fields: &[12, 13, 14, 15, 16, 17, 18, 19, 20],
+        },
+    ],
+};
+
+const SKILL_LINE_COLUMNS: [Column; 22] = [
+    c(0, "Id", Kind::Id),
+    ca(
+        1,
+        "Category",
+        Kind::Reference("SkillLineCategory"),
+        "The heading the skills panel lists the line under: 6 weapon skills, 7 \
+         class skills, 8 armour proficiencies, 9 secondary skills, 10 \
+         languages, 11 professions, 12 not displayed. One shipped row holds -1.",
+    ),
+    ca(
+        2,
+        "SkillCosts",
+        Kind::Reference("SkillCostsData"),
+        "Zero on all 123 shipped rows.",
+    ),
+    c(3, "Name", Kind::Text),
+    c(4, "Name koKR", Kind::Locale(LOCALES[1])),
+    c(5, "Name frFR", Kind::Locale(LOCALES[2])),
+    c(6, "Name deDE", Kind::Locale(LOCALES[3])),
+    c(7, "Name enCN", Kind::Locale(LOCALES[4])),
+    c(8, "Name enTW", Kind::Locale(LOCALES[5])),
+    c(9, "Name esES", Kind::Locale(LOCALES[6])),
+    c(10, "Name esMX", Kind::Locale(LOCALES[7])),
+    c(11, "NameFlags", Kind::LocaleFlags),
+    ca(
+        12,
+        "Description",
+        Kind::Text,
+        "The line's tooltip on the skills panel. 34 of the 123 rows have one.",
+    ),
+    c(13, "Description koKR", Kind::Locale(LOCALES[1])),
+    c(14, "Description frFR", Kind::Locale(LOCALES[2])),
+    c(15, "Description deDE", Kind::Locale(LOCALES[3])),
+    c(16, "Description enCN", Kind::Locale(LOCALES[4])),
+    c(17, "Description enTW", Kind::Locale(LOCALES[5])),
+    c(18, "Description esES", Kind::Locale(LOCALES[6])),
+    c(19, "Description esMX", Kind::Locale(LOCALES[7])),
+    c(20, "DescriptionFlags", Kind::LocaleFlags),
+    ca(
+        21,
+        "SpellIcon",
+        Kind::Reference("SpellIcon"),
+        "The picture on the line's spellbook tab.",
+    ),
+];
+
+/// `SkillLineAbility.dbc`: 5,072 rows of 15 fields. A row puts one spell in
+/// one skill line for the races and classes its masks name. The indices are
+/// those [`super::skills`] and [`super::tradeskill`] read, and the names
+/// follow vmangos' `SkillLineAbilityEntry`.
+///
+/// The spellbook files a spell under the skill line of the row that matches
+/// the character, and a class trainer's service is dropped by the client
+/// when its spell has no matching row, so a new class spell needs a row here
+/// to be trainable.
+///
+/// vmangos does not read this file. It reads the same rows from its
+/// `skill_line_ability` table, so an edit here reaches the server as a row
+/// of that table and not as a copied file.
+pub const SKILL_LINE_ABILITY: Schema = Schema {
+    table: "SkillLineAbility",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        c(1, "Skill", Kind::Reference("SkillLine")),
+        c(2, "Spell", Kind::Reference("Spell")),
+        ca(
+            3,
+            "RaceMask",
+            Kind::Flags(RACE_BITS),
+            "The races the row is for. Zero is every race, on 4,955 of the \
+             5,072 rows.",
+        ),
+        ca(
+            4,
+            "ClassMask",
+            Kind::Flags(CLASS_BITS),
+            "The classes the row is for. Zero is every class, on 3,131 rows.",
+        ),
+        ca(
+            5,
+            "ExcludeRace",
+            Kind::Flags(RACE_BITS),
+            "Zero on every shipped row, and vmangos has no column for it.",
+        ),
+        ca(
+            6,
+            "ExcludeClass",
+            Kind::Flags(CLASS_BITS),
+            "Zero on every shipped row, and vmangos has no column for it.",
+        ),
+        ca(
+            7,
+            "ReqSkillValue",
+            Kind::Int,
+            "The skill value a trade skill recipe needs. 1 on 5,026 rows.",
+        ),
+        ca(
+            8,
+            "SupersededBySpell",
+            Kind::Reference("Spell"),
+            "The next rank: the spell that replaces this one when it is learned.",
+        ),
+        ca(
+            9,
+            "LearnOnGetSkill",
+            Kind::Enum(&[
+                (0, "Not given with the skill"),
+                (1, "Given with a profession skill"),
+                (2, "Given with a race or class skill"),
+            ]),
+            "Whether learning the skill line teaches the spell. The values are \
+             vmangos' AbilytyLearnType. 1 on 50 rows and 2 on 295.",
+        ),
+        ca(
+            10,
+            "MaxValue",
+            Kind::Int,
+            "The skill value at which a recipe turns grey and gives no skill.",
+        ),
+        ca(
+            11,
+            "MinValue",
+            Kind::Int,
+            "The skill value at which a recipe turns yellow. It is green from \
+             halfway between this and MaxValue.",
+        ),
+        ca(12, "Unused 12", Kind::Unused, "Zero on every shipped row."),
+        ca(13, "Unused 13", Kind::Unused, "Zero on every shipped row."),
+        ca(
+            14,
+            "ReqTrainPoints",
+            Kind::Int,
+            "The training points a pet ability costs. Non-zero on 280 rows.",
+        ),
+    ],
+    sections: &[
+        Section {
+            name: "Ability",
+            fields: &[0, 1, 2, 8, 9],
+        },
+        Section {
+            name: "Who has it",
+            fields: &[3, 4, 5, 6],
+        },
+        Section {
+            name: "Skill values",
+            fields: &[7, 11, 10, 14],
+        },
+        Section {
+            name: "Unread",
+            fields: &[12, 13],
+        },
+    ],
+};
+
+/// `SkillRaceClassInfo.dbc`: 201 rows of 8 fields. A row gives one skill line
+/// to the races and classes its masks name, with the flags that decide how
+/// the client shows it. The indices are those [`super::skills`] reads, and the
+/// names follow vmangos' `SkillRaceClassInfoEntry`.
+///
+/// vmangos reads this file from `DataDir`.
+pub const SKILL_RACE_CLASS_INFO: Schema = Schema {
+    table: "SkillRaceClassInfo",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        c(1, "Skill", Kind::Reference("SkillLine")),
+        ca(
+            2,
+            "RaceMask",
+            Kind::Flags(RACE_BITS),
+            "511, all nine races, on 134 of the 201 rows.",
+        ),
+        ca(
+            3,
+            "ClassMask",
+            Kind::Flags(CLASS_BITS),
+            "1503, all nine classes, on 60 rows.",
+        ),
+        ca(
+            4,
+            "Flags",
+            Kind::Flags(&[
+                (
+                    super::skills::panel_flags::ALWAYS,
+                    "Always listed",
+                    "The skills panel lists the line whether or not the character \
+                     has a value in it. No shipped row sets it.",
+                ),
+                (
+                    super::skills::panel_flags::NEVER,
+                    "Never listed",
+                    "The skills panel leaves the line out. vmangos names the bit \
+                     SKILL_FLAG_NO_SKILLUP_MESSAGE.",
+                ),
+                (
+                    super::skills::panel_flags::AT_LEVEL,
+                    "Listed at level",
+                    "The skills panel lists the line once the character reaches \
+                     MinLevel.",
+                ),
+                (0x010, "Always max value", "vmangos' SKILL_FLAG_ALWAYS_MAX_VALUE."),
+                (
+                    0x020,
+                    "Unlearnable",
+                    "vmangos' SKILL_FLAG_UNLEARNABLE: the skill can be unlearned.",
+                ),
+                (
+                    super::skills::NO_SPELLBOOK_TAB,
+                    "No spellbook tab",
+                    "The line's spells go on the General tab and not on a tab of \
+                     their own. vmangos names the bit SKILL_FLAG_INCLUDE_IN_SORT.",
+                ),
+                (0x100, "Not trainable", "vmangos' SKILL_FLAG_NOT_TRAINABLE."),
+                (
+                    super::skills::panel_flags::PROFICIENCY,
+                    "Proficiency",
+                    "Rank and maximum are shown as 1, a full bar with no number. \
+                     vmangos' SKILL_FLAG_MONO_VALUE.",
+                ),
+            ]),
+            "Thirteen values over the 201 rows; 0x80 on 77 of them.",
+        ),
+        ca(
+            5,
+            "MinLevel",
+            Kind::Int,
+            "The level a line the character has not started is shown at. Zero \
+             on 186 rows.",
+        ),
+        ca(
+            6,
+            "SkillTier",
+            Kind::Reference("SkillTiers"),
+            "The row of maximum values the line's ranks step through. Zero on \
+             160 rows.",
+        ),
+        ca(7, "SkillCostIndex", Kind::Int, "0, 1 or 2."),
+    ],
+    sections: &[
+        Section {
+            name: "Skill line",
+            fields: &[0, 1, 4, 5, 6, 7],
+        },
+        Section {
+            name: "Who has it",
+            fields: &[2, 3],
+        },
+    ],
+};
+
+/// `ItemSet.dbc`: 172 rows of 45 fields. A row is one set: its name, up to
+/// seventeen items and up to eight bonus spells, each with the number of
+/// pieces that grants it. The indices are those [`super::itemset`] reads, and
+/// the names follow vmangos' `ItemSetEntry`.
+///
+/// An item names its set in `item_template.set_id`; the item columns here are
+/// what the client lists under the set's name on a tooltip. No shipped set
+/// uses more than nine items or six bonuses.
+///
+/// vmangos reads this file from `DataDir`.
+pub const ITEM_SET: Schema = Schema {
+    table: "ItemSet",
+    columns: &ITEM_SET_COLUMNS,
+    sections: &[
+        Section {
+            name: "Set",
+            fields: &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        },
+        Section {
+            name: "Items",
+            fields: &[10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26],
+        },
+        // A bonus is a spell and the pieces that grant it, eight columns
+        // apart in the file and drawn together.
+        Section {
+            name: "Bonuses",
+            fields: &[27, 35, 28, 36, 29, 37, 30, 38, 31, 39, 32, 40, 33, 41, 34, 42],
+        },
+        Section {
+            name: "Requirement",
+            fields: &[43, 44],
+        },
+    ],
+};
+
+/// What a bonus's piece count means, for each of the eight columns' notes.
+const SET_PIECES: &str = "How many pieces of the set must be worn for the bonus \
+     beside it. The client lists the bonuses in this order, whatever order the \
+     row stores them in.";
+
+const ITEM_SET_COLUMNS: [Column; 45] = [
+    c(0, "Id", Kind::Id),
+    c(1, "Name", Kind::Text),
+    c(2, "Name koKR", Kind::Locale(LOCALES[1])),
+    c(3, "Name frFR", Kind::Locale(LOCALES[2])),
+    c(4, "Name deDE", Kind::Locale(LOCALES[3])),
+    c(5, "Name enCN", Kind::Locale(LOCALES[4])),
+    c(6, "Name enTW", Kind::Locale(LOCALES[5])),
+    c(7, "Name esES", Kind::Locale(LOCALES[6])),
+    c(8, "Name esMX", Kind::Locale(LOCALES[7])),
+    c(9, "NameFlags", Kind::LocaleFlags),
+    c(10, "Item 1", Kind::Item),
+    c(11, "Item 2", Kind::Item),
+    c(12, "Item 3", Kind::Item),
+    c(13, "Item 4", Kind::Item),
+    c(14, "Item 5", Kind::Item),
+    c(15, "Item 6", Kind::Item),
+    c(16, "Item 7", Kind::Item),
+    c(17, "Item 8", Kind::Item),
+    c(18, "Item 9", Kind::Item),
+    c(19, "Item 10", Kind::Item),
+    c(20, "Item 11", Kind::Item),
+    c(21, "Item 12", Kind::Item),
+    c(22, "Item 13", Kind::Item),
+    c(23, "Item 14", Kind::Item),
+    c(24, "Item 15", Kind::Item),
+    c(25, "Item 16", Kind::Item),
+    c(26, "Item 17", Kind::Item),
+    c(27, "Bonus spell 1", Kind::Reference("Spell")),
+    c(28, "Bonus spell 2", Kind::Reference("Spell")),
+    c(29, "Bonus spell 3", Kind::Reference("Spell")),
+    c(30, "Bonus spell 4", Kind::Reference("Spell")),
+    c(31, "Bonus spell 5", Kind::Reference("Spell")),
+    c(32, "Bonus spell 6", Kind::Reference("Spell")),
+    c(33, "Bonus spell 7", Kind::Reference("Spell")),
+    c(34, "Bonus spell 8", Kind::Reference("Spell")),
+    ca(35, "Bonus pieces 1", Kind::Int, SET_PIECES),
+    ca(36, "Bonus pieces 2", Kind::Int, SET_PIECES),
+    ca(37, "Bonus pieces 3", Kind::Int, SET_PIECES),
+    ca(38, "Bonus pieces 4", Kind::Int, SET_PIECES),
+    ca(39, "Bonus pieces 5", Kind::Int, SET_PIECES),
+    ca(40, "Bonus pieces 6", Kind::Int, SET_PIECES),
+    ca(41, "Bonus pieces 7", Kind::Int, SET_PIECES),
+    ca(42, "Bonus pieces 8", Kind::Int, SET_PIECES),
+    ca(
+        43,
+        "RequiredSkill",
+        Kind::Reference("SkillLine"),
+        "The skill the wearer needs for any bonus to be active. Four shipped \
+         sets have one, each at rank 300.",
+    ),
+    c(44, "RequiredSkillRank", Kind::Int),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2058,10 +2541,14 @@ mod tests {
     /// a table name fails here instead of when somebody follows the reference.
     #[test]
     fn every_reference_target_is_either_described_or_named_here() {
-        // `Map` and `Faction` are referenced deliberately without a schema of
-        // their own. Both open as numbered fields, which is better than a
-        // reference the browser refuses to follow.
-        const UNDESCRIBED: [&str; 2] = ["Faction", "Map"];
+        // These are referenced deliberately without a schema of their own.
+        // Each opens as numbered fields, which is better than a reference the
+        // browser refuses to follow.
+        const UNDESCRIBED: [&str; 5] =
+            ["Faction", "Map", "SkillCostsData", "SkillLineCategory", "SkillTiers"];
+        for target in UNDESCRIBED {
+            assert!(TABLE_NAMES.contains(&target), "{target} is not a table");
+        }
         for schema in ALL {
             for column in schema.columns {
                 let Kind::Reference(target) = column.kind else {
@@ -2137,6 +2624,68 @@ mod tests {
         assert!(for_table("Spell").is_some());
         assert!(for_table("spell").is_some());
         assert!(for_table("Creature").is_none());
+    }
+
+    /// Every table has one spelling: the list holds no name twice in any
+    /// case, every described table is in it under its own spelling, and a
+    /// name asked for in the archives' lower case comes back as that spelling.
+    #[test]
+    fn a_table_has_one_name_whatever_case_it_is_asked_in() {
+        let mut lower: Vec<String> =
+            TABLE_NAMES.iter().map(|name| name.to_ascii_lowercase()).collect();
+        lower.sort();
+        let count = lower.len();
+        lower.dedup();
+        assert_eq!(lower.len(), count);
+        for schema in ALL {
+            assert!(TABLE_NAMES.contains(&schema.table), "{}", schema.table);
+        }
+        assert_eq!(table_name("itemset"), "ItemSet");
+        assert_eq!(table_name("SKILLLINEABILITY"), "SkillLineAbility");
+        assert_eq!(table_name("wmoareatable"), "WMOAreaTable");
+        assert_eq!(table_name("NotATable"), "NotATable");
+    }
+
+    /// The skill tables and the item sets are the width the files are, and
+    /// their joins are the ones the modules that read them use: an ability
+    /// names its skill line in field 1 and its spell in field 2, a set's
+    /// seventeen items are fields 10 to 26 and its eight bonus spells 27 to
+    /// 34, each with its piece count eight fields on.
+    #[test]
+    fn the_skill_and_set_tables_are_the_shape_the_files_are() {
+        assert_eq!(SKILL_LINE.columns.len(), 22);
+        assert_eq!(SKILL_LINE_ABILITY.columns.len(), 15);
+        assert_eq!(SKILL_RACE_CLASS_INFO.columns.len(), 8);
+        assert_eq!(ITEM_SET.columns.len(), 45);
+
+        assert_eq!(SKILL_LINE.columns[3].kind, Kind::Text);
+        assert_eq!(SKILL_LINE.columns[21].kind, Kind::Reference("SpellIcon"));
+        assert_eq!(SKILL_LINE_ABILITY.references_to("SkillLine"), vec![1]);
+        assert_eq!(SKILL_LINE_ABILITY.references_to("Spell"), vec![2, 8]);
+        assert_eq!(SKILL_RACE_CLASS_INFO.references_to("SkillLine"), vec![1]);
+
+        let items: Vec<usize> = ITEM_SET
+            .columns
+            .iter()
+            .filter(|column| column.kind == Kind::Item)
+            .map(|column| column.field)
+            .collect();
+        assert_eq!(items, (10..27).collect::<Vec<usize>>());
+        assert_eq!(ITEM_SET.references_to("Spell"), (27..35).collect::<Vec<usize>>());
+        assert_eq!(ITEM_SET.references_to("SkillLine"), vec![43]);
+        let bonuses = ITEM_SET.sections.iter().find(|section| section.name == "Bonuses").unwrap();
+        for pair in bonuses.fields.chunks(2) {
+            assert_eq!(pair[1], pair[0] + 8, "a spell and its piece count");
+        }
+        // The masks name the nine races and the nine classes.
+        let Kind::Flags(classes) = SKILL_LINE_ABILITY.columns[4].kind else {
+            panic!("ClassMask is a mask");
+        };
+        assert_eq!(classes.iter().fold(0, |all, (bit, _, _)| all | bit), 1503);
+        let Kind::Flags(races) = SKILL_LINE_ABILITY.columns[3].kind else {
+            panic!("RaceMask is a mask");
+        };
+        assert_eq!(races.iter().fold(0, |all, (bit, _, _)| all | bit), 511);
     }
 
     /// The five light tables, at the widths the archives state (`vale dbc
