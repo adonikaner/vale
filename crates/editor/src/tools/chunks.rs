@@ -22,6 +22,10 @@
 //!                      chunk grid. With shift it is added to the selection
 //! ctrl + a             every chunk of the tile under the pointer; with shift,
 //!                      added
+//! ctrl + c             copies the selected chunks
+//! ctrl + v             pastes them, the copied block centred on the chunk
+//!                      under the pointer. With ctrl held the outline shows
+//!                      where
 //! escape               drops the selection
 //! ```
 //!
@@ -33,6 +37,16 @@
 //! The selection is kept when another tool is chosen and is drawn only while
 //! this one is. It is dropped by `Escape`, by the panel's button, and by a map
 //! switch, because a cell names a place on the grid and not a map.
+//!
+//! ## What a copy holds and what a paste writes
+//!
+//! A [`Clip`] holds each selected chunk's heights, layers and blend maps,
+//! vertex colours, hole mask, water, area id and impassable flag, with its
+//! offset in the block that bounds the selection. A layer's texture is kept by
+//! path, because a layer's index into `MTEX` means nothing in another tile.
+//! [`paste`] writes the parts [`Parts`] names, at the copied height or moved to
+//! the level of the ground it replaces ([`Level`]). It does not turn or mirror
+//! the block and copies no placements; the doodad and WMO tools copy those.
 //!
 //! ## A chunk is named by its place on the map's chunk grid
 //!
@@ -218,6 +232,11 @@ pub struct Chunks {
     /// The chunk under the pointer, or `None` when the pointer is over no open
     /// tile.
     pub at: Option<Cell>,
+    /// What `Ctrl+C` took.
+    pub clip: Clip,
+    /// Which parts of the clip `Ctrl+V` writes, and at what height.
+    pub parts: Parts,
+    pub level: Level,
     /// The press a drag began with, while the button is held.
     drag: Option<Drag>,
     /// What the panel reports about the selection, and the stamp it was
@@ -605,6 +624,364 @@ pub fn remove_texture(session: &mut EditSession, cells: &BTreeSet<Cell>, path: &
     })
 }
 
+/// Which parts of a copied chunk a paste writes. All of them by default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Parts {
+    /// `MCVT`, with `MCNR` recomputed from it.
+    pub heights: bool,
+    /// `MCLY` and `MCAL`: the layers and their blend maps.
+    pub textures: bool,
+    /// `MCCV`, the colour painted onto the vertices.
+    pub shading: bool,
+    /// The hole mask.
+    pub holes: bool,
+    /// `MCLQ` and the flags that declare it.
+    pub water: bool,
+    /// The area id and the impassable flag.
+    pub area: bool,
+}
+
+impl Default for Parts {
+    fn default() -> Parts {
+        Parts {
+            heights: true,
+            textures: true,
+            shading: true,
+            holes: true,
+            water: true,
+            area: true,
+        }
+    }
+}
+
+/// The height a pasted chunk's ground is written at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Level {
+    /// The heights as they were copied.
+    #[default]
+    Absolute,
+    /// The copied heights moved up or down by one amount, so that their mean
+    /// is the mean of the ground they replace. The shape is kept and the
+    /// paste lands at the level of where it is put. Water is not moved: it is
+    /// pasted at the level it was copied at.
+    Relative,
+}
+
+/// One copied chunk.
+#[derive(Debug, Clone)]
+pub struct ClipChunk {
+    /// Columns and rows from the clip's corner of least column and row.
+    pub offset: (u32, u32),
+    heights: Vec<f32>,
+    paint: alpha::Paint,
+    /// The texture each of `paint`'s layers draws, by path. A layer holds an
+    /// index into its own tile's `MTEX`, which means nothing in another tile.
+    textures: Vec<String>,
+    colours: Option<Vec<u8>>,
+    holes: u16,
+    pools: Vec<vale_edit::adt::liquid::Pool>,
+    area: u32,
+    impassable: bool,
+}
+
+/// What `Ctrl+C` took: the selected chunks, each by its offset in the block
+/// that bounds them.
+#[derive(Debug, Clone, Default)]
+pub struct Clip {
+    pub chunks: Vec<ClipChunk>,
+    /// The bounding block's columns and rows.
+    pub size: (u32, u32),
+}
+
+impl Clip {
+    pub fn is_empty(&self) -> bool {
+        self.chunks.is_empty()
+    }
+
+    /// The cells a paste at `at` writes, each with the chunk it takes. The
+    /// clip's bounding block is centred on `at`.
+    pub fn footprint(&self, at: Cell) -> impl Iterator<Item = (Cell, &ClipChunk)> {
+        let corner = (
+            at.x.saturating_sub(self.size.0 / 2),
+            at.y.saturating_sub(self.size.1 / 2),
+        );
+        self.chunks.iter().map(move |chunk| {
+            let cell = Cell {
+                x: corner.0 + chunk.offset.0,
+                y: corner.1 + chunk.offset.1,
+            };
+            (cell, chunk)
+        })
+    }
+}
+
+/// Copy every selected chunk whose tile is open.
+pub fn copy(session: &EditSession, cells: &BTreeSet<Cell>) -> Clip {
+    let mut clip = Clip::default();
+    let mut found: Vec<(Cell, ClipChunk)> = Vec::new();
+    for &cell in cells {
+        let Some(tile) = session.tiles.get(&cell.tile()) else {
+            continue;
+        };
+        let Some(index) = cell.chunk_in(tile) else {
+            continue;
+        };
+        let Some(chunk) = tile.chunk(index) else {
+            continue;
+        };
+        let names = tile.texture_names();
+        let paint = alpha::paint(chunk);
+        let textures = paint
+            .layers
+            .iter()
+            .map(|layer| names.get(layer.texture_id as usize).cloned().unwrap_or_default())
+            .collect();
+        found.push((
+            cell,
+            ClipChunk {
+                offset: (0, 0),
+                heights: vale_edit::adt::heights::heights(chunk),
+                paint,
+                textures,
+                colours: vale_edit::adt::colours::capture(tile, index),
+                holes: chunk.head().holes(),
+                pools: vale_edit::adt::liquid::pools(tile, index),
+                area: chunk.head().area_id(),
+                impassable: vale_edit::adt::impass::impassable(tile, index),
+            },
+        ));
+    }
+    let (Some(left), Some(top)) = (
+        found.iter().map(|(cell, _)| cell.x).min(),
+        found.iter().map(|(cell, _)| cell.y).min(),
+    ) else {
+        return clip;
+    };
+    for (cell, mut chunk) in found {
+        chunk.offset = (cell.x - left, cell.y - top);
+        clip.size.0 = clip.size.0.max(chunk.offset.0 + 1);
+        clip.size.1 = clip.size.1.max(chunk.offset.1 + 1);
+        clip.chunks.push(chunk);
+    }
+    clip
+}
+
+/// A chunk's `MCNR` bytes, for the edit that records a change to them.
+fn normals_of(tile: &AdtFile, chunk: usize) -> Option<Vec<u8>> {
+    tile.chunk(chunk)?
+        .region(vale_edit::adt::Region::Normals)
+        .map(|sub| sub.data.clone())
+}
+
+/// Recompute the normals of the chunks `moved` names and of each one's four
+/// neighbours in the tile, and add an [`Edit::Normals`] for each that
+/// changed. A normal is a central difference, so a chunk beside one that
+/// moved is shaded from the moved heights too. Neighbours in another tile are
+/// not reached.
+fn reshade(tile: &mut AdtFile, moved: &[usize], edits: &mut Vec<Edit>) {
+    let mut shade: BTreeSet<usize> = BTreeSet::new();
+    for &index in moved {
+        let (x, y) = ((index % CHUNKS_PER_SIDE) as i32, (index / CHUNKS_PER_SIDE) as i32);
+        for (dx, dy) in [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)] {
+            let (x, y) = (x + dx, y + dy);
+            let side = CHUNKS_PER_SIDE as i32;
+            if (0..side).contains(&x) && (0..side).contains(&y) {
+                shade.insert((y * side + x) as usize);
+            }
+        }
+    }
+    for index in shade {
+        let Some(before) = normals_of(tile, index) else {
+            continue;
+        };
+        vale_edit::adt::heights::recompute_normals(tile, index);
+        let after = normals_of(tile, index).unwrap_or_default();
+        if after != before {
+            edits.push(Edit::Normals {
+                chunk: index,
+                before,
+                after,
+            });
+        }
+    }
+}
+
+/// Write `clip` centred on `at`, as one undo entry across every tile it
+/// reaches. Returns the cells written; a cell whose tile is not open is
+/// skipped.
+///
+/// Each part is written only where `parts` asks for it and only where it
+/// differs from what the chunk holds. Every written tile is read again, since
+/// a paste can change the mesh, the texture set and the water at once.
+///
+/// The pasted block's edge meets the ground around it at whatever height that
+/// ground has. Nothing blends the two.
+pub fn paste(
+    session: &mut EditSession,
+    clip: &Clip,
+    at: Cell,
+    parts: Parts,
+    level: Level,
+) -> Vec<Cell> {
+    use vale_edit::adt::{colours, heights, impass, liquid};
+
+    let mut tiles: BTreeMap<(u32, u32), Vec<(Cell, &ClipChunk)>> = BTreeMap::new();
+    for (cell, chunk) in clip.footprint(at) {
+        if session.tiles.contains_key(&cell.tile()) {
+            tiles.entry(cell.tile()).or_default().push((cell, chunk));
+        }
+    }
+
+    // The one amount a relative paste moves every height by: the mean of the
+    // ground being replaced, less the mean of what replaces it.
+    let lift = match level {
+        Level::Absolute => 0.0,
+        Level::Relative => {
+            let (mut had, mut brought, mut count) = (0.0f64, 0.0f64, 0usize);
+            for (coord, cells) in &tiles {
+                let tile = &session.tiles[coord];
+                for (cell, chunk) in cells {
+                    let Some(open) = cell.chunk_in(tile).and_then(|index| tile.chunk(index)) else {
+                        continue;
+                    };
+                    had += heights::heights(open).iter().map(|&h| f64::from(h)).sum::<f64>();
+                    brought += chunk.heights.iter().map(|&h| f64::from(h)).sum::<f64>();
+                    count += chunk.heights.len();
+                }
+            }
+            match count {
+                0 => 0.0,
+                n => ((had - brought) / n as f64) as f32,
+            }
+        }
+    };
+
+    let mut written: Vec<Cell> = Vec::new();
+    let mut begun = false;
+    for (coord, cells) in tiles {
+        let key = session.key(coord);
+        let Some(tile) = session.tiles.get_mut(&coord) else {
+            continue;
+        };
+        let mut edits: Vec<Edit> = Vec::new();
+        let mut moved: Vec<usize> = Vec::new();
+        for (cell, from) in cells {
+            let Some(chunk) = cell.chunk_in(tile) else {
+                continue;
+            };
+            let had = edits.len();
+            if parts.heights {
+                let before = tile.chunk(chunk).map(heights::heights).unwrap_or_default();
+                let after: Vec<f32> = from.heights.iter().map(|h| h + lift).collect();
+                if before != after {
+                    let edit = Edit::Heights {
+                        chunk,
+                        before,
+                        after,
+                    };
+                    edit.apply(tile);
+                    edits.push(edit);
+                    moved.push(chunk);
+                }
+            }
+            if parts.textures {
+                edits.extend(repaint(tile, chunk, |tile, paint| {
+                    let mut wanted = from.paint.clone();
+                    for (layer, path) in wanted.layers.iter_mut().zip(&from.textures) {
+                        layer.texture_id = tile.name_texture(path);
+                    }
+                    let changed = *paint != wanted;
+                    *paint = wanted;
+                    changed
+                }));
+            }
+            if parts.shading {
+                let before = colours::capture(tile, chunk);
+                if before != from.colours {
+                    let edit = Edit::Colours {
+                        chunk,
+                        before,
+                        after: from.colours.clone(),
+                    };
+                    edit.apply(tile);
+                    edits.push(edit);
+                }
+            }
+            if parts.holes {
+                let before = tile.chunk(chunk).map(|c| c.head().holes()).unwrap_or(0);
+                if before != from.holes {
+                    let edit = Edit::Holes {
+                        chunk,
+                        before,
+                        after: from.holes,
+                    };
+                    edit.apply(tile);
+                    edits.push(edit);
+                }
+            }
+            // The water before the flag: both write the chunk's flags word,
+            // and each edit records the word as it found it, so the undo
+            // takes them back in the reverse order.
+            if parts.water {
+                let before = vale_edit::ops::ChunkLiquid::capture(tile, chunk);
+                if let Some(open) = tile.chunk_mut(chunk) {
+                    liquid::set_pools(open, &from.pools);
+                }
+                let after = vale_edit::ops::ChunkLiquid::capture(tile, chunk);
+                if before != after {
+                    edits.push(Edit::Liquid {
+                        chunk,
+                        before: Box::new(before),
+                        after: Box::new(after),
+                    });
+                }
+            }
+            if parts.area {
+                let before = tile.chunk(chunk).map(|c| c.head().area_id()).unwrap_or(0);
+                if before != from.area {
+                    let edit = Edit::Area {
+                        chunk,
+                        before,
+                        after: from.area,
+                    };
+                    edit.apply(tile);
+                    edits.push(edit);
+                }
+                let before = tile.chunk(chunk).map(|c| c.head().flags()).unwrap_or(0);
+                impass::set_impassable(tile, chunk, from.impassable);
+                let after = tile.chunk(chunk).map(|c| c.head().flags()).unwrap_or(0);
+                if before != after {
+                    edits.push(Edit::Flags {
+                        chunk,
+                        before,
+                        after,
+                    });
+                }
+            }
+            if edits.len() > had {
+                written.push(cell);
+            }
+        }
+        reshade(tile, &moved, &mut edits);
+        if edits.is_empty() {
+            continue;
+        }
+        if !begun {
+            begun = true;
+            session
+                .history
+                .begin(format!("Paste {} chunks", clip.chunks.len()));
+        }
+        session.history.record(&key, edits);
+        session.publish(coord);
+        session.stale.insert(coord);
+    }
+    if begun {
+        session.history.end();
+    }
+    written
+}
+
 pub struct ChunkToolPlugin;
 
 impl Plugin for ChunkToolPlugin {
@@ -731,6 +1108,30 @@ fn press(
                 format!("{} chunks selected", chunks.selected.len());
         }
     }
+    if control && keys.just_pressed(KeyCode::KeyC) {
+        chunks.clip = copy(session, &chunks.selected);
+        session.bypass_change_detection().status = match chunks.clip.is_empty() {
+            true => "no chunks are selected to copy".to_string(),
+            false => format!("copied {} chunks", chunks.clip.chunks.len()),
+        };
+    }
+    if control && keys.just_pressed(KeyCode::KeyV) {
+        let status = match (chunks.clip.is_empty(), chunks.at) {
+            (true, _) => "no chunks have been copied".to_string(),
+            (false, None) => "no chunk under the pointer to paste onto".to_string(),
+            (false, Some(at)) => {
+                let (clip, parts, level) = (chunks.clip.clone(), chunks.parts, chunks.level);
+                let written = paste(session, &clip, at, parts, level);
+                let said = format!("pasted onto {} of {} chunks", written.len(), clip.chunks.len());
+                // What was asked for is selected, so the outline shows where
+                // the paste went even where it changed nothing.
+                chunks.select(clip.footprint(at).map(|(cell, _)| cell));
+                chunks.primary = Some(at);
+                said
+            }
+        };
+        session.bypass_change_detection().status = status;
+    }
 }
 
 /// `--chunks "<x,y>;<x,y>"`: select the block between the chunks two world
@@ -793,6 +1194,7 @@ fn draw(
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
+    keys: Res<ButtonInput<KeyCode>>,
 ) {
     if !state.editing() || *tool != Tool::Chunks {
         return;
@@ -800,13 +1202,24 @@ fn draw(
     let Some(session) = session else { return };
     let selected = Color::srgb(0.45, 0.80, 1.0);
     let sweeping = Color::srgb(1.0, 0.85, 0.35);
+    let pasting = Color::srgb(0.45, 0.90, 0.55);
     let hovered = Color::srgba(1.0, 1.0, 1.0, 0.7);
 
     outline(&mut gizmos, &session, &chunks.selected, selected);
     let swept: BTreeSet<Cell> = chunks.sweeping().iter().copied().collect();
     outline(&mut gizmos, &session, &swept, sweeping);
-    if let (Some(at), true) = (chunks.at, swept.is_empty()) {
-        outline(&mut gizmos, &session, &BTreeSet::from([at]), hovered);
+    let Some(at) = chunks.at.filter(|_| swept.is_empty()) else {
+        return;
+    };
+    // With control held and something copied, the outline is where `Ctrl+V`
+    // would write. Otherwise it is the chunk under the pointer.
+    let control = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    match control && !chunks.clip.is_empty() {
+        true => {
+            let footprint: BTreeSet<Cell> = chunks.clip.footprint(at).map(|(cell, _)| cell).collect();
+            outline(&mut gizmos, &session, &footprint, pasting);
+        }
+        false => outline(&mut gizmos, &session, &BTreeSet::from([at]), hovered),
     }
 }
 
@@ -1119,6 +1532,116 @@ mod tests {
         undo(&mut session);
         assert_eq!(chunks.census(&session).textures, vec![(BASE.to_string(), 4, 4)]);
         assert_eq!(names(&session).len(), 1);
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// Give every chunk of `cells` a sloped ground starting at `base`, so a
+    /// paste has a shape to keep.
+    fn slope(session: &mut EditSession, cells: &BTreeSet<Cell>, base: f32) {
+        for cell in cells {
+            let tile = session.tiles.get_mut(&cell.tile()).unwrap();
+            let index = cell.chunk_in(tile).unwrap();
+            let heights: Vec<f32> = (0..145).map(|n| base + n as f32 * 0.01).collect();
+            vale_edit::adt::heights::set_heights(tile.chunk_mut(index).unwrap(), &heights);
+        }
+    }
+
+    fn heights_of(session: &EditSession, cell: Cell) -> Vec<f32> {
+        let tile = &session.tiles[&cell.tile()];
+        vale_edit::adt::heights::heights(tile.chunk(cell.chunk_in(tile).unwrap()).unwrap())
+    }
+
+    fn base_of(session: &EditSession, cell: Cell) -> String {
+        let tile = &session.tiles[&cell.tile()];
+        let chunk = tile.chunk(cell.chunk_in(tile).unwrap()).unwrap();
+        let id = alpha::paint(chunk).layers[0].texture_id as usize;
+        tile.texture_names()[id].clone()
+    }
+
+    /// A block copied from one tile and pasted into another carries its
+    /// heights, area, holes and base texture, the texture named in the
+    /// destination's own list. It is centred on the chunk pasted at, it is one
+    /// undo entry, and the undo puts every part back.
+    #[test]
+    fn a_paste_writes_every_part_and_is_one_entry() {
+        let (here, there) = ((31, 49), (33, 49));
+        let (mut session, install) = session_with("paste", &[here, there]);
+        let source: BTreeSet<Cell> = block(Cell::of(here, (4, 4)), Cell::of(here, (5, 5)))
+            .into_iter()
+            .collect();
+        let grass = "tileset\\test\\grass.blp";
+        set_area(&mut session, &source, 87);
+        set_holes(&mut session, &source, true);
+        set_base(&mut session, &source, grass);
+        slope(&mut session, &source, 20.0);
+        let depth = session.history.depth_done();
+        session.stale.clear();
+
+        let clip = copy(&session, &source);
+        assert_eq!((clip.chunks.len(), clip.size), (4, (2, 2)));
+        let at = Cell::of(there, (8, 8));
+        let written = paste(&mut session, &clip, at, Parts::default(), Level::Absolute);
+        let wanted: BTreeSet<Cell> = block(Cell::of(there, (7, 7)), Cell::of(there, (8, 8)))
+            .into_iter()
+            .collect();
+        assert_eq!(written.iter().copied().collect::<BTreeSet<Cell>>(), wanted);
+        assert_eq!(session.history.depth_done(), depth + 1);
+        assert!(session.stale.contains(&there) && !session.stale.contains(&here));
+        for (cell, from) in clip.footprint(at) {
+            assert_eq!(area_of(&session, cell), Some(87));
+            assert_eq!(heights_of(&session, cell), from.heights);
+            assert_eq!(base_of(&session, cell), grass);
+        }
+        let mut chunks = Chunks::default();
+        chunks.select(wanted.iter().copied());
+        assert_eq!(chunks.census(&session).cut, 4 * 16);
+
+        // The same paste again changes nothing and records nothing.
+        assert!(paste(&mut session, &clip, at, Parts::default(), Level::Absolute).is_empty());
+        assert_eq!(session.history.depth_done(), depth + 1);
+
+        undo(&mut session);
+        for &cell in &wanted {
+            assert_eq!(area_of(&session, cell), Some(12));
+            assert!(heights_of(&session, cell).iter().all(|&h| h == 0.0));
+            assert_eq!(base_of(&session, cell), BASE);
+        }
+        assert_eq!(chunks.census(&session).cut, 0);
+        assert_eq!(session.tiles[&there].texture_names().len(), 1);
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// A relative paste keeps the copied shape and lands at the mean height
+    /// of the ground it replaces. A part switched off is not written.
+    #[test]
+    fn a_relative_paste_keeps_the_shape_at_the_level_it_lands_on() {
+        let (here, there) = ((31, 49), (33, 49));
+        let (mut session, install) = session_with("level", &[here]);
+        session
+            .tiles
+            .insert(there, blank_tile(there.0, there.1, BASE, 50.0, 12));
+        let source = BTreeSet::from([Cell::of(here, (4, 4))]);
+        slope(&mut session, &source, 20.0);
+        set_area(&mut session, &source, 87);
+        let clip = copy(&session, &source);
+        let at = Cell::of(there, (8, 8));
+
+        let only_area = Parts {
+            heights: false,
+            ..Parts::default()
+        };
+        paste(&mut session, &clip, at, only_area, Level::Relative);
+        assert_eq!(area_of(&session, at), Some(87));
+        assert!(heights_of(&session, at).iter().all(|&h| (h - 50.0).abs() < 1e-3));
+
+        paste(&mut session, &clip, at, Parts::default(), Level::Relative);
+        let (pasted, copied) = (heights_of(&session, at), &clip.chunks[0].heights);
+        let mean = pasted.iter().sum::<f32>() / pasted.len() as f32;
+        assert!((mean - 50.0).abs() < 1e-2, "{mean}");
+        for n in 0..pasted.len() {
+            let (rose, was) = (pasted[n] - pasted[0], copied[n] - copied[0]);
+            assert!((rose - was).abs() < 1e-3, "vertex {n}: {rose} against {was}");
+        }
         let _ = std::fs::remove_dir_all(&install);
     }
 

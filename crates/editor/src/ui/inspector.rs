@@ -910,6 +910,73 @@ fn chunks(
     }
 
     ui.add_space(4.0);
+    theme::heading(ui, "Copy and paste");
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(any, egui::Button::new("Copy"))
+            .on_hover_text(
+                "Ctrl+C. Copy the selected chunks: heights, textures, shading, holes, \
+                 water, area and the impassable flag.",
+            )
+            .on_disabled_hover_text("Select chunks first.")
+            .clicked()
+        {
+            chunks.clip = tool::copy(session, &chunks.selected);
+            session.status = format!("copied {} chunks", chunks.clip.chunks.len());
+        }
+        ui.label(
+            egui::RichText::new(match chunks.clip.is_empty() {
+                true => "nothing copied".to_string(),
+                false => format!(
+                    "{} chunk(s) copied, {} by {}",
+                    chunks.clip.chunks.len(),
+                    chunks.clip.size.0,
+                    chunks.clip.size.1
+                ),
+            })
+            .size(theme::SMALL)
+            .color(theme::INK_DIM),
+        );
+    });
+    theme::note(
+        ui,
+        "ctrl + v pastes, centred on the chunk under the pointer. Hold ctrl to see where.",
+    );
+    // Which parts a paste writes. A part switched off is left as the ground
+    // under the paste has it.
+    ui.horizontal_wrapped(|ui| {
+        let parts = &mut chunks.parts;
+        for (label, on, about) in [
+            ("heights", &mut parts.heights, "MCVT. The normals are recomputed."),
+            ("textures", &mut parts.textures, "The layers and their blend maps."),
+            ("shading", &mut parts.shading, "MCCV, the colour painted onto the vertices."),
+            ("holes", &mut parts.holes, "The hole mask."),
+            ("water", &mut parts.water, "MCLQ, at the level it was copied at."),
+            ("area", &mut parts.area, "The area id and the impassable flag."),
+        ] {
+            ui.checkbox(on, label).on_hover_text(about);
+        }
+    });
+    theme::segmented(
+        ui,
+        &mut chunks.level,
+        &[
+            ("Absolute", tool::Level::Absolute),
+            ("Relative", tool::Level::Relative),
+        ],
+        |a, b| a == b,
+    );
+    theme::note(
+        ui,
+        match chunks.level {
+            tool::Level::Absolute => "heights are pasted as they were copied",
+            tool::Level::Relative => {
+                "heights are moved to the level of the ground they replace; water is not moved"
+            }
+        },
+    );
+
+    ui.add_space(4.0);
     theme::heading(ui, "Area");
     ui.label(egui::RichText::new(area_name(table, areas.brush.area)).color(theme::INK));
     if ui
@@ -1169,6 +1236,7 @@ fn chunks(
     theme::note(ui, "click selects a chunk · drag selects a block");
     theme::note(ui, "shift adds · shift + click on a selected chunk takes it out");
     theme::note(ui, "ctrl + a the tile under the pointer · escape deselects");
+    theme::note(ui, "ctrl + c copies · ctrl + v pastes at the pointer");
 
     ui.add_space(6.0);
     theme::heading(ui, "Under the pointer");
