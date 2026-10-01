@@ -315,6 +315,10 @@ pub struct Args {
     /// position. The selection is otherwise a press and a drag, which a
     /// scripted run cannot make. See [`tools::chunks`].
     pub chunks: Option<Vec<(f32, f32)>>,
+    /// `--stitch`: stitch the `--chunks` selection to the ground around it
+    /// once it is made, with the tool's default settings. See
+    /// [`tools::chunks::stitch`].
+    pub stitch: bool,
     /// `--place [<path>]`: open the placement panel on its Place half, with
     /// that model armed.
     ///
@@ -854,6 +858,7 @@ impl Default for Args {
             dwell: None,
             measure: None,
             chunks: None,
+            stitch: false,
             character: None,
             playtest: None,
         }
@@ -976,6 +981,10 @@ impl Args {
                         .next()
                         .map(|list| tour::Tour::parse(&list))
                         .filter(|points| !points.is_empty());
+                    parsed.tool = Some(tools::Tool::Chunks);
+                }
+                "--stitch" => {
+                    parsed.stitch = true;
                     parsed.tool = Some(tools::Tool::Chunks);
                 }
                 "--taxi-node" => {
@@ -1359,6 +1368,9 @@ mod tests {
         let args = Args::parse(["--chunks", "-9450,-50;-9520,-120"].into_iter().map(String::from));
         assert_eq!(args.chunks, Some(vec![(-9450.0, -50.0), (-9520.0, -120.0)]));
         assert_eq!(args.tool, Some(tools::Tool::Chunks));
+        assert!(!args.stitch);
+        let args = Args::parse(["--chunks", "-9450,-50", "--stitch"].into_iter().map(String::from));
+        assert!(args.stitch);
     }
 
     /// `--shot` takes a file and `--after` the seconds before it.

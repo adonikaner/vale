@@ -828,17 +828,40 @@ fn area_name(table: Option<&vale_assets::tables::area::Areas>, id: u32) -> Strin
 /// more there are.
 const CENSUS_ROWS: usize = 6;
 
-/// The chunk tool: what is selected, and the operations on it. See
-/// [`crate::tools::chunks`].
+/// The chunk panel's pages, in the order the control lists them.
+const PAGES: [(&str, crate::tools::chunks::Page); 5] = [
+    ("Paste", crate::tools::chunks::Page::Paste),
+    ("Stitch", crate::tools::chunks::Page::Stitch),
+    ("Area", crate::tools::chunks::Page::Area),
+    ("Holes", crate::tools::chunks::Page::Holes),
+    ("Paint", crate::tools::chunks::Page::Textures),
+];
+
+/// `n` with `noun`, pluralised by adding an s.
+fn counted(n: usize, noun: &str) -> String {
+    match n {
+        1 => format!("1 {noun}"),
+        n => format!("{n} {noun}s"),
+    }
+}
+
+/// The chunk tool: what is selected, and the operations on it, one page at a
+/// time. See [`crate::tools::chunks`].
+///
+/// The selection's count and the buttons that grow or drop it are above the
+/// pages, since every page acts on the selection. The pages are the
+/// operations grouped by what they write: a paste, a stitch, the area id with
+/// the impassable flag, the holes, the textures. One page is open at a time,
+/// so the panel is about a screen tall whichever is open.
 ///
 /// The area and the texture an operation writes are the area brush's and the
 /// texture brush's chosen values, picked with the pickers those two panels
 /// draw. A second chosen area or texture kept by this tool would be a second
 /// answer to which one is chosen.
 ///
-/// The rows about the chunk under the pointer are last, as in the measuring
-/// panel: their height changes as the pointer moves on and off the world, and
-/// above the buttons they would move the buttons under the pointer.
+/// The line about the chunk under the pointer is last, as in the measuring
+/// panel: it changes as the pointer moves on and off the world, and above the
+/// buttons it would move the buttons under the pointer.
 fn chunks(
     ui: &mut egui::Ui,
     chunks: &mut crate::tools::chunks::Chunks,
@@ -863,8 +886,9 @@ fn chunks(
         _ => {
             ui.label(
                 egui::RichText::new(format!(
-                    "{} chunk(s) in {} tile(s)",
-                    census.open, census.tiles
+                    "{} in {}",
+                    counted(census.open, "chunk"),
+                    counted(census.tiles, "tile")
                 ))
                 .color(theme::INK),
             );
@@ -872,14 +896,14 @@ fn chunks(
                 theme::note(
                     ui,
                     format!(
-                        "{} more are in tiles that are not open. No operation reaches them.",
+                        "{} more in tiles that are not open; no operation reaches them",
                         census.closed
                     ),
                 );
             }
         }
     }
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui
             .add_enabled(any, egui::Button::new("Whole tiles"))
             .on_hover_text("Select every chunk of each tile the selection touches.")
@@ -887,6 +911,18 @@ fn chunks(
         {
             let cells = chunks.whole_tiles(session);
             chunks.select(cells);
+        }
+        if let Some(area) = chunks.primary.and_then(|cell| tool::area_of(session, cell)) {
+            if ui
+                .button(format!("All in {}", area_name(table, area)))
+                .on_hover_text(
+                    "Add every chunk of the open tiles that has the area of the chunk \
+                     last clicked.",
+                )
+                .clicked()
+            {
+                chunks.add(tool::Chunks::in_area(session, area));
+            }
         }
         if ui
             .add_enabled(census.open + census.closed > 0, egui::Button::new("Deselect"))
@@ -896,21 +932,59 @@ fn chunks(
             chunks.clear();
         }
     });
-    if let Some(area) = chunks.primary.and_then(|cell| tool::area_of(session, cell)) {
-        if ui
-            .small_button(format!("Add all in {}", area_name(table, area)))
-            .on_hover_text(
-                "Add every chunk of the open tiles that has the area of the chunk \
-                 last clicked.",
-            )
-            .clicked()
-        {
-            chunks.add(tool::Chunks::in_area(session, area));
-        }
+
+    ui.add_space(8.0);
+    theme::segmented(ui, &mut chunks.page, &PAGES, |a, b| a == b);
+    ui.add_space(6.0);
+    match chunks.page {
+        tool::Page::Paste => chunks_paste(ui, chunks, session, any),
+        tool::Page::Stitch => chunks_stitch(ui, chunks, session, &census),
+        tool::Page::Area => chunks_area(ui, chunks, areas, session, tables, &census),
+        tool::Page::Holes => chunks_holes(ui, chunks, session, &census),
+        tool::Page::Textures => chunks_textures(ui, chunks, textures, thumbnails, session, &census),
     }
 
-    ui.add_space(4.0);
-    theme::heading(ui, "Copy and paste");
+    ui.add_space(10.0);
+    egui::CollapsingHeader::new(
+        egui::RichText::new("Keys")
+            .size(theme::SMALL)
+            .color(theme::INK_FAINT),
+    )
+    .id_salt("chunks-keys")
+    .show(ui, |ui| {
+        theme::note(ui, "click selects a chunk · drag selects a block");
+        theme::note(ui, "shift adds · shift + click on a selected chunk takes it out");
+        theme::note(ui, "ctrl + a the tile under the pointer · escape deselects");
+        theme::note(ui, "ctrl + c copies · ctrl + v pastes at the pointer");
+    });
+    ui.add_space(2.0);
+    theme::note(
+        ui,
+        match chunks.at {
+            Some(cell) => {
+                let (tile, within) = (cell.tile(), cell.within());
+                let area = tool::area_of(session, cell)
+                    .map(|area| format!(" · {}", area_name(table, area)))
+                    .unwrap_or_default();
+                format!(
+                    "under the pointer: tile {},{} · chunk {},{}{area}",
+                    tile.0, tile.1, within.0, within.1
+                )
+            }
+            None => "the pointer is over no open tile".to_string(),
+        },
+    );
+}
+
+/// The Paste page: copy, what a paste writes, and at what height.
+fn chunks_paste(
+    ui: &mut egui::Ui,
+    chunks: &mut crate::tools::chunks::Chunks,
+    session: &mut EditSession,
+    any: bool,
+) {
+    use crate::tools::chunks as tool;
+
     ui.horizontal(|ui| {
         if ui
             .add_enabled(any, egui::Button::new("Copy"))
@@ -928,8 +1002,8 @@ fn chunks(
             egui::RichText::new(match chunks.clip.is_empty() {
                 true => "nothing copied".to_string(),
                 false => format!(
-                    "{} chunk(s) copied, {} by {}",
-                    chunks.clip.chunks.len(),
+                    "{} copied, {} by {}",
+                    counted(chunks.clip.chunks.len(), "chunk"),
                     chunks.clip.size.0,
                     chunks.clip.size.1
                 ),
@@ -942,8 +1016,10 @@ fn chunks(
         ui,
         "ctrl + v pastes, centred on the chunk under the pointer. Hold ctrl to see where.",
     );
-    // Which parts a paste writes. A part switched off is left as the ground
-    // under the paste has it.
+
+    ui.add_space(6.0);
+    theme::heading(ui, "What a paste writes");
+    // A part switched off is left as the ground under the paste has it.
     ui.horizontal_wrapped(|ui| {
         let parts = &mut chunks.parts;
         for (label, on, about) in [
@@ -957,6 +1033,9 @@ fn chunks(
             ui.checkbox(on, label).on_hover_text(about);
         }
     });
+
+    ui.add_space(6.0);
+    theme::heading(ui, "Height");
     theme::segmented(
         ui,
         &mut chunks.level,
@@ -975,25 +1054,133 @@ fn chunks(
             }
         },
     );
-
     ui.add_space(4.0);
-    theme::heading(ui, "Area");
-    ui.label(egui::RichText::new(area_name(table, areas.brush.area)).color(theme::INK));
-    if ui
-        .add_enabled(
-            any,
-            egui::Button::new(format!("Set on {} chunk(s)", census.open)),
+    ui.checkbox(&mut chunks.stitch_pasted, "stitch each paste to the ground around it")
+        .on_hover_text(
+            "After a paste that writes heights, the Stitch page's settings are applied \
+             to the pasted block, in the paste's own undo entry.",
+        );
+}
+
+/// The Stitch page: what the border meets, which side moves, how far the
+/// blend reaches, and the button.
+fn chunks_stitch(
+    ui: &mut egui::Ui,
+    chunks: &mut crate::tools::chunks::Chunks,
+    session: &mut EditSession,
+    census: &crate::tools::chunks::Census,
+) {
+    use crate::tools::chunks as tool;
+
+    theme::note(
+        ui,
+        "Joins the selection's border to the ground around it. Every vertex on the \
+         border is moved to one height, and the ground within reach of the border \
+         follows it, on the side that moves.",
+    );
+    ui.add_space(4.0);
+    theme::row(ui, "border", |ui| {
+        ui.label(
+            egui::RichText::new(match census.border.sides {
+                0 => "meets no open ground".to_string(),
+                n => format!(
+                    "{}; the tallest step is {:.1} y",
+                    counted(n, "side"),
+                    census.border.step
+                ),
+            })
+            .color(match census.border.step > 0.5 {
+                true => theme::WARN,
+                false => theme::INK,
+            }),
         )
         .on_hover_text(
-            "Write this area id to every selected chunk, as one undo entry. Nothing \
-             on screen is drawn from an area id; a playtest reads it for its zone text.",
+            "The sides of selected chunks that meet an unselected chunk in an open \
+             tile, and the largest difference between the two heights stored for one \
+             vertex on them.",
+        );
+    });
+
+    ui.add_space(4.0);
+    theme::segmented(
+        ui,
+        &mut chunks.stitch.yields,
+        &[
+            ("Selection", tool::Yields::Selection),
+            ("Ground", tool::Yields::Ground),
+            ("Halfway", tool::Yields::Both),
+        ],
+        |a, b| a == b,
+    );
+    theme::note(
+        ui,
+        match chunks.stitch.yields {
+            tool::Yields::Selection => "the selected chunks move to meet the ground around them",
+            tool::Yields::Ground => "the ground around the selection moves to meet it",
+            tool::Yields::Both => "both move halfway",
+        },
+    );
+    theme::row(ui, "reach", |ui| {
+        ui.add(
+            egui::Slider::new(&mut chunks.stitch.reach, 0.0..=tool::FURTHEST)
+                .fixed_decimals(0)
+                .suffix(" y"),
         )
-        .on_disabled_hover_text("Select chunks first.")
-        .clicked()
-    {
-        let changed = tool::set_area(session, &chunks.selected, areas.brush.area);
-        session.status = format!("area {} on {changed} chunk(s)", areas.brush.area);
+        .on_hover_text(
+            "How far from the border the blend reaches, on each side that moves. \
+             Zero moves the border's vertices and nothing else. A chunk is 33 yards.",
+        );
+    });
+
+    ui.add_space(6.0);
+    let ready = census.open > 0 && census.border.sides > 0;
+    ui.add_enabled_ui(ready, |ui| {
+        if theme::primary(ui, &format!("Stitch {}", counted(census.open, "chunk"))).clicked() {
+            let moved = tool::stitch(session, &chunks.selected, chunks.stitch);
+            session.status = match moved {
+                0 => "nothing moved: the border already meets the ground".to_string(),
+                n => format!("stitched: {n} chunks moved"),
+            };
+        }
+    });
+    if !ready {
+        theme::note(ui, "select chunks whose border meets open ground");
     }
+    theme::note(
+        ui,
+        "One undo entry. Nothing standing on the moved ground moves with it.",
+    );
+}
+
+/// The Area page: the area id written to the selection, and the impassable
+/// flag beside it, which nothing on screen reads either.
+fn chunks_area(
+    ui: &mut egui::Ui,
+    chunks: &mut crate::tools::chunks::Chunks,
+    areas: &mut crate::tools::areas::Areas,
+    session: &mut EditSession,
+    tables: Option<&vale_assets::tables::dbc::DisplayTables>,
+    census: &crate::tools::chunks::Census,
+) {
+    use crate::tools::chunks as tool;
+
+    let table = tables.and_then(|tables| tables.areas());
+    let any = census.open > 0;
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(any, egui::Button::new("Set"))
+            .on_hover_text(
+                "Write this area id to every selected chunk, as one undo entry. Nothing \
+                 on screen is drawn from an area id; a playtest reads it for its zone text.",
+            )
+            .on_disabled_hover_text("Select chunks first.")
+            .clicked()
+        {
+            let changed = tool::set_area(session, &chunks.selected, areas.brush.area);
+            session.status = format!("area {} on {changed} chunk(s)", areas.brush.area);
+        }
+        ui.label(egui::RichText::new(area_name(table, areas.brush.area)).color(theme::INK));
+    });
     // The areas the selection is made of. `use` takes one as the area to
     // write, which is this panel's form of the area tool's Space.
     for (id, count) in census.areas.iter().take(CENSUS_ROWS) {
@@ -1051,12 +1238,8 @@ fn chunks(
             }
         });
 
-    ui.add_space(4.0);
+    ui.add_space(6.0);
     theme::heading(ui, "Walkable");
-    theme::note(
-        ui,
-        format!("{} of {} marked impassable", census.impassable, census.open),
-    );
     ui.horizontal(|ui| {
         for (label, on) in [("Impassable", true), ("Passable", false)] {
             if ui
@@ -1072,14 +1255,24 @@ fn chunks(
                 session.status = format!("{} on {changed} chunk(s)", label.to_lowercase());
             }
         }
+        theme::note(
+            ui,
+            format!("{} of {} impassable", census.impassable, census.open),
+        );
     });
+}
 
-    ui.add_space(4.0);
-    theme::heading(ui, "Holes");
-    theme::note(
-        ui,
-        format!("{} of {} squares cut", census.cut, census.open * 16),
-    );
+/// The Holes page: all sixteen squares of every selected chunk, cut or put
+/// back.
+fn chunks_holes(
+    ui: &mut egui::Ui,
+    chunks: &mut crate::tools::chunks::Chunks,
+    session: &mut EditSession,
+    census: &crate::tools::chunks::Census,
+) {
+    use crate::tools::chunks as tool;
+
+    let any = census.open > 0;
     ui.horizontal(|ui| {
         for (label, cut) in [("Cut", true), ("Patch", false)] {
             if ui
@@ -1097,10 +1290,30 @@ fn chunks(
                 };
             }
         }
+        theme::note(
+            ui,
+            format!("{} of {} squares cut", census.cut, census.open * 16),
+        );
     });
+    theme::note(
+        ui,
+        "One square at a time is the Holes tool, under the pointer.",
+    );
+}
 
-    ui.add_space(4.0);
-    theme::heading(ui, "Textures");
+/// The Paint page: the chosen texture as a base, the layers cleared, and the
+/// textures the selection carries with a swap and a remove each.
+fn chunks_textures(
+    ui: &mut egui::Ui,
+    chunks: &mut crate::tools::chunks::Chunks,
+    textures: &mut Textures,
+    thumbnails: &mut Thumbnails,
+    session: &mut EditSession,
+    census: &crate::tools::chunks::Census,
+) {
+    use crate::tools::chunks as tool;
+
+    let any = census.open > 0;
     let chosen = match textures.brush.texture.is_empty() {
         true => None,
         false => Some(textures.brush.texture.clone()),
@@ -1143,11 +1356,17 @@ fn chunks(
             session.status = format!("{changed} chunk(s) cleared to their base");
         }
     });
+
+    ui.add_space(6.0);
+    theme::heading(ui, "On the selection");
     // The textures the selection carries. `swap` and `×` act on every chunk
     // that carries the row's texture, which is the chunk list's two buttons
     // over a selection.
     let mut swap: Option<String> = None;
     let mut drop: Option<String> = None;
+    if census.textures.is_empty() {
+        theme::note(ui, "nothing selected");
+    }
     for (path, carried, based) in census.textures.iter().take(CENSUS_ROWS) {
         ui.horizontal(|ui| {
             swatch(ui, thumbnails, path);
@@ -1224,41 +1443,13 @@ fn chunks(
         let changed = tool::remove_texture(session, &chunks.selected, path);
         session.status = format!("removed {} from {changed} chunk(s)", textures::leaf(path));
     }
+    ui.add_space(4.0);
     egui::CollapsingHeader::new(egui::RichText::new("Choose a texture").color(theme::INK_DIM))
         .id_salt("chunks-texture-picker")
         .default_open(chosen.is_none())
         .show(ui, |ui| {
             tileset_picker(ui, textures, thumbnails, session);
         });
-
-    ui.add_space(6.0);
-    theme::heading(ui, "Keys");
-    theme::note(ui, "click selects a chunk · drag selects a block");
-    theme::note(ui, "shift adds · shift + click on a selected chunk takes it out");
-    theme::note(ui, "ctrl + a the tile under the pointer · escape deselects");
-    theme::note(ui, "ctrl + c copies · ctrl + v pastes at the pointer");
-
-    ui.add_space(6.0);
-    theme::heading(ui, "Under the pointer");
-    match chunks.at {
-        Some(cell) => {
-            let (tile, within) = (cell.tile(), cell.within());
-            theme::row(ui, "tile", |ui| {
-                ui.label(theme::number(format!("{},{}", tile.0, tile.1)));
-            });
-            theme::row(ui, "chunk", |ui| {
-                ui.label(theme::number(format!("{},{}", within.0, within.1)));
-            });
-            if let Some(area) = tool::area_of(session, cell) {
-                ui.label(
-                    egui::RichText::new(area_name(table, area))
-                        .size(theme::SMALL)
-                        .color(theme::INK_DIM),
-                );
-            }
-        }
-        None => theme::note(ui, "the pointer is over no open tile"),
-    }
 }
 
 /// The Select/Place switch, and the model picker shown in Place mode.

@@ -24,8 +24,9 @@
 //!                      added
 //! ctrl + c             copies the selected chunks
 //! ctrl + v             pastes them, the copied block centred on the chunk
-//!                      under the pointer. With ctrl held the outline shows
-//!                      where
+//!                      under the pointer, and stitches the block to the
+//!                      ground around it when the panel asks for that. With
+//!                      ctrl held the outline shows where
 //! escape               drops the selection
 //! ```
 //!
@@ -47,6 +48,25 @@
 //! [`paste`] writes the parts [`Parts`] names, at the copied height or moved to
 //! the level of the ground it replaces ([`Level`]). It does not turn or mirror
 //! the block and copies no placements; the doodad and WMO tools copy those.
+//!
+//! ## Stitching the selection to the ground around it
+//!
+//! Two pieces of ground meet at a step wherever the two chunks on either side
+//! of a chunk boundary store different heights for the vertices they share:
+//! a pasted block against the ground it landed in, or the two sides of a tile
+//! border that were edited apart. [`stitch`] closes the step along the
+//! selection's border. For every vertex the selection shares with an
+//! unselected chunk in an open tile it chooses one height ([`Yields`]: the
+//! ground's, the selection's, or halfway) and writes it to both copies. Then
+//! it blends: every vertex within [`Stitch::reach`] yards of the border, on
+//! each side that moves, is lifted by the border's own lift there, scaled by
+//! a smooth step that is one at the border and zero at the reach. Beyond the
+//! reach the shape is kept.
+//!
+//! A step inside the selection is not stitched: select one side of it, so
+//! the step is the selection's border. The normals of every chunk whose
+//! heights moved, and of its four neighbours, are recomputed across tile
+//! borders. Nothing standing on the moved ground is moved with it.
 //!
 //! ## A chunk is named by its place on the map's chunk grid
 //!
@@ -71,14 +91,21 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::session::EditSession;
 use crate::tools::Tool;
 use bevy::prelude::*;
-use vale_assets::world::adt::{CHUNKS_PER_SIDE, CHUNK_SIZE};
+use vale_assets::world::adt::{CHUNKS_PER_SIDE, CHUNK_SIZE, INNER_SIDE, OUTER_SIDE, UNIT_SIZE};
 use vale_client::render::axes;
 use vale_client::world::camera::WorldCamera;
-use vale_edit::adt::{alpha, AdtFile};
+use vale_edit::adt::{alpha, heights, AdtFile};
 use vale_edit::ops::{ChunkPaint, Edit};
 
 /// Chunks along one side of a tile, as the grid's own integer type.
 const SIDE: u32 = CHUNKS_PER_SIDE as u32;
+
+/// Steps of the vertex lattice along one side of a chunk: eight, so the ninth
+/// outer vertex of one chunk is the first of the next.
+const PITCH: u32 = (OUTER_SIDE - 1) as u32;
+
+/// Vertices in one interleaved pair of `MCVT` rows: nine outer, eight inner.
+const STRIDE: usize = OUTER_SIDE + INNER_SIDE;
 
 /// One map chunk, named by its column and row on the map's chunk grid. See
 /// the module comment.
@@ -134,20 +161,38 @@ impl Cell {
             .position(|chunk| chunk.head().index() == within)
     }
 
+    /// The cell `dx` columns and `dy` rows from this one, or `None` past the
+    /// edge of the grid.
+    fn step(self, dx: i32, dy: i32) -> Option<Cell> {
+        let x = self.x.checked_add_signed(dx)?;
+        let y = self.y.checked_add_signed(dy)?;
+        (x < 64 * SIDE && y < 64 * SIDE).then_some(Cell { x, y })
+    }
+
     /// The four neighbours, each with the side of this cell's square it
     /// shares. `None` past the edge of the grid.
     fn neighbours(self) -> [(Side, Option<Cell>); 4] {
-        let step = |dx: i32, dy: i32| {
-            let x = self.x.checked_add_signed(dx)?;
-            let y = self.y.checked_add_signed(dy)?;
-            (x < 64 * SIDE && y < 64 * SIDE).then_some(Cell { x, y })
-        };
         [
-            (Side::LowY, step(1, 0)),
-            (Side::HighY, step(-1, 0)),
-            (Side::LowX, step(0, 1)),
-            (Side::HighX, step(0, -1)),
+            (Side::LowY, self.step(1, 0)),
+            (Side::HighY, self.step(-1, 0)),
+            (Side::LowX, self.step(0, 1)),
+            (Side::HighX, self.step(0, -1)),
         ]
+    }
+
+    /// The neighbour across one side.
+    fn across(self, side: Side) -> Option<Cell> {
+        self.neighbours()
+            .into_iter()
+            .find(|(had, _)| *had == side)
+            .and_then(|(_, cell)| cell)
+    }
+
+    /// The eight cells around this one that are on the grid.
+    fn around(self) -> impl Iterator<Item = Cell> {
+        [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)]
+            .into_iter()
+            .filter_map(move |(dx, dy)| self.step(dx, dy))
     }
 }
 
@@ -176,6 +221,24 @@ impl Side {
             Side::HighY => ((x0, y0), (x1, y0)),
             Side::LowY => ((x0, y1), (x1, y1)),
         }
+    }
+
+    /// The nine outer vertices along this side, each as its index in this
+    /// chunk and its index in the chunk across the side. The two are one
+    /// vertex stored twice: `MCVT`'s rows run along decreasing world x and its
+    /// columns along decreasing world y, so row 0 is the high-x side and
+    /// column 8 the low-y side.
+    fn along(self) -> [(usize, usize); OUTER_SIDE] {
+        let last = OUTER_SIDE - 1;
+        std::array::from_fn(|k| {
+            let (own, across) = match self {
+                Side::HighX => (heights::outer(0, k), heights::outer(last, k)),
+                Side::LowX => (heights::outer(last, k), heights::outer(0, k)),
+                Side::HighY => (heights::outer(k, 0), heights::outer(k, last)),
+                Side::LowY => (heights::outer(k, last), heights::outer(k, 0)),
+            };
+            (own.expect("on the grid"), across.expect("on the grid"))
+        })
     }
 }
 
@@ -237,6 +300,13 @@ pub struct Chunks {
     /// Which parts of the clip `Ctrl+V` writes, and at what height.
     pub parts: Parts,
     pub level: Level,
+    /// How the selection is stitched to the ground around it.
+    pub stitch: Stitch,
+    /// Whether `Ctrl+V` stitches the pasted block to the ground around it, in
+    /// the same undo entry as the paste.
+    pub stitch_pasted: bool,
+    /// Which page of the panel is open.
+    pub page: Page,
     /// The press a drag began with, while the button is held.
     drag: Option<Drag>,
     /// What the panel reports about the selection, and the stamp it was
@@ -282,7 +352,68 @@ pub struct Census {
     pub cut: usize,
     /// How many carry four textures, which is the most a chunk may.
     pub full: usize,
+    /// What the selection's border meets.
+    pub border: Border,
 }
+
+/// What a selection's border meets, for the panel. See [`stitch`].
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Border {
+    /// Sides of selected chunks that meet an unselected chunk in an open
+    /// tile. A side on a closed tile or past the edge of the map is not one.
+    pub sides: usize,
+    /// The largest difference, in yards, between the two heights stored for
+    /// one vertex on those sides: the tallest step along the border.
+    pub step: f32,
+}
+
+/// Which page of the chunk panel is open. The panel's operations are grouped
+/// by what they write, one group a page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Page {
+    #[default]
+    Paste,
+    Stitch,
+    Area,
+    Holes,
+    Textures,
+}
+
+/// Which side of the border moves when the selection is stitched to the
+/// ground around it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Yields {
+    /// The selected chunks move to meet the ground around them, which stays
+    /// where it is.
+    #[default]
+    Selection,
+    /// The ground around the selection moves to meet it, and the selection
+    /// stays where it is.
+    Ground,
+    /// Both move halfway.
+    Both,
+}
+
+/// How a stitch is made. See [`stitch`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stitch {
+    pub yields: Yields,
+    /// How far from the border the blend reaches, in yards, on each side that
+    /// moves. Zero welds the border's vertices and moves nothing else.
+    pub reach: f32,
+}
+
+impl Default for Stitch {
+    fn default() -> Stitch {
+        Stitch {
+            yields: Yields::Selection,
+            reach: CHUNK_SIZE,
+        }
+    }
+}
+
+/// The furthest a stitch reaches, in yards: three chunks.
+pub const FURTHEST: f32 = 3.0 * CHUNK_SIZE;
 
 impl Chunks {
     /// Replace the selection.
@@ -411,7 +542,267 @@ fn count(session: &EditSession, selected: &BTreeSet<Cell>) -> Census {
         .map(|(name, (carried, based))| (name, carried, based))
         .collect();
     census.textures.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    census.border = seam(session, selected).1;
     census
+}
+
+/// One cell's chunk's 145 world heights, when its tile is open.
+fn chunk_heights(session: &EditSession, cell: Cell) -> Option<Vec<f32>> {
+    let tile = session.tiles.get(&cell.tile())?;
+    let chunk = tile.chunk(cell.chunk_in(tile)?)?;
+    let found = heights::heights(chunk);
+    (!found.is_empty()).then_some(found)
+}
+
+/// A vertex's place on the map's vertex lattice, in units of `UNIT_SIZE`:
+/// along the grid's columns, then along its rows. An outer vertex lands on
+/// whole numbers and an inner one on halves, and a vertex on a chunk's side
+/// has the same place from both chunks.
+fn lattice(cell: Cell, index: usize) -> (f32, f32) {
+    let (dx, dy) = heights::vertex_offset(index);
+    (
+        (cell.x * PITCH) as f32 + dy / UNIT_SIZE,
+        (cell.y * PITCH) as f32 + dx / UNIT_SIZE,
+    )
+}
+
+/// [`lattice`] for an outer vertex, as whole numbers, or `None` for an inner
+/// one.
+fn outer_key(cell: Cell, index: usize) -> Option<(u32, u32)> {
+    let (row, col) = (index / STRIDE, index % STRIDE);
+    (col < OUTER_SIDE).then(|| (cell.x * PITCH + col as u32, cell.y * PITCH + row as u32))
+}
+
+/// One vertex on the border between the selection and the ground beyond it:
+/// where it is on the lattice, and the heights each side's chunks store for
+/// it. A vertex at a corner is stored by up to two chunks a side.
+struct Join {
+    at: (f32, f32),
+    inside: Vec<f32>,
+    outside: Vec<f32>,
+}
+
+/// Every vertex the selection shares with an unselected chunk in an open
+/// tile, by its place on the lattice, with the count the panel reports.
+fn seam(session: &EditSession, cells: &BTreeSet<Cell>) -> (BTreeMap<(u32, u32), Join>, Border) {
+    let mut joins: BTreeMap<(u32, u32), Join> = BTreeMap::new();
+    let mut found = Border::default();
+    // Each chunk is decoded once, though a border cell is listed once a side.
+    let mut read: BTreeMap<Cell, Option<Vec<f32>>> = BTreeMap::new();
+    let mut heights_of = |cell: Cell| -> Option<Vec<f32>> {
+        read.entry(cell)
+            .or_insert_with(|| chunk_heights(session, cell))
+            .clone()
+    };
+    for (cell, side) in border(cells) {
+        let Some(other) = cell.across(side) else {
+            continue;
+        };
+        let (Some(mine), Some(theirs)) = (heights_of(cell), heights_of(other)) else {
+            continue;
+        };
+        found.sides += 1;
+        for (own, across) in side.along() {
+            let key = outer_key(cell, own).expect("an outer vertex");
+            let join = joins.entry(key).or_insert_with(|| Join {
+                at: lattice(cell, own),
+                inside: Vec::new(),
+                outside: Vec::new(),
+            });
+            join.inside.push(mine[own]);
+            join.outside.push(theirs[across]);
+            found.step = found.step.max((mine[own] - theirs[across]).abs());
+        }
+    }
+    (joins, found)
+}
+
+/// The cells within `steps` of `from` on the grid, a diagonal counting as one
+/// step, that `keep` accepts; `from`'s own cells where `keep` accepts them.
+fn grow(from: impl IntoIterator<Item = Cell>, steps: u32, keep: impl Fn(Cell) -> bool) -> BTreeSet<Cell> {
+    let mut found: BTreeSet<Cell> = from.into_iter().filter(|&cell| keep(cell)).collect();
+    let mut edge: Vec<Cell> = found.iter().copied().collect();
+    for _ in 0..steps {
+        let mut next = Vec::new();
+        for cell in edge {
+            for other in cell.around() {
+                if keep(other) && found.insert(other) {
+                    next.push(other);
+                }
+            }
+        }
+        edge = next;
+    }
+    found
+}
+
+/// Stitch the selection to the ground around it, as one undo entry. Returns
+/// how many chunks' heights changed. See the module comment.
+pub fn stitch(session: &mut EditSession, cells: &BTreeSet<Cell>, how: Stitch) -> usize {
+    session.history.begin(format!("Stitch {} chunks", cells.len()));
+    let changed = stitch_in(session, cells, how);
+    session.history.end();
+    changed
+}
+
+/// [`stitch`], recorded in whatever history entry is open.
+fn stitch_in(session: &mut EditSession, cells: &BTreeSet<Cell>, how: Stitch) -> usize {
+    let (joins, _) = seam(session, cells);
+    if joins.is_empty() {
+        return 0;
+    }
+    let (w_in, w_out) = match how.yields {
+        Yields::Selection => (1.0, 0.0),
+        Yields::Ground => (0.0, 1.0),
+        Yields::Both => (0.5, 0.5),
+    };
+
+    // Each border vertex: where it is, the height both copies end at, and how
+    // far each side's ground moves there to reach it.
+    struct Point {
+        at: (f32, f32),
+        target: f32,
+        lift_in: f32,
+        lift_out: f32,
+    }
+    let mean = |heights: &[f32]| heights.iter().sum::<f32>() / heights.len().max(1) as f32;
+    let points: BTreeMap<(u32, u32), Point> = joins
+        .iter()
+        .map(|(key, join)| {
+            let (inside, outside) = (mean(&join.inside), mean(&join.outside));
+            let point = Point {
+                at: join.at,
+                target: inside + w_in * (outside - inside),
+                lift_in: w_in * (outside - inside),
+                lift_out: w_out * (inside - outside),
+            };
+            (*key, point)
+        })
+        .collect();
+    // The points by the cell each is in, so a chunk reads the cells within
+    // reach of it and not every point on the border.
+    let mut buckets: BTreeMap<(i64, i64), Vec<&Point>> = BTreeMap::new();
+    for point in points.values() {
+        let key = (
+            (point.at.0 / PITCH as f32).floor() as i64,
+            (point.at.1 / PITCH as f32).floor() as i64,
+        );
+        buckets.entry(key).or_default().push(point);
+    }
+
+    let reach = how.reach.max(0.0) / UNIT_SIZE;
+    let steps = (how.reach.max(0.0) / CHUNK_SIZE).ceil() as u32;
+    let sides = border(cells);
+    let mut work: Vec<(Cell, bool)> = Vec::new();
+    if w_in > 0.0 {
+        let edge = sides.iter().map(|(cell, _)| *cell);
+        work.extend(grow(edge, steps, |cell| cells.contains(&cell)).into_iter().map(|cell| (cell, true)));
+    }
+    if w_out > 0.0 {
+        let beyond = sides.iter().filter_map(|(cell, side)| cell.across(*side));
+        work.extend(grow(beyond, steps, |cell| !cells.contains(&cell)).into_iter().map(|cell| (cell, false)));
+    }
+
+    let mut edits: BTreeMap<(u32, u32), Vec<Edit>> = BTreeMap::new();
+    let mut moved: BTreeSet<Cell> = BTreeSet::new();
+    for (cell, inside) in work {
+        let Some(before) = chunk_heights(session, cell) else {
+            continue;
+        };
+        // The border points within reach of any vertex of this chunk.
+        let near: Vec<&Point> = {
+            let (bx, by) = (cell.x as i64, cell.y as i64);
+            let r = steps as i64 + 1;
+            (bx - r..=bx + r)
+                .flat_map(|x| (by - r..=by + r).map(move |y| (x, y)))
+                .filter_map(|key| buckets.get(&key))
+                .flatten()
+                .copied()
+                .collect()
+        };
+        let mut after = before.clone();
+        for (index, height) in after.iter_mut().enumerate() {
+            if let Some(point) = outer_key(cell, index).and_then(|key| points.get(&key)) {
+                *height = point.target;
+                continue;
+            }
+            if reach <= 0.0 {
+                continue;
+            }
+            // The lift at the nearest border points, weighted by the inverse
+            // square of their distance, and faded to nothing at the reach.
+            let at = lattice(cell, index);
+            let (mut sum, mut weight, mut nearest) = (0.0f32, 0.0f32, f32::INFINITY);
+            for point in &near {
+                let d = ((point.at.0 - at.0).powi(2) + (point.at.1 - at.1).powi(2)).sqrt();
+                if d > reach {
+                    continue;
+                }
+                let w = 1.0 / (d * d + 1e-3);
+                sum += w * match inside {
+                    true => point.lift_in,
+                    false => point.lift_out,
+                };
+                weight += w;
+                nearest = nearest.min(d);
+            }
+            if weight > 0.0 {
+                let u = (nearest / reach).clamp(0.0, 1.0);
+                *height += sum / weight * (1.0 - u * u * (3.0 - 2.0 * u));
+            }
+        }
+        if after.iter().zip(&before).all(|(a, b)| (a - b).abs() < 1e-4) {
+            continue;
+        }
+        let coord = cell.tile();
+        let Some(tile) = session.tiles.get_mut(&coord) else {
+            continue;
+        };
+        let Some(index) = cell.chunk_in(tile) else {
+            continue;
+        };
+        let Some(chunk) = tile.chunk_mut(index) else {
+            continue;
+        };
+        heights::set_heights(chunk, &after);
+        edits.entry(coord).or_default().push(Edit::Heights {
+            chunk: index,
+            before,
+            after,
+        });
+        moved.insert(cell);
+    }
+    let changed = moved.len();
+    reshade_across(session, &moved, &mut edits);
+    commit(session, edits, false);
+    changed
+}
+
+/// Record `edits` in the open history entry, tile by tile, and bring each
+/// written tile up to date on screen: read again where `reread` asks for it,
+/// otherwise patched live chunk by chunk. A tile whose only change is its
+/// shading is patched live either way.
+fn commit(session: &mut EditSession, edits: BTreeMap<(u32, u32), Vec<Edit>>, reread: bool) {
+    for (coord, edits) in edits {
+        if edits.is_empty() {
+            continue;
+        }
+        let key = session.key(coord);
+        let chunks: Vec<usize> = edits.iter().filter_map(Edit::chunk).collect();
+        let shading_only = edits.iter().all(|edit| matches!(edit, Edit::Normals { .. }));
+        session.history.record(&key, edits);
+        session.publish(coord);
+        match reread && !shading_only {
+            true => {
+                session.stale.insert(coord);
+            }
+            false => {
+                for chunk in chunks {
+                    session.touched(coord, chunk);
+                }
+            }
+        }
+    }
 }
 
 /// Cells grouped by the tile each is in, the tiles in order.
@@ -774,34 +1165,61 @@ fn normals_of(tile: &AdtFile, chunk: usize) -> Option<Vec<u8>> {
 }
 
 /// Recompute the normals of the chunks `moved` names and of each one's four
-/// neighbours in the tile, and add an [`Edit::Normals`] for each that
-/// changed. A normal is a central difference, so a chunk beside one that
-/// moved is shaded from the moved heights too. Neighbours in another tile are
-/// not reached.
-fn reshade(tile: &mut AdtFile, moved: &[usize], edits: &mut Vec<Edit>) {
-    let mut shade: BTreeSet<usize> = BTreeSet::new();
-    for &index in moved {
-        let (x, y) = ((index % CHUNKS_PER_SIDE) as i32, (index / CHUNKS_PER_SIDE) as i32);
-        for (dx, dy) in [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)] {
-            let (x, y) = (x + dx, y + dy);
-            let side = CHUNKS_PER_SIDE as i32;
-            if (0..side).contains(&x) && (0..side).contains(&y) {
-                shade.insert((y * side + x) as usize);
+/// neighbours, and add an [`Edit::Normals`] to `edits` for each that changed.
+/// A normal is a central difference, so a chunk beside one that moved is
+/// shaded from the moved heights too, and a chunk on a tile's side reads the
+/// heights across it. Runs after every height is written, since it reads
+/// them.
+fn reshade_across(
+    session: &mut EditSession,
+    moved: &BTreeSet<Cell>,
+    edits: &mut BTreeMap<(u32, u32), Vec<Edit>>,
+) {
+    let mut shade: BTreeSet<Cell> = BTreeSet::new();
+    for &cell in moved {
+        shade.insert(cell);
+        shade.extend(cell.neighbours().into_iter().filter_map(|(_, other)| other));
+    }
+    for (coord, cells) in by_tile(shade.into_iter()) {
+        if !session.tiles.contains_key(&coord) {
+            continue;
+        }
+        // The chunks across the tile's sides that these normals read, by
+        // their place on this tile's 16x16 grid, taken before the tile is
+        // borrowed to write.
+        let mut beyond: BTreeMap<(i32, i32), Vec<f32>> = BTreeMap::new();
+        for &cell in &cells {
+            let (x, y) = cell.within();
+            for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                let (nx, ny) = (x as i32 + dx, y as i32 + dy);
+                if (0..SIDE as i32).contains(&nx) && (0..SIDE as i32).contains(&ny) {
+                    continue;
+                }
+                if let Some(found) = cell.step(dx, dy).and_then(|other| chunk_heights(session, other)) {
+                    beyond.insert((nx, ny), found);
+                }
             }
         }
-    }
-    for index in shade {
-        let Some(before) = normals_of(tile, index) else {
+        let Some(tile) = session.tiles.get_mut(&coord) else {
             continue;
         };
-        vale_edit::adt::heights::recompute_normals(tile, index);
-        let after = normals_of(tile, index).unwrap_or_default();
-        if after != before {
-            edits.push(Edit::Normals {
-                chunk: index,
-                before,
-                after,
-            });
+        let written = edits.entry(coord).or_default();
+        for cell in cells {
+            let Some(index) = cell.chunk_in(tile) else {
+                continue;
+            };
+            let Some(before) = normals_of(tile, index) else {
+                continue;
+            };
+            heights::recompute_normals_with(tile, index, &|x, y| beyond.get(&(x, y)).cloned());
+            let after = normals_of(tile, index).unwrap_or_default();
+            if after != before {
+                written.push(Edit::Normals {
+                    chunk: index,
+                    before,
+                    after,
+                });
+            }
         }
     }
 }
@@ -815,7 +1233,7 @@ fn reshade(tile: &mut AdtFile, moved: &[usize], edits: &mut Vec<Edit>) {
 /// a paste can change the mesh, the texture set and the water at once.
 ///
 /// The pasted block's edge meets the ground around it at whatever height that
-/// ground has. Nothing blends the two.
+/// ground has. [`stitch`] joins the two.
 pub fn paste(
     session: &mut EditSession,
     clip: &Clip,
@@ -823,7 +1241,23 @@ pub fn paste(
     parts: Parts,
     level: Level,
 ) -> Vec<Cell> {
-    use vale_edit::adt::{colours, heights, impass, liquid};
+    session
+        .history
+        .begin(format!("Paste {} chunks", clip.chunks.len()));
+    let written = paste_in(session, clip, at, parts, level);
+    session.history.end();
+    written
+}
+
+/// [`paste`], recorded in whatever history entry is open.
+fn paste_in(
+    session: &mut EditSession,
+    clip: &Clip,
+    at: Cell,
+    parts: Parts,
+    level: Level,
+) -> Vec<Cell> {
+    use vale_edit::adt::{colours, impass, liquid};
 
     let mut tiles: BTreeMap<(u32, u32), Vec<(Cell, &ClipChunk)>> = BTreeMap::new();
     for (cell, chunk) in clip.footprint(at) {
@@ -857,14 +1291,13 @@ pub fn paste(
     };
 
     let mut written: Vec<Cell> = Vec::new();
-    let mut begun = false;
+    let mut edits: BTreeMap<(u32, u32), Vec<Edit>> = BTreeMap::new();
+    let mut moved: BTreeSet<Cell> = BTreeSet::new();
     for (coord, cells) in tiles {
-        let key = session.key(coord);
         let Some(tile) = session.tiles.get_mut(&coord) else {
             continue;
         };
-        let mut edits: Vec<Edit> = Vec::new();
-        let mut moved: Vec<usize> = Vec::new();
+        let edits = edits.entry(coord).or_default();
         for (cell, from) in cells {
             let Some(chunk) = cell.chunk_in(tile) else {
                 continue;
@@ -881,7 +1314,7 @@ pub fn paste(
                     };
                     edit.apply(tile);
                     edits.push(edit);
-                    moved.push(chunk);
+                    moved.insert(cell);
                 }
             }
             if parts.textures {
@@ -962,23 +1395,9 @@ pub fn paste(
                 written.push(cell);
             }
         }
-        reshade(tile, &moved, &mut edits);
-        if edits.is_empty() {
-            continue;
-        }
-        if !begun {
-            begun = true;
-            session
-                .history
-                .begin(format!("Paste {} chunks", clip.chunks.len()));
-        }
-        session.history.record(&key, edits);
-        session.publish(coord);
-        session.stale.insert(coord);
     }
-    if begun {
-        session.history.end();
-    }
+    reshade_across(session, &moved, &mut edits);
+    commit(session, edits, true);
     written
 }
 
@@ -1121,11 +1540,29 @@ fn press(
             (false, None) => "no chunk under the pointer to paste onto".to_string(),
             (false, Some(at)) => {
                 let (clip, parts, level) = (chunks.clip.clone(), chunks.parts, chunks.level);
-                let written = paste(session, &clip, at, parts, level);
-                let said = format!("pasted onto {} of {} chunks", written.len(), clip.chunks.len());
+                let footprint: BTreeSet<Cell> = clip.footprint(at).map(|(cell, _)| cell).collect();
+                // The paste and its stitch are one entry, so one undo takes
+                // both back.
+                session
+                    .history
+                    .begin(format!("Paste {} chunks", clip.chunks.len()));
+                let written = paste_in(session, &clip, at, parts, level);
+                let stitched = match chunks.stitch_pasted && parts.heights && !written.is_empty() {
+                    true => stitch_in(session, &footprint, chunks.stitch),
+                    false => 0,
+                };
+                session.history.end();
+                let said = match stitched {
+                    0 => format!("pasted onto {} of {} chunks", written.len(), clip.chunks.len()),
+                    n => format!(
+                        "pasted onto {} of {} chunks, {n} moved by the stitch",
+                        written.len(),
+                        clip.chunks.len()
+                    ),
+                };
                 // What was asked for is selected, so the outline shows where
                 // the paste went even where it changed nothing.
-                chunks.select(clip.footprint(at).map(|(cell, _)| cell));
+                chunks.select(footprint);
                 chunks.primary = Some(at);
                 said
             }
@@ -1136,14 +1573,15 @@ fn press(
 
 /// `--chunks "<x,y>;<x,y>"`: select the block between the chunks two world
 /// positions are over, once both are over open tiles. One position selects
-/// its own chunk. See `crate::Args::chunks`.
+/// its own chunk. `--stitch` then stitches the block to the ground around
+/// it. See `crate::Args::chunks`.
 fn scripted(
     mut chunks: ResMut<Chunks>,
-    session: Option<Res<EditSession>>,
+    mut session: Option<ResMut<EditSession>>,
     args: Res<crate::Args>,
     mut done: Local<bool>,
 ) {
-    let (Some(points), Some(session)) = (args.chunks.as_ref(), session) else {
+    let (Some(points), Some(session)) = (args.chunks.as_ref(), session.as_mut()) else {
         return;
     };
     if *done {
@@ -1152,7 +1590,7 @@ fn scripted(
     let cells: Option<Vec<Cell>> = points
         .iter()
         .take(2)
-        .map(|&(x, y)| Cell::at(&session, x, y))
+        .map(|&(x, y)| Cell::at(session, x, y))
         .collect();
     let Some(cells) = cells.filter(|cells| !cells.is_empty()) else {
         return;
@@ -1162,6 +1600,12 @@ fn scripted(
     chunks.select(block(from, to));
     chunks.primary = Some(to);
     info!("--chunks: {} selected", chunks.selected.len());
+    if args.stitch {
+        let changed = stitch(session, &chunks.selected, chunks.stitch);
+        info!("--stitch: {changed} chunks moved");
+        session.status = format!("stitched: {changed} chunks moved");
+        chunks.page = Page::Stitch;
+    }
 }
 
 /// How many segments one side of a chunk is drawn in, so the outline follows
@@ -1642,6 +2086,193 @@ mod tests {
             let (rose, was) = (pasted[n] - pasted[0], copied[n] - copied[0]);
             assert!((rose - was).abs() < 1e-3, "vertex {n}: {rose} against {was}");
         }
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// Set every height of each cell's chunk to `height`, with no entry.
+    fn raise(session: &mut EditSession, cells: &BTreeSet<Cell>, height: f32) {
+        for cell in cells {
+            let tile = session.tiles.get_mut(&cell.tile()).unwrap();
+            let index = cell.chunk_in(tile).unwrap();
+            let heights = vec![height; heights::VERTICES];
+            heights::set_heights(tile.chunk_mut(index).unwrap(), &heights);
+        }
+    }
+
+    /// One outer vertex's height, by row and column.
+    fn height_at(session: &EditSession, cell: Cell, row: usize, col: usize) -> f32 {
+        heights_of(session, cell)[heights::outer(row, col).unwrap()]
+    }
+
+    /// A raised block stitched with the selection yielding: its border
+    /// vertices take the ground's height, the ground does not move, a vertex
+    /// halfway to the reach is lifted halfway, and one at the reach keeps its
+    /// height. The whole stitch is one entry and one undo puts the shape and
+    /// the shading back.
+    #[test]
+    fn a_stitch_welds_the_border_and_blends_inward() {
+        let here = (31, 49);
+        let (mut session, install) = session_with("stitch", &[here]);
+        let block: BTreeSet<Cell> = block(Cell::of(here, (4, 4)), Cell::of(here, (5, 5)))
+            .into_iter()
+            .collect();
+        raise(&mut session, &block, 20.0);
+        let mut chunks = Chunks::default();
+        chunks.select(block.iter().copied());
+        let border = chunks.census(&session).border;
+        assert_eq!(border.sides, 8);
+        assert!((border.step - 20.0).abs() < 1e-3, "{border:?}");
+
+        let how = Stitch {
+            yields: Yields::Selection,
+            reach: CHUNK_SIZE,
+        };
+        assert_eq!(stitch(&mut session, &block, how), 4);
+        assert_eq!(session.history.depth_done(), 1);
+        let corner = Cell::of(here, (4, 4));
+        // Row 0 is the block's high-x side and column 0 its high-y side: both
+        // meet the ground at 0.
+        for k in 0..OUTER_SIDE {
+            assert!(height_at(&session, corner, 0, k).abs() < 1e-3);
+            assert!(height_at(&session, corner, k, 0).abs() < 1e-3);
+        }
+        // The middle of the chunk is half a chunk from the border.
+        let middle = height_at(&session, corner, 4, 4);
+        assert!((middle - 10.0).abs() < 0.5, "{middle}");
+        // The block's centre is a whole chunk from the border, which is the
+        // reach.
+        let centre = height_at(&session, corner, 8, 8);
+        assert!((centre - 20.0).abs() < 0.5, "{centre}");
+        // The ground around the block did not move.
+        let outside = Cell::of(here, (3, 4));
+        assert!(heights_of(&session, outside).iter().all(|&h| h == 0.0));
+        let border = chunks.census(&session).border;
+        assert!(border.step < 1e-3, "{border:?}");
+        // Its shading did: the ground's edge vertices now sit beside a slope.
+        let normals = vale_edit::adt::heights::normals(
+            session.tiles[&here].chunk(outside.chunk_in(&session.tiles[&here]).unwrap()).unwrap(),
+        );
+        assert!(normals[heights::outer(4, 8).unwrap()][1].abs() > 0.01, "{:?}", normals[heights::outer(4, 8).unwrap()]);
+
+        undo(&mut session);
+        assert!(heights_of(&session, corner).iter().all(|&h| (h - 20.0).abs() < 1e-3));
+        let normals = vale_edit::adt::heights::normals(
+            session.tiles[&here].chunk(outside.chunk_in(&session.tiles[&here]).unwrap()).unwrap(),
+        );
+        assert!(normals[heights::outer(4, 8).unwrap()][1].abs() < 0.01);
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// With the ground yielding, the block keeps its heights and the ground's
+    /// border vertices rise to meet it; halfway, both copies of a border
+    /// vertex end at the mean. A reach of zero welds the border and moves
+    /// nothing else.
+    #[test]
+    fn the_ground_yields_or_both_meet_halfway() {
+        let here = (31, 49);
+        let (mut session, install) = session_with("yields", &[here]);
+        let block = BTreeSet::from([Cell::of(here, (6, 6))]);
+        raise(&mut session, &block, 20.0);
+        let (inside, outside) = (Cell::of(here, (6, 6)), Cell::of(here, (7, 6)));
+
+        let ground = Stitch {
+            yields: Yields::Ground,
+            reach: 0.0,
+        };
+        assert_eq!(stitch(&mut session, &block, ground), 4);
+        assert!(heights_of(&session, inside).iter().all(|&h| (h - 20.0).abs() < 1e-3));
+        // The ground's copy of the shared side, column 0 of the chunk across
+        // the low-y side, is at 20; the rest of that chunk is untouched.
+        for k in 0..OUTER_SIDE {
+            assert!((height_at(&session, outside, k, 0) - 20.0).abs() < 1e-3);
+        }
+        assert!(height_at(&session, outside, 4, 1).abs() < 1e-3);
+        undo(&mut session);
+
+        // The block, its four neighbours, and the four diagonal ones, which
+        // share a corner vertex with it and are within reach of it.
+        let both = Stitch {
+            yields: Yields::Both,
+            reach: CHUNK_SIZE,
+        };
+        assert_eq!(stitch(&mut session, &block, both), 9);
+        assert!((height_at(&session, inside, 4, 8) - 10.0).abs() < 1e-3);
+        assert!((height_at(&session, outside, 4, 0) - 10.0).abs() < 1e-3);
+        assert!(height_at(&session, outside, 4, 4) > 1.0);
+        assert!(height_at(&session, inside, 4, 4) < 19.0);
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// A block on a tile's side is stitched to the next tile: both tiles are
+    /// written in one entry, and the ground's chunk across the border is
+    /// reshaded from the heights on this side of it.
+    #[test]
+    fn a_stitch_crosses_a_tile_border() {
+        let (here, there) = ((31, 49), (32, 49));
+        let (mut session, install) = session_with("border", &[here]);
+        session
+            .tiles
+            .insert(there, blank_tile(there.0, there.1, BASE, 50.0, 12));
+        let block = BTreeSet::from([Cell::of(here, (15, 4))]);
+        raise(&mut session, &block, 20.0);
+        let mut chunks = Chunks::default();
+        chunks.select(block.iter().copied());
+        let border = chunks.census(&session).border;
+        assert_eq!(border.sides, 4);
+        assert!((border.step - 30.0).abs() < 1e-3, "{border:?}");
+
+        let how = Stitch::default();
+        assert_eq!(stitch(&mut session, &block, how), 1);
+        assert_eq!(session.history.depth_done(), 1);
+        let inside = Cell::of(here, (15, 4));
+        for k in 1..OUTER_SIDE - 1 {
+            assert!((height_at(&session, inside, k, 8) - 50.0).abs() < 1e-3, "the low-y side meets the next tile");
+            assert!(height_at(&session, inside, k, 0).abs() < 1e-3, "the high-y side meets this tile");
+        }
+        // A corner is stored by two chunks of the ground, one in each tile,
+        // which disagree there; the one copy the block has takes their mean.
+        assert!((height_at(&session, inside, 0, 8) - 25.0).abs() < 1e-3);
+        // The chunk across the border is flat at 50, so its edge normal is
+        // vertical unless the heights on this side are read.
+        let across = Cell::of(there, (0, 4));
+        let tile = &session.tiles[&there];
+        let normals = vale_edit::adt::heights::normals(tile.chunk(across.chunk_in(tile).unwrap()).unwrap());
+        let n = normals[heights::outer(4, 0).unwrap()];
+        assert!(n[1].abs() > 0.01, "{n:?}");
+        assert!(session.unsaved.contains(&here) && session.unsaved.contains(&there));
+
+        undo(&mut session);
+        assert!(heights_of(&session, inside).iter().all(|&h| (h - 20.0).abs() < 1e-3));
+        let tile = &session.tiles[&there];
+        let normals = vale_edit::adt::heights::normals(tile.chunk(across.chunk_in(tile).unwrap()).unwrap());
+        assert!(normals[heights::outer(4, 0).unwrap()][1].abs() < 0.01);
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// A paste and its stitch share one entry when they are recorded between
+    /// one begin and end, as Ctrl+V records them, and one undo takes both
+    /// back.
+    #[test]
+    fn a_pasted_block_is_stitched_in_the_same_entry() {
+        let here = (31, 49);
+        let (mut session, install) = session_with("pastestitch", &[here]);
+        let source = BTreeSet::from([Cell::of(here, (2, 2))]);
+        raise(&mut session, &source, 20.0);
+        let clip = copy(&session, &source);
+        let at = Cell::of(here, (10, 10));
+
+        session.history.begin("Paste 1 chunks");
+        let written = paste_in(&mut session, &clip, at, Parts::default(), Level::Absolute);
+        assert_eq!(written, vec![at]);
+        let footprint: BTreeSet<Cell> = clip.footprint(at).map(|(cell, _)| cell).collect();
+        assert_eq!(stitch_in(&mut session, &footprint, Stitch::default()), 1);
+        session.history.end();
+        assert_eq!(session.history.depth_done(), 1);
+        assert!(height_at(&session, at, 0, 4).abs() < 1e-3);
+        assert!((height_at(&session, at, 4, 4) - 10.0).abs() < 0.5);
+
+        undo(&mut session);
+        assert!(heights_of(&session, at).iter().all(|&h| h == 0.0));
         let _ = std::fs::remove_dir_all(&install);
     }
 

@@ -72,12 +72,11 @@ pub(super) fn empty_tile() -> AdtFile {
     }
 }
 
-/// **A region that changes length moves everything after it, and the indices
-/// follow.**
+/// A region that changes length moves everything after it, and the indices
+/// follow.
 ///
-/// This is the check the whole of [`crate::adt::alpha`] rests on and it is the
-/// one thing the writer was built for and had never been made to do. Heights and
-/// placements are edited *in place*: 580 bytes stay 580 bytes and the file's
+/// This is the check the whole of [`crate::adt::alpha`] rests on. Heights and
+/// placements are edited in place: 580 bytes stay 580 bytes and the file's
 /// shape never moves. Painting a fourth texture onto a chunk adds sixteen bytes
 /// of `MCLY` and two kilobytes of `MCAL` in the middle of a two-megabyte file,
 /// which moves the rest of that chunk's regions, all 255 chunks after it, every
@@ -86,7 +85,7 @@ pub(super) fn empty_tile() -> AdtFile {
 /// A writer that got any of that wrong would produce a file that still parses —
 /// the regions are found through the offsets that moved with them — and draws
 /// the wrong thing, or nothing, from the first chunk after the edit. So the check
-/// is a **full re-parse and a field-by-field comparison** rather than a byte
+/// is a full re-parse and a field-by-field comparison rather than a byte
 /// count: every chunk's heights, layer count and region set has to come back as
 /// it went in, with only the painted chunk different.
 #[test]
@@ -122,9 +121,9 @@ fn a_resized_alpha_region_moves_everything_after_it() {
             "{path}: a new layer has to make the file longer"
         );
         let back = AdtFile::parse(&written).unwrap_or_else(|e| panic!("{path}: {e}"));
-        // **`MHDR`'s eight offsets are the writer's and the rest is the
-        // tile's.** The in-memory header still holds the offsets the file was
-        // read with, which is exactly the point: naming a texture lengthened
+        // `MHDR`'s eight offsets are the writer's and the rest is the
+        // tile's. The in-memory header still holds the offsets the file was
+        // read with: naming a texture lengthened
         // `MTEX`, so every chunk listed after it has to have moved by that much
         // and nothing else in the header may have changed at all.
         let grew = (painted.textures.len() - tile.textures.len()) as u32;
@@ -190,18 +189,18 @@ fn a_resized_alpha_region_moves_everything_after_it() {
     }
 }
 
-/// **A moved placement survives being written and read again**, and moving it
+/// A moved placement survives being written and read again, and moving it
 /// changes nothing else about the tile.
 ///
 /// This is the check the doodad tool leans on and it is a different one from the
 /// round trip above. That one says a tile written back unchanged is unchanged;
-/// this says a tile written back with **one** record changed differs in that
+/// this says a tile written back with one record changed differs in that
 /// record and in nothing else — which is the failure a placement edit actually
 /// has, because `MDDF` sits between two other lists and above 256 chunks of
 /// references into it.
 ///
 /// It also pins the two conversions the editor's panel is written in terms of.
-/// A record is edited in *world* coordinates and stored in the file's own, so a
+/// A record is edited in world coordinates and stored in the file's own, so a
 /// swapped axis is a doodad that lands somewhere else entirely — and the
 /// direction that is not exercised by simply loading a tile is exactly the one
 /// an edit uses.
@@ -273,13 +272,13 @@ fn a_moved_placement_survives_the_write_and_moves_nothing_else() {
     }
 }
 
-/// **No shipped 1.12 tile carries an `MCCV`**, and the header slot its offset
+/// No shipped 1.12 tile carries an `MCCV`, and the header slot its offset
 /// lives in is empty on every chunk.
 ///
 /// The measurement the whole vertex-shading subject rests on. If a shipped tile
 /// did carry one, adding the region would be editing something the reference
 /// reads and the deviation could not be stated the way it is; because none does,
-/// every chunk this crate shades is a chunk the region is *added* to, and a tile
+/// every chunk this crate shades is a chunk the region is added to, and a tile
 /// nobody has shaded is untouched.
 #[test]
 fn no_shipped_tile_has_vertex_shading() {
@@ -308,8 +307,8 @@ fn no_shipped_tile_has_vertex_shading() {
     }
 }
 
-/// **Shading a chunk survives the write, and shading it back to neutral undoes
-/// the file as well as the picture.**
+/// Shading a chunk survives the write, and shading it back to neutral undoes
+/// the file as well as the picture.
 ///
 /// Three claims in one test because they are one property: the region can be
 /// added, it reads back as what was written, and taking it away leaves the tile
@@ -382,11 +381,11 @@ fn shading_a_chunk_round_trips_and_clearing_it_undoes_the_file() {
     }
 }
 
-/// **A shading stroke moves the vertices under it and no others**, and it
+/// A shading stroke moves the vertices under it and no others, and it
 /// creates the region on the way.
 ///
 /// The brush's own check, over a real tile rather than a fixture: what is easy
-/// to get wrong here is not the arithmetic but the *reach* — a stroke that used
+/// to get wrong here is not the arithmetic but the reach: a stroke that used
 /// the wrong vertex positions would shade a neat circle somewhere else, which
 /// looks entirely deliberate.
 #[test]
@@ -400,7 +399,7 @@ fn a_shading_stroke_darkens_what_is_under_it() {
     let mut tile = AdtFile::parse(&bytes).expect("a shipped tile parses");
     let origin = tile.chunk(0).expect("a tile has chunks").head().position();
     // The middle of chunk 0, which is a quarter of a chunk in from its origin
-    // along both axes — the axes run *away* from it.
+    // along both axes, which run away from it.
     let at = [origin[0] - 8.0, origin[1] - 8.0];
 
     let brush = Shading {
@@ -479,8 +478,8 @@ fn a_real_tile_round_trips_byte_for_byte() {
     }
 }
 
-/// **A height stroke leaves the placements the same, and a moved doodad does
-/// not** — which is what decides whether the server's vmap half is rebuilt
+/// A height stroke leaves the placements the same, and a moved doodad does
+/// not — which is what decides whether the server's vmap half is rebuilt
 /// for a tile (`AdtFile::same_placements`).
 #[test]
 fn a_terrain_edit_keeps_the_placements_and_a_moved_doodad_does_not() {
@@ -523,7 +522,7 @@ fn every_map_chunk_has_the_regions_in_one_order_and_one_padding() {
         let tile = AdtFile::parse(bytes).unwrap();
         assert_eq!(tile.chunks.len(), 256, "{path}");
         for (i, chunk) in tile.chunks.iter().enumerate() {
-            // **The eight regions a 1.12 chunk is made of**, which is every
+            // The eight regions a 1.12 chunk is made of, which is every
             // region but the one this crate adds: no shipped tile has an
             // `MCCV`, and `no_shipped_tile_has_vertex_shading` is where that is
             // asserted on its own terms.
@@ -632,9 +631,9 @@ fn recomputed_normals_point_away_from_the_slope() {
     heights::recompute_normals(&mut tile, 70);
     let normals = &tile.chunk(70).unwrap().region(Region::Normals).unwrap().data;
     // A vertex on the edge of the chunk takes half its gradient from the chunk
-    // next door, which was not flattened, so only the interior is asserted. That
-    // reach across the boundary is the point of it: without it a flattened chunk
-    // would be lit as though its neighbours were flat too.
+    // next door, which was not flattened, so only the interior is asserted. The
+    // reach across the boundary keeps a flattened chunk from being lit as though
+    // its neighbours were flat too.
     for row in 1..8 {
         for col in 1..8 {
             let i = heights::outer(row, col).unwrap();
@@ -664,6 +663,45 @@ fn recomputed_normals_point_away_from_the_slope() {
     assert!(n[0] > 0, "a ramp climbing away from +x leans back toward it: {n:?}");
     assert!(n[1].abs() <= 1, "the ramp has no slope across y: {n:?}");
     assert!(n[2] > 0, "the normal points up: {n:?}");
+}
+
+/// A vertex on the tile's edge takes a central difference across the border
+/// when the tile beyond answers, and a one-sided one when it does not.
+#[test]
+fn normals_at_the_tile_edge_reach_into_the_tile_beyond() {
+    use crate::adt::blank::blank_tile;
+    let mut tile = blank_tile(31, 49, "tileset\\test\\base.blp", 0.0, 12);
+    // Chunk 15 is the last column: its low-y side is the tile's.
+    let chunk = 15;
+    let normal = |tile: &AdtFile, index: usize| {
+        let data = &tile.chunk(chunk).unwrap().region(Region::Normals).unwrap().data;
+        [data[index * 3] as i8, data[index * 3 + 1] as i8, data[index * 3 + 2] as i8]
+    };
+    let edge = heights::outer(4, 8).unwrap();
+
+    heights::recompute_normals(&mut tile, chunk);
+    assert_eq!(normal(&tile, edge), [0, 0, 127], "flat ground, nothing beyond");
+
+    // The tile beyond the low-y side is 50 yards higher. Chunk 15 is in the
+    // first row too, so its high-x side is also the tile's: the two asked for
+    // are (16, 0) and (15, -1), and nothing on the grid is asked for.
+    let asked = std::cell::RefCell::new(Vec::new());
+    let beyond = |x: i32, y: i32| -> Option<Vec<f32>> {
+        asked.borrow_mut().push((x, y));
+        ((x, y) == (16, 0)).then(|| vec![50.0; heights::VERTICES])
+    };
+    heights::recompute_normals_with(&mut tile, chunk, &beyond);
+    let n = normal(&tile, edge);
+    assert!(n[1] > 0, "the ground rises toward smaller y, so the normal leans to +y: {n:?}");
+    assert_eq!(n[0], 0, "no slope along x: {n:?}");
+    let mut asked = asked.into_inner();
+    asked.sort();
+    asked.dedup();
+    assert_eq!(asked, vec![(15, -1), (16, 0)]);
+
+    // An interior vertex is the same either way.
+    let inside = heights::outer(4, 4).unwrap();
+    assert_eq!(normal(&tile, inside), [0, 0, 127]);
 }
 
 /// Removing a placement renumbers the references above it in every chunk.
@@ -787,7 +825,7 @@ fn the_whole_tile_answers_a_height() {
     );
 }
 
-/// **One placement reads the same as its row in the whole list**, which is what
+/// One placement reads the same as its row in the whole list, which is what
 /// lets the two things that ask about a single record every frame — a panel
 /// checking it is still in step, and every edit reading the value it replaces —
 /// avoid parsing all 1,400 of them to do it.
@@ -803,12 +841,12 @@ fn one_placement_reads_the_same_as_the_whole_list() {
     }
 }
 
-/// **A placement moved to another tile comes out of one file and into the
-/// other, keeping its id**, and both files survive the write.
+/// A placement moved to another tile comes out of one file and into the
+/// other, keeping its id, and both files survive the write.
 ///
 /// This is the file half of `vale_ide::tools::rehome`, and the reason it
-/// exists is a rule in the renderer: **the tile containing a placement's origin
-/// is the tile that draws it**, because a model touching two tiles is listed in
+/// exists is a rule in the renderer: the tile containing a placement's origin
+/// is the tile that draws it, because a model touching two tiles is listed in
 /// both with one `unique_id` and exactly one of them has to claim it. So a
 /// placement dragged past a border whose record stayed behind is a placement
 /// nobody draws — the tile that holds it no longer claims it, and the tile that
@@ -816,7 +854,7 @@ fn one_placement_reads_the_same_as_the_whole_list() {
 ///
 /// The two halves are different operations and each renumbers something:
 /// removing renumbers every `MCRF` reference above it in 256 chunks of one file,
-/// and adding appends to `MMDX`, `MMID` and `MDDF` in the other under *that*
+/// and adding appends to `MMDX`, `MMID` and `MDDF` in the other under that
 /// tile's own numbering — a `name_id` means nothing outside the file it is in.
 #[test]
 fn a_placement_moved_between_tiles_keeps_its_id_and_both_files_survive() {
@@ -868,10 +906,10 @@ fn a_placement_moved_between_tiles_keeps_its_id_and_both_files_survive() {
     for (path, tile) in [(from_path, &from), (to_path, &to)] {
         let written = tile.write();
         let back = AdtFile::parse(&written).unwrap_or_else(|e| panic!("{path}: {e}"));
-        // **Not `back == tile`.** Every offset and size in `MHDR`, `MCIN` and
-        // the 256 chunk headers is the *writer's*, and the in-memory copy still
-        // holds the ones the file was read with — which is the point, since both
-        // lists have changed length. Writing what came back is the comparison
+        // Not `back == tile`. Every offset and size in `MHDR`, `MCIN` and
+        // the 256 chunk headers is the writer's, and the in-memory copy still
+        // holds the ones the file was read with, since both lists have changed
+        // length. Writing what came back is the comparison
         // that means anything: it says the file describes itself. What is
         // compared beside it is the content those offsets lead to.
         assert_eq!(back.write(), written, "{path}: does not survive the write");
@@ -893,10 +931,10 @@ fn a_placement_moved_between_tiles_keeps_its_id_and_both_files_survive() {
     }
 }
 
-/// **A minted id is above everything the game ships and above every other
-/// minted one.**
+/// A minted id is above everything the game ships and above every other
+/// minted one.
 ///
-/// It matters more than it used to. The rule that keeps a placement from being
+/// The rule that keeps a placement from being
 /// drawn twice is that one id names one object, so two objects sharing an id are
 /// one object as far as `rehome` is concerned — it would collapse them. Counting
 /// up from the largest id in the tiles a tool happens to have open would hand out
@@ -933,8 +971,8 @@ fn a_minted_id_is_above_the_shipped_ones() {
     }
 }
 
-/// **A placed doodad survives the write and is referenced by the chunks under
-/// it.** `MCRF` is the list the reference client culls by, and this client never
+/// A placed doodad survives the write and is referenced by the chunks under
+/// it. `MCRF` is the list the reference client culls by, and this client never
 /// reads it — so a placement added without it draws here and is invisible there.
 #[test]
 fn a_placed_doodad_is_written_and_referenced() {
@@ -982,14 +1020,14 @@ fn a_placed_doodad_is_written_and_referenced() {
     }
 }
 
-/// **A hole is two bytes, and two bytes are what changes.**
+/// A hole is two bytes, and two bytes are what changes.
 ///
 /// The smallest edit in this crate, over real tiles, and the check is
 /// deliberately the strict one: the written file must differ from the original
 /// in exactly the chunk that was cut and in nothing else. A mask written a
 /// quadrant out, or written to the wrong chunk, still parses and still draws —
-/// it just takes the ground out somewhere nobody asked — so byte equality is the
-/// only thing that reports it.
+/// it takes the ground out of the wrong square, and byte equality is the only
+/// check that reports it.
 #[test]
 fn a_cut_hole_survives_the_write_and_changes_nothing_else() {
     use crate::adt::holes;
@@ -1009,7 +1047,7 @@ fn a_cut_hole_survives_the_write_and_changes_nothing_else() {
         let wanted = holes::with_bit_at(&cut, 70, at[0], at[1], true)
             .expect("the point is over the chunk it was taken from");
         assert_ne!(wanted, was[70], "{path}: the point was already a hole");
-        // **Both directions, and both idempotent.** The tool records nothing
+        // Both directions, and both idempotent. The tool records nothing
         // when the mask comes back unchanged, which is what keeps a drag across
         // ground that is already gone from putting an entry on the stack per
         // frame.
@@ -1059,14 +1097,14 @@ fn a_cut_hole_survives_the_write_and_changes_nothing_else() {
     }
 }
 
-/// **The ground a hole came out of is still described by the file**, which is
+/// The ground a hole came out of is still described by the file, which is
 /// the whole of how the hole tool aims.
 ///
-/// A hole takes cells out of the *mesh*; `MCVT` is untouched. So `height_at`
+/// A hole takes cells out of the mesh; `MCVT` is untouched. So `height_at`
 /// refuses over a cut square — right for anything that asks where a character
 /// stands — and `solid_height_at` answers the height the missing cells were at.
 /// Without the second one the pointer falls through the moment a square is cut
-/// and a held drag walks off and cuts a trail of squares nobody asked for.
+/// and a held drag walks off and cuts a trail of squares.
 #[test]
 fn a_cut_square_still_has_a_height_to_aim_at() {
     use crate::adt::{heights, holes};
@@ -1102,11 +1140,11 @@ fn a_cut_square_still_has_a_height_to_aim_at() {
     }
 }
 
-/// **An area id is four bytes, and four bytes are what changes.**
+/// An area id is four bytes, and four bytes are what changes.
 ///
 /// The same strict check the hole mask gets, for the same reason: an id written
 /// to the wrong chunk still parses, still draws, and moves the zone boundary
-/// somewhere nobody asked. Byte equality is the only thing that reports it.
+/// to the wrong place. Byte equality is the only check that reports it.
 ///
 /// It also pins the two things the tool rests on: that `0` survives as a value
 /// rather than being treated as "unset", and that a tile's census sees every
@@ -1160,7 +1198,7 @@ fn an_area_id_survives_the_write_and_changes_nothing_else() {
             &differ[..differ.len().min(8)]
         );
 
-        // **Zero is a real value, not "unset".** The shipped tiles carry chunks
+        // Zero is a real value, not "unset". The shipped tiles carry chunks
         // with no area at all and a tool has to be able to write one back.
         area::set_area(edited.chunk_mut(70).expect("chunk 70"), 0);
         assert_eq!(area::area(&edited, 70), Some(0), "{path}");
@@ -1173,19 +1211,19 @@ fn an_area_id_survives_the_write_and_changes_nothing_else() {
     }
 }
 
-/// **What the shipped files say about `MCLQ`, measured rather than assumed.**
+/// What the shipped files say about `MCLQ`, measured rather than assumed.
 ///
 /// Four facts, all of them unanimous over the 1,280 chunks of five real tiles,
 /// and every one of them is something a writer would otherwise have to guess:
 ///
-/// * **every chunk has an `MCLQ` region**, wet or dry — a dry one is the bare
+/// * every chunk has an `MCLQ` region, wet or dry — a dry one is the bare
 ///   eight-byte sub-chunk header and no payload;
-/// * **its own size field is zero on every one of them**, which is why the
+/// * its own size field is zero on every one of them, which is why the
 ///   header's `sizeLiquid` is the authority and why
 ///   `SubChunk::set_keeping_size` exists;
-/// * **the block count is exactly the popcount of the liquid flag bits**, which
+/// * the block count is exactly the popcount of the liquid flag bits, which
 ///   is the whole of how a reader knows how many there are;
-/// * and a block is **804 bytes**.
+/// * and a block is 804 bytes.
 ///
 /// A writer that got the second one wrong would produce a file that still loads
 /// here and carries a number the game never writes.
@@ -1215,12 +1253,12 @@ fn the_shipped_liquid_regions_all_agree_about_their_own_shape() {
     assert!(looked_at == 0 || looked_at >= 256, "{looked_at} chunks");
 }
 
-/// **A pool read out and written back is the bytes it came from**, and a pool
+/// A pool read out and written back is the bytes it came from, and a pool
 /// changed changes only its own chunk.
 ///
 /// The round trip that says the encoder and the decoder agree — including the
-/// parts this crate does not understand, which is the point of carrying the flow
-/// tail rather than zeroing it. A block re-encoded without it would still parse,
+/// parts this crate does not understand, which is why the flow tail is carried
+/// rather than zeroed. A block re-encoded without it would still parse,
 /// still draw, and have quietly dropped something the game may read.
 #[test]
 fn a_pool_survives_being_read_out_and_written_back() {
@@ -1235,7 +1273,7 @@ fn a_pool_survives_being_read_out_and_written_back() {
         let pools = liquid::pools(&same, wet);
         assert!(!pools.is_empty(), "{path}");
         liquid::set_pools(same.chunk_mut(wet).expect("in range"), &pools);
-        // **The region first**, so a failure prints 804 bytes rather than two
+        // The region first, so a failure prints 804 bytes rather than two
         // megabytes — and then the file, which is what says nothing else moved.
         assert_eq!(
             same.chunk(wet).and_then(|chunk| chunk.region(Region::Liquid)),
@@ -1287,7 +1325,7 @@ fn a_pool_survives_being_read_out_and_written_back() {
     }
 }
 
-/// **Water painted onto a dry chunk comes back as water**, at the level it was
+/// Water painted onto a dry chunk comes back as water, at the level it was
 /// given and only where the brush reached.
 #[test]
 fn a_painted_pool_lands_where_the_brush_was_and_nowhere_else() {

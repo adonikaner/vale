@@ -7,7 +7,7 @@
 //! `9, 8, 9, 8, … 9` — 145 in all. The layout rule is
 //! `vale_assets::world::adt`'s and is not restated here: [`vertex_offset`]
 //! is the one place this crate converts an index to a position, and it agrees
-//! with `wedge_in` by construction. Rows run along **decreasing** world x from
+//! with `wedge_in` by construction. Rows run along decreasing world x from
 //! the chunk origin and columns along decreasing world y, because the origin is
 //! the chunk's maximum corner.
 //!
@@ -114,10 +114,10 @@ pub fn set_heights(chunk: &mut super::MapChunk, heights: &[f32]) {
 /// Recompute one chunk's `MCNR` from the heights of the whole tile.
 ///
 /// The gradient at a vertex needs its neighbours, and at a chunk edge those live
-/// in the next chunk. Reaching across is what stops a raised hill from being lit
-/// with a visible seam on the chunk boundary: within the tile every edge vertex
-/// has a real neighbour, and only the four sides of the tile itself fall back to
-/// a one-sided difference.
+/// in the next chunk. Within the tile every edge vertex has a real neighbour,
+/// so a raised hill is lit without a seam on the chunk boundary. The four sides
+/// of the tile itself fall back to a one-sided difference; a caller that has
+/// the neighbouring tiles open uses [`recompute_normals_with`] instead.
 ///
 /// The neighbour is found by index rather than by position: a chunk's `MCIN`
 /// slot is `index_y * 16 + index_x`, `index_x` grows along decreasing world y
@@ -125,6 +125,23 @@ pub fn set_heights(chunk: &mut super::MapChunk, heights: &[f32]) {
 /// `Azeroth_32_48`, whose chunk 1 sits one column west of chunk 0 and whose
 /// chunk 16 sits one row south.
 pub fn recompute_normals(tile: &mut AdtFile, chunk_index: usize) {
+    recompute_normals_with(tile, chunk_index, &|_, _| None);
+}
+
+/// [`recompute_normals`], with the tiles beyond this one's four sides answered
+/// by `beyond`.
+///
+/// `beyond` is asked for the heights of the chunk at `(x, y)` on this tile's
+/// 16x16 grid whenever `x` or `y` is off it: `(-1, y)` is the chunk across the
+/// tile's high-y side, `(16, y)` the one across its low-y side, `(x, -1)` the
+/// one across its high-x side and `(x, 16)` the one across its low-x side. A
+/// `None` leaves that side at the one-sided difference. Nothing asks for a
+/// diagonal, because a central difference moves along one axis at a time.
+pub fn recompute_normals_with(
+    tile: &mut AdtFile,
+    chunk_index: usize,
+    beyond: &dyn Fn(i32, i32) -> Option<Vec<f32>>,
+) {
     let Some(chunk) = tile.chunk(chunk_index) else {
         return;
     };
@@ -138,11 +155,10 @@ pub fn recompute_normals(tile: &mut AdtFile, chunk_index: usize) {
     let own = heights(chunk);
     let neighbour = |dx: i32, dy: i32| -> Option<Vec<f32>> {
         let (x, y) = (ix as i32 + dx, iy as i32 + dy);
-        (0..16).contains(&x)
-            .then(|| ())
-            .and_then(|()| (0..16).contains(&y).then(|| ()))
-            .and_then(|()| tile.chunk(y as usize * 16 + x as usize))
-            .map(heights)
+        match (0..16).contains(&x) && (0..16).contains(&y) {
+            true => tile.chunk(y as usize * 16 + x as usize).map(heights),
+            false => beyond(x, y),
+        }
     };
     // `index_x` grows along decreasing world y, and +Y is west, so the chunk one
     // column back is the one further west. `index_y` grows along decreasing
@@ -258,22 +274,21 @@ pub fn ground(chunk: &super::MapChunk) -> vale_assets::world::adt::ChunkGround {
 /// How far outside a chunk's square a position may be and still be answered by
 /// it, in yards.
 ///
-/// **The chunk origins in the file do not tile exactly.** They are `f32` and
-/// they step by 33.332032 yards where `CHUNK_SIZE` is 33.333332, so each square
+/// The chunk origins in the file do not tile exactly. They are `f32` and they
+/// step by 33.332032 yards where `CHUNK_SIZE` is 33.333332, so each square
 /// begins 0.00065 yards below where the one above it ended and sixteen of them
 /// span 533.314 against the tile's 533.333. Two consequences, both measured on
 /// `Azeroth_32_48`: there is a 0.00065-yard band between every pair of adjacent
 /// chunks that is inside neither, and the last two centimetres of the tile are
 /// inside none at all. A strict containment test answers "no ground" in both.
 ///
-/// That is invisible to the client, which only ever asks about a position a
-/// character is standing at, and very visible to an editor, which asks about
-/// arbitrary points and draws whatever comes back.
+/// The client asks only about positions a character stands at and does not
+/// meet the band. An editor asks about arbitrary points and draws whatever
+/// comes back, so it does.
 ///
-/// Two centimetres covers the gap with room to spare and is far below the
-/// 4.17-yard cell the answer is interpolated across, so a position pulled this
-/// far into a chunk is the same answer to within the width of the line drawing
-/// it.
+/// Five centimetres covers the band and is far below the 4.17-yard cell the
+/// answer is interpolated across, so a position pulled this far into a chunk
+/// gives the same answer to within the width of the line drawing it.
 const REACH: f32 = 0.05;
 
 /// The height of the edited ground at a world position, or `None` off this tile
@@ -295,12 +310,12 @@ pub fn height_at(tile: &AdtFile, x: f32, y: f32) -> Option<f32> {
     ground(chunk).height_at(inside(origin[0], x), inside(origin[1], y))
 }
 
-/// **The slope of the edited ground at a world position**, as a unit normal in
+/// The slope of the edited ground at a world position, as a unit normal in
 /// the world's own axes, or `None` off this tile and over a hole.
 ///
-/// The geometric normal of the wedge [`height_at`] answers from —
+/// This is the geometric normal of the wedge [`height_at`] answers from,
 /// `vale_assets::world::adt::ChunkGround::normal_at`, which says why it is
-/// not `MCNR`. What a placement is leaned onto: see
+/// not `MCNR`. A placement is leaned onto it through
 /// `vale_assets::world::adt::lean_to_normal`, which turns it into the two
 /// `MDDF` angles. The same allowance at a chunk's edge as `height_at`.
 pub fn normal_at(tile: &AdtFile, x: f32, y: f32) -> Option<[f32; 3]> {
@@ -314,20 +329,19 @@ pub fn normal_at(tile: &AdtFile, x: f32, y: f32) -> Option<[f32; 3]> {
     ground(chunk).normal_at(inside(origin[0], x), inside(origin[1], y))
 }
 
-/// …and the same height **as though the chunk had no holes**.
+/// The height of the edited ground at a world position as though the chunk
+/// had no holes.
 ///
 /// [`height_at`] refuses over a hole, which is right for everything that asks
 /// where a character stands or where a brush lands: there is no ground there.
-/// It is wrong for the one thing that has to aim *at* a hole. A tool that cuts
-/// and patches them needs a surface to point at whether or not the ground is
-/// still drawn, and the surface it needs is the one the missing cells came out
-/// of — the wedge the heights still describe, because a hole takes cells out of
-/// the *mesh* and leaves `MCVT` exactly as it was.
+/// A tool that cuts and patches holes has to aim at one, so it needs a surface
+/// to point at whether or not the ground is drawn. That surface is the wedge
+/// the heights still describe: a hole takes cells out of the mesh and leaves
+/// `MCVT` as it was.
 ///
-/// Without it the pointer falls through the moment a square is cut and lands on
-/// whatever is behind — the far bank of a lake, the next hillside, or nothing —
-/// so a held drag walks somewhere else and cuts a trail of squares nobody asked
-/// for. That is what it was reported as.
+/// Aiming at the drawn ground instead puts the pointer on whatever is behind
+/// the cut square (the far bank of a lake, the next hillside, or nothing), so
+/// a held drag walks somewhere else and cuts a trail of squares.
 pub fn solid_height_at(tile: &AdtFile, x: f32, y: f32) -> Option<f32> {
     use vale_assets::world::adt::CHUNK_SIZE;
     let chunk = tile.chunk(chunk_at(tile, x, y)?)?;
@@ -344,19 +358,16 @@ pub fn solid_height_at(tile: &AdtFile, x: f32, y: f32) -> Option<f32> {
 /// Which of a tile's 256 map chunks a world position is over, or `None` when it
 /// is over none of them.
 ///
-/// The chunk search [`height_at`] was doing inline, lifted out because a tool
-/// wants the chunk itself: what it is painted with, which zone it is in, where
-/// its holes are. **It is a search and not arithmetic** for the reason the
-/// architecture doc records — `MCNK`'s stored origins step by 33.332032 where
-/// `CHUNK_SIZE` is 33.333332, so the squares do not tile exactly and a position
-/// computed from the tile corner lands in the wrong one near a boundary. Asking
-/// each chunk's own origin is 256 comparisons and is the only answer that agrees
-/// with the file.
+/// A tool wants the chunk itself: what it is painted with, which zone it is
+/// in, where its holes are. It is a search and not arithmetic: `MCNK`'s
+/// stored origins step by 33.332032 where `CHUNK_SIZE` is 33.333332, so the
+/// squares do not tile exactly and a position computed from the tile corner
+/// lands in the wrong one near a boundary. Asking each chunk's own origin is
+/// 256 comparisons and is the only answer that agrees with the file.
 ///
 /// A position in the 0.65-millimetre band between two squares, or in the last
 /// two centimetres of the tile, is answered by the nearest chunk within
-/// [`REACH`] rather than refused — which is the same allowance `height_at` has
-/// always made and the reason it is made here instead.
+/// [`REACH`] rather than refused, which is the allowance `height_at` makes.
 pub fn chunk_at(tile: &AdtFile, x: f32, y: f32) -> Option<usize> {
     use vale_assets::world::adt::CHUNK_SIZE;
     // How far outside this chunk's square the position is, in the worse of the
@@ -378,7 +389,7 @@ pub fn chunk_at(tile: &AdtFile, x: f32, y: f32) -> Option<usize> {
     let mut nearest: Option<(f32, usize)> = None;
     for (i, chunk) in tile.chunks.iter().enumerate() {
         let origin = chunk.head().position();
-        // **The same predicate `ChunkGround::height_at` uses**, and not a gap of
+        // The same predicate `ChunkGround::height_at` uses, and not a gap of
         // zero. Both bounds are exclusive at the far edge there, so a position
         // exactly `CHUNK_SIZE` from the origin has a gap of zero and is still
         // refused; taking that as "inside" returned `None` from a chunk that had
