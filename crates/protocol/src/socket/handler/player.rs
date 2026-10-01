@@ -1499,6 +1499,159 @@ pub(super) fn who_results(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::WhoResults(results));
 }
 
+/// `SMSG_GUILD_QUERY_RESPONSE`: a guild's name, rank names and emblem.
+pub(super) fn guild_query(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(query) = read(ctx.stats, pkt, crate::play::guild::parse_query(&pkt.body)) else {
+        return;
+    };
+    // Kept in the world as well as forwarded: the name under a player's name
+    // is read from here, and the guild tab is filled from the event.
+    ctx.world.guilds.insert(query.id, query.clone());
+    ctx.world.note_event(PlayerEvent::GuildQuery(query));
+}
+
+/// `SMSG_GUILD_ROSTER`: the whole member list.
+pub(super) fn guild_roster(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(roster) = read(ctx.stats, pkt, crate::play::guild::parse_roster(&pkt.body)) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::GuildRoster(roster));
+}
+
+/// `SMSG_GUILD_EVENT`: one thing that happened in the guild.
+pub(super) fn guild_event(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(event) = read(ctx.stats, pkt, crate::play::guild::parse_event(&pkt.body)) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::GuildEvent(event));
+}
+
+/// `SMSG_GUILD_COMMAND_RESULT`: the answer to a guild request.
+pub(super) fn guild_command_result(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(result) = read(
+        ctx.stats,
+        pkt,
+        crate::play::guild::parse_command_result(&pkt.body),
+    ) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::GuildCommandResult(result));
+}
+
+/// `SMSG_GUILD_INVITE`: an invitation to join a guild.
+pub(super) fn guild_invite(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(invite) = read(ctx.stats, pkt, crate::play::guild::parse_invite(&pkt.body)) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::GuildInvite(invite));
+}
+
+/// `SMSG_GUILD_DECLINE`: the invited player declined.
+pub(super) fn guild_decline(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(name) = read(ctx.stats, pkt, crate::play::guild::parse_decline(&pkt.body)) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::GuildDecline(name));
+}
+
+/// `SMSG_GUILD_INFO`: the answer to `/ginfo`.
+pub(super) fn guild_info(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(info) = read(ctx.stats, pkt, crate::play::guild::parse_info(&pkt.body)) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::GuildInfo(info));
+}
+
+/// `MSG_TABARDVENDOR_ACTIVATE`: a tabard designer opened its window.
+pub(super) fn tabard_vendor(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(npc) = read(ctx.stats, pkt, crate::play::guild::parse_tabard_vendor(&pkt.body)) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::TabardVendor(npc));
+}
+
+/// `MSG_SAVE_GUILD_EMBLEM`: the answer to saving an emblem.
+pub(super) fn guild_emblem_result(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(result) = read(ctx.stats, pkt, crate::play::guild::parse_emblem_result(&pkt.body))
+    else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::GuildEmblemResult(result));
+}
+
+/// `SMSG_PETITION_SHOWLIST`: what a guild registrar sells.
+pub(super) fn petition_show_list(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(list) = read(ctx.stats, pkt, crate::play::petition::parse_show_list(&pkt.body)) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::PetitionShowList(list));
+}
+
+/// `SMSG_PETITION_SHOW_SIGNATURES`: a charter and its signers. The packet
+/// names the owner and each signer by guid, so their names are asked for
+/// here.
+pub(super) fn petition_signatures(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(shown) = read(ctx.stats, pkt, crate::play::petition::parse_signatures(&pkt.body))
+    else {
+        return;
+    };
+    ctx.world.want_social_guid(shown.owner);
+    for signer in &shown.signers {
+        ctx.world.want_social_guid(*signer);
+    }
+    ctx.world.note_event(PlayerEvent::PetitionSignatures(shown));
+}
+
+/// `SMSG_PETITION_QUERY_RESPONSE`: a petition's guild name and owner.
+pub(super) fn petition_query(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(query) = read(ctx.stats, pkt, crate::play::petition::parse_query(&pkt.body)) else {
+        return;
+    };
+    ctx.world.want_social_guid(query.owner);
+    ctx.world.note_event(PlayerEvent::PetitionQuery(query));
+}
+
+/// `SMSG_PETITION_SIGN_RESULTS`: the answer to a signature. The signer's name
+/// is needed for the sentence the charter's owner reads.
+pub(super) fn petition_sign_result(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(result) = read(ctx.stats, pkt, crate::play::petition::parse_sign_result(&pkt.body))
+    else {
+        return;
+    };
+    ctx.world.want_social_guid(result.player);
+    ctx.world.note_event(PlayerEvent::PetitionSignResult(result));
+}
+
+/// `SMSG_TURN_IN_PETITION_RESULTS`: the answer to handing a charter in.
+pub(super) fn petition_turn_in(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(result) = read(
+        ctx.stats,
+        pkt,
+        crate::play::petition::parse_turn_in_result(&pkt.body),
+    ) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::PetitionTurnInResult(result));
+}
+
+/// `MSG_PETITION_DECLINE`: a player declined to sign.
+pub(super) fn petition_declined(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(player) = read(ctx.stats, pkt, crate::play::petition::parse_decline(&pkt.body)) else {
+        return;
+    };
+    ctx.world.want_social_guid(player);
+    ctx.world.note_event(PlayerEvent::PetitionDeclined(player));
+}
+
+/// `MSG_PETITION_RENAME`: a charter's guild name changed.
+pub(super) fn petition_renamed(ctx: &mut Incoming, pkt: &Packet) {
+    let Some((item, name)) = read(ctx.stats, pkt, crate::play::petition::parse_rename(&pkt.body))
+    else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::PetitionRenamed { item, name });
+}
+
 /// `SMSG_INITIALIZE_FACTIONS`: the whole standing table, at login.
 ///
 /// Sixty-four slots, whether or not the character has met each faction, so the

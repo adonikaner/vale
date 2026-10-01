@@ -1143,6 +1143,10 @@ impl Units<'_, '_> {
             let member = self.party_row(id)?;
             return Some(UnitTip {
                 name: member.name.clone(),
+                title: UnitTitle {
+                    player: true,
+                    ..UnitTitle::default()
+                },
                 sub_name: String::new(),
                 level: self.level(id).max(0),
                 race: None,
@@ -1161,8 +1165,17 @@ impl Units<'_, '_> {
         };
         let player = unit.kind == vale_protocol::state::update::ObjectType::Player;
         let level_shown = self.level_shown(tables, id);
+        let parts = name_parts(tables, unit);
         Some(UnitTip {
             name: unit.name.clone(),
+            title: UnitTitle {
+                player,
+                pvp_rank: parts.pvp_rank,
+                pvp_medal: parts.pvp_medal,
+                team: parts.team,
+                female: parts.female,
+                owner: unit.owner.clone(),
+            },
             sub_name: unit.sub_name.clone(),
             // The tooltip's `??` follows the same rule as the unit frame's; see
             // [`Units::level_shown`]. Unknown is `0` rather than `-1` because
@@ -1216,6 +1229,58 @@ pub const BOSS_CLASSIFICATION: u32 = 3;
 /// colour.
 pub const UNIT_FLAG_PVP: u32 = 0x0000_1000;
 
+/// What a unit's name text is built from, off its world snapshot: the honor
+/// rank and city title, the team, the guild, the subname and the owner line.
+/// The floating name and the unit tooltip both compose from it; see
+/// [`vale_assets::look::unitname`].
+///
+/// The team is the unit's faction template's group, which for a player is
+/// its race's side. Without the display tables there is no team and so no
+/// rank title.
+pub fn name_parts<'a>(
+    tables: Option<&vale_assets::tables::dbc::DisplayTables>,
+    unit: &'a WorldEntity,
+) -> vale_assets::look::unitname::NameParts<'a> {
+    let player = unit.kind == vale_protocol::state::update::ObjectType::Player;
+    vale_assets::look::unitname::NameParts {
+        name: &unit.name,
+        player,
+        player_flags: unit.player_flags,
+        pvp_rank: unit.pvp_rank,
+        pvp_medal: unit.pvp_medal,
+        team: tables
+            .zip(unit.faction)
+            .and_then(|(tables, template)| tables.faction_group(template))
+            .and_then(vale_assets::look::unitname::team_of_group),
+        female: unit.gender == Some(1),
+        guild: &unit.guild,
+        sub_name: &unit.sub_name,
+        pet_number: unit.pet_number,
+        owner: unit
+            .owner
+            .as_ref()
+            .map(|(title, name)| (*title, name.as_str())),
+    }
+}
+
+/// The parts of a unit's name text that the unit tooltip composes with the
+/// interface's own strings: the rank title in front of a player's name and
+/// the owner line under a pet's. See
+/// [`vale_assets::look::unitname::titled_name`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct UnitTitle {
+    pub player: bool,
+    /// The honor rank and city title bytes, 0 for none.
+    pub pvp_rank: u8,
+    pub pvp_medal: u8,
+    /// 0 for the Horde and 1 for the Alliance.
+    pub team: Option<u8>,
+    pub female: bool,
+    /// The title and the owner's name, for a unit whose owner is in the
+    /// world.
+    pub owner: Option<(vale_assets::look::unitname::OwnerTitle, String)>,
+}
+
 /// The values `GameTooltip:SetUnit` draws, collected once.
 ///
 /// The fields are words and numbers rather than sentences. This struct says
@@ -1226,7 +1291,10 @@ pub const UNIT_FLAG_PVP: u32 = 0x0000_1000;
 /// `TOOLTIP_UNIT_LEVEL*` formats is chosen.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnitTip {
+    /// The unit's name without a title. The tooltip's first line is this
+    /// name with [`Self::title`]'s rank in front of it.
     pub name: String,
+    pub title: UnitTitle,
     /// A creature's template subname, such as `<Innkeeper>`; empty for a
     /// player.
     pub sub_name: String,
@@ -1425,26 +1493,25 @@ pub fn get_action_cooldown(
     item_spell: Option<&vale_assets::tables::spellbook::SpellInfo>,
 ) -> (f64, f64, bool) {
     let idle = (0.0, 0.0, true);
-    // **An item's swirl is its on-use spell's cooldown**, which is where a
-    // potion's two minutes actually live: the timer is on the spell's *category*
-    // (every healing potion shares one), not on the item entry. Without this an
-    // item slot answered `(0, 0, 1)` for ever — no swirl at all — so a potion
-    // just drunk looked ready, and pressing it again sent a `CMSG_USE_ITEM` the
-    // server silently refused. That is the "unreactive" half of the report.
+    // An item slot's cooldown is the cooldown of the item's on-use spell. A
+    // potion's two minutes are kept on the spell's category (every healing
+    // potion shares one), not on the item entry. Without this an item slot
+    // always answered `(0, 0, 1)` and drew no cooldown, so a potion just drunk
+    // looked ready, and pressing it again sent a `CMSG_USE_ITEM` that the
+    // server refused without an answer.
     match slot_spell(bar, slot, item_spell) {
         Some(spell) => cooldown_of(cooldowns, spell, now),
         None => idle,
     }
 }
 
-/// **One spell's `(start, duration, enable)`**, in `now`'s base — the shape both
-/// `GetActionCooldown` and `GetSpellCooldown` answer in, because both are asking
-/// the same question about the same three clocks.
+/// One spell's `(start, duration, enable)`, on the clock `now` comes from.
+/// `GetActionCooldown` and `GetSpellCooldown` both return this shape, because
+/// both ask the same question about the same three clocks.
 ///
-/// Shared rather than copied: the arithmetic that turns "how long is left" into
-/// "when did it start" is the part a second copy would get subtly wrong, and the
-/// symptom would be a cooldown swirl in the spellbook running at a different
-/// rate from the one on the bar.
+/// Shared so that the arithmetic that turns the remaining time into a start
+/// time exists once. A second copy that differed would make the cooldown in
+/// the spellbook run at a different rate from the one on the bar.
 pub fn cooldown_of(
     cooldowns: &Cooldowns,
     spell: &vale_assets::tables::spellbook::SpellInfo,
@@ -1459,104 +1526,106 @@ pub fn cooldown_of(
     }
 }
 
-/// **Everything the client knows about what a slot would cast** — the data
-/// half of `GameTooltip:SetAction`, which composes it into lines with the
-/// game's own format strings (see `lua::tooltip`).
+/// What the client knows about the spell a slot would cast. This is the data
+/// for `GameTooltip:SetAction`, which composes it into lines with the game's
+/// format strings (see `lua::tooltip`).
 ///
-/// Data rather than text on purpose: the formats (`MANA_COST`, `SPELL_RANGE`)
-/// live in the Lua environment `GlobalStrings.lua` filled, so the composition
-/// belongs on that side of the split and the *facts* belong here, where
-/// `vale spellbook` can check them with no interpreter running.
+/// It is data and not text because the formats (`MANA_COST`, `SPELL_RANGE`)
+/// are in the Lua environment that `GlobalStrings.lua` filled. The composition
+/// is done on that side, and the values are here, where `vale spellbook` can
+/// check them with no interpreter running.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SpellTip {
     pub name: String,
-    /// "Rank 1", or empty — the gray right column of the name line.
+    /// "Rank 1", or empty: the gray right column of the name line.
     pub rank: String,
-    /// **`(rank, maxRank)` for a talent**, which is a different line from
+    /// `(rank, maxRank)` for a talent. It is a different line from
     /// [`Self::rank`] and replaces it.
     ///
-    /// The reference composes the talent plate through the *same* function the
-    /// spellbook's hover uses, exactly as `SetSpell` and `SetPetAction` do, with the `TalentRec` passed alongside
-    /// the spell id, and that record is what adds `TOOLTIP_TALENT_RANK`
-    /// ("Rank %d/%d") as a line of its own under the name.
+    /// The 1.12.1 client composes a talent's plate the same way as the
+    /// spellbook's hover, as `SetSpell` and `SetPetAction` do, with the
+    /// talent's `Talent.dbc` row supplied as well as the spell id. That row
+    /// adds `TOOLTIP_TALENT_RANK` ("Rank %d/%d") as a line of its own under
+    /// the name.
     ///
-    /// So it is here rather than in a plate of its own: one composer, one place
-    /// the layout is decided. `None` for every plate that is not a talent's,
-    /// which is all but one.
+    /// The field is on this struct and not on a separate plate so that there
+    /// is one composer and one place that decides the layout. `None` for every
+    /// plate that is not a talent's, which is every plate but the talent
+    /// panel's.
     ///
-    /// **It replaces the grey cell rather than joining it**, and that is the
-    /// report: `Spell.dbc`'s `Rank` column for a talent's rank-5 spell is the
-    /// string "Rank 5", so a plate that printed both said "Rank 5" on the right
-    /// and nothing about the five — which reads as a talent with no maximum.
+    /// It replaces the grey rank cell and is not added to it. `Spell.dbc`'s
+    /// `Rank` column for a talent's rank-5 spell is the string "Rank 5", so a
+    /// plate that printed both showed "Rank 5" on the right and no maximum,
+    /// which reads as a talent with no maximum.
     pub talent_rank: Option<(u32, u32)>,
-    /// `enum Powers`: 0 mana, 1 rage, 3 energy — and the cost **as displayed**,
-    /// so a rage cost has already had the wire's tenths divided out.
+    /// `enum Powers`: 0 mana, 1 rage, 3 energy. The cost is the displayed
+    /// value, so a rage cost has already been divided by ten from the wire's
+    /// tenths.
     pub power_type: u32,
     pub power_cost: u32,
     pub range_yards: f32,
     pub cast_time_ms: u32,
-    /// The spell's own recovery or its category's, whichever is longer — the
-    /// number the tooltip's "cooldown" cell prints.
+    /// The spell's own recovery or its category's, whichever is longer. The
+    /// tooltip's "cooldown" cell prints this number.
     pub cooldown_ms: u32,
-    /// **The sentence, with its `$` variables already substituted** — see
-    /// [`vale_assets::tables::spelltext`]. Empty for a spell whose row carries none,
-    /// which is most of them.
+    /// The description, with its `$` variables already substituted. See
+    /// [`vale_assets::tables::spelltext`]. Empty for a spell whose row carries
+    /// none, which is most of them.
     ///
-    /// Substituted here rather than in `lua::tooltip` because it needs the
-    /// caster's level and the spell catalog, neither of which the interface
-    /// side holds — and because it is a decision about text taken with no
-    /// window, which is this project's own test for which side of the split
-    /// something belongs on.
+    /// Substituted here and not in `lua::tooltip` because it needs the
+    /// caster's level and the spell catalog, which the interface side does not
+    /// hold. It is also a decision about text that needs no window, and this
+    /// project puts such decisions on this side of the split.
     pub description: String,
     /// What the cast consumes, already named: `[("Rune of Teleportation", 1)]`.
     ///
-    /// **Names, not entries, and a name this client does not have yet is
-    /// missing from this list rather than printed as a number.** `Spell.dbc`
-    /// holds item entries and `Item.dbc` is not in the archives, so the name is
-    /// a `CMSG_ITEM_QUERY_SINGLE` away — the first hover on a cold cache asks
-    /// and shows nothing, and the next one shows the reagent. That is the real
-    /// client's own behaviour with an empty item cache.
+    /// The list holds names, not entries. A reagent whose name this client
+    /// does not have yet is left out of the list and not printed as a number.
+    /// `Spell.dbc` holds item entries and `Item.dbc` is not in the archives,
+    /// so the name needs a `CMSG_ITEM_QUERY_SINGLE`: the first hover on a cold
+    /// cache sends the query and shows nothing, and the next hover shows the
+    /// reagent. The 1.12.1 client behaves the same way with an empty item
+    /// cache.
     pub reagents: Vec<(String, u32)>,
 }
 
-/// **What the sentence and the reagents need that a spell row does not carry.**
+/// The values the description and the reagents need that a spell row does not
+/// carry.
 ///
-/// The caster's level (the effect values scale on it), the catalog (a `$<id>`
-/// token quotes another spell's row), and whatever item names have arrived. A
-/// parameter object rather than three arguments because every caller has all
-/// three or none: the audit's stub has none and passes [`Self::none`].
+/// They are the caster's level (the effect values scale with it), the catalog
+/// (a `$<id>` token quotes another spell's row), and the item names that have
+/// arrived. A parameter object and not three arguments because every caller
+/// has all three or none: the audit's stub has none and passes [`Self::none`].
 pub struct TipContext<'a> {
     pub level: u32,
     /// The player's own `ChrRaces`/`ChrClasses` ids, or `(0, 0)` before there is
-    /// a player. **What an item's requirement lines are tested against**, and
-    /// the reason they are ids rather than words: `AllowableRace` and
-    /// `AllowableClass` are bit masks over these numbers.
+    /// a player. An item's requirement lines are tested against them. They are
+    /// ids and not names because `AllowableRace` and `AllowableClass` are bit
+    /// masks over these numbers.
     ///
     /// Zero matches nothing, so a plate composed with no player draws its
-    /// requirement lines in the colour of an *unmet* requirement — which is the
-    /// safe direction and is what the headless harness sees.
+    /// requirement lines in the colour of an unmet requirement. The headless
+    /// harness sees this case.
     pub race: u32,
     pub class: u32,
     pub catalog: Option<&'a vale_assets::tables::spellbook::Spells>,
     /// `entry -> name`, as far as `CMSG_ITEM_QUERY_SINGLE` has answered.
     pub item_names: &'a dyn Fn(u32) -> Option<String>,
-    /// **Where the hearthstone points**, for the `$z` in its own sentence and
-    /// in Astral Recall's — see
-    /// [`vale_assets::tables::spelltext`], which is where the token's
-    /// meaning is written down.
+    /// The name of the place the hearthstone is bound to, for the `$z` in the
+    /// hearthstone's description and in Astral Recall's. See
+    /// [`vale_assets::tables::spelltext`], which defines the token.
     ///
-    /// A resolved name rather than an area id, because the crate that
-    /// substitutes it holds no DBC and no `GlobalStrings.lua`. `None` is a
-    /// character whose bind point has not arrived, which drops the token; the
-    /// caller that has the strings puts `HOME_INN` here instead, as the
-    /// reference does.
+    /// A resolved name and not an area id, because the crate that substitutes
+    /// it holds no DBC and no `GlobalStrings.lua`. `None` is a character whose
+    /// bind point has not arrived, which drops the token. A caller that has
+    /// the strings puts `HOME_INN` here instead, as the 1.12.1 client does.
     pub home: Option<String>,
 }
 
 impl TipContext<'_> {
-    /// The empty context: level 1, no catalog, no names. Used by the headless
-    /// harnesses, and the reason a description with a `$<id>` in it comes back
-    /// missing that clause rather than failing.
+    /// The empty context: level 1, no catalog, no names. The headless
+    /// harnesses use it. With it, a description containing a `$<id>` token
+    /// comes back without that clause and does not fail.
     pub fn none() -> TipContext<'static> {
         TipContext {
             level: 1,
@@ -2247,32 +2316,32 @@ fn set_tip(
     })
 }
 
-/// The `ChrRaces` ids the 1.12 client will list, in the order it walks them.
+/// The `ChrRaces` ids the 1.12.1 client lists, in the order it lists them.
 ///
-/// The client iterates the whole table and skips a row whose flag bit 0 is set,
-/// which is what keeps the unplayable
-/// rows out of a "Races:" line. That set is fixed for 5875 and is the same eight
+/// The client goes through the whole table and skips a row whose flag bit 0 is
+/// set, which keeps the unplayable rows out of a "Races:" line. That set is
+/// fixed for build 5875 and is the same eight
 /// [`vale_protocol::state::query::race_name`] names.
 const PLAYABLE_RACES: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
-/// …and the nine playable classes, which is the `ChrClasses` walk with 6 (Death
-/// Knight) and 10 absent — see [`vale_protocol::state::query::class_name`], which
-/// answers nothing for both.
+/// The nine playable classes: the `ChrClasses` ids with 6 (Death Knight) and
+/// 10 absent. [`vale_protocol::state::query::class_name`] returns nothing for
+/// both.
 const PLAYABLE_CLASSES: [u32; 9] = [1, 2, 3, 4, 5, 7, 8, 9, 11];
 
-/// **Which of a mask's members to list, or nothing at all when it covers
-/// everyone.**
+/// The members of a mask to list, or an empty list when the mask covers every
+/// member.
 ///
-/// The client's first pass over each table is looking for
-/// a member whose bit is *clear*, and a mask with no such member draws no line —
-/// which is why an ordinary sword has no "Classes:" row despite matching every
-/// class. Doing it the other way round (list the members, hide the line when the
-/// list is full) gives the same answer for these two tables and stops being the
-/// client's rule the moment a row is added.
+/// The 1.12.1 client first looks in each table for a member whose bit is
+/// clear, and a mask with no such member draws no line. That is why an
+/// ordinary sword has no "Classes:" row although it matches every class.
+/// Listing the members and hiding the line when the list is full gives the
+/// same answer for these two tables, but would differ from the client's rule
+/// if a row were added.
 ///
-/// The namer is passed in rather than chosen from the ids, because **the two id
-/// spaces overlap**: 1 is Human and 1 is Warrior, so a shared lookup that tried
-/// races first would list a warrior-only sword as usable by humans.
+/// The naming function is passed in and not chosen from the ids, because the
+/// two id spaces overlap: 1 is Human and 1 is Warrior, so a shared lookup that
+/// tried races first would list a warrior-only sword as usable by humans.
 fn allowed<const N: usize>(
     mask: i32,
     members: [u32; N],
@@ -2289,11 +2358,11 @@ fn allowed<const N: usize>(
         .collect()
 }
 
-/// Does an `AllowableRace`/`AllowableClass` mask admit this id? Bit `id - 1`,
-/// as the client tests it.
+/// Whether an `AllowableRace`/`AllowableClass` mask admits this id. The test is
+/// bit `id - 1`, as in the 1.12.1 client.
 ///
-/// **Id 0 is admitted by nothing**, which is what makes a plate composed with no
-/// player draw its requirements as unmet rather than as satisfied.
+/// Id 0 is admitted by no mask, so a plate composed with no player draws its
+/// requirements as unmet and not as satisfied.
 fn allows(mask: i32, id: u32) -> bool {
     if id == 0 || id > 32 {
         return false;
@@ -2301,13 +2370,13 @@ fn allows(mask: i32, id: u32) -> bool {
     mask as u32 & (1 << (id - 1)) != 0
 }
 
-/// The sentence an item's spell prints — the spell's own description, through
+/// The sentence an item's spell prints: the spell's own description, through
 /// the same substitution a spellbook plate uses.
 ///
-/// Falls back to the spell's **name** when the row has no description, and to
-/// the empty string when the catalogue is not loaded at all. An "Use:" line
-/// with nothing after it would be worse than no line, and the caller drops an
-/// empty one.
+/// Falls back to the spell's name when the row has no description, and to the
+/// empty string when the catalogue is not loaded. The caller drops an empty
+/// sentence, because a "Use:" line with nothing after it is worse than no
+/// line.
 fn item_spell_text(spell_id: u32, context: &TipContext) -> String {
     let Some(catalog) = context.catalog else {
         return String::new();
@@ -2328,19 +2397,20 @@ fn item_spell_text(spell_id: u32, context: &TipContext) -> String {
     }
 }
 
-/// `GameTooltip:SetAction`'s answer for a slot, or `None` for one with nothing
-/// to say — an empty slot, or an item/unresolved action whose name this client
-/// does not know. `None` is what hides the plate, so the degradation is "no
-/// tooltip" rather than a composed placeholder.
+/// The data for `GameTooltip:SetAction` for a slot, or `None` for a slot with
+/// nothing to show: an empty slot, or an item or unresolved action whose name
+/// this client does not know. `None` hides the plate, so the fallback is no
+/// tooltip and not a composed placeholder.
 pub fn action_tooltip(bar: &ActionBar, slot: u8, context: &TipContext) -> Option<SpellTip> {
     Some(spell_tip(action(bar, slot)?.spell.as_ref()?, context))
 }
 
-/// The same plate for a spell reached any other way — a spellbook row, a link.
+/// The same plate for a spell reached any other way, such as a spellbook row
+/// or a link.
 ///
-/// One copy, so a spell hovered on the bar and the same spell hovered in the
-/// book cannot print different numbers. The display conversion on the cost is
-/// the reason this is a function and not four field copies: rage arrives in
+/// There is one copy, so a spell hovered on the bar and the same spell hovered
+/// in the book cannot print different numbers. It is a function and not four
+/// field copies because of the display conversion on the cost: rage arrives in
 /// tenths and is shown in points.
 pub fn spell_tip(
     info: &vale_assets::tables::spellbook::SpellInfo,
@@ -2370,24 +2440,23 @@ pub fn spell_tip(
     }
 }
 
-/// **What the caster brings to a cast** — the half of
-/// [`vale_assets::tables::spellbook::CastConditions`] that is about *us*,
-/// measured once here for every door a cast can leave by.
+/// The caster's side of a cast: the fields of
+/// [`vale_assets::tables::spellbook::CastConditions`] that describe the local
+/// character, measured in one place for every path that sends a cast.
 ///
-/// There are two doors and they used to disagree. A spell pressed on the bar
-/// went through `cast_known_spell`, which built these conditions inline and
-/// ran `check_cast`; an *item* used from a bag or from the bar went through
-/// `character::items::use_item`, which had a cooldown refusal of its own and
-/// nothing else. Every mount in 1.12 is an item, so the moving refusal landed
-/// for Summon Warhorse and not for Brown Horse — which is "pre-cast checks
-/// still do not happen for a mount", reported a second time after the rule
-/// was in. One function, both callers, and a new condition cannot be added to
-/// one door and forgotten at the other.
+/// There are two such paths. A spell pressed on the bar goes through
+/// `cast_known_spell`. An item used from a bag or from the bar goes through
+/// `character::items::use_item`. When `cast_known_spell` built these
+/// conditions inline and ran `check_cast`, and `use_item` had only a cooldown
+/// refusal of its own, the two disagreed: every mount in 1.12 is an item, so
+/// the refusal while moving applied to Summon Warhorse and not to Brown Horse.
+/// With one function and two callers, a condition added here applies to both
+/// paths.
 ///
-/// `distance` and `target_dead` are the caller's, because only it knows what
-/// the cast was aimed at; `None` for either asks nothing, which errs towards
-/// sending. `world` is the three facts the caster's own snapshot does not carry
-/// — see [`CastWorld`].
+/// `distance` and `target_dead` come from the caller, because only it knows
+/// what the cast was aimed at. `None` for either skips that check, so the cast
+/// is sent. `world` is the three facts the caster's own snapshot does not
+/// carry; see [`CastWorld`].
 pub fn caster_conditions(
     me: &WorldEntity,
     info: &vale_assets::tables::spellbook::SpellInfo,
@@ -2403,36 +2472,40 @@ pub fn caster_conditions(
         caster_dead: me.dead,
         distance,
         target_dead,
-        // **The flags the *client* is running on**, which for the local player
-        // are the mover's own rather than the last thing the server said — the
-        // press is judged against the movement the player can see. See
+        // The movement flags the client is using. For the local player these
+        // are the mover's own and not the last value the server sent, so the
+        // press is tested against the movement the player sees. See
         // [`vale_assets::tables::spellbook::SpellInfo::refused_while_moving`].
         move_flags: me.move_flags,
-        // …and the caster-state chain's own inputs, every one of them a field
-        // the server already sends. See `book::check_cast`, which is the rule.
+        // The inputs of the caster-state checks follow. Each is a field the
+        // server already sends. `book::check_cast` holds the rule.
         unit_flags: me.unit_flags,
-        // **A charm by somebody else**, which is what the client compares: the
-        // field holding the caster's own guid is a spell they cast on
-        // themselves and is not a refusal.
+        // Charmed by another unit. The 1.12.1 client compares the charmer with
+        // the caster: a field holding the caster's own guid is a spell they
+        // cast on themselves and is not a refusal.
         charmed: me.charmed_by.is_some_and(|who| who != me.guid),
         mounted: me.mounted,
-        // Anything but standing — the innkeeper's stool, a chair, the ground.
+        // Any stand state but standing: the innkeeper's stool, a chair, the
+        // ground.
         sitting: me.stand_state != STAND_STATE_STANDING,
         stealthed: me.vis_flags & VIS_FLAG_CREEP != 0,
-        // **Sheath state `0` is "nothing drawn"**; 1 is melee and 2 is ranged.
+        // Sheath state `0` is "nothing drawn"; 1 is melee and 2 is ranged.
         sheathed: me.sheath_state == 0,
         aura_state: me.aura_state,
         daytime: world.daytime,
         outdoors: world.outdoors,
-        // **Asked only when the spell names a faction**, which on the shipped
-        // table is one disabled row — see `book::spell_fields::MIN_FACTION_ID`.
-        // The lookup is a scan of the character's own standing list, so it is
-        // worth not doing 22,359 times out of 22,360.
-        // **The talented cost and range**, which the server will charge and
-        // measure and this client must therefore test against — see
-        // `crate::world::spellmods`. `None` when the character has no
-        // modifier for this spell at all, which is the whole table for a
-        // character with no talents and is why the empty case costs nothing.
+        // `reputation_rank`, below, is looked up only when the spell names a
+        // faction, which in the shipped table is one disabled row; see
+        // `book::spell_fields::MIN_FACTION_ID`. The lookup is a scan of the
+        // character's own standing list, so it is skipped for the other 22,359
+        // of 22,360 spells.
+        //
+        // `cost_override` and `range_override` are the cost and range after
+        // talents. The server charges and measures those values, so this
+        // client must test against them; see `crate::world::spellmods`. `None`
+        // when the character has no modifier for this spell. For a character
+        // with no talents that is every spell, and the empty case then costs
+        // nothing.
         cost_override: world.mods.moved(
             vale_protocol::play::spells::spell_mod_op::COST,
             info.spell_family_flags,
@@ -2452,45 +2525,47 @@ pub fn caster_conditions(
     }
 }
 
-/// `UNIT_FIELD_BYTES_1` byte 0 — the one value that is not sitting on
-/// something.
+/// `UNIT_FIELD_BYTES_1` byte 0: the stand state for standing. It is the only
+/// value that is not a sitting state.
 const STAND_STATE_STANDING: u8 = 0;
 
-/// `UNIT_FIELD_BYTES_1` byte 3 bit 1, `UNIT_BYTE1_FLAG_CREEP` — the caster is
-/// sneaking. See [`WorldEntity::vis_flags`], where the byte's other two bits are.
+/// `UNIT_FIELD_BYTES_1` byte 3 bit 1, `UNIT_BYTE1_FLAG_CREEP`: the caster is
+/// sneaking. See [`WorldEntity::vis_flags`], which documents the byte's other
+/// two bits.
 const VIS_FLAG_CREEP: u8 = 0x02;
 
-/// **The three facts a cast is judged against that are not on the caster's own
-/// snapshot** — the clock, the sky overhead and the character's standing list.
+/// The three facts a cast is tested against that are not on the caster's own
+/// snapshot: the time of day, whether the caster is outdoors, and the
+/// character's standing list.
 ///
-/// One bundle rather than three arguments, on [`Friendship`]'s own reasoning:
-/// the cast path threads this through two doors, and a run of `&Res` arguments
-/// repeated down a chain is the shape that gets one of them dropped. Both
-/// `Option`s are "the caller has no answer", which skips the pair of refusals
-/// each decides rather than guessing at one of them.
+/// One bundle and not three arguments, for the reason [`Friendship`] gives:
+/// the cast path passes this through two callers, and one argument is harder
+/// to drop by mistake than a run of `&Res` arguments. Each `Option` is `None`
+/// when the caller has no answer, which skips the pair of refusals that value
+/// decides.
 #[derive(Clone, Copy)]
 pub struct CastWorld<'a> {
     pub daytime: Option<bool>,
     pub outdoors: Option<bool>,
     pub standing: &'a crate::interface::reputation::PlayerStanding,
-    /// …and what the character's talents do to the two numbers a refusal is
-    /// decided on — see [`crate::world::spellmods`].
+    /// The character's talent modifiers to the two numbers a refusal is
+    /// decided on, the cost and the range. See [`crate::world::spellmods`].
     pub mods: &'a crate::world::spellmods::SpellMods,
 }
 
-/// …and the resources it is read off, as one [`SystemParam`].
+/// The resources [`CastWorld`] is read from, as one [`SystemParam`].
 ///
-/// **A bundle because both doors are at the parameter ceiling.** Bevy's
-/// `SystemParam` tuples stop at sixteen, `run_bindings` was at exactly sixteen
-/// and `use_item` at fifteen, so three more `Res` between them was not a thing
-/// either could be given. It carries the settings as well as the two world
-/// facts because the press door already held `Res<CVars>` for one flag, and
-/// replacing that with this keeps the count where it was.
+/// It is a bundle because both callers are at the parameter limit. Bevy's
+/// `SystemParam` tuples stop at sixteen, `run_bindings` was at sixteen and
+/// `use_item` at fifteen, so neither could take three more `Res`. It carries
+/// the settings as well as the two world facts because `run_bindings` already
+/// held `Res<CVars>` for one flag, and replacing that with this param keeps
+/// its count unchanged.
 ///
-/// **Nothing that takes this may take any of the four `ResMut`**, which is the
-/// same rule [`Units`] carries about `PlayerStanding` and for the same reason:
-/// the systems that write the clock, the place and the settings do not press
-/// buttons.
+/// A system that takes this param must not take any of its resources as
+/// `ResMut`. [`Units`] has the same rule about `PlayerStanding`, for the same
+/// reason. The systems that write the clock, the place and the settings do not
+/// take this param.
 #[derive(SystemParam)]
 pub struct Surroundings<'w> {
     clock: Res<'w, crate::render::sky::WorldClock>,
@@ -2501,12 +2576,12 @@ pub struct Surroundings<'w> {
 }
 
 impl Surroundings<'_> {
-    /// The three as [`caster_conditions`] wants them.
+    /// The three facts in the form [`caster_conditions`] takes.
     ///
-    /// **Both `Option`s are always `Some` here**, because this client always has
-    /// a clock and always knows whether there is a building overhead. The
-    /// `Option` is the *rule's*, for a caller — a test, a CLI check — that has
-    /// neither.
+    /// Both `Option`s are always `Some` here, because this client always has a
+    /// clock and always knows whether the character is under a roof. The
+    /// `Option` exists for a caller of the rule that has neither, such as a
+    /// test or a CLI check.
     pub fn cast_world(&self) -> CastWorld<'_> {
         let (hour, minute) = self.clock.hour_minute();
         CastWorld {
@@ -2517,78 +2592,69 @@ impl Surroundings<'_> {
         }
     }
 
-    /// …and the settings, for the one flag the press door reads off them.
+    /// The settings, for the one flag `run_bindings` reads from them.
     pub fn cvars(&self) -> &crate::settings::cvars::CVars {
         &self.cvars
     }
 }
 
-/// `IsCurrentAction` — is this button's action the one currently *running*?
+/// `IsCurrentAction`: whether this button's action is the one currently in
+/// progress.
 ///
-/// **Two questions, not one**, and the second is the reference's *first*.
-/// The client reads the slot's spell and compares it against its
-/// `CURRENT_MELEE_SPELL` before it looks at anything else, so a
-/// **next-swing** ability draws its checked border from the moment it is
-/// pressed until the weapon lands. That is the whole of Heroic Strike, Cleave,
-/// Raptor Strike and Maul, and it was the first symptom in the action-bar
-/// report: pressing one did something on the wire and nothing on the button.
+/// The button is current in any of four cases.
 ///
-/// The auto-attack toggle is the same slot seen from the other end — 6603 is
-/// what the client files there while a swing is in progress — which is why this
-/// takes both and ors them rather than choosing.
+/// The first is a queued next-swing ability. The 1.12.1 client compares the
+/// slot's spell with its `CURRENT_MELEE_SPELL` before anything else, so a
+/// next-swing ability draws its checked border from the press until the weapon
+/// lands. This covers Heroic Strike, Cleave, Raptor Strike and Maul. Without
+/// it, pressing one sent a packet and changed nothing on the button.
 ///
-/// **…and a cast that has not landed yet is the third**, which this used to
-/// leave out. The reference's spell branch is two comparisons in a row against
-/// the slot's spell id and nothing else stands between them: the next swing,
-/// and then the cast being assembled — which is the spell the press assembled,
-/// but only while the press's targeting word is non-zero, i.e. only while it
-/// still wants a target.
+/// The second is the auto-attack toggle, which uses the same value: 6603 is
+/// the spell the client holds as its current melee spell while a swing is in
+/// progress. This function therefore takes both the attack state and the
+/// queued spell and ors them.
 ///
-/// **That gate is what the earlier attempt was missing.** It was tried once,
-/// lit "the right button and several wrong things with it", and was reverted
-/// with the targeting word unread — and unread it looks like "is a cast
-/// happening", which is a question about the *client* rather than about this
-/// slot. Read, it is the pending spell masked to nothing unless the cast is
-/// still holding: the word is seeded from the spell's own `Targets` column and
-/// the per-effect switch adds to it, a local refusal clears it, and the press
-/// tests it for zero to decide whether the cast goes now or waits.
+/// The third and fourth are a cast that has not finished. After the next-swing
+/// comparison, the 1.12.1 client compares the slot's spell with the spell the
+/// press started, and counts it only while that cast is still waiting for a
+/// target. Whether a pressed spell waits for a target follows from the spell's
+/// `Targets` column and its effects, and a local refusal ends the wait. The
+/// two states the border is drawn for are therefore:
 ///
-/// So the two states the border is drawn for are:
+/// * the spell cursor is up for this slot's spell (pressed and waiting for a
+///   target), which is [`crate::interface::action::SpellTargeting`];
+/// * a cast of this slot's spell is in flight (the cast bar is filling), which
+///   is [`crate::interface::action::Casting`]. The border goes out when the
+///   cast lands, is interrupted or is refused, because `Casting` then stops
+///   naming a spell.
 ///
-/// * **the spell cursor is up for this slot's spell** — pressed, waiting to be
-///   pointed at something, which is [`crate::interface::action::SpellTargeting`];
-/// * **a cast of this slot's spell is in flight** — the bar filling, which is
-///   [`crate::interface::action::Casting`], and it goes out the moment the
-///   cast lands, is interrupted or is refused, because that is when `Casting`
-///   stops naming a spell.
+/// Both are tested as "is this slot's spell that spell" and never as "is any
+/// cast in progress". An earlier version tested the second, lit the correct
+/// button and several others, and was reverted.
+/// [`crate::lua::panels::spellbook`] answers the same question for a spellbook
+/// button (`spell_is_current_cast`), and the two must agree.
 ///
-/// Both are asked as *"is this slot's spell that spell"*, never as "is
-/// something happening", which is the whole difference from the attempt that
-/// was reverted. It is also the same question [`crate::lua::panels::spellbook`]
-/// already answers for a book button (`spell_is_current_cast`), and the two
-/// disagreeing was a split with no symptom on either side.
-///
-/// `ActionButton.lua` reads it to decide whether the button draws its checked
-/// border, and pairs it with [`is_auto_repeat_action`], which is the same
-/// question for a ranged volley. The reference's third branch — a shapeshift
-/// button reading "current" for the form you are in — is not here, because
-/// there are no stance buttons to answer it.
+/// `ActionButton.lua` reads this to decide whether the button draws its
+/// checked border, and pairs it with [`is_auto_repeat_action`], the same
+/// question for a ranged auto-repeat. The 1.12.1 client has one more case, a
+/// shapeshift button that is current for the active form. It is not
+/// implemented here, because there are no stance buttons for it to answer.
 pub fn is_current_action(
     bar: &ActionBar,
     slot: u8,
     attacking: bool,
     next_swing: Option<u32>,
-    // **The two halves of "a press of this is still in the air"** — the cast in
-    // flight and the cursor waiting to be pointed. `None` for neither. See the
-    // note above, which is where the reference's own gate is.
+    // The spell of the cast in flight and the spell the targeting cursor is
+    // waiting on. `None` for neither. See the doc comment above for the
+    // 1.12.1 client's condition.
     in_flight: Option<u32>,
     aiming: Option<u32>,
 ) -> bool {
     if attacking && is_attack_action(bar, slot) {
         return true;
     }
-    // **Asked of the slot's spell and never of its kind**, exactly as
-    // [`is_auto_repeat_action`] is: an item whose entry happens to equal Heroic
+    // The test is on the slot's spell and its kind, as in
+    // [`is_auto_repeat_action`]: an item whose entry happens to equal Heroic
     // Strike's id is not the queued swing.
     let is = |spell: Option<u32>| {
         spell.is_some_and(|spell| {
@@ -2600,21 +2666,21 @@ pub fn is_current_action(
     is(next_swing) || is(in_flight) || is(aiming)
 }
 
-/// `IsAutoRepeatAction` — is this button the ranged attack that is currently
-/// **repeating**?
+/// `IsAutoRepeatAction`: whether this button is the ranged attack that is
+/// currently repeating.
 ///
-/// The other half of the pair above, and it is a different state rather than a
-/// variation on it: [`is_current_action`] is the melee swing
-/// (`SMSG_ATTACKSTART`, the server's answer) and this is the ranged loop, whose
-/// start is the client's own decision and whose only statement on the wire is
-/// its *end*. See [`super::action::AutoRepeat`].
+/// This is a different state from [`is_current_action`], not a variant of it.
+/// That function covers the melee swing (`SMSG_ATTACKSTART`, the server's
+/// answer). This one covers the ranged loop, which the client starts by its
+/// own decision and for which the server sends only the end. See
+/// [`super::action::AutoRepeat`].
 ///
-/// It is asked of the slot's **spell** and never of its kind: an item slot
-/// whose entry happens to equal Auto Shot's id is not the auto-repeat, and a
-/// macro slot is nothing at all. Three readers, all in `ActionButton.lua` —
-/// `ActionButton_UpdateState`'s checked border and the two flash arms — and
-/// each re-asks per button rather than being handed a spell id, which is why
-/// the events that go with it carry nothing.
+/// The test is on the slot's spell and its kind: an item slot whose entry
+/// happens to equal Auto Shot's id is not the auto-repeat, and a macro slot
+/// never is. `ActionButton.lua` reads it in three places:
+/// `ActionButton_UpdateState`'s checked border and the two flash cases. Each
+/// asks per button and is not handed a spell id, which is why the events that
+/// accompany it carry no arguments.
 pub fn is_auto_repeat_action(bar: &ActionBar, repeating: Option<u32>, slot: u8) -> bool {
     let Some(spell) = repeating else { return false };
     action(bar, slot).is_some_and(|a| {
@@ -2622,44 +2688,43 @@ pub fn is_auto_repeat_action(bar: &ActionBar, repeating: Option<u32>, slot: u8) 
     })
 }
 
-/// `ActionHasRange` — is *range* a question about this button at all?
+/// `ActionHasRange`: whether range applies to this button at all.
 ///
-/// The interface asks it before it asks [`is_action_in_range`], and it decides
+/// The interface asks this before it asks [`is_action_in_range`]. It decides
 /// something the second question cannot: a button with no key bound draws the
-/// **range dot** (`RANGE_INDICATOR`) in place of its hotkey text, and only a
-/// button that answers yes here ever gets one (`ActionButton_UpdateHotkeys`).
-/// A button that answers no keeps its grey hotkey for ever, which is right for
-/// Battle Shout and wrong for nothing.
+/// range dot (`RANGE_INDICATOR`) in place of its hotkey text, and only a
+/// button that answers yes here gets one (`ActionButton_UpdateHotkeys`). A
+/// button that answers no keeps its grey hotkey, which is correct for a spell
+/// such as Battle Shout.
 ///
-/// The answer is the spell's own [`vale_assets::tables::spellbook::SpellInfo::checks_range`],
-/// so the indicator and the client's own local refusal are the same predicate —
-/// a bar that lit a button red for a range `check_cast` does not enforce would
-/// be telling the player something the press then contradicts.
+/// The answer is the spell's own
+/// [`vale_assets::tables::spellbook::SpellInfo::checks_range`], so the
+/// indicator and the client's local refusal use the same predicate. A bar that
+/// drew a button red for a range `check_cast` does not enforce would
+/// contradict the press.
 ///
-/// **An item slot answers no, and that is a stated gap rather than the
-/// reference's behaviour.** A thrown weapon or a bandage has a range in the
-/// item's own prototype, which this client does not read; answering from the
-/// `ON_USE` spell instead would light the indicator off a number nothing here
-/// measures against.
+/// Known gap: an item slot answers from `item_spell`, the item's `ON_USE`
+/// spell, and answers no when that is `None`. This is not the 1.12.1 client's
+/// behaviour. A thrown weapon or a bandage has a range in the item's own
+/// prototype, which this client does not read.
 pub fn action_has_range(
     bar: &ActionBar,
     slot: u8,
-    // The item's own on-use spell, for an item slot — see the branch below.
+    // The item's own on-use spell, for an item slot. See `slot_spell`.
     item_spell: Option<&vale_assets::tables::spellbook::SpellInfo>,
 ) -> bool {
     slot_spell(bar, slot, item_spell)
         .is_some_and(vale_assets::tables::spellbook::SpellInfo::checks_range)
 }
 
-/// **The spell a slot's range and cooldown are really about**, whichever kind
-/// it is.
+/// The spell that a slot's range and cooldown belong to, for either kind of
+/// slot.
 ///
-/// A spell slot carries its own; an item slot carries an entry, and what has a
-/// range is the item's *on-use spell* — a bandage reaches five yards because
-/// First Aid does. Three reads went through `a.spell` and so answered for no
-/// item at all: the fade and the swirl were fixed a round ago and this is the
-/// third, which is why it is a shared function now rather than a fourth copy of
-/// the same two lines.
+/// A spell slot carries its own spell. An item slot carries an entry, and the
+/// range belongs to the item's on-use spell: a bandage reaches five yards
+/// because First Aid does. Three reads used `a.spell` directly and so answered
+/// nothing for an item: the fade, the cooldown and the range. They share this
+/// function so that the rule exists once.
 fn slot_spell<'a>(
     bar: &'a ActionBar,
     slot: u8,
@@ -2672,25 +2737,25 @@ fn slot_spell<'a>(
     action.spell.as_ref()
 }
 
-/// `IsActionInRange` — **`Some(true)` in range, `Some(false)` out of it, `None`
-/// where the question does not apply.**
+/// `IsActionInRange`: `Some(true)` in range, `Some(false)` out of range, and
+/// `None` where range does not apply.
 ///
-/// The three answers are the game's own `1` / `0` / `nil` and the interface
-/// reads all three differently, testing against the numbers rather than for
-/// truth: `ActionButton_OnUpdate` colours the hotkey red on an explicit **`0`**
-/// and grey otherwise, and hides the range dot on an explicit **`1`**. So `nil`
-/// is "say nothing", not "out of range" — which is what a unit the renderer has
-/// not placed yet, or no target at all, has to answer.
+/// The three answers are the game's `1`, `0` and `nil`. The interface tests
+/// against the numbers, not for truth: `ActionButton_OnUpdate` colours the
+/// hotkey red on an explicit `0` and grey otherwise, and hides the range dot
+/// on an explicit `1`. `nil` therefore means "no answer", not "out of range",
+/// and it is the answer for a unit the renderer has not placed yet and for no
+/// target.
 ///
-/// The distance is [`Units::reach`], surface to surface, because that is what
-/// the server's own `Spell::CheckRange` measures; the threshold is the spell's
-/// maximum **without** `check_cast`'s slack term, since the slack exists to stop
-/// this client refusing a cast the server would take and an indicator refuses
+/// The distance is [`Units::reach`], surface to surface, because the server's
+/// `Spell::CheckRange` measures that. The threshold is the spell's maximum
+/// without `check_cast`'s slack term. The slack exists so that this client
+/// does not refuse a cast the server would accept, and an indicator refuses
 /// nothing.
 ///
-/// Only the maximum is tested. A spell with a *minimum* range — the hunter
-/// shots — is inside it rather than out of it, and 1.12's own indicator says
-/// nothing about being too close either.
+/// Only the maximum is tested. A spell with a minimum range, such as the
+/// hunter shots, reads as in range when the target is too close; 1.12's
+/// indicator does not report being too close either.
 pub fn is_action_in_range(
     bar: &ActionBar,
     units: &Units,
@@ -2705,24 +2770,23 @@ pub fn is_action_in_range(
     Some(reach <= info.range_yards)
 }
 
-/// `IsUsableAction` — `(usable, not_enough_mana)`, the game's own pair.
+/// `IsUsableAction`: `(usable, not_enough_mana)`, the pair the game returns.
 ///
-/// Two booleans rather than one because the interface draws three states, and the
-/// middle one is the informative one: `ActionButton_UpdateUsable` tints an
-/// unusable button grey and a merely *unaffordable* one **blue**, so a player can
-/// tell "I cannot do that" from "I cannot do that yet". Both false means usable.
+/// Two booleans because the interface draws three states:
+/// `ActionButton_UpdateUsable` leaves a usable button untinted, tints an
+/// unaffordable one blue and tints any other grey, so a player can tell
+/// "cannot do that" from "cannot do that yet".
 ///
-/// What is checked here is the cost against the caster's own power, which is the
-/// half that needs no server. Range, line of sight, stance and reagents are the
-/// other half of the real answer and are not modelled — so this errs towards
-/// usable, which is the direction that leaves the player able to press the button
-/// and be told why by the server.
+/// This checks the cost against the caster's own power, which needs no server.
+/// Range, line of sight, stance and reagents are also part of the real answer
+/// and are not modelled, so the answer errs towards usable: the player can
+/// press the button and the server gives the reason for a refusal.
 pub fn is_usable_action(
     bar: &ActionBar,
     units: &Units,
     slot: u8,
     // How many of the slot's item the character is carrying, for an item slot.
-    // `None` for a slot that is not an item — see the item branch below.
+    // `None` for a slot that is not an item. See the item branch below.
     carrying: Option<u32>,
 ) -> (bool, bool) {
     let Some(action) = action(bar, slot) else {
@@ -2732,23 +2796,15 @@ pub fn is_usable_action(
     if action.is_auto_attack() {
         return (true, false);
     }
-    // **An item is usable when you have one**, and that is the reference's own
-    // rule rather than an approximation. The per-slot recompute behind
-    // `IsUsableAction` has an item branch that is two tests before it ever
-    // reaches the mana path:
+    // An item is usable when the character carries at least one. This is the
+    // 1.12.1 client's rule and not an approximation: for an item slot it tests
+    // only the count of that item, before any power cost is considered.
+    // `notEnoughMana` stays false, so an item is never tinted blue: it is grey
+    // or untinted.
     //
-    // ```text
-    // if ((action & 0xf0000000) == 0x80000000)   // the top nibble is the kind
-    //     if (count[slot] == 0) return 0;        // the per-slot count
-    // ```
-    //
-    // `notEnoughMana` is left at the zero the function opened with, so an item
-    // is never the *blue* tint — grey or nothing.
-    //
-    // Until this branch existed every item on the bar answered `(false, false)`
-    // and `ActionButton_UpdateUsable`'s `else` painted it at 0.4 grey: **every
-    // potion, bandage and trinket a player owned was drawn as unusable, always**,
-    // which is exactly what it looks like and is the report this came from.
+    // Without this branch every item on the bar answered `(false, false)`, and
+    // the `else` of `ActionButton_UpdateUsable` drew it at 0.4 grey, so every
+    // potion, bandage and trinket the player owned was drawn as unusable.
     if action.kind == vale_protocol::play::spells::action_kind::ITEM {
         return (carrying.is_some_and(|count| count > 0), false);
     }
@@ -2758,28 +2814,28 @@ pub fn is_usable_action(
     spell_is_usable(info, units)
 }
 
-/// **Can this spell be cast right now?** -> `(usable, notEnoughMana)`, which is
-/// the pair every button in the game is tinted from.
+/// Whether this spell can be cast now, as `(usable, notEnoughMana)`, the pair
+/// a button's tint is chosen from.
 ///
-/// Split out of [`is_usable_action`] because the stance bar asks the identical
-/// question about a spell that is on no action-bar slot — see
-/// [`crate::lua::panels::shapeshift`]. The two must not drift: a form drawn
-/// castable on one bar and not on the other is a bug with no symptom on either.
+/// Split out of [`is_usable_action`] because the stance bar asks the same
+/// question about a spell that is on no action-bar slot; see
+/// [`crate::lua::panels::shapeshift`]. Both bars must use this function, or a
+/// form could be drawn castable on one bar and not on the other.
 pub fn spell_is_usable(
     info: &vale_assets::tables::spellbook::SpellInfo,
     units: &Units,
 ) -> (bool, bool) {
-    // **The conditions the row states, before the cost.** A spell that cannot
-    // be cast at all is *grey*, not blue: `ActionButton_UpdateUsable`'s three
-    // branches are usable, `notEnoughMana`, and everything else, and "you have
-    // no Seal up" is the third. Ordering it after the cost test would paint a
-    // Judgement you cannot afford blue and one you have no Seal for blue too,
-    // which says the wrong thing about which problem to fix.
+    // The conditions the spell row states are tested before the cost. A spell
+    // that cannot be cast at all is grey, not blue: the three cases of
+    // `ActionButton_UpdateUsable` are usable, `notEnoughMana`, and everything
+    // else, and "no Seal is active" is the third. Testing the cost first would
+    // tint a Judgement with no Seal blue, the same as one the caster cannot
+    // afford, which names the wrong problem.
     //
-    // See [`SpellInfo::castable_now`] for what the five conditions are and
-    // which ability each is famous for. The equipped-item test is the one the
-    // row states that this does not make — it wants the character's weapons,
-    // which is the inventory's business; it is named there.
+    // See [`SpellInfo::castable_now`] for the five conditions and an example
+    // ability for each. The row's equipped-item condition is not tested here.
+    // It needs the character's weapons, which the inventory holds; it is named
+    // there.
     let me = units.get(UnitId::Player);
     if !info.castable_now(
         me.map_or(0, |me| me.aura_state),
@@ -2792,9 +2848,9 @@ pub fn spell_is_usable(
     if info.power_cost == 0 {
         return (true, false);
     }
-    // A spell paid for in a power the caster does not have at all reads
-    // unaffordable rather than unusable — a warrior's Battle Shout with no rage
-    // is the ordinary case and the blue tint is what the game shows for it.
+    // A spell that costs a power the caster does not have reads as
+    // unaffordable, not unusable. A warrior's Battle Shout with no rage is the
+    // usual case, and the game shows the blue tint for it.
     let has = match units.power_type(UnitId::Player) {
         Some(kind) if u32::from(kind) == info.power_type => units.mana(UnitId::Player),
         _ => 0,
@@ -2807,11 +2863,11 @@ pub fn spell_is_usable(
 mod tests {
     use super::*;
 
-    /// **The Attack button is checked while the *server* says we are
-    /// swinging**, and that is the whole of `IsCurrentAction` for it.
+    /// The Attack button is current while the server says the character is
+    /// swinging. `IsCurrentAction` tests nothing else for it.
     ///
-    /// The bug this pins was never in this function — it answered correctly
-    /// throughout — it was that nothing re-asked it. See
+    /// This function answered correctly before the fix this test accompanies.
+    /// The fault was that nothing called it again when the state changed. See
     /// `crate::interface::action::follow_attack_state`.
     #[test]
     fn the_attack_slot_is_current_exactly_while_attacking() {
@@ -2826,8 +2882,8 @@ mod tests {
         assert!(!is_current_action(&bar, 1, false, None, None, None), "not swinging");
         assert!(is_current_action(&bar, 1, true, None, None, None), "…and swinging");
 
-        // **An item whose entry happens to equal Attack's id is not the Attack
-        // button**, which is why the test is on the kind and not the number.
+        // An item whose entry happens to equal Attack's id is not the Attack
+        // button, so the test is on the kind as well as the number.
         let mut item = ActionBar::default();
         item.slots = vec![None; 4];
         item.slots[0] = Some(crate::interface::action::Slot {
@@ -2841,8 +2897,8 @@ mod tests {
     use crate::world::session::WorldEntity;
     use vale_protocol::play::group::{GroupList, GroupMember, PartyMemberStats, member_status};
 
-    /// **What one pass of [`Units`] answered**, recorded out of a real system so
-    /// the `SystemParam` is exercised rather than reimplemented.
+    /// What one pass of [`Units`] answered, recorded from a real system so
+    /// that the `SystemParam` itself is exercised.
     #[derive(Resource, Default, Debug, PartialEq)]
     struct Answered {
         guid: Option<u64>,
@@ -2889,8 +2945,9 @@ mod tests {
         app.world_mut().spawn(unit);
     }
 
-    /// Despawn the units and leave everything else standing — **`World::clear_entities`
-    /// would take the resources with it**, since Bevy stores those as entities too.
+    /// Despawn the units and keep everything else. `World::clear_entities`
+    /// would remove the resources as well, since Bevy stores those as entities
+    /// too.
     fn clear_units(app: &mut App) {
         let world = app.world_mut();
         let doomed: Vec<Entity> = world
@@ -2925,15 +2982,14 @@ mod tests {
         std::mem::take(&mut app.world_mut().resource_mut::<Answered>())
     }
 
-    /// **The `??` rule, both clauses and both gates** — see
-    /// [`Units::level_shown`] for the rule.
+    /// The `??` rule of [`Units::level_shown`].
     ///
-    /// Run with no `DisplayTables`, which is the one thing this harness cannot
-    /// build. That fixes the reaction at "no opinion", so the ten-level clause
-    /// is off and what is pinned here is the boss clause, the raw level either
-    /// side of it, and the fact that a `-1` player level does not mask the
-    /// world. The hostile half is pinned by
-    /// [`Units::level_shown`]'s own comparison and by the arithmetic below.
+    /// Run with no `DisplayTables`, which this harness cannot build. The
+    /// reaction is then unknown, so the ten-level rule is off. This test
+    /// covers the boss rule, the raw level of a unit that is not a boss, and
+    /// that a `-1` player level does not hide other units' levels. The hostile
+    /// case is covered by the comparison in [`Units::level_shown`] and by the
+    /// arithmetic test below.
     #[test]
     fn a_boss_reports_no_level_and_everybody_else_reports_theirs() {
         let mut app = world(&[]);
@@ -2970,13 +3026,14 @@ mod tests {
         assert_eq!(player_level(&mut app), 1, "the player is never masked");
     }
 
-    /// **Nine levels above is a number and ten is a skull**, which is the whole
-    /// of the comparison `playerLevel <= targetLevel - 10`.
+    /// A unit nine levels above the player shows its level and one ten levels
+    /// above shows the skull: the comparison is
+    /// `playerLevel <= targetLevel - 10`.
     ///
-    /// Asserted on the arithmetic rather than through the param, because the
-    /// clause it guards needs a `FactionTemplate.dbc` reading to be reached at
-    /// all and the harness has no archives. An off-by-one here is the
-    /// difference between a level 60 boss's escort showing `??` and showing 70.
+    /// Asserted on the arithmetic and not through the param, because the
+    /// ten-level rule is reached only with a `FactionTemplate.dbc` reading and
+    /// the harness has no archives. An off-by-one here decides whether a level
+    /// 60 boss's escort shows `??` or 70.
     #[test]
     fn the_ten_level_band_includes_ten_and_excludes_nine() {
         let unknown = |player: i32, target: i32| player <= target - 10;
@@ -3024,13 +3081,13 @@ mod tests {
     const LIVE_PET: u64 = 0xF140_0000_0000_0001;
     const CACHED_PET: u64 = 0xF140_0000_0000_0002;
 
-    /// **The live fields beat the cache, and that order is the measured one.**
+    /// The owner's live fields take precedence over the cached row.
     ///
-    /// The client asks the object manager for the *owner* first and reads their
-    /// `UNIT_FIELD_CHARM`/`SUMMON`; only with no owner in the world does it
-    /// fall back to the pet guid `SMSG_PARTY_MEMBER_STATS` left on their row.
-    /// A cache consulted first would go on showing a dismissed pet for as long
-    /// as nothing re-sent the block.
+    /// The 1.12.1 client looks up the owner first and reads the owner's
+    /// `UNIT_FIELD_CHARM`/`SUMMON`. Only when the owner is not in the world
+    /// does it use the pet guid `SMSG_PARTY_MEMBER_STATS` stored on the
+    /// member's row. If the cache were checked first, a dismissed pet would
+    /// stay visible until the server resent the block.
     #[test]
     fn a_party_pet_is_the_owners_live_field_before_the_group_packets_cache() {
         let mut app = world(&[(OWNER, "Bram")]);
@@ -3060,7 +3117,7 @@ mod tests {
             "a pet has no roster row, so `UnitIsConnected` finds nothing and the bar greys",
         );
 
-        // …and now the owner walks into range, carrying a *different* pet.
+        // The owner comes into range with a different pet.
         spawn(
             &mut app,
             WorldEntity { guid: OWNER, pet: Some(LIVE_PET), ..Default::default() },
@@ -3068,8 +3125,8 @@ mod tests {
         let out = ask(&mut app, UnitId::PartyPet(1));
         assert_eq!(out.guid, Some(LIVE_PET), "the live field wins");
 
-        // …and an owner who is present with *no* pet answers nothing rather
-        // than falling through to the stale row.
+        // An owner who is present with no pet answers nothing and does not
+        // fall back to the stale row.
         clear_units(&mut app);
         spawn(&mut app, WorldEntity { guid: OWNER, ..Default::default() });
         let out = ask(&mut app, UnitId::PartyPet(1));
@@ -3077,13 +3134,14 @@ mod tests {
         assert!(!out.exists, "the pet was dismissed while we watched");
     }
 
-    /// **Our own pet has no cache and needs none** — the client reads the local
-    /// player's two fields and stops. There is no case in which we are out of
-    /// our own range.
+    /// The local player's pet has no cache and needs none: the client reads
+    /// the local player's two fields and stops. The local player is never out
+    /// of its own range.
     ///
-    /// And it exists *before* its entity does, which is the half that matters:
-    /// `UnitExists` falls back to a walk over our charm/summon directly, so `PetFrame` goes up on the frame the summon field arrives
-    /// rather than whenever the pet happens to stream in.
+    /// The pet exists before its entity does. `UnitExists` is also true for a
+    /// guid that is the local player's charm or summon, so `PetFrame` is shown
+    /// on the frame the summon field arrives and not when the pet's entity
+    /// arrives.
     #[test]
     fn our_own_pet_exists_from_the_field_alone() {
         let mut app = world(&[]);
@@ -3111,7 +3169,7 @@ mod tests {
         assert_eq!(out.health, (300, 400));
         assert!(out.connected, "it is in the world");
 
-        // …and with no summon at all there is no pet frame.
+        // With no summon there is no pet frame.
         clear_units(&mut app);
         spawn(&mut app, WorldEntity { guid: 1, is_self: true, ..Default::default() });
         assert!(!ask(&mut app, UnitId::Pet).exists);
@@ -3140,8 +3198,9 @@ mod tests {
         assert_eq!(out.name, None);
     }
 
-    /// The tokens are the game's own spelling, and they round-trip — an addon
-    /// passing `"targettarget"` has to reach the same place `Bindings.xml` does.
+    /// The tokens use the game's spelling and parse back to the same variant.
+    /// An addon passing `"targettarget"` must reach the same unit
+    /// `Bindings.xml` does.
     #[test]
     fn the_tokens_are_the_games_own() {
         for id in [
@@ -3157,21 +3216,20 @@ mod tests {
         assert_eq!(UnitId::parse("targettarget"), Some(UnitId::TargetTarget));
     }
 
-    /// Case-insensitive, because the game's own is — see [`UnitId::parse`].
+    /// Parsing ignores case, as the game does. See [`UnitId::parse`].
     #[test]
     fn a_token_is_case_insensitive() {
         assert_eq!(UnitId::parse("Player"), Some(UnitId::Player));
         assert_eq!(UnitId::parse("TARGET"), Some(UnitId::Target));
     }
 
-    /// **A token this client has no state for is `None`, not a guess.**
-    /// `raid7` is a real token and answering it with the player would be a
-    /// wrong unit rather than a missing one.
+    /// A token this client has no state for parses to `None`. Answering an
+    /// unknown token with the player would return a wrong unit instead of no
+    /// unit.
     ///
-    /// `party1..4` came off this list the round the roster was read and
-    /// `pet`/`partypet1..4` the round the pet frames were; `party5` is still
-    /// refused because a 1.12 party is five including the leader, and so is
-    /// `partypet5`.
+    /// `party1..4`, `pet` and `partypet1..4` parse because the roster and the
+    /// pet frames are implemented. `party5` is refused because a 1.12 party is
+    /// five including the leader, and `partypet5` likewise.
     #[test]
     fn a_token_with_no_state_behind_it_is_refused() {
         assert_eq!(UnitId::parse("party1"), Some(UnitId::Party(1)));
@@ -3182,9 +3240,9 @@ mod tests {
         assert_eq!(UnitId::parse("PartyPet3"), Some(UnitId::PartyPet(3)));
         assert_eq!(UnitId::parse("partypet5"), None);
         assert_eq!(UnitId::parse("partypet0"), None);
-        // **`raid<n>` parses now**, and its two neighbours matter as much as it
-        // does: 40 is the last slot and `raidpet<n>` is a *different* prefix
-        // that must not fall through to it — see [`UnitId::parse`].
+        // `raid<n>` parses. Its limits are tested too: 40 is the last slot,
+        // and `raidpet<n>` is a different prefix that must not be read as
+        // `raid<n>`. See [`UnitId::parse`].
         assert_eq!(UnitId::parse("raid7"), Some(UnitId::Raid(7)));
         assert_eq!(UnitId::parse("RAID40"), Some(UnitId::Raid(40)));
         assert_eq!(UnitId::parse("raid41"), None);
@@ -3194,10 +3252,10 @@ mod tests {
         assert_eq!(UnitId::parse(""), None);
     }
 
-    /// **Every token round-trips through its own name.** The two families are
-    /// written out as literals — [`UnitId::token`] answers a `&'static str` for
-    /// twenty callers that want one — so a slot added to the enum without a
-    /// literal beside it would silently answer `party4`/`partypet4` for it.
+    /// Every token parses back from its own name. The two party families are
+    /// written out as literals, because [`UnitId::token`] returns a
+    /// `&'static str` for twenty callers that need one. A slot added to the
+    /// enum without a literal would return `party4` or `partypet4`.
     #[test]
     fn a_token_survives_being_named_and_parsed_back() {
         let every = [
@@ -3223,15 +3281,15 @@ mod tests {
         }
     }
 
-    /// **A pet's owner is the token the game raises `UNIT_PET` at**, and it is
-    /// the only inverse either frame has: `PetFrame_OnEvent` opens on
-    /// `arg1 == "player"`, never on `"pet"`.
+    /// A pet token's owner is the token the game raises `UNIT_PET` for.
+    /// `PetFrame_OnEvent` tests `arg1 == "player"`, never `"pet"`.
     ///
-    /// The two directions are checked together because they have to round-trip:
-    /// [`UnitId::pet`] is `UNIT_PET`'s own guard, so a token that answers an
-    /// owner and is *also* answered as an owner would raise the event at
-    /// itself — which is what the first draft of the vitals watcher did, at
-    /// `partypet<n>`, where nothing in the ninety files listens.
+    /// Both directions are tested together because they must be inverses.
+    /// [`UnitId::pet`] decides whether `UNIT_PET` is raised, so a token that
+    /// has an owner and also counted as an owner would raise the event for
+    /// itself. An early version of the vitals watcher did that for
+    /// `partypet<n>`, which no handler in the ninety FrameXML files listens
+    /// for.
     #[test]
     fn a_pet_token_names_its_owner_and_nothing_else_does() {
         assert_eq!(UnitId::Pet.owner(), Some(UnitId::Player));
@@ -3246,26 +3304,26 @@ mod tests {
         assert_eq!(UnitId::PartyPet(1).pet(), None);
         assert_eq!(UnitId::Target.pet(), None);
 
-        // …and the two are inverses wherever both are defined.
+        // The two are inverses wherever both are defined.
         for id in [UnitId::Player, UnitId::Party(1), UnitId::Party(4)] {
             assert_eq!(id.pet().and_then(|pet| pet.owner()), Some(id));
         }
     }
 
-    /// **A queued next-swing ability is the current action**, which is the
-    /// reference's *first* comparison in `IsCurrentAction` (against
-    /// `CURRENT_MELEE_SPELL`) and was missing outright — so pressing Heroic Strike lit
-    /// nothing at all.
+    /// A queued next-swing ability is the current action. The 1.12.1 client
+    /// compares the slot's spell with `CURRENT_MELEE_SPELL` first in
+    /// `IsCurrentAction`. Without that comparison, pressing Heroic Strike lit
+    /// no button.
     ///
-    /// The two halves are checked apart because they are different states that
-    /// reach the same button: the auto-attack toggle answers off a swing being
-    /// in progress, and the queue answers off its own spell id.
+    /// The two cases are tested separately because they are different states:
+    /// the auto-attack toggle depends on a swing being in progress, and the
+    /// queued ability depends on its own spell id.
     #[test]
     fn a_queued_swing_and_the_attack_toggle_are_both_current() {
         const SPELL: u8 = vale_protocol::play::spells::action_kind::SPELL;
         let mut bar = ActionBar::default();
         bar.slots = vec![
-            // 78 Heroic Strike, 6603 Attack, and an *item* whose entry is 78.
+            // 78 Heroic Strike, 6603 Attack, and an item whose entry is 78.
             Some(crate::interface::action::Slot { action: 78, kind: SPELL, spell: None }),
             Some(crate::interface::action::Slot { action: 6603, kind: SPELL, spell: None }),
             Some(crate::interface::action::Slot {
@@ -3281,37 +3339,37 @@ mod tests {
         // Armed: the ability lights and the attack toggle does not.
         assert!(is_current_action(&bar, 1, false, Some(78), None, None));
         assert!(!is_current_action(&bar, 2, false, Some(78), None, None));
-        // …and an item slot holding the same number is not the queued spell.
+        // An item slot holding the same number is not the queued spell.
         assert!(!is_current_action(&bar, 3, false, Some(78), None, None));
         // Swinging: the toggle lights, on its own state, with nothing armed.
         assert!(is_current_action(&bar, 2, true, None, None, None));
         assert!(!is_current_action(&bar, 1, true, None, None, None));
-        // …and both at once, which is the ordinary case mid-fight.
+        // Both at once, which is the usual case during a fight.
         assert!(is_current_action(&bar, 1, true, Some(78), None, None));
         assert!(is_current_action(&bar, 2, true, Some(78), None, None));
 
-        // **A cast in flight lights its own button and nothing else's**, which
-        // is the whole of what the earlier attempt got wrong: the answer is
-        // "is this slot's spell that spell", never "is a cast happening".
+        // A cast in flight lights its own button and no other. The test is
+        // "is this slot's spell that spell", not "is a cast in progress".
         assert!(is_current_action(&bar, 1, false, None, Some(78), None));
         assert!(!is_current_action(&bar, 2, false, None, Some(78), None));
         assert!(!is_current_action(&bar, 3, false, None, Some(78), None), "an item slot");
-        // …and a cast of something that is on no slot lights nothing at all.
+        // A cast of a spell that is on no slot lights nothing.
         assert!(!is_current_action(&bar, 1, false, None, Some(999), None));
 
-        // …and the same for the cursor waiting to be pointed, which is the
-        // reference's targeting-word gate — see the function's own note.
+        // The same holds for the spell the targeting cursor is waiting on. See
+        // the doc comment of `is_current_action`.
         assert!(is_current_action(&bar, 1, false, None, None, Some(78)));
         assert!(!is_current_action(&bar, 2, false, None, None, Some(78)));
-        // **Both empty is no border**, which is what makes it go out again: the
-        // border is not latched anywhere, it is this answer.
+        // With both empty there is no border. The border is not stored
+        // anywhere; it is this function's answer, so it goes out when both
+        // clear.
         assert!(!is_current_action(&bar, 1, false, None, None, None));
     }
 
-    /// **`GetActionText` is a macro's name and nothing else's.** The reader is
-    /// `ActionButton_Update`, which writes the answer straight onto the
-    /// button's Name font string — so a spell answering its own name printed a
-    /// label over every icon on the bar.
+    /// `GetActionText` returns a macro's name and nothing for any other slot.
+    /// `ActionButton_Update` writes the value directly onto the button's Name
+    /// font string, so a spell returning its own name printed a label over
+    /// every icon on the bar.
     #[test]
     fn only_a_macro_slot_has_action_text() {
         let mut bar = ActionBar::default();
@@ -3331,11 +3389,11 @@ mod tests {
         assert!(get_action_text(&bar, 2).is_some(), "a macro does");
     }
 
-    /// **An item slot is named by the kind byte, never by the absence of a
-    /// `SpellInfo`.** Both are `spell: None` here — one because the catalog does
-    /// not carry the id, one because the number is an item entry — and treating
-    /// the second test as the first would send `CMSG_USE_ITEM` for a spell
-    /// nobody could resolve and search the bags for its id.
+    /// An item slot is identified by the kind byte, not by the absence of a
+    /// `SpellInfo`. Two slots here have `spell: None`: one because the catalog
+    /// does not carry the id, one because the number is an item entry.
+    /// Treating the first as an item would send `CMSG_USE_ITEM` for a spell
+    /// and search the bags for its id.
     #[test]
     fn only_an_item_slot_names_an_entry() {
         let mut bar = ActionBar::default();
@@ -3362,16 +3420,16 @@ mod tests {
         assert_eq!(action_item(&bar, 9), None, "an empty slot");
     }
 
-    /// **`ActionHasRange` is the spell's own predicate and not a distance**, so
-    /// the button that draws a range indicator and the press that can be refused
-    /// locally agree by construction — a bar that lit a button red for a range
-    /// [`vale_assets::tables::spellbook::check_cast`] does not enforce would be
-    /// telling the player something the press immediately contradicts.
+    /// `ActionHasRange` is the spell's own predicate and not a distance, so
+    /// the button that draws a range indicator and the press that can be
+    /// refused locally use the same rule. A bar that drew a button red for a
+    /// range [`vale_assets::tables::spellbook::check_cast`] does not enforce
+    /// would contradict the press.
     ///
-    /// The melee row is the case worth naming: its stated 5 yards is a
-    /// placeholder for a reach the server computes from both units' bulk and how
-    /// fast they are moving, so Heroic Strike answers **no** here and keeps its
-    /// grey hotkey. That is a stated gap rather than the reference's behaviour.
+    /// The melee row's stated 5 yards is a placeholder for a reach the server
+    /// computes from both units' size and how fast they are moving, so Heroic
+    /// Strike answers no here and keeps its grey hotkey. This is a known gap
+    /// and not the 1.12.1 client's behaviour.
     #[test]
     fn only_a_spell_with_a_measurable_range_has_one() {
         use vale_assets::tables::spellbook::SpellInfo;
@@ -3412,8 +3470,8 @@ mod tests {
         assert!(!action_has_range(&bar, 9, None), "an empty slot");
     }
 
-    /// **Slots are one-based**, and slot 0 is not a slot — which is what lets
-    /// `ACTIONBAR_SLOT_CHANGED(0)` mean "all of them" without a separate flag.
+    /// Slots are one-based and slot 0 is not a slot, which lets
+    /// `ACTIONBAR_SLOT_CHANGED(0)` mean "all slots" without a separate flag.
     #[test]
     fn slot_numbering_is_the_games_one_based() {
         let mut bar = ActionBar::default();
@@ -3425,13 +3483,12 @@ mod tests {
         assert!(action(&bar, 0).is_none());
     }
 
-    /// **The green range is the client's twenty-entry table** — not the
-    /// server's arithmetic, which disagrees at the level
-    /// that matters most.
+    /// The green range is the 1.12.1 client's twenty-entry lookup, not the
+    /// server's arithmetic, which gives a different value at level 60.
     ///
-    /// The decade boundaries are the whole of the rule, so they are what this
-    /// pins: it steps at 20, 40 and 60 and nowhere in between, because the index
-    /// is `level / 10` and the table repeats each value twice up to 80.
+    /// The rule is defined by its ten-level boundaries, so those are tested:
+    /// the value steps at 20, 40 and 60 and nowhere between, because the index
+    /// is `level / 10` and each value appears twice up to 80.
     #[test]
     fn the_green_range_steps_by_decade() {
         assert_eq!(quest_green_range(1), 4);
@@ -3442,14 +3499,15 @@ mod tests {
         assert_eq!(quest_green_range(59), 6);
         assert_eq!(quest_green_range(60), 7, "the cap, and the common case");
 
-        // **And 7, not the 9 vmangos' `GetGrayLevel` would give at 60.** The
-        // number never crosses the wire; only the client's decides the colour.
+        // The value is 7, not the 9 vmangos' `GetGrayLevel` gives at 60. The
+        // number is never sent by the server; the client's value decides the
+        // colour.
         assert_ne!(quest_green_range(60), 9, "the server's rule is not this one");
     }
 
-    /// **No player is zero**, which is the client's own early return, and a
-    /// level past the table's end reads its last row rather than panicking —
-    /// the client clamps the index to 19.
+    /// With no player the range is zero, as in the 1.12.1 client. A level past
+    /// the end of the table reads its last entry and does not panic: the
+    /// client clamps the index to 19.
     #[test]
     fn the_green_range_has_no_edge_that_panics() {
         assert_eq!(quest_green_range(0), 0, "no character");
@@ -3458,9 +3516,9 @@ mod tests {
         assert_eq!(quest_green_range(i32::MAX), 12, "clamped, not indexed");
     }
 
-    /// **A mask that admits everyone draws no line at all**, which is what keeps
-    /// "Classes:" off every sword in the game — and is the client's own first
-    /// pass rather than a tidy-up of the list afterwards.
+    /// A mask that admits everyone draws no line, which keeps "Classes:" off
+    /// an ordinary sword. The 1.12.1 client makes this test before it lists
+    /// any member; see [`allowed`].
     #[test]
     fn a_requirement_line_appears_only_when_something_is_excluded() {
         use vale_protocol::state::query::{class_name, race_name};
@@ -3471,24 +3529,24 @@ mod tests {
 
         // A warrior-only item: bit 0.
         assert_eq!(allowed(0b1, PLAYABLE_CLASSES, class_name), vec!["Warrior"]);
-        // …and a Horde-only one: orc, undead, tauren, troll — bits 1, 4, 5, 7.
+        // A Horde-only item: orc, undead, tauren and troll, bits 1, 4, 5
+        // and 7.
         assert_eq!(
             allowed(0b1011_0010, PLAYABLE_RACES, race_name),
             vec!["Orc", "Undead", "Tauren", "Troll"]
         );
     }
 
-    /// **The two id spaces overlap**, and a shared lookup that tried races first
-    /// would list a warrior-only sword as usable by humans. `allows` is the bit
-    /// test the client makes, bit `id - 1`.
+    /// The two id spaces overlap, and a shared lookup that tried races first
+    /// would list a warrior-only sword as usable by humans. `allows` is the
+    /// bit test the 1.12.1 client makes, bit `id - 1`.
     #[test]
     fn a_mask_admits_by_bit_and_never_admits_nobody() {
         assert!(allows(0b1, 1), "class 1 is the warrior, race 1 is the human");
         assert!(!allows(0b1, 2));
         assert!(allows(-1, 11), "everyone includes the druid");
-        // Zero is "there is no player", and it matches nothing — so a plate
-        // composed with no character draws its requirements as unmet, which is
-        // the safe direction.
+        // Zero means "there is no player" and matches nothing, so a plate
+        // composed with no character draws its requirements as unmet.
         assert!(!allows(-1, 0));
         assert!(!allows(-1, 33), "past the width of the mask");
     }

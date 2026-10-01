@@ -526,6 +526,15 @@ impl ItemDisplays {
     }
 
     /// The raw component name a row gives, before any suffix.
+    /// The row's flags field, 0 for a display id the table does not have.
+    /// Bit 0 marks a guild tabard; see [`crate::look::emblem`].
+    pub fn flags(&self, display_id: u32) -> u32 {
+        self.by_id
+            .get(&display_id)
+            .and_then(|record| self.dbc.u32_at(*record, fields::FLAGS))
+            .unwrap_or(0)
+    }
+
     pub fn texture_name(&self, display_id: u32, component: usize) -> Option<String> {
         let record = *self.by_id.get(&display_id)?;
         self.dbc
@@ -1231,15 +1240,44 @@ pub fn item_layers(
     table: &ItemDisplays,
     gender: u8,
     items: &[Equipped],
+    exists: impl FnMut(&str) -> bool,
+) -> Vec<crate::look::character::SkinLayer> {
+    item_layers_with_emblem(table, gender, items, None, exists)
+}
+
+/// [`item_layers`] for a wearer whose guild has an emblem.
+///
+/// `emblem` is the five numbers and whether they are the tabard designer's
+/// preview. A guild tabard, which is a tabard whose row has
+/// [`crate::look::emblem::DISPLAY_FLAG_GUILD_TABARD`], paints the emblem's
+/// six layers in place of its own two textures. A preview paints them after
+/// every item when no guild tabard did, because the designer shows the
+/// design on a character who wears no tabard.
+pub fn item_layers_with_emblem(
+    table: &ItemDisplays,
+    gender: u8,
+    items: &[Equipped],
+    emblem: Option<([i32; 5], bool)>,
     mut exists: impl FnMut(&str) -> bool,
 ) -> Vec<crate::look::character::SkinLayer> {
+    use crate::look::emblem;
     let mut wearing: Vec<&Equipped> = items.iter().filter(|i| i.slot.layer() > 0).collect();
     // Stable by layer, so two items in the same layer keep the order the
     // caller listed them in rather than an arbitrary one.
     wearing.sort_by_key(|i| i.slot.layer());
 
     let mut layers = Vec::new();
+    let mut emblazoned = false;
     for item in wearing {
+        if let Some((numbers, _)) = emblem {
+            if item.slot == Slot::Tabard
+                && table.flags(item.display_id) & emblem::DISPLAY_FLAG_GUILD_TABARD != 0
+            {
+                layers.extend(emblem::layers(numbers).into_iter().filter(|l| exists(&l.path)));
+                emblazoned = true;
+                continue;
+            }
+        }
         // Only the components this slot wears; see [`Slot::components`]. The
         // other columns hold the rest of the armour set and belong to the pieces
         // that are worn elsewhere.
@@ -1257,6 +1295,11 @@ pub fn item_layers(
                 path,
                 region: component.region(),
             });
+        }
+    }
+    if let Some((numbers, true)) = emblem {
+        if !emblazoned {
+            layers.extend(emblem::layers(numbers).into_iter().filter(|l| exists(&l.path)));
         }
     }
     layers

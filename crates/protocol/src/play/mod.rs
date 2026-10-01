@@ -46,6 +46,10 @@
 //!                side, and the server states both offers
 //! group.rs       the party
 //! social.rs      the friends list, the ignore list, and the /who search
+//! guild.rs       the guild: its name and ranks, the roster, the events, the
+//!                nineteen requests of the guild tab, and the emblem
+//! petition.rs    the guild charter: the registrar's offer, the signatures,
+//!                and the nine requests about a charter item
 //! channels.rs    chat channels: General, Trade, and /join
 //! chat.rs        SMSG_MESSAGECHAT and CMSG_MESSAGECHAT, and the GM commands
 //!                sent as chat
@@ -86,6 +90,7 @@ pub mod explored;
 pub mod inspect;
 pub mod gossip;
 pub mod group;
+pub mod guild;
 pub mod items;
 pub mod logout;
 pub mod mail;
@@ -93,6 +98,7 @@ pub mod loot;
 pub mod lootroll;
 pub mod object;
 pub mod pagetext;
+pub mod petition;
 pub mod pet;
 pub mod played;
 pub mod quest;

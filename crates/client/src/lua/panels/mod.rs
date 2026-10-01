@@ -40,6 +40,12 @@
 //! skills.rs      the skills panel, which has the same shape as reputation.rs
 //! party.rs       the party
 //! social.rs      the friends list, the ignore list and the /who search
+//! guild.rs       the guild tab: the roster, the ranks and their rights, and
+//!                the guild names `GetGuildInfo` answers from
+//! petition.rs    the guild charter: the registrar window's four functions
+//!                and the petition window's eight
+//! tabard.rs      the tabard designer: two functions and the ten methods of
+//!                `TabardModel`
 //! channels.rs    chat channels: ten numbered slots and the chat frame's
 //!                twenty-five channel globals
 //! raid.rs        the raid roster: the party roster with its first byte set,
@@ -77,18 +83,21 @@ pub mod mail;
 pub mod pagetext;
 pub mod duel;
 pub mod summon;
+pub mod guild;
 pub mod inspect;
 pub mod lootroll;
 pub mod merchant;
 pub mod paperdoll;
 pub mod party;
 pub mod pet;
+pub mod petition;
 pub mod quest;
 pub mod raid;
 pub mod reputation;
 pub mod shapeshift;
 pub mod skills;
 pub mod stable;
+pub mod tabard;
 pub mod trade;
 pub mod social;
 pub mod spellbook;

@@ -417,6 +417,30 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         Opcode::SMSG_FRIEND_STATUS => player::friend_status(ctx, pkt),
         Opcode::SMSG_WHO => player::who_results(ctx, pkt),
 
+        // ---- the guild -------------------------------------------------------
+        // See [`crate::play::guild`]. Each is forwarded as an event; the
+        // character's own guild id and rank are update fields.
+        Opcode::SMSG_GUILD_QUERY_RESPONSE => player::guild_query(ctx, pkt),
+        Opcode::SMSG_GUILD_ROSTER => player::guild_roster(ctx, pkt),
+        Opcode::SMSG_GUILD_EVENT => player::guild_event(ctx, pkt),
+        Opcode::SMSG_GUILD_COMMAND_RESULT => player::guild_command_result(ctx, pkt),
+        Opcode::SMSG_GUILD_INVITE => player::guild_invite(ctx, pkt),
+        Opcode::SMSG_GUILD_DECLINE => player::guild_decline(ctx, pkt),
+        Opcode::SMSG_GUILD_INFO => player::guild_info(ctx, pkt),
+        Opcode::MSG_TABARDVENDOR_ACTIVATE => player::tabard_vendor(ctx, pkt),
+        Opcode::MSG_SAVE_GUILD_EMBLEM => player::guild_emblem_result(ctx, pkt),
+
+        // ---- the guild charter -----------------------------------------------
+        // See [`crate::play::petition`]. The signatures name their signers by
+        // guid, so that handler also asks for the names.
+        Opcode::SMSG_PETITION_SHOWLIST => player::petition_show_list(ctx, pkt),
+        Opcode::SMSG_PETITION_SHOW_SIGNATURES => player::petition_signatures(ctx, pkt),
+        Opcode::SMSG_PETITION_QUERY_RESPONSE => player::petition_query(ctx, pkt),
+        Opcode::SMSG_PETITION_SIGN_RESULTS => player::petition_sign_result(ctx, pkt),
+        Opcode::SMSG_TURN_IN_PETITION_RESULTS => player::petition_turn_in(ctx, pkt),
+        Opcode::MSG_PETITION_DECLINE => player::petition_declined(ctx, pkt),
+        Opcode::MSG_PETITION_RENAME => player::petition_renamed(ctx, pkt),
+
         // ---- mail ------------------------------------------------------------
         // Five packets; one of them (`SMSG_SEND_MAIL_RESULT`) answers seven
         // different actions. The other four arms follow the trade arms below.

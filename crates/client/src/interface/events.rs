@@ -758,6 +758,79 @@ pub struct WhoListUpdate;
 #[derive(Message, Debug, Clone, Copy)]
 pub struct FriendListShow;
 
+/// `GUILD_ROSTER_UPDATE`: the guild roster changed.
+///
+/// `refresh` is the event's first argument. `FriendsFrame_OnEvent` calls
+/// `GuildRoster()` when it is set and the guild tab is showing, so it is set
+/// when the server stated a change without sending the roster, and clear
+/// when a roster arrived. See [`crate::interface::guild`].
+#[derive(Message, Debug, Clone, Copy)]
+pub struct GuildRosterUpdate {
+    pub refresh: bool,
+}
+
+/// `PLAYER_GUILD_UPDATE`: the character's guild or rank changed, or the name
+/// of its guild arrived. The character sheet redraws its guild line on it and
+/// the social window enables or disables its guild tab.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct PlayerGuildUpdate;
+
+/// `GUILD_MOTD`: the guild's message of the day, as the first argument.
+/// `ChatFrame_OnEvent` prints it and `FriendsFrame_OnEvent` keeps it for the
+/// guild tab.
+#[derive(Message, Debug, Clone)]
+pub struct GuildMotd(pub String);
+
+/// `GUILD_INVITE_REQUEST`: an invitation to a guild. The arguments are the
+/// inviter's name and the guild's name, and `UIParent_OnEvent` shows the
+/// `GUILD_INVITE` popup with them.
+#[derive(Message, Debug, Clone)]
+pub struct GuildInviteRequest {
+    pub inviter: String,
+    pub guild: String,
+}
+
+/// `PETITION_SHOW`: a guild charter's signatures arrived, or one of its
+/// names did. `PetitionFrame`'s handler shows the frame and calls
+/// `PetitionFrame_Update`, which reads the whole charter again. See
+/// [`crate::interface::petition`].
+#[derive(Message, Debug, Clone, Copy)]
+pub struct PetitionShow;
+
+/// `PETITION_CLOSED`: the charter window is to close. Its handler is
+/// `HideUIPanel(PetitionFrame)`.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct PetitionClosed;
+
+/// `GUILD_REGISTRAR_SHOW`: a guild registrar's offer arrived.
+/// `GuildRegistrarFrame`'s handler shows the frame.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct GuildRegistrarShow;
+
+/// `GUILD_REGISTRAR_CLOSED`: the registrar window is to close.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct GuildRegistrarClosed;
+
+/// `OPEN_TABARD_FRAME`: a tabard designer opened its window.
+/// `TabardFrame_OnEvent` points `TabardModel` at the character and shows the
+/// frame. See [`crate::interface::tabard`].
+#[derive(Message, Debug, Clone, Copy)]
+pub struct OpenTabardFrame;
+
+/// `CLOSE_TABARD_FRAME`: the tabard designer's window is to close.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct CloseTabardFrame;
+
+/// `TABARD_CANSAVE_CHANGED`: whether the design can be saved changed.
+/// `TabardFrame_UpdateButtons` reads `TabardModel:CanSaveTabardNow()` on it.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct TabardCansaveChanged;
+
+/// `TABARD_SAVE_PENDING`: a save was sent and has not been answered. The
+/// handler is the same `TabardFrame_UpdateButtons`.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct TabardSavePending;
+
 /// `PARTY_LEADER_CHANGED`: the party leader changed. Raised from the roster's
 /// leader guid rather than from `SMSG_GROUP_SET_LEADER`, which carries a name.
 #[derive(Message, Debug, Clone, Copy)]
@@ -2203,6 +2276,58 @@ impl GameEvent for WhoListUpdate {
 impl GameEvent for FriendListShow {
     const EVENT: &'static str = "FRIENDLIST_SHOW";
 }
+impl GameEvent for GuildRosterUpdate {
+    const EVENT: &'static str = "GUILD_ROSTER_UPDATE";
+    fn args(&self) -> Vec<EventArg> {
+        if self.refresh {
+            vec![EventArg::Number(1.0)]
+        } else {
+            Vec::new()
+        }
+    }
+}
+impl GameEvent for PlayerGuildUpdate {
+    const EVENT: &'static str = "PLAYER_GUILD_UPDATE";
+}
+impl GameEvent for GuildMotd {
+    const EVENT: &'static str = "GUILD_MOTD";
+    fn args(&self) -> Vec<EventArg> {
+        vec![EventArg::Text(self.0.clone())]
+    }
+}
+impl GameEvent for GuildInviteRequest {
+    const EVENT: &'static str = "GUILD_INVITE_REQUEST";
+    fn args(&self) -> Vec<EventArg> {
+        vec![
+            EventArg::Text(self.inviter.clone()),
+            EventArg::Text(self.guild.clone()),
+        ]
+    }
+}
+impl GameEvent for PetitionShow {
+    const EVENT: &'static str = "PETITION_SHOW";
+}
+impl GameEvent for PetitionClosed {
+    const EVENT: &'static str = "PETITION_CLOSED";
+}
+impl GameEvent for GuildRegistrarShow {
+    const EVENT: &'static str = "GUILD_REGISTRAR_SHOW";
+}
+impl GameEvent for GuildRegistrarClosed {
+    const EVENT: &'static str = "GUILD_REGISTRAR_CLOSED";
+}
+impl GameEvent for OpenTabardFrame {
+    const EVENT: &'static str = "OPEN_TABARD_FRAME";
+}
+impl GameEvent for CloseTabardFrame {
+    const EVENT: &'static str = "CLOSE_TABARD_FRAME";
+}
+impl GameEvent for TabardCansaveChanged {
+    const EVENT: &'static str = "TABARD_CANSAVE_CHANGED";
+}
+impl GameEvent for TabardSavePending {
+    const EVENT: &'static str = "TABARD_SAVE_PENDING";
+}
 impl GameEvent for SkillLinesChanged {
     const EVENT: &'static str = "SKILL_LINES_CHANGED";
 }
@@ -2875,6 +3000,18 @@ pub struct GameEventReaders<'w, 's> {
     friend_list: MessageReader<'w, 's, FriendListUpdate>,
     ignore_list: MessageReader<'w, 's, IgnoreListUpdate>,
     who_list: MessageReader<'w, 's, WhoListUpdate>,
+    player_guild: MessageReader<'w, 's, PlayerGuildUpdate>,
+    guild_roster: MessageReader<'w, 's, GuildRosterUpdate>,
+    guild_motd: MessageReader<'w, 's, GuildMotd>,
+    guild_invite: MessageReader<'w, 's, GuildInviteRequest>,
+    petition_show: MessageReader<'w, 's, PetitionShow>,
+    petition_closed: MessageReader<'w, 's, PetitionClosed>,
+    guild_registrar_show: MessageReader<'w, 's, GuildRegistrarShow>,
+    guild_registrar_closed: MessageReader<'w, 's, GuildRegistrarClosed>,
+    open_tabard_frame: MessageReader<'w, 's, OpenTabardFrame>,
+    close_tabard_frame: MessageReader<'w, 's, CloseTabardFrame>,
+    tabard_cansave_changed: MessageReader<'w, 's, TabardCansaveChanged>,
+    tabard_save_pending: MessageReader<'w, 's, TabardSavePending>,
     skill_lines: MessageReader<'w, 's, SkillLinesChanged>,
     character_points: MessageReader<'w, 's, CharacterPointsChanged>,
     party_members: MessageReader<'w, 's, PartyMembersChanged>,
@@ -3051,6 +3188,23 @@ impl GameEventReaders<'_, '_> {
         take!(friend_list, FriendListUpdate);
         take!(ignore_list, IgnoreListUpdate);
         take!(who_list, WhoListUpdate);
+        // The membership before the roster: `InGuildCheck` enables the
+        // guild tab that the roster update then fills.
+        take!(player_guild, PlayerGuildUpdate);
+        take!(guild_roster, GuildRosterUpdate);
+        take!(guild_motd, GuildMotd);
+        take!(guild_invite, GuildInviteRequest);
+        // The charter, the registrar and the tabard designer. Each show
+        // comes before its close, so a window opened and closed in one
+        // frame ends closed.
+        take!(petition_show, PetitionShow);
+        take!(petition_closed, PetitionClosed);
+        take!(guild_registrar_show, GuildRegistrarShow);
+        take!(guild_registrar_closed, GuildRegistrarClosed);
+        take!(open_tabard_frame, OpenTabardFrame);
+        take!(close_tabard_frame, CloseTabardFrame);
+        take!(tabard_cansave_changed, TabardCansaveChanged);
+        take!(tabard_save_pending, TabardSavePending);
         take!(skill_lines, SkillLinesChanged);
         take!(character_points, CharacterPointsChanged);
         // The party events. Membership comes before the leader, because
@@ -3300,7 +3454,7 @@ impl GameEventReaders<'_, '_> {
 /// A hand-written list rather than a derived one, like
 /// [`crate::lua::api::verbs::REGISTERED`], so that it can be compared with the
 /// set of names passed to `RegisterEvent`.
-pub const FIRED: [&str; 260] = [
+pub const FIRED: [&str; 272] = [
     PlayerDead::EVENT,
     PlayerAlive::EVENT,
     PlayerUnghost::EVENT,
@@ -3393,6 +3547,18 @@ pub const FIRED: [&str; 260] = [
     FriendListUpdate::EVENT,
     IgnoreListUpdate::EVENT,
     WhoListUpdate::EVENT,
+    PlayerGuildUpdate::EVENT,
+    GuildRosterUpdate::EVENT,
+    GuildMotd::EVENT,
+    GuildInviteRequest::EVENT,
+    PetitionShow::EVENT,
+    PetitionClosed::EVENT,
+    GuildRegistrarShow::EVENT,
+    GuildRegistrarClosed::EVENT,
+    OpenTabardFrame::EVENT,
+    CloseTabardFrame::EVENT,
+    TabardCansaveChanged::EVENT,
+    TabardSavePending::EVENT,
     SkillLinesChanged::EVENT,
     CharacterPointsChanged::EVENT,
     PartyMembersChanged::EVENT,
@@ -3680,6 +3846,18 @@ pub(crate) fn register(app: &mut App) {
         .add_message::<FriendListUpdate>()
         .add_message::<IgnoreListUpdate>()
         .add_message::<WhoListUpdate>()
+        .add_message::<PlayerGuildUpdate>()
+        .add_message::<GuildRosterUpdate>()
+        .add_message::<GuildMotd>()
+        .add_message::<GuildInviteRequest>()
+        .add_message::<PetitionShow>()
+        .add_message::<PetitionClosed>()
+        .add_message::<GuildRegistrarShow>()
+        .add_message::<GuildRegistrarClosed>()
+        .add_message::<OpenTabardFrame>()
+        .add_message::<CloseTabardFrame>()
+        .add_message::<TabardCansaveChanged>()
+        .add_message::<TabardSavePending>()
         .add_message::<SkillLinesChanged>()
         .add_message::<CharacterPointsChanged>()
         .add_message::<PartyMembersChanged>()

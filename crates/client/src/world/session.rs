@@ -612,6 +612,33 @@ fn re_enumerate_blocking(
     })
 }
 
+/// The title and name of a unit's owner, for the line under the unit's name.
+///
+/// The owner is the charmer when there is one and the creator otherwise, and
+/// it must be an object in the world: an owner out of sight gives no line.
+/// A player has no owner line. The creating spell's first effect chooses
+/// between a guardian, a created object and the pet-or-minion default; see
+/// [`vale_assets::look::unitname::OwnerTitle::of`].
+fn owner_of(
+    world: &vale_protocol::state::objects::ObjectManager,
+    tables: Option<&vale_assets::tables::dbc::DisplayTables>,
+    unit: &vale_protocol::state::objects::Entity,
+) -> Option<(vale_assets::look::unitname::OwnerTitle, String)> {
+    if unit.object_type != Some(ObjectType::Unit) {
+        return None;
+    }
+    let charmer = unit.charmed_by();
+    let owner = world.get(charmer.or_else(|| unit.created_by())?)?;
+    let effect = unit.created_by_spell().and_then(|spell| {
+        Some(tables?.spellbook()?.info(spell)?.effects[0].kind)
+    });
+    let creature_type = world.creature_of(unit).map_or(0, |c| c.creature_type);
+    Some((
+        vale_assets::look::unitname::OwnerTitle::of(charmer.is_some(), effect, creature_type),
+        world.unit_name_of(owner),
+    ))
+}
+
 /// One entity as the renderer wants it: the ECS form of the old
 /// `EntitySnapshot`, without the serialisation.
 ///
@@ -712,7 +739,9 @@ pub struct WorldEntity {
     /// one from.
     pub gender: Option<u8>,
     /// What a player is wearing: `(ItemDisplayInfo id, InventoryType)` per
-    /// visible slot, empty for everything that is not a player.
+    /// visible slot, empty for everything that is not a player. A player
+    /// whose guild has an emblem has one more pair after the items, which is
+    /// the emblem and not an item; see [`vale_assets::look::emblem`].
     ///
     /// Both numbers come from the server. `PLAYER_VISIBLE_ITEM_n_0` carries an
     /// item entry, and `Item.dbc` is not in the 1.12 archives, so the display
@@ -909,6 +938,24 @@ pub struct WorldEntity {
     /// faction draws green and cannot be clicked, while the server has the two
     /// at war.
     pub player_flags: u32,
+    /// `PLAYER_GUILDID` and the guild's name, for a player. The id is 0 for a
+    /// player in no guild. The name is empty for that player and until
+    /// `SMSG_GUILD_QUERY_RESPONSE` answers for the id; see
+    /// [`vale_protocol::state::objects::ObjectManager::guilds`]. The floating
+    /// name's second line is the name.
+    pub guild_id: u32,
+    pub guild: String,
+    /// The honor rank and city title bytes of `PLAYER_BYTES_3`; see
+    /// [`vale_protocol::state::objects::Entity::pvp_rank_and_medal`]. The
+    /// floating name and the unit tooltip put the rank's title in front of a
+    /// player's name.
+    pub pvp_rank: u8,
+    pub pvp_medal: u8,
+    /// The line that names this unit's owner, as a title and the owner's
+    /// name: a pet, a minion, a guardian or a summoned object. `None` for a
+    /// player, for a unit nobody owns, and for one whose owner is not in the
+    /// world. See [`vale_assets::look::unitname::OwnerTitle`].
+    pub owner: Option<(vale_assets::look::unitname::OwnerTitle, String)>,
     /// `PLAYER_DUEL_ARBITER` and `PLAYER_DUEL_TEAM`: `0`/`0` for almost every
     /// whole session. The 1.12.1 client decides a player-versus-player reaction
     /// on this pair before it looks at either faction.
@@ -2550,6 +2597,14 @@ fn poll_world(
                         .filter_map(|entry| world.items.get(&entry))
                         .filter(|info| info.display_id != 0)
                         .map(|info| (info.display_id, info.inventory_type))
+                        // The guild's emblem, as one more pair after the
+                        // items. A guild tabard is painted with it; see
+                        // [`vale_assets::look::emblem`]. Absent for a player
+                        // in no guild, for a guild with no emblem, and until
+                        // the guild's query answers.
+                        .chain(world.guild_of(e).and_then(|guild| {
+                            vale_assets::look::emblem::entry(guild.emblem.fields(), false)
+                        }))
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -2643,6 +2698,14 @@ fn poll_world(
             faction: e.faction(),
             unit_flags: e.unit_flags(),
             player_flags: e.player_flags(),
+            guild_id: e.guild_id(),
+            guild: world
+                .guild_of(e)
+                .map(|guild| guild.name.clone())
+                .unwrap_or_default(),
+            pvp_rank: e.pvp_rank_and_medal().0,
+            pvp_medal: e.pvp_rank_and_medal().1,
+            owner: owner_of(&world, transports.as_deref(), e),
             duel_arbiter: e.duel_arbiter(),
             duel_team: e.duel_team(),
             npc_flags: e.npc_flags(),

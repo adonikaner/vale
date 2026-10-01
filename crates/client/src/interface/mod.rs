@@ -46,6 +46,11 @@
 //! shapeshift.rs  the stance bar
 //! skills.rs      the skills panel
 //! social.rs      the friends, ignore and /who lists
+//! guild.rs       the guild: membership, the roster, the events and the
+//!                requests
+//! petition.rs    the guild charter: the registrar window and the petition
+//!                window
+//! tabard.rs      the tabard designer: the design, the save and the preview
 //! spellbook.rs   the spellbook's pages
 //! stable.rs      the stable window
 //! stats.rs       the character sheet's stat events
@@ -140,6 +145,7 @@ pub mod object;
 pub mod pagetext;
 pub mod party;
 pub mod pet;
+pub mod petition;
 pub mod plate;
 pub mod played;
 pub mod quest;
@@ -148,11 +154,13 @@ pub mod received;
 pub mod reputation;
 pub mod shapeshift;
 pub mod skills;
+pub mod guild;
 pub mod social;
 pub mod spellbook;
 pub mod stable;
 pub mod stats;
 pub mod summon;
+pub mod tabard;
 pub mod inspect;
 pub mod supersede;
 pub mod talents;
@@ -237,6 +245,9 @@ impl Plugin for InterfacePlugins {
                 party::PartyPlugin,
                 raid::RaidPlugin,
                 social::SocialPlugin,
+                guild::GuildPlugin,
+                petition::PetitionPlugin,
+                tabard::TabardPlugin,
                 duel::DuelPlugin,
                 summon::SummonPlugin,
                 inspect::InspectPlugin,

@@ -1790,11 +1790,21 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
 /// this order matches the client exactly:
 ///
 /// ```text
-/// 1  the name                              gold, the engine default
-/// 2  <subname>                             a creature template's tag
-/// 3  Level <level> <class> (<type>)        the four TOOLTIP_UNIT_LEVEL* keys
-/// 4  PvP                                   on UNIT_FIELD_FLAGS bit 12
+/// 1  the name                              gold, the engine default; a
+///                                          player's honor rank in front
+/// 2  subname                               a creature template's tag
+/// 3  Dolgrin's Pet                         the unit's owner
+/// 4  Level <level> <class> (<type>)        the four TOOLTIP_UNIT_LEVEL* keys
+/// 5  PvP                                   on UNIT_FIELD_FLAGS bit 12
 /// ```
+///
+/// The first line is [`vale_assets::look::unitname::titled_name`] with the
+/// title always on: the `UnitNamePlayerPVPTitle` switch applies to the
+/// floating name only. A player with a city title has it as a second line of
+/// the same cell. The subname and the owner line are the floating name's
+/// second and third lines without their angle brackets. The tooltip has no
+/// guild line: the 1.12.1 client shows a player's guild under the floating
+/// name only.
 ///
 /// The third line needs the most work. Two cells are computed first, and the
 /// format is chosen by which of them is non-empty:
@@ -1812,18 +1822,36 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
 /// player is shown.
 ///
 /// Not drawn, because the state behind them does not exist in this client:
-/// a player's guild (this client has no `SMSG_GUILD_QUERY` for it),
-/// `RESURRECTABLE`, `PLAYER_OFFLINE`, and the faction/reaction lines below
-/// them. Each depends on a missing subsystem, so the line is omitted rather
+/// `RESURRECTABLE`, `PLAYER_OFFLINE`, the faction name, and the `Civilian`
+/// prefix and line of a non-combatant NPC. Each depends on a missing subsystem, so the line is omitted rather
 /// than filled with a guess; [`super::super::api::stubs`]' first paragraph
 /// gives the same reasoning.
 fn unit_lines(lua: &mlua::Lua, this: &mlua::Table, tip: &crate::interface::api::UnitTip) -> mlua::Result<()> {
     // The name takes the plate's default colour rather than a specific one:
     // `GameTooltip.xml`'s `UPDATE_MOUSEOVER_UNIT` handler replaces it with
     // `GameTooltip_UnitColor("mouseover")` immediately afterwards.
-    append(lua, this, (text(lua, &tip.name)?, GOLD), None, false)?;
+    let word = |key: &str| lua.globals().get::<Option<String>>(key).ok().flatten();
+    let parts = vale_assets::look::unitname::NameParts {
+        name: &tip.name,
+        player: tip.title.player,
+        pvp_rank: tip.title.pvp_rank,
+        pvp_medal: tip.title.pvp_medal,
+        team: tip.title.team,
+        female: tip.title.female,
+        owner: tip
+            .title
+            .owner
+            .as_ref()
+            .map(|(title, name)| (*title, name.as_str())),
+        ..Default::default()
+    };
+    let name = vale_assets::look::unitname::titled_name(&parts, true, &word);
+    append(lua, this, (text(lua, &name)?, GOLD), None, false)?;
     if !tip.sub_name.is_empty() {
         append(lua, this, (text(lua, &tip.sub_name)?, WHITE), None, false)?;
+    }
+    if let Some(owner) = vale_assets::look::unitname::owner_line(&parts, &word) {
+        append(lua, this, (text(lua, &owner)?, WHITE), None, false)?;
     }
 
     // `%d` of the level, or "??" as the client shows. `GlobalStrings.lua` has
@@ -2827,6 +2855,62 @@ mod tests {
             plate(&lua, &world, "target"),
             ["Biggay", "Level 60 Human Warrior (Player)", "PvP"]
         );
+    }
+
+    /// A player with an honor rank has its title in front of the name, and
+    /// a city title is a second line of the same cell. The tooltip does not
+    /// consult `UnitNamePlayerPVPTitle`.
+    #[test]
+    fn set_unit_puts_the_rank_title_in_front_of_a_players_name() {
+        let lua = state();
+        unit_strings(&lua);
+        lua.load(
+            r#"
+            UNIT_PVP_NAME = "%s %s";
+            PVP_RANK_6_1 = "Corporal";
+            PVP_MEDAL1 = "Protector of Stormwind";
+            "#,
+        )
+        .exec()
+        .expect("the strings load");
+        let world = Stub::default()
+            .unit("target", "Dolgrin", 7)
+            .player_controlled()
+            .titled(crate::interface::api::UnitTitle {
+                pvp_rank: 6,
+                pvp_medal: 1,
+                team: Some(1),
+                ..Default::default()
+            });
+        assert_eq!(
+            plate(&lua, &world, "target"),
+            [
+                "Corporal Dolgrin\nProtector of Stormwind",
+                "Level 60 Human Warrior (Player)"
+            ]
+        );
+    }
+
+    /// A pet's plate names its owner on the line under the name, without the
+    /// angle brackets the floating name puts round it.
+    #[test]
+    fn set_unit_names_a_pets_owner() {
+        let lua = state();
+        unit_strings(&lua);
+        lua.load(r#"UNITNAME_TITLE_PET = "%s's Pet";"#)
+            .exec()
+            .expect("the string loads");
+        let world = Stub::default()
+            .unit("target", "Growlfang", 7)
+            .described("", 1, 0, false)
+            .titled(crate::interface::api::UnitTitle {
+                owner: Some((vale_assets::look::unitname::OwnerTitle::Pet, "Dolgrin".into())),
+                ..Default::default()
+            });
+        let lines = plate(&lua, &world, "target");
+        assert_eq!(lines[0], "Growlfang");
+        assert_eq!(lines[1], "Dolgrin's Pet");
+        assert_eq!(lines.len(), 3, "{lines:?}");
     }
 
     /// The two cells together select the format. An ordinary creature has no

@@ -194,6 +194,18 @@ pub struct LuaHost {
     /// [`super::panels::social`].
     social: super::panels::social::Held,
     social_queue: super::panels::social::Queue,
+    /// The guild's state and queue, held for the same reason. See
+    /// [`super::panels::guild`].
+    guild: super::panels::guild::Held,
+    guild_queue: super::panels::guild::Queue,
+    /// The guild charter's state and presses. See
+    /// [`super::panels::petition`].
+    petition: super::panels::petition::Held,
+    petition_queue: super::panels::petition::Queue,
+    /// The tabard designer's state and presses. See
+    /// [`super::panels::tabard`].
+    tabard: super::panels::tabard::Held,
+    tabard_queue: super::panels::tabard::Queue,
     /// The chat channels' state and queue. See [`super::panels::channels`].
     channels: super::panels::channels::Held,
     channels_queue: super::panels::channels::Queue,
@@ -318,6 +330,12 @@ impl LuaHost {
         let reputation_queue: super::panels::reputation::Queue = Rc::new(RefCell::new(Vec::new()));
         let social: super::panels::social::Held = Rc::default();
         let social_queue: super::panels::social::Queue = Rc::new(RefCell::new(Vec::new()));
+        let guild: super::panels::guild::Held = Rc::default();
+        let guild_queue: super::panels::guild::Queue = Rc::new(RefCell::new(Vec::new()));
+        let petition: super::panels::petition::Held = Rc::default();
+        let petition_queue: super::panels::petition::Queue = Rc::new(RefCell::new(Vec::new()));
+        let tabard: super::panels::tabard::Held = Rc::default();
+        let tabard_queue: super::panels::tabard::Queue = Rc::new(RefCell::new(Vec::new()));
         let channels: super::panels::channels::Held = Rc::default();
         let channels_queue: super::panels::channels::Queue = Rc::new(RefCell::new(Vec::new()));
         let glue: super::panels::glue::GlueQueue = Rc::new(RefCell::new(Vec::new()));
@@ -369,6 +387,14 @@ impl LuaHost {
         // The social panel's sixteen functions. The state is held here and
         // `crate::interface::social` drains the six packets.
         super::panels::social::register(&lua, &social, &social_queue)?;
+        // The guild's forty-four functions. The state is held here and
+        // `crate::interface::guild` drains the requests.
+        super::panels::guild::register(&lua, &guild, &guild_queue)?;
+        // The guild charter's thirteen functions and the tabard designer's
+        // two. `crate::interface::petition` and `crate::interface::tabard`
+        // fill the boards and drain the presses.
+        super::panels::petition::register(&lua, &petition, &petition_queue)?;
+        super::panels::tabard::register(&lua, &tabard, &tabard_queue)?;
         // The chat channels' twenty-five functions. The board is held here and
         // `crate::interface::channels` drains the two packets.
         super::panels::channels::register(&lua, &channels, &channels_queue)?;
@@ -459,6 +485,12 @@ impl LuaHost {
             reputation_queue,
             social,
             social_queue,
+            guild,
+            guild_queue,
+            petition,
+            petition_queue,
+            tabard,
+            tabard_queue,
             channels,
             channels_queue,
             skills,
@@ -1521,6 +1553,40 @@ impl LuaHost {
     /// answers into it and reads what the panel asked for.
     pub fn social(&self) -> &super::panels::social::Held {
         &self.social
+    }
+
+    /// The guild board, borrowed. See [`super::panels::guild`]. One caller,
+    /// [`crate::interface::guild`], which writes the server's answers into
+    /// it.
+    pub fn guild(&self) -> &super::panels::guild::Held {
+        &self.guild
+    }
+
+    /// Take and clear the guild requests that send a packet.
+    pub fn take_guild_verbs(&mut self) -> Vec<vale_protocol::socket::session::GuildVerb> {
+        std::mem::take(&mut *self.guild_queue.borrow_mut())
+    }
+
+    /// The guild charter's board, borrowed. See [`super::panels::petition`].
+    /// One caller, [`crate::interface::petition`].
+    pub fn petition(&self) -> &super::panels::petition::Held {
+        &self.petition
+    }
+
+    /// Take and clear what the registrar and petition windows pressed.
+    pub fn take_petition_presses(&mut self) -> Vec<super::panels::petition::Press> {
+        std::mem::take(&mut *self.petition_queue.borrow_mut())
+    }
+
+    /// The tabard designer's board, borrowed. See [`super::panels::tabard`].
+    /// One caller, [`crate::interface::tabard`].
+    pub fn tabard(&self) -> &super::panels::tabard::Held {
+        &self.tabard
+    }
+
+    /// Take and clear what the tabard designer pressed.
+    pub fn take_tabard_presses(&mut self) -> Vec<super::panels::tabard::Press> {
+        std::mem::take(&mut *self.tabard_queue.borrow_mut())
     }
 
     /// Take and clear the social panel's six verbs that send a packet.
@@ -3780,7 +3846,7 @@ mod tests {
                 f = CreateFrame("Frame", "Probe");
                 f:RegisterEvent("PLAYER_TARGET_CHANGED");
                 f:RegisterEvent("BAG_UPDATE");
-                f:RegisterEvent("GUILD_ROSTER_UPDATE");
+                f:RegisterEvent("AUCTION_HOUSE_SHOW");
                 "#,
             )
             .exec()
@@ -3789,12 +3855,13 @@ mod tests {
         assert_eq!(host.registered_events(), 3);
         let mut unfired = host.unfired_events();
         unfired.sort();
-        // `GUILD_ROSTER_UPDATE` because this client does not read the guild
-        // yet. This event was changed twice before, when `MERCHANT_SHOW` and
-        // then `TRADE_SHOW` became names this client raises.
+        // `AUCTION_HOUSE_SHOW` because this client has no auction house. This
+        // event was changed four times before, when `MERCHANT_SHOW`,
+        // `TRADE_SHOW`, `GUILD_ROSTER_UPDATE` and then `PETITION_SHOW` became
+        // names this client raises.
         assert_eq!(
             unfired,
-            ["GUILD_ROSTER_UPDATE"],
+            ["AUCTION_HOUSE_SHOW"],
             "the other two are names this client raises"
         );
     }

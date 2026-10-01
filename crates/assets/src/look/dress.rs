@@ -196,6 +196,14 @@ pub fn dress(tables: &DisplayTables, display: &DisplayModel, wearer: &Wearer) ->
     for geoset in equipment_geosets(tables, &worn) {
         geosets.equip(geoset);
     }
+    // The tabard designer's preview draws the tabard's geometry on a wearer
+    // who has no tabard on, unless a garment with a skirt is worn. See
+    // [`crate::look::emblem`].
+    if matches!(crate::look::emblem::find(wearer.equipment), Some((_, true)))
+        && !wears_a_skirt(tables, &worn)
+    {
+        geosets.equip(crate::look::emblem::TABARD_GEOSET);
+    }
     // A helmet hides what it covers, and which of the wearer's own geosets that
     // is depends on the item and the race together: a tauren's mane and a
     // night elf's ears stay visible under a helm that hides a human's hair.
@@ -266,16 +274,31 @@ pub fn skin_recipe(
 ) -> crate::look::character::CharacterSkin {
     let mut recipe = sections.skin(&look.appearance);
     // The wardrobe over the body, in slot order: a sleeve under a glove, a
-    // trouser leg under a boot.
+    // trouser leg under a boot. The wearer's guild emblem, when the list
+    // carries one, is painted where a guild tabard is worn.
     if let Some(table) = items {
-        recipe.layers.extend(item::item_layers(
+        recipe.layers.extend(item::item_layers_with_emblem(
             table,
             look.appearance.gender,
             &from_wire(&look.equipment),
+            crate::look::emblem::find(&look.equipment),
             exists,
         ));
     }
     recipe
+}
+
+/// Whether a worn chest, robe or leg piece sets the third of its three
+/// geoset numbers, which is the skirt of a robe or a kilt. The tabard
+/// designer's preview leaves the tabard's geometry off over one.
+fn wears_a_skirt(tables: &DisplayTables, worn: &[Equipped]) -> bool {
+    let Some(table) = tables.items() else {
+        return false;
+    };
+    worn.iter()
+        .filter(|item| matches!(item.slot, Slot::Chest | Slot::Robe | Slot::Legs))
+        .filter_map(|item| table.appearance(item.display_id, 0))
+        .any(|look| look.geoset_groups[2] != 0)
 }
 
 /// Whose body is being dressed, once the wire and the tables have been
@@ -333,6 +356,9 @@ fn body(tables: &DisplayTables, display: &DisplayModel, wearer: &Wearer) -> Body
 fn from_wire(equipment: &[(u32, u32)]) -> Vec<Equipped> {
     equipment
         .iter()
+        // The pair that carries a guild emblem is not an item; see
+        // [`crate::look::emblem`].
+        .filter(|pair| !crate::look::emblem::is_entry(pair))
         .map(|(display_id, inventory_type)| Equipped {
             display_id: *display_id,
             slot: Slot::from_inventory_type(*inventory_type),

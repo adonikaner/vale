@@ -453,6 +453,16 @@ impl Art {
 /// the files do not write one; the client appends `.blp`. A path that already
 /// has one, as `SetTexture` from a script sometimes passes, is left alone.
 pub(super) fn decode_rgba(assets: &GameAssets, path: &str) -> Option<(u32, u32, Vec<u8>)> {
+    // A mask: the file after the prefix, with every texel made white and its
+    // alpha kept. The tabard designer draws an emblem's shape this way; see
+    // [`crate::lua::panels::tabard::ALPHA_MASK_PREFIX`].
+    if let Some(file) = path.strip_prefix(crate::lua::panels::tabard::ALPHA_MASK_PREFIX) {
+        let (width, height, mut pixels) = decode_rgba(assets, file)?;
+        for texel in pixels.chunks_exact_mut(4) {
+            texel[..3].fill(255);
+        }
+        return Some((width, height, pixels));
+    }
     // `.blp` first, then `.tga`: the order the 1.12.1 client tries for a path
     // without an extension. Every texture in the archives is BLP; an addon's
     // art is almost always TGA (45 of pfUI's 46). A path that names its own

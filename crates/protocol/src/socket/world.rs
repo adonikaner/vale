@@ -1484,6 +1484,76 @@ impl WorldSession {
         self.send(opcode, &body)
     }
 
+    /// The guild's twenty-one packets. See
+    /// [`crate::socket::session::GuildVerb`] and [`crate::play::guild`], which
+    /// builds the bodies.
+    pub fn guild(&mut self, verb: &crate::socket::session::GuildVerb) -> io::Result<()> {
+        use crate::play::guild as g;
+        use crate::socket::session::GuildVerb as V;
+        let (opcode, body) = match verb {
+            V::Query(id) => (Opcode::CMSG_GUILD_QUERY, g::query_body(*id)),
+            V::Roster => (Opcode::CMSG_GUILD_ROSTER, Vec::new()),
+            V::Info => (Opcode::CMSG_GUILD_INFO, Vec::new()),
+            V::Invite(name) => (Opcode::CMSG_GUILD_INVITE, g::text_body(name)),
+            V::Accept => (Opcode::CMSG_GUILD_ACCEPT, Vec::new()),
+            V::Decline => (Opcode::CMSG_GUILD_DECLINE, Vec::new()),
+            V::Remove(name) => (Opcode::CMSG_GUILD_REMOVE, g::text_body(name)),
+            V::Promote(name) => (Opcode::CMSG_GUILD_PROMOTE, g::text_body(name)),
+            V::Demote(name) => (Opcode::CMSG_GUILD_DEMOTE, g::text_body(name)),
+            V::Leader(name) => (Opcode::CMSG_GUILD_LEADER, g::text_body(name)),
+            V::Leave => (Opcode::CMSG_GUILD_LEAVE, Vec::new()),
+            V::Disband => (Opcode::CMSG_GUILD_DISBAND, Vec::new()),
+            V::Motd(text) => (Opcode::CMSG_GUILD_MOTD, g::text_body(text)),
+            V::InfoText(text) => (Opcode::CMSG_GUILD_INFO_TEXT, g::text_body(text)),
+            V::PublicNote { player, note } => {
+                (Opcode::CMSG_GUILD_SET_PUBLIC_NOTE, g::note_body(player, note))
+            }
+            V::OfficerNote { player, note } => {
+                (Opcode::CMSG_GUILD_SET_OFFICER_NOTE, g::note_body(player, note))
+            }
+            V::Rank { rank, rights, name } => {
+                (Opcode::CMSG_GUILD_RANK, g::rank_body(*rank, *rights, name))
+            }
+            V::AddRank(name) => (Opcode::CMSG_GUILD_ADD_RANK, g::text_body(name)),
+            V::DelRank => (Opcode::CMSG_GUILD_DEL_RANK, Vec::new()),
+            V::TabardVendor(npc) => (Opcode::MSG_TABARDVENDOR_ACTIVATE, g::tabard_vendor_body(*npc)),
+            V::SaveEmblem { npc, emblem } => {
+                (Opcode::MSG_SAVE_GUILD_EMBLEM, g::emblem_body(*npc, *emblem))
+            }
+        };
+        self.send(opcode, &body)
+    }
+
+    /// The guild charter's nine packets. See
+    /// [`crate::socket::session::PetitionVerb`] and [`crate::play::petition`],
+    /// which builds the bodies.
+    pub fn petition(&mut self, verb: &crate::socket::session::PetitionVerb) -> io::Result<()> {
+        use crate::play::petition as p;
+        use crate::socket::session::PetitionVerb as V;
+        let (opcode, body) = match verb {
+            V::ShowList(npc) => (Opcode::CMSG_PETITION_SHOWLIST, p::guid_body(*npc)),
+            V::Buy { npc, name, index } => {
+                (Opcode::CMSG_PETITION_BUY, p::buy_body(*npc, name, *index))
+            }
+            V::ShowSignatures(item) => {
+                (Opcode::CMSG_PETITION_SHOW_SIGNATURES, p::guid_body(*item))
+            }
+            V::Query { petition, item } => {
+                (Opcode::CMSG_PETITION_QUERY, p::query_body(*petition, *item))
+            }
+            V::Sign { item, byte } => (Opcode::CMSG_PETITION_SIGN, p::sign_body(*item, *byte)),
+            V::Decline(item) => (Opcode::MSG_PETITION_DECLINE, p::guid_body(*item)),
+            V::Offer { item, player } => {
+                (Opcode::CMSG_OFFER_PETITION, p::offer_body(*item, *player))
+            }
+            V::TurnIn(item) => (Opcode::CMSG_TURN_IN_PETITION, p::guid_body(*item)),
+            V::Rename { item, name } => {
+                (Opcode::MSG_PETITION_RENAME, p::rename_body(*item, name))
+            }
+        };
+        self.send(opcode, &body)
+    }
+
     /// The chat frame's sixteen channel packets. See
     /// [`crate::socket::session::ChannelVerb`] and [`crate::play::channels`],
     /// which builds the bodies. Eight of them share one layout: channel name

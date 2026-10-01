@@ -65,6 +65,12 @@ pub struct SubjectAnswers<'w> {
     /// The social panel's four events, bundled for the same reason. See
     /// [`crate::interface::social`].
     pub social: MessageWriter<'w, crate::interface::social::SocialAnswer>,
+    /// The guild's seven events. See [`crate::interface::guild`].
+    pub guild: MessageWriter<'w, crate::interface::guild::GuildAnswer>,
+    /// The guild charter's seven events. See [`crate::interface::petition`].
+    pub petition: MessageWriter<'w, crate::interface::petition::PetitionAnswer>,
+    /// The tabard designer's two events. See [`crate::interface::tabard`].
+    pub tabard: MessageWriter<'w, crate::interface::tabard::TabardAnswer>,
     /// The chat channels' two events. See [`crate::interface::channels`].
     pub channels: MessageWriter<'w, crate::interface::channels::ChannelAnswer>,
     /// A text emote. See [`crate::interface::emotetext`].
@@ -967,6 +973,33 @@ pub(crate) fn drain_events(
             | PlayerEvent::WhoResults(_)) => {
                 if let Some(answer) = crate::interface::social::answer_of(event) {
                     subjects.social.write(answer);
+                }
+            }
+            ref event @ (PlayerEvent::GuildQuery(_)
+            | PlayerEvent::GuildRoster(_)
+            | PlayerEvent::GuildEvent(_)
+            | PlayerEvent::GuildCommandResult(_)
+            | PlayerEvent::GuildInvite(_)
+            | PlayerEvent::GuildDecline(_)
+            | PlayerEvent::GuildInfo(_)) => {
+                if let Some(answer) = crate::interface::guild::answer_of(event) {
+                    subjects.guild.write(answer);
+                }
+            }
+            ref event @ (PlayerEvent::PetitionShowList(_)
+            | PlayerEvent::PetitionSignatures(_)
+            | PlayerEvent::PetitionQuery(_)
+            | PlayerEvent::PetitionSignResult(_)
+            | PlayerEvent::PetitionTurnInResult(_)
+            | PlayerEvent::PetitionDeclined(_)
+            | PlayerEvent::PetitionRenamed { .. }) => {
+                if let Some(answer) = crate::interface::petition::answer_of(event) {
+                    subjects.petition.write(answer);
+                }
+            }
+            ref event @ (PlayerEvent::TabardVendor(_) | PlayerEvent::GuildEmblemResult(_)) => {
+                if let Some(answer) = crate::interface::tabard::answer_of(event) {
+                    subjects.tabard.write(answer);
                 }
             }
             ref event @ (PlayerEvent::ChannelNotify(_) | PlayerEvent::ChannelList(_)) => {

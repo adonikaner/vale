@@ -317,6 +317,7 @@ fn follow(
     ui_scale: Res<crate::ui::scale::InterfaceScale>,
     mut egui: ResMut<bevy_egui::EguiUserTextures>,
     time: Res<Time>,
+    tabard: Res<crate::interface::tabard::TabardPreview>,
 ) {
     let Some(host) = host else { return };
     if host.interface().is_none() || !enabled() {
@@ -348,13 +349,24 @@ fn follow(
             size: target_size(&want, viewport, dpi),
             rotation: want.rotation,
         };
-        let Some(built) = subject(&units, &want.unit) else {
+        let Some(mut built) = subject(&units, &want.unit) else {
             // A frame pointed at no unit, such as an open pet panel with no
             // pet, which is the normal state of that panel for every class but
             // two.
             take_down(&mut commands, &mut dolls, &mut egui, &want.frame);
             continue;
         };
+        // The tabard designer's model wears the design in the window and not
+        // the guild's saved emblem. The design replaces the emblem pair in
+        // the equipment, so the doll is rebuilt when a row is cycled.
+        if want.frame == TABARD_MODEL {
+            if let Some(design) = tabard.0 {
+                built.equipment.retain(|pair| !vale_assets::look::emblem::is_entry(pair));
+                built
+                    .equipment
+                    .extend(vale_assets::look::emblem::entry(design.fields(), true));
+            }
+        }
 
         // Three cases, cheapest first: nothing changed, only the angle
         // changed, or the subject changed. The first applies on every frame a
@@ -537,6 +549,10 @@ fn turn(rotation: f32) -> Quat {
 /// is never read as a display id, and a frame pointed at a real unit never
 /// takes this path.
 pub const DISPLAY_ID_PREFIX: &str = "displayid:";
+
+/// The name of the tabard designer's `<TabardModel>` frame in
+/// `TabardFrame.xml`.
+const TABARD_MODEL: &str = "TabardModel";
 
 /// What a `<PlayerModel>` should show, or `None` for a name that resolves to
 /// no unit.

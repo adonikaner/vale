@@ -1501,6 +1501,15 @@ impl Entity {
             .unwrap_or(0)
     }
 
+    /// `PLAYER_GUILDID`: the id of the guild a player belongs to, 0 for none
+    /// and for anything that is not a player.
+    pub fn guild_id(&self) -> u32 {
+        (self.object_type == Some(ObjectType::Player))
+            .then(|| self.field(fields::player::GUILDID))
+            .flatten()
+            .unwrap_or(0)
+    }
+
     /// `UNIT_FIELD_PET_NAME_TIMESTAMP`: when the pet was last named.
     ///
     /// The server writes `time(nullptr)` into it on a successful
@@ -1742,6 +1751,34 @@ impl Entity {
             .then(|| self.field(fields::unit::DYNAMIC_FLAGS))
             .flatten()
             .is_some_and(|flags| flags & UNIT_DYNFLAG_TRACK_UNIT != 0)
+    }
+
+    /// `UNIT_FIELD_CREATEDBY`, read the same way as [`Self::summoned_by`]: the
+    /// guid of the unit whose spell made this one. The line under a pet's
+    /// name is the creator's, when the unit has no charmer.
+    pub fn created_by(&self) -> Option<u64> {
+        if !self.is_unit_like() {
+            return None;
+        }
+        let low = u64::from(self.field(fields::unit::CREATEDBY)?);
+        let high = u64::from(self.field(fields::unit::CREATEDBY + 1).unwrap_or(0));
+        let guid = (high << 32) | low;
+        (guid != 0).then_some(guid)
+    }
+
+    /// The honor rank and the city title of a player: bytes 3 and 2 of
+    /// `PLAYER_BYTES_3`. Both are 0 for a player with neither and for
+    /// anything that is not a player.
+    ///
+    /// The rank byte is the number in a `PVP_RANK_<n>_<team>` key of
+    /// `GlobalStrings.lua` and the title byte is the number in a
+    /// `PVP_MEDAL<n>` key.
+    pub fn pvp_rank_and_medal(&self) -> (u8, u8) {
+        let bytes = (self.object_type == Some(ObjectType::Player))
+            .then(|| self.field(fields::player::BYTES_3))
+            .flatten()
+            .unwrap_or(0);
+        ((bytes >> 24) as u8, (bytes >> 16) as u8)
     }
 
     /// `UNIT_FIELD_CHARMEDBY`, read the same way as [`Self::summoned_by`]: the
@@ -2247,6 +2284,10 @@ pub struct ObjectManager {
     /// server does not resend the list, so without this a friend added
     /// mid-session has no name until the next login.
     pub wanted_social: HashSet<u64>,
+    /// Guilds resolved by `CMSG_GUILD_QUERY`, keyed by guild id: the name,
+    /// the rank names and the emblem. A player object carries only the id, in
+    /// `PLAYER_GUILDID`. See [`crate::play::guild`].
+    pub guilds: HashMap<u32, crate::play::guild::GuildQuery>,
     /// Item templates resolved by `CMSG_ITEM_QUERY_SINGLE`, keyed by entry.
     /// This deduplicates well: every guard in a city wears the same
     /// breastplate.
@@ -2982,6 +3023,25 @@ impl ObjectManager {
             .chain(self.wanted_social.iter().copied())
             .filter(|g| Some(*g) != self.player_guid && !self.players.contains_key(g))
             .collect()
+    }
+
+    /// Guild ids on a player in sight that have no query answer yet.
+    /// Deduplicated: a city full of one guild's members is one query.
+    pub fn unresolved_guild_ids(&self) -> Vec<u32> {
+        let mut seen: HashSet<u32> = HashSet::new();
+        for entity in self.entities.values() {
+            let guild = entity.guild_id();
+            if guild != 0 && !self.guilds.contains_key(&guild) {
+                seen.insert(guild);
+            }
+        }
+        seen.into_iter().collect()
+    }
+
+    /// The query answer for the guild a player belongs to. `None` for an
+    /// entity in no guild and for a guild whose answer has not arrived.
+    pub fn guild_of(&self, entity: &Entity) -> Option<&crate::play::guild::GuildQuery> {
+        self.guilds.get(&entity.guild_id()).filter(|_| entity.guild_id() != 0)
     }
 
     /// Item entries worn by a player in sight that have not been looked up yet.

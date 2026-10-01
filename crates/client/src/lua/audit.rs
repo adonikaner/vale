@@ -938,6 +938,12 @@ impl super::panels::mail::MailAnswers for Login {
 impl super::panels::trade::TradeAnswers for Login {}
 impl super::panels::summon::SummonAnswers for Login {}
 impl super::panels::inspect::InspectAnswers for Login {}
+/// The double is the guild master of the guild `seed` puts on the board.
+impl super::panels::guild::GuildAnswers for Login {
+    fn unit_guild(&self, token: &str) -> Option<(u32, u32)> {
+        (token == "player").then_some((SEEDED_GUILD, 0))
+    }
+}
 
 /// A bank with no bank bag slots bought, which is every default. See
 /// [`super::panels::bank`].
@@ -2102,6 +2108,7 @@ impl super::api::UnitAnswers for Login {
     fn unit_tooltip(&self, token: &str) -> Option<crate::interface::api::UnitTip> {
         Self::has(token).then(|| crate::interface::api::UnitTip {
             name: self.unit_name(token).unwrap_or_default(),
+            title: Default::default(),
             sub_name: String::new(),
             level: self.unit_level(token),
             race: None,
@@ -2142,6 +2149,8 @@ impl super::api::UnitAnswers for Login {
 /// [`Login::CHARACTERS`], whose first row is the character every probe plays.
 const HUMAN: u8 = 1;
 const MAGE: u8 = 8;
+/// The id of the guild the probes' character is seeded into.
+const SEEDED_GUILD: u32 = 1;
 
 impl Login {
     /// `(name, race, class, level, gender, ghost)`. Read by
@@ -2362,6 +2371,94 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
             board.tables = Some(std::sync::Arc::new(skills));
             board.refresh(HUMAN, MAGE, 60, &have);
         }
+    }
+
+    // The guild, seeded with the double as guild master of a five-rank guild.
+    //
+    // Without it `IsInGuild` answers nil, `InGuildCheck` disables the social
+    // window's guild tab, and the roster, the member detail pane and the
+    // guild-control window are never opened by a probe. The roster has more
+    // members than the tab's thirteen rows, one of them offline, so the
+    // scroll frame and both row colours run.
+    {
+        use vale_protocol::play::guild::{presence, GuildQuery, Member, Roster};
+        let ranks = ["Guild Master", "Officer", "Veteran", "Member", "Initiate"];
+        let mut board = host.guild().borrow_mut();
+        board.set_membership(SEEDED_GUILD, 0);
+        board.note_query(GuildQuery {
+            id: SEEDED_GUILD,
+            name: "Audit".into(),
+            ranks: ranks.iter().map(|rank| (*rank).to_string()).collect(),
+            ..GuildQuery::default()
+        });
+        board.set_roster(Roster {
+            motd: "Message of the day".into(),
+            info: "Guild information".into(),
+            rank_rights: vec![0x000f_f1ff, 0x0000_f1ff, 0x43, 0x43, 0x43],
+            members: (0..16u8)
+                .map(|i| Member {
+                    guid: 100 + u64::from(i),
+                    presence: if i == 15 { 0 } else { presence::ONLINE },
+                    name: format!("Member{i}"),
+                    rank: u32::from(i).min(4),
+                    level: 60 - i,
+                    class: MAGE,
+                    zone: 12,
+                    days_offline: if i == 15 { 3.5 } else { 0.0 },
+                    note: "note".into(),
+                    officer_note: "officer note".into(),
+                })
+                .collect(),
+        });
+    }
+
+    // A guild charter and a tabard design, seeded so that the three windows
+    // behind them draw their contents under a probe.
+    //
+    // The charter is another player's, with two of nine signatures, so
+    // `PetitionFrame_Update` takes its signer's branch and fills two name
+    // lines. The registrar's offer is vmangos' ten silver. The tabard board
+    // holds a saved emblem and the cost of a new one, so `Save` reaches its
+    // last check.
+    {
+        use vale_protocol::play::petition::{CharterOffer, PetitionQuery, Signatures};
+        let mut board = host.petition().borrow_mut();
+        board.own_guid = 1;
+        board.offer = Some(CharterOffer {
+            index: 1,
+            item: 5863,
+            display: 16161,
+            cost: 1000,
+            flags: 1,
+        });
+        board.records.insert(
+            1,
+            PetitionQuery {
+                petition: 1,
+                owner: 200,
+                name: "Audit Charter".into(),
+                body: String::new(),
+                flags: super::panels::petition::FLAG_CHARTER,
+                min_signatures: 9,
+                max_signatures: 9,
+            },
+        );
+        for (guid, name) in [(200, "Founder"), (201, "Signer"), (202, "Cosigner")] {
+            board.names.insert(guid, name.to_string());
+        }
+        board.petition = Some(super::panels::petition::Open {
+            shown: Signatures {
+                item: 300,
+                owner: 200,
+                petition: 1,
+                signers: vec![201, 202],
+            },
+            signed: false,
+        });
+        let mut tabard = host.tabard().borrow_mut();
+        tabard.guild = Some(vale_protocol::play::guild::Emblem::default());
+        tabard.money = vale_protocol::play::guild::EMBLEM_COST;
+        tabard.initialize();
     }
 
     // The key bindings, seeded as on a first launch.
@@ -4399,6 +4496,11 @@ impl super::panels::mail::MailAnswers for Ticking {
 impl super::panels::trade::TradeAnswers for Ticking {}
 impl super::panels::summon::SummonAnswers for Ticking {}
 impl super::panels::inspect::InspectAnswers for Ticking {}
+impl super::panels::guild::GuildAnswers for Ticking {
+    fn unit_guild(&self, token: &str) -> Option<(u32, u32)> {
+        (token == "player").then_some((SEEDED_GUILD, 0))
+    }
+}
 
 impl super::panels::bank::BankAnswers for Ticking {}
 impl super::panels::pagetext::PageTextAnswers for Ticking {}

@@ -419,6 +419,9 @@ fn register_methods(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> 
     // [`super::model`]. Installed before the stubs, so that `SetModel` and
     // `SetSequence` are the real methods and not stubs that return nothing.
     super::model::install(lua, methods)?;
+    // The ten methods of `TabardModel`, which read and write the tabard
+    // designer's board. See [`super::super::panels::tabard`].
+    super::super::panels::tabard::install_methods(lua, methods)?;
     // The one method a `LootButton` has that a `Button` does not, which is the
     // only difference between the two kinds. See [`super::super::panels::loot`]
     // for why a host that treats them alike draws a loot window that does not

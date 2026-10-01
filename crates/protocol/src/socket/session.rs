@@ -584,6 +584,87 @@ pub enum SocialVerb {
     Who(Box<crate::play::social::WhoRequest>),
 }
 
+/// The twenty-one requests the guild tab, the guild slash commands, the
+/// guild popups and the tabard designer send to the socket. See [`crate::play::guild`], which has the
+/// layouts.
+///
+/// A member is named by name in every request that is about one, because the
+/// server looks the member up by name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GuildVerb {
+    /// `CMSG_GUILD_QUERY`: ask for a guild's name, rank names and emblem.
+    Query(u32),
+    /// `CMSG_GUILD_ROSTER`: ask for the member list.
+    Roster,
+    /// `CMSG_GUILD_INFO`: `/ginfo`.
+    Info,
+    /// `CMSG_GUILD_INVITE`.
+    Invite(String),
+    /// `CMSG_GUILD_ACCEPT`: accept the pending invitation.
+    Accept,
+    /// `CMSG_GUILD_DECLINE`: decline it.
+    Decline,
+    /// `CMSG_GUILD_REMOVE`.
+    Remove(String),
+    /// `CMSG_GUILD_PROMOTE`.
+    Promote(String),
+    /// `CMSG_GUILD_DEMOTE`.
+    Demote(String),
+    /// `CMSG_GUILD_LEADER`: hand the guild to the named member.
+    Leader(String),
+    /// `CMSG_GUILD_LEAVE`.
+    Leave,
+    /// `CMSG_GUILD_DISBAND`.
+    Disband,
+    /// `CMSG_GUILD_MOTD`: set the message of the day.
+    Motd(String),
+    /// `CMSG_GUILD_INFO_TEXT`: set the guild information text.
+    InfoText(String),
+    /// `CMSG_GUILD_SET_PUBLIC_NOTE`.
+    PublicNote { player: String, note: String },
+    /// `CMSG_GUILD_SET_OFFICER_NOTE`.
+    OfficerNote { player: String, note: String },
+    /// `CMSG_GUILD_RANK`: replace one rank's name and rights.
+    Rank { rank: u32, rights: u32, name: String },
+    /// `CMSG_GUILD_ADD_RANK`: add a rank below the lowest.
+    AddRank(String),
+    /// `CMSG_GUILD_DEL_RANK`: delete the lowest rank.
+    DelRank,
+    /// `MSG_TABARDVENDOR_ACTIVATE`: ask a tabard designer to open its window.
+    TabardVendor(u64),
+    /// `MSG_SAVE_GUILD_EMBLEM`: save the guild's emblem at a tabard designer.
+    SaveEmblem {
+        npc: u64,
+        emblem: crate::play::guild::Emblem,
+    },
+}
+
+/// The nine requests about a guild charter. See [`crate::play::petition`],
+/// which has the layouts. `item` is the charter item's guid in every request
+/// that carries one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PetitionVerb {
+    /// `CMSG_PETITION_SHOWLIST`: ask a guild registrar what it sells.
+    ShowList(u64),
+    /// `CMSG_PETITION_BUY`: buy a charter for a guild of this name.
+    Buy { npc: u64, name: String, index: u32 },
+    /// `CMSG_PETITION_SHOW_SIGNATURES`: open a charter.
+    ShowSignatures(u64),
+    /// `CMSG_PETITION_QUERY`: ask for a petition's guild name and owner.
+    Query { petition: u32, item: u64 },
+    /// `CMSG_PETITION_SIGN`: the charter and the byte after it, which the
+    /// 1.12.1 client sends as 1.
+    Sign { item: u64, byte: u8 },
+    /// `MSG_PETITION_DECLINE`: decline to sign.
+    Decline(u64),
+    /// `CMSG_OFFER_PETITION`: show the charter to another player.
+    Offer { item: u64, player: u64 },
+    /// `CMSG_TURN_IN_PETITION`: found the guild.
+    TurnIn(u64),
+    /// `MSG_PETITION_RENAME`: change the proposed guild name.
+    Rename { item: u64, name: String },
+}
+
 /// The ten requests the trade window sends to the socket. See
 /// [`crate::play::trade`], which has the layouts. Six have no body;
 /// `Initiate` names the partner, `SetItem` a bag square by the server's
@@ -882,6 +963,10 @@ pub enum Command {
     /// The social panel's six verbs; see [`SocialVerb`]. Not `Copy`: three
     /// carry a name and one carries a whole search.
     Social(SocialVerb),
+    /// The guild's twenty-one verbs; see [`GuildVerb`].
+    Guild(GuildVerb),
+    /// The guild charter's nine verbs; see [`PetitionVerb`].
+    Petition(PetitionVerb),
     /// The sixteen chat channel verbs; see [`ChannelVerb`].
     Channel(ChannelVerb),
     /// The mailbox verbs; see [`MailVerb`]. Not `Copy`: sending a letter
@@ -1693,6 +1778,16 @@ impl LiveSession {
         self.send(Command::Social(verb));
     }
 
+    /// Send one of the guild's requests; see [`GuildVerb`].
+    pub fn guild(&self, verb: GuildVerb) {
+        self.send(Command::Guild(verb));
+    }
+
+    /// Send one of the guild charter's requests; see [`PetitionVerb`].
+    pub fn petition(&self, verb: PetitionVerb) {
+        self.send(Command::Petition(verb));
+    }
+
     /// Join, leave, list or moderate a chat channel; see [`ChannelVerb`].
     pub fn channel(&self, verb: ChannelVerb) {
         self.send(Command::Channel(verb));
@@ -2077,6 +2172,7 @@ struct SessionLoop {
     asked_gameobjects: HashSet<u32>,
     asked_items: HashSet<u32>,
     asked_players: HashSet<u64>,
+    asked_guilds: HashSet<u32>,
     /// `Entity::position_updates` for the player at the last resync, so a
     /// server correction can be distinguished from local dead reckoning.
     seen_position_updates: u32,
@@ -2178,6 +2274,7 @@ impl SessionLoop {
             asked_gameobjects: HashSet::new(),
             asked_items: HashSet::new(),
             asked_players: HashSet::new(),
+            asked_guilds: HashSet::new(),
             seen_position_updates: 0,
             left_world: false,
             caches,
@@ -2484,6 +2581,16 @@ impl SessionLoop {
                 }
                 Ok(Command::Social(verb)) => {
                     if self.session.social(&verb).is_err() {
+                        return Flow::Stop;
+                    }
+                }
+                Ok(Command::Guild(verb)) => {
+                    if self.session.guild(&verb).is_err() {
+                        return Flow::Stop;
+                    }
+                }
+                Ok(Command::Petition(verb)) => {
+                    if self.session.petition(&verb).is_err() {
                         return Flow::Stop;
                     }
                 }
@@ -3327,7 +3434,7 @@ impl SessionLoop {
 
         // Copy the work list out before touching the socket: holding the world
         // lock across a write would block every reader on network latency.
-        let (creatures, gameobjects, players, items, pets, learned) = {
+        let (creatures, gameobjects, players, guilds, items, pets, learned) = {
             let mut world = lock(&self.world);
             // The four scans below cover every entity in view, and this
             // function runs every tick rather than on the query interval, so
@@ -3350,6 +3457,7 @@ impl SessionLoop {
                 world.unresolved_creature_entries(),
                 world.unresolved_gameobject_entries(),
                 world.unresolved_player_guids(),
+                world.unresolved_guild_ids(),
                 world.unresolved_item_entries(),
                 world.unresolved_pet_names(),
                 learned,
@@ -3384,6 +3492,16 @@ impl SessionLoop {
             }
             self.session
                 .send(Opcode::CMSG_NAME_QUERY, &query::name_query_body(guid))?;
+        }
+        // A player object carries a guild id and no guild name. The name
+        // under a player's own name and in the unit tooltip is the answer to
+        // this query.
+        for guild in guilds {
+            if !worth_asking(&mut self.asked_guilds, guild, retry) {
+                continue;
+            }
+            self.session
+                .send(Opcode::CMSG_GUILD_QUERY, &crate::play::guild::query_body(guild))?;
         }
         // Equipment. A `PLAYER_VISIBLE_ITEM` field carries only the entry, and
         // `Item.dbc` is not in the archives, so only the server can say what an

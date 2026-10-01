@@ -78,7 +78,7 @@ pub struct Spellbook {
     /// learned them. The client's own spellbook sorts by skill line; this is the
     /// raw list.
     pub known: Vec<u32>,
-    /// Whatever was still on cooldown at login — an empty list is the normal
+    /// The spells still on cooldown at login. An empty list is the normal
     /// case for a character who has been logged out for a while.
     pub cooldowns: Vec<InitialCooldown>,
 }
@@ -105,7 +105,8 @@ pub struct InitialCooldown {
 }
 
 impl InitialCooldown {
-    /// The `0x80000000` marker above, and the category duration without it.
+    /// Whether the `0x80000000` marker described on `category_ms` is set.
+    /// `category_duration_ms` is the category duration without it.
     pub fn is_permanent(&self) -> bool {
         self.category_ms & 0x8000_0000 != 0
     }
@@ -136,9 +137,9 @@ pub fn parse_initial_spells(body: &[u8]) -> Option<Spellbook> {
         let _slot = r.u16();
     }
 
-    // The cooldown block is the tail and a truncated one costs only the
-    // cooldowns: the spellbook above it is what makes the bar work at all, and
-    // an unknown cooldown shows as a ready button that the server refuses.
+    // The cooldown block is the tail of the packet. A truncated block loses
+    // only the cooldowns: the action bar needs the spellbook above it, and an
+    // unknown cooldown shows as a ready button that the server refuses.
     let mut cooldowns = Vec::new();
     if r.has(2) {
         let count = r.u16();
@@ -262,7 +263,7 @@ pub mod multi_bar {
     /// `SHOW_MULTI_ACTIONBAR_3 and SHOW_MULTI_ACTIONBAR_4`. The bit keeps its own
     /// meaning; the condition is applied by the interface.
     pub const LEFT: u8 = 0x08;
-    /// The four of them, for a mask that cannot carry the fifth argument.
+    /// All four bits. The mask cannot carry the fifth argument.
     pub const ALL: u8 = BOTTOM_LEFT | BOTTOM_RIGHT | RIGHT | LEFT;
 }
 
@@ -416,7 +417,7 @@ pub fn parse_clear_cooldown(body: &[u8]) -> Option<(u32, u64)> {
 }
 
 // ---------------------------------------------------------------------------
-// What the server says about a press
+// The server's answers to a cast or a swing, and the player event queue
 // ---------------------------------------------------------------------------
 
 /// `SMSG_CAST_RESULT`: the answer to the player's own `CMSG_CAST_SPELL`.
@@ -612,17 +613,19 @@ pub enum PlayerEvent {
     /// `CMSG_CAST_SPELL` was accepted. The cast itself arrives as
     /// `SMSG_SPELL_START`/`SMSG_SPELL_GO` like anybody else's.
     CastAccepted { spell_id: u32 },
-    /// …or refused, with an index into [`CAST_FAILURE_KEYS`].
+    /// `CMSG_CAST_SPELL` was refused. `reason` is an index into
+    /// [`CAST_FAILURE_KEYS`].
     ///
     /// `requirement` is the argument to the message's own `%s` for the three
-    /// equipped-item reasons and `None` for every other — see
+    /// equipped-item reasons and `None` for every other. See
     /// [`EquipRequirement`].
     CastFailed {
         spell_id: u32,
         reason: u8,
         requirement: Option<EquipRequirement>,
     },
-    /// A cast in progress was interrupted — ours if the guid is ours.
+    /// A cast in progress was interrupted. It is the player's cast if the
+    /// guid is the player's.
     CastInterrupted { guid: u64, spell_id: u32 },
     /// `SMSG_SPELL_START` naming the player as the caster: the server has accepted
     /// the cast, and this shows the cast bar.
@@ -737,7 +740,7 @@ pub enum PlayerEvent {
     /// state would also lose the packet's main use: the server sends a start
     /// again to mean "paused", because the FrameXML pause handler cannot work.
     MirrorTimerStarted(crate::play::timers::MirrorTimerStart),
-    /// …and the same bar hidden. `SMSG_STOP_MIRROR_TIMER`, one `u32`.
+    /// The same bar hidden: `SMSG_STOP_MIRROR_TIMER`, one `u32`.
     MirrorTimerStopped { timer: crate::play::timers::MirrorTimer },
     /// The same bar frozen at its current value. The game's FrameXML handler for
     /// this event cannot work (see [`crate::play::timers`]); the packet is read
@@ -771,11 +774,12 @@ pub enum PlayerEvent {
     /// `SMSG_PET_BROKEN` — an empty body. "Your pet has run away", which is a
     /// hunter pet whose loyalty ran out.
     PetBroken,
-    /// `SMSG_PET_NAME_INVALID` — also an empty body, and also one sentence.
+    /// `SMSG_PET_NAME_INVALID` — an empty body, shown as one message, like
+    /// `SMSG_PET_BROKEN`.
     PetNameInvalid,
     /// `SMSG_PET_UNLEARN_CONFIRM` — the guid, and what resetting it costs.
     PetUnlearnConfirm { pet: u64, cost: u32 },
-    /// `SMSG_PET_ACTION_SOUND` — the pet said something. `talk` is a
+    /// `SMSG_PET_ACTION_SOUND` — the pet makes a sound. `talk` is a
     /// [`crate::play::pet::pet_talk`] selector, not a sound entry.
     PetTalk { pet: u64, talk: u32 },
     /// `SMSG_PET_DISMISS_SOUND` — a model-data id and a place; the pet itself
@@ -838,16 +842,16 @@ pub enum PlayerEvent {
     /// `SMSG_CORPSE_RECLAIM_DELAY`, in milliseconds, sent once at release and
     /// never restated. See [`crate::play::death`].
     CorpseReclaimDelay { ms: u32 },
-    /// Where the body is, or `None` for "there isn't one" — the reply to our own
-    /// `MSG_CORPSE_QUERY`. An answer to a question, so it belongs on the queue
-    /// rather than in the status: a second query with the same answer is still a
-    /// second answer.
+    /// Where the corpse is, or `None` when there is none: the reply to this
+    /// client's `MSG_CORPSE_QUERY`. It is on the queue rather than in the
+    /// status because it answers a request: a second query with the same answer
+    /// is a second answer.
     CorpseLocated(Option<crate::play::death::CorpseLocation>),
-    /// Somebody has offered to resurrect us — `SMSG_RESURRECT_REQUEST`.
+    /// A resurrection was offered to the player: `SMSG_RESURRECT_REQUEST`.
     ResurrectOffered(crate::play::death::ResurrectOffer),
-    /// …and the spirit healer's version of the same offer, which costs 25%
-    /// durability and brings sickness: `SMSG_SPIRIT_HEALER_CONFIRM`, whose
-    /// whole body is the healer's guid.
+    /// The spirit healer's form of the same offer, which costs 25% durability
+    /// and causes resurrection sickness: `SMSG_SPIRIT_HEALER_CONFIRM`. The
+    /// body is the healer's guid and nothing else.
     SpiritHealerOffered { healer: u64 },
     /// An item action was refused: `SMSG_INVENTORY_CHANGE_FAILURE`, the answer
     /// shared by every right-click, equip and swap. See
@@ -890,10 +894,12 @@ pub enum PlayerEvent {
     /// `(guid, slot)` is a second roll on a respawned corpse rather than a
     /// repeated value.
     LootRollStarted(crate::play::lootroll::RollStart),
-    /// `SMSG_LOOT_ROLL` — somebody chose, or somebody's dice landed. Sent to
-    /// everyone eligible, so it arrives for our own vote too.
+    /// `SMSG_LOOT_ROLL` — a player's choice, or the result of a player's
+    /// roll. Sent to everyone eligible, so it also arrives for the player's own
+    /// choice.
     LootRollCast(crate::play::lootroll::RollCast),
-    /// `SMSG_LOOT_ROLL_WON` — and the item is already in the winner's bags.
+    /// `SMSG_LOOT_ROLL_WON` — the roll was won. The item is already in the
+    /// winner's bags.
     LootRollWon(crate::play::lootroll::RollWon),
     /// `SMSG_LOOT_ALL_PASSED`: the one outcome that leaves the item on the
     /// corpse, and the only statement that its row can be clicked again.
@@ -924,19 +930,22 @@ pub enum PlayerEvent {
     /// would be as large as the largest variant, which is also the least
     /// frequent.
     QuestGreeting(Box<crate::play::quest::QuestGreeting>),
-    /// `SMSG_QUESTGIVER_QUEST_DETAILS` — the page before you accept.
+    /// `SMSG_QUESTGIVER_QUEST_DETAILS` — the page shown before the quest is
+    /// accepted.
     QuestDetails(Box<crate::play::quest::QuestDetails>),
     /// `SMSG_QUESTGIVER_OFFER_REWARD`: the page shown when the quest is complete.
     QuestReward(Box<crate::play::quest::QuestReward>),
     /// `SMSG_QUESTGIVER_REQUEST_ITEMS`: the page shown when it is not. Not sent
     /// for every unfinished quest; see [`crate::play::quest::QuestProgress`].
     QuestProgress(Box<crate::play::quest::QuestProgress>),
-    /// `SMSG_QUESTGIVER_QUEST_COMPLETE` — what handing it in paid.
+    /// `SMSG_QUESTGIVER_QUEST_COMPLETE` — the rewards given for handing the
+    /// quest in.
     QuestComplete(crate::play::quest::QuestComplete),
     /// `SMSG_QUEST_QUERY_RESPONSE`: the quest's definition. Cached per id, in the
     /// same way as an item template.
     QuestTemplate(Box<crate::play::quest::QuestTemplate>),
-    /// `SMSG_QUESTUPDATE_ADD_KILL` — one more of something.
+    /// `SMSG_QUESTUPDATE_ADD_KILL` — one more kill counted toward an
+    /// objective.
     QuestKill(crate::play::quest::QuestKill),
     /// `SMSG_QUESTUPDATE_ADD_ITEM`: an item objective changed, as
     /// `(entry, added)` plus the bag count when it arrived. See
@@ -951,7 +960,8 @@ pub enum PlayerEvent {
     /// state bit also says so; this event plays the sound and writes the chat
     /// line.
     QuestObjectivesDone { quest_id: u32 },
-    /// `SMSG_QUESTUPDATE_FAILED` and its timer twin.
+    /// `SMSG_QUESTUPDATE_FAILED` and its timed-out counterpart; `timed_out`
+    /// says which.
     QuestFailed { quest_id: u32, timed_out: bool },
     /// `SMSG_QUESTGIVER_QUEST_INVALID`: a reason, not a quest id.
     /// `SendCanTakeQuestResponse` writes the refusal code where every other
@@ -984,7 +994,7 @@ pub enum PlayerEvent {
     },
     /// `SMSG_GOSSIP_COMPLETE` — the server closed the window. No body.
     GossipClosed,
-    /// `SMSG_NPC_TEXT_UPDATE` — the words a menu's text id stood for.
+    /// `SMSG_NPC_TEXT_UPDATE` — the text for a menu's text id.
     NpcText { text_id: u32, text: String },
 
     /// `SMSG_BINDER_CONFIRM`: an innkeeper asks whether to set the player's home.
@@ -1003,24 +1013,25 @@ pub enum PlayerEvent {
     /// `SMSG_BINDPOINTUPDATE` carries the same area id with the position; this
     /// packet says which innkeeper set it.
     PlayerBound { guid: u64, area_id: u32 },
-    /// `SMSG_DUEL_REQUESTED` — a duel was asked for, by us or at us. Which of
-    /// the two is the initiator guid against our own; see [`crate::play::duel`].
+    /// `SMSG_DUEL_REQUESTED` — a duel was requested, by the player or of the
+    /// player. Comparing the initiator guid with the player's own tells which;
+    /// see [`crate::play::duel`].
     DuelRequested { arbiter: u64, initiator: u64 },
-    /// `SMSG_DUEL_COUNTDOWN` — it was accepted, and starts in this many
+    /// `SMSG_DUEL_COUNTDOWN` — the duel was accepted and starts in this many
     /// milliseconds.
     DuelCountdown { ms: u32 },
-    /// `SMSG_DUEL_OUTOFBOUNDS` / `SMSG_DUEL_INBOUNDS` — left the flag's area,
-    /// and came back. `true` is out.
+    /// `SMSG_DUEL_OUTOFBOUNDS` / `SMSG_DUEL_INBOUNDS` — the player left the
+    /// duel flag's area, or returned to it. `true` is out.
     DuelBounds { out: bool },
-    /// `SMSG_DUEL_COMPLETE` — over. `started` is false for a duel declined or
-    /// abandoned before the countdown ended.
+    /// `SMSG_DUEL_COMPLETE` — the duel ended. `started` is false for a duel
+    /// declined or abandoned before the countdown ended.
     DuelComplete { started: bool },
     /// `SMSG_DUEL_WINNER` — who won, broadcast to everyone nearby.
     DuelWinner(crate::play::duel::DuelWinner),
-    /// `SMSG_SUMMON_REQUEST` — somebody wants to bring us to them. See
+    /// `SMSG_SUMMON_REQUEST` — another player asks to summon the player. See
     /// [`crate::play::summon`].
     SummonRequest(crate::play::summon::SummonRequest),
-    /// `SMSG_PLAYED_TIME` — `/played` answered, in seconds.
+    /// `SMSG_PLAYED_TIME` — the answer to `/played`, in seconds.
     PlayedTime { total: u32, level: u32 },
     /// `MSG_INSPECT_HONOR_STATS` — the honor tab of the player being
     /// inspected. See [`crate::play::inspect`].
@@ -1031,13 +1042,13 @@ pub enum PlayerEvent {
     Fish { escaped: bool },
     /// `SMSG_LIST_INVENTORY` — the vendor window.
     VendorShow(Box<crate::play::gossip::VendorList>),
-    /// `SMSG_BUY_ITEM` — a purchase went through; the slot's stock moved.
+    /// `SMSG_BUY_ITEM` — a purchase succeeded; the slot's stock changed.
     VendorSold {
         guid: u64,
         slot: u32,
         left: Option<u32>,
     },
-    /// `SMSG_BUY_FAILED` — …or did not, and why.
+    /// `SMSG_BUY_FAILED` — a purchase was refused, with the reason.
     BuyFailed {
         entry: u32,
         reason: Option<crate::play::gossip::BuyFailure>,
@@ -1054,7 +1065,8 @@ pub enum PlayerEvent {
     /// arrives separately as an ordinary `SMSG_LEARNED_SPELL`, so this packet only
     /// says which row to recolour.
     TrainerBought { spell: u32 },
-    /// `SMSG_TRAINER_BUY_FAILED` — …or was not, and why.
+    /// `SMSG_TRAINER_BUY_FAILED` — a service was not learned, with the
+    /// reason.
     TrainerBuyFailed {
         spell: u32,
         reason: Option<crate::play::trainer::TrainFailure>,
@@ -1062,12 +1074,13 @@ pub enum PlayerEvent {
 
     // --- the stable ---
     //
-    // See [`crate::play::stable`]. Two packets, and the second is the answer to
-    // all four of the verbs.
+    // See [`crate::play::stable`]. Two packets. The second answers all four
+    // stable requests.
 
-    /// `MSG_LIST_STABLED_PETS` — the whole stable window. Boxed for the reason
-    /// [`Self::TrainerShow`] is: three named pets is the largest variant in
-    /// this enum by some way, and every other one pays for it.
+    /// `MSG_LIST_STABLED_PETS` — the whole stable window. Boxed for the same
+    /// reason as [`Self::TrainerShow`]: three named pets is the largest variant
+    /// in this enum by a wide margin, and unboxed it would set the size of
+    /// every value of the enum.
     StableList(Box<crate::play::stable::StableList>),
     /// `SMSG_STABLE_RESULT` — one byte, kept raw beside its reading so an
     /// unrecognised code is data rather than a dropped packet.
@@ -1078,8 +1091,8 @@ pub enum PlayerEvent {
 
     // --- the bank ---
     //
-    // See [`crate::play::bank`]. A guid and a refusal; the contents are
-    // fields.
+    // See [`crate::play::bank`]. Two packets: a guid and a refusal. The
+    // bank's contents arrive as update fields.
 
     /// `SMSG_SHOW_BANK` — the window opens, at this banker.
     BankShow(u64),
@@ -1097,11 +1110,11 @@ pub enum PlayerEvent {
     // Only [`Self::GroupList`] is the roster, and it arrives complete every time
     // anything about the group changes.
 
-    /// `SMSG_GROUP_INVITE` — somebody is asking us to join theirs. The body is
-    /// their name and nothing else, and it is what the popup says.
+    /// `SMSG_GROUP_INVITE` — another player invites the player to a group.
+    /// The body is the inviter's name and nothing else; the popup shows it.
     GroupInvite { name: String },
-    /// `SMSG_GROUP_DECLINE` — somebody we invited said no. Only the inviter is
-    /// told.
+    /// `SMSG_GROUP_DECLINE` — a player this player invited declined. Only the
+    /// inviter is told.
     GroupDecline { name: String },
     /// `SMSG_GROUP_LIST`: the whole roster, everybody except the player. Boxed
     /// for the same reason as `TrainerShow`: a party of four with names is the
@@ -1113,11 +1126,11 @@ pub enum PlayerEvent {
     /// `SMSG_GROUP_SET_LEADER`: the new leader, by name, although the request
     /// that caused it named a guid.
     GroupNewLeader { name: String },
-    /// `SMSG_PARTY_COMMAND_RESULT` — what came of an invite or a leave, as an
+    /// `SMSG_PARTY_COMMAND_RESULT` — the result of an invite or a leave, as an
     /// index into `GlobalStrings.lua` and the name it applies to.
     PartyResult(crate::play::group::PartyCommandResult),
     /// `SMSG_PARTY_MEMBER_STATS` / `_FULL` — a member's health, mana, level and
-    /// zone, for the ones too far away to be in the object manager at all.
+    /// zone, for members too far away to be in the object manager.
     PartyMemberStats(crate::play::group::PartyMemberStats),
     /// `MSG_RAID_READY_CHECK`: one opcode with two meanings, distinguished by
     /// whether it has a body. See [`crate::play::group::ReadyCheck`].
@@ -1141,8 +1154,8 @@ pub enum PlayerEvent {
     /// `SMSG_SET_FACTION_VISIBLE`: a faction met for the first time, which adds a
     /// row to the panel rather than changing one.
     FactionVisible { reputation_list_id: u32 },
-    /// `SMSG_SET_FACTION_ATWAR` — the server's own statement about the box, and
-    /// the whole flag byte rather than a boolean.
+    /// `SMSG_SET_FACTION_ATWAR` — the server's statement of the at-war
+    /// checkbox, carried as the whole flag byte rather than a boolean.
     FactionAtWar { reputation_list_id: u32, flags: u8 },
     /// `SMSG_SET_FORCED_REACTIONS`: the whole forced-reaction map, as
     /// `(factionId, rank)`, replacing whatever was held. See
@@ -1178,7 +1191,7 @@ pub enum PlayerEvent {
     /// body; its arrival is the whole message. It plays the `TaxiNodeDiscovered`
     /// sound and, in the 1.12.1 client, refreshes any open map.
     NewTaxiPath,
-    /// `SMSG_ACTIVATETAXIREPLY` — yes, or one of twelve reasons why not.
+    /// `SMSG_ACTIVATETAXIREPLY` — accepted, or one of twelve refusal reasons.
     TaxiReply(crate::play::taxi::TaxiReply),
 
     // --- friends, ignore list and /who ---
@@ -1191,14 +1204,59 @@ pub enum PlayerEvent {
     /// It arrives once, at login. Every later change is a [`Self::FriendStatus`]
     /// and nothing sends this again.
     FriendList(Vec<crate::play::social::Friend>),
-    /// `SMSG_IGNORE_LIST` — the same statement about the ignore list, and the
-    /// same once-only arrival.
+    /// `SMSG_IGNORE_LIST` — the whole ignore list. Like the friends list, it
+    /// arrives once, at login.
     IgnoreList(Vec<u64>),
     /// `SMSG_FRIEND_STATUS` — one answer about one player: an add, a removal, a
     /// refusal, or a friend logging in or out.
     FriendStatus(crate::play::social::FriendStatus),
-    /// `SMSG_WHO` — the search's answer, and the online total behind it.
+    /// `SMSG_WHO` — the search results and the online total.
     WhoResults(crate::play::social::WhoResults),
+
+    // --- the guild ---
+    //
+    // See [`crate::play::guild`]. The character's own membership is not
+    // here: it is two update fields on the player object.
+    /// `SMSG_GUILD_QUERY_RESPONSE`: one guild's name, rank names and emblem.
+    GuildQuery(crate::play::guild::GuildQuery),
+    /// `SMSG_GUILD_ROSTER`: the whole member list, replacing the one held.
+    GuildRoster(crate::play::guild::Roster),
+    /// `SMSG_GUILD_EVENT`: a member joined, left, changed rank or logged in,
+    /// or the message of the day was stated.
+    GuildEvent(crate::play::guild::GuildEvent),
+    /// `SMSG_GUILD_COMMAND_RESULT`: the answer to a guild request.
+    GuildCommandResult(crate::play::guild::CommandResult),
+    /// `SMSG_GUILD_INVITE`: an invitation to join a guild.
+    GuildInvite(crate::play::guild::Invite),
+    /// `SMSG_GUILD_DECLINE`: the named player declined the invitation.
+    GuildDecline(String),
+    /// `SMSG_GUILD_INFO`: the answer to `/ginfo`.
+    GuildInfo(crate::play::guild::GuildInfo),
+    /// `MSG_TABARDVENDOR_ACTIVATE`: a tabard designer opened its window. The
+    /// value is the designer's guid.
+    TabardVendor(u64),
+    /// `MSG_SAVE_GUILD_EMBLEM`: the answer to saving an emblem, one of
+    /// [`crate::play::guild::emblem_result`].
+    GuildEmblemResult(u32),
+
+    // --- the guild charter ---
+    //
+    // See [`crate::play::petition`].
+    /// `SMSG_PETITION_SHOWLIST`: a guild registrar's charter offer.
+    PetitionShowList(crate::play::petition::ShowList),
+    /// `SMSG_PETITION_SHOW_SIGNATURES`: a charter and who has signed it.
+    PetitionSignatures(crate::play::petition::Signatures),
+    /// `SMSG_PETITION_QUERY_RESPONSE`: a petition's guild name and owner.
+    PetitionQuery(crate::play::petition::PetitionQuery),
+    /// `SMSG_PETITION_SIGN_RESULTS`: the answer to a signature.
+    PetitionSignResult(crate::play::petition::SignResult),
+    /// `SMSG_TURN_IN_PETITION_RESULTS`: one of
+    /// [`crate::play::petition::result`].
+    PetitionTurnInResult(u32),
+    /// `MSG_PETITION_DECLINE`: the guid of the player who declined to sign.
+    PetitionDeclined(u64),
+    /// `MSG_PETITION_RENAME`: a charter's guild name changed.
+    PetitionRenamed { item: u64, name: String },
 
     // --- mail ---
     //
@@ -1212,31 +1270,33 @@ pub enum PlayerEvent {
 
     // --- the trade window ---
     //
-    // See [`crate::play::trade`]. Two packets: the state machine, and the
-    // offer — either side's, said by the server.
+    // See [`crate::play::trade`]. Two packets: the trade's state, and one
+    // side's offer as the server states it.
 
     /// `SMSG_TRADE_STATUS` — a request, an open, an accept, a refusal or a
     /// close; see [`crate::play::trade::TradeStatus`].
     TradeStatus(crate::play::trade::TradeStatusPacket),
-    /// `SMSG_TRADE_STATUS_EXTENDED` — one side's seven slots and money,
-    /// whole. Boxed for the reason [`Self::MailList`] is.
+    /// `SMSG_TRADE_STATUS_EXTENDED` — all of one side's seven slots and
+    /// money. Boxed for the same reason as [`Self::MailList`].
     TradeOffer(Box<crate::play::trade::TradeOffer>),
-    /// `SMSG_SEND_MAIL_RESULT` — the one answer all seven verbs share.
+    /// `SMSG_SEND_MAIL_RESULT` — the answer shared by all seven mail
+    /// requests.
     MailResult(crate::play::mail::MailResponse),
-    /// `SMSG_RECEIVED_MAIL` — something has arrived. The packet's own arrival
-    /// is the whole of its content.
+    /// `SMSG_RECEIVED_MAIL` — new mail has arrived. The packet carries
+    /// nothing beyond its arrival.
     MailReceived,
     /// `MSG_QUERY_NEXT_MAIL_TIME`: seconds until the next letter, where 0 means
     /// one is already waiting; see [`crate::play::mail::parse_next_mail_time`].
     MailNextTime(f32),
-    /// `SMSG_ITEM_TEXT_QUERY_RESPONSE` — the words of one letter, by the text
-    /// id that was asked for.
+    /// `SMSG_ITEM_TEXT_QUERY_RESPONSE` — the text of one letter, by the text
+    /// id that was requested.
     ItemText { id: u32, text: String },
     /// `SMSG_CHANNEL_NOTIFY` — see [`crate::play::channels`].
     ChannelNotify(Box<crate::play::channels::ChannelNotify>),
     /// `SMSG_CHANNEL_LIST` — who is on a channel.
     ChannelList(Box<crate::play::channels::ChannelList>),
-    /// `SMSG_TEXT_EMOTE` — somebody's `/dance`; see [`crate::play::emotetext`].
+    /// `SMSG_TEXT_EMOTE` — a player's text emote, such as `/dance`; see
+    /// [`crate::play::emotetext`].
     TextEmote(Box<crate::play::emotetext::TextEmote>),
 
     // ---- proficiency and spell modifiers ----
@@ -1244,8 +1304,8 @@ pub enum PlayerEvent {
     /// [`crate::play::skills::Proficiency`]. Replaces that class, never merges.
     Proficiency(crate::play::skills::Proficiency),
     /// `SMSG_SET_FLAT_SPELL_MODIFIER` / `_PCT_` — one bit of one operation's
-    /// running total; see [`SpellModifier`], whose note is that these are
-    /// totals and not deltas.
+    /// running total; see [`SpellModifier`]: the values are totals, not
+    /// deltas.
     SpellModifier(SpellModifier),
 }
 
@@ -1383,9 +1443,8 @@ pub fn parse_attack_stop(body: &[u8]) -> Option<(u64, u64)> {
 
 /// `SpellCastTargets`' mask bits, as far as this client sends them.
 ///
-/// The full table is sixteen bits wide and most of it names things this client
-/// cannot yet aim at — an item, a gameobject, a corpse, a string. The three here
-/// are the three this client can send.
+/// The full table is sixteen bits wide. The constants here are the flags this
+/// client sends.
 pub mod target_flag {
     /// Zero, meaning there is no target block. `SpellCastTargets::read` compares
     /// the whole mask with this value before reading anything, so a self-cast is
@@ -1439,9 +1498,10 @@ pub mod target_flag {
 /// What a cast is aimed at.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CastTarget {
-    /// The spell says who it hits; send no target. Ice Armor, Battle Shout.
+    /// The spell's implicit targeting decides who it hits, and no target is
+    /// sent. Examples: Ice Armor, Battle Shout.
     SelfImplicit,
-    /// This unit, whoever it is — including ourselves.
+    /// This unit, which may be the player.
     Unit(u64),
     /// A position in the server's axes and yards, `x, y, z`. For a
     /// ground-targeted spell it is the point the player clicked on the ground.
@@ -1484,8 +1544,9 @@ pub enum CastTarget {
 
 /// `CMSG_CAST_SPELL`: `u32 spellId`, then the target block.
 ///
-/// See [`CastTarget`] and the module comment: shipping the current selection
-/// with a spell that wants no target is how a buff becomes "Invalid target".
+/// See [`CastTarget`] and the module comment: sending the current selection
+/// with a spell that takes no target makes the server refuse a buff with
+/// "Invalid target".
 pub fn cast_spell_body(spell_id: u32, target: CastTarget) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(spell_id);
@@ -1621,7 +1682,7 @@ pub fn parse_levelup(body: &[u8]) -> Option<LevelUp> {
     Some(LevelUp { level, health, mana, stats })
 }
 
-/// What one level bought — see [`parse_levelup`].
+/// What one level-up gave. See [`parse_levelup`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LevelUp {
     pub level: u32,
@@ -1812,12 +1873,12 @@ pub const CAST_FAILURE_KEYS: [&str; 146] = [
 pub const SPELL_FAILED_OUT_OF_RANGE: u8 = 0x59;
 
 /// `SPELL_FAILED_DONT_REPORT`, which the client never displays. The server
-/// substitutes it for the real reason on a passive spell, and it also comes back
-/// for a good deal of internal machinery.
+/// substitutes it for the real reason on a passive spell, and also sends it
+/// for several internal cases.
 pub const DONT_REPORT: u8 = 0x17;
 
 /// The `GlobalStrings.lua` key for a wire reason, or `None` for a code outside
-/// the table or one the client deliberately swallows.
+/// the table or one the client does not display.
 pub fn cast_failure_key(reason: u8) -> Option<&'static str> {
     if reason == DONT_REPORT {
         return None;
@@ -1864,11 +1925,11 @@ pub mod spell_mod_op {
     pub const DURATION: u8 = 1;
     /// How far the spell reaches.
     pub const RANGE: u8 = 5;
-    /// The wind-up.
+    /// The cast time.
     pub const CASTING_TIME: u8 = 10;
     /// The recovery, which is what the button's sweep is drawn from.
     pub const COOLDOWN: u8 = 11;
-    /// The power the cast is paid for with.
+    /// The power cost of the cast.
     pub const COST: u8 = 14;
 }
 
@@ -1881,8 +1942,8 @@ pub fn parse_spell_modifier(body: &[u8], percent: bool) -> Option<SpellModifier>
     let effect_bit = r.u8();
     let op = r.u8();
     let value = r.u32() as i32;
-    // A bit outside the 64 a mask has is a packet this client cannot file, and
-    // filing it under a wrapped index would modify the wrong spells.
+    // A mask has 64 bits. A bit index outside that range is refused, because
+    // storing it under a wrapped index would modify the wrong spells.
     if effect_bit >= 64 {
         return None;
     }
@@ -1942,8 +2003,8 @@ mod tests {
     }
 
     /// The spellbook's ids are `u16`, and the slot beside each one is not a
-    /// slot. Reading the pair as one `u32` gives a spellbook of plausible
-    /// nonsense — every id doubled and every other one dropped.
+    /// slot. Reading the pair as one `u32` gives a spellbook that looks
+    /// plausible and is wrong: every id doubled and every other one dropped.
     #[test]
     fn the_spellbook_is_pairs_of_u16() {
         let mut w = Writer::new();
@@ -2001,7 +2062,7 @@ mod tests {
     }
 
     /// The cooldown block is behind the spell list, so a miscount above it
-    /// reads durations out of spell ids. And a body that stops before it costs
+    /// reads durations out of spell ids. A body that stops before it loses
     /// only the cooldowns.
     #[test]
     fn the_cooldowns_are_read_across_the_spell_list() {
@@ -2204,7 +2265,8 @@ mod tests {
             Some("SPELL_FAILED_OUT_OF_RANGE")
         );
         assert_eq!(cast_failure_key(0x91), Some("SPELL_FAILED_UNKNOWN"));
-        // Off the end is silence rather than a panic or a wrong message.
+        // A code past the end of the table gives `None` rather than a panic or
+        // a wrong message.
         assert_eq!(cast_failure_key(0x92), None);
         assert_eq!(cast_failure_key(0xFF), None);
         // The reason the client never displays.

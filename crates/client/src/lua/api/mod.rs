@@ -126,6 +126,7 @@ pub trait Answers:
     + super::panels::trade::TradeAnswers
     + super::panels::summon::SummonAnswers
     + super::panels::inspect::InspectAnswers
+    + super::panels::guild::GuildAnswers
     + super::panels::glue::GlueAnswers
     + super::panels::spellbook::SpellbookAnswers
     + super::panels::talent::TalentAnswers
@@ -159,6 +160,7 @@ impl<T> Answers for T where
     + super::panels::trade::TradeAnswers
     + super::panels::summon::SummonAnswers
     + super::panels::inspect::InspectAnswers
+    + super::panels::guild::GuildAnswers
     + super::panels::glue::GlueAnswers
     + super::panels::spellbook::SpellbookAnswers
     + super::panels::talent::TalentAnswers
@@ -2333,6 +2335,9 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     super::panels::summon::install(lua, scope, answers)?;
     // The inspect window's four reads. See [`super::panels::inspect`].
     super::panels::inspect::install(lua, scope, answers)?;
+    // `GetGuildInfo`, which reads a unit's guild fields. See
+    // [`super::panels::guild`].
+    super::panels::guild::install(lua, scope, answers)?;
     super::panels::trade::install(lua, scope, answers)?;
     // The two profession windows. Their create buttons push onto the same
     // queue the bags' drag uses; see [`super::panels::tradeskill`].
@@ -2400,6 +2405,9 @@ pub(crate) mod tests {
         pub pvp: bool,
         /// `<Innkeeper>`.
         pub sub_name: String,
+        /// The honor rank and the owner the unit tooltip's first and third
+        /// lines are built from. The default is a unit with neither.
+        pub title: crate::interface::api::UnitTitle,
     }
 
     /// One slot of a [`Stub`]'s bar.
@@ -2647,9 +2655,19 @@ pub(crate) mod tests {
                 classification: 0,
                 pvp: false,
                 sub_name: String::new(),
+                title: Default::default(),
                 // Empty for every unit except a group member in another zone.
                 zone: String::new(),
             });
+            self
+        }
+
+        /// Sets the rank and owner of the unit added last. Whether the unit
+        /// is a player is taken from the unit and not from `title`.
+        pub fn titled(mut self, title: crate::interface::api::UnitTitle) -> Stub {
+            if let Some(unit) = self.units.last_mut() {
+                unit.title = title;
+            }
             self
         }
 
@@ -3476,6 +3494,7 @@ pub(crate) mod tests {
     impl crate::lua::panels::trade::TradeAnswers for Stub {}
     impl crate::lua::panels::summon::SummonAnswers for Stub {}
     impl crate::lua::panels::inspect::InspectAnswers for Stub {}
+    impl crate::lua::panels::guild::GuildAnswers for Stub {}
     impl crate::lua::panels::bank::BankAnswers for Stub {}
     impl crate::lua::panels::pagetext::PageTextAnswers for Stub {}
 
@@ -4126,6 +4145,10 @@ pub(crate) mod tests {
             let unit = self.find(token)?;
             Some(crate::interface::api::UnitTip {
                 name: unit.name.clone(),
+                title: crate::interface::api::UnitTitle {
+                    player: unit.player,
+                    ..unit.title.clone()
+                },
                 sub_name: unit.sub_name.clone(),
                 level: unit.level,
                 race: unit.player.then_some("Human"),
@@ -4641,6 +4664,7 @@ pub(crate) mod tests {
             .chain(crate::lua::panels::trade::READS.iter())
             .chain(crate::lua::panels::summon::READS.iter())
             .chain(crate::lua::panels::inspect::READS.iter())
+            .chain(crate::lua::panels::guild::READS.iter())
             .chain(crate::lua::panels::loot::READS.iter())
             .chain(crate::lua::panels::lootroll::READS.iter())
             .chain(crate::lua::panels::quest::READS.iter())

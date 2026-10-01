@@ -11,6 +11,8 @@
 //!                 at runtime from CharSections into one 256x256 body texture
 //! dress.rs        what to draw an entity as: geosets, attachments, and whether
 //!                 its skin is a file or has to be built
+//! emblem.rs       a guild's emblem on a tabard: the five numbers, the six
+//!                 textures they name, and how they travel with equipment
 //! sheath.rs       whether the weapons are out
 //! weapon_trail.rs the strip a weapon leaves behind it during a melee ability
 //! conform.rs      which models lean with the ground
@@ -38,6 +40,7 @@ pub mod character;
 pub mod conform;
 pub mod cursor;
 pub mod dress;
+pub mod emblem;
 pub mod inspect;
 pub mod object;
 pub mod pick;
