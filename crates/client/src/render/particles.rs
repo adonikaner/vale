@@ -52,11 +52,12 @@
 //! Behaviour not yet implemented, with the emitter counts from
 //! `vale particles`:
 //!
-//! * Model-space clouds (flag 0x10, 701 emitters) are birth-baked like
-//!   everything else. The difference shows only on an emitter that moves or
-//!   turns while its particles live.
+//! * Model-space clouds (flag 0x10, 701 emitters) ride their emitter, but
+//!   not rigidly: a live particle takes [`MODEL_SPACE_FOLLOW`] of the
+//!   emitter's motion each frame where the 1.12.1 client gives it all of it.
+//!   See [`Emitter::carry`].
 //! * Velocity inherit (0x40, 85) and follow-emitter (0x4000, 73) are not
-//!   applied; both need the emitter's own frame-to-frame motion.
+//!   applied.
 //! * Spline emitters (type 3, 23 of 2,626) are born at the chain's first
 //!   control point rather than along it.
 //! * Ground snap (0x2000, 41), twinkle and the recursion model (child
@@ -221,6 +222,22 @@ pub enum Anchor {
     Owner,
 }
 
+/// How much of its emitter's frame-to-frame motion a live particle of a
+/// model-space emitter (flag 0x10) takes, from 0 to 1.
+///
+/// The 1.12.1 client draws such a cloud through the emitter's live bone
+/// matrix, which is 1: the flames of an enchanted weapon stay on the blade
+/// however the wielder moves. This client keeps a little of the motion back,
+/// by choice, so the cloud leans behind a moving emitter. A particle ends its
+/// life `(1 - MODEL_SPACE_FOLLOW)` of the distance the emitter travelled
+/// behind where the client would draw it: at a 7 yard per second run and a
+/// one second lifespan, 0.7 yards.
+///
+/// An emitter without the flag is not affected. Its particles keep the
+/// placement they were born at, as in the client: a torch leaves its smoke
+/// behind and a missile leaves its tail.
+pub const MODEL_SPACE_FOLLOW: f32 = 0.9;
+
 /// One live particle. World space, Bevy axes.
 struct Particle {
     pos: Vec3,
@@ -310,6 +327,39 @@ struct ModelInstance {
 }
 
 impl Emitter {
+    /// Move the live particles of a model-space emitter with the emitter:
+    /// `frame` is where the emitter stands now and [`Self::frame`] is where
+    /// it stood on the last frame.
+    ///
+    /// The pool is kept in world space, so riding the emitter is applying the
+    /// emitter's own change of placement to each particle. The position takes
+    /// [`MODEL_SPACE_FOLLOW`] of that change. The velocity and a model
+    /// particle's orientation turn with the emitter in full, so a cloud keeps
+    /// its shape when the emitter turns.
+    ///
+    /// It runs for a frozen emitter too. A cloud left where its emitter was
+    /// when it went out of view would be drawn there when it came back.
+    fn carry(&mut self, frame: bevy::math::Affine3A) {
+        if self.def().flags & particle_flags::MODEL_SPACE == 0
+            || self.pool.is_empty()
+            || frame == self.frame
+        {
+            return;
+        }
+        let moved = frame * self.frame.inverse();
+        // A degenerate frame (a zero scale on a hidden bone) has no inverse
+        // and would scatter the pool.
+        if !moved.is_finite() {
+            return;
+        }
+        let (_, turned, _) = moved.to_scale_rotation_translation();
+        for p in &mut self.pool {
+            p.pos = p.pos.lerp(moved.transform_point3(p.pos), MODEL_SPACE_FOLLOW);
+            p.vel = turned * p.vel;
+            p.quat = turned * p.quat;
+        }
+    }
+
     fn def(&self) -> &M2Particle {
         &self.set.emitters[self.index].def
     }
@@ -713,6 +763,8 @@ pub(crate) fn simulate(
         };
         let origin = frame.transform_point3(axes::to_bevy(emitter.def().position));
 
+        // Before the frame is replaced, while the last one is still held.
+        emitter.carry(frame);
         emitter.age += dt;
         emitter.origin = origin;
         emitter.frame = frame;
@@ -2196,6 +2248,47 @@ mod tests {
             "an emitter with nothing alive is not a lamp: {} against {lit}",
             e.output()
         );
+    }
+
+    /// A model-space emitter's particles go most of the way with it and a
+    /// world-space emitter's stay where they were born.
+    #[test]
+    fn a_model_space_cloud_rides_its_emitter() {
+        let particle = |pos: Vec3| Particle {
+            pos,
+            vel: Vec3::X,
+            age: 0.0,
+            life: 1.0,
+            seed: 0,
+            quat: Quat::IDENTITY,
+            angvel: Vec3::ZERO,
+        };
+        let moved = bevy::math::Affine3A::from_translation(Vec3::new(10.0, 0.0, 0.0));
+
+        let mut riding = test_emitter(M2Particle {
+            flags: particle_flags::MODEL_SPACE,
+            ..plain_def()
+        });
+        riding.pool.push(particle(Vec3::new(1.0, 2.0, 3.0)));
+        riding.carry(moved);
+        let at = riding.pool[0].pos;
+        assert!((at.x - (1.0 + 10.0 * MODEL_SPACE_FOLLOW)).abs() < 1e-5, "{at}");
+        assert_eq!((at.y, at.z), (2.0, 3.0));
+
+        // A quarter turn about the vertical turns the velocity with it.
+        let mut turning = test_emitter(M2Particle {
+            flags: particle_flags::MODEL_SPACE,
+            ..plain_def()
+        });
+        turning.pool.push(particle(Vec3::ZERO));
+        turning.carry(bevy::math::Affine3A::from_rotation_y(std::f32::consts::FRAC_PI_2));
+        let vel = turning.pool[0].vel;
+        assert!((vel - Vec3::NEG_Z).length() < 1e-5, "{vel}");
+
+        let mut left_behind = test_emitter(plain_def());
+        left_behind.pool.push(particle(Vec3::new(1.0, 2.0, 3.0)));
+        left_behind.carry(moved);
+        assert_eq!(left_behind.pool[0].pos, Vec3::new(1.0, 2.0, 3.0));
     }
 
     fn test_emitter(def: M2Particle) -> Emitter {
