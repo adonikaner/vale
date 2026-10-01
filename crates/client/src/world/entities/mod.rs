@@ -731,6 +731,14 @@ pub struct AttachedPart {
     pending: Vec<vale_assets::tables::itemvisual::ItemEffect>,
 }
 
+impl AttachedPart {
+    /// Whether a model asked for on this model's points is still loading, so
+    /// a caller can skip [`hang_nested`] when nothing is outstanding.
+    pub(crate) fn wants_nested(&self) -> bool {
+        !self.pending.is_empty()
+    }
+}
+
 /// One drawn part whose `MeshTag` is its animated colour rather than its room.
 ///
 /// The tag is the only per-instance channel, so a fade cannot be a material;
@@ -1529,6 +1537,7 @@ pub(crate) use pose::*;
 pub use sheath::Sheath;
 pub(crate) use sheath::SheathRequest;
 use spawn::*;
+pub(crate) use worn::hang_nested;
 use worn::*;
 #[cfg(test)]
 mod tests;

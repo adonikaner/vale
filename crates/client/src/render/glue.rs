@@ -734,7 +734,12 @@ fn dress_the_character(
     mut meshes: ResMut<Assets<Mesh>>,
     time: Res<Time>,
 ) {
-    let Some(root) = scene.standing.root.filter(|_| !scene.standing.wanted.is_empty()) else {
+    let nested_wanted = scene.standing.attached.iter().any(|part| part.wants_nested());
+    let Some(root) = scene
+        .standing
+        .root
+        .filter(|_| !scene.standing.wanted.is_empty() || nested_wanted)
+    else {
         return;
     };
     let now = time.elapsed_secs();
@@ -767,7 +772,7 @@ fn dress_the_character(
                 else {
                     continue;
                 };
-                scene.standing.attached.push(crate::world::entities::hang_model(
+                let mut part = crate::world::entities::hang_model(
                     &mut commands,
                     &mut meshes,
                     root,
@@ -780,11 +785,27 @@ fn dress_the_character(
                     None,
                     crate::render::models::sun_scale::NEUTRAL,
                     now,
-                ));
+                );
+                // A held item's visual. `SMSG_CHAR_ENUM` carries no
+                // enchantment, so the dressing rule chose these from the
+                // item's display row alone.
+                part.want_nested(attachment.effects);
+                scene.standing.attached.push(part);
             }
         }
     }
     scene.standing.wanted = still_wanted;
+    // The item-visual models, each a load behind the weapon it hangs on.
+    for part in &mut scene.standing.attached {
+        crate::world::entities::hang_nested(
+            &mut commands,
+            &mut cache,
+            &mut materials,
+            &mut meshes,
+            part,
+            now,
+        );
+    }
 }
 
 /// Whether the scene on screen is the character-create one.
@@ -1139,6 +1160,9 @@ fn pose_character(
             &mut writes,
         );
     }
+    // The roots of the models nested on the gear: an item visual's models on
+    // a held weapon. The gear's own roots were written in the loop above.
+    writes.apply_roots(roots);
     writes.apply(worn_joints, worn_tags);
 }
 

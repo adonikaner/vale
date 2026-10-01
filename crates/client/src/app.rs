@@ -76,8 +76,14 @@ pub fn plugins(host: &Host) -> PluginGroupBuilder {
             // already reports the archives mounting once, so `wow_mpq` is
             // filtered to WARN. `RUST_LOG` still overrides this filter, as it
             // overrides bevy's own default.
+            //
+            // With the `diagnostics` feature, a second layer copies every
+            // line that passes the filter into the ring the debug panel's
+            // console tab draws; see `ui::debug::log`.
             .set(bevy::log::LogPlugin {
                 filter: format!("{},wow_mpq=warn", bevy::log::DEFAULT_FILTER),
+                #[cfg(feature = "diagnostics")]
+                custom_layer: ui::debug::log::layer,
                 ..default()
             })
             .set(RenderPlugin {

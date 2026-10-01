@@ -99,7 +99,10 @@ pub(super) fn spawn_attachments(
 /// blade. See `vale_assets::tables::itemvisual`. The load is a third one,
 /// behind the weapon's, and is not waited for, for the reason given on
 /// [`spawn_attachments`].
-fn hang_nested(
+///
+/// `render::glue` calls this too, for the character on the character-select
+/// plinth.
+pub(crate) fn hang_nested(
     commands: &mut Commands,
     cache: &mut ModelCache,
     materials: &mut Materials,

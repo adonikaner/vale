@@ -350,8 +350,23 @@ impl RigWrites {
                 }
             }
         }
-        debug_assert!(self.roots.is_empty(), "attachment roots need `apply_with_roots`");
+        debug_assert!(self.roots.is_empty(), "attachment roots need `apply_roots` first");
         self.roots.clear();
+    }
+
+    /// Write the attachment roots collected and empty that list. A caller
+    /// whose attachments carry nested models calls this before
+    /// [`Self::apply`]: [`animate_attachment`] collects a root for each nested
+    /// model.
+    pub(crate) fn apply_roots<F: bevy::ecs::query::QueryFilter>(
+        &mut self,
+        roots: &mut Query<&mut Transform, F>,
+    ) {
+        for (root, local) in self.roots.drain(..) {
+            if let Ok(mut transform) = roots.get_mut(root) {
+                *transform = local;
+            }
+        }
     }
 
     /// [`Self::apply`], plus the attachment roots. [`animate`] uses this form.
@@ -361,11 +376,7 @@ impl RigWrites {
         tags: &mut Query<&mut bevy::mesh::MeshTag, With<EntityPart>>,
         roots: &mut Query<&mut Transform, With<AttachedTo>>,
     ) {
-        for (root, local) in self.roots.drain(..) {
-            if let Ok(mut transform) = roots.get_mut(root) {
-                *transform = local;
-            }
-        }
+        self.apply_roots(roots);
         self.apply(joints, tags);
     }
 }
