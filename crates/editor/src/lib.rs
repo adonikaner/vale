@@ -310,6 +310,11 @@ pub struct Args {
     /// only other way to keep a point, and a scripted run cannot click. See
     /// [`tools::measure`].
     pub measure: Option<Vec<(f32, f32)>>,
+    /// `--chunks "<x,y>[;<x,y>]"`: open the chunk tool with the block between
+    /// the chunks at two world positions selected, or the one chunk at one
+    /// position. The selection is otherwise a press and a drag, which a
+    /// scripted run cannot make. See [`tools::chunks`].
+    pub chunks: Option<Vec<(f32, f32)>>,
     /// `--place [<path>]`: open the placement panel on its Place half, with
     /// that model armed.
     ///
@@ -848,6 +853,7 @@ impl Default for Args {
             tour: None,
             dwell: None,
             measure: None,
+            chunks: None,
             character: None,
             playtest: None,
         }
@@ -964,6 +970,13 @@ impl Args {
                         .map(|list| tour::Tour::parse(&list))
                         .filter(|points| !points.is_empty());
                     parsed.tool = Some(tools::Tool::Measure);
+                }
+                "--chunks" => {
+                    parsed.chunks = args
+                        .next()
+                        .map(|list| tour::Tour::parse(&list))
+                        .filter(|points| !points.is_empty());
+                    parsed.tool = Some(tools::Tool::Chunks);
                 }
                 "--taxi-node" => {
                     parsed.taxi_node = args.next().as_deref().and_then(|v| v.trim().parse().ok());
@@ -1343,6 +1356,9 @@ mod tests {
         assert_eq!(args.measure, Some(vec![(-9450.0, -50.0), (-9480.0, -90.0)]));
         assert_eq!(args.tool, Some(tools::Tool::Measure));
         assert_eq!(args.map, "Azeroth");
+        let args = Args::parse(["--chunks", "-9450,-50;-9520,-120"].into_iter().map(String::from));
+        assert_eq!(args.chunks, Some(vec![(-9450.0, -50.0), (-9520.0, -120.0)]));
+        assert_eq!(args.tool, Some(tools::Tool::Chunks));
     }
 
     /// `--shot` takes a file and `--after` the seconds before it.

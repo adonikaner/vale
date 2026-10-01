@@ -3,10 +3,11 @@
 //!
 //! ```text
 //! theme.rs      the palette, the style, and the widgets built on them
-//! topbar.rs     the top bar: the open project and map, the camera position,
-//!               and the playtest button
-//! popover.rs    the four forms the top bar opens: where to go, which account
-//!               to log in as, which project, and where the server is
+//! topbar.rs     the top bar: the Project menu and Save, the Server button,
+//!               the Map menu, the workspace control and the playtest button
+//! popover.rs    the five forms the top bar opens: where to go, which account
+//!               to log in as, which project, where the server is, and what
+//!               a publish writes
 //! rail.rs       the subject list: what the editor edits now and what it will
 //!               edit
 //! inspector.rs  the panel beside the viewport: the chosen tool's controls
@@ -344,6 +345,8 @@ pub struct Editing<'w> {
     pub(crate) gizmo: ResMut<'w, Gizmo>,
     pub(crate) holes: Res<'w, crate::tools::holes::Holes>,
     pub(crate) areas: ResMut<'w, crate::tools::areas::Areas>,
+    /// The chunk tool's selection. See [`crate::tools::chunks`].
+    pub(crate) chunks: ResMut<'w, crate::tools::chunks::Chunks>,
     pub(crate) water: ResMut<'w, crate::tools::water::Water>,
     pub(crate) sweep: ResMut<'w, crate::tools::sweep::Sweep>,
     pub(crate) thumbnails: ResMut<'w, thumbnails::Thumbnails>,
@@ -569,6 +572,7 @@ fn draw(
                     tool: &mut tool,
                     rail: &mut viewing.rail,
                 },
+                &editing.bookmarks,
             );
         });
 
@@ -668,13 +672,13 @@ fn draw(
             ui.allocate_rect(ui.available_rect_before_wrap(), egui::Sense::hover());
         });
 
-    // The DBCs, loaded only for the two panels that name an area: the zone
-    // tool and the measuring tool. `GameAssets::display_tables` loads every
+    // The DBCs, loaded only for the three panels that name an area: the zone
+    // tool, the chunk tool and the measuring tool. `GameAssets::display_tables` loads every
     // table on its first call, so asking unconditionally would make an editor
     // that opens on the terrain brush load `AreaTable`, `Map` and the rest at
-    // startup. Asked here, the cost is paid the first time either tool is
+    // startup. Asked here, the cost is paid the first time one of them is
     // chosen.
-    let tables = matches!(*tool, Tool::Areas | Tool::Measure)
+    let tables = matches!(*tool, Tool::Areas | Tool::Chunks | Tool::Measure)
         .then(|| assets.display_tables().ok())
         .flatten();
     // The inspector is resizable and the rail is not. The rail is a fixed

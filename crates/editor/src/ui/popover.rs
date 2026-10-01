@@ -1,13 +1,15 @@
-//! The windows the top bar's buttons open: go-to, playtest login, the project
-//! dialog, the server panel and the publish popover. Each holds text fields.
+//! The windows the top bar's buttons and menu entries open: go-to, playtest
+//! login, the project dialog, the server panel and the publish popover. Each
+//! holds text fields.
 //!
 //! ## Why the popovers are windows and not menus
 //!
 //! An egui menu (`ui.menu_button`) closes when anything inside it is clicked.
 //! That suits a menu, whose items are commands, and does not suit a panel of
 //! text fields: clicking into the password box closed the box. So each popover
-//! is an `egui::Window` with an open flag, opened from its button and positioned
-//! under it. A window keeps focus and a `TextEdit` inside one works. Clicking
+//! is an `egui::Window` with an open flag, opened from its button, or from an
+//! entry of one of the bar's two menus, and positioned under that button or
+//! menu. A window keeps focus and a `TextEdit` inside one works. Clicking
 //! outside closes it because [`Popovers::follow`] closes it, not because the
 //! container does.
 //!
@@ -1255,6 +1257,36 @@ fn window(
         .map(|response| response.response.rect)
 }
 
+/// Put the camera where a bookmark kept it, opening the bookmark's map first
+/// when another map is open. The go-to popover's rows and the Map menu's
+/// Bookmarks entries both call this.
+pub(super) fn go_to_bookmark(
+    mark: &crate::bookmarks::Bookmark,
+    camera: &mut EditorCamera,
+    session: &mut crate::session::EditSession,
+) {
+    if mark.map != session.map {
+        if let Some((id, name)) = session
+            .maps
+            .iter()
+            .find(|(_, name)| *name == mark.map)
+            .cloned()
+        {
+            session.switch_map(name, id, camera);
+        }
+    }
+    camera.target = Vec3::from(mark.target);
+    camera.yaw = mark.yaw;
+    camera.pitch = mark.pitch;
+    camera.distance = mark.distance;
+    // The height is the bookmark's own, so the ground is not asked for.
+    // When the map changed, `switch_map` has already asked, and the tile
+    // under the target decides.
+    if mark.map == session.map {
+        camera.wants_the_ground = false;
+    }
+}
+
 /// The go-to popover: send the camera to a bookmark, a position, a tile, or a
 /// zone.
 ///
@@ -1346,26 +1378,7 @@ fn go_somewhere(
         bookmarks.remove(&name);
     }
     if let Some(mark) = jump {
-        if mark.map != session.map {
-            if let Some((id, name)) = session
-                .maps
-                .iter()
-                .find(|(_, name)| *name == mark.map)
-                .cloned()
-            {
-                session.switch_map(name, id, camera);
-            }
-        }
-        camera.target = Vec3::from(mark.target);
-        camera.yaw = mark.yaw;
-        camera.pitch = mark.pitch;
-        camera.distance = mark.distance;
-        // The height is the bookmark's own, so the ground is not asked for.
-        // When the map changed, `switch_map` has already asked, and the tile
-        // under the target decides.
-        if mark.map == session.map {
-            camera.wants_the_ground = false;
-        }
+        go_to_bookmark(&mark, camera, session);
         *open = false;
     }
 

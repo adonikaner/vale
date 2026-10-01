@@ -9,6 +9,9 @@
 //! holes.rs       where the terrain is not drawn: the sixteen bits per chunk
 //! areas.rs       which place in the world a chunk is: one AreaTable id per
 //!                chunk
+//! chunks.rs      a selection of map chunks, by click and by a block dragged on
+//!                the ground, and the area, flag, hole and texture operations
+//!                that write one value to every chunk in it
 //! water.rs       the water standing on the terrain: MCLQ, and the flags that
 //!                declare it
 //! doodads.rs     the placed models (MDDF): select, move, turn, scale, remove
@@ -115,6 +118,7 @@
 
 pub mod areas;
 pub mod behaviour;
+pub mod chunks;
 pub mod creatures;
 pub mod displays;
 pub mod doodads;
@@ -175,6 +179,9 @@ pub enum Tool {
     Holes,
     /// Which place in the world each chunk is — see [`areas`].
     Areas,
+    /// A selection of chunks, and one value written to all of them — see
+    /// [`chunks`].
+    Chunks,
     /// The water standing on the terrain — see [`water`].
     Water,
     /// The placed models standing on the terrain — see [`doodads`].
@@ -279,7 +286,7 @@ pub enum Surface {
 /// [`Tool::at`] enforces the list: an exhaustive `match` that does not compile
 /// until a new variant has an index, plus a test that this list is exactly
 /// those indices in order.
-pub const ALL: [Tool; 19] = [
+pub const ALL: [Tool; 20] = [
     Tool::Select,
     Tool::Terrain,
     Tool::Grade,
@@ -299,6 +306,7 @@ pub const ALL: [Tool; 19] = [
     Tool::Quests,
     Tool::Measure,
     Tool::Flightpaths,
+    Tool::Chunks,
 ];
 
 impl Tool {
@@ -330,6 +338,7 @@ impl Tool {
             Tool::Quests => 16,
             Tool::Measure => 17,
             Tool::Flightpaths => 18,
+            Tool::Chunks => 19,
         }
     }
 
@@ -481,6 +490,7 @@ impl Tool {
             // TaxiPath and TaxiPathNode. One word, so `--tool taxi` needs no
             // quoting.
             Tool::Flightpaths => "Taxi",
+            Tool::Chunks => "Chunks",
         }
     }
 }
@@ -587,6 +597,7 @@ impl Plugin for ToolPlugin {
             group::GroupPlugin,
             measure::MeasureToolPlugin,
             flightpaths::FlightpathToolPlugin,
+            chunks::ChunkToolPlugin,
         ));
     }
 }
@@ -1018,6 +1029,7 @@ fn modes(
         // text field has focus: a workspace has text fields, and a number row
         // that meant something here would conflict with every one of them.
         Tool::Areas
+        | Tool::Chunks
         | Tool::Water
         | Tool::Select
         | Tool::Measure

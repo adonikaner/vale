@@ -119,6 +119,15 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
         Tool::Shading => shading(ui, &mut editing.shading),
         Tool::Holes => holes(ui, &editing.holes, session),
         Tool::Areas => zones(ui, &mut editing.areas, session, tables, cursor),
+        Tool::Chunks => chunks(
+            ui,
+            &mut editing.chunks,
+            &mut editing.areas,
+            &mut editing.textures,
+            &mut editing.thumbnails,
+            session,
+            tables,
+        ),
         Tool::Water => water(ui, &mut editing.water),
         Tool::Sweep => sweep(ui, &mut editing.sweep, session, assets),
         Tool::Textures => paint(
@@ -535,13 +544,7 @@ fn zones(
     // An area's own name, and the zone it is part of. `0` is a valid value
     // (a chunk that belongs to no area) and the shipped tiles contain it, so
     // it is named rather than shown as an error.
-    let name_of = |id: u32| -> String {
-        match (id, table.and_then(|table| table.get(id))) {
-            (0, _) => "nowhere".to_string(),
-            (id, Some(area)) => format!("{} ({id})", area.name),
-            (id, None) => format!("area {id}"),
-        }
-    };
+    let name_of = |id: u32| area_name(table, id);
 
     theme::heading(ui, "Under the pointer");
     match areas.at {
@@ -808,6 +811,386 @@ fn holes(ui: &mut egui::Ui, holes: &crate::tools::holes::Holes, session: &EditSe
         ui,
         "sixteen squares per chunk, and the file has nothing smaller",
     );
+}
+
+/// An area's name with its id. `0` is a chunk that belongs to no area, which
+/// the shipped tiles contain, so it is named. An id `AreaTable` has no row
+/// for is shown as the number.
+fn area_name(table: Option<&vale_assets::tables::area::Areas>, id: u32) -> String {
+    match (id, table.and_then(|table| table.get(id))) {
+        (0, _) => "nowhere".to_string(),
+        (id, Some(area)) => format!("{} ({id})", area.name),
+        (id, None) => format!("area {id}"),
+    }
+}
+
+/// How many of a census's rows the chunk panel lists before it says how many
+/// more there are.
+const CENSUS_ROWS: usize = 6;
+
+/// The chunk tool: what is selected, and the operations on it. See
+/// [`crate::tools::chunks`].
+///
+/// The area and the texture an operation writes are the area brush's and the
+/// texture brush's chosen values, picked with the pickers those two panels
+/// draw. A second chosen area or texture kept by this tool would be a second
+/// answer to which one is chosen.
+///
+/// The rows about the chunk under the pointer are last, as in the measuring
+/// panel: their height changes as the pointer moves on and off the world, and
+/// above the buttons they would move the buttons under the pointer.
+fn chunks(
+    ui: &mut egui::Ui,
+    chunks: &mut crate::tools::chunks::Chunks,
+    areas: &mut crate::tools::areas::Areas,
+    textures: &mut Textures,
+    thumbnails: &mut Thumbnails,
+    session: &mut EditSession,
+    tables: Option<&vale_assets::tables::dbc::DisplayTables>,
+) {
+    use crate::tools::chunks as tool;
+
+    let census = chunks.census(session).clone();
+    let table = tables.and_then(|tables| tables.areas());
+    let any = census.open > 0;
+
+    theme::heading(ui, "Selection");
+    match census.open + census.closed {
+        0 => theme::note(
+            ui,
+            "nothing selected: click a chunk, or drag a block on the ground",
+        ),
+        _ => {
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} chunk(s) in {} tile(s)",
+                    census.open, census.tiles
+                ))
+                .color(theme::INK),
+            );
+            if census.closed > 0 {
+                theme::note(
+                    ui,
+                    format!(
+                        "{} more are in tiles that are not open. No operation reaches them.",
+                        census.closed
+                    ),
+                );
+            }
+        }
+    }
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(any, egui::Button::new("Whole tiles"))
+            .on_hover_text("Select every chunk of each tile the selection touches.")
+            .clicked()
+        {
+            let cells = chunks.whole_tiles(session);
+            chunks.select(cells);
+        }
+        if ui
+            .add_enabled(census.open + census.closed > 0, egui::Button::new("Deselect"))
+            .on_hover_text("Escape. Select nothing.")
+            .clicked()
+        {
+            chunks.clear();
+        }
+    });
+    if let Some(area) = chunks.primary.and_then(|cell| tool::area_of(session, cell)) {
+        if ui
+            .small_button(format!("Add all in {}", area_name(table, area)))
+            .on_hover_text(
+                "Add every chunk of the open tiles that has the area of the chunk \
+                 last clicked.",
+            )
+            .clicked()
+        {
+            chunks.add(tool::Chunks::in_area(session, area));
+        }
+    }
+
+    ui.add_space(4.0);
+    theme::heading(ui, "Area");
+    ui.label(egui::RichText::new(area_name(table, areas.brush.area)).color(theme::INK));
+    if ui
+        .add_enabled(
+            any,
+            egui::Button::new(format!("Set on {} chunk(s)", census.open)),
+        )
+        .on_hover_text(
+            "Write this area id to every selected chunk, as one undo entry. Nothing \
+             on screen is drawn from an area id; a playtest reads it for its zone text.",
+        )
+        .on_disabled_hover_text("Select chunks first.")
+        .clicked()
+    {
+        let changed = tool::set_area(session, &chunks.selected, areas.brush.area);
+        session.status = format!("area {} on {changed} chunk(s)", areas.brush.area);
+    }
+    // The areas the selection is made of. `use` takes one as the area to
+    // write, which is this panel's form of the area tool's Space.
+    for (id, count) in census.areas.iter().take(CENSUS_ROWS) {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(area_name(table, *id))
+                    .size(theme::SMALL)
+                    .color(theme::INK_DIM),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(*id != areas.brush.area, egui::Button::new("use").small())
+                    .on_hover_text("Take this as the area to write.")
+                    .clicked()
+                {
+                    areas.brush.area = *id;
+                }
+                ui.label(
+                    egui::RichText::new(count.to_string())
+                        .size(theme::SMALL)
+                        .color(theme::INK_FAINT),
+                );
+            });
+        });
+    }
+    if census.areas.len() > CENSUS_ROWS {
+        theme::note(
+            ui,
+            format!("and {} more areas", census.areas.len() - CENSUS_ROWS),
+        );
+    }
+    egui::CollapsingHeader::new(egui::RichText::new("Choose an area").color(theme::INK_DIM))
+        .id_salt("chunks-area-picker")
+        .show(ui, |ui| match table {
+            Some(table) => {
+                // The tree opens on the map being edited, as the area tool's
+                // does.
+                if areas.folder.is_empty() {
+                    if let Some(map) = tables
+                        .map(|tables| tables.map_name(session.map_id))
+                        .filter(|name| !name.is_empty())
+                    {
+                        areas.folder = format!("{}{}", map.to_ascii_lowercase(), place::SEP);
+                    }
+                }
+                if let Some(picked) = area_tree(ui, areas, table, tables) {
+                    areas.brush.area = picked;
+                }
+            }
+            None => {
+                theme::note(ui, "no AreaTable.dbc: the archives did not open");
+                theme::row(ui, "id", |ui| {
+                    ui.add(egui::DragValue::new(&mut areas.brush.area).speed(1.0));
+                });
+            }
+        });
+
+    ui.add_space(4.0);
+    theme::heading(ui, "Walkable");
+    theme::note(
+        ui,
+        format!("{} of {} marked impassable", census.impassable, census.open),
+    );
+    ui.horizontal(|ui| {
+        for (label, on) in [("Impassable", true), ("Passable", false)] {
+            if ui
+                .add_enabled(any, egui::Button::new(label))
+                .on_hover_text(
+                    "MCNK flag 0x02 on every selected chunk. vmangos reads it when it \
+                     builds mmaps. This client does not read it, so the viewport does \
+                     not change.",
+                )
+                .clicked()
+            {
+                let changed = tool::set_impassable(session, &chunks.selected, on);
+                session.status = format!("{} on {changed} chunk(s)", label.to_lowercase());
+            }
+        }
+    });
+
+    ui.add_space(4.0);
+    theme::heading(ui, "Holes");
+    theme::note(
+        ui,
+        format!("{} of {} squares cut", census.cut, census.open * 16),
+    );
+    ui.horizontal(|ui| {
+        for (label, cut) in [("Cut", true), ("Patch", false)] {
+            if ui
+                .add_enabled(any, egui::Button::new(label))
+                .on_hover_text(match cut {
+                    true => "Cut all sixteen squares of every selected chunk.",
+                    false => "Put back all sixteen squares of every selected chunk.",
+                })
+                .clicked()
+            {
+                let changed = tool::set_holes(session, &chunks.selected, cut);
+                session.status = match cut {
+                    true => format!("cut {changed} chunk(s)"),
+                    false => format!("patched {changed} chunk(s)"),
+                };
+            }
+        }
+    });
+
+    ui.add_space(4.0);
+    theme::heading(ui, "Textures");
+    let chosen = match textures.brush.texture.is_empty() {
+        true => None,
+        false => Some(textures.brush.texture.clone()),
+    };
+    match &chosen {
+        Some(path) => {
+            ui.horizontal(|ui| {
+                swatch(ui, thumbnails, path);
+                ui.add(
+                    egui::Label::new(egui::RichText::new(textures::leaf(path)).color(theme::INK))
+                        .truncate(),
+                )
+                .on_hover_text(path.clone());
+            });
+        }
+        None => theme::note(ui, "no texture chosen; pick one below"),
+    }
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(any && chosen.is_some(), egui::Button::new("Base"))
+            .on_hover_text(
+                "Make the chosen texture the base of every selected chunk, under \
+                 whatever each already carries. Every blend map is kept. One undo entry.",
+            )
+            .on_disabled_hover_text("Select chunks, and choose a texture below.")
+            .clicked()
+        {
+            if let Some(path) = &chosen {
+                let changed = tool::set_base(session, &chunks.selected, path);
+                session.status =
+                    format!("{changed} chunk(s) re-based on {}", textures::leaf(path));
+            }
+        }
+        if ui
+            .add_enabled(any, egui::Button::new("Clear to base"))
+            .on_hover_text("Take every layer but the base off every selected chunk.")
+            .clicked()
+        {
+            let changed = tool::clear_paint(session, &chunks.selected);
+            session.status = format!("{changed} chunk(s) cleared to their base");
+        }
+    });
+    // The textures the selection carries. `swap` and `×` act on every chunk
+    // that carries the row's texture, which is the chunk list's two buttons
+    // over a selection.
+    let mut swap: Option<String> = None;
+    let mut drop: Option<String> = None;
+    for (path, carried, based) in census.textures.iter().take(CENSUS_ROWS) {
+        ui.horizontal(|ui| {
+            swatch(ui, thumbnails, path);
+            ui.vertical(|ui| {
+                ui.label(
+                    egui::RichText::new(textures::leaf(path))
+                        .size(theme::SMALL)
+                        .color(theme::INK),
+                )
+                .on_hover_text(path.clone());
+                theme::note(
+                    ui,
+                    match based {
+                        0 => format!("on {carried}"),
+                        _ => format!("on {carried}, the base of {based}"),
+                    },
+                );
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(carried > based, egui::Button::new("×").small())
+                    .on_hover_text(
+                        "Take this texture's layer off every selected chunk that \
+                         carries it above its base.",
+                    )
+                    .on_disabled_hover_text(
+                        "It is only a base here. A base is replaced, not removed.",
+                    )
+                    .clicked()
+                {
+                    drop = Some(path.clone());
+                }
+                let differs = chosen
+                    .as_deref()
+                    .is_some_and(|chosen| !chosen.eq_ignore_ascii_case(path));
+                if ui
+                    .add_enabled(differs, egui::Button::new("swap").small())
+                    .on_hover_text(
+                        "Make this texture's layer draw the chosen texture instead, on \
+                         every selected chunk that carries it, keeping each blend map.",
+                    )
+                    .on_disabled_hover_text("Choose another texture below.")
+                    .clicked()
+                {
+                    swap = Some(path.clone());
+                }
+            });
+        });
+    }
+    if census.textures.len() > CENSUS_ROWS {
+        theme::note(
+            ui,
+            format!("and {} more textures", census.textures.len() - CENSUS_ROWS),
+        );
+    }
+    if census.full > 0 {
+        theme::note(
+            ui,
+            format!(
+                "{} carry four textures, the most a chunk may.",
+                census.full
+            ),
+        );
+    }
+    if let (Some(from), Some(to)) = (&swap, &chosen) {
+        let changed = tool::swap_texture(session, &chunks.selected, from, to);
+        session.status = format!(
+            "{} now draws {} on {changed} chunk(s)",
+            textures::leaf(from),
+            textures::leaf(to)
+        );
+    }
+    if let Some(path) = &drop {
+        let changed = tool::remove_texture(session, &chunks.selected, path);
+        session.status = format!("removed {} from {changed} chunk(s)", textures::leaf(path));
+    }
+    egui::CollapsingHeader::new(egui::RichText::new("Choose a texture").color(theme::INK_DIM))
+        .id_salt("chunks-texture-picker")
+        .default_open(chosen.is_none())
+        .show(ui, |ui| {
+            tileset_picker(ui, textures, thumbnails, session);
+        });
+
+    ui.add_space(6.0);
+    theme::heading(ui, "Keys");
+    theme::note(ui, "click selects a chunk · drag selects a block");
+    theme::note(ui, "shift adds · shift + click on a selected chunk takes it out");
+    theme::note(ui, "ctrl + a the tile under the pointer · escape deselects");
+
+    ui.add_space(6.0);
+    theme::heading(ui, "Under the pointer");
+    match chunks.at {
+        Some(cell) => {
+            let (tile, within) = (cell.tile(), cell.within());
+            theme::row(ui, "tile", |ui| {
+                ui.label(theme::number(format!("{},{}", tile.0, tile.1)));
+            });
+            theme::row(ui, "chunk", |ui| {
+                ui.label(theme::number(format!("{},{}", within.0, within.1)));
+            });
+            if let Some(area) = tool::area_of(session, cell) {
+                ui.label(
+                    egui::RichText::new(area_name(table, area))
+                        .size(theme::SMALL)
+                        .color(theme::INK_DIM),
+                );
+            }
+        }
+        None => theme::note(ui, "the pointer is over no open tile"),
+    }
 }
 
 /// The Select/Place switch, and the model picker shown in Place mode.
@@ -2261,6 +2644,75 @@ fn paint(
     assets: &vale_client::assets::GameAssets,
     now: f64,
 ) {
+    tileset_chosen(ui, textures, thumbnails, session, assets);
+    ui.add_space(4.0);
+    if !tileset_picker(ui, textures, thumbnails, session) {
+        return;
+    }
+
+    ui.add_space(4.0);
+    theme::heading(ui, "Brush");
+    theme::row(ui, "radius", |ui| {
+        ui.add(
+            egui::DragValue::new(&mut textures.brush.radius)
+                .speed(0.25)
+                .range(textures::RADIUS)
+                .suffix(" yd"),
+        );
+    });
+    theme::row(ui, "strength", |ui| {
+        ui.add(
+            egui::DragValue::new(&mut textures.brush.strength)
+                .speed(0.05)
+                .range(textures::RATE)
+                .suffix("/s"),
+        );
+    });
+
+    theme::row(ui, "core", |ui| {
+        ui.add(
+            egui::DragValue::new(&mut textures.brush.core)
+                .speed(0.01)
+                .range(crate::tools::CORE)
+                .fixed_decimals(2),
+        );
+    });
+
+    ui.add_space(4.0);
+    theme::heading(ui, "Falloff");
+    theme::segmented(
+        ui,
+        &mut textures.brush.falloff,
+        &textures::FALLOFFS,
+        |a, b| a == b,
+    );
+
+    ui.add_space(4.0);
+    theme::heading(ui, "Shape");
+    theme::segmented(ui, &mut textures.brush.shape, &textures::SHAPES, |a, b| {
+        a == b
+    });
+
+    ui.add_space(6.0);
+    chunk_layers(ui, thumbnails, textures, session, cursor, assets, now);
+
+    ui.add_space(6.0);
+    theme::heading(ui, "Keys");
+    theme::note(ui, "left button paints");
+    theme::note(ui, "ctrl + wheel resizes · shift + wheel the strength");
+    theme::note(ui, "alt + wheel the core");
+    theme::note(ui, "space pins the chunk under the pointer");
+    theme::note(ui, "1 - 5 pick the falloff · shift + 1 · 2 · 3 the shape");
+}
+
+/// The texture brush's chosen texture, and what a new layer of it grows.
+fn tileset_chosen(
+    ui: &mut egui::Ui,
+    textures: &mut Textures,
+    thumbnails: &mut Thumbnails,
+    session: &EditSession,
+    assets: &vale_client::assets::GameAssets,
+) {
     theme::heading(ui, "Texture");
     match textures.brush.texture.is_empty() {
         true => theme::note(ui, "no texture chosen; pick one below"),
@@ -2313,8 +2765,21 @@ fn paint(
             theme::note(ui, grows(assets, textures.brush.effect_id));
         }
     }
+}
 
-    ui.add_space(4.0);
+/// The tileset picker: the search box and the list by folder. A click sets
+/// the texture brush's chosen texture.
+///
+/// Shared by the texture brush's panel and the chunk selection's. Both act
+/// with the brush's chosen texture, so there is one picker and one chosen
+/// texture. Returns `false` while the tileset list is still being read, and
+/// draws nothing below the search box then.
+fn tileset_picker(
+    ui: &mut egui::Ui,
+    textures: &mut Textures,
+    thumbnails: &mut Thumbnails,
+    session: &EditSession,
+) -> bool {
     ui.add(
         egui::TextEdit::singleline(&mut textures.search)
             .hint_text("search the tilesets")
@@ -2322,7 +2787,7 @@ fn paint(
     );
     if !textures.catalogue.iter().any(|path| !path.is_empty()) {
         theme::note(ui, "reading the tileset list…");
-        return;
+        return false;
     }
     // Folders, as in the model picker. `Tileset\Elwynn\` is the set a zone was
     // painted with, and with six hundred names in one scroller every one has
@@ -2394,60 +2859,7 @@ fn paint(
         textures.brush.effect_id = textures::usual_effect(session, &path).unwrap_or(0);
         textures.brush.texture = path;
     }
-
-    ui.add_space(4.0);
-    theme::heading(ui, "Brush");
-    theme::row(ui, "radius", |ui| {
-        ui.add(
-            egui::DragValue::new(&mut textures.brush.radius)
-                .speed(0.25)
-                .range(textures::RADIUS)
-                .suffix(" yd"),
-        );
-    });
-    theme::row(ui, "strength", |ui| {
-        ui.add(
-            egui::DragValue::new(&mut textures.brush.strength)
-                .speed(0.05)
-                .range(textures::RATE)
-                .suffix("/s"),
-        );
-    });
-
-    theme::row(ui, "core", |ui| {
-        ui.add(
-            egui::DragValue::new(&mut textures.brush.core)
-                .speed(0.01)
-                .range(crate::tools::CORE)
-                .fixed_decimals(2),
-        );
-    });
-
-    ui.add_space(4.0);
-    theme::heading(ui, "Falloff");
-    theme::segmented(
-        ui,
-        &mut textures.brush.falloff,
-        &textures::FALLOFFS,
-        |a, b| a == b,
-    );
-
-    ui.add_space(4.0);
-    theme::heading(ui, "Shape");
-    theme::segmented(ui, &mut textures.brush.shape, &textures::SHAPES, |a, b| {
-        a == b
-    });
-
-    ui.add_space(6.0);
-    chunk_layers(ui, thumbnails, textures, session, cursor, assets, now);
-
-    ui.add_space(6.0);
-    theme::heading(ui, "Keys");
-    theme::note(ui, "left button paints");
-    theme::note(ui, "ctrl + wheel resizes · shift + wheel the strength");
-    theme::note(ui, "alt + wheel the core");
-    theme::note(ui, "space pins the chunk under the pointer");
-    theme::note(ui, "1 - 5 pick the falloff · shift + 1 · 2 · 3 the shape");
+    true
 }
 
 /// One row of the tileset list: a picture, a name, and whether it was clicked.

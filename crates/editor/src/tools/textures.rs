@@ -1,51 +1,50 @@
-//! The texture brush: what the ground is painted with.
+//! The texture brush: the tool that paints textures on the ground.
 //!
-//! ## It is the first tool whose edit changes the size of the file
+//! ## A texture edit can change the size of the file
 //!
-//! The height brush moves 580 bytes about inside a region that stays 580 bytes
-//! long. Painting with a texture a chunk does not carry adds a `MCLY` record and
-//! a blend map, which moves every region after them and every offset that names
-//! one. That is `vale_edit`'s problem and it is solved there — see
-//! `vale_edit::adt::alpha`, and the round trip over five real tiles that says
-//! the writer can do it.
+//! The height brush moves 580 bytes inside a region that stays 580 bytes long.
+//! Painting with a texture a chunk does not carry adds a `MCLY` record and a
+//! blend map. That moves every region after them and every offset that names
+//! one. `vale_edit` handles this: see `vale_edit::adt::alpha` and the round
+//! trip over five real tiles that tests the writer.
 //!
-//! What is left here is the half a person touches, and it has one decision in it
-//! that the height brush did not have to make.
+//! This module is the interactive half. It makes one decision the height brush
+//! does not have to make: how an edit reaches the screen.
 //!
-//! ## A stroke reaches the screen two different ways, and which one decides the cost
+//! ## The two ways an edit reaches the screen, and what each costs
 //!
 //! ```text
 //! the alpha changed        write the chunk's cell into the tile's atlas
 //! the texture set changed  read the tile again
 //! ```
 //!
-//! A chunk's blend maps are texels in one 1024x1024 atlas per tile, so moving
+//! A chunk's blend maps are texels in one 1024x1024 atlas per tile, so changing
 //! them is a write into an image that is already on the GPU: 16 KB for a chunk,
-//! at every level of the mip chain, which
-//! `vale_assets::world::adt::write_alpha_atlas_cell` does in one call because
-//! a cell is self-contained at every level the chain reaches.
+//! at every level of the mip chain.
+//! `vale_assets::world::adt::write_alpha_atlas_cell` does it in one call,
+//! because a cell is self-contained at every level the chain reaches.
 //!
-//! Which *textures* a chunk names is not in the atlas at all. It is part of the
-//! `TerrainMaterial` its draw group was built with — four image handles and a
-//! layer count — so a chunk given a fourth texture has to have its tile read
-//! again. That is a third of a second in a debug build, and it happens **once
-//! per texture per chunk**: the first stroke that introduces a texture pays for
-//! it and every stroke after it is live. [`Edit::changes_the_texture_set`] is
-//! what tells the two apart and it is asked per edit, not per stroke.
+//! Which textures a chunk names is not in the atlas. It is part of the
+//! `TerrainMaterial` its draw group was built with (four image handles and a
+//! layer count), so a chunk given a fourth texture must have its tile read
+//! again. That takes a third of a second in a debug build and happens once per
+//! texture per chunk: the first stroke that introduces a texture pays for it
+//! and every stroke after it is live. [`Edit::changes_the_texture_set`]
+//! distinguishes the two cases. It is asked per edit, not per stroke.
 //!
-//! ## The catalogue is the archives' own listing
+//! ## The catalogue is the archives' listing of `Tileset\`
 //!
-//! `Tileset\` is 1,700-odd paths in the MPQ listing and this offers all of them,
-//! filtered by a search box. Not the tile's own `MTEX`: that is the list of what
-//! is already there, which is the one list a person painting does not need.
+//! The MPQ listing has about 1,700 paths under `Tileset\`. The picker offers
+//! all of them, filtered by a search box. It does not offer the tile's own
+//! `MTEX`, which lists only the textures the tile already has.
 //!
-//! ## What a texture edit does not carry with it
+//! ## What a new layer grows
 //!
-//! `MCLY`'s `effectId` is the ground foliage a layer grows — the tufts and
-//! shrubs `render::foliage` plants — and a new layer is written with none. So
-//! painting grass over dirt does not plant grass; that is a second field on the
-//! same record and a second panel, and it is left for later rather
-//! than guessed at here.
+//! `MCLY`'s `effectId` is the ground foliage a layer grows: the tufts and
+//! shrubs `render::foliage` plants. A new layer is written with the brush's
+//! `effect_id`. The panel sets that from [`usual_effect`] when a texture is
+//! chosen: the id the open tiles most often pair with the texture. Zero plants
+//! nothing. [`set_layer_effect`] changes the id on a layer already there.
 
 use crate::pick::Cursor;
 use crate::session::EditSession;
@@ -57,14 +56,14 @@ use vale_edit::ops::{Falloff, PaintBrush, Working};
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 
-/// How large the texture brush may be, in yards, and how hard.
+/// The range of the texture brush's radius, in yards, and of its strength.
 ///
-/// The radius has the same real ceiling the height brush's does and for the same
-/// reason — a stroke reaches only the tiles this session has open — and the
-/// strength has none worth the name: it is a fraction of the remaining distance
-/// a second and one step is clamped to all of it, so a large number is simply
-/// "immediately". Both were guesses before (100 yards and 10), and a guess that
-/// refuses work the tool can do is the wrong kind.
+/// The radius has the same ceiling as the height brush's, for the same reason:
+/// a stroke reaches only the tiles this session has open. The strength has no
+/// meaningful ceiling. It is a fraction of the remaining distance per second,
+/// and one step is clamped to all of that distance, so a large number means
+/// "immediately". Both limits were guesses before (100 yards and 10), and they
+/// refused work the tool can do.
 pub const RADIUS: std::ops::RangeInclusive<f32> = 0.5..=(crate::OPEN_BLOCK / 2.0);
 pub const RATE: std::ops::RangeInclusive<f32> = 0.0..=1_000.0;
 
@@ -72,38 +71,37 @@ pub const RATE: std::ops::RangeInclusive<f32> = 0.0..=1_000.0;
 #[derive(Resource, Debug, Clone)]
 pub struct Textures {
     pub brush: PaintBrush,
-    /// Every `Tileset\` path the archives name, sorted. Read once, lazily — see
+    /// Every `Tileset\` path the archives name, sorted. Read once, lazily. See
     /// [`read_catalogue`].
     pub catalogue: Vec<String>,
     /// What the panel's search box holds. Held here rather than in the panel so
     /// that it survives the tool being switched away from and back.
     pub search: String,
-    /// **Which folder the picker is showing**, as a lower-case path prefix
-    /// ending in a separator.
+    /// Which folder the picker is showing, as a lower-case path prefix ending
+    /// in a separator.
     ///
-    /// The same arrangement the model picker has and for the same reason — see
-    /// [`crate::tools::place`]. 621 tilesets in one scroller means every texture
-    /// is found by typing, and the archives' own directories are the game's own
-    /// grouping: `Tileset\Elwynn\` is the set a zone was painted with.
+    /// The model picker has the same arrangement for the same reason. See
+    /// [`crate::tools::place`]. With 621 tilesets in one scroller, every
+    /// texture has to be found by typing. The archives' directories are the
+    /// game's own grouping: `Tileset\Elwynn\` is the set a zone was painted
+    /// with.
     pub folder: String,
-    /// **The chunk the panel is about, when it is not the one under the
-    /// pointer.**
+    /// The chunk the panel is about, when it is not the one under the pointer.
     ///
-    /// The layer list has to be *reachable*: a person who wants to take a layer
-    /// off has to move the pointer to the button, and the moment they do, the
-    /// pointer is over something else and the panel is showing a different
-    /// chunk. It was reported exactly that way — "deleting one requires moving
-    /// the pointer, at which point whatever you were trying to delete has
-    /// disappeared. It's circular."
+    /// The layer list has to be reachable. A person who wants to take a layer
+    /// off has to move the pointer to the button. The pointer is then over a
+    /// different chunk, and the panel shows that chunk instead. A user reported
+    /// this: "deleting one requires moving the pointer, at which point whatever
+    /// you were trying to delete has disappeared."
     ///
-    /// Latching on the pointer leaving the viewport does not fix it either,
-    /// because reaching the panel sweeps the pointer across every chunk between
-    /// here and the right-hand edge.
+    /// Latching when the pointer leaves the viewport does not fix it, because
+    /// reaching the panel moves the pointer across every chunk between its
+    /// position and the right-hand edge.
     ///
-    /// So it is pinned, two ways, and neither of them needs the pointer to move:
-    /// [`PIN`] pins whatever is under it, and a stroke that is **refused** pins
-    /// the chunk that refused it — which is the case the list exists for, and
-    /// means the answer to "why did it stop" is already on screen.
+    /// A chunk is pinned in two ways, and neither needs the pointer to move.
+    /// [`PIN`] pins the chunk under the pointer. A stroke that is refused pins
+    /// the chunk that refused it, which is the case the list exists for. The
+    /// panel then already shows why the stroke stopped.
     pub pinned: Option<((u32, u32), usize)>,
 }
 
@@ -113,10 +111,10 @@ impl Default for Textures {
             brush: PaintBrush::default(),
             catalogue: Vec::new(),
             search: String::new(),
-            // **[`ROOT`] and not the empty string**, which a derived default
-            // would give: an empty prefix matches every path, so the picker
-            // would open on one folder called `tileset` with everything in it
-            // and a click nobody can avoid.
+            // [`ROOT`], not the empty string a derived default would give. An
+            // empty prefix matches every path, so the picker would open on one
+            // folder called `tileset` with everything in it, and every use
+            // would begin with a click into that folder.
             folder: ROOT.to_string(),
             pinned: None,
         }
@@ -125,14 +123,14 @@ impl Default for Textures {
 
 /// The key that pins the chunk under the pointer, and unpins it.
 ///
-/// **A key and not a button**, which is the whole point: a button would have to
-/// be reached, and reaching it is what moves the pointer off the chunk. Space is
-/// free — the camera flies on `WASD`, `Q` and `E`.
+/// It is a key and not a button because a button would have to be reached, and
+/// reaching it moves the pointer off the chunk. Space is free: the camera flies
+/// on `WASD`, `Q` and `E`.
 const PIN: KeyCode = KeyCode::Space;
 
-/// Where the tileset picker starts. Everything the catalogue holds is under it
-/// — it comes from `list_prefix("Tileset\\")` — so a level above would be one
-/// folder with everything in it.
+/// Where the tileset picker starts. Everything the catalogue holds is under
+/// it, because the catalogue comes from `list_prefix("Tileset\\")`. A level
+/// above would be one folder with everything in it.
 pub const ROOT: &str = "tileset\\";
 
 pub struct TextureToolPlugin;
@@ -145,43 +143,44 @@ impl Plugin for TextureToolPlugin {
                 Update,
                 (read_catalogue, stroke, live_paint)
                     .chain()
-                    // **After the pick**, for the reason the height brush is:
+                    // After the pick, for the same reason as the height brush:
                     // the stroke is aimed by where the pointer met the ground,
-                    // and a frame earlier is a stroke that trails the cursor.
+                    // and a pick from the frame before makes the stroke trail
+                    // the cursor.
                     .after(crate::pick::aim),
             )
             .add_systems(Update, (draw_brush, draw_pin));
     }
 }
 
-/// Whether a stroke is being held, and whether the press that began it was the
-/// world's.
+/// Whether a stroke is being held, and whether the press that began it was
+/// over the world.
 ///
-/// The same two bools the doodad tool keeps and for the same reason: **a drag
-/// belongs to where it began**, so the gate is asked on the press and not on
-/// every frame. Without that a stroke that wandered over the inspector stopped
-/// dead in the middle and started again on the way back.
+/// The doodad tool keeps the same two bools for the same reason. A drag belongs
+/// to where it began, so the gate is asked on the press and not on every frame.
+/// Without that, a stroke that passed over the inspector stopped there and
+/// started again when the pointer came back.
 #[derive(Resource, Default)]
 struct Held {
     painting: bool,
     armed: bool,
-    /// **The stroke's own copy of the texels it is working on**, per tile.
+    /// The stroke's own copy of the texels it is working on, per tile.
     ///
-    /// A stroke cannot accumulate in the numbers the file holds: a 4-bit chunk
-    /// has sixteen levels, so any step smaller than half a quantum is a step
-    /// that rounds back to where it started. See `vale_edit::ops::Working`,
-    /// which is the whole argument — and note that it is cleared when the button
-    /// comes up, because a copy kept past the stroke that made it disagrees with
-    /// the file the moment anything else writes.
+    /// A stroke cannot accumulate in the numbers the file holds. A 4-bit chunk
+    /// has sixteen levels, so any step smaller than half a quantum rounds back
+    /// to where it started. See `vale_edit::ops::Working`. The copy is cleared
+    /// when the button comes up, because a copy kept past the stroke that made
+    /// it disagrees with the file as soon as anything else writes.
     working: bevy::platform::collections::HashMap<(u32, u32), Working>,
 }
 
 /// The list of tilesets, read once.
 ///
-/// Lazily rather than at startup: it walks the whole listing of nineteen
-/// archives, and a session that never opens this tool should not pay for it.
+/// It is read lazily rather than at startup. The read walks the whole listing
+/// of nineteen archives, and a session that never opens this tool should not
+/// pay for it.
 fn read_catalogue(mut textures: ResMut<Textures>, tool: Res<Tool>, assets: Res<GameAssets>) {
-    if *tool != Tool::Textures || !textures.catalogue.is_empty() {
+    if !matches!(*tool, Tool::Textures | Tool::Chunks) || !textures.catalogue.is_empty() {
         return;
     }
     let found = assets.with_archive(|chain| Ok(chain.list_prefix("Tileset\\")));
@@ -190,9 +189,9 @@ fn read_catalogue(mut textures: ResMut<Textures>, tool: Res<Tool>, assets: Res<G
             .into_iter()
             .filter(|path| path.ends_with(".blp"))
             // The `_s` files are the specular masks that sit beside every
-            // tileset — see `vale_assets::world::adt`, which resolves them
-            // from the base name. Offering them would be offering each texture
-            // twice, once as itself and once as its gloss.
+            // tileset. See `vale_assets::world::adt`, which resolves them
+            // from the base name. Offering them would list each texture
+            // twice, once as itself and once as its gloss mask.
             .filter(|path| !path.trim_end_matches(".blp").ends_with("_s"))
             .collect(),
         Err(e) => {
@@ -231,9 +230,9 @@ fn stroke(
         return;
     }
     let in_world = crate::ui::over_the_world(&viewport, &wants, &windows);
-    // **Pin, from the keyboard**, so that choosing a chunk does not move the
-    // pointer off it — see [`Textures::pinned`]. Pressing it again on the same
-    // chunk lets go.
+    // The pin is set from the keyboard, so that choosing a chunk does not move
+    // the pointer off it. See [`Textures::pinned`]. Pressing the key again on
+    // the same chunk unpins it.
     if keys.just_pressed(PIN) && !wants.wants_keyboard_input() && in_world {
         let under = cursor.tile.zip(cursor.chunk);
         textures.pinned = match (textures.pinned, under) {
@@ -241,11 +240,10 @@ fn stroke(
             (_, now) => now,
         };
     }
-    // **The same three numbers on the wheel the height brush has** — see
+    // The wheel sets the same three numbers it sets on the height brush. See
     // [`crate::tools::Wheel`], which is the one list of what each modifier puts
-    // on it and is what `camera::fly` reads to decline the same notch. Two
-    // brushes that answered different modifiers would be two things to learn for
-    // one gesture.
+    // on the wheel and is what `camera::fly` reads to decline the same notch.
+    // Both brushes answer the same modifiers, so the gesture is learned once.
     if in_world && scroll.delta.y != 0.0 {
         let step = 1.0 + scroll.delta.y * 0.1;
         match crate::tools::Wheel::held(&keys) {
@@ -297,9 +295,9 @@ fn stroke(
     let brush = textures.brush.clone();
     let seconds = time.delta_secs();
     let mut full: Vec<((u32, u32), usize)> = Vec::new();
-    // **Every tile the circle reaches**, on the height brush's own argument: a
-    // stroke that stopped at a tile border would leave the paint ending in a
-    // straight line exactly there, with nothing about either file wrong.
+    // Every tile the circle reaches, for the same reason as the height brush:
+    // a stroke that stopped at a tile border would leave the paint ending in a
+    // straight line there, with neither file being wrong.
     for coord in tiles_under(brush.radius, at) {
         let key = session.key(coord);
         let Some(tile) = session.tiles.get_mut(&coord) else {
@@ -316,10 +314,10 @@ fn stroke(
         if edits.is_empty() {
             continue;
         }
-        // **Which route to the screen each edit takes, decided per edit.** A
-        // stroke that gives one chunk a new texture and moves the alpha on three
-        // others rebuilds the tile once and patches the other three, rather than
-        // rebuilding on every frame it is held.
+        // The route to the screen is decided per edit. A stroke that gives one
+        // chunk a new texture and moves the alpha on three others rebuilds the
+        // tile once and patches the other three, rather than rebuilding on
+        // every frame it is held.
         let mut rebuild = false;
         let mut touched: Vec<usize> = Vec::new();
         for edit in &edits {
@@ -343,24 +341,25 @@ fn stroke(
         }
     }
 
-    // **What the stroke could not do, said out loud.** A chunk already carrying
-    // four textures cannot take a fifth, and roughly half the ground in the
-    // shipped tiles is already at four — so a brush that refused in silence
-    // stops dead part-way across a hillside with nothing anywhere saying why.
-    // The inspector's *Chunk under the pointer* section is where the way out is.
+    // The status line reports what the stroke could not do. A chunk already
+    // carrying four textures cannot take a fifth, and roughly half the ground
+    // in the shipped tiles is already at four. A brush that refused without a
+    // message would stop part-way across a hillside with nothing saying why.
+    // The inspector's "Chunk under the pointer" section holds the controls
+    // that free a layer.
     session.status = match full.len() {
         0 => format!("painting {}", leaf(&brush.texture)),
         1 => "1 chunk is full: four textures is the limit".to_string(),
         n => format!("{n} chunks are full: four textures is the limit"),
     };
-    // **…and the first of them is put in front of the person painting.** This is
-    // the case the layer list exists for: the stroke stopped, and the panel is
-    // already showing which chunk stopped it and what its four textures are.
+    // The first full chunk is pinned. This is the case the layer list exists
+    // for: the stroke stopped, and the panel shows which chunk stopped it and
+    // what its four textures are.
     //
     // It replaces a pin that was already there, deliberate or not. The rule is
-    // *the panel shows what just stopped you*, and a pin held from a minute ago
-    // while the brush is refusing somewhere else is the panel answering a
-    // question nobody is asking.
+    // that the panel shows the chunk that last refused the stroke. A pin held
+    // from a minute ago, while the brush is refusing somewhere else, would
+    // show a chunk that is not the one refusing.
     if let Some(&(coord, chunk)) = full.first() {
         textures.pinned = Some((coord, chunk));
     }
@@ -369,20 +368,20 @@ fn stroke(
 /// Write the repainted chunks' blend maps into the atlases that are already
 /// drawn.
 ///
-/// The paint counterpart of `super::terrain::live_ground`, and it is cheaper per
-/// chunk than that one is: a cell is 64x64 texels wherever it is in the tile, so
+/// This is the paint counterpart of `super::terrain::live_ground`, and it is
+/// cheaper per chunk. A cell is 64x64 texels wherever it is in the tile, so
 /// this writes 16 KB and a mip chain rather than comparing against 81,840
 /// vertices.
 ///
-/// **What it costs is the re-upload**, which is the whole atlas: writing to an
-/// `Image` marks the asset changed and Bevy re-prepares all 5.3 MiB of it. That
-/// is per frame of a stroke and per tile the stroke is over, and it is the one
-/// number in this tool nothing has measured.
+/// The cost is the re-upload, which is the whole atlas: writing to an `Image`
+/// marks the asset changed and Bevy re-prepares all 5.3 MiB of it. That happens
+/// per frame of a stroke and per tile the stroke is over. It is the one cost in
+/// this tool that has not been measured.
 ///
-/// A tile whose atlas is not in `Assets<Image>` cannot be patched — the client
-/// builds them that way, and so does a tile that arrived before
-/// `LiveEdits` was set — and is marked stale instead, exactly as `live_ground`
-/// falls back.
+/// A tile whose atlas is not in `Assets<Image>` cannot be patched. The client
+/// builds them that way, and so does a tile that arrived before `LiveEdits`
+/// was set. Such a tile is marked stale instead, which is the same fallback
+/// `live_ground` has.
 fn live_paint(
     mut session: Option<ResMut<EditSession>>,
     tiles: Query<(&TerrainTile, &TileAlpha)>,
@@ -404,12 +403,12 @@ fn live_paint(
         let Some(tile) = session.tiles.get(&coord) else {
             continue;
         };
-        // **Every entity with this coordinate, not the first.** While a tile is
-        // being replaced there are two — the outgoing one, which is what is on
-        // screen, and the incoming one, which is hidden — and `find` picks
-        // whichever the query happens to yield. Patching only the hidden one is
-        // a stroke that stops appearing half way through and starts again when
-        // the swap lands. See `super::terrain::swap`.
+        // Every entity with this coordinate, not the first. While a tile is
+        // being replaced there are two: the outgoing one, which is on screen,
+        // and the incoming one, which is hidden. `find` picks whichever the
+        // query yields first. Patching only the hidden one makes a stroke stop
+        // appearing half way through and start again when the swap lands. See
+        // `super::terrain::swap`.
         let drawn: Vec<Handle<Image>> = tiles
             .iter()
             .filter(|(drawn, _)| drawn.coord == coord)
@@ -438,9 +437,9 @@ fn live_paint(
             }
         }
         if !reached {
-            // Drawn, but its atlas is not in `Assets<Image>` — the client builds
+            // Drawn, but its atlas is not in `Assets<Image>`. The client builds
             // them that way, and so does a tile that arrived before `LiveEdits`
-            // was set. Nothing to patch, so it is read again.
+            // was set. There is nothing to patch, so the tile is read again.
             session.stale.insert(coord);
         }
     }
@@ -449,16 +448,15 @@ fn live_paint(
 /// One chunk's atlas cell, from the file's blend maps and the atlas's own
 /// shadow.
 ///
-/// **The alpha channel is read back rather than recomputed.** It is the chunk's
-/// baked `MCSH`, which a paint stroke does not touch, and the copy already in
-/// the atlas is by construction the one the tile was built with — so taking it
-/// from there is both cheaper than decoding `MCSH` again and immune to
-/// disagreeing with it.
+/// The alpha channel is read back rather than recomputed. It is the chunk's
+/// baked `MCSH`, which a paint stroke does not touch. The copy already in the
+/// atlas is the one the tile was built with, so taking it from there is cheaper
+/// than decoding `MCSH` again and cannot disagree with it.
 ///
-/// The blend maps take the edge fix on the way out, because that is what a
-/// *renderer* reads: the file's last row and column hold nothing the reference
-/// client ever samples, and `vale_edit` deliberately decodes without it so
-/// that a tile written back is written back as it was.
+/// The blend maps take the edge fix here, because the cell is what a renderer
+/// reads: the file's last row and column hold nothing the reference client
+/// ever samples. `vale_edit` decodes without the fix, so that a tile written
+/// back is written back as it was.
 fn cell_of(chunk: &vale_edit::adt::MapChunk, index: usize, atlas: &[u8]) -> Vec<u8> {
     let paint = vale_edit::adt::alpha::paint(chunk);
     let mut maps = paint.maps;
@@ -477,18 +475,18 @@ fn cell_of(chunk: &vale_edit::adt::MapChunk, index: usize, atlas: &[u8]) -> Vec<
     cell
 }
 
-/// The tiles a brush's circle reaches — `super::terrain::tiles_in_range`, which
-/// is shared because the two brushes ask about the same circle and one of them
-/// getting it wrong for a large radius is a stroke with a cross of untouched
-/// ground through it.
+/// The tiles a brush's circle reaches. This is
+/// `super::terrain::tiles_in_range`, which is shared because the two brushes
+/// ask about the same circle. A wrong answer for a large radius leaves a stroke
+/// with a cross of untouched ground through it.
 fn tiles_under(radius: f32, at: Vec3) -> Vec<(u32, u32)> {
     super::terrain::tiles_in_range(radius, at)
 }
 
 /// The pinned chunk's square, on the ground.
 ///
-/// **Without it a pin is invisible**: the panel says *chunk 137* and there is
-/// nothing on screen saying which of the 2,304 squares in view that is. Drawn
+/// Without it a pin cannot be seen: the panel says "chunk 137" and nothing on
+/// screen shows which of the 2,304 squares in view that is. The square is drawn
 /// along the chunk's own edges at the edited heights, through the same height
 /// lookup the brush ring uses, so it lies on the ground rather than flat across
 /// it.
@@ -523,7 +521,7 @@ fn draw_pin(
 
     let at = |t: f32, edge: usize| -> Option<Vec3> {
         // The origin is the chunk's maximum corner and the square runs down from
-        // it in both axes — `vale_assets`' own convention.
+        // it in both axes, which is the convention `vale_assets` uses.
         let (x, y) = match edge {
             0 => (origin[0], origin[1] - t * side),
             1 => (origin[0] - t * side, origin[1] - side),
@@ -549,9 +547,9 @@ fn draw_pin(
 
 /// The brush ring, on the ground it is about to paint.
 ///
-/// Through the height tool's own [`super::terrain::ring`], which follows the
-/// edited heights rather than lying flat — the same ring, so the two brushes
-/// cannot come to disagree about where the pointer is.
+/// It is drawn through the height tool's own [`super::terrain::ring`], which
+/// follows the edited heights rather than lying flat. Both brushes use the same
+/// ring, so they cannot disagree about where the pointer is.
 fn draw_brush(
     mut gizmos: Gizmos,
     session: Option<Res<EditSession>>,
@@ -581,14 +579,13 @@ fn draw_brush(
 #[derive(Debug, Clone)]
 pub struct Layer {
     pub texture: String,
-    /// What this layer actually shows, 0 to 1 — see
-    /// `vale_edit::adt::alpha::Paint::coverage`, and note that it is not the
-    /// layer's own alpha.
+    /// How much of the chunk this layer shows, 0 to 1. It is not the layer's
+    /// own alpha. See `vale_edit::adt::alpha::Paint::coverage`.
     pub coverage: f32,
     /// What it grows: the `GroundEffectTexture` row, zero for nothing.
     pub effect_id: u32,
-    /// **How it crawls**: `(direction 0..7, speed 0..7, on)` — `MCLY`'s
-    /// texture animation. See
+    /// How its texture moves: `(direction 0..7, speed 0..7, on)`, which is
+    /// `MCLY`'s texture animation. See
     /// `vale_assets::world::adt::layer_flags::ANIMATION_ROTATION`.
     pub animation: (u32, u32, bool),
 }
@@ -601,11 +598,11 @@ pub fn shown(textures: &Textures, cursor: &Cursor) -> Option<((u32, u32), usize)
 
 /// What a chunk is painted with.
 ///
-/// **The answer to "why did the brush stop here".** Four textures is the limit
+/// This list shows why the brush stopped on a chunk. Four textures is the limit
 /// and about half the shipped chunks are already at four, so a person painting
-/// needs to see which four and which of them is doing nothing — which is what
-/// the coverage column is for: a layer at 0% can be taken off and the picture
-/// does not change.
+/// needs to see which four, and which of them shows nothing. The coverage
+/// column gives the second: a layer at 0% can be taken off and the picture does
+/// not change.
 ///
 /// `None` for a tile that is not open.
 pub fn layers_of(session: &EditSession, coord: (u32, u32), chunk: usize) -> Option<Vec<Layer>> {
@@ -631,13 +628,13 @@ pub fn layers_of(session: &EditSession, coord: (u32, u32), chunk: usize) -> Opti
     )
 }
 
-/// **What the shipped ground grows on this texture**: the `effectId` most
-/// often paired with it across the open tiles' layers, ignoring zero, or
-/// `None` when no open layer of it grows anything.
+/// What the shipped ground grows on this texture: the `effectId` most often
+/// paired with it across the open tiles' layers, ignoring zero, or `None` when
+/// no open layer of it grows anything.
 ///
-/// The one place the answer can come from, since neither table names a
+/// The open layers are the only source for this, since neither table names a
 /// texture: `GroundEffectTexture` is keyed by an id that only `MCLY` carries.
-/// A brush that took its id from here plants what the zone plants; a person
+/// A brush that takes its id from here plants what the zone plants. A person
 /// who wants something else has the number beside it.
 pub fn usual_effect(session: &EditSession, path: &str) -> Option<u32> {
     let mut seen: bevy::platform::collections::HashMap<u32, usize> = Default::default();
@@ -665,9 +662,10 @@ pub fn usual_effect(session: &EditSession, path: &str) -> Option<u32> {
         .map(|(id, _)| id)
 }
 
-/// **Change what one layer grows**, on [`swap_layer`]'s terms — one entry on
-/// the history, folded by `now` so a dragged number field is one press of
-/// undo. The tile is read again, since the foliage is built from the layer.
+/// Change what one layer grows. It records as [`swap_layer`] does: one entry
+/// on the history. The entry is folded by `now`, so a dragged number field is
+/// one press of undo. The tile is read again, since the foliage is built from
+/// the layer.
 pub fn set_layer_effect(
     session: &mut EditSession,
     coord: (u32, u32),
@@ -709,15 +707,16 @@ pub fn set_layer_effect(
     session.status = format!("layer {layer} of chunk {chunk} now grows effect {effect_id}");
 }
 
-/// **Change how one layer crawls** — `MCLY`'s texture animation, the direction
-/// and speed that make lava move. On [`set_layer_effect`]'s terms: one entry on
-/// the history, folded by `now` so that a dragged number is one press of undo.
+/// Change how one layer's texture moves. This is `MCLY`'s texture animation,
+/// the direction and speed that make lava move. It records as
+/// [`set_layer_effect`] does: one entry on the history, folded by `now` so
+/// that a dragged number is one press of undo.
 ///
-/// The tile is read again rather than patched, and the reason is not the paint:
-/// the velocity reaches the shader as part of the **draw group's** own uniform,
-/// and `Adt::to_mesh` groups chunks by their textures *and* their scroll — so a
-/// chunk that starts crawling has to leave the group of the still ones it was
-/// folded in with. See `vale_assets::world::adt::TerrainDraw::scrolls`.
+/// The tile is read again rather than patched, and the reason is not the paint.
+/// The velocity reaches the shader as part of the draw group's own uniform, and
+/// `Adt::to_mesh` groups chunks by their textures and their scroll. A chunk
+/// that starts moving therefore has to leave the group of still chunks it was
+/// grouped with. See `vale_assets::world::adt::TerrainDraw::scrolls`.
 pub fn set_layer_animation(
     session: &mut EditSession,
     coord: (u32, u32),
@@ -769,13 +768,13 @@ pub fn set_layer_animation(
 
 /// Take one layer off the chunk under the pointer.
 ///
-/// The one way out of the four-layer limit, and it is deliberately a button a
-/// person presses rather than something the brush does on their behalf: dropping
-/// a layer throws away whatever blend it was carrying, and which of the four is
-/// expendable is a judgement the coverage column informs and does not make.
+/// This is the one way out of the four-layer limit. It is a button a person
+/// presses rather than something the brush does for them: dropping a layer
+/// discards the blend it was carrying, and the coverage column informs the
+/// choice of which of the four to drop but does not make it.
 ///
-/// It changes the chunk's texture *set*, so the tile is read again rather than
-/// patched — see this module's own comment on the two routes.
+/// It changes the chunk's texture set, so the tile is read again rather than
+/// patched. See this module's own comment on the two routes.
 pub fn drop_layer(session: &mut EditSession, coord: (u32, u32), chunk: usize, layer: usize) {
     let key = session.key(coord);
     let Some(tile) = session.tiles.get_mut(&coord) else {
@@ -817,14 +816,14 @@ pub fn drop_layer(session: &mut EditSession, coord: (u32, u32), chunk: usize, la
     session.status = format!("removed {} from chunk {chunk}", leaf(&name));
 }
 
-/// **Swap what one layer draws, keeping its blend.**
+/// Swap what one layer draws, keeping its blend.
 ///
-/// The way through the four-layer limit that throws nothing away: a layer
+/// This gets past the four-layer limit without discarding anything: a layer
 /// painted in the right shape with the wrong tileset keeps its shape and
 /// changes its texture. `vale_edit::adt::alpha::Paint::set_layer_texture`
-/// is the operation; what is here is naming the texture in the tile's own
-/// `MTEX` and recording the undo entry, on [`set_base`]'s own terms — and
-/// like it, the tile is read again, since the chunk's texture *set* changed.
+/// is the operation. This function names the texture in the tile's own `MTEX`
+/// and records the undo entry, as [`set_base`] does. As there, the tile is
+/// read again, since the chunk's texture set changed.
 pub fn swap_layer(
     session: &mut EditSession,
     coord: (u32, u32),
@@ -864,30 +863,30 @@ pub fn swap_layer(
     session.status = format!("layer {layer} of chunk {chunk} now draws {}", leaf(path));
 }
 
-/// **Replace what a chunk is painted with underneath everything.**
+/// Replace the texture a chunk is painted with underneath every layer.
 ///
-/// The base is the one part of a chunk's paint no brush could reach: painting
-/// adds a layer *over* it, and a chunk already at the four-layer limit cannot
-/// even do that. So ground authored on the wrong tileset had no way back — which
-/// was reported from the window as *"is there a way to clear or change the base
-/// texture for a tile?"*, and there was not.
+/// The base is the one part of a chunk's paint no brush can reach: painting
+/// adds a layer over it, and a chunk already at the four-layer limit cannot do
+/// even that. Ground authored on the wrong tileset therefore could not be
+/// corrected. A user asked "is there a way to clear or change the base texture
+/// for a tile?", and there was not.
 ///
-/// **It replaces rather than removes**, which is what makes it well defined:
-/// every blend map and every layer above the base stays exactly as it was, and
-/// the one texture id underneath them changes. Removing a base would mean
-/// inventing what the chunk looks like where the layer above it is transparent.
+/// It replaces rather than removes, which keeps it well defined: every blend
+/// map and every layer above the base stays exactly as it was, and the one
+/// texture id underneath them changes. Removing a base would mean inventing
+/// what the chunk looks like where the layer above it is transparent.
 ///
-/// `vale_edit::adt::alpha::Paint::set_base` is the operation; what is here is
-/// naming the texture in the tile's own `MTEX` and recording the undo entry.
+/// `vale_edit::adt::alpha::Paint::set_base` is the operation. This function
+/// names the texture in the tile's own `MTEX` and records the undo entry.
 pub fn set_base(session: &mut EditSession, coord: (u32, u32), chunk: usize, path: &str) {
     let key = session.key(coord);
     let Some(tile) = session.tiles.get_mut(&coord) else {
         return;
     };
     let before = vale_edit::ops::ChunkPaint::capture(tile, chunk);
-    // **Named on the tile first.** `MTEX` is the tile's list and the layer holds
-    // an index into it, so a texture the tile has never heard of has to be added
-    // before a chunk can point at it.
+    // The texture is named on the tile first. `MTEX` is the tile's list and the
+    // layer holds an index into it, so a texture the tile does not list has to
+    // be added before a chunk can point at it.
     let texture_id = tile.name_texture(path);
     let mut paint = vale_edit::adt::alpha::paint(match tile.chunk(chunk) {
         Some(chunk) => chunk,
@@ -912,10 +911,11 @@ pub fn set_base(session: &mut EditSession, coord: (u32, u32), chunk: usize, path
     session.stale.insert(coord);
 }
 
-/// **Take every layer off but the base**, leaving flat ground.
+/// Take every layer off but the base, leaving flat ground.
 ///
-/// The other half of *clear this chunk's paint*. Dropping layers one at a time
-/// works and is three presses with an index that shifts under you each time.
+/// With [`set_base`], this is how a chunk's paint is cleared. Dropping layers
+/// one at a time also works, but it is three presses and the index of each
+/// remaining layer shifts after every one.
 pub fn clear_paint(session: &mut EditSession, coord: (u32, u32), chunk: usize) {
     let key = session.key(coord);
     let Some(tile) = session.tiles.get_mut(&coord) else {
@@ -945,11 +945,11 @@ pub fn clear_paint(session: &mut EditSession, coord: (u32, u32), chunk: usize) {
     session.stale.insert(coord);
 }
 
-/// …and the same over **every chunk of a tile**, which is what *change this
-/// tile's base* means.
+/// Replace the base texture of every chunk of a tile, as [`set_base`] does for
+/// one chunk. This is how a tile's base is changed.
 ///
-/// One undo entry for the whole tile rather than 256, because it is one action
-/// and undoing it a chunk at a time would be 256 presses.
+/// It records one undo entry for the whole tile rather than 256, because it is
+/// one action and undoing it a chunk at a time would be 256 presses.
 pub fn set_tile_base(session: &mut EditSession, coord: (u32, u32), path: &str) -> usize {
     let key = session.key(coord);
     let Some(tile) = session.tiles.get_mut(&coord) else {
@@ -990,15 +990,15 @@ pub fn set_tile_base(session: &mut EditSession, coord: (u32, u32), path: &str) -
 
 /// An archive path as a row in a list: the folder it is in, and its file name.
 ///
-/// **Two components and not one.** The tilesets are grouped by zone —
-/// `Tileset\Elwynn\`, `Tileset\Barrens\` — and the folder is most of what
-/// identifies one, because `grassbase.blp` appears in a dozen of them. The whole
-/// path is a hover away, which is where the rest of the directory belongs.
+/// The row has two components and not one. The tilesets are grouped by zone
+/// (`Tileset\Elwynn\`, `Tileset\Barrens\`) and the folder is most of what
+/// identifies one, because `grassbase.blp` appears in a dozen of them. The rest
+/// of the directory is in the whole path, which is shown on hover.
 ///
 /// The names come back from the archive listing in lower case, because that is
-/// how the listing is keyed. The archives answer either spelling, so what a
-/// stroke writes into `MTEX` is a lower-case path where Blizzard's own tools
-/// wrote mixed case; nothing reads it case-sensitively.
+/// how the listing is keyed. The archives answer either spelling, so a stroke
+/// writes a lower-case path into `MTEX` where Blizzard's own tools wrote mixed
+/// case. Nothing reads it case-sensitively.
 pub fn leaf(path: &str) -> &str {
     let file = path.rsplit(['\\', '/']).next().unwrap_or(path);
     let rest = &path[..path.len() - file.len()];
@@ -1012,14 +1012,15 @@ pub fn leaf(path: &str) -> &str {
     }
 }
 
-/// The three falloffs, as a list the panel can offer. The height brush's own
-/// list, named again here so the panel does not reach across into the other
-/// tool's file for it.
+/// The five falloffs, as a list the panel can offer. It is the height brush's
+/// own list, named again here so the panel does not reach into the other tool's
+/// file for it.
 pub const FALLOFFS: [(&str, Falloff); 5] = super::terrain::FALLOFFS;
 
-/// …and the three footprints, likewise. **The height brush's own lists and not
-/// a second pair**: a texture brush whose edge did not match the one that moves
-/// the ground would be two tools that disagree about where the pointer is.
+/// The three footprints, as a list the panel can offer. This and [`FALLOFFS`]
+/// are the height brush's own lists and not a second pair: a texture brush
+/// whose edge did not match the height brush's would make the two tools
+/// disagree about where the pointer is.
 pub const SHAPES: [(&str, vale_edit::ops::Shape); 3] = super::terrain::SHAPES;
 
 #[cfg(test)]
@@ -1027,8 +1028,8 @@ mod tests {
     use super::*;
 
     /// A brush in the middle of a tile names one tile, and one on a corner names
-    /// four. The same property the height brush has, and the one that keeps a
-    /// stroke from ending in a straight line at a border.
+    /// four. The height brush has the same property. It keeps a stroke from
+    /// ending in a straight line at a border.
     #[test]
     fn a_brush_names_every_tile_its_circle_reaches() {
         let middle = vale_assets::world::adt::TILE_SIZE * 0.5;
@@ -1040,13 +1041,13 @@ mod tests {
             0.0,
         );
         assert_eq!(tiles_under(10.0, at).len(), 1);
-        // …and its far corner, where four tiles meet.
+        // The tile's far corner, where four tiles meet.
         let corner = Vec3::new(at.x + middle, at.y + middle, 0.0);
         assert_eq!(tiles_under(10.0, corner).len(), 4);
     }
 
-    /// **A row names the folder and the file.** `grassbase.blp` on its own is
-    /// in a dozen tilesets, so the zone folder is most of what identifies one.
+    /// A row names the folder and the file. `grassbase.blp` on its own is in a
+    /// dozen tilesets, so the zone folder is most of what identifies one.
     #[test]
     fn a_row_names_the_folder_and_the_file() {
         assert_eq!(
@@ -1054,14 +1055,14 @@ mod tests {
             "elwynn\\grassbase.blp"
         );
         assert_eq!(leaf("tileset/elwynn/grassbase.blp"), "elwynn/grassbase.blp");
-        // …and a path with nothing above it is just itself.
+        // A path with no folder above it is returned unchanged.
         assert_eq!(leaf("grassbase.blp"), "grassbase.blp");
         assert_eq!(leaf(""), "");
     }
 
-    /// **The catalogue is the archives' list without the gloss masks.** Every
+    /// The catalogue is the archives' list without the gloss masks. Every
     /// tileset ships beside a `_s` variant holding its specular, and offering
-    /// both would be offering each texture twice under names that differ by two
+    /// both would list each texture twice under names that differ by two
     /// characters.
     #[test]
     fn the_gloss_masks_are_not_in_the_catalogue() {

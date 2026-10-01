@@ -12,7 +12,7 @@
 //! workspace replaces the viewport is a part of the workspace control.
 //!
 //! ```text
-//! the rail      Terrain  the ground itself: seven tools, each of which writes
+//! the rail      Terrain  the ground itself: eight tools, each of which writes
 //!                        a field of an MCNK chunk
 //!               World    what has a place on the ground and is not the ground:
 //!                        MDDF, MODF, the spheres of Light.dbc, the taxi nodes
@@ -110,6 +110,13 @@ const GROUPS: [(&str, &[Subject]); 3] = [
                 Tool::Areas,
                 "The AreaTable row each chunk belongs to. It is the only field that \
                  says where a character is standing.",
+            ),
+            s(
+                "Chunks",
+                Tool::Chunks,
+                "A selection of chunks: click one, drag a block on the ground, shift \
+                 to add. Then one area, base texture, hole mask or impassable flag \
+                 is written to all of them as one undo entry.",
             ),
         ],
     ),

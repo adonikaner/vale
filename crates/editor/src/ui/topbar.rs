@@ -1,6 +1,6 @@
-//! The bar across the top of the window: the open project and map, the camera
-//! position, the workspace control, and the controls that start and stop a
-//! playtest.
+//! The bar across the top of the window: the Project menu and the Save
+//! button, the Server button, the Map menu, the workspace control, and the
+//! controls that start and stop a playtest.
 //!
 //! ## What the bar holds
 //!
@@ -10,23 +10,43 @@
 //! that changes the world belongs in the inspector on the right, beside the tool
 //! that owns it.
 //!
-//! That rule keeps the bar short. It is also why "go to" is a popup rather than
-//! three rows: it moves the camera, which is the same kind of action as choosing
-//! a map, and it is used once and then not again for some time. The playtest
-//! login control has the same shape and sits behind the same kind of popover,
-//! with one difference: its button label states who the playtest logs in as,
-//! and gains " · cached" while the query cache is kept, so the facts a person
-//! would open it to check are readable without opening it. The query cache
-//! switch is in that popover.
+//! ## Two menus, and what stays a button
 //!
-//! After Go to… comes the workspace control ([`super::rail::workspaces`]):
+//! The bar is one row, and at 1280 points wide it had no room left: the
+//! project's name, Save, Publish, Server, the map drop-down with its id, the
+//! tile map button, Go to and four workspaces filled it, and a fifth workspace
+//! did not fit. The controls about one subject are now one menu each:
+//!
+//! ```text
+//! Project: <name>   Projects…        the project dialog
+//!                   Publish…         the publish popover
+//! Map: <name> (id)  Open map     >   every map, by id
+//!                   Edit WDT/ADT…    the tile map window
+//!                   Go to…           the go-to popover
+//!                   Bookmarks    >   each kept view, which a click returns to
+//! ```
+//!
+//! Each menu's button states what a person reads the bar for without opening
+//! it: which project is open, and which map with its `Map.dbc` id. The id is
+//! the number every other authority keys on (`WorldMapArea`, `Light.dbc`,
+//! vmangos' tables, a `.tele`), and the directory name is usable in none of
+//! them.
+//!
+//! A menu entry is a command. A form is still a popover: an egui menu closes
+//! when anything inside it is clicked, which suits a list of commands and does
+//! not suit text fields, so `Publish…` and `Go to…` open the same windows the
+//! buttons opened, placed under the menu. See [`super::popover`].
+//!
+//! Three controls stay buttons. Save's label says what is unsaved, which is
+//! read without a click. Server… opens one panel with two tabs, so a menu of
+//! two entries would add a click and remove nothing. The playtest login
+//! button's label states who the playtest logs in as, and gains " · cached"
+//! while the query cache is kept.
+//!
+//! After the Map menu comes the workspace control ([`super::rail::workspaces`]):
 //! World, Spells, Items, Quests. World returns to the last rail tool; the other
 //! three replace the viewport. [`Subjects`] carries the tool and the rail's
 //! memory into [`draw`].
-//!
-//! The popovers are in [`super::popover`], which also records why they are
-//! windows rather than menus: an egui menu closes when anything inside it is
-//! clicked, which suits a list of commands and does not suit a form.
 
 use bevy_egui::egui;
 
@@ -90,6 +110,8 @@ pub fn draw(
     playing: &mut Session,
     map_open: &mut bool,
     subjects: &mut Subjects<'_>,
+    // The kept views the Map menu lists. See [`crate::bookmarks`].
+    bookmarks: &crate::bookmarks::Bookmarks,
 ) {
     ui.horizontal(|ui| {
         ui.label(
@@ -125,44 +147,7 @@ pub fn draw(
             popovers.server.toggle(&at_server);
         }
         separator(ui);
-        map(ui, session, camera, in_world);
-        // Which tiles this map has is a fact about the session, which is what
-        // this bar is for, and it is the one thing in the editor not chosen
-        // with the pointer. It is not on the rail, because the rail lists what
-        // the pointer edits. See [`super::mapview`].
-        //
-        // This is a button rather than a `selectable_label`. A selectable label
-        // is drawn flat until it is on, so among buttons it reads as text.
-        if ui
-            .add_enabled(!in_world, egui::Button::new("Edit WDT/ADT"))
-            .on_hover_text(
-                "The map from above: which tiles exist, and making, deleting, \
-                 copying and pasting them.",
-            )
-            .on_disabled_hover_text(
-                "Not while a playtest is running: making and deleting tiles is \
-                 about the map the character is standing on.",
-            )
-            .clicked()
-        {
-            *map_open = !*map_open;
-        }
-        separator(ui);
-        // Disabled while a playtest is running, like the two controls beside
-        // it, for the same reason: all three act on the editor's free camera,
-        // which a playtest replaces with the session's. A jump would move a
-        // camera nothing is looking through and be undone on the way back out.
-        let go = ui
-            .add_enabled(!in_world, egui::Button::new("Go to…"))
-            .on_hover_text("Move the camera: a position, a tile, or a zone.")
-            .on_disabled_hover_text(
-                "Not while a playtest is running: the session has the camera. \
-                 Walk, or Ctrl+P to come back to the tools.",
-            );
-        popovers.go_to.track(&go);
-        if go.clicked() {
-            popovers.go_to.toggle(&go);
-        }
+        map(ui, session, camera, popovers, bookmarks, map_open, in_world);
         separator(ui);
         // The workspace control: World, then Spells, Items and Quests. World
         // returns to the last rail tool; the other three replace the viewport.
@@ -301,8 +286,11 @@ fn separator(ui: &mut egui::Ui) {
     ui.add_space(4.0);
 }
 
-/// The project section: which project is open, the Save button and the
-/// Publish button.
+/// The project section: the Project menu and the Save button.
+///
+/// The menu's button is the open project's name, which is the one thing on
+/// this bar a person can lose work by being wrong about. Its entries open the
+/// project dialog and the publish popover.
 ///
 /// The Save button's label names what it will save, for example `Save 2 tiles
 /// and server rows`, or `Saved` when there is nothing. A bare count such as
@@ -322,35 +310,63 @@ fn project(
     // The progress line a publish's tile regeneration writes.
     step: &crate::server::datadir::Step,
 ) {
-    ui.label(egui::RichText::new("Project").color(theme::INK_DIM));
-    // The project's name is the button that opens the project popover. The
-    // project is the one thing on this bar a person can lose work by being
-    // wrong about, so it must be changeable from the window and not only by
-    // `--project`.
-    //
-    // Disabled while a playtest is running. Switching saves what is unsaved,
-    // rebuilds the archive overlay, empties the undo stack and re-reads every
-    // tile on screen, and the running client reads that overlay for the ground
-    // the character stands on. Ending the playtest first is one keypress and
-    // leaves nothing half-swapped.
-    let which = ui
-        .add_enabled(
-            !playing,
-            egui::Button::new(
-                egui::RichText::new(&session.project.name).color(match playing {
-                    true => theme::INK_DIM,
-                    false => theme::INK,
-                }),
-            ),
-        )
-        .on_hover_text("Which project the edits go into, and making another one.")
-        .on_disabled_hover_text(
-            "Not while a playtest is running: switching rebuilds the archive overlay \
-             the running game is reading. Ctrl+P first.",
-        );
-    popovers.project.track(&which);
-    if which.clicked() {
-        popovers.project.toggle(&which);
+    // A publish's tile regeneration reads the folder a second publish would
+    // write, so Publish is disabled while one runs.
+    let regenerating = queue.busy();
+    let (mut ask_projects, mut ask_publish) = (false, false);
+    let menu = ui
+        .menu_button(format!("Project: {}", session.project.name), |ui| {
+            // Disabled while a playtest is running. Switching saves what is
+            // unsaved, rebuilds the archive overlay, empties the undo stack
+            // and re-reads every tile on screen, and the running client reads
+            // that overlay for the ground the character stands on. Ending the
+            // playtest first is one keypress and leaves nothing half-swapped.
+            if ui
+                .add_enabled(!playing, egui::Button::new("Projects…"))
+                .on_hover_text("Which project the edits go into, and making another one.")
+                .on_disabled_hover_text(
+                    "Not while a playtest is running: switching rebuilds the archive \
+                     overlay the running game is reading. Ctrl+P first.",
+                )
+                .clicked()
+            {
+                ask_projects = true;
+                ui.close();
+            }
+            // Disabled while a playtest is running. Publishing writes a new
+            // archive into the folder whose chain this process has open, and
+            // the running client reads that chain for the ground the
+            // character is standing on. Saving is what reaches a running
+            // game; publishing is for finished work.
+            if ui
+                .add_enabled(!playing && !regenerating, egui::Button::new("Publish…"))
+                .on_hover_text(
+                    "Write a patch: one folder under the project's publish\\ holding the \
+                     client archive, the server's DBCs, a migration of the rows and the \
+                     server's maps, vmaps and mmaps, with a README saying where each goes. \
+                     Nothing is applied to this machine.",
+                )
+                .on_disabled_hover_text(match playing {
+                    true => "Not while a playtest is running.",
+                    false => "A server write is still running.",
+                })
+                .clicked()
+            {
+                ask_publish = true;
+                ui.close();
+            }
+        })
+        .response
+        .on_hover_text("The open project. Every edit is written into its folder.");
+    // Both windows are placed from the menu's button, tracked every frame so
+    // `--projects` can open one without a press. See `Popover::show`.
+    popovers.project.track(&menu);
+    popovers.publish.track(&menu);
+    if ask_projects {
+        popovers.project.show();
+    }
+    if ask_publish {
+        popovers.publish.show();
     }
 
     // Three kinds of unsaved work: tiles, tables and server rows. The same
@@ -413,31 +429,7 @@ fn project(
         }
     }
 
-    // Disabled while a playtest is running. Publishing writes a new archive
-    // into the folder whose chain this process has open, and the running client
-    // reads that chain for the ground the character is standing on. Saving is
-    // what reaches a running game; publishing is for finished work.
-    //
-    // Also disabled while a publish's tile regeneration is still running,
-    // because the extractors read the same folder mid-run.
-    let regenerating = queue.busy();
-    let at_publish = ui
-        .add_enabled(!playing && !regenerating, egui::Button::new("Publish…"))
-        .on_hover_text(
-            "Write a patch: one folder under the project's publish\\ holding the \
-             client archive, the server's DBCs, a migration of the rows and the \
-             server's maps, vmaps and mmaps, with a README saying where each goes. \
-             Nothing is applied to this machine.",
-        )
-        .on_disabled_hover_text(match playing {
-            true => "Not while a playtest is running.",
-            false => "A server write is still running.",
-        });
-    popovers.publish.track(&at_publish);
-    if at_publish.clicked() {
-        popovers.publish.toggle(&at_publish);
-    }
-    // A spinner beside the disabled button, with the step's name on its hover
+    // A spinner beside Save while a server write runs, with the step's name on its hover
     // text. The step's name is a sentence that changes every few seconds, and
     // a bar whose width follows it would move everything to its right; the
     // sentence and the fraction are on the status line's bar instead.
@@ -538,42 +530,112 @@ impl Projects {
     }
 }
 
-/// The map section: which map is open, as a drop-down, with its id beside it.
+/// The Map menu: which map is open, and the four things done to the map as a
+/// whole.
 ///
-/// The id is shown as well as the name, here and on every row of the list. It
-/// is the number every other authority in this project keys on (a `Map.dbc`
-/// row, `WorldMapArea`, `Light.dbc`, vmangos' own tables, a `.tele`), and the
-/// directory name is usable in none of them. A tool that shows only the name
-/// makes a person look the id up.
+/// The button shows the map's name with its `Map.dbc` id. The entries are the
+/// map list, the tile map window, the go-to popover, and the bookmarks, each
+/// of which a click returns the camera to.
 ///
-/// Disabled while a playtest is running. Switching re-reads every open tile
-/// and moves the editor's camera, and the character is standing on the map
-/// being left. The map a playtest is on is changed by the game, by walking
-/// through a portal; the drop-down could not have moved the character, so
-/// disabling it costs nothing.
-fn map(ui: &mut egui::Ui, session: &mut EditSession, camera: &mut EditorCamera, playing: bool) {
-    ui.label(egui::RichText::new("Map").color(theme::INK_DIM));
-    ui.add_enabled_ui(!playing, |ui| {
-        egui::ComboBox::from_id_salt("map")
-            .selected_text(session.map.clone())
-            .width(140.0)
-            .show_ui(ui, |ui| {
-                for (id, name) in session.maps.clone() {
-                    let row = format!("{id:>4}  {name}");
-                    if ui.selectable_label(session.map == name, row).clicked() {
-                        session.switch_map(name, id, camera);
+/// Every entry is disabled while a playtest is running. Opening a map re-reads
+/// every open tile and moves the editor's camera, and the character is
+/// standing on the map being left. The other three act on the editor's free
+/// camera or on the map's tiles, and a playtest replaces the camera with the
+/// session's and reads those tiles.
+fn map(
+    ui: &mut egui::Ui,
+    session: &mut EditSession,
+    camera: &mut EditorCamera,
+    popovers: &mut Popovers,
+    bookmarks: &crate::bookmarks::Bookmarks,
+    map_open: &mut bool,
+    playing: bool,
+) {
+    const HELD: &str = "Not while a playtest is running: the session has the camera and the \
+                        character is on this map. Ctrl+P to come back to the tools.";
+    let mut open_map: Option<(String, u32)> = None;
+    let mut jump: Option<crate::bookmarks::Bookmark> = None;
+    let mut ask_go = false;
+    let menu = ui
+        .menu_button(format!("Map: {} ({})", session.map, session.map_id), |ui| {
+            ui.add_enabled_ui(!playing, |ui| {
+                ui.menu_button("Open map", |ui| {
+                    egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                        for (id, name) in &session.maps {
+                            let row = format!("{id:>4}  {name}");
+                            if ui.selectable_label(session.map == *name, row).clicked() {
+                                open_map = Some((name.clone(), *id));
+                                ui.close();
+                            }
+                        }
+                    });
+                });
+            })
+            .response
+            .on_disabled_hover_text(HELD);
+            // Which tiles this map has is a fact about the session, and it is
+            // the one thing in the editor not chosen with the pointer, so it
+            // is here and not on the rail. See [`super::mapview`].
+            if ui
+                .add_enabled(!playing, egui::Button::new("Edit WDT/ADT…"))
+                .on_hover_text(
+                    "The map from above: which tiles exist, and making, deleting, \
+                     copying and pasting them.",
+                )
+                .on_disabled_hover_text(HELD)
+                .clicked()
+            {
+                *map_open = !*map_open;
+                ui.close();
+            }
+            if ui
+                .add_enabled(!playing, egui::Button::new("Go to…"))
+                .on_hover_text("Move the camera: a position, a tile, or a zone. Keeps bookmarks.")
+                .on_disabled_hover_text(HELD)
+                .clicked()
+            {
+                ask_go = true;
+                ui.close();
+            }
+            ui.add_enabled_ui(!playing, |ui| {
+                ui.menu_button("Bookmarks", |ui| {
+                    if bookmarks.list.is_empty() {
+                        ui.label(
+                            egui::RichText::new("none yet: Go to… keeps one")
+                                .size(theme::SMALL)
+                                .color(theme::INK_FAINT),
+                        );
                     }
-                }
-            });
-    })
-    .response
-    .on_disabled_hover_text("Not while a playtest is running: the character is on this map.");
-    // The id beside the drop-down, readable without opening the list.
-    ui.label(theme::number(format!("id {}", session.map_id)))
+                    for mark in &bookmarks.list {
+                        let label = match mark.map != session.map {
+                            true => format!("{} · {}", mark.name, mark.map),
+                            false => mark.name.clone(),
+                        };
+                        if ui.button(label).clicked() {
+                            jump = Some(mark.clone());
+                            ui.close();
+                        }
+                    }
+                });
+            })
+            .response
+            .on_disabled_hover_text(HELD);
+        })
+        .response
         .on_hover_text(
-            "The map's Map.dbc id. The light chain, the collision world, \
-             WorldMapArea and the server all key on it.",
+            "The open map and its Map.dbc id. The light chain, the collision world, \
+             WorldMapArea and the server all key on the id.",
         );
+    popovers.go_to.track(&menu);
+    if ask_go {
+        popovers.go_to.show();
+    }
+    if let Some((name, id)) = open_map {
+        session.switch_map(name, id, camera);
+    }
+    if let Some(mark) = jump {
+        super::popover::go_to_bookmark(&mark, camera, session);
+    }
 }
 
 #[cfg(test)]
