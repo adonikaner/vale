@@ -170,6 +170,38 @@ impl Pool {
         &self.bytes
     }
 
+    /// The pool with its vertices and its cells moved about within the chunk:
+    /// the record now at `(row, col)` of a grid `n` on a side is the one that
+    /// was at `source(n, row, col)`. Called with 9 for the vertices and 8 for
+    /// the tile flags. A quarter turn and a mirror are each one such map.
+    ///
+    /// Each vertex's eight bytes move whole, so the bytes this crate does not
+    /// understand go with their vertex. The height range is the same set of
+    /// heights and is left as it was. The flow vectors after the flags are
+    /// not turned; they are zero for a pool that stands still.
+    pub fn rearranged(&self, source: &dyn Fn(usize, usize, usize) -> (usize, usize)) -> Pool {
+        let mut bytes = self.bytes.clone();
+        for row in 0..SIDE {
+            for col in 0..SIDE {
+                let (from_row, from_col) = source(SIDE, row, col);
+                let to = 8 + (row * SIDE + col) * VERTEX;
+                let from = 8 + (from_row * SIDE + from_col) * VERTEX;
+                bytes[to..to + VERTEX].copy_from_slice(&self.bytes[from..from + VERTEX]);
+            }
+        }
+        let cells = SIDE - 1;
+        for row in 0..cells {
+            for col in 0..cells {
+                let (from_row, from_col) = source(cells, row, col);
+                bytes[TILES_AT + row * cells + col] = self.bytes[TILES_AT + from_row * cells + from_col];
+            }
+        }
+        Pool {
+            kind: self.kind,
+            bytes,
+        }
+    }
+
     /// The surface height at one vertex of the 9x9 grid.
     pub fn height(&self, row: usize, col: usize) -> f32 {
         let at = 8 + (row * SIDE + col) * VERTEX + 4;

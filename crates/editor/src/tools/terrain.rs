@@ -19,6 +19,22 @@
 //!
 //! Every one of them stands down for a playtest — see [`crate::playtest`].
 //!
+//! ## What the tool does besides the five brush modes
+//!
+//! ```text
+//! flatten        to the height under the pointer or a typed one; both ways,
+//!                or only filling, or only cutting; level, or a plane tilted
+//!                toward a compass bearing through where the stroke began
+//! select         the left button chooses vertices in place of sculpting;
+//!                the panel then moves them together, levels them, or locks
+//!                them so a stroke leaves them alone ([`Terrain::vertices`])
+//! tile sides     a stroke shades each tile from its own heights, and the
+//!                release shades the chunks on a tile's side again from both
+//!                tiles ([`shade_seams`])
+//! objects        what stands on moved ground is carried at the release
+//!                ([`carry`])
+//! ```
+//!
 //! ## The ground moves while the button is held
 //!
 //! Rebuilding a tile is the client's own streamer reading the file, meshing 256
@@ -83,6 +99,9 @@ use crate::tools::Tool;
 use crate::tools::{Wheel, CORE};
 use vale_client::render::foliage::TileFoliagePlans;
 use vale_client::render::terrain::{GroundSources, LoadedTiles, TerrainTile};
+use super::chunks::Cell;
+use std::collections::{BTreeMap, BTreeSet};
+use vale_edit::ops::vertices::Selected;
 use vale_edit::ops::Edit;
 use vale_edit::ops::{Brush, Falloff, Mode, Shape};
 use bevy::input::mouse::AccumulatedMouseScroll;
@@ -131,6 +150,42 @@ pub struct Terrain {
     /// by as much when the stroke ends, in the stroke's own undo entry. See
     /// `vale_edit::ops::follow`.
     pub objects_follow: bool,
+    /// The height a flatten goes to while [`Self::flatten_to_cursor`] is off.
+    pub flatten_height: f32,
+    /// How steep the plane a flatten goes to is, in degrees from level. Zero
+    /// is a level flatten.
+    pub tilt_angle: f32,
+    /// The compass bearing the tilted plane rises toward, in degrees: 0 is
+    /// north and 90 east.
+    pub tilt_toward: f32,
+    /// Whether the left button selects vertices in place of sculpting. See
+    /// [`Self::vertices`].
+    pub selecting: bool,
+    /// The selected vertices, per open tile. Chosen by painting over them
+    /// while [`Self::selecting`] is on, then moved together or levelled from
+    /// the panel, or kept from the brush by [`Self::lock`]. See
+    /// `vale_edit::ops::vertices`.
+    pub vertices: bevy::platform::collections::HashMap<(u32, u32), Selected>,
+    /// Whether a brush stroke leaves the selected vertices where they are.
+    pub lock: bool,
+    /// What the panel asks to be done with the selection, taken by
+    /// [`vertex_asks`]. The panel holds no session.
+    pub ask: Option<VertexAsk>,
+    /// How many entries the selection holds and their mean height, for the
+    /// panel. Written by [`vertex_asks`] each frame the tool is chosen.
+    pub selected: usize,
+    pub selected_mean: f32,
+}
+
+/// What the panel asks to be done with the selected vertices.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum VertexAsk {
+    /// Move them all by one amount, so that their mean height is this.
+    MoveTo(f32),
+    /// Put every one at their mean height.
+    Level,
+    /// Select nothing.
+    Clear,
 }
 
 impl Default for Terrain {
@@ -139,6 +194,15 @@ impl Default for Terrain {
             brush: Brush::default(),
             flatten_to_cursor: true,
             objects_follow: true,
+            flatten_height: 0.0,
+            tilt_angle: 0.0,
+            tilt_toward: 0.0,
+            selecting: false,
+            vertices: Default::default(),
+            lock: false,
+            ask: None,
+            selected: 0,
+            selected_mean: 0.0,
         }
     }
 }
@@ -155,6 +219,11 @@ struct Held {
     /// touched, read before the stroke first moved that tile. The release
     /// measures against it. Empty while [`Terrain::objects_follow`] is off.
     standing: bevy::platform::collections::HashMap<(u32, u32), vale_edit::ops::follow::Standing>,
+    /// The chunks on a tile's side that the stroke moved. The stroke shades
+    /// each tile from that tile's own heights, which is a one-sided
+    /// difference on a side; the release shades these again from both tiles.
+    /// See [`shade_seams`].
+    sides: BTreeSet<Cell>,
 }
 
 pub struct TerrainToolPlugin;
@@ -172,6 +241,7 @@ impl Plugin for TerrainToolPlugin {
                     // a stroke that trails the cursor.
                     (
                         stroke,
+                        vertex_asks,
                         super::shortcuts,
                         live_ground,
                         live_foliage,
@@ -181,6 +251,8 @@ impl Plugin for TerrainToolPlugin {
                         .chain()
                         .after(crate::pick::aim),
                     draw_brush,
+                    draw_vertices,
+                    vertices_on_the_command_line,
                 ),
             )
             // **In `PostUpdate`, and before visibility is propagated.** The
@@ -261,6 +333,7 @@ fn stroke(
     if buttons.just_released(MouseButton::Left) {
         // What stood on the ground the stroke moved is moved with it, into
         // the stroke's own entry, before the entry is closed.
+        shade_seams(session, &std::mem::take(&mut held.sides));
         let carried = carry(session, std::mem::take(&mut held.standing));
         if carried > 0 {
             session.status = match carried {
@@ -286,15 +359,48 @@ fn stroke(
     // a tile this session has open at all.
     let Some(at) = cursor.ground else { return };
 
+    // Selecting vertices: the left button puts the vertices under the brush's
+    // footprint into the selection, and takes them out with Shift held. It
+    // edits nothing, so no history entry is opened.
+    if terrain.selecting {
+        if buttons.just_pressed(MouseButton::Left) {
+            held.on = true;
+        }
+        if !buttons.pressed(MouseButton::Left) || !held.on {
+            return;
+        }
+        let on = !(keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight));
+        let (radius, shape) = (terrain.brush.radius, terrain.brush.shape);
+        for coord in tiles_in_range(radius, at) {
+            let Some(tile) = session.tiles.get(&coord) else {
+                continue;
+            };
+            let set = terrain.vertices.entry(coord).or_default();
+            set.mark(tile, [at.x, at.y], radius, shape, on);
+            if set.is_empty() {
+                terrain.vertices.remove(&coord);
+            }
+        }
+        return;
+    }
+
     if buttons.just_pressed(MouseButton::Left) {
         // What a flatten flattens toward is decided once, when the button goes
         // down: taking it from the pointer every frame would flatten toward
         // whatever the brush had just made, which is a stroke that never
-        // converges.
-        if terrain.flatten_to_cursor {
-            if let Mode::Flatten { .. } = terrain.brush.mode {
-                terrain.brush.mode = Mode::Flatten { to: at.z };
-            }
+        // converges. The plane's pivot is the same point, so a tilted flatten
+        // is a ramp through where the stroke began.
+        if let Mode::Flatten { .. } = terrain.brush.mode {
+            let to = match terrain.flatten_to_cursor {
+                true => at.z,
+                false => terrain.flatten_height,
+            };
+            terrain.brush.mode = Mode::Flatten { to };
+            terrain.brush.pivot = [at.x, at.y];
+            terrain.brush.tilt = match terrain.tilt_angle > 0.0 {
+                true => Brush::tilted(terrain.tilt_angle, terrain.tilt_toward),
+                false => [0.0; 2],
+            };
         }
         let label = match terrain.brush.mode {
             Mode::Raise => "Raise terrain",
@@ -353,7 +459,12 @@ fn stroke(
             held.standing
                 .insert(coord, vale_edit::ops::follow::standing(tile));
         }
-        let edits = brush.stroke(tile, [at.x, at.y], seconds, level);
+        // A locked selection is this tile's vertices the stroke may not move.
+        let kept = match terrain.lock {
+            true => terrain.vertices.get(&coord),
+            false => None,
+        };
+        let edits = brush.stroke_keeping(tile, [at.x, at.y], seconds, level, kept);
         if edits.is_empty() {
             continue;
         }
@@ -361,9 +472,266 @@ fn stroke(
         session.history.record(&key, edits);
         for chunk in chunks {
             session.touched(coord, chunk);
+            if let Some(cell) = side_cell(coord, chunk) {
+                held.sides.insert(cell);
+            }
         }
     }
 }
+
+/// The cell of a chunk on one of its tile's four sides, or `None` for a chunk
+/// inside the tile. `chunk` is the chunk's place in the file, which is row by
+/// row.
+fn side_cell(coord: (u32, u32), chunk: usize) -> Option<Cell> {
+    let (x, y) = ((chunk % 16) as u32, (chunk / 16) as u32);
+    (x == 0 || x == 15 || y == 0 || y == 15).then(|| Cell::of(coord, (x, y)))
+}
+
+/// Shade the chunks in `sides`, and the chunks across each tile side from
+/// them, from the heights on both sides, and record what changed in the
+/// history entry that is open.
+///
+/// A stroke's own shading reads one tile, so a vertex on a tile's side is
+/// shaded from one side of it and the two tiles disagree there: a line of
+/// light or shadow along the border. This is `chunks::reshade_across`, which
+/// the stitch uses, run over the border chunks a stroke moved.
+fn shade_seams(session: &mut EditSession, sides: &BTreeSet<Cell>) {
+    if sides.is_empty() {
+        return;
+    }
+    let mut edits: BTreeMap<(u32, u32), Vec<Edit>> = BTreeMap::new();
+    super::chunks::reshade_across(session, sides, &mut edits);
+    for (coord, edits) in edits {
+        if edits.is_empty() {
+            continue;
+        }
+        let key = session.key(coord);
+        let chunks: Vec<usize> = edits.iter().filter_map(Edit::chunk).collect();
+        session.history.record(&key, edits);
+        for chunk in chunks {
+            session.touched(coord, chunk);
+        }
+    }
+}
+
+/// Carry out what the panel asked of the selected vertices, and keep the two
+/// numbers the panel shows about them.
+///
+/// A move is a gesture: the panel's height field is dragged through many
+/// values, and they fold into one undo entry. Each tile's heights are written
+/// by `vale_edit::ops::vertices`, the tile sides are shaded from both tiles,
+/// and what stands on the moved ground is carried, as at the end of a stroke.
+///
+/// The tiles are published once the left button is up. A drag changes the
+/// selection every frame, and laying a tile out is two megabytes.
+#[allow(clippy::too_many_arguments)]
+fn vertex_asks(
+    mut session: Option<ResMut<EditSession>>,
+    mut terrain: ResMut<Terrain>,
+    tool: Res<Tool>,
+    state: Res<crate::playtest::Playtest>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    time: Res<Time>,
+    mut unpublished: Local<BTreeSet<(u32, u32)>>,
+) {
+    let Some(session) = session.as_mut() else {
+        return;
+    };
+    if !state.editing() || *tool != Tool::Terrain {
+        return;
+    }
+    // A selection in a tile that has been closed is let go: its vertices are
+    // indices into a file that is no longer open.
+    let closed: Vec<(u32, u32)> = terrain
+        .vertices
+        .keys()
+        .copied()
+        .filter(|coord| !session.tiles.contains_key(coord))
+        .collect();
+    if !closed.is_empty() {
+        for coord in closed {
+            terrain.vertices.remove(&coord);
+        }
+    }
+
+    let mean_of = |terrain: &Terrain, session: &EditSession| -> (usize, f32) {
+        let (mut sum, mut count) = (0.0f64, 0usize);
+        for (coord, set) in &terrain.vertices {
+            if let Some(tile) = session.tiles.get(coord) {
+                let (s, n) = set.weighed(tile);
+                sum += s;
+                count += n;
+            }
+        }
+        match count {
+            0 => (0, 0.0),
+            n => (n, (sum / n as f64) as f32),
+        }
+    };
+    let (count, mean) = mean_of(&terrain, session);
+
+    if let Some(ask) = terrain.ask.take() {
+        match ask {
+            VertexAsk::Clear => terrain.vertices.clear(),
+            VertexAsk::MoveTo(_) | VertexAsk::Level if count == 0 => {}
+            VertexAsk::MoveTo(_) | VertexAsk::Level => {
+                match ask {
+                    VertexAsk::MoveTo(_) => session.history.begin_gesture(
+                        "Move vertices",
+                        "terrain vertices",
+                        time.elapsed_secs_f64(),
+                    ),
+                    _ => session.history.begin("Level vertices"),
+                }
+                let coords: Vec<(u32, u32)> = terrain.vertices.keys().copied().collect();
+                let mut standing = Vec::new();
+                let mut sides: BTreeSet<Cell> = BTreeSet::new();
+                for coord in coords {
+                    let key = session.key(coord);
+                    let Some(tile) = session.tiles.get_mut(&coord) else {
+                        continue;
+                    };
+                    let set = &terrain.vertices[&coord];
+                    if terrain.objects_follow {
+                        standing.push((coord, vale_edit::ops::follow::standing(tile)));
+                    }
+                    let edits = match ask {
+                        VertexAsk::MoveTo(to) => set.shift(tile, to - mean),
+                        _ => set.level(tile, mean),
+                    };
+                    if edits.is_empty() {
+                        continue;
+                    }
+                    let chunks: Vec<usize> = edits.iter().filter_map(Edit::chunk).collect();
+                    session.history.record(&key, edits);
+                    for chunk in chunks {
+                        session.touched(coord, chunk);
+                        sides.extend(side_cell(coord, chunk));
+                    }
+                    unpublished.insert(coord);
+                }
+                shade_seams(session, &sides);
+                carry(session, standing);
+                session.history.end();
+            }
+        }
+    }
+
+    let (count, mean) = mean_of(&terrain, session);
+    if terrain.selected != count || terrain.selected_mean != mean {
+        terrain.selected = count;
+        terrain.selected_mean = mean;
+    }
+    if !unpublished.is_empty() && !buttons.pressed(MouseButton::Left) {
+        for coord in std::mem::take(&mut *unpublished) {
+            session.publish(coord);
+        }
+    }
+}
+
+/// `--vertices <radius>[,<rise>]`: select the vertices round the camera's
+/// target once its tile is open, and move them when a rise is given. See
+/// [`crate::Args::vertices`].
+fn vertices_on_the_command_line(
+    args: Res<crate::Args>,
+    session: Option<Res<EditSession>>,
+    focus: Res<vale_client::render::focus::WorldFocus>,
+    mut terrain: ResMut<Terrain>,
+    mut done: Local<u8>,
+) {
+    let Some((radius, rise)) = args.vertices else {
+        return;
+    };
+    let Some(session) = session else { return };
+    let at = focus.position;
+    match *done {
+        0 => {
+            let coord = vale_assets::tile_for_position(at.x, at.y);
+            if !focus.present || !session.tiles.contains_key(&coord) {
+                return;
+            }
+            *done = 1;
+            terrain.selecting = true;
+            terrain.brush.radius = radius;
+            let shape = terrain.brush.shape;
+            for coord in tiles_in_range(radius, at) {
+                if let Some(tile) = session.tiles.get(&coord) {
+                    terrain
+                        .vertices
+                        .entry(coord)
+                        .or_default()
+                        .mark(tile, [at.x, at.y], radius, shape, true);
+                }
+            }
+        }
+        // A frame later, once `vertex_asks` has the selection's mean.
+        1 if terrain.selected > 0 => {
+            *done = 2;
+            info!(
+                "--vertices: {} selected at a mean of {:.2} yd",
+                terrain.selected, terrain.selected_mean
+            );
+            if let Some(rise) = rise {
+                terrain.ask = Some(VertexAsk::MoveTo(terrain.selected_mean + rise));
+            }
+        }
+        2 if rise.is_some() && terrain.ask.is_none() => {
+            *done = 3;
+            info!("--vertices: moved to a mean of {:.2} yd", terrain.selected_mean);
+        }
+        _ => {}
+    }
+}
+
+/// Mark every selected vertex near the pointer with a short upright line, in
+/// front of the world, so the selection is seen through the ground's own
+/// folds.
+fn draw_vertices(
+    mut gizmos: Gizmos<super::gizmo::EditorHandles>,
+    session: Option<Res<EditSession>>,
+    tool: Res<Tool>,
+    state: Res<crate::playtest::Playtest>,
+    terrain: Res<Terrain>,
+    focus: Res<vale_client::render::focus::WorldFocus>,
+) {
+    if !state.editing() || *tool != Tool::Terrain || terrain.vertices.is_empty() {
+        return;
+    }
+    let Some(session) = session else { return };
+    // Yellow while the selection is only a selection, and red while it is
+    // also a lock, which is the state that changes what a stroke does.
+    let colour = match terrain.lock {
+        true => Color::srgb(1.0, 0.45, 0.4),
+        false => Color::srgb(1.0, 0.9, 0.35),
+    };
+    let mut drawn = 0;
+    for (coord, set) in &terrain.vertices {
+        let Some(tile) = session.tiles.get(coord) else {
+            continue;
+        };
+        for position in set.positions(tile) {
+            let at = Vec3::from(position);
+            if at.distance(focus.position) > VERTEX_MARK_RANGE {
+                continue;
+            }
+            if drawn >= VERTEX_MARKS {
+                return;
+            }
+            drawn += 1;
+            gizmos.line(
+                vale_client::render::axes::to_bevy(position),
+                vale_client::render::axes::to_bevy((at + Vec3::Z * 1.2).to_array()),
+                colour,
+            );
+        }
+    }
+}
+
+/// How far from the camera's target a selected vertex is still marked, in
+/// yards, and the most marks drawn in a frame. A mark is a gizmo line rebuilt
+/// every frame.
+const VERTEX_MARK_RANGE: f32 = 400.0;
+const VERTEX_MARKS: usize = 20_000;
 
 /// Move every doodad and building of the tiles in `standing` by as much as
 /// the ground under it has moved since `standing` was read, and record the
@@ -894,6 +1262,9 @@ fn draw_brush(
         return;
     };
     let colour = match terrain.brush.mode {
+        // While the pointer selects, the ring is the footprint a press
+        // selects and no brush mode's.
+        _ if terrain.selecting => Color::WHITE,
         Mode::Raise => Color::srgb(0.4, 0.9, 0.4),
         Mode::Lower => Color::srgb(0.9, 0.5, 0.3),
         Mode::Flatten { .. } => Color::srgb(0.4, 0.7, 1.0),

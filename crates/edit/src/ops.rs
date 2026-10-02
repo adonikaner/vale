@@ -1141,6 +1141,34 @@ pub struct Brush {
     /// Ignored by every other mode.
     pub scale: f32,
     pub mode: Mode,
+    /// Which way [`Mode::Flatten`] may move a vertex. See [`Only`].
+    pub only: Only,
+    /// The slope of the plane [`Mode::Flatten`] flattens toward, as the rise
+    /// in yards per yard along world x and along world y. Zero is level, and
+    /// then the target is the mode's own height everywhere. See
+    /// [`Brush::tilted`].
+    pub tilt: [f32; 2],
+    /// The point the tilted plane passes through at the mode's own height.
+    /// A caller sets it where the stroke begins. Unused while [`Self::tilt`]
+    /// is zero.
+    pub pivot: [f32; 2],
+}
+
+/// Which way a flatten may move the ground.
+///
+/// A flatten toward a height does two things at once: it fills what is under
+/// the height and cuts what is over it. Each alone is a tool of its own. Fill
+/// makes a causeway across a hollow and leaves the hills beside it; cut
+/// makes a shelf in a hillside and leaves the valley.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Only {
+    /// Up and down, toward the target.
+    #[default]
+    Both,
+    /// Raise what is under the target and leave what is over it.
+    Fill,
+    /// Lower what is over the target and leave what is under it.
+    Cut,
 }
 
 impl Default for Brush {
@@ -1155,6 +1183,9 @@ impl Default for Brush {
             // rolling ground rather than as the vertex grid.
             scale: 25.0,
             mode: Mode::Raise,
+            only: Only::Both,
+            tilt: [0.0; 2],
+            pivot: [0.0; 2],
         }
     }
 }
@@ -1176,6 +1207,32 @@ impl Brush {
         at: [f32; 2],
         seconds: f32,
         level: Option<f32>,
+    ) -> Vec<Edit> {
+        self.stroke_keeping(tile, at, seconds, level, None)
+    }
+
+    /// The slope [`Self::tilt`] holds for a plane that rises `angle` degrees
+    /// toward the compass bearing `toward`: 0 is north, which is world +x, and
+    /// 90 is east, which is world -y.
+    pub fn tilted(angle: f32, toward: f32) -> [f32; 2] {
+        let rise = angle.clamp(0.0, 89.0).to_radians().tan();
+        let bearing = toward.to_radians();
+        [rise * bearing.cos(), -rise * bearing.sin()]
+    }
+
+    /// [`Self::stroke`], leaving every vertex in `kept` where it is.
+    ///
+    /// `kept` is a set of this tile's vertices that the stroke may not move:
+    /// a selection used as a lock. The shading is still recomputed for every
+    /// chunk the stroke reached, since a kept vertex's normal depends on its
+    /// neighbours.
+    pub fn stroke_keeping(
+        &self,
+        tile: &mut AdtFile,
+        at: [f32; 2],
+        seconds: f32,
+        level: Option<f32>,
+        kept: Option<&vertices::Selected>,
     ) -> Vec<Edit> {
         let touched = self.chunks_under(tile, at);
         let mut edits = Vec::new();
@@ -1201,7 +1258,14 @@ impl Brush {
             if before.is_empty() {
                 continue;
             }
-            let after = self.moved(&before, origin, at, seconds, level);
+            let mut after = self.moved(&before, origin, at, seconds, level);
+            if let Some(kept) = kept {
+                for (vertex, height) in after.iter_mut().enumerate() {
+                    if kept.holds(index, vertex) {
+                        *height = before[vertex];
+                    }
+                }
+            }
             if after == before {
                 continue;
             }
@@ -1258,6 +1322,17 @@ impl Brush {
             Mode::Flatten { to } => Some(to),
             _ => None,
         };
+        // A flatten's target at one vertex: the plane through the pivot at
+        // the mode's height, which is that height everywhere while the tilt
+        // is zero. A smooth has no plane.
+        let flattening = matches!(self.mode, Mode::Flatten { .. });
+        let target_at = |i: usize, to: f32| match flattening {
+            true => {
+                let (x, y) = world(i);
+                to + self.tilt[0] * (x - self.pivot[0]) + self.tilt[1] * (y - self.pivot[1])
+            }
+            false => to,
+        };
 
         before
             .iter()
@@ -1277,9 +1352,22 @@ impl Brush {
                         h + self.strength * w * seconds * wobble(x, y, self.scale)
                     }
                     Mode::Flatten { .. } | Mode::Smooth => match target {
-                        // Clamped so a long frame cannot overshoot the target
-                        // and oscillate around it.
-                        Some(to) => h + (to - h) * (self.strength * w * seconds).min(1.0),
+                        Some(to) => {
+                            let to = target_at(i, to);
+                            // A fill leaves what is over the target and a cut
+                            // what is under it. A smooth moves both ways.
+                            let allowed = match (flattening, self.only) {
+                                (true, Only::Fill) => to > h,
+                                (true, Only::Cut) => to < h,
+                                _ => true,
+                            };
+                            match allowed {
+                                // Clamped so a long frame cannot overshoot the
+                                // target and oscillate around it.
+                                true => h + (to - h) * (self.strength * w * seconds).min(1.0),
+                                false => h,
+                            }
+                        }
                         None => h,
                     },
                 }
@@ -2206,6 +2294,9 @@ pub mod follow;
 
 /// A tile's heights and texture blends as pictures, written out and read back.
 pub mod image;
+
+/// A set of vertices chosen first and moved together, or kept from a brush.
+pub mod vertices;
 
 #[cfg(test)]
 mod tests;

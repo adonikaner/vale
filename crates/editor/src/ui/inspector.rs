@@ -1073,6 +1073,38 @@ fn chunks_paste(
             .color(theme::INK_DIM),
         );
     });
+    // The copied block, turned before it is pasted. Each press turns what
+    // is held, so two mirrors or four quarter turns are the block as copied.
+    ui.horizontal(|ui| {
+        let held = !chunks.clip.is_empty();
+        for (label, how, about) in [
+            (
+                "Turn 90\u{b0}",
+                tool::Turn::Clockwise,
+                "Turn the copied block a quarter turn clockwise, seen from above: heights, \
+                 blends, shading, holes and water together. Four presses are the block as \
+                 it was copied.",
+            ),
+            (
+                "Mirror",
+                tool::Turn::Mirror,
+                "Swap the copied block's east and west. A second press swaps them back.",
+            ),
+        ] {
+            if ui
+                .add_enabled(held, egui::Button::new(label).small())
+                .on_hover_text(about)
+                .on_disabled_hover_text("Copy some chunks first.")
+                .clicked()
+            {
+                chunks.clip = chunks.clip.turned(how);
+                session.status = format!(
+                    "the copied block is now {} by {}",
+                    chunks.clip.size.0, chunks.clip.size.1
+                );
+            }
+        }
+    });
     theme::note(
         ui,
         "ctrl + v pastes, centred on the chunk under the pointer. Hold ctrl to see where.",
@@ -2766,6 +2798,21 @@ fn grading(
 
 /// The height brush.
 fn brush(ui: &mut egui::Ui, terrain: &mut Terrain) {
+    // What the left button does: move the ground, or choose vertices. It is
+    // above the brush because it decides which of the two panels follows.
+    theme::heading(ui, "Pointer");
+    theme::segmented(
+        ui,
+        &mut terrain.selecting,
+        &[("Sculpt", false), ("Select vertices", true)],
+        |a, b| a == b,
+    );
+    ui.add_space(4.0);
+    if terrain.selecting {
+        vertex_panel(ui, terrain);
+        return;
+    }
+
     theme::heading(ui, "Brush");
     theme::segmented(ui, &mut terrain.brush.mode, &MODES, |a, b| {
         // A flatten's target is set when the stroke begins, so the variant held
@@ -2838,16 +2885,20 @@ fn brush(ui: &mut egui::Ui, terrain: &mut Terrain) {
     theme::note(ui, "a square follows the chunk grid");
 
     if matches!(terrain.brush.mode, Mode::Flatten { .. }) {
-        ui.add_space(4.0);
-        ui.checkbox(
-            &mut terrain.flatten_to_cursor,
-            "flatten to the height under the pointer",
-        );
+        flatten_panel(ui, terrain);
     }
 
     ui.add_space(4.0);
     theme::heading(ui, "Objects");
     objects_follow(ui, &mut terrain.objects_follow);
+
+    // The selection, while there is one: whether a stroke leaves it alone.
+    // The rest of what is done with it is on the Select vertices half.
+    if terrain.selected > 0 {
+        ui.add_space(4.0);
+        theme::heading(ui, "Selected vertices");
+        vertex_lock(ui, terrain);
+    }
 
     ui.add_space(6.0);
     theme::heading(ui, "Keys");
@@ -2856,6 +2907,179 @@ fn brush(ui: &mut egui::Ui, terrain: &mut Terrain) {
     theme::note(ui, "alt + wheel the core");
     theme::note(ui, "1 - 5 pick the mode · 6 - 0 the falloff");
     theme::note(ui, "shift + 1 · 2 · 3 pick the shape");
+}
+
+/// What a flatten goes to: which height, which way it may move the ground,
+/// and whether the target is level or a tilted plane.
+fn flatten_panel(ui: &mut egui::Ui, terrain: &mut Terrain) {
+    use vale_edit::ops::Only;
+    ui.add_space(4.0);
+    theme::heading(ui, "Flatten to");
+    ui.checkbox(
+        &mut terrain.flatten_to_cursor,
+        "the height under the pointer",
+    )
+    .on_hover_text(
+        "Taken where the stroke begins. Off, the stroke goes to the height typed below, \
+         wherever it begins.",
+    );
+    if !terrain.flatten_to_cursor {
+        theme::row(ui, "height", |ui| {
+            ui.add(
+                egui::DragValue::new(&mut terrain.flatten_height)
+                    .speed(0.25)
+                    .fixed_decimals(1)
+                    .suffix(" yd"),
+            );
+        });
+    }
+    theme::segmented(
+        ui,
+        &mut terrain.brush.only,
+        &[("Both", Only::Both), ("Fill", Only::Fill), ("Cut", Only::Cut)],
+        |a, b| a == b,
+    );
+    theme::note(
+        ui,
+        match terrain.brush.only {
+            Only::Both => "raises what is under the height and lowers what is over it",
+            Only::Fill => "raises what is under the height and leaves the rest",
+            Only::Cut => "lowers what is over the height and leaves the rest",
+        },
+    );
+    // A level flatten is the common one, so the bearing is shown only once
+    // there is a tilt for it to be the bearing of.
+    theme::row(ui, "tilt", |ui| {
+        ui.add(
+            egui::DragValue::new(&mut terrain.tilt_angle)
+                .speed(0.25)
+                .range(0.0..=60.0)
+                .fixed_decimals(0)
+                .suffix("\u{b0}"),
+        )
+        .on_hover_text(
+            "Flatten to a plane this steep, through the point where the stroke begins: a \
+             ramp. Zero is level.",
+        );
+        if terrain.tilt_angle == 0.0 {
+            theme::note(ui, "level");
+        }
+    });
+    if terrain.tilt_angle > 0.0 {
+        theme::row(ui, "rising", |ui| {
+            ui.add(
+                egui::DragValue::new(&mut terrain.tilt_toward)
+                    .speed(1.0)
+                    .range(0.0..=359.0)
+                    .fixed_decimals(0)
+                    .suffix("\u{b0}"),
+            )
+            .on_hover_text("The compass bearing the plane rises toward: 0 is north, 90 east.");
+            theme::note(ui, compass(terrain.tilt_toward));
+        });
+    }
+}
+
+/// The nearest of the eight compass points to a bearing in degrees.
+fn compass(bearing: f32) -> &'static str {
+    const POINTS: [&str; 8] = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"];
+    POINTS[((bearing.rem_euclid(360.0) / 45.0).round() as usize) % 8]
+}
+
+/// The switch that makes the selection a lock, with how much is selected.
+fn vertex_lock(ui: &mut egui::Ui, terrain: &mut Terrain) {
+    ui.checkbox(&mut terrain.lock, "Brush strokes leave them alone")
+        .on_hover_text(
+            "A stroke moves the ground round the selected vertices and not the vertices: \
+             a cliff's edge or a building's pad is selected once and sculpted up to. The \
+             marks are red while this is on.",
+        );
+    theme::note(ui, format!("{} selected", terrain.selected));
+}
+
+/// The terrain tool's panel while the left button selects vertices: the
+/// footprint a press selects, and what is done with the selection.
+fn vertex_panel(ui: &mut egui::Ui, terrain: &mut Terrain) {
+    use crate::tools::terrain::VertexAsk;
+    theme::heading(ui, "Footprint");
+    theme::row(ui, "radius", |ui| {
+        ui.add(
+            egui::DragValue::new(&mut terrain.brush.radius)
+                .speed(0.5)
+                .range(terrain::RADIUS)
+                .suffix(" yd"),
+        );
+    });
+    theme::segmented(ui, &mut terrain.brush.shape, &SHAPES, |a, b| a == b);
+
+    ui.add_space(4.0);
+    theme::heading(ui, "Selection");
+    let any = terrain.selected > 0;
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(match terrain.selected {
+                0 => "nothing selected".to_string(),
+                n => format!("{n} selected"),
+            })
+            .color(match any {
+                true => theme::INK,
+                false => theme::INK_DIM,
+            }),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .add_enabled(any, egui::Button::new("Clear").small())
+                .clicked()
+            {
+                terrain.ask = Some(VertexAsk::Clear);
+            }
+        });
+    });
+    // The mean height, dragged: every selected vertex moves by the same
+    // amount, so the shape they make is kept.
+    theme::row(ui, "height", |ui| {
+        let mut mean = terrain.selected_mean;
+        let moved = ui
+            .add_enabled(
+                any,
+                egui::DragValue::new(&mut mean)
+                    .speed(0.1)
+                    .fixed_decimals(1)
+                    .suffix(" yd"),
+            )
+            .on_hover_text(
+                "The mean height of the selection. Drag it, or type a height: every selected \
+                 vertex moves by the same amount, with no falloff, as one undo entry.",
+            )
+            .on_disabled_hover_text("Select some vertices first.");
+        if moved.changed() && mean != terrain.selected_mean {
+            terrain.ask = Some(VertexAsk::MoveTo(mean));
+        }
+    });
+    if ui
+        .add_enabled(any, egui::Button::new("Level to that height"))
+        .on_hover_text(
+            "Put every selected vertex at the selection's mean height: a flat top with a \
+             hard edge, which a brush's falloff cannot make.",
+        )
+        .on_disabled_hover_text("Select some vertices first.")
+        .clicked()
+    {
+        terrain.ask = Some(VertexAsk::Level);
+    }
+    ui.add_space(2.0);
+    ui.checkbox(&mut terrain.lock, "Brush strokes leave them alone")
+        .on_hover_text(
+            "With Sculpt chosen, a stroke moves the ground round the selected vertices and \
+             not the vertices. The marks are red while this is on.",
+        );
+    objects_follow(ui, &mut terrain.objects_follow);
+
+    ui.add_space(6.0);
+    theme::heading(ui, "Keys");
+    theme::note(ui, "left button selects \u{b7} with shift, takes out");
+    theme::note(ui, "ctrl + wheel resizes the footprint");
+    theme::note(ui, "shift + 1 \u{b7} 2 \u{b7} 3 pick the shape");
 }
 
 /// The switch the height brush and the grade share: whether what stands on

@@ -1058,8 +1058,31 @@ pub enum Level {
     Relative,
 }
 
+/// A way a copied block is turned before it is pasted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Turn {
+    /// A quarter turn clockwise, seen from above: what was at the block's
+    /// north-west corner is at its north-east.
+    Clockwise,
+    /// East and west changed places.
+    Mirror,
+}
+
+impl Turn {
+    /// Where the value now at `(row, col)` of a grid `n` on a side was before
+    /// the turn. Rows run south and columns east, as every per-chunk grid in
+    /// the file does, so seen from above a grid is a picture with its rows
+    /// down the page.
+    fn source(self, n: usize, row: usize, col: usize) -> (usize, usize) {
+        match self {
+            Turn::Clockwise => (n - 1 - col, row),
+            Turn::Mirror => (row, n - 1 - col),
+        }
+    }
+}
+
 /// One copied chunk.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ClipChunk {
     /// Columns and rows from the clip's corner of least column and row.
     pub offset: (u32, u32),
@@ -1075,9 +1098,99 @@ pub struct ClipChunk {
     impassable: bool,
 }
 
+impl ClipChunk {
+    /// The chunk turned in place: every grid it carries moved by `how`. The
+    /// area id and the impassable flag are the chunk's and do not move.
+    ///
+    /// ```text
+    /// heights, shading   the 9x9 outer and the 8x8 inner vertices, each grid
+    ///                    turned on its own
+    /// blend maps         64x64, of which 63 span the chunk: those are turned
+    ///                    and the last row and column repeat the one before
+    /// holes              the 4x4 mask
+    /// water              each pool's 9x9 vertices and 8x8 flags
+    /// ```
+    fn turned(&self, how: Turn) -> ClipChunk {
+        use vale_assets::world::adt::{ALPHA_SIDE, INNER_SIDE, OUTER_SIDE};
+        // Which vertex each vertex takes its value from.
+        let mut from = vec![0usize; heights::VERTICES];
+        for row in 0..OUTER_SIDE {
+            for col in 0..OUTER_SIDE {
+                let (r, c) = how.source(OUTER_SIDE, row, col);
+                if let (Some(to), Some(at)) = (heights::outer(row, col), heights::outer(r, c)) {
+                    from[to] = at;
+                }
+            }
+        }
+        for row in 0..INNER_SIDE {
+            for col in 0..INNER_SIDE {
+                let (r, c) = how.source(INNER_SIDE, row, col);
+                if let (Some(to), Some(at)) = (heights::inner(row, col), heights::inner(r, c)) {
+                    from[to] = at;
+                }
+            }
+        }
+        let heights: Vec<f32> = match self.heights.len() == heights::VERTICES {
+            true => from.iter().map(|&at| self.heights[at]).collect(),
+            false => self.heights.clone(),
+        };
+        // A shading region is a fixed number of bytes per vertex.
+        let colours = self.colours.as_ref().map(|bytes| {
+            let each = bytes.len() / heights::VERTICES;
+            match each > 0 && bytes.len() == each * heights::VERTICES {
+                true => from
+                    .iter()
+                    .flat_map(|&at| bytes[at * each..(at + 1) * each].iter().copied())
+                    .collect(),
+                false => bytes.clone(),
+            }
+        });
+        // Texels 0 to 62 span the chunk and texel 63 is not sampled; see
+        // `vale_edit::adt::alpha::texel_position`.
+        let span = ALPHA_SIDE - 1;
+        let mut paint = self.paint.clone();
+        for map in &mut paint.maps {
+            if map.len() != ALPHA_SIDE * ALPHA_SIDE {
+                continue;
+            }
+            let was = map.clone();
+            for ty in 0..ALPHA_SIDE {
+                for tx in 0..ALPHA_SIDE {
+                    let (r, c) = how.source(span, ty.min(span - 1), tx.min(span - 1));
+                    map[ty * ALPHA_SIDE + tx] = was[r * ALPHA_SIDE + c];
+                }
+            }
+        }
+        let mut holes = 0u16;
+        for row in 0..4 {
+            for col in 0..4 {
+                let (r, c) = how.source(4, row, col);
+                if self.holes & (1 << (r * 4 + c)) != 0 {
+                    holes |= 1 << (row * 4 + col);
+                }
+            }
+        }
+        ClipChunk {
+            offset: self.offset,
+            heights,
+            paint,
+            textures: self.textures.clone(),
+            colours,
+            holes,
+            pools: self
+                .pools
+                .iter()
+                .map(|pool| pool.rearranged(&|n, row, col| how.source(n, row, col)))
+                .collect(),
+            area: self.area,
+            impassable: self.impassable,
+        }
+    }
+}
+
 /// What `Ctrl+C` took: the selected chunks, each by its offset in the block
 /// that bounds them.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Clip {
     pub chunks: Vec<ClipChunk>,
     /// The bounding block's columns and rows.
@@ -1087,6 +1200,36 @@ pub struct Clip {
 impl Clip {
     pub fn is_empty(&self) -> bool {
         self.chunks.is_empty()
+    }
+
+    /// The block turned as a whole: every chunk moved to its new place in the
+    /// block and turned in place, so the ground it carries is the same ground
+    /// seen from another side. A quarter turn swaps the block's two sizes.
+    ///
+    /// What is pasted is the turned ground and nothing that stood on it: a
+    /// clip holds no doodads. A texture's own picture is not turned either,
+    /// since a layer names a tileset and the tileset repeats the same way up
+    /// everywhere.
+    pub fn turned(&self, how: Turn) -> Clip {
+        let (wide, tall) = self.size;
+        let size = match how {
+            Turn::Clockwise => (tall, wide),
+            Turn::Mirror => (wide, tall),
+        };
+        let chunks = self
+            .chunks
+            .iter()
+            .map(|chunk| {
+                let (x, y) = chunk.offset;
+                let mut turned = chunk.turned(how);
+                turned.offset = match how {
+                    Turn::Clockwise => (tall - 1 - y, x),
+                    Turn::Mirror => (wide - 1 - x, y),
+                };
+                turned
+            })
+            .collect();
+        Clip { chunks, size }
     }
 
     /// The cells a paste at `at` writes, each with the chunk it takes. The
@@ -1170,7 +1313,10 @@ fn normals_of(tile: &AdtFile, chunk: usize) -> Option<Vec<u8>> {
 /// shaded from the moved heights too, and a chunk on a tile's side reads the
 /// heights across it. Runs after every height is written, since it reads
 /// them.
-fn reshade_across(
+///
+/// `pub(crate)` because the height brush shades its own strokes inside each
+/// tile and asks this for the chunks on a tile's sides when the stroke ends.
+pub(crate) fn reshade_across(
     session: &mut EditSession,
     moved: &BTreeSet<Cell>,
     edits: &mut BTreeMap<(u32, u32), Vec<Edit>>,
@@ -2052,6 +2198,102 @@ mod tests {
         }
         assert_eq!(chunks.census(&session).cut, 0);
         assert_eq!(session.tiles[&there].texture_names().len(), 1);
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// A copied block turned four quarter turns, or mirrored twice, is the
+    /// block as copied. One quarter turn swaps its sizes, moves the
+    /// north-west chunk to the north-east and that chunk's north-west vertex
+    /// to its north-east, and leaves neighbouring chunks agreeing along the
+    /// edge they share, so the turned block is still one piece of ground.
+    #[test]
+    fn a_copied_block_turns_and_mirrors_as_one_piece() {
+        use vale_edit::adt::heights::outer;
+        let here = (31, 49);
+        let (mut session, install) = session_with("turn", &[here]);
+        let source: BTreeSet<Cell> = block(Cell::of(here, (4, 4)), Cell::of(here, (5, 6)))
+            .into_iter()
+            .collect();
+        // One plane across the whole block, so neighbouring chunks agree on
+        // the vertices they share before anything is turned.
+        for cell in &source {
+            let tile = session.tiles.get_mut(&cell.tile()).unwrap();
+            let index = cell.chunk_in(tile).unwrap();
+            let origin = tile.chunk(index).unwrap().head().position();
+            let heights: Vec<f32> = (0..vale_edit::adt::heights::VERTICES)
+                .map(|vertex| {
+                    let [x, y, _] = vale_edit::adt::heights::vertex_position(origin, vertex, 0.0);
+                    (x * 0.25 + y * 0.5).round()
+                })
+                .collect();
+            vale_edit::adt::heights::set_heights(tile.chunk_mut(index).unwrap(), &heights);
+        }
+        // One hole, in the north-west square of the north-west chunk.
+        let corner: BTreeSet<Cell> = [Cell::of(here, (4, 4))].into_iter().collect();
+        over(&mut session, &corner, "Cut", false, |tile, chunk| {
+            let before = tile.chunk(chunk)?.head().holes();
+            let edit = Edit::Holes {
+                chunk,
+                before,
+                after: 1,
+            };
+            edit.apply(tile);
+            Some(edit)
+        });
+        let clip = copy(&session, &source);
+        assert_eq!((clip.chunks.len(), clip.size), (6, (2, 3)));
+
+        let mut round = clip.clone();
+        for _ in 0..4 {
+            round = round.turned(Turn::Clockwise);
+        }
+        assert_eq!(round, clip, "four quarter turns");
+        assert_eq!(clip.turned(Turn::Mirror).turned(Turn::Mirror), clip, "two mirrors");
+
+        let turned = clip.turned(Turn::Clockwise);
+        assert_eq!(turned.size, (3, 2));
+        let at_offset = |clip: &Clip, offset: (u32, u32)| -> ClipChunk {
+            clip.chunks
+                .iter()
+                .find(|chunk| chunk.offset == offset)
+                .cloned()
+                .expect("a chunk at that offset")
+        };
+        let was = at_offset(&clip, (0, 0));
+        let now = at_offset(&turned, (2, 0));
+        let (north_west, north_east) = (outer(0, 0).unwrap(), outer(0, 8).unwrap());
+        assert_eq!(now.heights[north_east], was.heights[north_west]);
+        // The hole was bit 0, the north-west square; it is the north-east now.
+        assert_eq!((was.holes, now.holes), (1, 1 << 3));
+        // Along the edge two turned chunks share, their heights agree.
+        let (west, east) = (at_offset(&turned, (0, 0)), at_offset(&turned, (1, 0)));
+        for row in 0..9 {
+            assert_eq!(
+                west.heights[outer(row, 8).unwrap()],
+                east.heights[outer(row, 0).unwrap()],
+                "row {row}"
+            );
+        }
+        let (north, south) = (at_offset(&turned, (0, 0)), at_offset(&turned, (0, 1)));
+        for col in 0..9 {
+            assert_eq!(
+                north.heights[outer(8, col).unwrap()],
+                south.heights[outer(0, col).unwrap()],
+                "column {col}"
+            );
+        }
+        // A mirrored block's west column is the copied block's east column.
+        let mirrored = clip.turned(Turn::Mirror);
+        let (copied, flipped) = (at_offset(&clip, (1, 0)), at_offset(&mirrored, (0, 0)));
+        assert_eq!(
+            flipped.heights[outer(0, 0).unwrap()],
+            copied.heights[outer(0, 8).unwrap()]
+        );
+
+        // The turned block pastes as any other does.
+        let at = Cell::of(here, (10, 10));
+        let written = paste(&mut session, &turned, at, Parts::default(), Level::Absolute);
+        assert_eq!(written.len(), 6);
         let _ = std::fs::remove_dir_all(&install);
     }
 

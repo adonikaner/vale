@@ -116,6 +116,7 @@ fn a_stroke_on_a_chunk_boundary_leaves_no_seam() {
         core: 0.0,
         scale: 25.0,
         mode: Mode::Raise,
+        ..Brush::default()
     };
     for _ in 0..60 {
         brush.stroke(&mut tile, at, 1.0 / 60.0, None);
@@ -165,6 +166,7 @@ fn a_smooth_converges_on_one_height_across_chunks() {
         core: 0.0,
         scale: 25.0,
         mode: Mode::Smooth,
+        ..Brush::default()
     };
 
     // One chunk's mean height inside the brush, which is what a step between two
@@ -231,6 +233,7 @@ fn a_stroke_leaves_no_vertex_stranded() {
         core: 0.0,
         scale: 25.0,
         mode: Mode::Raise,
+        ..Brush::default()
     };
     let step = |tile: &AdtFile| {
         // The largest gap between an outer vertex and the one next to it, over
@@ -1363,6 +1366,149 @@ fn a_blend_map_reads_back_as_the_tile_it_came_from() {
     let now = alpha::paint(tile.chunk(which).unwrap());
     assert!(now.maps[1].iter().all(|&texel| texel == 0));
     for edit in edits.iter().rev() {
+        edit.revert(&mut tile);
+    }
+    assert_eq!(tile.write(), bytes);
+}
+
+/// A flatten that may only fill raises what is under the target and leaves
+/// what is over it, and one that may only cut does the reverse.
+#[test]
+fn a_flatten_can_be_told_to_fill_or_to_cut() {
+    use crate::adt::heights;
+    use crate::ops::Only;
+    let Some(tile) = tile() else { return };
+    let origin = tile.chunk(70).unwrap().head().position();
+    let at = [origin[0] - 16.0, origin[1] - 16.0];
+    let before = heights::heights(tile.chunk(70).unwrap());
+    let (low, high) = before.iter().fold((f32::MAX, f32::MIN), |(low, high), &h| {
+        (low.min(h), high.max(h))
+    });
+    let middle = (low + high) / 2.0;
+    let run = |only: Only| {
+        let mut tile = tile.clone();
+        let brush = Brush {
+            radius: 60.0,
+            strength: 50.0,
+            falloff: Falloff::Flat,
+            mode: Mode::Flatten { to: middle },
+            only,
+            ..Brush::default()
+        };
+        for _ in 0..30 {
+            brush.stroke(&mut tile, at, 0.1, None);
+        }
+        heights::heights(tile.chunk(70).unwrap())
+    };
+    let filled = run(Only::Fill);
+    let cut = run(Only::Cut);
+    for (i, &was) in before.iter().enumerate() {
+        assert!(filled[i] >= was - 1e-3, "a fill lowered vertex {i}");
+        assert!(cut[i] <= was + 1e-3, "a cut raised vertex {i}");
+        if was > middle + 0.01 {
+            assert_eq!(filled[i], was, "a fill left what is over the target");
+        }
+        if was < middle - 0.01 {
+            assert_eq!(cut[i], was, "a cut left what is under the target");
+        }
+    }
+    assert!(filled.iter().all(|&h| h >= middle - 0.05), "the hollows are filled");
+    assert!(cut.iter().all(|&h| h <= middle + 0.05), "the rises are cut");
+}
+
+/// A tilted flatten converges on a plane through the pivot: level across the
+/// bearing and rising along it by the tangent of the angle.
+#[test]
+fn a_tilted_flatten_makes_a_ramp_through_its_pivot() {
+    use crate::adt::heights;
+    let Some(mut tile) = tile() else { return };
+    let origin = tile.chunk(70).unwrap().head().position();
+    let at = [origin[0] - 16.0, origin[1] - 16.0];
+    let to = origin[2];
+    // Thirty degrees, rising to the north, which is world +x.
+    let tilt = Brush::tilted(30.0, 0.0);
+    assert!((tilt[0] - 30f32.to_radians().tan()).abs() < 1e-6);
+    assert!(tilt[1].abs() < 1e-6);
+    let east = Brush::tilted(45.0, 90.0);
+    assert!(east[0].abs() < 1e-6 && (east[1] + 1.0).abs() < 1e-6, "east is -y");
+
+    let brush = Brush {
+        radius: 14.0,
+        strength: 50.0,
+        falloff: Falloff::Flat,
+        mode: Mode::Flatten { to },
+        tilt,
+        pivot: at,
+        ..Brush::default()
+    };
+    for _ in 0..40 {
+        brush.stroke(&mut tile, at, 0.1, None);
+    }
+    for (x, y) in [(at[0], at[1]), (at[0] + 8.0, at[1]), (at[0] - 8.0, at[1] + 6.0)] {
+        let expected = to + tilt[0] * (x - at[0]) + tilt[1] * (y - at[1]);
+        let found = heights::height_at(&tile, x, y).expect("ground");
+        assert!((found - expected).abs() < 0.2, "at {x},{y}: {found} against {expected}");
+    }
+}
+
+/// A selection is marked by position, moves as one, levels to one height,
+/// and a brush told to keep it leaves it where it is.
+#[test]
+fn a_selection_of_vertices_moves_together_and_can_be_kept_from_a_brush() {
+    use crate::adt::heights;
+    use crate::ops::vertices::Selected;
+    let Some(mut tile) = tile() else { return };
+    let bytes = tile.write();
+    // The corner four chunks share: chunk 0's last outer vertex.
+    let origin = tile.chunk(17).unwrap().head().position();
+    let at = [origin[0], origin[1]];
+    let mut selected = Selected::default();
+    assert_eq!(selected.mark(&tile, at, 1.0, Shape::Circle, true), 4, "one vertex, in four chunks");
+    assert!(selected.holds(0, heights::outer(8, 8).unwrap()));
+    assert!(selected.holds(17, heights::outer(0, 0).unwrap()));
+    assert_eq!(selected.count(), 4);
+    assert_eq!(selected.positions(&tile).len(), 4);
+
+    let (sum, count) = selected.weighed(&tile);
+    let was = (sum / count as f64) as f32;
+    let edits = selected.shift(&mut tile, 5.0);
+    let corner = |tile: &AdtFile, chunk: usize, row: usize, column: usize| {
+        heights::heights(tile.chunk(chunk).unwrap())[heights::outer(row, column).unwrap()]
+    };
+    assert!((corner(&tile, 0, 8, 8) - was - 5.0).abs() < 1e-4);
+    assert_eq!(corner(&tile, 0, 8, 8), corner(&tile, 17, 0, 0), "still welded");
+    assert!(edits.iter().any(|edit| matches!(edit, Edit::Normals { .. })));
+
+    // A brush that keeps the selection moves the ground round it and not it.
+    let held = corner(&tile, 0, 8, 8);
+    let beside = corner(&tile, 17, 1, 1);
+    let brush = Brush {
+        radius: 20.0,
+        strength: 10.0,
+        ..Brush::default()
+    };
+    let mut more = Vec::new();
+    for _ in 0..10 {
+        more.extend(brush.stroke_keeping(&mut tile, at, 0.1, None, Some(&selected)));
+    }
+    assert_eq!(corner(&tile, 0, 8, 8), held, "the kept vertex did not move");
+    assert_eq!(corner(&tile, 17, 0, 0), held);
+    assert!(corner(&tile, 17, 1, 1) > beside + 1.0, "the ground beside it rose");
+
+    // Levelling puts every entry at one height.
+    let wide = {
+        let mut wide = Selected::default();
+        wide.mark(&tile, at, 12.0, Shape::Square, true);
+        wide
+    };
+    let levelled = wide.level(&mut tile, 40.0);
+    assert!(wide.positions(&tile).iter().all(|position| position[2] == 40.0));
+
+    // Taking vertices out empties the set, and everything undoes.
+    let mut gone = wide.clone();
+    gone.mark(&tile, at, 30.0, Shape::Square, false);
+    assert!(gone.is_empty());
+    for edit in levelled.iter().rev().chain(more.iter().rev()).chain(edits.iter().rev()) {
         edit.revert(&mut tile);
     }
     assert_eq!(tile.write(), bytes);
