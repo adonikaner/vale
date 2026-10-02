@@ -694,6 +694,11 @@ fn draw(
     let tables = matches!(*tool, Tool::Areas | Tool::Chunks | Tool::Measure)
         .then(|| assets.display_tables().ok())
         .flatten();
+    // The session's own copy of AreaTable, for the two panels that list and
+    // name areas, so one made in the Zones workspace is there before a save.
+    if matches!(*tool, Tool::Areas | Tool::Chunks) {
+        editing.areas.follow_table(session);
+    }
     // The inspector is resizable and the rail is not. The rail is a fixed
     // list of words; the inspector shows the chosen tool's controls, and two
     // tools show content no single width fits: a tileset's folder and file
@@ -1385,6 +1390,49 @@ fn draw(
         if let Some(last) = said.last() {
             session.status = last.clone();
         }
+    }
+    // What the Areas panel asked of AreaTable: open a row in the Zones
+    // workspace, or make a zone or a sub-area and put it on the brush. The
+    // table is opened here, since the panel has no archives to open it from.
+    if let Some(ask) = editing.areas.ask.take() {
+        use crate::tools::areas::Ask;
+        use crate::tools::tables::{self, area};
+        match (session.open_table(&assets, area::TABLE), ask) {
+            (false, _) => session.status = "AreaTable did not open".to_string(),
+            (true, Ask::Edit(id)) => {
+                if editing.browser.follow(session, area::TABLE, id) {
+                    editing.browser.followed_in = true;
+                    *tool = Tool::Zones;
+                }
+            }
+            (true, made) => {
+                let record = match made {
+                    Ask::NewSubArea(of) => tables::add_sub_area(session, of),
+                    _ => {
+                        let map = session.map_id;
+                        tables::add_zone(session, map)
+                    }
+                };
+                let id = record.and_then(|record| session.table(area::TABLE)?.u32_at(record, 0));
+                session.status = match id {
+                    Some(id) => {
+                        editing.areas.brush.area = id;
+                        format!("area {id} is made and on the brush: Edit\u{2026} names it")
+                    }
+                    None => "the area was not made".to_string(),
+                };
+            }
+        }
+    }
+    // An area the Zones workspace asked to paint: it goes on the Areas tool's
+    // brush and the tool is switched to. Dropped during a playtest, when no
+    // tool that keeps the viewport can be used.
+    if let Some(id) = editing.browser.paint_area.take().filter(|_| !in_world) {
+        editing.areas.brush.area = id;
+        editing.areas.search.clear();
+        *tool = Tool::Areas;
+        viewing.rail.follow(Tool::Areas);
+        session.status = format!("area {id} is on the brush");
     }
     // A part of a workspace chosen on the strip at the head of its list.
     let part = editing.items.switch_to.take().or_else(|| editing.browser.switch_to.take());

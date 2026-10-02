@@ -62,6 +62,7 @@
 //! taxi_nodes        the server has to be restarted: it is read at startup and
 //!                   has no reload
 //! skill_line_ability  the same: read at startup, no reload
+//! area_template     the same: read at startup, no reload
 //! item_template    live on .reload item_template, for every copy already in
 //!                   the world — LoadItemPrototypes clears its map before it
 //!                   reads and Item::GetProto is a lookup per call
@@ -303,7 +304,7 @@ impl Half {
     /// the table names are what the database shows.
     pub fn tables(self) -> &'static str {
         match self {
-            Half::Tables => "spell_template, taxi_nodes, skill_line_ability",
+            Half::Tables => "spell_template, taxi_nodes, skill_line_ability, area_template",
             Half::Creatures => "creature_template, creature, creature_movement",
             Half::GameObjects => "gameobject_template, gameobject",
             Half::Items => "item_template",
@@ -350,9 +351,9 @@ impl Half {
             Half::Tables => {
                 "A spell is live on `.reload spell_template`, which an apply sends when it \
                  is made with the panels open over a playtest; applied at any other time, \
-                 it is live after a restart. A flight node and a skill line ability need a restart: \
-                 `taxi_nodes` and `skill_line_ability` are read at startup and have no \
-                 reload. So do the DBC files Apply copies into DataDir\\5875\\dbc: \
+                 it is live after a restart. A flight node, a skill line ability and an area \
+                 need a restart: `taxi_nodes`, `skill_line_ability` and `area_template` \
+                 are read at startup and have no reload. So do the DBC files Apply copies into DataDir\\5875\\dbc: \
                  TaxiPath, TaxiPathNode, SkillLine, SkillRaceClassInfo and ItemSet among \
                  them. A spell *removed* \
                  needs a restart too: the reload overwrites and \

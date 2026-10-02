@@ -264,6 +264,15 @@ pub enum Tool {
     /// same reason as `Lights`, it is on the rail's World half rather than
     /// with the data editors on the top bar.
     Flightpaths,
+    /// `AreaTable.dbc`: the zones and the sub-areas inside them, what each
+    /// is called and how the game treats a character standing in it — see
+    /// [`tables`].
+    ///
+    /// A DBC table edited in the table browser, and the row [`Tool::Areas`]
+    /// paints onto the ground by id: this tool says what an area is, and that
+    /// one says where it is. The server reads its copy from `area_template`
+    /// at startup, so it is not available during a playtest.
+    Zones,
     /// Any DBC table, by name — see [`tables`].
     ///
     /// The workspace's list is the files of `DBFilesClient\`. Choosing one
@@ -300,7 +309,7 @@ pub enum Surface {
 /// [`Tool::at`] enforces the list: an exhaustive `match` that does not compile
 /// until a new variant has an index, plus a test that this list is exactly
 /// those indices in order.
-pub const ALL: [Tool; 22] = [
+pub const ALL: [Tool; 23] = [
     Tool::Select,
     Tool::Terrain,
     Tool::Grade,
@@ -323,6 +332,7 @@ pub const ALL: [Tool; 22] = [
     Tool::Chunks,
     Tool::ItemSets,
     Tool::Tables,
+    Tool::Zones,
 ];
 
 impl Tool {
@@ -357,6 +367,7 @@ impl Tool {
             Tool::Chunks => 19,
             Tool::ItemSets => 20,
             Tool::Tables => 21,
+            Tool::Zones => 22,
         }
     }
 
@@ -374,6 +385,7 @@ impl Tool {
             Tool::Lights => Some("Light"),
             Tool::Flightpaths => Some("TaxiNodes"),
             Tool::ItemSets => Some("ItemSet"),
+            Tool::Zones => Some(tables::area::TABLE),
             // No one table: the workspace starts on the list of them.
             Tool::Tables => Some(tables::ANY),
             _ => None,
@@ -399,9 +411,12 @@ impl Tool {
 
     /// Whether this tool keeps working while a playtest is running.
     ///
-    /// The four workspaces do: Spells, Items with its Sets part, Quests and
+    /// Four workspaces do: Spells, Items with its Sets part, Quests and
     /// Tables. Each replaces the viewport, so none needs the editor's own
-    /// world, which was despawned when the playtest started.
+    /// world, which was despawned when the playtest started. [`Tool::Zones`]
+    /// is a workspace that does not: the server reads `area_template` at
+    /// startup only, and an area is put on the ground with a tool that keeps
+    /// the viewport.
     ///
     /// A DBC is the same file whoever reads it, so a spell or any other table
     /// can be edited while a character stands in the world. [`Tool::Items`] is
@@ -442,9 +457,12 @@ impl Tool {
     /// [`Tool::survives_playtest`].
     pub fn surface(self) -> Surface {
         match self {
-            Tool::Spells | Tool::Items | Tool::ItemSets | Tool::Quests | Tool::Tables => {
-                Surface::Middle
-            }
+            Tool::Spells
+            | Tool::Items
+            | Tool::ItemSets
+            | Tool::Quests
+            | Tool::Tables
+            | Tool::Zones => Surface::Middle,
             // A light's row, a flight path node or point, a creature's spawn
             // row and a game object's are each a place in the world, so each
             // is picked with the pointer and puts its form where every other
@@ -480,6 +498,7 @@ impl Tool {
             Tool::Lights => &tables::LIGHT_TABS,
             Tool::Flightpaths => &tables::TAXI_TABS,
             Tool::ItemSets => &tables::SET_TABS,
+            Tool::Zones => &tables::ZONE_TABS,
             _ => &[],
         }
     }
@@ -507,14 +526,16 @@ impl Tool {
     }
 
     /// The workspace a DBC table is browsed in, for a reference followed
-    /// from another form: Sets for `ItemSet`, Spells for the spell chain and
-    /// the skill tables, and Tables for everything else.
+    /// from another form: Sets for `ItemSet`, Zones for `AreaTable`, Spells
+    /// for the spell chain and the skill tables, and Tables for everything
+    /// else.
     pub fn for_table(table: &str) -> Tool {
         let in_spells = table == "Spell"
             || tables::SPELL_TABS.iter().any(|&(_, name)| name == table)
             || tables::chain_for("Spell").contains(&table);
         match table {
             "ItemSet" => Tool::ItemSets,
+            "AreaTable" => Tool::Zones,
             _ if in_spells => Tool::Spells,
             _ => Tool::Tables,
         }
@@ -554,6 +575,11 @@ impl Tool {
             Tool::Chunks => "Chunks",
             Tool::ItemSets => "Sets",
             Tool::Tables => "Tables",
+            // "Zones" and not "Areas": the rail's Areas tool paints an area
+            // onto chunks, and this workspace is what a zone and its
+            // sub-areas are. Two subjects with one name would be two answers
+            // to `--tool areas`.
+            Tool::Zones => "Zones",
         }
     }
 }
@@ -1013,6 +1039,7 @@ fn modes(
         | Tool::ItemSets
         | Tool::Quests
         | Tool::Tables
+        | Tool::Zones
         | Tool::Flightpaths => {}
         Tool::Terrain => {
             // Unshifted digits cover the two long rows; shifted digits cover
@@ -1131,18 +1158,20 @@ mod tests {
         }
     }
 
-    /// The tools that work during a playtest are the four workspaces, with
-    /// the Sets part of Items, and nothing that keeps the viewport.
+    /// The tools that work during a playtest are four workspaces, with the
+    /// Sets part of Items, and nothing that keeps the viewport. Zones is the
+    /// one workspace that does not.
     #[test]
     fn only_the_workspaces_survive_a_playtest() {
         for tool in ALL {
             assert_eq!(
                 tool.survives_playtest(),
-                tool.covers_viewport(),
+                tool.covers_viewport() && tool != Tool::Zones,
                 "{}",
                 tool.name()
             );
         }
+        assert_eq!(open_on(Tool::Zones), Tool::Spells);
         assert!(!Tool::Lights.survives_playtest());
         assert!(!Tool::Flightpaths.survives_playtest());
         assert_eq!(open_on(Tool::Lights), Tool::Spells);
@@ -1378,9 +1407,12 @@ mod tests {
         for table in ["Spell", "SpellVisualKit", "SpellIcon", "SkillLine", "SkillLineAbility"] {
             assert_eq!(Tool::for_table(table), Tool::Spells, "{table}");
         }
-        for table in ["Faction", "AreaTable", "Map", "Lock"] {
+        for table in ["Faction", "Map", "Lock"] {
             assert_eq!(Tool::for_table(table), Tool::Tables, "{table}");
         }
+        assert_eq!(Tool::for_table("AreaTable"), Tool::Zones);
+        assert_eq!(Tool::Zones.table(), Some("AreaTable"));
+        assert!(Tool::Zones.covers_viewport());
         // The skill tables are the spell workspace's second row of tabs.
         let tabs = Tool::Spells.tabs();
         assert_eq!(tabs.len(), tables::TAB_ROW + 3);

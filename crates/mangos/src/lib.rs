@@ -9,6 +9,9 @@
 //! skills.rs    `skill_line_ability`, the server's copy of
 //!              `SkillLineAbility.dbc`: an edited ability written as a row at
 //!              build 5875, the only build the loader reads
+//! area.rs      `area_template`, the server's copy of `AreaTable.dbc`: an
+//!              edited or new area written as a row keyed by its entry alone,
+//!              nine columns of the file's 25, read at startup
 //! creature.rs  two tables with no client file behind them: `creature_template`,
 //!              what an NPC is, and `creature`, where one stands
 //! gameobject.rs the matching pair for game objects: `gameobject_template`,
@@ -97,6 +100,7 @@
 //! knows nothing about the server's database. The editor and the CLI are the
 //! two hosts that use this crate.
 
+pub mod area;
 pub mod broadcast;
 pub mod conn;
 pub mod creature;

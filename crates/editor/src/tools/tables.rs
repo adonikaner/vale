@@ -40,6 +40,7 @@
 //! Spells   the spell chain's four tables, and under them the three skill
 //!          tables: SkillLine, SkillLineAbility, SkillRaceClassInfo
 //! Sets     ItemSet, as a part of the Items workspace
+//! Zones    AreaTable: the zones and the sub-areas inside them
 //! Tables   any file of DBFilesClient\, chosen from a list of all of them
 //! ```
 //!
@@ -100,6 +101,16 @@
 //! An item set's item list and an item's `set_id` are one fact stored
 //! twice, in a DBC table and in a server row. [`move_between_sets`] is
 //! the table half of keeping them in step.
+//!
+//! ## Zones and sub-areas
+//!
+//! `AreaTable` is two levels: a zone, and the sub-areas that name it as
+//! their parent. A zone's form lists its sub-areas ([`sub_areas_of`]).
+//! [`add_zone`] and [`add_sub_area`] make a row with the columns a blank row
+//! would get wrong: the map, the parent, and an explore bit no other row
+//! holds ([`next_explore_bit`]). A sub-area also starts with its zone's flags,
+//! reverb, ambience and music. A row is put on the ground by the Areas tool,
+//! which [`Browser::paint_area`] asks the shell to switch to.
 //!
 //! ## Commands on a row
 //!
@@ -324,6 +335,10 @@ pub struct Browser {
     /// for Items. The panel cannot switch itself, because the tool is
     /// borrowed while it draws.
     pub switch_to: Option<super::Tool>,
+    /// An area the form asks the shell to paint with: the shell gives its id
+    /// to the Areas tool's brush and switches to that tool. See
+    /// [`Command::PaintArea`].
+    pub paint_area: Option<u32>,
 }
 
 impl Browser {
@@ -965,6 +980,29 @@ pub fn describe(
             let (items, bonuses) = (count(10..27), count(27..35));
             (text(1), format!("{items} items · {bonuses} bonuses"))
         }
+        // An area is its name, and where it is: `zone · Azeroth` for a zone
+        // and `in Elwynn Forest · Azeroth` for a sub-area. The search index
+        // is built from the label, so a zone's name finds its sub-areas and
+        // the word `zone` finds the zones.
+        "AreaTable" => {
+            let map = num(area::MAP);
+            let map_name = session
+                .table("Map")
+                .and_then(|maps| maps.string_at(maps.row_of(map)?, 1))
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| format!("map {map}"));
+            let sub = match num(area::PARENT) {
+                0 => format!("zone \u{b7} {map_name}"),
+                parent => {
+                    let zone = table
+                        .row_of(parent)
+                        .and_then(|row| table.string_at(row, area::NAME))
+                        .unwrap_or_else(|| format!("area {parent}"));
+                    format!("in {zone} \u{b7} {map_name}")
+                }
+            };
+            (text(area::NAME), sub)
+        }
         _ => (
             browser
                 .name_field(session, table_name)
@@ -1192,6 +1230,16 @@ pub fn chain_for(table: &str) -> &'static [&'static str] {
         // the others.
         "SkillLine" => &["SkillLineCategory", "SpellIcon"],
         "SkillLineAbility" | "SkillRaceClassInfo" => &["SkillLine", "Spell"],
+        // `Map`, which an area's label names, and the five tables its sound
+        // and liquid columns refer to, so each reference is drawn as a name.
+        "AreaTable" => &[
+            "Map",
+            "ZoneMusic",
+            "ZoneIntroMusicTable",
+            "SoundAmbience",
+            "SoundProviderPreferences",
+            "LiquidType",
+        ],
         _ => &[],
     }
 }
@@ -1225,6 +1273,10 @@ pub const TAB_ROW: usize = 4;
 /// The Sets part of the Items workspace: one table. A single tab is not
 /// drawn; the strip above it switches between the workspace's parts.
 pub const SET_TABS: [(&str, &str); 1] = [("Sets", "ItemSet")];
+
+/// The Zones workspace: one table, so no tab is drawn. The zones and their
+/// sub-areas are rows of the same table.
+pub const ZONE_TABS: [(&str, &str); 1] = [("Areas", "AreaTable")];
 
 /// The table the Tables workspace starts on: none. Its list is the tables
 /// themselves until one is chosen. See [`super::Tool::Tables`].
@@ -1559,6 +1611,102 @@ pub fn add_race_class_row(session: &mut EditSession, skill: u32) -> Option<usize
             (race_class::CLASSES, race_class::EVERY_CLASS),
         ],
         &[],
+    );
+    session.history.end();
+    at
+}
+
+/// `AreaTable.dbc`'s fields, as the Zones workspace reads and writes them.
+/// The indices are `vale_assets::tables::area::fields`'.
+pub mod area {
+    use vale_assets::tables::area::fields;
+    pub const TABLE: &str = "AreaTable";
+    pub const MAP: usize = fields::MAP_ID;
+    pub const PARENT: usize = fields::PARENT;
+    pub const EXPLORE_BIT: usize = fields::AREA_BIT;
+    pub const FLAGS: usize = fields::FLAGS;
+    pub const NAME: usize = fields::NAME;
+    pub const NAME_FLAGS: usize = fields::NAME_FLAGS;
+    /// `AREA_FLAG_DUEL`, which 969 of the 1,081 shipped rows carry and a new
+    /// zone starts with.
+    pub const DUELS: u32 = 0x40;
+    /// The word after the name columns on 724 of the 1,081 shipped rows; the
+    /// other 357 hold 8,323,198. No source describes the column, so a new row
+    /// takes the commoner shipped value and not zero, which no shipped row
+    /// holds.
+    pub const SHIPPED_NAME_FLAGS: u32 = 4_128_894;
+    /// What a new sub-area takes from its zone: the flags, the two reverb
+    /// presets, the ambience and the music. Northshire Valley holds Elwynn
+    /// Forest's values in all five.
+    pub const FROM_ZONE: [usize; 5] = [4, 5, 6, 7, 8];
+    pub const NEW_ZONE: &str = "New zone";
+    pub const NEW_SUB_AREA: &str = "New area";
+}
+
+/// The lowest explore bit above every one the table uses. The shipped rows
+/// use 0 to 1076 with no gap, so a new area takes 1077. Two areas that share
+/// a bit are discovered together, which is why a new row does not reuse one.
+pub fn next_explore_bit(areas: &vale_edit::dbc::DbcFile) -> u32 {
+    (0..areas.record_count())
+        .filter_map(|record| areas.u32_at(record, area::EXPLORE_BIT))
+        .max()
+        .map_or(0, |highest| highest.saturating_add(1))
+}
+
+/// The sub-areas of a zone: the rows whose parent is `zone`, in file order.
+pub fn sub_areas_of(browser: &mut Browser, session: &EditSession, zone: u32) -> Vec<usize> {
+    rows_naming(browser, session, area::TABLE, zone, area::TABLE, area::PARENT)
+}
+
+/// A new zone on `map`, as one undo entry: no parent, the next explore bit,
+/// duels allowed, and a name to be replaced. Returns its record.
+pub fn add_zone(session: &mut EditSession, map: u32) -> Option<usize> {
+    let bit = next_explore_bit(session.table(area::TABLE)?);
+    session.history.begin("Add zone");
+    let at = push_row(
+        session,
+        area::TABLE,
+        &[
+            (area::MAP, map),
+            (area::EXPLORE_BIT, bit),
+            (area::FLAGS, area::DUELS),
+            (area::NAME_FLAGS, area::SHIPPED_NAME_FLAGS),
+        ],
+        &[(area::NAME, area::NEW_ZONE.to_string())],
+    );
+    session.history.end();
+    at
+}
+
+/// A new sub-area of the zone `of` is, or is in, as one undo entry. It takes
+/// the zone's map and [`area::FROM_ZONE`]'s columns, the next explore bit, and
+/// a name to be replaced. Asked of a sub-area, it makes a sibling: the table
+/// is two levels, and no shipped row's parent has a parent. Returns the new
+/// row's record.
+pub fn add_sub_area(session: &mut EditSession, of: u32) -> Option<usize> {
+    let areas = session.table(area::TABLE)?;
+    let asked = areas.row_of(of)?;
+    let zone = match areas.u32_at(asked, area::PARENT)? {
+        0 => of,
+        parent => parent,
+    };
+    // A parent the table does not hold: the row asked of stands in for it.
+    let from = areas.row_of(zone).unwrap_or(asked);
+    let mut numbers = vec![
+        (area::MAP, areas.u32_at(from, area::MAP)?),
+        (area::PARENT, zone),
+        (area::EXPLORE_BIT, next_explore_bit(areas)),
+        (area::NAME_FLAGS, area::SHIPPED_NAME_FLAGS),
+    ];
+    for field in area::FROM_ZONE {
+        numbers.push((field, areas.u32_at(from, field)?));
+    }
+    session.history.begin("Add sub-area");
+    let at = push_row(
+        session,
+        area::TABLE,
+        &numbers,
+        &[(area::NAME, area::NEW_SUB_AREA.to_string())],
     );
     session.history.end();
     at
@@ -1925,6 +2073,10 @@ pub enum Command {
     LookLike,
     CloneChain,
     GiveToRacesAndClasses,
+    /// A new sub-area of a zone. Offered on a zone's row.
+    AddSubArea,
+    /// Give the area to the Areas tool's brush and switch to that tool.
+    PaintArea,
     Clone,
     Delete,
     CopyId,
@@ -1941,6 +2093,7 @@ pub fn commands(table: &str) -> Vec<Command> {
         ],
         "SpellVisual" => vec![Command::CloneChain],
         "SkillLine" => vec![Command::GiveToRacesAndClasses],
+        "AreaTable" => vec![Command::AddSubArea, Command::PaintArea],
         _ => Vec::new(),
     };
     all.extend([Command::Clone, Command::Delete, Command::CopyId]);
@@ -1975,6 +2128,15 @@ pub fn command_label(
         Command::LookLike => "Look like a spell\u{2026}".to_string(),
         Command::CloneChain => "Clone chain".to_string(),
         Command::GiveToRacesAndClasses => "Give it to races and classes".to_string(),
+        // Offered on a zone. A sub-area's own sub-area would be a third
+        // level, which the table does not have.
+        Command::AddSubArea => {
+            if session.table(table)?.u32_at(record, area::PARENT)? != 0 {
+                return None;
+            }
+            "Add a sub-area".to_string()
+        }
+        Command::PaintArea => "Paint it on the map".to_string(),
         Command::Clone => "Clone".to_string(),
         Command::Delete => match browser.used_by(session, table, id).len() {
             0 => "Delete".to_string(),
@@ -2009,6 +2171,14 @@ pub fn command_about(command: Command) -> &'static str {
         Command::GiveToRacesAndClasses => {
             "A new SkillRaceClassInfo row naming this line, for every race and every class, \
              with no flag set. One undo entry."
+        }
+        Command::AddSubArea => {
+            "A new area inside this zone, on the zone's map, with the zone's flags, reverb, \
+             ambience and music and an explore bit no other area holds. One undo entry."
+        }
+        Command::PaintArea => {
+            "Switch to the Areas tool with this area on the brush. An area is on the map \
+             where chunks carry its id, and nowhere until some do."
         }
         Command::Clone => "A copy of the row under the next id; a copied name gets \" (copy)\".",
         Command::Delete => "Remove the row. One undo entry.",
@@ -2837,6 +3007,67 @@ mod tests {
         let _ = std::fs::remove_dir_all(&install);
     }
 
+    /// A new zone has no parent, is on the map asked for and takes an explore
+    /// bit no row holds. A new sub-area names its zone, is on the zone's map,
+    /// carries the zone's flags and music, and takes the next bit after that.
+    /// Asked of a sub-area, a sibling is made. Each is one undo entry.
+    #[test]
+    fn a_zone_and_its_sub_areas_are_rows_with_their_own_explore_bits() {
+        let (mut session, install) = session("areas");
+        let mut areas = empty(25);
+        add(
+            &mut areas,
+            12,
+            &[(area::MAP, 0), (area::EXPLORE_BIT, 126), (area::FLAGS, 0x40), (7, 35), (8, 1)],
+            &[(area::NAME, "Elwynn Forest")],
+        );
+        add(
+            &mut areas,
+            9,
+            &[(area::MAP, 0), (area::PARENT, 12), (area::EXPLORE_BIT, 125)],
+            &[(area::NAME, "Northshire Valley")],
+        );
+        session.tables.insert(area::TABLE.to_string(), areas);
+        let mut browser = Browser::default();
+        assert_eq!(next_explore_bit(&session.tables[area::TABLE]), 127);
+        assert_eq!(sub_areas_of(&mut browser, &session, 12), vec![1]);
+
+        let zone = add_zone(&mut session, 1).expect("a zone");
+        let table = &session.tables[area::TABLE];
+        assert_eq!(table.u32_at(zone, area::MAP), Some(1));
+        assert_eq!(table.u32_at(zone, area::PARENT), Some(0));
+        assert_eq!(table.u32_at(zone, area::EXPLORE_BIT), Some(127));
+        assert_eq!(table.u32_at(zone, area::FLAGS), Some(area::DUELS));
+        assert_eq!(table.string_at(zone, area::NAME).as_deref(), Some(area::NEW_ZONE));
+
+        let inside = add_sub_area(&mut session, 12).expect("a sub-area");
+        let table = &session.tables[area::TABLE];
+        assert_eq!(table.u32_at(inside, area::PARENT), Some(12));
+        assert_eq!(table.u32_at(inside, area::MAP), Some(0));
+        assert_eq!(table.u32_at(inside, area::EXPLORE_BIT), Some(128));
+        assert_eq!(table.u32_at(inside, 7), Some(35), "the zone's ambience");
+        assert_eq!(table.u32_at(inside, 8), Some(1), "the zone's music");
+        let sibling = add_sub_area(&mut session, 9).expect("a sibling");
+        assert_eq!(session.tables[area::TABLE].u32_at(sibling, area::PARENT), Some(12));
+        assert_eq!(sub_areas_of(&mut browser, &session, 12), vec![1, inside, sibling]);
+        assert_eq!(session.history.depth_done(), 3);
+
+        // A sub-area is offered to a zone and not to a sub-area.
+        let label = |browser: &mut Browser, record| {
+            command_label(browser, &session, area::TABLE, record, Command::AddSubArea)
+        };
+        assert!(label(&mut browser, 0).is_some());
+        assert!(label(&mut browser, 1).is_none());
+        assert!(commands(area::TABLE).contains(&Command::PaintArea));
+        // The label says which of the two a row is.
+        assert_eq!(describe(&mut browser, &session, area::TABLE, 0).sub, "zone \u{b7} map 0");
+        assert_eq!(
+            describe(&mut browser, &session, area::TABLE, 1).sub,
+            "in Elwynn Forest \u{b7} map 0"
+        );
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
     /// A skill line is given to races and classes by a row naming it, for
     /// everyone by default.
     #[test]
@@ -3094,6 +3325,16 @@ mod tests {
         assert_eq!(commands("SkillLine")[0], Command::GiveToRacesAndClasses);
         assert_eq!(
             commands("AreaTable"),
+            vec![
+                Command::AddSubArea,
+                Command::PaintArea,
+                Command::Clone,
+                Command::Delete,
+                Command::CopyId,
+            ]
+        );
+        assert_eq!(
+            commands("Faction"),
             vec![Command::Clone, Command::Delete, Command::CopyId]
         );
 

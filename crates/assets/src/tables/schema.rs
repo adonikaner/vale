@@ -226,6 +226,9 @@ pub fn for_table(name: &str) -> Option<&'static Schema> {
 ///
 /// `ItemSet` stands alone: its items are [`Kind::Item`], its bonuses refer to
 /// `Spell` and its requirement to `SkillLine`.
+///
+/// `AreaTable` stands alone too: an area refers to its `Map`, to the zone
+/// that encloses it in the same table, and to the sound and music tables.
 pub const ALL: &[&Schema] = &[
     &SPELL,
     &SPELL_VISUAL,
@@ -256,6 +259,7 @@ pub const ALL: &[&Schema] = &[
     &SKILL_LINE_ABILITY,
     &SKILL_RACE_CLASS_INFO,
     &ITEM_SET,
+    &AREA_TABLE,
 ];
 
 /// Every file in 1.12.1's `DBFilesClient\`, by bare name: 158 of them, four
@@ -2208,9 +2212,192 @@ const ITEM_SET_COLUMNS: [Column; 45] = [
     c(44, "RequiredSkillRank", Kind::Int),
 ];
 
+/// `AreaTable.dbc`: 1,081 rows of 25 fields. A row is one named place: a zone,
+/// or a sub-area of a zone. Each terrain chunk carries one row's id, and that
+/// is the only thing that says where a character is standing. The indices are
+/// those [`super::area`] reads, each measured over the shipped file; the flag
+/// names follow vmangos' `AreaFlags` in `DBCEnums.h`.
+///
+/// The table is two levels deep: 122 rows have no parent and are zones, and
+/// no shipped row's parent has a parent of its own.
+///
+/// vmangos does not read this file. It reads nine of the columns from its
+/// `area_template` table, so an edit here reaches the server as a row of that
+/// table. Fields 5 to 9 and the seven other locales are the client's alone.
+pub const AREA_TABLE: Schema = Schema {
+    table: "AreaTable",
+    columns: &AREA_TABLE_COLUMNS,
+    sections: &[
+        // The seven other locale names fold away under the name, as a form
+        // draws every locale run.
+        Section {
+            name: "Area",
+            fields: &[0, 11, 12, 13, 14, 15, 16, 17, 18, 19, 1, 2, 20, 4],
+        },
+        Section {
+            name: "Exploration",
+            fields: &[3, 10],
+        },
+        Section {
+            name: "Sound",
+            fields: &[8, 9, 7, 5, 6],
+        },
+        Section {
+            name: "Other",
+            fields: &[24, 21, 22, 23],
+        },
+    ],
+};
+
+/// vmangos' `AreaFlags`, with what each bit does as its comments state it.
+pub const AREA_FLAGS: [(u32, &str, &str); 10] = [
+    (0x001, "Snow", "Breath is drawn. Dun Morogh, Winterspring, Naxxramas and Razorfen Downs."),
+    (0x002, "Override parent snow", "Two shipped rows: in Naxxramas and Razorfen Downs."),
+    (0x004, "Development", "Used on the development map only."),
+    (0x008, "Trade channel", "The trade channel exists here: a capital's sub-areas."),
+    (0x010, "Enemies flagged", "An enemy player here is flagged for PvP."),
+    (0x020, "Resting", "A character here is resting, as in an inn."),
+    (0x040, "Duels", "A duel may be started here. 969 of the 1,081 shipped rows."),
+    (0x080, "Arena", "A free-for-all arena."),
+    (0x100, "Capital", "A capital city's own row."),
+    (0x200, "City channels", "The highest area id with this bit names the city chat channels."),
+];
+
+/// The three values the team column holds over the shipped rows.
+pub const AREA_TEAMS: [(u32, &str); 3] = [(0, "Neither"), (2, "Alliance"), (4, "Horde")];
+
+const AREA_UNUSED: &str = "Zero on all 1,081 shipped rows. No reader of this column is known.";
+
+const AREA_TABLE_COLUMNS: [Column; 25] = [
+    c(0, "Id", Kind::Id),
+    ca(
+        1,
+        "Map",
+        Kind::Reference("Map"),
+        "The map the area is on. Its chunks can only be painted on that map.",
+    ),
+    ca(
+        2,
+        "Parent",
+        Kind::Reference("AreaTable"),
+        "The zone this area is inside, or none for a zone. The interface shows \
+         the zone's name as the zone and this row's as the sub-zone. No shipped \
+         row's parent has a parent.",
+    ),
+    ca(
+        3,
+        "ExploreBit",
+        Kind::Int,
+        "Which bit of the character's explored-zones mask says this area has \
+         been seen. The shipped rows use 0 to 1076, and four values are held \
+         by two rows each. The mask is 64 words, so a bit must be under 2,048.",
+    ),
+    ca(4, "Flags", Kind::Flags(&AREA_FLAGS), "vmangos' AreaFlags."),
+    ca(
+        5,
+        "SoundProviderPref",
+        Kind::Reference("SoundProviderPreferences"),
+        "The reverb preset heard in the area. Eight shipped rows have one.",
+    ),
+    ca(
+        6,
+        "SoundProviderPrefUnderwater",
+        Kind::Reference("SoundProviderPreferences"),
+        "The reverb preset heard under water. 568 shipped rows hold 11 and the \
+         rest none.",
+    ),
+    ca(
+        7,
+        "Ambience",
+        Kind::Reference("SoundAmbience"),
+        "The ambient sound, by day and by night. 179 shipped rows have one.",
+    ),
+    ca(
+        8,
+        "ZoneMusic",
+        Kind::Reference("ZoneMusic"),
+        "The music played here. 447 shipped rows have one; an area with none \
+         keeps its zone's.",
+    ),
+    ca(
+        9,
+        "IntroMusic",
+        Kind::Reference("ZoneIntroMusicTable"),
+        "The piece played once on entering. 62 shipped rows have one, and four \
+         of those name a row the table does not hold.",
+    ),
+    ca(
+        10,
+        "ExploreLevel",
+        Kind::Signed,
+        "The level of the area, which scales the experience given for \
+         discovering it; 0 or less gives none. A negative value also shows \
+         the area's map landmarks before it is explored. 512 shipped rows \
+         hold 0.",
+    ),
+    ca(11, "Name", Kind::Text, "What the minimap and the zone text call the place."),
+    c(12, "Name koKR", Kind::Locale(LOCALES[1])),
+    c(13, "Name frFR", Kind::Locale(LOCALES[2])),
+    c(14, "Name deDE", Kind::Locale(LOCALES[3])),
+    c(15, "Name enCN", Kind::Locale(LOCALES[4])),
+    c(16, "Name enTW", Kind::Locale(LOCALES[5])),
+    c(17, "Name esES", Kind::Locale(LOCALES[6])),
+    c(18, "Name esMX", Kind::Locale(LOCALES[7])),
+    c(19, "NameFlags", Kind::LocaleFlags),
+    ca(
+        20,
+        "Team",
+        Kind::Enum(&AREA_TEAMS),
+        "Which side the area belongs to. 25 shipped rows are the Alliance's \
+         and 37 the Horde's; the rest are neither.",
+    ),
+    ca(21, "Unused 21", Kind::Unused, AREA_UNUSED),
+    ca(22, "Unused 22", Kind::Unused, AREA_UNUSED),
+    ca(23, "Unused 23", Kind::Unused, AREA_UNUSED),
+    ca(
+        24,
+        "LiquidType",
+        Kind::Reference("LiquidType"),
+        "A liquid that replaces the one drawn in the area. One shipped row has \
+         one: Naxxramas, 21.",
+    ),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The area schema is the width the file is and names the fields
+    /// `tables::area` reads, so a form and the reader cannot drift apart.
+    #[test]
+    fn the_area_schema_agrees_with_the_module_that_reads_it() {
+        use super::super::area::fields as af;
+        assert_eq!(AREA_TABLE.columns.len(), af::COUNT);
+        let named = |field: usize| AREA_TABLE.columns[field].name;
+        assert_eq!(named(af::MAP_ID), "Map");
+        assert_eq!(named(af::PARENT), "Parent");
+        assert_eq!(named(af::AREA_BIT), "ExploreBit");
+        assert_eq!(named(af::FLAGS), "Flags");
+        assert_eq!(named(af::ZONE_MUSIC), "ZoneMusic");
+        assert_eq!(named(af::EXPLORE_LEVEL), "ExploreLevel");
+        assert_eq!(named(af::NAME), "Name");
+        assert_eq!(named(af::NAME_FLAGS), "NameFlags");
+        assert_eq!(named(af::TEAM), "Team");
+        assert_eq!(named(af::LIQUID_TYPE), "LiquidType");
+        assert_eq!(AREA_TABLE.columns[af::PARENT].kind, Kind::Reference("AreaTable"));
+        // The two flags `tables::area` reads are in the list under their bits.
+        let bit = |name: &str| AREA_FLAGS.iter().find(|flag| flag.1 == name).map(|flag| flag.0);
+        assert_eq!(bit("Trade channel"), Some(super::super::area::AREA_FLAG_SLAVE_CAPITAL));
+        assert_eq!(bit("City channels"), Some(super::super::area::AREA_FLAG_CITY));
+        // Every field is in exactly one section.
+        let mut drawn: Vec<usize> = AREA_TABLE
+            .sections
+            .iter()
+            .flat_map(|section| section.fields.iter().copied())
+            .collect();
+        drawn.sort_unstable();
+        assert_eq!(drawn, (0..af::COUNT).collect::<Vec<_>>());
+    }
 
     /// Every named mask is a distinct single bit.
     ///
@@ -2544,8 +2731,18 @@ mod tests {
         // These are referenced deliberately without a schema of their own.
         // Each opens as numbered fields, which is better than a reference the
         // browser refuses to follow.
-        const UNDESCRIBED: [&str; 5] =
-            ["Faction", "Map", "SkillCostsData", "SkillLineCategory", "SkillTiers"];
+        const UNDESCRIBED: [&str; 10] = [
+            "Faction",
+            "LiquidType",
+            "Map",
+            "SkillCostsData",
+            "SkillLineCategory",
+            "SkillTiers",
+            "SoundAmbience",
+            "SoundProviderPreferences",
+            "ZoneIntroMusicTable",
+            "ZoneMusic",
+        ];
         for target in UNDESCRIBED {
             assert!(TABLE_NAMES.contains(&target), "{target} is not a table");
         }

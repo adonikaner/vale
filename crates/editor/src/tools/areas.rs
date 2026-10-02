@@ -1,58 +1,59 @@
-//! Which place in the world each chunk belongs to — `MCNK`'s `areaId`.
+//! Which place in the world each chunk belongs to: `MCNK`'s `areaId`.
 //!
-//! ## The one tool whose result is invisible
+//! This tool says where an area is. What an area is (its name, its zone, its
+//! music, its flags) is a row of `AreaTable.dbc`, edited in the Zones
+//! workspace; see [`crate::tools::tables`]. The panel links the two: Edit
+//! opens the row of the area on the brush, and two buttons make a zone or a
+//! sub-area and put it on the brush ([`Ask`]). The panel lists areas from the
+//! session's own copy of the table while it has one open
+//! ([`Areas::follow_table`]), so a new area can be painted before it is saved.
+//!
+//! ## The ground is drawn as its area
 //!
 //! Every other tool here changes the picture: the ground moves, the paint
-//! changes, a tree appears, a hole opens. An area id changes **nothing on
-//! screen at all**. It is a row id in a header, read by `GetZoneText`, by the
-//! minimap's label, by the world map's highlight, by which chat channels exist
-//! where you stand, and by whether a duel may be started — and by nothing that
-//! is drawn. See `vale_edit::adt::area`.
+//! changes, a tree appears, a hole opens. An area id changes nothing on
+//! screen. It is a row id in a header, read by `GetZoneText`, by the minimap's
+//! label, by the world map's highlight, by which chat channels exist where a
+//! character stands, and by whether a duel may be started. Nothing drawn reads
+//! it. See `vale_edit::adt::area`.
 //!
-//! Two consequences, and they shape the whole tool.
+//! Two things follow. There is no live path and no re-read: nothing was built
+//! from the id, so nothing has to be caught up. And a person editing areas
+//! cannot see what they are editing or what they have done, so while this
+//! tool is chosen the ground is drawn as its area: a solid colour per chunk,
+//! derived from the area id, washed over the terrain.
 //!
-//! **There is no live path and no re-read.** Nothing has to be caught up,
-//! because nothing was built from it. This is the cheapest edit in the crate.
+//! ## The wash is one 16x16 image per tile
 //!
-//! **The overlay is not a garnish, it is the tool.** A person editing zones
-//! cannot see what they are editing or what they have done, so while this tool
-//! is chosen **the ground is drawn as its area**: a solid colour per chunk,
-//! derived from the area id, washed over the terrain. Without it this is a
-//! number field that changes an invisible field to an invisible value.
-//!
-//! ## It is one 16x16 image per tile, and no geometry at all
-//!
-//! The first draft drew the *boundaries* — every edge where two chunks disagree
-//! — as draped lines. It worked and it was the wrong picture twice over: an
-//! outline says where a zone ends and not what is inside it, and every line had
-//! to be draped over the ground by sampling it, which is a search per sample.
+//! An earlier version drew the boundaries, every edge where two chunks
+//! disagree, as draped lines. An outline says where an area ends and not what
+//! is inside it, and every line had to be draped over the ground by sampling
+//! it, which is a search per sample.
 //!
 //! The ground is already addressed per chunk. `Adt::atlas_uv` maps a vertex to
 //! its own chunk's cell of a 16x16 grid over the alpha atlas, inset by half a
-//! texel so no sample can leave its cell — so a **16x16 image sampled with that
-//! same coordinate, nearest**, is exactly this chunk's own texel and nothing
-//! else's. `render::terrain::TileTint` is that image and
-//! `TerrainParams::tint` is how much of it to show; both are the client's, both
-//! are off in the client, and together they cost a kilobyte per tile and not one
-//! triangle.
+//! texel so no sample can leave its cell. A 16x16 image sampled with that
+//! coordinate, nearest, is therefore this chunk's own texel and no other's.
+//! `render::terrain::TileTint` is that image and `TerrainParams::tint` is how
+//! much of it to show. Both are the client's and both are off in the client;
+//! together they cost a kilobyte per tile and no triangle.
 //!
-//! What is left drawn as lines is only the **brush preview**, which is a handful
-//! of chunks and has to read *against* the wash rather than as part of it.
+//! Only the brush preview is drawn as lines. It is a handful of chunks and
+//! has to be told apart from the wash.
 //!
-//! ## …and the proof is a playtest
+//! ## A playtest shows the result
 //!
-//! `vale_assets::MapTerrain::area_at` is the client's **only** source for
-//! where the character is standing — nothing in the protocol carries a zone —
-//! and the local simulation already opens its terrain through this editor's
-//! overlay. So the check on this tool needs no server: paint a chunk, press
-//! **Playtest**, walk onto it, and the zone text is the new name.
+//! `vale_assets::MapTerrain::area_at` is the client's only source for where
+//! the character is standing, since nothing in the protocol carries a zone,
+//! and the local simulation opens its terrain through this editor's overlay.
+//! The check on this tool therefore needs no server: paint a chunk, press
+//! Playtest, walk onto it, and the zone text is the area's name.
 //!
-//! ## The eyedropper is half of using it
+//! ## Space takes the area under the pointer
 //!
-//! Zone editing is nearly always *extending an area that already exists* rather
-//! than inventing one — a subzone grows, a border moves. So `Space` takes the
-//! area under the pointer as the one to paint with, which turns "make this like
-//! that" into two gestures with no trip to the picker at all.
+//! Most area editing extends an area that already exists: a sub-area grows, a
+//! border moves. `Space` takes the area under the pointer as the one to paint
+//! with, so making one chunk like its neighbour needs no trip to the picker.
 
 use crate::session::EditSession;
 use crate::tools::Tool;
@@ -69,7 +70,7 @@ use bevy::prelude::*;
 ///
 /// The upper bound is the height brush's own argument one size down: a stroke
 /// can only reach tiles this session has open, which is the 3x3, and half of
-/// that is the honest cap. The lower bound is well under half a chunk, which is
+/// that is the cap. The lower bound is well under half a chunk, which is
 /// the radius at which a stroke is exactly the square under the pointer.
 pub const RADIUS: std::ops::RangeInclusive<f32> = 1.0..=400.0;
 
@@ -86,7 +87,7 @@ pub struct Areas {
     pub brush: AreaBrush,
     /// The chunk under the pointer, as `(tile, chunk)`.
     pub at: Option<((u32, u32), usize)>,
-    /// …and the area it currently carries, which is what the panel names and
+    /// The area that chunk currently carries, which is what the panel names and
     /// what `Space` takes.
     pub under: Option<u32>,
     /// The chunks a press would paint, in the tile they are in — drawn by
@@ -96,15 +97,63 @@ pub struct Areas {
     /// What the picker's search box holds, kept here so it survives the tool
     /// being switched away from and back.
     pub search: String,
-    /// …and which folder of the area tree it is showing — see
+    /// Which folder of the area tree the picker is showing — see
     /// [`crate::ui::inspector`], which builds the tree out of `AreaTable`'s own
     /// parents.
     pub folder: String,
+    /// `AreaTable` as this session has edited it, while the session has the
+    /// table open, and the table revision it was read at. The panel names and
+    /// lists areas from it, so an area made or renamed in the Zones workspace
+    /// is paintable before it is saved. `None` while the table is not open;
+    /// the panel then reads the client's own parse. See [`Areas::follow_table`].
+    ///
+    /// Behind an `Arc` so a panel can hold it while it writes the brush and
+    /// the picker's folder, which are fields of the same struct.
+    pub table: Option<std::sync::Arc<vale_assets::tables::area::Areas>>,
+    table_at: Option<u64>,
+    /// What the panel asks the shell to do with the table, taken by the shell
+    /// after the panel is drawn. See [`Ask`].
+    pub ask: Option<Ask>,
     /// Whether the press that began this stroke belonged to the world, and
     /// whether one is open — *a drag belongs to where it began*, the rule every
     /// tool in this directory keeps arriving at.
     armed: bool,
     painting: bool,
+}
+
+/// What the Areas panel asks of `AreaTable`. The panel has the brush and the
+/// shell has the table browser and the tool, so the panel asks and the shell
+/// acts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ask {
+    /// Open the Zones workspace on this area's row.
+    Edit(u32),
+    /// Make a zone on the open map and put it on the brush.
+    NewZone,
+    /// Make a sub-area of the zone this area is, or is in, and put it on the
+    /// brush.
+    NewSubArea(u32),
+}
+
+impl Areas {
+    /// Read `AreaTable` again from the session's open copy when it has
+    /// changed, and forget it when the session has none open.
+    ///
+    /// The whole table is parsed, 1,081 rows, on each table revision the
+    /// panel is drawn at. The revision moves on an edit to any table, which
+    /// is a keystroke at most.
+    pub fn follow_table(&mut self, session: &EditSession) {
+        let Some(open) = session.table(crate::tools::tables::area::TABLE) else {
+            self.table = None;
+            self.table_at = None;
+            return;
+        };
+        if self.table_at == Some(session.table_revision) {
+            return;
+        }
+        self.table = vale_assets::tables::area::Areas::parse(&open.write()).map(std::sync::Arc::new);
+        self.table_at = Some(session.table_revision);
+    }
 }
 
 pub struct AreaToolPlugin;
@@ -113,11 +162,11 @@ impl Plugin for AreaToolPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Areas>().add_systems(
             Update,
-            // **After the pick**, like every tool here: reading the pointer
+            // After the pick, like every tool here: reading the pointer
             // before the ray is this frame's paints where the pointer was.
             (aim, stroke).chain().after(crate::pick::aim),
         );
-        // …and after the stroke, so a chunk painted this frame is washed this
+        // After the stroke, so a chunk painted this frame is washed this
         // frame rather than next. Without it the one thing the tool shows lags
         // the one thing it does by a frame, which on a held stroke reads as the
         // brush trailing the pointer.
@@ -136,7 +185,7 @@ const WASH: f32 = 0.75;
 
 /// Draw the ground as its area, while this tool is chosen.
 ///
-/// **The tool is the picture** — see the module comment. What this does is fill
+/// The tool is the picture — see the module comment. What this does is fill
 /// each open tile's `TileTint` from its chunks' area ids and raise
 /// `TerrainParams::tint` on that tile's ground materials; when the tool is not
 /// chosen it lowers them again, which is the whole of putting the world back.
@@ -157,7 +206,7 @@ fn wash(
     mut shown: Local<HashMap<(u32, u32), u64>>,
 ) {
     let on = state.editing() && *tool == Tool::Areas;
-    // **Every ground material, not only the open tiles'.** Turning the tool off
+    // Every ground material, not only the open tiles'. Turning the tool off
     // has to put back every tile that was ever washed, including ones that have
     // since streamed out of the session's own 3x3.
     let wanted = if on { WASH } else { 0.0 };
@@ -199,7 +248,7 @@ fn wash(
         };
         for (index, id) in grid.iter().enumerate() {
             let [r, g, b, _] = colour_of(*id).to_srgba().to_u8_array();
-            // **`0` is transparent**, which is what leaves a chunk belonging to
+            // `0` is transparent, which is what leaves a chunk belonging to
             // nowhere looking like ground rather than like a zone of its own.
             // It is a real value and the shipped tiles have it; painting it a
             // colour would say it was somewhere.
@@ -242,7 +291,7 @@ fn aim(
         return;
     }
 
-    // **The ground as though it had no holes** — see [`crate::pick::solid_under`].
+    // The ground as though it had no holes — see [`crate::pick::solid_under`].
     // A cave mouth is a hole with a building behind it, and its chunks have an
     // area like any others; aiming at the drawn ground would make exactly those
     // unreachable.
@@ -258,7 +307,7 @@ fn aim(
     };
     areas.at = Some((coord, chunk));
     areas.under = area::area(tile, chunk);
-    // **From the brush's own rule and not a second one**, which is what makes
+    // From the brush's own rule and not a second one, which is what makes
     // the preview a preview rather than a guess. See `AreaBrush::covers`.
     areas.covered = areas.brush.covers(tile, [point.x, point.y]);
 
@@ -285,7 +334,7 @@ fn stroke(
     let Some(session) = session.as_mut() else {
         return;
     };
-    // **The release is answered wherever the pointer is**, and always, or the
+    // The release is answered wherever the pointer is, and always, or the
     // history is left open and the next change folds into it.
     if buttons.just_released(MouseButton::Left) {
         if areas.painting {
@@ -305,7 +354,7 @@ fn stroke(
         return;
     }
 
-    // **Every tile the circle reaches**, on the height brush's own argument: a
+    // Every tile the circle reaches, on the height brush's own argument: a
     // stroke that stopped at a tile border would leave the zone ending in a
     // straight line exactly there with nothing about either file wrong.
     let Some(point) = crate::pick::solid_under(session, &windows, &camera) else {
@@ -331,7 +380,7 @@ fn stroke(
             session.history.begin("Set area");
         }
         session.history.record(&key, edits);
-        // **Published and nothing else.** No chunk is marked dirty, no tile is
+        // Published and nothing else. No chunk is marked dirty, no tile is
         // marked stale: nothing on screen was built from an area id. See the
         // module comment.
         session.publish(coord);
@@ -365,14 +414,14 @@ fn tiles_under(radius: f32, at: Vec3) -> Vec<(u32, u32)> {
 /// the lesson the hole outline paid for. Four is a sample every eight yards.
 const DRAPE: usize = 4;
 
-/// …and how far above the ground it is lifted, in yards. It draws over the
+/// How far above the ground the preview is lifted, in yards. It draws over the
 /// world anyway (see [`crate::tools::gizmo::EditorHandles`]); this is so it
 /// reads as lying *on* the ground rather than inside it.
 const LIFT: f32 = 0.1;
 
 /// Outline what a press would paint.
 ///
-/// **All that is left of the overlay.** The ground itself is drawn as its area
+/// All that is left of the overlay. The ground itself is drawn as its area
 /// by [`wash`] — see the module comment — so what lines are still for is the one
 /// thing a wash cannot say: *which chunks the next press takes*. They are drawn
 /// in the area's own colour against a ground already washed in it, so the
@@ -397,7 +446,7 @@ fn draw(
     let Some(tile) = session.tiles.get(&coord) else {
         return;
     };
-    // **A light edge and not the area's own colour.** The ground under it is
+    // A light edge and not the area's own colour. The ground under it is
     // already washed in that colour, so drawing the outline in it would be
     // drawing the preview in the one shade guaranteed to be invisible.
     let colour = Color::srgb(1.0, 1.0, 1.0);
@@ -430,7 +479,7 @@ fn grid_of(tile: &vale_edit::adt::AdtFile) -> [u32; 256] {
 
 /// A colour for an area id.
 ///
-/// **A hash and not a table.** There are 1,081 rows in `AreaTable` and the point
+/// A hash and not a table. There are 1,081 rows in `AreaTable` and the point
 /// is only that two neighbouring zones look different; a palette anybody chose
 /// would be a hundred colours nobody agreed on and would still collide. The
 /// saturation and value are fixed so every zone reads at the same weight
@@ -445,13 +494,13 @@ fn colour_of(area: u32) -> Color {
 
 /// Which neighbour of a chunk, and therefore which of its four edges.
 ///
-/// A chunk's origin is its **maximum** corner and the grid runs in decreasing x
+/// A chunk's origin is its maximum corner and the grid runs in decreasing x
 /// and y from it, so [`Along::X`] and [`Along::Y`] alone cover every shared edge
 /// in the map exactly once — the other two belong to the chunks on the far side
 /// of them. The two negative ones exist only for drawing a single chunk's whole
 /// outline, which the brush preview does.
 ///
-/// **It is an enum and not an axis index**, because the first draft used an
+/// It is an enum and not an axis index, because the first draft used an
 /// index and got the pairing wrong: the probe looked at the neighbour along y
 /// and the line was drawn along the edge shared with the one along x. Every
 /// boundary was therefore drawn one edge away from where it is, which on a
@@ -469,7 +518,7 @@ enum Along {
 impl Along {
     /// The centre of the neighbouring chunk one step this way, in the world.
     ///
-    /// **Only the check calls it**, and that is what it is for: the midpoint of
+    /// Only the check calls it, and that is what it is for: the midpoint of
     /// a shared edge is halfway between the two chunk centres, which is true of
     /// a shared edge and of nothing else — so this is how [`Self::edge`] is
     /// held to naming the side it says it does. Stating the neighbour a second
@@ -487,7 +536,7 @@ impl Along {
         [origin[0] + size * dx, origin[1] + size * dy]
     }
 
-    /// …and the edge this chunk shares with it.
+    /// The edge this chunk shares with it.
     fn edge(self, origin: [f32; 3]) -> ((f32, f32), (f32, f32)) {
         let size = vale_assets::world::adt::CHUNK_SIZE;
         let (x0, y0) = (origin[0], origin[1]);
@@ -501,7 +550,7 @@ impl Along {
     }
 }
 
-/// A line between two world points, draped over **this chunk's own** ground in
+/// A line between two world points, draped over this chunk's own ground in
 /// [`DRAPE`] steps.
 ///
 /// It takes the chunk's `ChunkGround` rather than the session because the caller
@@ -542,14 +591,14 @@ const INSET: f32 = 0.05;
 
 // ------------------------------------------------------------- impassability
 
-/// **Mark the chunk under the pointer as one a server may not walk on.**
+/// Mark the chunk under the pointer as one a server may not walk on.
 ///
 /// A second thing this tool does, because it is the same gesture on the same
 /// unit: one word per chunk, clicked rather than painted, invisible in the
 /// viewport until something draws it. It is a mode of this tool rather than a
 /// tool of its own, because a rail tile for one checkbox is hard to find.
 ///
-/// **It is the server's flag and not the client's.** vmangos reads `MCNK`'s
+/// It is the server's flag and not the client's. vmangos reads `MCNK`'s
 /// `0x02` when it builds `mmaps`, and nothing in this client reads it at all —
 /// so marking a hill changes where a *character* may go once the server's maps
 /// are rebuilt from the edited files, and changes nothing on screen ever. See
@@ -604,7 +653,7 @@ mod tests {
     use super::*;
     use vale_assets::world::adt::CHUNK_SIZE;
 
-    /// **The edge drawn is the edge shared with the neighbour looked at.**
+    /// The edge drawn is the edge shared with the neighbour looked at.
     ///
     /// The one thing here that is silently wrong when it is wrong. The first
     /// draft indexed the two by an axis number and crossed them: the area was
@@ -614,7 +663,7 @@ mod tests {
     /// squares that looks exactly like a boundary.
     ///
     /// The check is the geometry rather than a second reading of the table: the
-    /// **midpoint of the shared edge is halfway between the two chunk centres**,
+    /// midpoint of the shared edge is halfway between the two chunk centres,
     /// which is true of a shared edge and of nothing else.
     #[test]
     fn each_edge_is_the_one_shared_with_the_neighbour_it_names() {

@@ -268,7 +268,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
         // itself is in the middle, where the viewport would be; see
         // `super::data`. This follows the shell's rule that the inspector
         // shows the selection.
-        Tool::Spells | Tool::ItemSets | Tool::Tables => table(
+        Tool::Spells | Tool::ItemSets | Tool::Tables | Tool::Zones => table(
             ui,
             super::data::Workspace {
                 tool,
@@ -530,7 +530,12 @@ fn zones(
     cursor: &Cursor,
 ) {
     impassability(ui, session, cursor);
-    let table = tables.and_then(|tables| tables.areas());
+    // The session's own copy of the table while it has one open, so an area
+    // made or renamed in the Zones workspace is listed here before a save.
+    let edited = areas.table.clone();
+    let table = edited
+        .as_deref()
+        .or_else(|| tables.and_then(|tables| tables.areas()));
     // The tree opens on the map being edited. Its top level is `AreaTable`'s
     // thirty-six maps, most of them instances that a continent edit does not
     // need; opening there would add a click to every use. `all` on the
@@ -575,6 +580,52 @@ fn zones(
     theme::heading(ui, "Painting");
     ui.label(egui::RichText::new(name_of(areas.brush.area)).color(theme::INK));
     theme::note(ui, "space takes the area under the pointer");
+    // What the area on the brush is, and the two ways to make one. The rows
+    // are AreaTable's, which the Zones workspace edits; the shell carries
+    // each request out after the panel is drawn. See `tools::areas::Ask`.
+    {
+        use crate::tools::areas::Ask;
+        let on_brush = table.and_then(|table| table.get(areas.brush.area));
+        let zone = table
+            .and_then(|table| table.zone_of(areas.brush.area))
+            .map(|zone| zone.name.clone());
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(on_brush.is_some(), egui::Button::new("Edit\u{2026}").small())
+                .on_hover_text(
+                    "Open this area in the Zones workspace: its name, its zone, its music \
+                     and ambience, its flags and how it is explored.",
+                )
+                .on_disabled_hover_text("AreaTable has no row for the area on the brush.")
+                .clicked()
+            {
+                areas.ask = Some(Ask::Edit(areas.brush.area));
+            }
+            if ui
+                .add_enabled(on_brush.is_some(), egui::Button::new("+ Sub-area").small())
+                .on_hover_text(match &zone {
+                    Some(zone) => format!(
+                        "A new area inside {zone}, with that zone's flags, ambience and \
+                         music, put on the brush. Name it with Edit\u{2026}."
+                    ),
+                    None => "A new area inside the zone on the brush.".to_string(),
+                })
+                .on_disabled_hover_text("Put a zone or one of its areas on the brush first.")
+                .clicked()
+            {
+                areas.ask = Some(Ask::NewSubArea(areas.brush.area));
+            }
+            if ui
+                .small_button("+ Zone")
+                .on_hover_text(
+                    "A new zone on this map, put on the brush. Name it with Edit\u{2026}.",
+                )
+                .clicked()
+            {
+                areas.ask = Some(Ask::NewZone);
+            }
+        });
+    }
     theme::row(ui, "radius", |ui| {
         ui.add(
             egui::DragValue::new(&mut areas.brush.radius)
@@ -876,7 +927,10 @@ fn chunks(
     use crate::tools::chunks as tool;
 
     let census = chunks.census(session).clone();
-    let table = tables.and_then(|tables| tables.areas());
+    let edited = areas.table.clone();
+    let table = edited
+        .as_deref()
+        .or_else(|| tables.and_then(|tables| tables.areas()));
     let any = census.open > 0;
 
     theme::heading(ui, "Selection");
@@ -1166,7 +1220,10 @@ fn chunks_area(
 ) {
     use crate::tools::chunks as tool;
 
-    let table = tables.and_then(|tables| tables.areas());
+    let edited = areas.table.clone();
+    let table = edited
+        .as_deref()
+        .or_else(|| tables.and_then(|tables| tables.areas()));
     let any = census.open > 0;
     ui.horizontal(|ui| {
         if ui

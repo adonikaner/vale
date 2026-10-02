@@ -500,8 +500,8 @@ fn table_about(name: &str) -> String {
 /// it, numbered fields where none does) and how this editor sends an edit to
 /// the server: as rows of a table, as the copied file, or not at all. The
 /// last is a statement about the editor: vmangos reads some of those tables
-/// from SQL tables this editor does not write, `AreaTable` among them. The mark on the
-/// right says the project carries an edited copy.
+/// from SQL tables this editor does not write. The mark on the right says the
+/// project carries an edited copy.
 fn table_list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     if work.browser.table_names.is_none() {
         let mut names: Vec<String> = work
@@ -795,12 +795,34 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     ui.horizontal(|ui| {
         let third = ((ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0).max(40.0);
         let size = egui::vec2(third, 22.0);
+        // A new area is a zone on the open map, with an explore bit of its
+        // own; a blank row would be on map 0 and share bit 0 with two shipped
+        // rows. A sub-area is made from its zone's row.
+        let zones = table_name == tables::area::TABLE;
+        let (word, about) = match zones {
+            true => (
+                "+ New zone",
+                format!(
+                    "a new zone on the open map, {} ({}), under the next id, with an explore \
+                     bit no other area holds. A sub-area is made from its zone's row.",
+                    work.session.map, work.session.map_id
+                ),
+            ),
+            false => ("+ New", format!("a blank {table_name} row under the next id")),
+        };
         if ui
-            .add_sized(size, egui::Button::new("+ New"))
-            .on_hover_text(format!("a blank {table_name} row under the next id"))
+            .add_sized(size, egui::Button::new(word))
+            .on_hover_text(about)
             .clicked()
         {
-            if let Some(at) = tables::add_row(work.session, &table_name) {
+            let made = match zones {
+                true => {
+                    let map = work.session.map_id;
+                    tables::add_zone(work.session, map)
+                }
+                false => tables::add_row(work.session, &table_name),
+            };
+            if let Some(at) = made {
                 work.browser.open_row(at);
             }
         }
@@ -1171,6 +1193,11 @@ fn fields(
             if schema.table == "Spell" {
                 learning(ui, work, record);
             }
+            // A zone's sub-areas are rows of the same table that name it, so
+            // they are listed on the zone's form, above its own columns.
+            if schema.table == tables::area::TABLE {
+                area_block(ui, work, record);
+            }
             for section in schema.sections {
                 // A light's sphere is drawn in the world's units. Its five
                 // columns are in 1/36 of a yard measured from the corner of
@@ -1195,6 +1222,87 @@ fn fields(
     }
     ui.add_space(24.0);
 }
+
+/// The head of an area's form: where an area gets its place and what the
+/// server reads of it, and for a zone, the sub-areas inside it.
+///
+/// The sub-areas are the rows of `AreaTable` whose parent is this row. Each
+/// is a link to its own form, and `+ Add a sub-area` makes one. A sub-area's
+/// own form shows its zone in the Parent column, which is a link too.
+fn area_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
+    use tables::area;
+    let Some((id, parent)) = work.session.table(area::TABLE).and_then(|areas| {
+        Some((areas.u32_at(record, 0)?, areas.u32_at(record, area::PARENT)?))
+    }) else {
+        return;
+    };
+    theme::note(
+        ui,
+        "An area is on the map where chunks carry its id: Paint it on the map puts it on \
+         the Areas tool's brush. The server reads the id, map, parent, explore bit, flags, \
+         level, name, team and liquid type from area_template, after a restart; the sound \
+         columns and the other locales are the client's alone.",
+    );
+    ui.add_space(4.0);
+    if parent != 0 {
+        return;
+    }
+    let rows = tables::sub_areas_of(work.browser, work.session, id);
+    let title = match rows.len() {
+        0 => "Sub-areas".to_string(),
+        n => format!("Sub-areas ({n})"),
+    };
+    egui::CollapsingHeader::new(egui::RichText::new(title).size(14.0).strong())
+        .id_salt("area-sub-areas")
+        .default_open(true)
+        .show(ui, |ui| {
+            if rows.is_empty() {
+                theme::note(
+                    ui,
+                    "No area names this zone as its parent. The zone's own name is then \
+                     shown everywhere inside it.",
+                );
+            }
+            let mut follow: Option<u32> = None;
+            // A zone has up to 45 sub-areas in the shipped table, so the
+            // list scrolls in a fixed height and the columns stay in reach.
+            egui::ScrollArea::vertical()
+                .id_salt("area-sub-area-rows")
+                .max_height(SUB_AREA_ROWS)
+                .show(ui, |ui| {
+                    for &row in &rows {
+                        let label = work.browser.describe(work.session, area::TABLE, row);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add(egui::Link::new(
+                                    egui::RichText::new(&label.title).color(theme::ACCENT),
+                                ))
+                                .on_hover_text(format!("open area {}", label.id))
+                                .clicked()
+                            {
+                                follow = Some(label.id);
+                            }
+                            ui.label(theme::number(format!("#{}", label.id)).color(theme::INK_DIM));
+                        });
+                    }
+                });
+            if ui
+                .button("+ Add a sub-area")
+                .on_hover_text(tables::command_about(Command::AddSubArea))
+                .clicked()
+            {
+                let ctx = ui.ctx().clone();
+                run_command(&ctx, work, area::TABLE, record, Command::AddSubArea);
+            }
+            if let Some(id) = follow {
+                follow_reference(work, area::TABLE, id);
+            }
+        });
+}
+
+/// The most height a zone's list of sub-areas takes before it scrolls, in
+/// points: about eight rows.
+const SUB_AREA_ROWS: f32 = 180.0;
 
 /// A spell's Learning section: the skill lines it is in and the spells that
 /// teach it, which are rows of other tables that exist only for this spell.
@@ -1946,6 +2054,8 @@ fn head(
     let mut open_lab = false;
     let mut clone_chain = false;
     let mut copy_id = false;
+    // An area's two commands, which its right-click menu also lists.
+    let mut area_command: Option<Command> = None;
     ui.horizontal(|ui| {
         if !work.browser.back.is_empty() && ui.button("< back").clicked() {
             work.browser.go_back();
@@ -1981,6 +2091,26 @@ fn head(
                             )
                             .clicked();
                     }
+                    "AreaTable" => {
+                        for command in [Command::PaintArea, Command::AddSubArea] {
+                            let Some(said) = tables::command_label(
+                                work.browser,
+                                work.session,
+                                &table_name,
+                                record,
+                                command,
+                            ) else {
+                                continue;
+                            };
+                            if ui
+                                .button(said)
+                                .on_hover_text(tables::command_about(command))
+                                .clicked()
+                            {
+                                area_command = Some(command);
+                            }
+                        }
+                    }
                     _ => {}
                 }
             });
@@ -2003,8 +2133,9 @@ fn head(
     // One line listing the rows that point here; the full list is in the
     // inspector. Other spells point at a spell only through trigger columns,
     // which is rarely why a spell is opened, so the line is shown only for the
-    // chain tables.
-    if table_name != "Spell" {
+    // chain tables. An area is pointed at only by its sub-areas, which its
+    // form lists under their own heading.
+    if table_name != "Spell" && table_name != tables::area::TABLE {
         used_by_line(ui, work, &table_name, label.id);
     }
     if open_lab {
@@ -2013,6 +2144,9 @@ fn head(
     let ctx = ui.ctx().clone();
     if clone_chain {
         run_command(&ctx, work, &table_name, record, Command::CloneChain);
+    }
+    if let Some(command) = area_command {
+        run_command(&ctx, work, &table_name, record, command);
     }
     if copy_id {
         run_command(&ctx, work, &table_name, record, Command::CopyId);
@@ -2096,6 +2230,7 @@ fn plural(table: &str, count: usize) -> String {
         "Spell" => "spell",
         "SpellVisual" => "visual",
         "SpellVisualKit" => "kit",
+        "AreaTable" => "area",
         other => other,
     };
     match count {
@@ -3247,6 +3382,16 @@ pub(super) fn run_command(
             tables::add_race_class_row(work.session, id);
             show(work);
         }
+        Command::AddSubArea => {
+            if let Some(at) = tables::add_sub_area(work.session, id) {
+                work.session.status = "a sub-area was added: name it".to_string();
+                if here {
+                    work.browser.open_row(at);
+                }
+            }
+        }
+        // The shell gives the area to the Areas tool and switches to it.
+        Command::PaintArea => work.browser.paint_area = Some(id),
         Command::Clone => {
             if let Some(at) = tables::clone_row(work.session, table, record) {
                 if here {

@@ -1,8 +1,9 @@
 //! What a save does for the server: the SQL it writes, the rows it applies,
 //! and how to take them back, for the client tables whose rows the server
 //! reads from its own SQL tables. [`MAPPED`] lists them: `Spell.dbc` becomes
-//! `spell_template`, `TaxiNodes.dbc` becomes `taxi_nodes`, and
-//! `SkillLineAbility.dbc` becomes `skill_line_ability`.
+//! `spell_template`, `TaxiNodes.dbc` becomes `taxi_nodes`,
+//! `SkillLineAbility.dbc` becomes `skill_line_ability`, and `AreaTable.dbc`
+//! becomes `area_template`.
 //!
 //! ## The file is rewritten whole on every save
 //!
@@ -52,9 +53,11 @@
 //! the same terms, written through `vale_mangos::taxi`. A skill line ability
 //! is a `skill_line_ability` row at build 5875 with no lower build behind
 //! it, since the loader reads that build alone, so its undo is a `DELETE`
-//! only for a row this project added. See [`Undo`], and
-//! `vale_mangos::spell::undo`, `vale_mangos::taxi::undo` and
-//! `vale_mangos::skills::undo`, which hold the rule.
+//! only for a row this project added. An area is an `area_template` row
+//! keyed by its entry alone, with no build, on the same terms. See [`Undo`],
+//! and `vale_mangos::spell::undo`, `vale_mangos::taxi::undo`,
+//! `vale_mangos::skills::undo` and `vale_mangos::area::undo`, which hold the
+//! rule.
 //!
 //! There is no permanent apply. The durable output is the SQL file in the
 //! project folder, which can be reviewed, and Publish hands it over as a
@@ -76,6 +79,7 @@ use vale_client::assets::GameAssets;
 use vale_edit::dbc::DbcFile;
 use vale_mangos::conn::Db;
 use vale_mangos::row::Key;
+use vale_mangos::area;
 use vale_mangos::skills;
 use vale_mangos::spell::{self, Assignment};
 use vale_mangos::taxi;
@@ -95,15 +99,16 @@ pub const REVERT_VPATH: &str = "sql\\revert.sql";
 ///
 /// Every other DBC the server reads, it reads as a file in `DataDir\5875\dbc\`, and
 /// a publish copies it there; see `super::release::copy_server_dbcs`.
-pub const MAPPED: [(&str, &str); 3] = [
+pub const MAPPED: [(&str, &str); 4] = [
     ("Spell", spell::TABLE),
     ("TaxiNodes", taxi::TABLE),
     ("SkillLineAbility", skills::TABLE),
+    ("AreaTable", area::TABLE),
 ];
 
 /// Whether the server has a `.reload` for a mapped table. `spell_template` has
-/// one; `taxi_nodes` and `skill_line_ability` are read once at startup and
-/// have none.
+/// one; `taxi_nodes`, `skill_line_ability` and `area_template` are read once
+/// at startup and have none.
 pub fn reloadable(table: &str) -> bool {
     table == spell::TABLE
 }
@@ -120,6 +125,13 @@ pub fn refusal(dbc: &str, id: u32) -> String {
              must each be at most {}, since skill_line_ability holds them as smallints",
             skills::MAX_SMALLINT
         ),
+        "AreaTable" => format!(
+            "area {id} cannot go to the server: its explore bit must be under {}, its \
+             name at most {} bytes, and its team and liquid type at most {}",
+            area::EXPLORE_BITS,
+            area::MAX_NAME,
+            area::MAX_TINYINT
+        ),
         _ => format!(
             "spell {id} cannot go to the server: ids above {} do not fit \
              spell_template.entry, which is a smallint",
@@ -135,7 +147,8 @@ pub struct Row {
     /// The server table it lands in.
     pub table: &'static str,
     /// Which row of that table: `(entry, build)` for a spell, `(id, build)` for
-    /// a flight node and for a skill line ability. See `vale_mangos::row::Key`.
+    /// a flight node and for a skill line ability, `entry` for an area. See
+    /// `vale_mangos::row::Key`.
     pub key: Key,
     /// The columns whose values this project sets.
     pub changes: Vec<Assignment>,
@@ -472,6 +485,25 @@ pub fn plan(session: &EditSession, assets: &GameAssets) -> Result<Plan, String> 
                     });
                 }
             }
+            "AreaTable" => {
+                for entry in changed_entries(&shipped, &edited) {
+                    let changes = area::changes(&shipped, &edited, entry);
+                    if changes.is_empty() {
+                        continue;
+                    }
+                    if !area::fits(&edited, entry) {
+                        out.refused.push((table, entry));
+                        continue;
+                    }
+                    any = true;
+                    out.rows.push(Row {
+                        table: server_table,
+                        key: area::key(entry),
+                        statements: area::statements(&shipped, &edited, entry),
+                        changes,
+                    });
+                }
+            }
             _ => {
                 for entry in changed_entries(&shipped, &edited) {
                     let changes = spell::changes(&shipped, &edited, entry);
@@ -617,6 +649,10 @@ pub fn apply_at(
             skills::TABLE => {
                 let now = db.row(&skills::dev_row_query(entry))?;
                 skills::undo(entry, &row.changes, now.as_ref())
+            }
+            area::TABLE => {
+                let now = db.row(&area::dev_row_query(entry))?;
+                area::undo(entry, &row.changes, now.as_ref())
             }
             _ => {
                 let now = db.row(&spell::dev_row_query(entry))?;
@@ -1163,6 +1199,13 @@ mod tests {
         assert!(mixed.needs_a_restart());
         assert!(!reloadable(skills::TABLE) && !reloadable(taxi::TABLE));
         assert!(refusal("SkillLineAbility", 70_000).contains("skill line ability 70000"));
+        let areas = Plan {
+            rows: vec![row(area::TABLE)],
+            ..Plan::default()
+        };
+        assert_eq!(areas.read_at_startup(), vec![area::TABLE]);
+        assert!(!reloadable(area::TABLE));
+        assert!(refusal("AreaTable", 3487).contains("area 3487"));
     }
 
     /// The byte comparison finds a record whose bytes changed, and no other.

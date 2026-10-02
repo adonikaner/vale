@@ -6,8 +6,8 @@
 //!
 //! Tools that act on the world (terrain, grading, holes, texture layers,
 //! doodads, area assignment, lights, water) are tiles on the side rail, and
-//! editors that do not (Spells, Items, Quests) are parts of the workspace
-//! control on the top bar. [`Tool::surface`] decides it: a subject for which
+//! editors that do not (Spells, Items, Quests, Zones, Tables) are parts of
+//! the workspace control on the top bar. [`Tool::surface`] decides it: a subject for which
 //! the viewport is the document is a tile on the rail, and a subject whose
 //! workspace replaces the viewport is a part of the workspace control.
 //!
@@ -21,9 +21,11 @@
 //!               Spawns   rows of vmangos' database that stand in the world:
 //!                        creature and gameobject spawns, picked and moved in
 //!                        the viewport
-//! the top bar   World | Spells | Items | Quests | Tables: World returns to the
-//!               rail's last tool; the other four replace the viewport, and
-//!               they are the only subjects available during a playtest
+//! the top bar   World | Spells | Items | Quests | Zones | Tables: World
+//!               returns to the rail's last tool; the other five replace the
+//!               viewport. Tables is last because it reaches every table the
+//!               others do not. All but Zones are available during a playtest,
+//!               and nothing else is
 //! the corner    Select and Measure, which change nothing and are returned to
 //!               rather than started with
 //! ```
@@ -182,7 +184,7 @@ const GROUPS: [(&str, &[Subject]); 3] = [
 ];
 
 /// The workspaces after *World*, in the order the top bar draws them.
-const WORKSPACES: [Subject; 4] = [
+const WORKSPACES: [Subject; 5] = [
     s(
         "Spells",
         Tool::Spells,
@@ -205,6 +207,15 @@ const WORKSPACES: [Subject; 4] = [
         "quest_template and the four relation tables that say who hands a quest out \
          and who takes it: what it asks for, says and gives. Rows in vmangos' \
          database, so this needs a database connection.",
+    ),
+    s(
+        "Zones",
+        Tool::Zones,
+        "AreaTable.dbc: the zones and the sub-areas inside them. What each is called, \
+         which zone it is in, its music and ambience, whether duels and resting are \
+         allowed, and the level and bit it is explored by. Make a zone or a sub-area \
+         here, then paint it onto the ground with the Areas tool. The server reads its \
+         copy from area_template at startup.",
     ),
     s(
         "Tables",
@@ -662,7 +673,12 @@ mod tests {
             assert!(held(tool, true, true).is_some(), "{}", tool.name());
         }
         for subject in &WORKSPACES {
-            assert!(held(subject.tool, true, true).is_none(), "{}", subject.name);
+            assert_eq!(
+                held(subject.tool, true, true).is_none(),
+                subject.tool != Tool::Zones,
+                "{}",
+                subject.name
+            );
         }
         assert!(held(Tool::Spells, true, true).is_none());
         assert!(held(Tool::Creatures, false, false).is_some());

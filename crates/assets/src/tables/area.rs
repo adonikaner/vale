@@ -1,4 +1,4 @@
-//! **Where you are, in the game's own words** — `AreaTable.dbc`.
+//! `AreaTable.dbc`: the name of the place a character is standing in.
 //!
 //! One table, 1,081 rows, and it answers the four questions the interface asks
 //! about a place: `GetZoneText`, `GetSubZoneText`, `GetRealZoneText` and
@@ -6,7 +6,7 @@
 //! on the continent drop-down is an `AreaTable` name reached through
 //! [`crate::tables::worldmap`].
 //!
-//! **Nothing in the protocol carries a zone name.** The server sends a *map* in
+//! Nothing in the protocol carries a zone name. The server sends a *map* in
 //! `SMSG_LOGIN_VERIFY_WORLD` and nothing else about where the character is;
 //! everything below that is the client reading the terrain under its own feet.
 //! `MCNK`'s header carries an `areaId` per 33-yard chunk ([`crate::world::adt`]), and
@@ -25,7 +25,7 @@
 //! ```
 //!
 //! vmangos's `AreaTableEntryfmt` is `"niiiixxxxxissssssssxixxxi"` — id, three
-//! ints, five skipped, one int, **eight strings**, which puts the name block at
+//! ints, five skipped, one int, eight strings, which puts the name block at
 //! 11. Corroborated against the file: row 12 reads mapId 0, parent 0, and its
 //! field 11 resolves to "Elwynn Forest", which is what area 12 is.
 //!
@@ -35,7 +35,7 @@
 //! inside "Elwynn Forest" (parent 0). That is the whole of the difference
 //! between `GetZoneText` and `GetSubZoneText` — the interface shows the zone on
 //! the minimap's title and the sub-area under it, and an area with no parent
-//! draws an **empty** sub-area rather than repeating itself.
+//! draws an empty sub-area rather than repeating itself.
 //!
 //! [`Areas::zone_of`] walks up rather than assuming one level, with a step bound
 //! for the same reason [`crate::tables::dbc`]'s fallback walk has one: a table this
@@ -45,19 +45,35 @@
 use crate::tables::dbc::Dbc;
 use std::collections::HashMap;
 
-mod fields {
+/// The field indices this module reads, and the rest of the row's layout.
+/// `tables::schema::AREA_TABLE` names the same fields and a test there holds
+/// the two together.
+pub mod fields {
     pub const MAP_ID: usize = 1;
     pub const PARENT: usize = 2;
     /// The exploration bit — see [`super::Area::explore_bit`].
     pub const AREA_BIT: usize = 3;
     /// The flags word — see [`super::Area::flags`].
     pub const FLAGS: usize = 4;
-    /// **The exploration level**, field 10 — read as a *gate* rather than as a
+    /// The music played in the area: a `ZoneMusic` row. Every one of the 447
+    /// shipped rows that names one resolves.
+    pub const ZONE_MUSIC: usize = 8;
+    /// The exploration level, field 10 — read as a *gate* rather than as a
     /// level: the client skips the area check for a landmark whose row has a
     /// negative one, which is 200 of the 339 rows in `AreaPOI.dbc`. See
     /// [`crate::tables::areapoi`].
     pub const EXPLORE_LEVEL: usize = 10;
     pub const NAME: usize = 11;
+    /// The word after the eight name columns.
+    pub const NAME_FLAGS: usize = 19;
+    /// Which side the area belongs to: 2 for the Alliance, 4 for the Horde,
+    /// 0 for neither. 1,019 of the 1,081 shipped rows hold 0.
+    pub const TEAM: usize = 20;
+    /// A `LiquidType` row that replaces the liquid drawn in the area. One
+    /// shipped row holds one: Naxxramas, 21.
+    pub const LIQUID_TYPE: usize = 24;
+    /// How many fields a row has.
+    pub const COUNT: usize = 25;
 }
 
 /// How far [`Areas::zone_of`] will walk before giving up. Three is already one
@@ -77,20 +93,20 @@ pub struct Area {
     /// and [`AREA_FLAG_CITY`]. Stormwind City and Orgrimmar read `0x138`, the
     /// Trade District `0x38`, Elwynn Forest `0x40` (duels allowed).
     pub flags: u32,
-    /// **Which bit of `PLAYER_EXPLORED_ZONES` says this place has been seen.**
+    /// Which bit of `PLAYER_EXPLORED_ZONES` says this place has been seen.
     ///
     /// The one column in this table that is neither a name nor a hierarchy, and
     /// the only thing that joins the character's exploration mask to a place.
     /// The server writes it the same way (`Player::CheckAreaExploreAndOutdoor`
     /// takes `areaFlag / 32` and `1 << (areaFlag % 32)`), and the client reads
-    /// it as a **byte** array — `areaBit / 8` and `1 << (areaBit % 8)` — which is the same bit string either way.
+    /// it as a byte array — `areaBit / 8` and `1 << (areaBit % 8)` — which is the same bit string either way.
     ///
     /// It is not unique and it is not the row id: several rows share a bit, and
-    /// **0 is a real value** (the first bit) rather than "no bit", so nothing
+    /// 0 is a real value (the first bit) rather than "no bit", so nothing
     /// here filters on it. See [`crate::tables::worldmap::WorldMap::overlays`], which is
     /// the only reader.
     pub explore_bit: u32,
-    /// **Field 10, and it is a gate rather than a level here.** A negative one
+    /// Field 10, and it is a gate rather than a level here. A negative one
     /// means a landmark in this area is shown without asking whether it has
     /// been explored — see [`crate::tables::areapoi`], which is the only reader.
     pub explore_level: i32,
@@ -168,7 +184,7 @@ impl Areas {
         self.by_id.values()
     }
 
-    /// **The name the city channels take** — the highest area id carrying
+    /// The name the city channels take — the highest area id carrying
     /// [`AREA_FLAG_CITY`], which is the rule vmangos' comment on the flag
     /// states and which the 1.12 table answers with the row named `City`:
     /// `Trade - City`, one channel for every capital. `None` for a table with
@@ -181,7 +197,7 @@ impl Areas {
             .map(|area| area.name.as_str())
     }
 
-    /// **The enclosing zone**, or the area itself when it is one.
+    /// The enclosing zone, or the area itself when it is one.
     ///
     /// `None` only for an id the table does not have, which a damaged or patched
     /// `MCNK` can carry.
@@ -201,7 +217,7 @@ impl Areas {
         Some(at)
     }
 
-    /// The sub-area's own name, **empty when the area is a zone** — which is
+    /// The sub-area's own name, empty when the area is a zone — which is
     /// what `GetSubZoneText` answers standing in open country, and what the
     /// minimap's second line is written against.
     pub fn sub_zone_name(&self, id: u32) -> String {
@@ -226,17 +242,17 @@ impl Areas {
         self.zones().count()
     }
 
-    /// **Every zone**, in no particular order — the rows a `/who z-` may name.
+    /// Every zone, in no particular order — the rows a `/who z-` may name.
     ///
     /// Zones rather than every area, because that is what the reference walks:
     /// it takes only rows whose parent is zero. A sub-area in this list
     /// would make `z-"Northshire Valley"` a filter the server can satisfy, which
-    /// it cannot — `SMSG_WHO` matches against the player's cached **zone**.
+    /// it cannot — `SMSG_WHO` matches against the player's cached zone.
     pub fn zones(&self) -> impl Iterator<Item = &Area> {
         self.by_id.values().filter(|a| a.is_zone())
     }
 
-    /// **The one zone a map is**, for a map that has no ground to ask.
+    /// The one zone a map is, for a map that has no ground to ask.
     ///
     /// Twenty of the game's forty-three maps carry no ADT at all, so the
     /// `MCNK` `areaId` this table is normally reached through does not exist on
@@ -245,7 +261,7 @@ impl Areas {
     /// that states nothing, so it is not rare — the `mapId` column here is the
     /// only thing left in any shipped file that names the place.
     ///
-    /// **It refuses where the file is ambiguous rather than picking**, which is
+    /// It refuses where the file is ambiguous rather than picking, which is
     /// the difference between reading the data and guessing at it: one zone
     /// naming a map is an answer, and several is the file declining to say. See
     /// `vale zones`, whose last section is the census, and
@@ -286,8 +302,8 @@ mod tests {
         .expect("the table parses")
     }
 
-    /// **A map with one zone naming it is that zone; a map with several is not
-    /// answered at all.**
+    /// A map with one zone naming it is that zone; a map with several is not
+    /// answered at all.
     ///
     /// This is the last thing that names a place on the twenty maps with no
     /// ground — `vale zones` measures that none of their buildings states an
@@ -329,7 +345,7 @@ mod tests {
         assert_eq!(areas.sub_zone_name(9), "Northshire Valley");
     }
 
-    /// **A zone's sub-area is empty, not its own name** — which is the whole of
+    /// A zone's sub-area is empty, not its own name — which is the whole of
     /// what the minimap's second line shows in open country.
     #[test]
     fn a_zone_is_its_own_zone_and_has_no_sub_area() {

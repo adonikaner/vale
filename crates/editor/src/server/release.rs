@@ -157,6 +157,7 @@ pub fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<Entry>,
             subject: match row.table {
                 vale_mangos::taxi::TABLE => "flight nodes",
                 vale_mangos::skills::TABLE => "skill line abilities",
+                vale_mangos::area::TABLE => "areas",
                 _ => "spells",
             }
             .to_string(),
