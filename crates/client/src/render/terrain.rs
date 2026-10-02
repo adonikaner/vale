@@ -638,7 +638,10 @@ pub struct TerrainParams {
     /// tile it is about, which is where the fork has to be, since the image is
     /// per tile and the material is per draw group.
     pub tint: f32,
-    pub _pad: f32,
+    /// Which grid lines are drawn on the ground: 0 for none, 1 for the chunk
+    /// borders (every 33.33 yards), 2 for the tile borders (every 533.33),
+    /// 3 for both. See [`Self::guides`].
+    pub grid: f32,
     /// How fast each of the four layers crawls, in texture widths a second,
     /// packed two layers to a `Vec4` — `(u0, v0, u1, v1)` and `(u2, v2, u3, v3)`.
     ///
@@ -655,6 +658,25 @@ pub struct TerrainParams {
     /// rather than a `if`.
     pub scroll_a: Vec4,
     pub scroll_b: Vec4,
+    /// Two readings of the ground's shape, drawn on it: `x` is a slope limit
+    /// as the cosine of an angle from level, and ground steeper than it is
+    /// shaded; `y` is a contour interval in yards, and a line is drawn at
+    /// every multiple of it. Zero turns either off. `z` and `w` are unused.
+    ///
+    /// With [`Self::grid`], these are what a host draws to read the terrain
+    /// by: where the chunks and tiles are, where the ground is too steep, how
+    /// high it is. All three are computed in the fragment shader from the
+    /// world position and the normal, so they cost no geometry and no image.
+    ///
+    /// Zero in every frame of the game, as [`Self::tint`] is: nothing in this
+    /// crate raises either. `terrain.wgsl` skips the whole block then.
+    pub guides: Vec4,
+}
+
+impl TerrainParams {
+    /// No grid, no slope shading and no contours, which is what every ground
+    /// material is built with.
+    pub const NO_GUIDES: (f32, Vec4) = (0.0, Vec4::ZERO);
 }
 
 /// What `#[data]` extracts into the storage array — the whole of the
@@ -1304,9 +1326,11 @@ fn receive_tiles(
                     repeat: TEXTURE_REPEAT,
                     // Off. See [`TerrainParams::tint`].
                     tint: 0.0,
-                    _pad: 0.0,
+                    // Off. See [`TerrainParams::guides`].
+                    grid: TerrainParams::NO_GUIDES.0,
                     scroll_a: pair(&draw.scrolls, 0),
                     scroll_b: pair(&draw.scrolls, 2),
+                    guides: TerrainParams::NO_GUIDES.1,
                 },
                 alpha: build.atlas.clone(),
                 tint: build.tint.clone(),
@@ -1716,6 +1740,16 @@ fn atlas_image(rgba: &[u8], live: bool) -> Image {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The ground guides are off: the value every ground material is built
+    /// with is no grid, no slope limit and no contour interval, which is what
+    /// `terrain.wgsl` skips its guide block on.
+    #[test]
+    fn the_ground_guides_are_off() {
+        let (grid, guides) = TerrainParams::NO_GUIDES;
+        assert_eq!(grid, 0.0);
+        assert_eq!(guides, Vec4::ZERO);
+    }
 
     /// The reach a host asks for is clamped, and everything derived from it
     /// is derived.

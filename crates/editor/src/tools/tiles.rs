@@ -66,6 +66,9 @@ pub struct Tiles {
     /// shadow lands at 1.2–1.4x the base rate of shadow in a shipped file and
     /// terrain-cast shadow at 0.4–0.9x, which is chance or worse.
     pub cast_from_ground: bool,
+    /// Whether an imported height map carries what stands on the ground it
+    /// moves. See `super::images`.
+    pub objects_follow: bool,
     /// What the last operation said, for the panel to print.
     pub said: String,
     /// **What the map window asked for**, taken by [`run_asked`] next frame.
@@ -95,6 +98,7 @@ impl Default for Tiles {
             height: 0.0,
             area: 0,
             cast_from_ground: false,
+            objects_follow: true,
             said: String::new(),
             asked: None,
             derive: None,
@@ -663,12 +667,29 @@ pub fn run_asked(
         session.status = tiles.said.clone();
         return;
     }
+    // The pictures. An export changes nothing; an import rewrites the open
+    // tiles it has pictures for. See `super::images`.
+    if asked == Asked::ExportImages {
+        tiles.said = super::images::export(&session, &chosen);
+        session.status = tiles.said.clone();
+        return;
+    }
+    if asked == Asked::ImportImages {
+        view.edited_stale = true;
+        tiles.said = super::images::import(&mut session, &chosen, tiles.objects_follow);
+        session.status = tiles.said.clone();
+        return;
+    }
     // Every operation below makes, unclaims or rewrites a tile of the project.
     view.edited_stale = true;
 
     let said = match asked {
         Asked::FlyTo(_) => unreachable!("answered above"),
-        Asked::Rebake | Asked::Minimap | Asked::ServerFiles => unreachable!("answered above"),
+        Asked::Rebake
+        | Asked::Minimap
+        | Asked::ServerFiles
+        | Asked::ExportImages
+        | Asked::ImportImages => unreachable!("answered above"),
         Asked::Copy => {
             let taken: Vec<(u32, u32)> = chosen
                 .iter()
@@ -1002,13 +1023,41 @@ pub fn restream(
     }
 }
 
+/// `--export-images` and `--import-images`: export or import the pictures of
+/// the tile under the camera, once, when that tile is open. A scripted run
+/// cannot press the map window's buttons. See [`crate::Args::export_images`].
+fn images_on_the_command_line(
+    args: Res<crate::Args>,
+    session: Option<ResMut<EditSession>>,
+    focus: Res<vale_client::render::focus::WorldFocus>,
+    tiles: Res<Tiles>,
+    mut done: Local<bool>,
+) {
+    if *done || !(args.export_images || args.import_images) {
+        return;
+    }
+    let Some(mut session) = session else { return };
+    let at = vale_assets::tile_for_position(focus.position.x, focus.position.y);
+    if !focus.present || !is_open(&session, at) {
+        return;
+    }
+    *done = true;
+    let said = match args.import_images {
+        true => super::images::import(&mut session, &[at], tiles.objects_follow),
+        false => super::images::export(&session, &[at]),
+    };
+    info!("images: {said}");
+    session.status = said;
+}
+
 pub struct TilePlugin;
 
 impl Plugin for TilePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Tiles>()
             .init_resource::<crate::jobs::Running<Baked>>()
-            .add_systems(Update, (run_asked, run_derive, restream, collect_bakes));
+            .add_systems(Update, (run_asked, run_derive, restream, collect_bakes))
+            .add_systems(Update, images_on_the_command_line);
     }
 }
 

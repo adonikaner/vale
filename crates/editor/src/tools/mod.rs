@@ -78,8 +78,15 @@
 //! tiles.rs       the tile itself: making ground where there was none, and the
 //!                shadow bake and minimap picture that no other edit keeps in
 //!                step. Not a pointer tool: the map window drives it
+//! images.rs      a tile's heights and texture blends as PNG files, exported
+//!                and imported from the map window: the folder, the file
+//!                names, the encoding, and the one undo entry an import is
 //! measure.rs     a pointer tool that changes nothing and reports what is at a
 //!                point, and the distance and facing between two points
+//! guides.rs      what is drawn on the ground to read it by, under every
+//!                tool: the chunk and tile grid, the ground that is too steep,
+//!                contour lines and the texture count per chunk. Switches on
+//!                the view bar; nothing here edits
 //! gizmo.rs       the handles a selected placement is moved and turned by
 //! group.rs       a selection of more than one placement: the rules the four
 //!                placement tools share, the rectangle a drag on empty ground
@@ -125,8 +132,10 @@ pub mod flightpaths;
 pub mod gameobjects;
 pub mod gizmo;
 pub mod grade;
+pub mod guides;
 pub mod group;
 pub mod holes;
+pub mod images;
 pub mod items;
 pub mod lights;
 pub mod loot;
@@ -687,6 +696,7 @@ impl Plugin for ToolPlugin {
             measure::MeasureToolPlugin,
             flightpaths::FlightpathToolPlugin,
             chunks::ChunkToolPlugin,
+            guides::GuidesPlugin,
         ));
     }
 }

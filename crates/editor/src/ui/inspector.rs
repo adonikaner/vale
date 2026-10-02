@@ -73,6 +73,9 @@ pub struct Subject<'a> {
     /// The bar's Server… popover, which holds every server operation. The
     /// same panels link to it; see [`super::sync`].
     pub server_panel: &'a mut super::popover::Popover,
+    /// The ground guides, for the one a tool's panel repeats: the texture
+    /// brush shows the full chunks. See [`crate::tools::guides`].
+    pub guides: &'a mut crate::tools::guides::Guides,
 }
 
 /// Draw the panel for whichever tool is chosen.
@@ -86,6 +89,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
         now,
         server,
         server_panel,
+        guides,
     } = subject;
     ui.add_space(6.0);
     ui.horizontal(|ui| {
@@ -137,6 +141,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
             session,
             cursor,
             assets,
+            guides,
             now,
         ),
         Tool::Doodads => doodad(
@@ -2734,6 +2739,8 @@ fn grading(
             );
     });
 
+    objects_follow(ui, &mut grading.objects_follow);
+
     ui.add_space(6.0);
     let ready = grading.grade().and_then(|g| g.slope()).is_some();
     if theme::primary(ui, "Apply the grade").clicked() && ready {
@@ -2838,6 +2845,10 @@ fn brush(ui: &mut egui::Ui, terrain: &mut Terrain) {
         );
     }
 
+    ui.add_space(4.0);
+    theme::heading(ui, "Objects");
+    objects_follow(ui, &mut terrain.objects_follow);
+
     ui.add_space(6.0);
     theme::heading(ui, "Keys");
     theme::note(ui, "left button paints");
@@ -2845,6 +2856,19 @@ fn brush(ui: &mut egui::Ui, terrain: &mut Terrain) {
     theme::note(ui, "alt + wheel the core");
     theme::note(ui, "1 - 5 pick the mode · 6 - 0 the falloff");
     theme::note(ui, "shift + 1 · 2 · 3 pick the shape");
+}
+
+/// The switch the height brush and the grade share: whether what stands on
+/// the ground is carried when the ground moves. One function, so the two
+/// panels word it alike.
+fn objects_follow(ui: &mut egui::Ui, on: &mut bool) {
+    ui.checkbox(on, "Objects follow the ground").on_hover_text(
+        "When the ground moves, every doodad and building over it is raised or lowered \
+         by as much, in the same undo entry, so a tree stays on a hill that was raised \
+         under it. Off, a placement keeps the height in its record and the ground \
+         moves through it. Creature and object spawns are rows of the server's \
+         database and are not moved.",
+    );
 }
 
 /// The shading brush: `MCCV`, the light painted onto the ground's vertices.
@@ -2966,6 +2990,7 @@ fn paint(
     session: &mut EditSession,
     cursor: &Cursor,
     assets: &vale_client::assets::GameAssets,
+    guides: &mut crate::tools::guides::Guides,
     now: f64,
 ) {
     tileset_chosen(ui, textures, thumbnails, session, assets);
@@ -2976,6 +3001,15 @@ fn paint(
 
     ui.add_space(4.0);
     theme::heading(ui, "Brush");
+    // Paint or Erase first, because it decides what every number under it
+    // means. Shift held is the other one for the length of a stroke.
+    theme::segmented(
+        ui,
+        &mut textures.brush.erase,
+        &[("Paint", false), ("Erase", true)],
+        |a, b| a == b,
+    );
+    ui.add_space(2.0);
     theme::row(ui, "radius", |ui| {
         ui.add(
             egui::DragValue::new(&mut textures.brush.radius)
@@ -2991,6 +3025,30 @@ fn paint(
                 .range(textures::RATE)
                 .suffix("/s"),
         );
+    });
+    // Opacity is where a held stroke stops, which an eraser does not have:
+    // it always goes to nothing.
+    let erasing = textures.brush.erase;
+    theme::row(ui, "opacity", |ui| {
+        let mut percent = textures.brush.opacity * 100.0;
+        let response = ui
+            .add_enabled(
+                !erasing,
+                egui::DragValue::new(&mut percent)
+                    .speed(0.5)
+                    .range(1.0..=100.0)
+                    .fixed_decimals(0)
+                    .suffix("%"),
+            )
+            .on_hover_text(
+                "How visible the texture is where a held stroke ends up. At 100% the \
+                 stroke converges on the texture alone; at 60% on the texture at 60% \
+                 over what is under it, from either side.",
+            )
+            .on_disabled_hover_text("An eraser takes the texture to nothing.");
+        if response.changed() {
+            textures.brush.opacity = percent / 100.0;
+        }
     });
 
     theme::row(ui, "core", |ui| {
@@ -3017,12 +3075,76 @@ fn paint(
         a == b
     });
 
+    // Spray: a stroke in patches. One number while it is solid, and the
+    // patch size only once it is not.
+    ui.add_space(4.0);
+    theme::heading(ui, "Spray");
+    theme::row(ui, "density", |ui| {
+        let mut percent = textures.brush.density * 100.0;
+        if ui
+            .add(
+                egui::DragValue::new(&mut percent)
+                    .speed(0.5)
+                    .range(5.0..=100.0)
+                    .fixed_decimals(0)
+                    .suffix("%"),
+            )
+            .on_hover_text(
+                "How much of the ground under the brush is painted. At 100% the stroke \
+                 is solid. Below it the stroke paints in patches, the same patches for \
+                 as long as it is held, which breaks one texture up into another.",
+            )
+            .changed()
+        {
+            textures.brush.density = percent / 100.0;
+        }
+        if textures.brush.density >= 1.0 {
+            theme::note(ui, "solid");
+        }
+    });
+    if textures.brush.density < 1.0 {
+        theme::row(ui, "grain", |ui| {
+            ui.add(
+                egui::DragValue::new(&mut textures.brush.grain)
+                    .speed(0.05)
+                    .range(0.5..=20.0)
+                    .fixed_decimals(1)
+                    .suffix(" yd"),
+            )
+            .on_hover_text("How many yards a patch is across. A blend map's texel is half a yard.");
+        });
+    }
+
+    // The three switches about the limit of four textures to a chunk, which
+    // is what stops a stroke on about half the shipped ground.
+    ui.add_space(4.0);
+    theme::heading(ui, "Four-texture limit");
+    ui.checkbox(&mut textures.brush.existing_only, "Paint existing layers only")
+        .on_hover_text(
+            "Leave a chunk that does not carry the texture alone. A stroke then changes \
+             how the textures blend and never adds one to a chunk.",
+        );
+    ui.add_enabled(
+        !textures.brush.existing_only && !textures.brush.erase,
+        egui::Checkbox::new(&mut textures.brush.reuse_hidden, "Reuse a hidden layer"),
+    )
+    .on_hover_text(
+        "When a chunk already has four textures, give this one the layer that shows \
+         least, if it shows under 2% of the chunk. Otherwise the stroke is refused \
+         there, and the Chunk list below shows which four it has.",
+    )
+    .on_disabled_hover_text("Only a stroke that may add a texture can reuse a layer.");
+    ui.checkbox(&mut guides.layers, "Show full chunks").on_hover_text(
+        "Wash red the chunks that carry four textures. The same switch as Full chunks \
+         in the view bar's Guides menu.",
+    );
+
     ui.add_space(6.0);
     chunk_layers(ui, thumbnails, textures, session, cursor, assets, now);
 
     ui.add_space(6.0);
     theme::heading(ui, "Keys");
-    theme::note(ui, "left button paints");
+    theme::note(ui, "left button paints · with shift, erases");
     theme::note(ui, "ctrl + wheel resizes · shift + wheel the strength");
     theme::note(ui, "alt + wheel the core");
     theme::note(ui, "space pins the chunk under the pointer");

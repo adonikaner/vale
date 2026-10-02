@@ -188,6 +188,11 @@ pub fn run() {
     // given, so the radius is the editor's from the first frame.
     #[cfg(feature = "diagnostics")]
     app.insert_resource(ui::viewbar::editor_overlay(args.overlay.as_deref()));
+    // The ground guides a run asked for. See [`Args::guides`].
+    app.insert_resource(match args.guides.as_deref() {
+        Some(list) => tools::guides::Guides::with(list),
+        None => tools::guides::Guides::default(),
+    });
     app.insert_resource(shot::Shot::new(args.shot.clone(), args.after));
     if let Some(stops) = args.tour.clone() {
         app.insert_resource(tour::Tour::new(stops, args.dwell));
@@ -268,6 +273,19 @@ pub struct Args {
     /// under the camera. Not the navmesh, which is the editor's own overlay
     /// and has its own flag, `--navmesh`.
     pub overlay: Option<String>,
+    /// `--guides <name>[,<name>…]`: draw those ground guides, which are
+    /// otherwise the switches in the view bar's Guides menu: `chunks`,
+    /// `tiles`, `slope`, `contours`, `layers`. A scripted run cannot open the
+    /// menu, and a misspelling warns. See `tools::guides`.
+    pub guides: Option<String>,
+    /// `--guides-menu`: open the view bar's Guides menu, for a picture of it.
+    pub guides_menu: bool,
+    /// `--export-images` / `--import-images`: write the height and blend maps
+    /// of the tile under the camera into the project's images folder, or read
+    /// them back, once that tile is open. The map window's Export and Import
+    /// buttons from a command line. See `tools::images`.
+    pub export_images: bool,
+    pub import_images: bool,
     /// `--view <distance>[,<pitch°>[,<yaw°>]]`: where the camera stands.
     ///
     /// `--at` sets where the editor looks and this sets the distance and angle,
@@ -789,6 +807,10 @@ impl Default for Args {
             project: None,
             without: None,
             overlay: None,
+            guides: None,
+            guides_menu: false,
+            export_images: false,
+            import_images: false,
             view: None,
             reach: None,
             size: None,
@@ -913,6 +935,12 @@ impl Args {
                 "--overlay" => {
                     parsed.overlay = args.next();
                 }
+                "--guides" => {
+                    parsed.guides = args.next();
+                }
+                "--guides-menu" => parsed.guides_menu = true,
+                "--export-images" => parsed.export_images = true,
+                "--import-images" => parsed.import_images = true,
                 "--view" => {
                     parsed.view = args.next().as_deref().and_then(parse_view);
                 }

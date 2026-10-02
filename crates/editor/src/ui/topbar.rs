@@ -461,6 +461,8 @@ pub struct Projects {
     pub new_name: String,
     /// Whether `--projects` has been acted on.
     pub shown_once: bool,
+    /// Whether `--guides-menu` has been acted on.
+    pub guides_shown_once: bool,
     /// Every project under `Edit\`, with what each holds. Read when the
     /// dialog opens and after it makes one, not every frame, because a summary
     /// walks the folder.

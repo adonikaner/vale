@@ -203,6 +203,11 @@ pub enum Asked {
     /// Regenerate the server's files for the selection: `maps`, `vmaps`,
     /// `mmaps`.
     ServerFiles,
+    /// Write the selection's height and blend maps as pictures. See
+    /// `crate::tools::images`.
+    ExportImages,
+    /// Read them back onto the selection.
+    ImportImages,
 }
 
 /// The tiles a zoom draws: the top-left tile, how many across and down, and
@@ -784,6 +789,60 @@ fn foot_panel(
             );
         if open == 0 {
             theme::note(ui, "none open: fly to it first");
+        }
+    });
+
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        // The height map and the blend map of each open selected tile, as
+        // PNG files in the project's images folder. Both act on open tiles,
+        // for the reason the picture buttons above do.
+        let open = view
+            .selection
+            .iter()
+            .filter(|&&at| tool::is_open(session, at))
+            .count();
+        let dir = crate::tools::images::folder(session);
+        label(ui, "Images");
+        if ui
+            .add_enabled(open > 0, egui::Button::new(format!("Export ({open})")))
+            .on_hover_text(format!(
+                "Write each open selected tile's heights as a 257 x 257 16-bit greyscale \
+                 PNG, with a text file holding the two heights black and white stand \
+                 for, and its texture blends as a 1024 x 1024 RGB PNG: red, green and \
+                 blue are the second, third and fourth texture of each chunk. Into {}.",
+                dir.display()
+            ))
+            .on_disabled_hover_text("None of the selection is open: fly to a tile to open it.")
+            .clicked()
+        {
+            asked = Some(Asked::ExportImages);
+        }
+        if ui
+            .add_enabled(open > 0, egui::Button::new(format!("Import ({open})")))
+            .on_hover_text(format!(
+                "Read the pictures in {} back onto each open selected tile, as one undo \
+                 entry. A tile takes whichever of its two pictures is there. Only what a \
+                 picture changes is written. A blend map changes how a chunk's textures \
+                 blend and not which textures they are.",
+                dir.display()
+            ))
+            .on_disabled_hover_text("None of the selection is open: fly to a tile to open it.")
+            .clicked()
+        {
+            asked = Some(Asked::ImportImages);
+        }
+        ui.checkbox(&mut tiles.objects_follow, "objects follow the ground")
+            .on_hover_text(
+                "When an imported height map moves the ground, move every doodad and \
+                 building over it by as much, in the same undo entry.",
+            );
+        if ui
+            .small_button("copy folder")
+            .on_hover_text(format!("Put {} on the clipboard.", dir.display()))
+            .clicked()
+        {
+            ui.ctx().copy_text(dir.display().to_string());
         }
     });
 

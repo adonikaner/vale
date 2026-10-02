@@ -45,6 +45,10 @@ pub struct Grading {
     pub strength: f32,
     /// What the last apply said.
     pub said: String,
+    /// Whether the doodads and buildings over the graded ground are moved by
+    /// as much as it moves, in the grade's own undo entry. See
+    /// `vale_edit::ops::follow`.
+    pub objects_follow: bool,
 }
 
 impl Default for Grading {
@@ -57,6 +61,7 @@ impl Default for Grading {
             falloff: base.falloff,
             strength: 1.0,
             said: String::new(),
+            objects_follow: true,
         }
     }
 }
@@ -124,12 +129,19 @@ pub fn apply(session: &mut EditSession, grading: &Grading) -> usize {
         .collect();
 
     let mut moved = 0usize;
+    // What stands on each tile, read before the ramp is cut, so it can be
+    // carried by as much as the ground under it moves. See
+    // `vale_edit::ops::follow`.
+    let mut standing = Vec::new();
     session.history.begin("Grade".to_string());
-    for coord in tiles {
+    for coord in tiles.iter().copied() {
         let key = session.key(coord);
         let Some(tile) = session.tiles.get_mut(&coord) else {
             continue;
         };
+        if grading.objects_follow {
+            standing.push((coord, vale_edit::ops::follow::standing(tile)));
+        }
         // **The arithmetic is `vale_edit`'s and is called rather than
         // restated**, which is the rule this file used to break: the heights on
         // both sides of `set_heights` are world heights, and the copy here took
@@ -150,7 +162,12 @@ pub fn apply(session: &mut EditSession, grading: &Grading) -> usize {
         for chunk in chunks {
             session.touched(coord, chunk);
         }
-        session.publish(coord);
+    }
+    super::terrain::carry(session, standing);
+    for coord in tiles {
+        if session.tiles.contains_key(&coord) {
+            session.publish(coord);
+        }
     }
     session.history.end();
     moved

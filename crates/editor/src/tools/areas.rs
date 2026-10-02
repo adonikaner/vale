@@ -198,6 +198,7 @@ const WASH: f32 = 0.75;
 fn wash(
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
+    guides: Res<super::guides::Guides>,
     session: Option<Res<EditSession>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<TerrainMaterial>>,
@@ -205,11 +206,23 @@ fn wash(
     ground: Query<(&ChildOf, &MeshMaterial3d<TerrainMaterial>), With<TerrainGround>>,
     mut shown: Local<HashMap<(u32, u32), u64>>,
 ) {
-    let on = state.editing() && *tool == Tool::Areas;
+    // The tint image holds one picture at a time. This tool's areas come
+    // first while it is chosen; under any other tool the image is the
+    // texture count, when that guide is on. See `super::guides`.
+    let picture = match (state.editing(), *tool == Tool::Areas, guides.layers) {
+        (false, _, _) | (true, false, false) => None,
+        (true, true, _) => Some(Picture::Areas),
+        (true, false, true) => Some(Picture::Layers),
+    };
+    let on = picture.is_some();
     // Every ground material, not only the open tiles'. Turning the tool off
     // has to put back every tile that was ever washed, including ones that have
     // since streamed out of the session's own 3x3.
-    let wanted = if on { WASH } else { 0.0 };
+    let wanted = match picture {
+        Some(Picture::Areas) => WASH,
+        Some(Picture::Layers) => super::guides::LAYER_WASH,
+        None => 0.0,
+    };
     for (_, handle) in &ground {
         if let Some(mut material) = materials.get_mut(&handle.0) {
             if material.params.tint != wanted {
@@ -227,11 +240,16 @@ fn wash(
         let Some(open) = session.tiles.get(&tile.coord) else {
             continue;
         };
-        let grid = grid_of(open);
-        // A cheap order-dependent hash of the 256 ids: what is being asked is
-        // only "is this the same picture", and a collision costs one frame of a
-        // stale wash rather than anything wrong.
-        let mut mark = 0xcbf2_9ce4_8422_2325u64;
+        let layers = picture == Some(Picture::Layers);
+        let grid = match layers {
+            true => layers_of(open),
+            false => grid_of(open),
+        };
+        // A cheap order-dependent hash of the 256 values: what is being asked
+        // is only "is this the same picture", and a collision costs one frame
+        // of a stale wash rather than anything wrong. Seeded by which picture
+        // it is, so a switch between the two repaints every tile.
+        let mut mark = 0xcbf2_9ce4_8422_2325u64 ^ u64::from(layers);
         for id in grid {
             mark = (mark ^ u64::from(id)).wrapping_mul(0x1000_0000_01b3);
         }
@@ -247,13 +265,20 @@ fn wash(
             continue;
         };
         for (index, id) in grid.iter().enumerate() {
-            let [r, g, b, _] = colour_of(*id).to_srgba().to_u8_array();
-            // `0` is transparent, which is what leaves a chunk belonging to
-            // nowhere looking like ground rather than like a zone of its own.
-            // It is a real value and the shipped tiles have it; painting it a
-            // colour would say it was somewhere.
-            let alpha = if *id == 0 { 0 } else { 255 };
-            data[index * 4..index * 4 + 4].copy_from_slice(&[r, g, b, alpha]);
+            let texel = match layers {
+                true => super::guides::layer_colour(*id),
+                false => {
+                    let [r, g, b, _] = colour_of(*id).to_srgba().to_u8_array();
+                    // `0` is transparent, which is what leaves a chunk
+                    // belonging to nowhere looking like ground rather than
+                    // like a zone of its own. It is a real value and the
+                    // shipped tiles have it; painting it a colour would say
+                    // it was somewhere.
+                    let alpha = if *id == 0 { 0 } else { 255 };
+                    [r, g, b, alpha]
+                }
+            };
+            data[index * 4..index * 4 + 4].copy_from_slice(&texel);
         }
         shown.insert(tile.coord, mark);
     }
@@ -466,6 +491,27 @@ fn draw(
 ///
 /// `index_y * 16 + index_x`, which is what `vale_edit::ops`' own tests
 /// already rest on. Built once per tile per frame: 256 reads of four bytes.
+/// Which of its two pictures the tint image holds. See [`wash`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Picture {
+    /// A colour per area id.
+    Areas,
+    /// How many textures each chunk carries.
+    Layers,
+}
+
+/// How many textures each of a tile's 256 chunks carries, out of its header.
+fn layers_of(tile: &vale_edit::adt::AdtFile) -> [u32; 256] {
+    let mut grid = [0u32; 256];
+    for (index, slot) in grid.iter_mut().enumerate() {
+        *slot = tile
+            .chunk(index)
+            .map(|chunk| chunk.head().layer_count())
+            .unwrap_or(0);
+    }
+    grid
+}
+
 fn grid_of(tile: &vale_edit::adt::AdtFile) -> [u32; 256] {
     let mut grid = [0u32; 256];
     for (index, slot) in grid.iter_mut().enumerate() {

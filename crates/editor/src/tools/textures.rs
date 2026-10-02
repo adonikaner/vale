@@ -32,6 +32,23 @@
 //! and every stroke after it is live. [`Edit::changes_the_texture_set`]
 //! distinguishes the two cases. It is asked per edit, not per stroke.
 //!
+//! ## What a stroke can be told
+//!
+//! The brush is `vale_edit::ops::PaintBrush`, and the panel sets all of it:
+//!
+//! ```text
+//! Paint or Erase     put the texture down, or take it away so what is under
+//!                    it shows. Shift held is the other one
+//! opacity            how visible the texture is where a held stroke ends up
+//! density, grain     under 100%, paint in patches of that size
+//! existing only      never add the texture to a chunk that lacks it
+//! reuse hidden       on a full chunk, take the layer that shows under 2%
+//! ```
+//!
+//! The last two and the Full chunks guide are the panel's answers to the
+//! four-texture limit, grouped under that heading. The stroke reports what it
+//! could not do on the status line, a refusal before anything else.
+//!
 //! ## The catalogue is the archives' listing of `Tileset\`
 //!
 //! The MPQ listing has about 1,700 paths under `Tileset\`. The picker offers
@@ -285,16 +302,26 @@ fn stroke(
     }
     let Some(at) = cursor.ground else { return };
 
+    // Shift held is the other of the panel's two modes for as long as it is
+    // held, as it is on the hole and water brushes: a stroke that went too far
+    // is taken back without a trip to the panel.
+    let mut brush = textures.brush.clone();
+    if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
+        brush.erase = !brush.erase;
+    }
     if !held.painting {
         held.painting = true;
-        session
-            .history
-            .begin(format!("Paint {}", leaf(&textures.brush.texture)));
+        session.history.begin(match brush.erase {
+            true => format!("Erase {}", leaf(&brush.texture)),
+            false => format!("Paint {}", leaf(&brush.texture)),
+        });
     }
 
-    let brush = textures.brush.clone();
     let seconds = time.delta_secs();
     let mut full: Vec<((u32, u32), usize)> = Vec::new();
+    // What else the stroke could not do, or did in place of what was asked,
+    // as counts for the status line.
+    let (mut base, mut absent, mut reused) = (0usize, 0usize, 0usize);
     // Every tile the circle reaches, for the same reason as the height brush:
     // a stroke that stopped at a tile border would leave the paint ending in a
     // straight line there, with neither file being wrong.
@@ -310,6 +337,9 @@ fn stroke(
             seconds,
         );
         full.extend(painted.full.iter().map(|&chunk| (coord, chunk)));
+        base += painted.base.len();
+        absent += painted.absent.len();
+        reused += painted.reused.len();
         let edits = painted.edits;
         if edits.is_empty() {
             continue;
@@ -347,10 +377,29 @@ fn stroke(
     // message would stop part-way across a hillside with nothing saying why.
     // The inspector's "Chunk under the pointer" section holds the controls
     // that free a layer.
-    session.status = match full.len() {
-        0 => format!("painting {}", leaf(&brush.texture)),
-        1 => "1 chunk is full: four textures is the limit".to_string(),
-        n => format!("{n} chunks are full: four textures is the limit"),
+    //
+    // One line, and a refusal comes before a report of what was done.
+    let chunks = |n: usize| match n {
+        1 => "1 chunk".to_string(),
+        n => format!("{n} chunks"),
+    };
+    session.status = match (full.len(), base, absent, reused) {
+        (1, ..) => "1 chunk is full: four textures is the limit".to_string(),
+        (n @ 2.., ..) => format!("{n} chunks are full: four textures is the limit"),
+        (0, n @ 1.., ..) => format!(
+            "{} has it as its base, which cannot be erased: swap it in the Chunk list",
+            chunks(n)
+        ),
+        (0, 0, n @ 1.., _) => format!(
+            "{} under the brush do not carry {}: existing layers only is on",
+            chunks(n),
+            leaf(&brush.texture)
+        ),
+        (0, 0, 0, n @ 1..) => format!("a hidden layer was reused on {}", chunks(n)),
+        _ => match brush.erase {
+            true => format!("erasing {}", leaf(&brush.texture)),
+            false => format!("painting {}", leaf(&brush.texture)),
+        },
     };
     // The first full chunk is pinned. This is the case the layer list exists
     // for: the stroke stopped, and the panel shows which chunk stopped it and
@@ -563,7 +612,13 @@ fn draw_brush(
     let (Some(session), Some(at)) = (session, cursor.ground) else {
         return;
     };
-    let colour = Color::srgb(0.85, 0.6, 1.0);
+    // The eraser's ring is red, so the mode is read at the pointer and not
+    // only on the panel. Shift is not asked here: the ring is drawn from the
+    // panel's mode.
+    let colour = match textures.brush.erase {
+        true => Color::srgb(1.0, 0.45, 0.4),
+        false => Color::srgb(0.85, 0.6, 1.0),
+    };
     super::terrain::rings(
         &mut gizmos,
         &session,

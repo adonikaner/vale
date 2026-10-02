@@ -50,11 +50,15 @@
 //! the answer for that population and it is the only one that needed a live
 //! answer, because it is the only one the terrain's own heights place.
 //!
-//! Three others read the heights and are deliberately left to a re-read:
+//! A doodad or a building stands at the absolute height in its record, so
+//! raising the ground under a tree buries it. When the stroke ends, [`carry`]
+//! moves every placement over ground the stroke moved by as much as the
+//! ground under it moved, in the stroke's own undo entry
+//! ([`Terrain::objects_follow`], on by default). It is done at the release
+//! and not per frame: it reads the ground under every placement of the tile.
 //!
-//! * an `MDDF` doodad stands at the **absolute** height in the file, which is
-//!   what the reference does — raising the ground under a tree buries it, here
-//!   and in any other editor, until the tree is moved;
+//! Two others read the heights and are deliberately left to a re-read:
+//!
 //! * `recompute_normals` stops at the tile's edge, so a stroke across a border
 //!   leaves a shading seam.
 //!
@@ -123,6 +127,10 @@ pub struct Terrain {
     /// What [`Mode::Flatten`] flattens toward when the stroke begins: the height
     /// under the pointer at that moment, so a flatten is "make it like here".
     pub flatten_to_cursor: bool,
+    /// Whether the doodads and buildings over ground a stroke moves are moved
+    /// by as much when the stroke ends, in the stroke's own undo entry. See
+    /// `vale_edit::ops::follow`.
+    pub objects_follow: bool,
 }
 
 impl Default for Terrain {
@@ -130,6 +138,7 @@ impl Default for Terrain {
         Terrain {
             brush: Brush::default(),
             flatten_to_cursor: true,
+            objects_follow: true,
         }
     }
 }
@@ -140,7 +149,13 @@ impl Default for Terrain {
 /// 533-yard square, so a stroke near a border edits both sides of it; which
 /// tiles those are is asked again every frame, because the pointer moves.
 #[derive(Resource, Default)]
-struct Held(bool);
+struct Held {
+    on: bool,
+    /// The ground height under every placement of each tile the stroke has
+    /// touched, read before the stroke first moved that tile. The release
+    /// measures against it. Empty while [`Terrain::objects_follow`] is off.
+    standing: bevy::platform::collections::HashMap<(u32, u32), vale_edit::ops::follow::Standing>,
+}
 
 pub struct TerrainToolPlugin;
 
@@ -244,8 +259,17 @@ fn stroke(
         return;
     };
     if buttons.just_released(MouseButton::Left) {
+        // What stood on the ground the stroke moved is moved with it, into
+        // the stroke's own entry, before the entry is closed.
+        let carried = carry(session, std::mem::take(&mut held.standing));
+        if carried > 0 {
+            session.status = match carried {
+                1 => "1 object followed the ground".to_string(),
+                n => format!("{n} objects followed the ground"),
+            };
+        }
         session.history.end();
-        held.0 = false;
+        held.on = false;
         return;
     }
     if *tool != Tool::Terrain {
@@ -280,9 +304,9 @@ fn stroke(
             Mode::Noise => "Roughen terrain",
         };
         session.history.begin(label);
-        held.0 = true;
+        held.on = true;
     }
-    if !buttons.pressed(MouseButton::Left) || !held.0 {
+    if !buttons.pressed(MouseButton::Left) || !held.on {
         return;
     }
 
@@ -324,6 +348,11 @@ fn stroke(
             // two-megabyte parse in the middle of a drag.
             continue;
         };
+        // Before the stroke first moves this tile. See [`Held::standing`].
+        if terrain.objects_follow && !held.standing.contains_key(&coord) {
+            held.standing
+                .insert(coord, vale_edit::ops::follow::standing(tile));
+        }
         let edits = brush.stroke(tile, [at.x, at.y], seconds, level);
         if edits.is_empty() {
             continue;
@@ -334,6 +363,40 @@ fn stroke(
             session.touched(coord, chunk);
         }
     }
+}
+
+/// Move every doodad and building of the tiles in `standing` by as much as
+/// the ground under it has moved since `standing` was read, and record the
+/// moves in the history entry that is open. Returns how many moved.
+///
+/// `pub(crate)` because the grade tool moves the ground in one press and
+/// carries what stands on it the same way. See `vale_edit::ops::follow`.
+pub(crate) fn carry(
+    session: &mut EditSession,
+    standing: impl IntoIterator<Item = ((u32, u32), vale_edit::ops::follow::Standing)>,
+) -> usize {
+    let mut carried = 0;
+    for (coord, was) in standing {
+        let key = session.key(coord);
+        let Some(tile) = session.tiles.get_mut(&coord) else {
+            continue;
+        };
+        let done = vale_edit::ops::follow::follow(tile, &was);
+        if done.edits.is_empty() {
+            continue;
+        }
+        carried += done.edits.len();
+        session.history.record(&key, done.edits);
+        // The drawn copies are put where the records now say by the placement
+        // tools' own reconciles, which run whatever tool is chosen.
+        for index in done.doodads {
+            session.moved(coord, index);
+        }
+        for index in done.buildings {
+            session.moved_building(coord, index);
+        }
+    }
+    carried
 }
 
 /// Push the changed chunks' vertices into the meshes that are already drawn.

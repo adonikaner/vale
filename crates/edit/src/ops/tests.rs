@@ -327,6 +327,7 @@ fn a_paint_stroke_lands_where_the_pointer_is() {
         core: 0.0,
         texture: "Tileset\\Generic\\Black.blp".into(),
         effect_id: 0,
+        ..PaintBrush::default()
     };
     // Four seconds of stroke, a tenth of a second at a time, which is what a
     // held button produces.
@@ -410,6 +411,7 @@ fn a_paint_stroke_inverts() {
         core: 0.0,
         texture: "Tileset\\Generic\\Black.blp".into(),
         effect_id: 0,
+        ..PaintBrush::default()
     };
     // The first step is the one that adds the layer; the rest only move texels.
     let mut working = crate::ops::Working::default();
@@ -570,6 +572,7 @@ fn a_full_chunk_refuses_a_fifth_texture_and_reports_it() {
         core: 0.0,
         texture: "Tileset\\Generic\\Black.blp".into(),
         effect_id: 0,
+        ..PaintBrush::default()
     };
     let mut working = crate::ops::Working::default();
     let painted = brush.stroke(&mut tile, &mut working, at, 0.1);
@@ -638,6 +641,7 @@ fn strength_decides_how_fast_a_stroke_paints() {
             core: 0.0,
             texture: "Tileset\\Generic\\Black.blp".into(),
             effect_id: 0,
+            ..PaintBrush::default()
         };
         for _ in 0..30 {
             brush.stroke(&mut tile, &mut working, at, 1.0 / 60.0);
@@ -683,6 +687,7 @@ fn a_weak_brush_still_reaches_opaque_if_it_is_held() {
         core: 0.0,
         texture: "Tileset\\Generic\\Black.blp".into(),
         effect_id: 0,
+        ..PaintBrush::default()
     };
     // Twenty seconds of a very weak brush.
     for _ in 0..1200 {
@@ -743,6 +748,7 @@ fn a_chunk_with_no_textures_takes_the_first_one_as_its_base() {
         core: 0.0,
         texture: "Tileset\\Generic\\Black.blp".into(),
         effect_id: 0,
+        ..PaintBrush::default()
     };
     let painted = brush.stroke(&mut tile, &mut Working::default(), at, 0.1);
     assert_eq!(painted.based, vec![blank], "the chunk is reported as based");
@@ -1001,4 +1007,363 @@ fn a_renamed_path_is_undone_byte_for_byte() {
     // reaches it.
     assert!(edit.remeshes());
     assert_eq!(edit.chunk(), None);
+}
+
+/// A brush for the tests below: eight yards, strong, on `texture`.
+fn paint_brush(texture: &str) -> crate::ops::PaintBrush {
+    crate::ops::PaintBrush {
+        radius: 8.0,
+        strength: 4.0,
+        texture: texture.into(),
+        ..crate::ops::PaintBrush::default()
+    }
+}
+
+/// Hold `brush` at the middle of chunk `which` for `seconds`.
+fn hold(
+    tile: &mut AdtFile,
+    brush: &crate::ops::PaintBrush,
+    which: usize,
+    seconds: f32,
+) -> crate::ops::Painted {
+    let origin = tile.chunk(which).expect("a chunk").head().position();
+    let at = [origin[0] - 16.0, origin[1] - 16.0];
+    let mut working = crate::ops::Working::default();
+    let mut all = crate::ops::Painted::default();
+    for _ in 0..(seconds * 10.0) as usize {
+        let step = brush.stroke(tile, &mut working, at, 0.1);
+        all.edits.extend(step.edits);
+        all.full.extend(step.full);
+        all.base.extend(step.base);
+        all.absent.extend(step.absent);
+        all.reused.extend(step.reused);
+    }
+    all
+}
+
+/// The texel in the middle of a chunk's blend map, which is under the brush
+/// [`hold`] holds.
+fn centre_of(tile: &AdtFile, which: usize, layer: usize) -> u8 {
+    use vale_assets::world::adt::ALPHA_SIDE;
+    let paint = crate::adt::alpha::paint(tile.chunk(which).unwrap());
+    paint.maps[layer][ALPHA_SIDE / 2 * ALPHA_SIDE + ALPHA_SIDE / 2]
+}
+
+/// A held stroke converges on the opacity asked for, from below and from
+/// above.
+#[test]
+fn a_stroke_converges_on_its_opacity_from_either_side() {
+    let Some(mut tile) = tile() else { return };
+    let Some(which) = room_for_a_layer(&tile) else {
+        return;
+    };
+    let half = crate::ops::PaintBrush {
+        opacity: 0.5,
+        ..paint_brush("Tileset\\Generic\\Black.blp")
+    };
+    hold(&mut tile, &half, which, 6.0);
+    let top = crate::adt::alpha::paint(tile.chunk(which).unwrap()).len() - 1;
+    let from_below = centre_of(&tile, which, top);
+    assert!((110..=145).contains(&from_below), "from below: {from_below}");
+
+    hold(&mut tile, &paint_brush("Tileset\\Generic\\Black.blp"), which, 6.0);
+    assert!(centre_of(&tile, which, top) > 230, "a full stroke is opaque");
+    hold(&mut tile, &half, which, 6.0);
+    let from_above = centre_of(&tile, which, top);
+    assert!((110..=145).contains(&from_above), "from above: {from_above}");
+}
+
+/// An eraser takes the texture's own layer toward transparent and adds
+/// nothing: a chunk that does not carry the texture is not changed, and the
+/// layer stays on a chunk that does.
+#[test]
+fn an_eraser_takes_a_texture_away_and_never_adds_one() {
+    use crate::adt::alpha;
+    let Some(mut tile) = tile() else { return };
+    let Some(which) = room_for_a_layer(&tile) else {
+        return;
+    };
+    let was = alpha::paint(tile.chunk(which).unwrap());
+    let eraser = crate::ops::PaintBrush {
+        erase: true,
+        ..paint_brush("Tileset\\Generic\\Black.blp")
+    };
+    let nothing = hold(&mut tile, &eraser, which, 2.0);
+    assert!(nothing.edits.is_empty(), "the chunk does not carry it");
+    assert_eq!(alpha::paint(tile.chunk(which).unwrap()), was);
+
+    hold(&mut tile, &paint_brush("Tileset\\Generic\\Black.blp"), which, 4.0);
+    let top = alpha::paint(tile.chunk(which).unwrap()).len() - 1;
+    assert!(centre_of(&tile, which, top) > 230);
+    hold(&mut tile, &eraser, which, 6.0);
+    assert!(centre_of(&tile, which, top) < 20, "erased under the brush");
+    assert_eq!(alpha::paint(tile.chunk(which).unwrap()).len(), was.len() + 1);
+
+    // The base has no blend map, and an eraser on it says so.
+    let base = tile.texture_names()[was.layers[0].texture_id as usize].clone();
+    let on_base = crate::ops::PaintBrush {
+        erase: true,
+        ..paint_brush(&base)
+    };
+    let refused = hold(&mut tile, &on_base, which, 0.5);
+    assert!(refused.edits.is_empty());
+    assert!(refused.base.contains(&which));
+}
+
+/// A stroke confined to existing layers leaves a chunk without the texture
+/// alone, and says which it was.
+#[test]
+fn a_stroke_confined_to_existing_layers_adds_none() {
+    use crate::adt::alpha;
+    let Some(mut tile) = tile() else { return };
+    let Some(which) = room_for_a_layer(&tile) else {
+        return;
+    };
+    let was = alpha::paint(tile.chunk(which).unwrap());
+    let confined = crate::ops::PaintBrush {
+        existing_only: true,
+        ..paint_brush("Tileset\\Generic\\Black.blp")
+    };
+    let done = hold(&mut tile, &confined, which, 2.0);
+    assert!(done.absent.contains(&which));
+    assert_eq!(alpha::paint(tile.chunk(which).unwrap()), was);
+}
+
+/// At a density under 1 a held stroke paints some of the texels under it and
+/// leaves others bare, and the value that decides is the place's own.
+#[test]
+fn a_sparse_stroke_paints_patches() {
+    use crate::adt::alpha;
+    use vale_assets::world::adt::ALPHA_SIDE;
+    let Some(mut tile) = tile() else { return };
+    let Some(which) = room_for_a_layer(&tile) else {
+        return;
+    };
+    let sparse = crate::ops::PaintBrush {
+        density: 0.5,
+        falloff: Falloff::Flat,
+        ..paint_brush("Tileset\\Generic\\Black.blp")
+    };
+    hold(&mut tile, &sparse, which, 6.0);
+    let paint = alpha::paint(tile.chunk(which).unwrap());
+    let map = paint.maps.last().unwrap();
+    // The 16x16 texels round the middle are well inside an eight-yard brush.
+    let (mut painted, mut bare) = (0, 0);
+    for ty in ALPHA_SIDE / 2 - 8..ALPHA_SIDE / 2 + 8 {
+        for tx in ALPHA_SIDE / 2 - 8..ALPHA_SIDE / 2 + 8 {
+            match map[ty * ALPHA_SIDE + tx] {
+                200.. => painted += 1,
+                0..=40 => bare += 1,
+                _ => {}
+            }
+        }
+    }
+    assert!(painted > 16, "some of it is painted: {painted}");
+    assert!(bare > 16, "and some of it is not: {bare}");
+    assert_eq!(crate::ops::speckle(1.0, 2.0, 2.0), crate::ops::speckle(1.0, 2.0, 2.0));
+    for step in 0..50 {
+        let value = crate::ops::speckle(step as f32 * 0.52, 3.0, 2.0);
+        assert!((0.0..=1.0).contains(&value));
+    }
+}
+
+/// A full chunk refuses a fifth texture, and with the switch on gives it the
+/// layer that shows almost nothing.
+#[test]
+fn a_full_chunk_gives_up_a_layer_that_shows_nothing() {
+    use crate::adt::alpha;
+    let Some(mut tile) = tile() else { return };
+    let Some(which) = room_for_a_layer(&tile) else {
+        return;
+    };
+    // Fill the chunk with one-yard dots, each a layer showing about 0.3%.
+    let dots = [
+        "Tileset\\Generic\\Black.blp",
+        "Tileset\\Generic\\Red.blp",
+        "Tileset\\Generic\\Grey.blp",
+    ];
+    for dot in dots {
+        if !alpha::paint(tile.chunk(which).unwrap()).has_room() {
+            break;
+        }
+        let brush = crate::ops::PaintBrush {
+            radius: 1.0,
+            ..paint_brush(dot)
+        };
+        hold(&mut tile, &brush, which, 2.0);
+    }
+    let full = alpha::paint(tile.chunk(which).unwrap());
+    assert_eq!(full.len(), alpha::MAX_LAYERS);
+
+    let fifth = paint_brush("Tileset\\Generic\\Fifth.blp");
+    let refused = hold(&mut tile, &fifth, which, 0.5);
+    assert!(refused.full.contains(&which) && refused.edits.is_empty());
+
+    let reusing = crate::ops::PaintBrush {
+        reuse_hidden: true,
+        ..fifth
+    };
+    let done = hold(&mut tile, &reusing, which, 4.0);
+    assert!(done.reused.contains(&which));
+    let now = alpha::paint(tile.chunk(which).unwrap());
+    assert_eq!(now.len(), alpha::MAX_LAYERS, "no layer was added");
+    let names = tile.texture_names();
+    let layer = now
+        .layers
+        .iter()
+        .position(|layer| names[layer.texture_id as usize].ends_with("Fifth.blp"))
+        .expect("the texture took a layer");
+    assert!(layer > 0, "the base is never the one given up");
+    assert!(centre_of(&tile, which, layer) > 200, "and it was painted");
+}
+
+/// A doodad over ground a stroke raised is raised by as much as the ground
+/// under it, one over ground it did not touch is not moved, and undoing the
+/// edits puts the tile back.
+#[test]
+fn a_placement_follows_the_ground_under_it() {
+    use crate::adt::heights;
+    use crate::ops::follow;
+    use vale_assets::world::adt::placement_to_world;
+
+    let Some(mut tile) = tile() else { return };
+    let before_bytes = tile.write();
+    let doodads = tile.doodad_list();
+    // A doodad whose origin is over this tile's own ground.
+    let Some((index, doodad, ground)) = doodads.iter().enumerate().find_map(|(index, doodad)| {
+        let [x, y, _] = placement_to_world(doodad.position);
+        Some((index, *doodad, heights::height_at(&tile, x, y)?))
+    }) else {
+        return;
+    };
+    let [x, y, _] = placement_to_world(doodad.position);
+    let was = follow::standing(&tile);
+    assert!(was.doodads.iter().any(|(id, _)| *id == doodad.unique_id));
+
+    let brush = Brush {
+        radius: 12.0,
+        strength: 10.0,
+        mode: Mode::Raise,
+        ..Brush::default()
+    };
+    let mut edits = Vec::new();
+    for _ in 0..10 {
+        edits.extend(brush.stroke(&mut tile, [x, y], 0.1, None));
+    }
+    let raised = heights::height_at(&tile, x, y).expect("still ground") - ground;
+    assert!(raised > 1.0, "the ground rose: {raised}");
+    assert_eq!(tile.doodad_at(index).unwrap().position, doodad.position, "not yet moved");
+
+    let done = follow::follow(&mut tile, &was);
+    assert!(done.doodads.contains(&index));
+    let now = tile.doodad_at(index).unwrap();
+    assert!(
+        (now.position[1] - doodad.position[1] - raised).abs() < 1e-3,
+        "the doodad rose {} and the ground {raised}",
+        now.position[1] - doodad.position[1]
+    );
+    assert_eq!(now.position[0], doodad.position[0]);
+    assert_eq!(now.position[2], doodad.position[2]);
+    // Far from the stroke nothing moved: every moved doodad is near it.
+    for &moved in &done.doodads {
+        let [mx, my, _] = placement_to_world(doodads[moved].position);
+        assert!((mx - x).hypot(my - y) < 60.0, "a far doodad moved");
+    }
+    // Against a reading taken now, nothing is left to move.
+    let settled = follow::standing(&tile);
+    assert!(follow::follow(&mut tile, &settled).edits.is_empty());
+
+    // Everything inverts, in reverse order.
+    for edit in done.edits.iter().rev().chain(edits.iter().rev()) {
+        edit.revert(&mut tile);
+    }
+    assert_eq!(tile.write(), before_bytes);
+}
+
+/// A height map read straight back changes nothing; one with a pixel moved
+/// moves that vertex in every chunk that has it, and undoing puts the tile
+/// back.
+#[test]
+fn a_height_map_reads_back_as_the_tile_it_came_from() {
+    use crate::adt::heights;
+    use crate::ops::image::{self, HEIGHT_SIDE};
+
+    let Some(mut tile) = tile() else { return };
+    let bytes = tile.write();
+    let map = image::export_heights(&tile).expect("a whole tile");
+    assert_eq!(map.pixels.len(), HEIGHT_SIDE * HEIGHT_SIDE);
+    assert!(map.high > map.low);
+    assert!(image::import_heights(&mut tile, &map).is_empty(), "nothing to change");
+    assert_eq!(tile.write(), bytes);
+
+    // The pixel at column 16, row 16 is the corner four chunks share.
+    let mut raised = map.clone();
+    let at = 16 * HEIGHT_SIDE + 16;
+    raised.pixels[at] = raised.pixels[at].saturating_add(2000).max(2000);
+    let edits = image::import_heights(&mut tile, &raised);
+    let moved: Vec<usize> = edits
+        .iter()
+        .filter_map(|edit| match edit {
+            Edit::Heights { chunk, .. } => Some(*chunk),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(moved, vec![0, 1, 16, 17], "the four chunks at that corner");
+    let corner = |chunk: usize, row: usize, column: usize| {
+        heights::heights(tile.chunk(chunk).unwrap())[heights::outer(row, column).unwrap()]
+    };
+    let height = corner(0, 8, 8);
+    assert_eq!(height, corner(1, 8, 0));
+    assert_eq!(height, corner(16, 0, 8));
+    assert_eq!(height, corner(17, 0, 0));
+    assert!(edits.iter().any(|edit| matches!(edit, Edit::Normals { .. })));
+    // What was written reads back as the picture that wrote it.
+    let again = image::export_heights(&tile).unwrap();
+    assert!(image::import_heights(&mut tile, &again).is_empty());
+
+    for edit in edits.iter().rev() {
+        edit.revert(&mut tile);
+    }
+    assert_eq!(tile.write(), bytes);
+}
+
+/// A blend map read straight back changes nothing, and a channel written
+/// lands on the layer it stands for and on no chunk without that layer.
+#[test]
+fn a_blend_map_reads_back_as_the_tile_it_came_from() {
+    use crate::adt::alpha;
+    use crate::ops::image::{self, BLEND_SIDE};
+    use vale_assets::world::adt::ALPHA_SIDE;
+
+    let Some(mut tile) = tile() else { return };
+    let bytes = tile.write();
+    let rgb = image::export_blend(&tile);
+    assert_eq!(rgb.len(), BLEND_SIDE * BLEND_SIDE * 3);
+    assert!(image::import_blend(&mut tile, &rgb).is_empty(), "nothing to change");
+    assert_eq!(tile.write(), bytes);
+
+    // Clear the red channel of one chunk that has a second layer.
+    let Some(which) = (0..256).find(|&index| {
+        let paint = alpha::paint(tile.chunk(index).unwrap());
+        paint.len() >= 2 && paint.maps[1].iter().any(|&texel| texel > 0)
+    }) else {
+        return;
+    };
+    let mut cleared = rgb.clone();
+    let (cx, cy) = (which % 16, which / 16);
+    for ty in 0..ALPHA_SIDE {
+        for tx in 0..ALPHA_SIDE {
+            let at = (cy * ALPHA_SIDE + ty) * BLEND_SIDE + cx * ALPHA_SIDE + tx;
+            cleared[at * 3] = 0;
+        }
+    }
+    let edits = image::import_blend(&mut tile, &cleared);
+    assert_eq!(edits.len(), 1);
+    assert!(matches!(&edits[0], Edit::Paint { chunk, .. } if *chunk == which));
+    let now = alpha::paint(tile.chunk(which).unwrap());
+    assert!(now.maps[1].iter().all(|&texel| texel == 0));
+    for edit in edits.iter().rev() {
+        edit.revert(&mut tile);
+    }
+    assert_eq!(tile.write(), bytes);
 }

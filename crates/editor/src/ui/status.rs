@@ -232,9 +232,16 @@ pub fn draw(
             // The view flags go between the numbers and the message, coloured
             // like the unsaved count: both are states left over from earlier
             // that explain what the viewport shows.
+            // Truncated to the room that is left, with the whole flag on the
+            // hover text. Three flags together are wider than a 1280-point
+            // window leaves, and an untruncated label in this right-to-left
+            // layout runs back over the numbers on the left.
             for flag in scripted {
                 ui.add_space(8.0);
-                ui.label(theme::number(flag.as_str()).color(theme::WARN));
+                ui.add(
+                    egui::Label::new(theme::number(flag.as_str()).color(theme::WARN)).truncate(),
+                )
+                .on_hover_text(flag.as_str());
             }
         });
     });

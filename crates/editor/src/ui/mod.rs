@@ -437,6 +437,9 @@ pub struct Viewing<'w> {
     #[cfg(feature = "diagnostics")]
     drawn: Res<'w, vale_client::render::overlay::CollisionDrawn>,
     navmesh: ResMut<'w, crate::navmesh::Navmesh>,
+    /// The ground guides, which the view bar's Guides menu switches. See
+    /// [`crate::tools::guides`].
+    guides: ResMut<'w, crate::tools::guides::Guides>,
     icons: Res<'w, icons::Icons>,
     /// Which world tool the World part of the top bar returns to. See
     /// [`rail::Rail`].
@@ -622,11 +625,17 @@ fn draw(
     let scripted = {
         #[cfg(feature = "diagnostics")]
         {
-            viewbar::scripted(&edited_world, &baseline, &edited_overlay, viewing.navmesh.on)
+            viewbar::scripted(
+                &edited_world,
+                &baseline,
+                &edited_overlay,
+                viewing.navmesh.on,
+                &viewing.guides,
+            )
         }
         #[cfg(not(feature = "diagnostics"))]
         {
-            viewbar::scripted(&edited_world, &baseline, viewing.navmesh.on)
+            viewbar::scripted(&edited_world, &baseline, viewing.navmesh.on, &viewing.guides)
         }
     };
     egui::Panel::bottom("editor-status")
@@ -637,6 +646,7 @@ fn draw(
             );
         });
 
+    let mut edited_guides = viewing.guides.clone();
     egui::Panel::bottom("editor-view")
         .frame(bar(theme::PANEL))
         .show(&mut root, |ui| {
@@ -652,11 +662,20 @@ fn draw(
                     #[cfg(feature = "diagnostics")]
                     drawn: &viewing.drawn,
                     navmesh: &mut viewing.navmesh,
+                    guides: &mut edited_guides,
+                    areas_shown: *tool == Tool::Areas,
+                    open_guides: editing.args.guides_menu
+                        && time.elapsed_secs() > 3.0
+                        && !std::mem::replace(&mut editing.projects.guides_shown_once, true),
                     baseline: &baseline,
                     icons: &viewing.icons,
                 },
             );
         });
+    // Written back only when a switch moved, as the other view settings are.
+    if edited_guides != *viewing.guides {
+        *viewing.guides = edited_guides;
+    }
 
     // The rail is not drawn over a playtest. Every tile on it keeps the
     // viewport, and no such tool can be used then; see
@@ -729,6 +748,7 @@ fn draw(
                         // panel is the one user of it here.
                         server: &playing.server,
                         server_panel: &mut popovers.server,
+                        guides: &mut viewing.guides,
                     },
                     &mut editing,
                 );

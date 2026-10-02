@@ -14,14 +14,21 @@
 //! A button draws the icon [`super::icons`] has under its switch label, and
 //! its short label from [`ART`] when there is none. No icons are shipped yet.
 //!
-//! ## The four groups
+//! ## The five groups
 //!
 //! ```text
 //! world    a subtraction: the layer is in the frame, and this takes it out
 //! overlay  an addition: not in the frame at all, drawn on top of it
 //! server   the server's navmesh, which is the editor's own overlay
+//! ground   the guides drawn on the terrain: one button that opens a menu
 //! frame    how the frame is produced: the three settings F5, F9 and F10 toggle
 //! ```
+//!
+//! The ground guides are one button and not five. Two of them take a number
+//! (an angle, an interval), a button has no room for one, and five more
+//! buttons do not fit the row at 1280 points. The button says how many are
+//! on, and its menu stays open while its switches are pressed. See
+//! [`crate::tools::guides`].
 //!
 //! The groups are divided by a vertical rule, not by captions. Three caption
 //! words cost about 140 points, measured when the bar held thirty-two buttons
@@ -216,6 +223,14 @@ pub struct Bar<'a> {
     /// The server's navmesh, which is the editor's own overlay rather than
     /// the client's. See [`crate::navmesh`].
     pub navmesh: &'a mut crate::navmesh::Navmesh,
+    /// The ground guides. A copy, written back by the caller when it changed.
+    pub guides: &'a mut crate::tools::guides::Guides,
+    /// Whether the Areas tool is drawing its own wash, which takes the place
+    /// of the texture count while it is. The menu says so.
+    pub areas_shown: bool,
+    /// `--guides-menu`: open the Guides menu, which a scripted run cannot
+    /// press.
+    pub open_guides: bool,
     /// The world switches as the editor sets them in its current state, which
     /// is what a button's "moved" mark and `reset` measure against. See
     /// [`crate::playtest::world_baseline`].
@@ -311,6 +326,9 @@ pub fn draw(ui: &mut Ui, bar: &mut Bar) {
         }
 
         rule(ui);
+        guides_menu(ui, bar.guides, bar.areas_shown, bar.open_guides);
+
+        rule(ui);
         for (key, label, field) in FRAME {
             // The function key, which toggles it without the pointer.
             let why = format!("frame setting: {key} toggles it");
@@ -334,12 +352,122 @@ pub fn draw(ui: &mut Ui, bar: &mut Bar) {
             *bar.world = bar.baseline.clone();
             *bar.frame = RenderTuning::default();
             bar.navmesh.on = false;
+            *bar.guides = crate::tools::guides::Guides::default();
             #[cfg(feature = "diagnostics")]
             {
                 *bar.overlay = editor_overlay(None);
             }
         }
     });
+}
+
+/// The Guides button and its menu: the five things drawn on the ground to
+/// read it by. See [`crate::tools::guides`].
+///
+/// The button is lit while any guide is on and says how many. The menu stays
+/// open while its switches are pressed and closes on a press outside it, so
+/// several guides are set in one visit. A guide that takes a number has it
+/// on its own row, in the sentence the switch begins.
+fn guides_menu(
+    ui: &mut Ui,
+    guides: &mut crate::tools::guides::Guides,
+    areas_shown: bool,
+    open: bool,
+) {
+    use crate::tools::guides::{CONTOUR_RANGE, SLOPE_RANGE};
+    let on = guides.count();
+    let label = match on {
+        0 => "Guides".to_string(),
+        n => format!("Guides {n}"),
+    };
+    let button = egui::Button::new(RichText::new(label).size(12.0).color(match on {
+        0 => theme::INK_DIM,
+        _ => theme::INK,
+    }))
+    .fill(match on {
+        0 => theme::RAISED,
+        _ => theme::ACCENT_SUNK,
+    })
+    .stroke(Stroke::new(
+        1.0,
+        match on {
+            0 => theme::LINE,
+            _ => theme::ACCENT,
+        },
+    ))
+    .corner_radius(CornerRadius::same(3))
+    .min_size(Vec2::new(64.0, BUTTON));
+    let (response, _) = egui::containers::menu::MenuButton::from_button(button)
+        .config(
+            egui::containers::menu::MenuConfig::new()
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+        )
+        .ui(ui, |ui| {
+            // The bar's own tight spacing is for a row of square buttons.
+            ui.spacing_mut().item_spacing = Vec2::new(6.0, 5.0);
+            ui.spacing_mut().button_padding = Vec2::new(6.0, 3.0);
+            ui.set_min_width(250.0);
+            // A menu draws its buttons with no frame, which leaves a number
+            // box looking like a label. These two are boxes.
+            ui.visuals_mut().button_frame = true;
+            ui.visuals_mut().widgets.inactive.weak_bg_fill = theme::RAISED;
+            ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0, theme::LINE);
+            theme::heading(ui, "Grid");
+            ui.checkbox(&mut guides.chunks, "Chunks")
+                .on_hover_text("A line on every chunk border, 33.33 yards apart.");
+            ui.checkbox(&mut guides.tiles, "Tiles")
+                .on_hover_text("A heavier line on every tile border, 533.33 yards apart.");
+
+            ui.add_space(2.0);
+            theme::heading(ui, "Shape");
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut guides.slope, "Steeper than");
+                ui.add_enabled(
+                    guides.slope,
+                    egui::DragValue::new(&mut guides.slope_angle)
+                        .range(SLOPE_RANGE)
+                        .speed(0.5)
+                        .fixed_decimals(0)
+                        .suffix("\u{b0}"),
+                );
+            })
+            .response
+            .on_hover_text(
+                "Shade the ground steeper than this, in degrees from level. vmangos builds \
+                 its navmesh with 50\u{b0}: steeper ground is ground no creature paths across.",
+            );
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut guides.contours, "Contours every");
+                ui.add_enabled(
+                    guides.contours,
+                    egui::DragValue::new(&mut guides.contour_interval)
+                        .range(CONTOUR_RANGE)
+                        .speed(0.5)
+                        .fixed_decimals(0)
+                        .suffix(" yd"),
+                );
+            })
+            .response
+            .on_hover_text("A line at every multiple of this height.");
+
+            ui.add_space(2.0);
+            theme::heading(ui, "Textures");
+            ui.checkbox(&mut guides.layers, "Full chunks").on_hover_text(
+                "Wash red the chunks that carry four textures. A chunk holds four at \
+                 most, and a brush stroke with a fifth is refused there. The texture \
+                 brush's panel has the same switch.",
+            );
+            if guides.layers && areas_shown {
+                theme::note(ui, "not drawn while the Areas tool shows areas");
+            }
+        });
+    if open {
+        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
+    }
+    response.on_hover_text(
+        "ground guides: lines and shading drawn on the terrain to read it by. They edit \
+         nothing and are off during a playtest.",
+    );
 }
 
 /// The collision overlay's radius, as a drag value beside its button while
@@ -459,8 +587,8 @@ fn toggle(
 }
 
 /// What differs from the default view, as the command-line flags that
-/// reproduce it: `--without <list>`, `--overlay <list>` and `--navmesh`, each
-/// present only when it has something to say. `--without` lists the world
+/// reproduce it: `--without <list>`, `--overlay <list>`, `--navmesh` and
+/// `--guides <list>`, each present only when it has something to say. `--without` lists the world
 /// switches that are off and on in `baseline`, so a switch the editor turns off
 /// itself is not echoed.
 ///
@@ -474,6 +602,7 @@ pub fn scripted(
     baseline: &WorldTuning,
     #[cfg(feature = "diagnostics")] overlay: &DebugOverlay,
     navmesh: bool,
+    guides: &crate::tools::guides::Guides,
 ) -> Vec<String> {
     let (off, on) = lists(
         world,
@@ -490,6 +619,9 @@ pub fn scripted(
     }
     if navmesh {
         flags.push("--navmesh".to_string());
+    }
+    if guides.count() > 0 {
+        flags.push(format!("--guides {}", guides.list()));
     }
     flags
 }
@@ -584,6 +716,7 @@ mod tests {
                 #[cfg(feature = "diagnostics")]
                 &overlay,
                 navmesh,
+                &crate::tools::guides::Guides::default(),
             )
         };
 
@@ -598,5 +731,16 @@ mod tests {
             echo(&world, true),
             vec!["--without doodads,blobshadows", "--navmesh"]
         );
+        // The ground guides are echoed by the names their flag takes.
+        let guides = crate::tools::guides::Guides::with("chunks,slope");
+        let echoed = scripted(
+            &editing,
+            &editing,
+            #[cfg(feature = "diagnostics")]
+            &overlay,
+            false,
+            &guides,
+        );
+        assert_eq!(echoed, vec!["--guides chunks,slope"]);
     }
 }

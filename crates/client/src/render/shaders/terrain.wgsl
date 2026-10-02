@@ -48,7 +48,9 @@ struct TerrainParams {
     // **How much of the per-chunk tint to show**, 0 for none — which is every
     // frame of the client. See `TerrainMaterial::tint`.
     tint: f32,
-    _pad: f32,
+    // Which grid lines to draw: 0 none, 1 chunk borders, 2 tile borders, 3
+    // both. Zero in every frame of the client. See `TerrainParams::grid`.
+    grid: f32,
     // **How fast each layer crawls**, in texture widths a second, two layers to
     // a vector: `(u0, v0, u1, v1)` and `(u2, v2, u3, v3)`. `MCLY`'s animation
     // bits — the Burning Steppes lava and nothing else in Azeroth. A velocity
@@ -56,7 +58,72 @@ struct TerrainParams {
     // multiplies it by the clock. See `TerrainParams::scroll_a`.
     scroll_a: vec4<f32>,
     scroll_b: vec4<f32>,
+    // `x` is a slope limit as a cosine and `y` a contour interval in yards;
+    // zero turns either off, and both are zero in every frame of the client.
+    // See `TerrainParams::guides`.
+    guides: vec4<f32>,
 };
+
+// A map chunk and a map tile, in yards. Their borders are at whole multiples
+// of these along both horizontal world axes.
+const CHUNK_YARDS: f32 = 33.333332;
+const TILE_YARDS: f32 = 533.33331;
+const GUIDE_STEEP: vec3<f32> = vec3<f32>(0.62, 0.22, 0.88);
+// Dark, where the two grids are light, so a contour is not taken for a
+// chunk border where they cross.
+const GUIDE_CONTOUR: vec3<f32> = vec3<f32>(0.08, 0.05, 0.03);
+const GUIDE_CHUNK: vec3<f32> = vec3<f32>(1.0, 1.0, 1.0);
+const GUIDE_TILE: vec3<f32> = vec3<f32>(1.0, 0.78, 0.25);
+
+// How much of a line `width` pixels wide covers this fragment, for a quantity
+// whose lines are at its whole numbers. `rate` is how far the quantity moves
+// across one pixel. A quantity moving more than a third of a unit per pixel
+// would draw as a solid fill, so its lines fade out before that.
+fn guide_line(value: f32, rate: f32, width: f32) -> f32 {
+    let away = abs(fract(value - 0.5) - 0.5) / max(rate, 1e-6);
+    return (1.0 - smoothstep(width * 0.5, width * 0.5 + 1.0, away))
+        * (1.0 - smoothstep(0.15, 0.33, rate));
+}
+
+// The ground's colour with the guides a host asked for drawn on it: steep
+// ground shaded, a contour at every multiple of the interval, and the chunk
+// and tile borders as lines. See `TerrainParams::guides`.
+//
+// The derivatives are taken by the caller, outside any branch, because the
+// parameters are per material slot under `BINDLESS` and a branch on them is
+// not uniform control flow.
+fn guided(
+    colour: vec3<f32>,
+    grid: f32,
+    guides: vec4<f32>,
+    world: vec3<f32>,
+    rate: vec3<f32>,
+    normal: vec3<f32>,
+) -> vec3<f32> {
+    var out = colour;
+    if guides.x > 0.0 && normalize(normal).y < guides.x {
+        out = mix(out, GUIDE_STEEP, 0.55);
+    }
+    if guides.y > 0.0 {
+        let line = guide_line(world.y / guides.y, rate.y / guides.y, 1.0);
+        out = mix(out, GUIDE_CONTOUR, 0.7 * line);
+    }
+    if grid == 1.0 || grid == 3.0 {
+        let line = max(
+            guide_line(world.x / CHUNK_YARDS, rate.x / CHUNK_YARDS, 1.0),
+            guide_line(world.z / CHUNK_YARDS, rate.z / CHUNK_YARDS, 1.0),
+        );
+        out = mix(out, GUIDE_CHUNK, 0.32 * line);
+    }
+    if grid >= 2.0 {
+        let line = max(
+            guide_line(world.x / TILE_YARDS, rate.x / TILE_YARDS, 2.5),
+            guide_line(world.z / TILE_YARDS, rate.z / TILE_YARDS, 2.5),
+        );
+        out = mix(out, GUIDE_TILE, 0.9 * line);
+    }
+    return out;
+}
 
 // **Two binding layouts, one blend.** `TerrainMaterial` is `#[bindless]`, the
 // same shape `m2.wgsl` documents: with the `BINDLESS` def the five textures
@@ -250,6 +317,25 @@ fn fragment(mesh_in: VertexOutput) -> @location(0) vec4<f32> {
         let wash = textureSample(tint_map, tint_sampler, mesh_in.uv_b);
 #endif
         texel = vec4<f32>(mix(texel.rgb, wash.rgb, wash.a * params.tint), texel.a);
+    }
+    // **The guides**, which are off in every frame of the game: grid lines on
+    // the chunk and tile borders, shading where the ground is steeper than a
+    // limit, and contour lines. They go on the texel, before the light, so
+    // they are lit and fogged as the ground is and a far hillside's lines fade
+    // with it. The derivative is taken here, outside the branch.
+    let world_rate = fwidth(mesh_in.world_position.xyz);
+    if params.grid > 0.0 || params.guides.x > 0.0 || params.guides.y > 0.0 {
+        texel = vec4<f32>(
+            guided(
+                texel.rgb,
+                params.grid,
+                params.guides,
+                mesh_in.world_position.xyz,
+                world_rate,
+                mesh_in.world_normal,
+            ),
+            texel.a,
+        );
     }
     // **`MCCV` — the shading painted onto the chunk's own vertices**, and it
     // multiplies the blended texel before any light touches it. That order is

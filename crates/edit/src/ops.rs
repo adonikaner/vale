@@ -1363,11 +1363,25 @@ pub struct Painted {
     /// be given and it is not what a brush stroke usually means, so the caller
     /// says so rather than letting it look like the brush overshot.
     pub based: Vec<usize>,
+    /// The chunks an erasing stroke reached whose base is the texture. The
+    /// base has no blend map, so there is nothing to erase.
+    pub base: Vec<usize>,
+    /// The chunks a stroke confined to existing layers reached that do not
+    /// carry the texture. See [`PaintBrush::existing_only`].
+    pub absent: Vec<usize>,
+    /// The full chunks in which a layer that showed almost nothing was given
+    /// to the texture. See [`PaintBrush::reuse_hidden`].
+    pub reused: Vec<usize>,
 }
 
 impl Painted {
     pub fn is_empty(&self) -> bool {
-        self.edits.is_empty() && self.full.is_empty() && self.based.is_empty()
+        self.edits.is_empty()
+            && self.full.is_empty()
+            && self.based.is_empty()
+            && self.base.is_empty()
+            && self.absent.is_empty()
+            && self.reused.is_empty()
     }
 }
 
@@ -1744,6 +1758,47 @@ pub struct PaintBrush {
     /// sets it when the texture is chosen, from what the shipped ground pairs
     /// that texture with.
     pub effect_id: u32,
+    /// How visible the texture is where a held stroke ends up, 0 to 1. At 1
+    /// the stroke converges on the texture alone. At 0.6 it converges on the
+    /// texture at 60% over what is under it, from either side: ground already
+    /// more opaque than that is brought down to it.
+    pub opacity: f32,
+    /// Take the texture away instead of putting it down: its layer moves
+    /// toward transparent and nothing else moves, so what is under it shows
+    /// again. Erasing never adds a layer. The base cannot be erased, since it
+    /// has no blend map; see [`Painted::base`].
+    pub erase: bool,
+    /// Paint only chunks that already carry the texture. A chunk without it
+    /// is left alone and reported in [`Painted::absent`], so a stroke changes
+    /// blends and never the set of textures a chunk names.
+    pub existing_only: bool,
+    /// When a chunk is full, give the texture the layer that shows least,
+    /// provided it shows less than [`REUSE_UNDER`] of the chunk. See
+    /// [`Painted::reused`].
+    pub reuse_hidden: bool,
+    /// How much of the ground under the brush is painted, 0 to 1. At 1 the
+    /// stroke is solid. Below 1 it paints in patches, the fraction of the
+    /// footprint that [`speckle`] puts under this value, which is how one
+    /// texture is broken up into another.
+    pub density: f32,
+    /// How many yards a patch is across, for a [`Self::density`] under 1.
+    pub grain: f32,
+}
+
+/// The most of a chunk a layer may show and still be given to another
+/// texture by [`PaintBrush::reuse_hidden`]: two hundredths. Below it the layer
+/// is a few texels at a border, and replacing it changes nothing a person
+/// would find.
+pub const REUSE_UNDER: f32 = 0.02;
+
+/// A value from 0 to 1 that depends on where a texel is and on nothing else,
+/// varying over `grain` yards: [`wobble`] moved into that range.
+///
+/// A stroke at a density under 1 paints the texels where this is under the
+/// density. It is a function of the place for the reason `wobble` is: a held
+/// stroke has to deepen the same patches and not paint new ones every frame.
+pub fn speckle(x: f32, y: f32, grain: f32) -> f32 {
+    wobble(x, y, grain.max(0.25)) * 0.5 + 0.5
 }
 
 impl Default for PaintBrush {
@@ -1756,6 +1811,14 @@ impl Default for PaintBrush {
             falloff: Falloff::Smooth,
             texture: String::new(),
             effect_id: 0,
+            opacity: 1.0,
+            erase: false,
+            existing_only: false,
+            reuse_hidden: false,
+            density: 1.0,
+            // About four texels of a blend map, which is the smallest patch
+            // that still reads as a patch after the map's own filtering.
+            grain: 2.0,
         }
     }
 }
@@ -1784,8 +1847,17 @@ impl PaintBrush {
                 Step::Painted => {}
                 Step::Nothing => continue,
                 Step::Based => painted.based.push(index),
+                Step::Reused => painted.reused.push(index),
                 Step::Full => {
                     painted.full.push(index);
+                    continue;
+                }
+                Step::Base => {
+                    painted.base.push(index);
+                    continue;
+                }
+                Step::Absent => {
+                    painted.absent.push(index);
                     continue;
                 }
             }
@@ -1830,6 +1902,14 @@ impl PaintBrush {
         // becomes this texture. That is the only thing an empty chunk can be
         // given, and [`Painted::based`] is how the caller says so.
         if paint.is_empty() {
+            // Neither an eraser nor a stroke confined to existing layers has
+            // anything to do with a chunk that has no layers.
+            if self.erase || self.existing_only {
+                return match self.erase {
+                    true => Step::Nothing,
+                    false => Step::Absent,
+                };
+            }
             paint.layers.push(TextureLayer {
                 texture_id: tile.name_texture(&self.texture),
                 flags: 0,
@@ -1855,12 +1935,36 @@ impl PaintBrush {
             .iter()
             .position(|name| name.eq_ignore_ascii_case(&self.texture))
             .map(|at| at as u32);
+        let mut reused = false;
         let target = match named.and_then(|id| paint.layer_of(id)) {
             Some(layer) => layer,
-            None => {
-                if !paint.has_room() {
+            // An eraser takes a texture away and has none to take here.
+            None if self.erase => return Step::Nothing,
+            None if self.existing_only => return Step::Absent,
+            None if !paint.has_room() => {
+                // A full chunk. The layer that shows least is given to this
+                // texture when it shows almost nothing; otherwise the stroke
+                // is refused here, as it always was.
+                let hidden = match self.reuse_hidden {
+                    true => least_shown(&paint).filter(|&(_, shown)| shown < REUSE_UNDER),
+                    false => None,
+                };
+                let Some((layer, _)) = hidden else {
                     return Step::Full;
+                };
+                paint.layers[layer].texture_id = tile.name_texture(&self.texture);
+                paint.layers[layer].effect_id = self.effect_id;
+                paint.maps[layer] = vec![0u8; ALPHA_LEN];
+                // The stroke's own copy of that layer was the old texture's.
+                if let Some(wet) = working.chunks.get_mut(&index) {
+                    if let Some(map) = wet.get_mut(layer) {
+                        map.fill(0.0);
+                    }
                 }
+                reused = true;
+                layer
+            }
+            None => {
                 paint.layers.push(TextureLayer {
                     texture_id: tile.name_texture(&self.texture),
                     flags: 0,
@@ -1871,6 +1975,11 @@ impl PaintBrush {
                 paint.len() - 1
             }
         };
+        // The base has no blend map. Painting it clears what is over it, which
+        // is the same picture; erasing it has no meaning.
+        if self.erase && target == 0 {
+            return Step::Base;
+        }
 
         // **The stroke's own copy, at full precision** — see [`Working`], which
         // is where the whole argument is. Seeded from the file the first time
@@ -1895,15 +2004,34 @@ impl PaintBrush {
             if weight == 0.0 {
                 continue;
             }
+            // A density under 1 paints in patches: the texels where the
+            // place's own value is under the density, with a soft edge a
+            // twelfth of the range wide so a patch does not end on a texel.
+            let patch = match self.density < 1.0 {
+                true => ((self.density - speckle(x, y, self.grain)) * 12.0 + 0.5).clamp(0.0, 1.0),
+                false => 1.0,
+            };
+            if patch == 0.0 {
+                continue;
+            }
             // Clamped so a long frame cannot overshoot and oscillate, which is
             // the same guard `Brush::moved` puts on its two converging modes.
-            let step = (self.strength * weight * seconds).clamp(0.0, 1.0);
-            // The target layer toward opaque…
-            wet[target][texel] += (255.0 - wet[target][texel]) * step;
+            let step = (self.strength * weight * patch * seconds).clamp(0.0, 1.0);
+            if self.erase {
+                // The texture's own layer toward transparent, and nothing
+                // else: what is under it shows again.
+                wet[target][texel] -= wet[target][texel] * step;
+                continue;
+            }
+            let opacity = self.opacity.clamp(0.0, 1.0);
+            // The target layer toward the opacity asked for, from either
+            // side…
+            wet[target][texel] += (255.0 * opacity - wet[target][texel]) * step;
             // …and everything painted over it toward transparent, which is the
-            // half a brush that "does not work" is missing.
+            // half a brush that "does not work" is missing. Scaled by the
+            // opacity, so a faint stroke also uncovers the texture faintly.
             for above in target + 1..wet.len() {
-                wet[above][texel] -= wet[above][texel] * step;
+                wet[above][texel] -= wet[above][texel] * step * opacity;
             }
         }
 
@@ -1921,7 +2049,7 @@ impl PaintBrush {
                 }
             }
         }
-        if !moved {
+        if !moved && !reused {
             return Step::Nothing;
         }
         // **The base layer is the one that cannot be blended.** If the brush was
@@ -1931,7 +2059,10 @@ impl PaintBrush {
         if let Some(chunk) = tile.chunk_mut(index) {
             alpha::set_paint(chunk, &paint);
         }
-        Step::Painted
+        match reused {
+            true => Step::Reused,
+            false => Step::Painted,
+        }
     }
 
     /// The chunks whose square the brush's circle reaches. The same rule
@@ -1950,6 +2081,17 @@ impl PaintBrush {
             })
             .collect()
     }
+}
+
+/// The layer over the base that shows least of the chunk, with how much it
+/// shows. `None` for a chunk with only a base.
+fn least_shown(paint: &alpha::Paint) -> Option<(usize, f32)> {
+    paint
+        .coverage()
+        .into_iter()
+        .enumerate()
+        .skip(1)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
 }
 
 /// One chunk's blend maps as the stroke works on them.
@@ -1972,6 +2114,15 @@ enum Step {
     /// **It carries four textures and none of them is this one.** Reported
     /// rather than swallowed; see [`Painted`].
     Full,
+    /// It was full, and a layer that showed almost nothing now carries this
+    /// texture. See [`Painted::reused`].
+    Reused,
+    /// An eraser reached a chunk whose base is the texture. See
+    /// [`Painted::base`].
+    Base,
+    /// The stroke is confined to existing layers and the chunk does not carry
+    /// the texture. See [`Painted::absent`].
+    Absent,
 }
 
 fn normals_of(tile: &AdtFile, chunk: usize) -> Option<Vec<u8>> {
@@ -2049,6 +2200,12 @@ fn with_neighbours(index: usize) -> Vec<usize> {
 
 /// A ramp between two points — the one shape a round brush cannot make.
 pub mod grade;
+
+/// Carrying the placements that stand on ground an edit moved.
+pub mod follow;
+
+/// A tile's heights and texture blends as pictures, written out and read back.
+pub mod image;
 
 #[cfg(test)]
 mod tests;
