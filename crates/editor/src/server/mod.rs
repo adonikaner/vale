@@ -176,7 +176,9 @@ use bevy::prelude::*;
 /// 4  the database        the statements queued to run, when `apply_on_save`
 ///                        is on; see [`queue`]
 /// 5  the reload          for the tables an apply can make live, requested by
-///                        each write when it completes
+///                        each write when it completes, and kept only for a
+///                        save made with the panels open over a playtest; see
+///                        [`reload::Reloads::when_there_is_a_session`]
 /// ```
 ///
 /// Steps 3 and 4 cover every subject; see
@@ -273,8 +275,7 @@ fn save_files(session: &mut crate::session::EditSession, server: &settings::Serv
 /// the same reason.
 #[derive(SystemParam)]
 pub struct Reach<'w> {
-    /// The queue a save's database writes go on; see [`queue`]. Each write
-    /// requests its own `.reload` when it completes.
+    /// The queue a save's database writes go on; see [`queue`].
     pub queue: ResMut<'w, queue::ServerQueue>,
     /// Where this machine's server is, and the two switches; see [`settings`].
     pub settings: Res<'w, settings::ServerSettings>,

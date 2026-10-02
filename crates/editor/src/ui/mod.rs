@@ -70,6 +70,8 @@
 //!               body, with the handles that move it
 //! hovercard.rs  the card beside the pointer that names the creature or game
 //!               object under it: a title and four or five attributes
+//! servicemarks.rs the icons over a creature's head that say what it offers,
+//!               drawn in the viewport under the creature tool
 //! mapview.rs    the map from above: which tiles exist, and which are selected
 //! viewbar.rs    every toggle that changes what the viewport shows
 //! icons.rs      the toolbar icons compiled into the editor (none yet)
@@ -170,6 +172,7 @@ pub mod quests;
 pub mod rail;
 pub mod reference;
 pub mod rowform;
+pub mod servicemarks;
 pub mod services;
 pub mod status;
 pub mod storyboard;
@@ -370,6 +373,9 @@ pub struct Editing<'w> {
     /// The world half of the creature subject: the map's spawns, which is
     /// selected, and the two rows behind it. See [`crate::tools::creatures`].
     pub(crate) creatures: ResMut<'w, crate::tools::creatures::Creatures>,
+    /// Where each near creature's service icons go this frame. Read-only
+    /// here; see [`servicemarks`].
+    pub(crate) service_marks: Res<'w, crate::tools::creatures::ServiceMarks>,
     /// The game-object subject's state, which has the same shape. See
     /// [`crate::tools::gameobjects`].
     pub(crate) objects: ResMut<'w, crate::tools::gameobjects::GameObjects>,
@@ -490,10 +496,11 @@ fn draw(
 
     // A playtest has two layouts, chosen by [`crate::playtest::ShellOpen`].
     // Shut, the whole window is the game's and the bar is one row of controls.
-    // Open, the panels are drawn exactly as they are while editing, so there
-    // is no second layout to learn for the same subjects. Only the rail's
-    // availability and the right-hand end of the top bar change, and both
-    // state the reason.
+    // Open, the panels are drawn as they are while editing, so there is no
+    // second layout to learn for the same subjects. Three things change: the
+    // rail is not drawn, the top bar's World part is disabled with the reason
+    // on its hover text, and the right-hand end of the top bar holds the
+    // playtest's controls.
     let in_world = playing.state.playing();
     if in_world && !playing.open.0 {
         // The pointer belongs to the game under test. egui's own
@@ -651,26 +658,32 @@ fn draw(
             );
         });
 
-    egui::Panel::left("editor-rail")
-        .exact_size(theme::RAIL_WIDTH)
-        .frame(side(theme::SHELL))
-        .show(&mut root, |ui| {
-            // The last argument is whether a world database is reachable. A
-            // tool whose rows are in vmangos' database is greyed without one;
-            // see [`rail::draw`].
-            rail::draw(
-                ui,
-                &mut tool,
-                &mut viewing.rail,
-                &viewing.icons,
-                in_world,
-                playing.server.resolve().is_some(),
-            );
-            // Claim the rest of the rail's height. Without this the panel is
-            // only as tall as its rows, so its fill stops part way down the
-            // window and leaves a gap in the shell.
-            ui.allocate_rect(ui.available_rect_before_wrap(), egui::Sense::hover());
-        });
+    // The rail is not drawn over a playtest. Every tile on it keeps the
+    // viewport, and no such tool can be used then; see
+    // [`Tool::survives_playtest`](crate::tools::Tool::survives_playtest). The
+    // workspace control on the top bar is the whole of the choice.
+    if !in_world {
+        egui::Panel::left("editor-rail")
+            .exact_size(theme::RAIL_WIDTH)
+            .frame(side(theme::SHELL))
+            .show(&mut root, |ui| {
+                // The last argument is whether a world database is reachable.
+                // A tool whose rows are in vmangos' database is greyed without
+                // one; see [`rail::draw`].
+                rail::draw(
+                    ui,
+                    &mut tool,
+                    &mut viewing.rail,
+                    &viewing.icons,
+                    in_world,
+                    playing.server.resolve().is_some(),
+                );
+                // Claim the rest of the rail's height. Without this the panel
+                // is only as tall as its rows, so its fill stops part way down
+                // the window and leaves a gap in the shell.
+                ui.allocate_rect(ui.available_rect_before_wrap(), egui::Sense::hover());
+            });
+    }
 
     // The DBCs, loaded only for the three panels that name an area: the zone
     // tool, the chunk tool and the measuring tool. `GameAssets::display_tables` loads every
@@ -878,6 +891,15 @@ fn draw(
         true => egui::Rect::NOTHING,
         false => root.available_rect_before_wrap(),
     });
+    // The icons over the creatures' heads, painted into the viewport before
+    // anything floats over it. The list is empty under every tool but the
+    // creature tool. See [`servicemarks`].
+    servicemarks::draw(
+        &ctx,
+        viewport.rect.unwrap_or(egui::Rect::NOTHING),
+        &editing.service_marks.0,
+        &mut editing.thumbnails,
+    );
     // The floating windows follow, which the panels cannot shrink around; see
     // [`Viewport`]. They are drawn after the panels, against the context
     // rather than into the root, so a popover is above the bar it hangs from.
@@ -1039,7 +1061,10 @@ fn draw(
         );
         viewport.floating.extend(quest_window);
     }
-    if let Some(wanted) = switch_to {
+    // A request for a tool that keeps the viewport is dropped during a
+    // playtest: the quest workspace's link back to the creature tool names
+    // one, and that tool cannot be used then.
+    if let Some(wanted) = switch_to.filter(|wanted| !in_world || wanted.survives_playtest()) {
         *tool = wanted;
     }
 
@@ -1671,8 +1696,9 @@ fn playtest_bar(
                     .button("Live Edit")
                     .on_hover_text(
                         "Ctrl+E. Open the editor's panels over the running game: \
-                         change a table, save, and the next thing to read it is \
-                         the edited one. Not available for world tools.",
+                         change a spell, an item, a quest or any table, save, and \
+                         the next thing to read it is the edited one. The world \
+                         tools are not available.",
                     )
                     .clicked()
                 {

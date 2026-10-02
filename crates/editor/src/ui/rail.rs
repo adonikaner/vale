@@ -21,8 +21,9 @@
 //!               Spawns   rows of vmangos' database that stand in the world:
 //!                        creature and gameobject spawns, picked and moved in
 //!                        the viewport
-//! the top bar   World | Spells | Items | Quests: World returns to the rail's
-//!               last tool; the other three replace the viewport
+//! the top bar   World | Spells | Items | Quests | Tables: World returns to the
+//!               rail's last tool; the other four replace the viewport, and
+//!               they are the only subjects available during a playtest
 //! the corner    Select and Measure, which change nothing and are returned to
 //!               rather than started with
 //! ```
@@ -269,9 +270,9 @@ impl Rail {
 /// Why a subject cannot be chosen now, as a sentence, or `None`.
 ///
 /// `playing` is whether the panels are open over a running playtest. The
-/// editor's own tiles were despawned on the way in, so a subject whose
-/// document is the map is unavailable; one with a table is not, because a DBC
-/// is the same file whoever reads it ([`Tool::survives_playtest`]). `server`
+/// editor's own tiles were despawned on the way in, so a subject that keeps
+/// the viewport is unavailable and a workspace is not
+/// ([`Tool::survives_playtest`]). `server`
 /// is whether there is a world database to reach; a subject whose rows are in
 /// it has nothing to show without one ([`Tool::server_table`]).
 fn held(tool: Tool, playing: bool, server: bool) -> Option<&'static str> {
@@ -437,23 +438,28 @@ fn tile(
 
 /// The workspace control on the top bar: *World*, then each workspace that
 /// replaces the viewport. *World* is lit while a rail or corner tool is in use
-/// and returns to the last one chosen.
+/// and returns to the last one chosen. It is disabled during a playtest, when
+/// no tool that keeps the viewport can be used.
 pub fn workspaces(ui: &mut egui::Ui, tool: &mut Tool, rail: &mut Rail, playing: bool, server: bool) {
     let in_world = tool.surface() != Surface::Middle;
     ui.spacing_mut().item_spacing.x = 2.0;
     let world = ui
-        .add(egui::Button::selectable(in_world, "World"))
+        .add_enabled(!playing, egui::Button::selectable(in_world, "World"))
         .on_hover_text(
             "The world tools on the rail, and Select and Measure over the viewport. \
              Returns to the tool that was last in use.",
+        )
+        .on_disabled_hover_text(
+            "Not while a playtest is running: the ground on screen is the game's own, \
+             streamed around the character. Ctrl+P to come back to the tools.",
         );
     if world.clicked() {
-        // During a playtest only a world tool with a table can be used; return
-        // to the first of those when the last one cannot.
+        // With no database the last tool may be a spawn tool that cannot be
+        // used; Select can always be.
         let back = rail.last_world;
         *tool = match held(back, playing, server) {
             None => back,
-            Some(_) => Tool::Lights,
+            Some(_) => Tool::Select,
         };
     }
     for subject in &WORKSPACES {
@@ -647,13 +653,17 @@ mod tests {
         assert_eq!(rail.last_world, Tool::Measure);
     }
 
-    /// During a playtest a tile without a table is unavailable and a
-    /// workspace is not; with no database, the spawn tiles and the two server
-    /// workspaces are unavailable.
+    /// During a playtest every tile is unavailable and a workspace is not;
+    /// with no database, the spawn tiles and the two server workspaces are
+    /// unavailable.
     #[test]
     fn a_subject_is_held_for_the_stated_reasons() {
-        assert!(held(Tool::Terrain, true, true).is_some());
-        assert!(held(Tool::Flightpaths, true, true).is_none());
+        for tool in rail_tools().into_iter().chain(POINTER.iter().map(|s| s.tool)) {
+            assert!(held(tool, true, true).is_some(), "{}", tool.name());
+        }
+        for subject in &WORKSPACES {
+            assert!(held(subject.tool, true, true).is_none(), "{}", subject.name);
+        }
         assert!(held(Tool::Spells, true, true).is_none());
         assert!(held(Tool::Creatures, false, false).is_some());
         assert!(held(Tool::Items, false, false).is_some());

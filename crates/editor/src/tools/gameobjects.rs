@@ -503,8 +503,10 @@ pub struct GameObjects {
     /// Which half of the panel is showing, and with it what a click does.
     pub mode: super::place::Mode,
     pub new_spawn: NewSpawn,
-    /// Which way the ghost is facing, so the row a click writes faces the way
-    /// the body on screen did.
+    /// Which way the object on the cursor faces, in radians, which is what a
+    /// click writes. `None` while nothing is on the cursor. Set toward the
+    /// camera when the placer is armed, kept from one placement to the next,
+    /// and turned by [`Self::turn_ghost`]. See `tools::creatures::ghost`.
     ghost_facing: Option<f32>,
     task: Option<Task<Result<MapRead, String>>>,
     /// What [`Self::spawns`] was read for: the map, and how many times this
@@ -1185,6 +1187,14 @@ impl GameObjects {
         self.mode == super::place::Mode::Place && self.new_spawn.chosen.is_some()
     }
 
+    /// Turn the object on the cursor by `degrees` about up, snapped to the
+    /// placer's step when `snap`. See `Creatures::turn_ghost`.
+    pub fn turn_ghost(&mut self, degrees: f32, snap: bool) {
+        if let Some(facing) = self.ghost_facing {
+            self.ghost_facing = Some(super::spawn::turned(facing, degrees, snap));
+        }
+    }
+
     /// The model a display id names, memoised. See [`Self::models`].
     pub fn model_of(
         &mut self,
@@ -1681,8 +1691,8 @@ fn aim(
     objects.hovered = best.map(|(_, guid)| guid);
 }
 
-/// Put the chosen object on the ground under the pointer, facing the camera.
-/// See `tools::creatures::place_one`.
+/// Put the chosen object on the ground under the pointer, facing the way the
+/// ghost does. See `tools::creatures::place_one`.
 #[allow(clippy::too_many_arguments)]
 fn place_one(
     objects: &mut GameObjects,
@@ -2178,17 +2188,28 @@ fn ghost(
         for (entity, _, _) in &standing {
             commands.entity(entity).despawn();
         }
-        objects.ghost_facing = None;
+        // Kept while the placer is armed, forgotten once nothing is on the
+        // cursor. See `tools::creatures::ghost`.
+        if !objects.placing() && objects.ghost_facing.is_some() {
+            objects.ghost_facing = None;
+        }
         return;
     };
-    let facing = match camera.single() {
-        Ok(camera) => {
-            let eye = Vec3::from(vale_client::render::axes::to_wow(camera.translation()));
-            (eye.y - at.y).atan2(eye.x - at.x)
+    // Toward the camera the first time, and what it was left at after that.
+    let facing = match objects.ghost_facing {
+        Some(facing) => facing,
+        None => {
+            let toward = match camera.single() {
+                Ok(camera) => {
+                    let eye = Vec3::from(vale_client::render::axes::to_wow(camera.translation()));
+                    (eye.y - at.y).atan2(eye.x - at.x)
+                }
+                Err(_) => 0.0,
+            };
+            objects.ghost_facing = Some(toward);
+            toward
         }
-        Err(_) => 0.0,
     };
-    objects.ghost_facing = Some(facing);
 
     // The mark, which is there whether or not the display id resolves.
     let centre = vale_client::render::axes::to_bevy(at.to_array());

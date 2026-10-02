@@ -70,8 +70,7 @@
 //! flightpaths.rs the flight paths: TaxiNodes, TaxiPath and TaxiPathNode,
 //!                drawn on the map, their nodes and points picked, dragged,
 //!                added and removed. Client tables whose rows are places, so
-//!                the tool keeps the viewport and works during a playtest, as
-//!                lights.rs does
+//!                the tool keeps the viewport, as lights.rs does
 //! lights.rs      Light.dbc's spheres, drawn on the map, picked with the
 //!                pointer and flown to. A client table whose row is also a
 //!                position, so, like flightpaths.rs, it is a DBC tool that
@@ -364,9 +363,9 @@ impl Tool {
     /// Which client table this tool edits, or `None` for a tool that edits the
     /// world.
     ///
-    /// A tool with a table keeps working during a playtest (see
-    /// [`Tool::survives_playtest`]); where its controls are drawn is
-    /// [`Tool::surface`]'s answer. A tool that edits a chain of tables answers
+    /// Where a tool's controls are drawn is [`Tool::surface`]'s answer, and
+    /// whether it works during a playtest is [`Tool::survives_playtest`]'s. A
+    /// tool that edits a chain of tables answers
     /// with the first: `Tool::Flightpaths` answers `TaxiNodes`, not
     /// `TaxiPath` or `TaxiPathNode`. See [`tables`].
     pub fn table(self) -> Option<&'static str> {
@@ -383,13 +382,8 @@ impl Tool {
 
     /// Which table of the server's database this tool edits, or `None`.
     ///
-    /// This is a separate question from [`Tool::table`]. [`Tool::table`]
-    /// decides whether a tool keeps working through a
-    /// playtest: a DBC is the same file whoever reads it, so a spell can be
-    /// edited while a character stands in the world. A server table cannot be
-    /// edited that way here: its rows are drawn where they stand in the
-    /// editor's own world, and during a playtest the ground on screen is the
-    /// game's and the creatures on it are the ones the server spawned.
+    /// This is a separate question from [`Tool::table`], which names a client
+    /// table.
     ///
     /// The name is the one the row writers use, so it is also the name a
     /// `.reload` is sent for.
@@ -405,24 +399,31 @@ impl Tool {
 
     /// Whether this tool keeps working while a playtest is running.
     ///
-    /// A DBC is the same file whoever reads it, so every tool with a
-    /// [`Tool::table`] does. A tool whose document is the world does not: the
-    /// editor's own tiles were despawned when the playtest started, and the
-    /// ground on screen is the client's stream around the character.
+    /// The four workspaces do: Spells, Items with its Sets part, Quests and
+    /// Tables. Each replaces the viewport, so none needs the editor's own
+    /// world, which was despawned when the playtest started.
     ///
-    /// [`Tool::Items`] is a server subject that does, for the reason given in
+    /// A DBC is the same file whoever reads it, so a spell or any other table
+    /// can be edited while a character stands in the world. [`Tool::Items`] is
+    /// a server subject that survives, for the reason given in
     /// `vale_mangos::item`: `LoadItemPrototypes` clears the prototype map
     /// before it reads and `Item::GetProto` is a lookup per call, so an
     /// applied row is live for every copy of that item already in the world.
-    /// This lets an item be edited and seen in the same session; greying the
-    /// row would prevent that. `Tool::Quests` also survives, for the reason
-    /// given on the variant.
+    /// `Tool::Quests` survives for the reason given on the variant.
     ///
-    /// [`Tool::Creatures`] and [`Tool::GameObjects`] do not: a change to
-    /// either needs the server restarted, so a panel offering one during a
-    /// playtest would offer a change the game cannot show.
+    /// Every tool that keeps the viewport does not. The ground on screen
+    /// during a playtest is the client's stream around the character, and the
+    /// tool's picks, drags and markers act on the editor's own camera and
+    /// tiles. That includes [`Tool::Lights`] and [`Tool::Flightpaths`], which
+    /// edit client tables but pick and drag their rows in the viewport, and
+    /// the server reads the taxi tables at startup only.
+    /// [`Tool::Creatures`] and [`Tool::GameObjects`] also need the server
+    /// restarted for a change to show.
     pub fn survives_playtest(self) -> bool {
-        self.table().is_some() || matches!(self, Tool::Items | Tool::Quests)
+        matches!(
+            self,
+            Tool::Spells | Tool::Items | Tool::ItemSets | Tool::Quests | Tool::Tables
+        )
     }
 
     /// Where this tool's controls are drawn.
@@ -437,9 +438,8 @@ impl Tool {
     /// with the pointer, so its numbers go in the inspector with every other
     /// selection's numbers, and the world keeps the middle.
     ///
-    /// Answering anything but [`Surface::Middle`] does not make a tool a world
-    /// subject. It still has a table, so it still works while a playtest is
-    /// running and the rail still leaves it lit — see [`crate::ui::rail`].
+    /// Only a [`Surface::Middle`] tool works while a playtest is running; see
+    /// [`Tool::survives_playtest`].
     pub fn surface(self) -> Surface {
         match self {
             Tool::Spells | Tool::Items | Tool::ItemSets | Tool::Quests | Tool::Tables => {
@@ -876,15 +876,15 @@ pub(crate) fn shortcuts(
 
 /// Which subject the shell opens on over a playtest.
 ///
-/// The world tools cannot act during a playtest, because the editor's own
-/// tiles were despawned when it started. Opening the shell on the terrain
-/// brush would show a greyed rail, an inspector for a brush that does nothing,
-/// and the game behind. Every subject whose document is a table works, so a
-/// world tool is replaced by the first of them and a table tool is kept.
+/// The tools that keep the viewport cannot act during a playtest, because the
+/// editor's own tiles were despawned when it started. Opening the shell on
+/// the terrain brush would show an inspector for a brush that does nothing,
+/// and the game behind. A workspace works ([`Tool::survives_playtest`]), so a
+/// viewport tool is replaced by the first of them and a workspace is kept.
 pub(crate) fn open_on(tool: Tool) -> Tool {
-    match tool.table() {
-        Some(_) => tool,
-        None => Tool::Spells,
+    match tool.survives_playtest() {
+        true => tool,
+        false => Tool::Spells,
     }
 }
 
@@ -1111,25 +1111,42 @@ mod tests {
 
     /// The shell over a playtest opens on a subject that works there.
     ///
-    /// Every tool whose document is the world is greyed during a playtest,
+    /// Every tool that keeps the viewport is unavailable during a playtest,
     /// because the editor's own tiles were despawned when it started. Opening
-    /// the panels on one would show a greyed rail and an inspector about a
-    /// brush that does nothing. A tool whose document is a table is left where
-    /// it is, because a DBC is the same file whoever is looking at it.
+    /// the panels on one would show an inspector about a brush that does
+    /// nothing. A workspace is left where it is.
     #[test]
-    fn the_shell_opens_on_a_table_subject() {
+    fn the_shell_opens_on_a_workspace() {
         for tool in ALL {
             let opened = open_on(tool);
             assert!(
-                opened.table().is_some(),
-                "{} opened the shell on {}, which has no table",
+                opened.survives_playtest() && opened.covers_viewport(),
+                "{} opened the shell on {}, which keeps the viewport",
                 tool.name(),
                 opened.name()
             );
-            if tool.table().is_some() {
-                assert_eq!(opened, tool, "a table subject is left where it is");
+            if tool.survives_playtest() {
+                assert_eq!(opened, tool, "a workspace is left where it is");
             }
         }
+    }
+
+    /// The tools that work during a playtest are the four workspaces, with
+    /// the Sets part of Items, and nothing that keeps the viewport.
+    #[test]
+    fn only_the_workspaces_survive_a_playtest() {
+        for tool in ALL {
+            assert_eq!(
+                tool.survives_playtest(),
+                tool.covers_viewport(),
+                "{}",
+                tool.name()
+            );
+        }
+        assert!(!Tool::Lights.survives_playtest());
+        assert!(!Tool::Flightpaths.survives_playtest());
+        assert_eq!(open_on(Tool::Lights), Tool::Spells);
+        assert_eq!(open_on(Tool::Items), Tool::Items);
     }
 
     /// [`ALL`] is every tool, in index order.
@@ -1370,15 +1387,4 @@ mod tests {
         assert_eq!(tabs[tables::TAB_ROW].1, "SkillLine");
     }
 
-    /// A data subject survives a playtest whether or not it covers the
-    /// viewport, because a DBC is the same file whoever is looking at it.
-    ///
-    /// [`open_on`] keys on the table rather than on the covering, so a tool
-    /// with a table that keeps the viewport, such as `Lights`, still opens the
-    /// shell on itself.
-    #[test]
-    fn a_playtest_keeps_every_data_subject() {
-        assert_eq!(open_on(Tool::Lights), Tool::Lights);
-        assert_eq!(open_on(Tool::Spells), Tool::Spells);
-    }
 }

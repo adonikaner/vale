@@ -6,7 +6,7 @@
 //!
 //! An edit is stored, batched, written and undone as in that module: the
 //! project's own store accumulates typed values, a save writes the SQL, nothing
-//! reaches the database until **Apply** is pressed, and the statement that puts
+//! reaches the database until Apply is pressed, and the statement that puts
 //! each row back is written from the database immediately before anything
 //! runs.
 //!
@@ -30,9 +30,9 @@
 //! switch is on, through [`crate::server::save`] and [`crate::ui::sync`]. Every
 //! other subject here uses the same two entry points.
 //!
-//! [`apply`] asks for that reload itself, deferred: it is sent on the next
-//! frame when a playtest is running, and dropped with a line in the log when
-//! none is. Every other apply in this directory does the same. See
+//! [`apply`] asks for that reload itself. The request is kept when the apply
+//! was asked for with the panels open over a playtest, and dropped otherwise.
+//! Every other apply in this directory does the same. See
 //! [`super::reload::Reloads::when_there_is_a_session`].
 //!
 //! ## Files this module writes
@@ -472,8 +472,9 @@ impl ApplyJob {
 ///
 /// The table has changed whether or not the run succeeded, so what the tool
 /// read out of it is stale either way, and so is the server's copy. The reload
-/// is therefore asked for in both cases, deferred: sent on the next frame when
-/// there is a session, and dropped with a line in the log when there is not. See `super::reload::Reloads::when_there_is_a_session`. The signature is
+/// is therefore asked for in both cases, and kept only for an apply made with
+/// the panels open over a playtest. See
+/// `super::reload::Reloads::when_there_is_a_session`. The signature is
 /// kept only for a run that finished, so a failure leaves the project saying it
 /// has applied nothing rather than claiming a change that did not land.
 pub fn finish_apply(

@@ -431,9 +431,11 @@ fn picker(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
             }
             theme::note(
                 ui,
-                "Click the ground to place it, facing the camera. Escape puts it down; every \
-                 column of the row can be edited afterwards in Select.",
+                "Click the ground to place it. Escape puts it down; every column of \
+                 the row can be edited afterwards in Select.",
             );
+            theme::note(ui, ", and . turn it \u{b7} shift is three times \u{b7} alt + mouse turns it");
+            theme::note(ui, "ctrl with alt snaps the turn to 15\u{b0}");
             // The window's toggle, here as well as under a selected spawn, so
             // an object can be edited before any spawn of it exists.
             let open = subject.objects.template_window;

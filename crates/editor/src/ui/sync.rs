@@ -348,8 +348,9 @@ impl Half {
     pub fn going_live(self) -> &'static str {
         match self {
             Half::Tables => {
-                "A spell is live on `.reload spell_template`, which an apply sends to a \
-                 running playtest. A flight node and a skill line ability need a restart: \
+                "A spell is live on `.reload spell_template`, which an apply sends when it \
+                 is made with the panels open over a playtest; applied at any other time, \
+                 it is live after a restart. A flight node and a skill line ability need a restart: \
                  `taxi_nodes` and `skill_line_ability` are read at startup and have no \
                  reload. So do the DBC files Apply copies into DataDir\\5875\\dbc: \
                  TaxiPath, TaxiPathNode, SkillLine, SkillRaceClassInfo and ItemSet among \
@@ -368,36 +369,42 @@ impl Half {
                  faction, flags and size it was created with."
             }
             Half::Items => {
-                "Live on `.reload item_template`, which an apply sends to a running \
-                 playtest — for every copy of the item already in a bag, in the world \
-                 and on the auction house. No restart and no relog. An item *removed* \
+                "Live on `.reload item_template`, which an apply sends when it is made \
+                 with the panels open over a playtest — for every copy of the item \
+                 already in a bag, in the world and on the auction house, with no relog. \
+                 Applied at any other time, it is live after a restart. An item *removed* \
                  needs a restart, and the apply sends no reload while one is in the \
                  plan: a reload would leave every copy already loaded with no \
                  prototype, which the server does not check for."
             }
             Half::Quests => {
                 "Live on `.reload quest_template` and then one reload per relation table \
-                 written, which an apply sends to a running playtest in that order \u{2014} \
-                 removals included. The reload frees every quest the server holds, so do \
+                 written, which an apply sends in that order when it is made with the \
+                 panels open over a playtest \u{2014} removals included. Applied at any \
+                 other time, it is live after a restart. The reload frees every quest the server holds, so do \
                  not apply while an escort quest is in progress on it."
             }
             Half::Loot => {
                 "Live on `.reload <table>` for each loot table written, which an apply sends \
-                 to a running playtest \u{2014} removals included, since every loot loader \
-                 clears its store before it reads. Loot already rolled onto a corpse or into \
+                 when it is made with the panels open over a playtest \u{2014} removals \
+                 included, since every loot loader clears its store before it reads. \
+                 Applied at any other time, it is live after a restart. Loot already rolled onto a corpse or into \
                  an opened chest keeps the list it was given."
             }
             Half::Services => {
                 "Live on `.reload npc_vendor` and `.reload npc_trainer`, which an apply sends \
-                 to a running playtest \u{2014} removals included, since each re-reads its \
-                 template table and its own and clears both lists first. The client asks for a \
+                 when it is made with the panels open over a playtest \u{2014} removals \
+                 included, since each re-reads its template table and its own and clears \
+                 both lists first. Applied at any other time, it is live after a restart. \
+                 The client asks for a \
                  list each time the window opens, so no relog is needed. A vendor's current \
                  count of a limited item is not reset."
             }
             Half::Behaviour => {
                 "Live on `.reload creature_ai_events`, which re-reads creature_ai_scripts \
-                 first, and `.reload creature_spells`, which an apply sends to a running \
-                 playtest; a creature already in the world keeps the events and the list it \
+                 first, and `.reload creature_spells`, which an apply sends when it is made \
+                 with the panels open over a playtest; applied at any other time, it is \
+                 live after a restart. A creature already in the world keeps the events and the list it \
                  spawned with until it respawns. Five of the script tables reload under \
                  their own names; the other six and broadcast_text are read at start, so a \
                  change to one of those needs a restart."
@@ -906,9 +913,9 @@ pub fn project(ui: &mut egui::Ui, work: &mut Work<'_>) {
             egui::Checkbox::new(&mut work.server.apply_on_save, "Apply on save"),
         )
         .on_hover_text(
-            "Every save runs what it has just written, for every subject, and tells a \
-             running playtest to re-read the tables that take a reload. Off writes the SQL \
-             files and touches nothing.",
+            "Every save runs what it has just written, for every subject. A save made \
+             with the panels open over a playtest also tells the server to re-read the \
+             tables that take a reload. Off writes the SQL files and touches nothing.",
         )
         .on_disabled_hover_text("There is no database to apply to.")
         .changed()

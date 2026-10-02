@@ -673,8 +673,10 @@ fn edits_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_
             .button("Server\u{2026}")
             .on_hover_text(
                 "Apply these rows, put them back, or give them up \u{2014} every server \
-                 operation is on one panel. An applied quest change is live on a reload of \
-                 quest_template and of each relation table written.",
+                 operation is on one panel. A quest change applied with the panels open \
+                 over a playtest is live on a reload of quest_template and of each \
+                 relation table written; applied at any other time, it is live after a \
+                 restart.",
             )
             .clicked()
         {

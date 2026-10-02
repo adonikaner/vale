@@ -152,10 +152,12 @@ impl Playtest {
 /// disabled and the streamer stays on the client's 3x3, because all three are
 /// properties of a running playtest rather than of who is looking at it.
 ///
-/// Only the table subjects are reachable while it is open. The world tools act
-/// on the editor's own nine tiles, which [`stand_the_world_down`] despawned on
-/// the way in; the rail greys them and `crate::ui`'s shell leaves the viewport
-/// rectangle empty, so no tool can act on ground nobody is editing.
+/// Only the four workspaces are reachable while it is open: Spells, Items,
+/// Quests and Tables. The tools that keep the viewport act on the editor's own
+/// tiles, which [`stand_the_world_down`] despawned on the way in.
+/// `crate::ui`'s shell does not draw the rail, disables the top bar's World
+/// part and leaves the viewport rectangle empty, so no tool can act on ground
+/// nobody is editing. See `crate::tools::Tool::survives_playtest`.
 #[derive(Resource, Debug, Default, Clone, Copy)]
 pub struct ShellOpen(pub bool);
 
@@ -296,8 +298,8 @@ fn on_the_command_line(
     mut auto: ResMut<AutoLogin>,
     mut shell: ResMut<ShellOpen>,
     mut tool: ResMut<crate::tools::Tool>,
-    // What a playtest needs to reach the server: the deferred `.reload`
-    // queue, where the database is, and whether this session keeps its query
+    // What a playtest needs to reach the server: the queue its save's writes
+    // go on, where the database is, and whether this session keeps its query
     // answers. See [`start`], and `crate::server::Reach`.
     mut reach: crate::server::Reach,
     mut done: Local<u8>,
@@ -632,8 +634,7 @@ pub fn start(
     assets: &GameAssets,
     login: &Login,
     auto: &mut AutoLogin,
-    // The queue whatever this applies goes on. Each write asks for its
-    // `.reload` when it lands, deferred until there is a session to send it on.
+    // The queue whatever this applies goes on.
     queue: &mut crate::server::queue::ServerQueue,
     // Where this machine's server is, for the apply the save does, and for
     // whether the session about to start keeps its query answers.
@@ -645,12 +646,11 @@ pub fn start(
     // Save the server half as well, for the same reason. See
     // [`crate::server::save`].
     //
-    // The `.reload` it asks for is deferred until there is a session to send
-    // it on. vmangos reads `spell_template` at its own startup and never
-    // again, so a row applied here is a row the running server has not seen,
-    // and pressing Playtest is when the edit is expected to be live. See
-    // [`crate::server::reload::Reloads::when_there_is_a_session`], which is
-    // sent on the frame the character reaches the world.
+    // This save asks the server for no `.reload`. A reload is sent only for a
+    // write asked for with the panels open over a playtest, and this write is
+    // queued while the state is still `Editing`. A row applied here is live
+    // after the server's next restart. See
+    // [`crate::server::reload::Reloads::when_there_is_a_session`].
     crate::server::save(session, assets, server, queue);
     republish(session, assets);
     // Whether the session about to start keeps the answers the server gives

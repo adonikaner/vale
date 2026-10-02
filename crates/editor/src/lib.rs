@@ -522,8 +522,8 @@ pub struct Args {
     /// `--loot`.
     pub loot_add: Option<u32>,
     /// `--apply-loot` / `--revert-loot`: the Server panel's two buttons for
-    /// the loot half. The apply also asks a running playtest to reload each
-    /// loot table.
+    /// the loot half. Under `--playtest` with `--shell`, the apply also asks
+    /// the server to reload each loot table.
     pub apply_loot: bool,
     pub revert_loot: bool,
     /// `--vendor` and `--trainer`: open the Vendor or the Trainer window on
@@ -544,8 +544,9 @@ pub struct Args {
     pub vendor_find: Option<String>,
     pub trainer_find: Option<String>,
     /// `--apply-services` / `--revert-services`: the Server panel's two
-    /// buttons for the vendor and trainer lists. The apply also asks a running
-    /// playtest for `.reload npc_vendor` and `.reload npc_trainer`.
+    /// buttons for the vendor and trainer lists. Under `--playtest` with
+    /// `--shell`, the apply also sends `.reload npc_vendor` and `.reload
+    /// npc_trainer`.
     pub apply_services: bool,
     pub revert_services: bool,
     /// `--events`: open the events window on `--spawn`'s creature;
@@ -563,9 +564,9 @@ pub struct Args {
     /// adds an existing event, with `text` searched.
     pub find_event: Option<String>,
     /// `--apply-behaviour` / `--revert-behaviour`: the Server panel's two
-    /// buttons for the behaviour half. The apply also asks a running playtest
-    /// to reload the events, the spell lists and the script tables that have
-    /// a reload.
+    /// buttons for the behaviour half. Under `--playtest` with `--shell`, the
+    /// apply also asks the server to reload the events, the spell lists and
+    /// the script tables that have a reload.
     pub apply_behaviour: bool,
     pub revert_behaviour: bool,
     /// `--apply-creatures` / `--revert-creatures`: the Server panel's two
@@ -648,8 +649,9 @@ pub struct Args {
     /// the item half, from the command line. They are `--apply-creatures` and
     /// `--revert-creatures` for items, and exist for the same reason.
     ///
-    /// The apply also asks a running playtest to `.reload item_template`,
-    /// which is what makes an item edit live without a restart.
+    /// Under `--playtest` with `--shell`, the apply also sends `.reload
+    /// item_template`, which is what makes an item edit live without a
+    /// restart.
     pub apply_items: bool,
     pub revert_items: bool,
     /// `--quest <entry or title>`: open the quest workspace on that row. It is
@@ -670,8 +672,9 @@ pub struct Args {
     /// a scripted run cannot make. It implies `--tool quests`.
     pub quests_of: Option<u32>,
     /// `--apply-quests` / `--revert-quests`: the Server panel's two buttons for
-    /// the quest half. The apply also asks a running playtest to reload
-    /// `quest_template` and each relation table it wrote, in that order.
+    /// the quest half. Under `--playtest` with `--shell`, the apply also asks
+    /// the server to reload `quest_template` and each relation table it wrote,
+    /// in that order.
     pub apply_quests: bool,
     pub revert_quests: bool,
     /// `--spawn <guid>`: open the creature tool on that spawn, and move the

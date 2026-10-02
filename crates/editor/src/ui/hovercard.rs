@@ -26,26 +26,6 @@ const OFFSET: egui::Vec2 = egui::vec2(16.0, 18.0);
 /// The widest the card is allowed to become before a value wraps.
 const MAX_WIDTH: f32 = 240.0;
 
-/// Display names for `npc_flags` bits, in the order of
-/// [`creature::NPC_FLAGS`]. `GOSSIP` is omitted: nearly every flagged NPC
-/// carries it, and it names no service.
-const SERVICES: [(u32, &str); 14] = [
-    (0x00000002, "Quest Giver"),
-    (0x00000004, "Vendor"),
-    (0x00000008, "Flight Master"),
-    (0x00000010, "Trainer"),
-    (0x00000020, "Spirit Healer"),
-    (0x00000040, "Spirit Guide"),
-    (0x00000080, "Innkeeper"),
-    (0x00000100, "Banker"),
-    (0x00000200, "Guild Registrar"),
-    (0x00000400, "Tabard Designer"),
-    (0x00000800, "Battlemaster"),
-    (0x00001000, "Auctioneer"),
-    (0x00002000, "Stable Master"),
-    (0x00004000, "Repair"),
-];
-
 /// One card's contents.
 struct Card {
     title: String,
@@ -134,10 +114,10 @@ fn creature_card(spawn: &crate::tools::creatures::Spawn) -> Card {
     if spawn.rank != 0 {
         rows.push(("Rank", creature::value_word(&creature::RANKS, spawn.rank)));
     }
-    let services: Vec<&str> = SERVICES
-        .iter()
-        .filter(|(bit, _)| spawn.npc_flags & bit != 0)
-        .map(|(_, name)| *name)
+    // The same table the icons over a creature's head are drawn from, so the
+    // card and the icons name the same services in the same order.
+    let services: Vec<&str> = super::servicemarks::offered(spawn.npc_flags)
+        .map(|service| service.name)
         .collect();
     if !services.is_empty() {
         rows.push(("Services", services.join(", ")));

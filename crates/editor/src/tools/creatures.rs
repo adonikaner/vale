@@ -490,9 +490,11 @@ pub struct Creatures {
     pub mode: super::place::Mode,
     /// The picker shown in the Place half, and what a click will put down.
     pub new_spawn: NewSpawn,
-    /// The direction the ghost faces, stored so the row a click writes faces
-    /// the way the model on screen did. Two readings of the camera a frame
-    /// apart would not agree.
+    /// The direction the creature on the cursor faces, in radians, which is
+    /// what a click writes as `orientation`. `None` while nothing is on the
+    /// cursor. Set toward the camera when the placer is armed, kept from one
+    /// placement to the next, and turned by [`Self::turn_ghost`]. See
+    /// [`ghost`].
     ghost_facing: Option<f32>,
     /// The read, while it is running. `None` when there is nothing in flight.
     task: Option<Task<Result<MapRead, String>>>,
@@ -550,6 +552,9 @@ pub struct Creatures {
     pub show_models: bool,
     /// How many models at once — see the module comment.
     pub model_budget: usize,
+    /// Draw a row of service icons over each near creature that offers one.
+    /// See [`mark_services`].
+    pub show_services: bool,
     /// How far out a spawn is drawn at all, in yards.
     pub range: f32,
     /// Whether the template window is open. [`crate::ui::creatures`] states
@@ -607,6 +612,7 @@ impl Default for Creatures {
             // well inside what the entity pass draws in a session. The panel
             // changes it and shows the count.
             model_budget: 200,
+            show_services: true,
             // A little past the 7x7 block the editor streams at its default
             // reach, so a marker appears as its ground does.
             range: 1200.0,
@@ -1433,6 +1439,16 @@ impl Creatures {
     pub fn placing(&self) -> bool {
         self.mode == super::place::Mode::Place && self.new_spawn.chosen.is_some()
     }
+
+    /// Turn the creature on the cursor by `degrees` about up, snapped to the
+    /// placer's step when `snap`. Does nothing before the ghost has a facing.
+    /// `,` and `.` call it from `super::spawn::keys` and `Alt` with the mouse
+    /// from `super::gizmo::spin`.
+    pub fn turn_ghost(&mut self, degrees: f32, snap: bool) {
+        if let Some(facing) = self.ghost_facing {
+            self.ghost_facing = Some(super::spawn::turned(facing, degrees, snap));
+        }
+    }
 }
 
 /// Whether a template may move to `to`, and the two keys of the move when it
@@ -1501,6 +1517,16 @@ pub struct CreatureToolPlugin;
 impl Plugin for CreatureToolPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Creatures>()
+            .init_resource::<ServiceMarks>()
+            // After the client has put the camera where the rig says, so the
+            // marks are projected through this frame's view and do not trail
+            // a moving camera by a frame.
+            .add_systems(
+                Update,
+                mark_services
+                    .after(drag)
+                    .after(vale_client::world::camera::place),
+            )
             .add_systems(
                 Update,
                 // After the pick, like every tool here: reading the pointer
@@ -2185,8 +2211,8 @@ fn place_one(
         return;
     };
     // The ghost's own facing, so the row written matches the model that was
-    // on screen. The camera fallback covers the frame before the ghost has
-    // been spawned, which is the only time the two could differ.
+    // on screen. The camera fallback covers a click before the ghost has been
+    // given a facing, which is the frame the placer is armed on.
     let facing = creatures
         .ghost_facing
         .unwrap_or_else(|| match camera.single() {
@@ -2659,6 +2685,121 @@ fn draw(
     }
 }
 
+/// Where one creature's service icons are drawn this frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ServiceMark {
+    /// The point over the creature's head, in physical pixels: the world
+    /// camera draws into a target sized in physical pixels, and that is what
+    /// its projection answers in.
+    pub at: Vec2,
+    /// The creature's `npc_flags`, with this project's edits applied.
+    pub npc_flags: u32,
+    /// Yards from the camera, which the painter fades the far ones by.
+    pub away: f32,
+}
+
+/// The service marks to draw this frame, nearest last so a near creature's
+/// icons are painted over a far one's. Written by [`mark_services`] and drawn
+/// by `crate::ui::servicemarks`.
+///
+/// A resource of its own rather than a field of [`Creatures`]: it is written
+/// every frame, and [`Creatures`] is read by passes that would then see it as
+/// changed every frame.
+#[derive(Resource, Default)]
+pub struct ServiceMarks(pub Vec<ServiceMark>);
+
+/// How far from the camera a creature's services are still marked, in yards.
+///
+/// The icons are a fixed size on screen, so past this distance they are
+/// larger than the creature they mark and a town reads as a block of icons.
+pub const SERVICE_MARK_RANGE: f32 = 150.0;
+
+/// How far above the name point, or above a marker's top, the icons sit, in
+/// yards.
+const SERVICE_MARK_LIFT: f32 = 0.35;
+
+/// The `npc_flags` bits that are services. `GOSSIP` (0x1) is left out: nearly
+/// every flagged creature carries it and it names no service.
+pub const SERVICE_BITS: u32 = 0x0000_7FFE;
+
+/// Project a point over the head of every near creature that offers a service.
+///
+/// A creature drawn as a model is marked over the model's name point, which is
+/// where the client draws a unit's name, scaled as the body is. One drawn as a
+/// ring is marked over the top of its marker line.
+///
+/// Nothing is tested against the world: a mark is drawn for a creature behind
+/// a wall, as its ring is while it is selected.
+fn mark_services(
+    mut marks: ResMut<ServiceMarks>,
+    creatures: Res<Creatures>,
+    session: Option<Res<EditSession>>,
+    tool: Res<Tool>,
+    state: Res<crate::playtest::Playtest>,
+    camera: Query<(&Camera, &Transform), With<WorldCamera>>,
+    bodies: Query<(
+        &Preview,
+        &Transform,
+        &vale_client::world::entities::EntityModel,
+    )>,
+) {
+    marks.0.clear();
+    if !state.editing() || *tool != Tool::Creatures || !creatures.show_services {
+        return;
+    }
+    let Ok((camera, camera_at)) = camera.single() else {
+        return;
+    };
+    let view = GlobalTransform::from(*camera_at);
+    let eye = camera_at.translation;
+    let forward = *camera_at.forward();
+    // The name point of each body that has its model, by the spawn's guid.
+    let heads: HashMap<u64, Vec3> = bodies
+        .iter()
+        .map(|(preview, at, model)| {
+            let height = model.name_anchor * at.scale.y + SERVICE_MARK_LIFT;
+            (preview.guid, at.translation + Vec3::Y * height)
+        })
+        .collect();
+    let edits = session.as_ref().map(|session| &session.server_edits);
+    for index in &creatures.near {
+        let Some(base) = creatures.base_spawn(*index) else {
+            continue;
+        };
+        // The near list is sorted by distance from the focus, not from the
+        // camera, so the whole list is walked; the cheap tests come first.
+        let ground = vale_client::render::axes::to_bevy(base.at.to_array());
+        if ground.distance(eye) > SERVICE_MARK_RANGE {
+            continue;
+        }
+        let with_edits = edits.and_then(|edits| base.with_edits(edits));
+        let spawn = with_edits.as_ref().unwrap_or(base);
+        if spawn.npc_flags & SERVICE_BITS == 0 || spawn.is_removed() {
+            continue;
+        }
+        let over = heads.get(&spawn.guid).copied().unwrap_or_else(|| {
+            let top = spawn.at + Vec3::Z * (BODY + SERVICE_MARK_LIFT);
+            vale_client::render::axes::to_bevy(top.to_array())
+        });
+        // In front of the camera only: a point behind it projects to a
+        // mirrored place on the screen.
+        if (over - eye).dot(forward) <= 0.0 {
+            continue;
+        }
+        let Ok(at) = camera.world_to_viewport(&view, over) else {
+            continue;
+        };
+        marks.0.push(ServiceMark {
+            at,
+            npc_flags: spawn.npc_flags,
+            away: over.distance(eye),
+        });
+    }
+    marks
+        .0
+        .sort_unstable_by(|a, b| b.away.total_cmp(&a.away));
+}
+
 /// Spawn a model at each of the nearest spawns, and despawn the models of
 /// spawns that have left the list.
 ///
@@ -2789,12 +2930,17 @@ const GHOST_GUID: u64 = PREVIEW_GUID_BASE | 0xFFFF_FFFF;
 /// creature's appearance is decided only by the client, and the ghost is posed
 /// and animated, where the doodad ghost is a still mesh.
 ///
-/// ## The ghost follows the ground and faces the camera
+/// ## The ghost follows the ground and keeps its facing
 ///
-/// The same two rules a placement follows: the height is the ground's under
-/// the pointer, because the server stands a creature at its `position_z` and a
-/// guessed one drops it through the floor; and the facing is toward the
-/// camera, the equivalent of `.npc add` using the player's own orientation.
+/// The height is the ground's under the pointer, because the server stands a
+/// creature at its `position_z` and a guessed one drops it through the floor.
+///
+/// The facing is the doodad placer's turn. It starts toward the camera, on
+/// the frame the ghost first has a surface under it, and from then on it is
+/// held: moving the pointer or the camera does not turn the ghost. `,` and
+/// `.` and `Alt` with the mouse turn it ([`Creatures::turn_ghost`]), and it is
+/// kept from one placement to the next. Leaving Place or pressing `Escape`
+/// forgets it, so the next creature armed starts toward the camera again.
 #[allow(clippy::too_many_arguments)]
 fn ghost(
     mut commands: Commands,
@@ -2839,20 +2985,31 @@ fn ghost(
         for (entity, _, _) in &standing {
             commands.entity(entity).despawn();
         }
-        creatures.ghost_facing = None;
+        // The facing is kept while the placer is armed and the pointer is
+        // only off the world, and forgotten once nothing is on the cursor.
+        if !creatures.placing() && creatures.ghost_facing.is_some() {
+            creatures.ghost_facing = None;
+        }
         return;
     };
 
-    let facing = match camera.single() {
-        Ok(camera) => {
-            let eye = Vec3::from(vale_client::render::axes::to_wow(camera.translation()));
-            (eye.y - at.y).atan2(eye.x - at.x)
+    // Toward the camera the first time, and what it was left at after that.
+    // The click reads the same value, so the model on screen and the row
+    // written face the same way.
+    let facing = match creatures.ghost_facing {
+        Some(facing) => facing,
+        None => {
+            let toward = match camera.single() {
+                Ok(camera) => {
+                    let eye = Vec3::from(vale_client::render::axes::to_wow(camera.translation()));
+                    (eye.y - at.y).atan2(eye.x - at.x)
+                }
+                Err(_) => 0.0,
+            };
+            creatures.ghost_facing = Some(toward);
+            toward
         }
-        Err(_) => 0.0,
     };
-    // Kept for the click, so the model on screen and the row written face the
-    // same way. Two readings of the camera taken a frame apart would not.
-    creatures.ghost_facing = Some(facing);
 
     let scale = match known.display_scale > 0.01 {
         true => known.display_scale,

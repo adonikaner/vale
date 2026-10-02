@@ -844,8 +844,8 @@ fn spin(
     mut buildings: ResMut<wmos::Selection>,
     mut session: Option<ResMut<EditSession>>,
     mut placing: ResMut<super::place::Placing>,
-    creatures: Res<Creatures>,
-    objects: Res<GameObjects>,
+    mut creatures: ResMut<Creatures>,
+    mut objects: ResMut<GameObjects>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -884,6 +884,15 @@ fn spin(
             true => (turned / SPIN_SNAP).round() * SPIN_SNAP,
             false => turned,
         });
+        return;
+    }
+    // The same for a spawn on the cursor, which each spawn tool holds itself.
+    if *tool == Tool::Creatures && creatures.placing() {
+        creatures.turn_ghost(by, snap);
+        return;
+    }
+    if *tool == Tool::GameObjects && objects.placing() {
+        objects.turn_ghost(by, snap);
         return;
     }
 

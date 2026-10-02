@@ -31,6 +31,11 @@
 //! along z, `,` and `.` turn about z, `Shift` multiplies each step by ten,
 //! `Delete` removes, `Ctrl+D` duplicates. `Alt` with the mouse turns, and is
 //! in `super::gizmo::spin`, which serves all four tools.
+//!
+//! While a new spawn is on the cursor in Place, `,` and `.` and `Alt` with
+//! the mouse turn that spawn and not the selection, in the doodad placer's
+//! steps: [`PLACE_TURN`] degrees a press, three times that with `Shift`, and
+//! `Ctrl` with `Alt` snaps to it. See `Creatures::turn_ghost`.
 
 use super::creatures::Creatures;
 use super::gameobjects::GameObjects;
@@ -46,6 +51,24 @@ pub const STEP: f32 = 0.5;
 
 /// Degrees `,` and `.` turn a spawn.
 pub const TURN: f32 = 5.0;
+
+/// Degrees `,` and `.` turn a spawn that is on the cursor, not yet placed,
+/// and the step a held `Ctrl` snaps its `Alt` turn to. The doodad placer's
+/// step: a new spawn is turned to roughly the right way and corrected after.
+pub const PLACE_TURN: f32 = 15.0;
+
+/// A facing turned by `degrees`, in radians, wrapped into one turn.
+///
+/// With `snap`, the result is the nearest multiple of [`PLACE_TURN`], which
+/// is what a held `Ctrl` asks of the `Alt` turn.
+pub fn turned(facing: f32, degrees: f32, snap: bool) -> f32 {
+    let to = facing.to_degrees() + degrees;
+    let to = match snap {
+        true => (to / PLACE_TURN).round() * PLACE_TURN,
+        false => to,
+    };
+    to.rem_euclid(360.0).to_radians()
+}
 
 /// Which table the selected spawn is a row of.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -269,6 +292,33 @@ pub fn keys(
         return;
     }
     if wants.wants_keyboard_input() {
+        return;
+    }
+    // While a spawn is on the cursor the keys are the placer's: `,` and `.`
+    // turn it, and nothing reaches the selection, whose form the panel is not
+    // showing. `Escape` is each tool's own `ghost`.
+    let placing = match *tool {
+        Tool::Creatures => creatures.placing(),
+        _ => objects.placing(),
+    };
+    if placing {
+        let far = match keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
+            true => 3.0,
+            false => 1.0,
+        };
+        let mut turn = 0.0;
+        if keys.just_pressed(KeyCode::Comma) {
+            turn -= PLACE_TURN * far;
+        }
+        if keys.just_pressed(KeyCode::Period) {
+            turn += PLACE_TURN * far;
+        }
+        if turn != 0.0 {
+            match *tool {
+                Tool::Creatures => creatures.turn_ghost(turn, false),
+                _ => objects.turn_ghost(turn, false),
+            }
+        }
         return;
     }
     let Some(session) = session.as_mut() else {
@@ -519,5 +569,22 @@ fn group_keys(
     }
     if turn != 0.0 {
         move_group(session, &all, was.at, Vec3::ZERO, turn.to_radians(), "facing", now);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A spawn on the cursor turns by the step asked, wraps at a full turn,
+    /// and snaps to the placer's step when asked.
+    #[test]
+    fn a_ghost_turns_wraps_and_snaps() {
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        assert!(close(turned(0.0, PLACE_TURN, false), 15f32.to_radians()));
+        assert!(close(turned(0.0, -PLACE_TURN, false), 345f32.to_radians()));
+        assert!(close(turned(350f32.to_radians(), 20.0, false), 10f32.to_radians()));
+        assert!(close(turned(40f32.to_radians(), 4.0, true), 45f32.to_radians()));
+        assert!(close(turned(40f32.to_radians(), -4.0, true), 30f32.to_radians()));
     }
 }

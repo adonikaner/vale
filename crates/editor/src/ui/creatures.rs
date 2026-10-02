@@ -20,9 +20,13 @@
 //! The two rows are drawn in two places on the same split: the columns of the
 //! clicked spawn are in the sidebar, and the columns of its kind are behind a
 //! button. The sidebar carries the spawn's own 21 columns, which describe a
-//! place in the world shown by the viewport beside them, under a read-only
-//! summary of what the creature is and the buttons that open its windows. The
-//! summary and the buttons stay in place and the 21 columns scroll under them.
+//! place in the world shown by the viewport beside them. Above them are two
+//! folding sections and a row of buttons: Spawn (the selected spawn's guid,
+//! level, what it offers and what this project does to it), Creature (a
+//! read-only summary of the template row) and the buttons that open its
+//! windows. Those stay in place and the 21 columns scroll under them, in the
+//! height the sections leave: folding a section gives its height to the
+//! columns.
 //! [`template_window`] holds `creature_template`'s 78, in a window that can be
 //! dragged off the panel and left open while the pointer works in the world.
 //!
@@ -233,13 +237,28 @@ fn panel(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         Some(GroupAsk::Clear) => subject.creatures.select_only(None),
         None => {}
     }
-    // The spawn's name, its claim, the template summary and the buttons stay
-    // in place; only the spawn's columns scroll. The buttons are used while
-    // the form below is scrolled to any column.
-    head(ui, subject, &spawn);
-    claim(ui, subject, &spawn, &on_server);
-    ui.add_space(6.0);
-    what_it_is(ui, subject, &spawn);
+    // The spawn's name, the two folding sections and the buttons stay in
+    // place; only the spawn's columns scroll. The buttons are used while the
+    // form below is scrolled to any column, so they are outside both sections.
+    //
+    // The sections fold because the scrolled form takes the height they
+    // leave. With both open on a short window the form is at its minimum and
+    // the whole panel scrolls; with either shut the form has that much more.
+    // egui keeps each section's state under its id, so a section stays as it
+    // was left when another creature is selected.
+    title(ui, &spawn);
+    let edits = &subject.session.server_edits;
+    let spawn_edited = edits.touches(creature::SPAWN, &spawn.key());
+    let template_edited = edits.touches(creature::TEMPLATE, &spawn.template_key());
+    section(ui, "creature-panel-spawn", "Spawn", spawn_edited, true, |ui| {
+        head(ui, subject, &spawn);
+        claim(ui, subject, &spawn, &on_server);
+    });
+    section(ui, "creature-panel-template", "Creature", template_edited, true, |ui| {
+        summary(ui, subject, &spawn, template_edited);
+    });
+    ui.add_space(4.0);
+    windows(ui, subject, &spawn);
     ui.add_space(8.0);
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
@@ -351,6 +370,12 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
              editor streams a 7x7 block, so drawing every one of them is several thousand \
              creatures.",
         );
+        ui.checkbox(&mut subject.creatures.show_services, "Services")
+            .on_hover_text(
+                "Draw icons over each creature within 150 yards for what its npc_flags \
+                 offer: quests, a vendor list, training, a flight, an inn, a bank and the \
+                 rest. The hover card names them.",
+            );
     });
 }
 
@@ -558,9 +583,11 @@ fn picker(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
             }
             theme::note(
                 ui,
-                "Click the ground to place it, facing the camera. Escape puts it down; \
-                 every column of the row can be edited afterwards in Select.",
+                "Click the ground to place it. Escape puts it down; every column of \
+                 the row can be edited afterwards in Select.",
             );
+            theme::note(ui, ", and . turn it \u{b7} shift is three times \u{b7} alt + mouse turns it");
+            theme::note(ui, "ctrl with alt snaps the turn to 15\u{b0}");
             // The window's toggle, here as well as under a selected spawn, so
             // a creature can be edited before any spawn of it exists.
             let open = subject.creatures.template_window;
@@ -913,8 +940,9 @@ fn claim(
     });
 }
 
-/// The selected spawn's name, where it is, and the two buttons.
-fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
+/// The selected spawn's name and subname. Drawn above the folding sections,
+/// so the panel says which creature is open when both are shut.
+fn title(ui: &mut egui::Ui, spawn: &Spawn) {
     ui.label(egui::RichText::new(spawn.label()).strong().size(14.0));
     if let Some(subname) = spawn.subname.as_deref().filter(|s| !s.is_empty()) {
         ui.label(
@@ -923,6 +951,11 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
                 .color(theme::INK_DIM),
         );
     }
+}
+
+/// The Spawn section's first part: the selected spawn's guid, level, rank and
+/// faction, what it offers, and the two buttons.
+fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
     ui.label(
         egui::RichText::new(format!(
             "guid {}  ·  level {}–{}  ·  {}  ·  faction {}",
@@ -1080,22 +1113,16 @@ pub(super) fn placement(
     ui.add_space(6.0);
 }
 
-/// A summary of what the creature is, and the buttons that open the rest of it.
+/// The Creature section: a summary of what the creature is.
 ///
 /// A summary rather than a form: the columns a person wants to see while
-/// looking at a spawn (what it is called, how strong it is, what it offers)
-/// without the 78 that editing it needs, with a picture of its model beside
-/// them. Editing is in [`template_window`], behind the first button. The other
-/// buttons open what a creature has besides its template.
+/// looking at a spawn (how strong it is, what it offers) without the 78 that
+/// editing it needs, with a picture of its model beside them. Editing is in
+/// [`template_window`], behind the first button of [`windows`].
 ///
-/// Drawn under the spawn's name with no heading of its own, outside the
-/// scrolled form. The first line names the template row, which is what tells
-/// its scope from the spawn's.
-fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
-    let edited = subject
-        .session
-        .server_edits
-        .touches(creature::TEMPLATE, &spawn.template_key());
+/// The first line names the template row, which is what tells its scope from
+/// the spawn's. `edited` is whether this project changes that row.
+fn summary(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn, edited: bool) {
     ui.label(
         egui::RichText::new(format!(
             "creature_template entry {} at content patch {}",
@@ -1148,8 +1175,13 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
                 }
             });
     });
+}
 
-    ui.add_space(4.0);
+/// The buttons that open the template window and what a creature has besides
+/// its template: its path, quests, loot, events, spells and its two service
+/// lists. Each is a toggle, lit while its window is open. Drawn outside the
+/// folding sections, so they are reachable with both shut.
+fn windows(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
     ui.horizontal_wrapped(|ui| {
         let open = subject.creatures.template_window;
         if ui

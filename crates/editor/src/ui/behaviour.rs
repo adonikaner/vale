@@ -1156,7 +1156,7 @@ fn script_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                 .color(theme::INK_DIM),
             );
             match table_info.and_then(|t| t.reload) {
-                Some(reload) => theme::note(ui, format!("Live on `.reload {reload}`, which an apply sends.")),
+                Some(reload) => theme::note(ui, format!("Live on `.reload {reload}`, which an apply made during a playtest sends.")),
                 None => theme::note(ui, "Read at server start: an applied change needs a restart."),
             }
             if !scripts::waits(table) {
