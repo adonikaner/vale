@@ -675,14 +675,16 @@ pub fn holder_names_query(creatures: bool, entries: &[u32], wow_patch: u32) -> O
 }
 
 /// The name, display id and quality of a stated set of items, for the ids a
-/// quest's objectives and rewards name.
+/// quest's objectives and rewards name, with the content patch of the row
+/// and its `set_id`, for a form that writes the item's set.
 pub fn item_names_query(entries: &[u32], wow_patch: u32) -> Option<String> {
     if entries.is_empty() {
         return None;
     }
     let list: Vec<String> = entries.iter().map(u32::to_string).collect();
     Some(format!(
-        "SELECT t.`entry`, t.`name`, t.`quality`, t.`display_id` FROM `item_template` t \
+        "SELECT t.`entry`, t.`name`, t.`quality`, t.`display_id`, t.`patch`, t.`set_id` \
+         FROM `item_template` t \
          JOIN (SELECT `entry`, MAX(`patch`) AS `patch` FROM `item_template` \
                WHERE `patch` <= {wow_patch} GROUP BY `entry`) w \
            ON w.`entry` = t.`entry` AND w.`patch` = t.`patch` \

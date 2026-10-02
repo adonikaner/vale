@@ -1353,6 +1353,14 @@ fn draw(
             *tool = Tool::for_table(table);
         }
     }
+    // A set's item list changed in the set's form: the items' `set_id`
+    // follows once their rows are read. See `Quests::follow_sets`.
+    if !editing.quests.set_follows.is_empty() {
+        let said = editing.quests.follow_sets(session, time.elapsed_secs_f64());
+        if let Some(last) = said.last() {
+            session.status = last.clone();
+        }
+    }
     // A part of a workspace chosen on the strip at the head of its list.
     let part = editing.items.switch_to.take().or_else(|| editing.browser.switch_to.take());
     if let Some(part) = part {

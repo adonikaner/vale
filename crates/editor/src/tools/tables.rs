@@ -80,6 +80,27 @@
 //! [`clone_chain`] does the same for a whole `SpellVisual` and everything it
 //! names, through `vale_edit::dbc::chain`.
 //!
+//! ## Rows of one table edited from another table's form
+//!
+//! Some rows exist only for a row of another table and have no name of
+//! their own: a `SkillLineAbility` row is a spell's place in a skill line,
+//! a `SkillRaceClassInfo` row is who has a skill line, and a teaching spell
+//! is a `Spell` row whose only job is to teach another. The form of the
+//! row they are about lists and edits them (`crate::ui::data`), and the
+//! functions here find and make them: [`abilities_of`], [`teachers_of`],
+//! [`race_class_rows_of`], [`add_ability`], [`add_teaching_spell`],
+//! [`add_race_class_row`]. Each make is one entry on the undo stack. None
+//! of them is required: most spells are in no skill line and have no
+//! teaching spell.
+//!
+//! A row that many rows share (a kit, a cast time, a range, an icon) is
+//! not edited this way. It stays a reference with a picker, because an edit
+//! made from one row's form would change every row that names it.
+//!
+//! An item set's item list and an item's `set_id` are one fact stored
+//! twice, in a DBC table and in a server row. [`move_between_sets`] is
+//! the table half of keeping them in step.
+//!
 //! The contents of a blank row are the only table-specific rule here: a kit's
 //! effect and procedural slots are `-1` for none ([`blank_defaults`]), which is
 //! the convention the shipped rows use.
@@ -123,8 +144,12 @@ pub struct Use {
 /// per frame regardless of which field opened it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Modal {
-    /// Choose a row of `points_at` for the reference at `(record, field)`.
+    /// Choose a row of `points_at` for the reference at `(record, field)` of
+    /// `table`. The table is named because the record is not always a row of
+    /// the open table: a spell's form edits the `SkillLineAbility` rows that
+    /// name the spell.
     Pick {
+        table: String,
         record: usize,
         field: usize,
         points_at: &'static str,
@@ -138,7 +163,7 @@ pub enum Modal {
     /// light that is not on screen, and choosing a row opens it instead of
     /// writing it into a column.
     Rows { table: &'static str },
-    /// Set and clear the bits of the mask at `(record, field)`.
+    /// Set and clear the bits of the mask at `(record, field)` of `table`.
     ///
     /// This is the third way to edit a column without typing its value.
     /// `Spell.dbc` has twelve mask columns with about 240 named bits between
@@ -146,6 +171,7 @@ pub enum Modal {
     /// is the column's own list: `vale_assets::tables::schema::Kind::Flags`
     /// carries it, and the names come from `vale_assets::tables::spellbits`.
     Bits {
+        table: String,
         record: usize,
         field: usize,
         /// The column's name, for the dialog's heading. The schema is not
@@ -1335,6 +1361,332 @@ pub fn set_text(
     session.table_edited(table_name);
 }
 
+// ---------------------------------------------------------------------------
+// Rows of one table edited from another table's form
+// ---------------------------------------------------------------------------
+
+/// `SkillLineAbility.dbc`'s fields, as the spell form's Learning section and
+/// the skill line form read them. The indices are
+/// `schema::SKILL_LINE_ABILITY`'s.
+pub mod ability {
+    pub const TABLE: &str = "SkillLineAbility";
+    pub const SKILL: usize = 1;
+    pub const SPELL: usize = 2;
+    pub const RACES: usize = 3;
+    pub const CLASSES: usize = 4;
+    pub const REQ_SKILL_VALUE: usize = 7;
+    pub const SUPERSEDED_BY: usize = 8;
+    pub const LEARN_ON_GET_SKILL: usize = 9;
+    pub const MAX_VALUE: usize = 10;
+    pub const MIN_VALUE: usize = 11;
+    pub const REQ_TRAIN_POINTS: usize = 14;
+}
+
+/// `SkillRaceClassInfo.dbc`'s fields, as the skill line form reads them. The
+/// indices are `schema::SKILL_RACE_CLASS_INFO`'s.
+pub mod race_class {
+    pub const TABLE: &str = "SkillRaceClassInfo";
+    pub const SKILL: usize = 1;
+    pub const RACES: usize = 2;
+    pub const CLASSES: usize = 3;
+    pub const FLAGS: usize = 4;
+    pub const MIN_LEVEL: usize = 5;
+    pub const SKILL_TIER: usize = 6;
+    /// Every race: 134 of the 201 shipped rows hold it.
+    pub const EVERY_RACE: u32 = 511;
+    /// Every class: 60 of the shipped rows hold it.
+    pub const EVERY_CLASS: u32 = 1503;
+}
+
+/// `ItemSet.dbc`'s seventeen item columns.
+pub const SET_ITEMS: std::ops::Range<usize> = 10..27;
+
+/// The records of `table` whose reference column `field` names row `id` of
+/// `target`, in file order, through the reverse index.
+fn rows_naming(
+    browser: &mut Browser,
+    session: &EditSession,
+    target: &str,
+    id: u32,
+    table: &str,
+    field: usize,
+) -> Vec<usize> {
+    let mut rows: Vec<usize> = browser
+        .used_by(session, target, id)
+        .into_iter()
+        .filter(|at| at.table == table && at.field == field)
+        .map(|at| at.record)
+        .collect();
+    rows.sort_unstable();
+    rows.dedup();
+    rows
+}
+
+/// The `SkillLineAbility` rows that put `spell` in a skill line. Most spells
+/// have none: 4,753 of the shipped spells are named by a row.
+pub fn abilities_of(browser: &mut Browser, session: &EditSession, spell: u32) -> Vec<usize> {
+    rows_naming(browser, session, "Spell", spell, ability::TABLE, ability::SPELL)
+}
+
+/// The `SkillLineAbility` rows of one skill line.
+pub fn abilities_in(browser: &mut Browser, session: &EditSession, skill: u32) -> Vec<usize> {
+    rows_naming(browser, session, "SkillLine", skill, ability::TABLE, ability::SKILL)
+}
+
+/// The `SkillRaceClassInfo` rows that give `skill` to races and classes.
+pub fn race_class_rows_of(browser: &mut Browser, session: &EditSession, skill: u32) -> Vec<usize> {
+    rows_naming(browser, session, "SkillLine", skill, race_class::TABLE, race_class::SKILL)
+}
+
+/// `SpellCastTimes.dbc`'s row for an instant cast, which is what both mage
+/// trainer lists' teaching spells use; see `super::services::teaching_spell`.
+const INSTANT_CAST: u32 = 1;
+
+/// The teaching spells of `spell`, as the record of each and whether it is
+/// instant: the rows of `Spell.dbc` whose first effect is `LEARN_SPELL` and
+/// whose `EffectTriggerSpell 1` is `spell`. A trainer's list names one of
+/// these and not the spell itself.
+///
+/// 4,183 of the shipped spells have one and 511 of those have more than one,
+/// usually an instant one a trainer's list names beside one with a cast time
+/// that a book casts.
+pub fn teachers_of(browser: &mut Browser, session: &EditSession, spell: u32) -> Vec<(usize, bool)> {
+    use vale_assets::tables::spellbook::spell_fields;
+    let rows = rows_naming(
+        browser,
+        session,
+        "Spell",
+        spell,
+        "Spell",
+        spell_fields::EFFECT_TRIGGER_SPELL,
+    );
+    let Some(spells) = session.table("Spell") else {
+        return Vec::new();
+    };
+    rows.into_iter()
+        .filter(|&record| {
+            spells.u32_at(record, spell_fields::EFFECT) == Some(vale_mangos::trainer::LEARN_SPELL)
+        })
+        .map(|record| {
+            let instant = spells.u32_at(record, spell_fields::CASTING_TIME_INDEX) == Some(INSTANT_CAST);
+            (record, instant)
+        })
+        .collect()
+}
+
+/// A new row of `table_name` under the next id with `numbers` and `texts`
+/// written, recorded in the history entry that is open. Returns its record.
+fn push_row(
+    session: &mut EditSession,
+    table_name: &str,
+    numbers: &[(usize, u32)],
+    texts: &[(usize, String)],
+) -> Option<usize> {
+    let table = session.tables.get_mut(table_name)?;
+    let id = table.max_id().checked_add(1)?;
+    let bytes = table.blank_record(id);
+    let at = table.push_record(&bytes)?;
+    let row = Row::added(table, at)?;
+    session.history.record_row(table_name, row);
+    for &(field, value) in numbers {
+        let table = session.tables.get_mut(table_name)?;
+        if let Some(edit) = Cell::new(table, at, field, value) {
+            edit.apply(table);
+            session.history.record_cell(table_name, edit);
+        }
+    }
+    for (field, text) in texts {
+        let table = session.tables.get_mut(table_name)?;
+        if let Some(edit) = cell::set_text(table, at, *field, text) {
+            session.history.record_cell(table_name, edit);
+        }
+    }
+    session.table_edited(table_name);
+    Some(at)
+}
+
+/// Put `spell` in a skill line: a new `SkillLineAbility` row naming it, as
+/// one undo entry. The skill line is not chosen here; the form opens the
+/// picker on the new row. `ReqSkillValue` starts at 1, which 5,026 of the
+/// 5,072 shipped rows hold.
+pub fn add_ability(session: &mut EditSession, spell: u32) -> Option<usize> {
+    session.history.begin("Add to a skill line");
+    let at = push_row(
+        session,
+        ability::TABLE,
+        &[(ability::SPELL, spell), (ability::REQ_SKILL_VALUE, 1)],
+        &[],
+    );
+    session.history.end();
+    at
+}
+
+/// Give `skill` to races and classes: a new `SkillRaceClassInfo` row naming
+/// it, for every race and every class, as one undo entry. The flags start at
+/// zero, which lists the line normally and gives it a spellbook tab.
+pub fn add_race_class_row(session: &mut EditSession, skill: u32) -> Option<usize> {
+    session.history.begin("Give the skill line to races and classes");
+    let at = push_row(
+        session,
+        race_class::TABLE,
+        &[
+            (race_class::SKILL, skill),
+            (race_class::RACES, race_class::EVERY_RACE),
+            (race_class::CLASSES, race_class::EVERY_CLASS),
+        ],
+        &[],
+    );
+    session.history.end();
+    at
+}
+
+/// What a new teaching spell holds besides its name, rank, icon and the spell
+/// it teaches, as `(field, value)`. Each value is the one most of the 3,408
+/// shipped instant teaching spells hold, with the count beside it; a field
+/// not listed is zero on most of them.
+const TEACHING_SPELL: [(usize, u32); 12] = [
+    // Attributes: 3,265.
+    (6, 0x0004_0100),
+    // Targets: 3,194.
+    (13, 0x100),
+    // CastingTimeIndex, instant: all of them, by the population's definition.
+    (18, INSTANT_CAST),
+    // ProcChance: 3,381.
+    (25, 101),
+    // RangeIndex: 3,350.
+    (36, 6),
+    // EquippedItemClass, none: all 3,408.
+    (58, u32::MAX),
+    // EquippedItemSubClassMask: 2,959.
+    (59, u32::MAX),
+    // Effect 1.
+    (61, vale_mangos::trainer::LEARN_SPELL),
+    // SpellVisual, the learning visual: 3,390.
+    (115, 107),
+    // StanceBarOrder, none: 3,397.
+    (166, u32::MAX),
+    // DmgMultiplier 1 and 2, 1.0: 3,408 and 3,397.
+    (167, 0x3F80_0000),
+    (168, 0x3F80_0000),
+];
+
+/// `DmgMultiplier 3`, which is 1.0 on 3,397 of the shipped instant teaching
+/// spells, as the other two are.
+const TEACHING_SPELL_MULTIPLIER_3: (usize, u32) = (169, 0x3F80_0000);
+
+/// Make the spell that teaches `spell`: a new `Spell.dbc` row whose first
+/// effect is `LEARN_SPELL` and whose `EffectTriggerSpell 1` is `spell`, as one
+/// undo entry. Returns the new spell's id, or `None` when `spell` is not a row
+/// of the open table.
+///
+/// The row takes the taught spell's name, rank and icon, which is what the
+/// shipped ones do (2,958, 3,126 and 2,748 of the 3,392 whose taught spell
+/// exists), and [`TEACHING_SPELL`] for the rest.
+pub fn add_teaching_spell(session: &mut EditSession, spell: u32) -> Option<u32> {
+    use vale_assets::tables::spellbook::spell_fields;
+    let spells = session.table("Spell")?;
+    let taught = spells.row_of(spell)?;
+    let name = spells.string_at(taught, spell_fields::NAME).unwrap_or_default();
+    let rank = spells.string_at(taught, spell_fields::RANK).unwrap_or_default();
+    let icon = spells.u32_at(taught, spell_fields::ICON_ID).unwrap_or(0);
+    // The locale flag words after the name and the rank, copied so the new
+    // row marks the same locales as present.
+    let name_flags = spells.u32_at(taught, spell_fields::NAME + 8).unwrap_or(0);
+    let rank_flags = spells.u32_at(taught, spell_fields::RANK + 8).unwrap_or(0);
+
+    let mut numbers: Vec<(usize, u32)> = TEACHING_SPELL.to_vec();
+    numbers.push(TEACHING_SPELL_MULTIPLIER_3);
+    numbers.push((spell_fields::EFFECT_TRIGGER_SPELL, spell));
+    numbers.push((spell_fields::ICON_ID, icon));
+    numbers.push((spell_fields::NAME + 8, name_flags));
+    numbers.push((spell_fields::RANK + 8, rank_flags));
+    let mut texts = vec![(spell_fields::NAME, name)];
+    if !rank.is_empty() {
+        texts.push((spell_fields::RANK, rank));
+    }
+
+    session.history.begin("Create teaching spell");
+    let at = push_row(session, "Spell", &numbers, &texts);
+    session.history.end();
+    session.table("Spell")?.u32_at(at?, 0)
+}
+
+/// Which item column of an `ItemSet` row lists `item`, if one does.
+pub fn set_lists(sets: &vale_edit::dbc::DbcFile, record: usize, item: u32) -> Option<usize> {
+    let mut fields = SET_ITEMS;
+    fields.find(|&field| item != 0 && sets.u32_at(record, field) == Some(item))
+}
+
+/// The first item column of an `ItemSet` row that holds no item.
+fn empty_item_column(sets: &vale_edit::dbc::DbcFile, record: usize) -> Option<usize> {
+    let mut fields = SET_ITEMS;
+    fields.find(|&field| sets.u32_at(record, field) == Some(0))
+}
+
+/// Move `item` between two sets' item lists in the open `ItemSet` table: it
+/// is taken out of every item column of set `from` that lists it and put in
+/// the first empty item column of set `to`, where `to` does not list it
+/// already. Zero for either is no set. Returns one sentence per change made
+/// or refused.
+///
+/// The edits are recorded under `subject`, so that when the caller has just
+/// written the item's `set_id` under the same subject the two are one undo
+/// entry: the item's column and the set's list are one fact stored twice.
+pub fn move_between_sets(
+    session: &mut EditSession,
+    item: u32,
+    from: u32,
+    to: u32,
+    subject: &str,
+    now: f64,
+) -> Vec<String> {
+    let mut said = Vec::new();
+    if item == 0 || from == to {
+        return said;
+    }
+    let Some(sets) = session.table("ItemSet") else {
+        return said;
+    };
+    let mut edits: Vec<(usize, usize, u32)> = Vec::new();
+    if let Some(record) = sets.row_of(from).filter(|_| from != 0) {
+        for field in SET_ITEMS.filter(|&field| sets.u32_at(record, field) == Some(item)) {
+            edits.push((record, field, 0));
+        }
+        if !edits.is_empty() {
+            said.push(format!("item {item} taken out of set {from}'s items"));
+        }
+    }
+    if to != 0 {
+        match sets.row_of(to) {
+            None => said.push(format!("ItemSet has no row {to}; item {item} is listed nowhere")),
+            Some(record) if set_lists(sets, record, item).is_some() => {}
+            Some(record) => match empty_item_column(sets, record) {
+                Some(field) => {
+                    edits.push((record, field, item));
+                    said.push(format!("item {item} added to set {to}'s items"));
+                }
+                None => said.push(format!(
+                    "set {to} has no empty item column; item {item} is not listed in it"
+                )),
+            },
+        }
+    }
+    if edits.is_empty() {
+        return said;
+    }
+    session.history.begin_gesture("Edit item", subject, now);
+    for (record, field, value) in edits {
+        let table = table_mut(session, "ItemSet");
+        if let Some(edit) = Cell::new(table, record, field, value) {
+            edit.apply(table);
+            session.history.record_cell("ItemSet", edit);
+        }
+    }
+    session.history.end();
+    session.table_edited("ItemSet");
+    said
+}
+
 /// The tables a deep copy of a `SpellVisual` follows into: its kits, and the
 /// effects those kits and the visual's own missile and area columns name.
 pub const CHAIN_DEEP: [&str; 2] = ["SpellVisualKit", "SpellVisualEffectName"];
@@ -1867,6 +2219,7 @@ pub fn open_tables(
                         Some(column) => {
                             if let Kind::Flags(bits) = column.kind {
                                 browser.modal = Some(Modal::Bits {
+                                    table: open.clone(),
                                     record,
                                     field: column.field,
                                     column: column.name,
@@ -2029,6 +2382,172 @@ mod tests {
         let _ = std::fs::remove_dir_all(&install);
         let project = vale_edit::project::Project::open(&install, "default").unwrap();
         (EditSession::for_tests(project), install)
+    }
+
+    /// Undo the last entry on every table it names.
+    fn undo(session: &mut EditSession) {
+        let change = session.history.undo().expect("an entry");
+        for name in change.tables() {
+            if let Some(table) = session.tables.get_mut(&name) {
+                change.revert_table(&name, table);
+            }
+        }
+        session.table_revision += 1;
+    }
+
+    /// A spell is put in a skill line by a new ability row naming it, found
+    /// again through the reverse index, as one entry that one undo takes out.
+    /// A spell with no row has none, which is the common case.
+    #[test]
+    fn a_spell_joins_a_skill_line_through_a_row_of_its_own() {
+        let (mut session, install) = session("ability");
+        let mut spells = empty(173);
+        add(&mut spells, 133, &[], &[]);
+        add(&mut spells, 143, &[], &[]);
+        let mut abilities = empty(15);
+        add(&mut abilities, 69, &[(ability::SKILL, 6), (ability::SPELL, 143)], &[]);
+        session.tables.insert("Spell".to_string(), spells);
+        session.tables.insert(ability::TABLE.to_string(), abilities);
+        session.tables.insert("SkillLine".to_string(), empty(22));
+        let mut browser = Browser::default();
+        assert!(abilities_of(&mut browser, &session, 133).is_empty());
+        assert_eq!(abilities_of(&mut browser, &session, 143), vec![0]);
+
+        let depth = session.history.depth_done();
+        let at = add_ability(&mut session, 133).expect("a row");
+        assert_eq!(session.history.depth_done(), depth + 1);
+        let table = &session.tables[ability::TABLE];
+        assert_eq!(table.u32_at(at, 0), Some(70), "the next id");
+        assert_eq!(table.u32_at(at, ability::SPELL), Some(133));
+        assert_eq!(table.u32_at(at, ability::SKILL), Some(0), "the line is chosen after");
+        assert_eq!(table.u32_at(at, ability::REQ_SKILL_VALUE), Some(1));
+        assert_eq!(abilities_of(&mut browser, &session, 133), vec![at]);
+
+        undo(&mut session);
+        assert_eq!(session.tables[ability::TABLE].record_count(), 1);
+        assert!(abilities_of(&mut browser, &session, 133).is_empty());
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// A teaching spell is a new spell whose first effect is Learn Spell and
+    /// which names the taught spell, with that spell's name, rank and icon
+    /// and an instant cast. It is found as the spell's teacher, it is one
+    /// entry, and a spell that only has a teacher with a cast time is not
+    /// counted as having an instant one.
+    #[test]
+    fn a_teaching_spell_is_made_for_a_spell_and_found_again() {
+        use vale_assets::tables::spellbook::spell_fields;
+        let (mut session, install) = session("teach");
+        let mut spells = empty(173);
+        add(
+            &mut spells,
+            143,
+            &[(spell_fields::ICON_ID, 185)],
+            &[(spell_fields::NAME, "Fireball"), (spell_fields::RANK, "Rank 2")],
+        );
+        // A book's teaching spell: Learn Spell with a cast time.
+        add(
+            &mut spells,
+            483,
+            &[
+                (spell_fields::EFFECT, vale_mangos::trainer::LEARN_SPELL),
+                (spell_fields::EFFECT_TRIGGER_SPELL, 143),
+                (spell_fields::CASTING_TIME_INDEX, 14),
+            ],
+            &[],
+        );
+        // A spell that triggers 143 without teaching it is not a teacher.
+        add(&mut spells, 500, &[(spell_fields::EFFECT, 64), (spell_fields::EFFECT_TRIGGER_SPELL, 143)], &[]);
+        session.tables.insert("Spell".to_string(), spells);
+        let mut browser = Browser::default();
+        assert_eq!(teachers_of(&mut browser, &session, 143), vec![(1, false)]);
+        assert!(teachers_of(&mut browser, &session, 500).is_empty());
+
+        let depth = session.history.depth_done();
+        let id = add_teaching_spell(&mut session, 143).expect("a spell");
+        assert_eq!(id, 501, "the next id");
+        assert_eq!(session.history.depth_done(), depth + 1);
+        let table = &session.tables["Spell"];
+        let at = table.row_of(id).unwrap();
+        assert_eq!(table.u32_at(at, spell_fields::EFFECT), Some(vale_mangos::trainer::LEARN_SPELL));
+        assert_eq!(table.u32_at(at, spell_fields::EFFECT_TRIGGER_SPELL), Some(143));
+        assert_eq!(table.u32_at(at, spell_fields::CASTING_TIME_INDEX), Some(INSTANT_CAST));
+        assert_eq!(table.u32_at(at, spell_fields::ICON_ID), Some(185));
+        assert_eq!(table.string_at(at, spell_fields::NAME).as_deref(), Some("Fireball"));
+        assert_eq!(table.string_at(at, spell_fields::RANK).as_deref(), Some("Rank 2"));
+        assert_eq!(table.f32_at(at, 167), Some(1.0));
+        assert_eq!(teachers_of(&mut browser, &session, 143), vec![(1, false), (at, true)]);
+        // What `services::teaching_spell` answers for a trainer's list is the
+        // instant one.
+        assert_eq!(super::super::services::teaching_spell(table, 143), Some(id));
+        assert_eq!(add_teaching_spell(&mut session, 9999), None, "no such spell");
+
+        undo(&mut session);
+        assert_eq!(session.tables["Spell"].record_count(), 3);
+        assert_eq!(teachers_of(&mut browser, &session, 143), vec![(1, false)]);
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// A skill line is given to races and classes by a row naming it, for
+    /// everyone by default.
+    #[test]
+    fn a_skill_line_is_given_to_races_and_classes_by_a_row() {
+        let (mut session, install) = session("raceclass");
+        session.tables.insert("SkillLine".to_string(), empty(22));
+        session.tables.insert(race_class::TABLE.to_string(), empty(8));
+        let mut browser = Browser::default();
+        assert!(race_class_rows_of(&mut browser, &session, 8).is_empty());
+        let at = add_race_class_row(&mut session, 8).expect("a row");
+        let table = &session.tables[race_class::TABLE];
+        assert_eq!(table.u32_at(at, race_class::SKILL), Some(8));
+        assert_eq!(table.u32_at(at, race_class::RACES), Some(race_class::EVERY_RACE));
+        assert_eq!(table.u32_at(at, race_class::CLASSES), Some(race_class::EVERY_CLASS));
+        assert_eq!(table.u32_at(at, race_class::FLAGS), Some(0));
+        assert_eq!(race_class_rows_of(&mut browser, &session, 8), vec![at]);
+        assert_eq!(session.history.depth_done(), 1);
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// An item moved between sets leaves every column of the old set that
+    /// lists it and takes the first empty column of the new one, as one
+    /// entry. A set that lists it already is left alone, and a set with no
+    /// empty column refuses and says so.
+    #[test]
+    fn an_item_moves_between_two_sets_item_lists() {
+        let (mut session, install) = session("sets");
+        let mut sets = empty(45);
+        add(&mut sets, 1, &[(10, 11729), (11, 11726)], &[(1, "The Gladiator")]);
+        add(&mut sets, 41, &[(10, 12940)], &[(1, "Dal'Rend's Arms")]);
+        let full: Vec<(usize, u32)> = SET_ITEMS.map(|field| (field, 900 + field as u32)).collect();
+        add(&mut sets, 65, &full, &[(1, "A full set")]);
+        session.tables.insert("ItemSet".to_string(), sets);
+        let listed = |session: &EditSession, set: u32, item: u32| {
+            let sets = &session.tables["ItemSet"];
+            set_lists(sets, sets.row_of(set).unwrap(), item)
+        };
+
+        let said = move_between_sets(&mut session, 11726, 1, 41, "item 11726 set_id", 0.0);
+        assert_eq!(said.len(), 2, "{said:?}");
+        assert_eq!(listed(&session, 1, 11726), None);
+        assert_eq!(listed(&session, 41, 11726), Some(11), "the first empty column");
+        assert_eq!(listed(&session, 1, 11729), Some(10), "the other piece stays");
+        assert_eq!(session.history.depth_done(), 1);
+
+        // Already listed, or no change of set: nothing is written.
+        assert!(move_between_sets(&mut session, 11726, 0, 41, "item 11726 set_id", 10.0).is_empty());
+        assert!(move_between_sets(&mut session, 11726, 41, 41, "item 11726 set_id", 10.0).is_empty());
+        assert_eq!(session.history.depth_done(), 1);
+
+        let said = move_between_sets(&mut session, 11729, 0, 65, "item 11729 set_id", 20.0);
+        assert!(said[0].contains("no empty item column"), "{said:?}");
+        let said = move_between_sets(&mut session, 11729, 0, 777, "item 11729 set_id", 20.0);
+        assert!(said[0].contains("no row 777"), "{said:?}");
+        assert_eq!(session.history.depth_done(), 1);
+
+        undo(&mut session);
+        assert_eq!(listed(&session, 1, 11726), Some(11));
+        assert_eq!(listed(&session, 41, 11726), None);
+        let _ = std::fs::remove_dir_all(&install);
     }
 
     /// The skill tables and the item sets are labelled from the rows they

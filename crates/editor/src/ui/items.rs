@@ -1029,6 +1029,9 @@ fn reference_field(
     let id: u32 = showing.trim().parse().unwrap_or(0);
     if id == 0 {
         ui.label(egui::RichText::new("none").small().color(theme::INK_FAINT));
+        if table == "ItemSet" {
+            set_membership(ui, work, known, 0);
+        }
         return written;
     }
     // The item's own table is answered from the list that is already in
@@ -1101,6 +1104,9 @@ fn reference_field(
     if link(ui, &name, theme::ACCENT, &hover) {
         work.items.show_row = Some((table, id));
     }
+    if table == "ItemSet" {
+        set_membership(ui, work, known, id);
+    }
     // A spell's rank, which is the only thing that tells nine Fireballs
     // apart — field 129, the one the quest picker lists under the name.
     if table == "Spell" {
@@ -1114,6 +1120,81 @@ fn reference_field(
         }
     }
     written
+}
+
+/// The other half of an item's set, beside its `set_id`: whether the set's
+/// own list of items names this item.
+///
+/// The membership is one fact stored twice. The server counts set pieces by
+/// `item_template.set_id`, and the client lists a set's pieces from
+/// `ItemSet.dbc`'s item columns. A set chosen in the picker has the list
+/// follow in the same undo entry (`ColumnTarget::write`). A number typed
+/// into the cell does not, because a number being typed passes through
+/// other sets' ids, so the difference is drawn here with a button for each
+/// side of it: the named set not listing the item, and another set still
+/// listing it.
+fn set_membership(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, set: u32) {
+    use crate::tools::tables;
+    if !work.session.open_table(work.assets, "ItemSet") {
+        return;
+    }
+    let Some(sets) = work.session.table("ItemSet") else {
+        return;
+    };
+    let item = known.entry;
+    let unlisted = set != 0
+        && sets
+            .row_of(set)
+            .is_some_and(|record| tables::set_lists(sets, record, item).is_none());
+    let elsewhere: Vec<u32> = (0..sets.record_count())
+        .filter(|&record| tables::set_lists(sets, record, item).is_some())
+        .filter_map(|record| sets.u32_at(record, 0))
+        .filter(|&other| other != set)
+        .collect();
+    let subject = format!("item {item} set_id");
+    let mut moves: Vec<(u32, u32)> = Vec::new();
+    if unlisted {
+        ui.label(
+            egui::RichText::new("not among the set's items")
+                .small()
+                .color(theme::WARN),
+        )
+        .on_hover_text(
+            "The item names the set, and the set's own list in ItemSet.dbc does not \
+             name the item. The client lists a set's pieces from that list.",
+        );
+        if ui
+            .small_button("add")
+            .on_hover_text("Put the item in the set's first empty item column. One undo entry.")
+            .clicked()
+        {
+            moves.push((0, set));
+        }
+    }
+    for other in elsewhere {
+        ui.label(
+            egui::RichText::new(format!("still listed in set {other}"))
+                .small()
+                .color(theme::WARN),
+        )
+        .on_hover_text(
+            "Another set's list in ItemSet.dbc names this item, and the item does not \
+             name that set.",
+        );
+        if ui
+            .small_button("take out")
+            .on_hover_text(format!("Take the item out of set {other}'s items. One undo entry."))
+            .clicked()
+        {
+            moves.push((other, 0));
+        }
+    }
+    for (from, to) in moves {
+        let said = tables::move_between_sets(work.session, item, from, to, &subject, work.now);
+        if let Some(last) = said.last() {
+            work.session.status = last.clone();
+        }
+    }
 }
 
 /// A name that opens something, in the colour it is drawn in and

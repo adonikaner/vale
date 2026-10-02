@@ -2314,6 +2314,20 @@ pub(super) fn picker(
             if picked.is_some() || cleared =>
         {
             let value = picked.map(|hit| hit.id).unwrap_or(0);
+            // An item column of a set: the two items' `set_id` follows once
+            // their rows are read. See `Quests::follow_sets`.
+            if table == "ItemSet" && crate::tools::tables::SET_ITEMS.contains(field) {
+                let row = session.table(table).map(|sets| {
+                    (sets.u32_at(*record, 0).unwrap_or(0), sets.u32_at(*record, *field).unwrap_or(0))
+                });
+                if let Some((set, left)) = row.filter(|(_, left)| *left != value) {
+                    quests.set_follows.push(crate::tools::quests::SetFollow {
+                        set,
+                        left,
+                        joined: value,
+                    });
+                }
+            }
             crate::tools::tables::set_field(
                 session,
                 table,

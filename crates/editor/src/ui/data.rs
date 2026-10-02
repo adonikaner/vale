@@ -26,6 +26,24 @@
 //! `DBFilesClient\` until one is chosen ([`table_list`]), and which then
 //! draws that table like any other, with a link back to the list.
 //!
+//! ## A row that exists only for another row is edited on that row's form
+//!
+//! The form is one table's columns, with three additions where a subject is
+//! spread over tables. A spell's form has a Learning section ([`learning`]):
+//! the `SkillLineAbility` rows that put the spell in a skill line, with
+//! their classes, races and next rank, and the spells that teach it, each
+//! with a button that makes one. A skill line's form lists the
+//! `SkillRaceClassInfo` rows that say who has it ([`skill_line_members`]).
+//! A set's item column says when the item's own `set_id` does not name the
+//! set, and a picked item has it written.
+//!
+//! Each is optional: a spell in no skill line and with no teaching spell is
+//! the common case and reads as one line each. The rows are ordinary rows of
+//! their tables, drawn through [`field_in`] with the table named, so the
+//! per-table tabs show the same rows. A row many rows share (a kit, a cast
+//! time, an icon) stays a reference with a picker: editing it from one
+//! row's form would change the others without saying so.
+//!
 //! ## The schema decides each field's widget
 //!
 //! `vale_assets::tables::schema` says what each column is: a number, a mask, a
@@ -1021,6 +1039,12 @@ fn fields(
 ) {
     match schema {
         Some(schema) => {
+            // A spell's skill lines and teaching spells are rows of other
+            // tables that exist only for the spell, so they are edited on
+            // the spell's form, above its own columns.
+            if schema.table == "Spell" {
+                learning(ui, work, record);
+            }
             for section in schema.sections {
                 // A light's sphere is drawn in the world's units. Its five
                 // columns are in 1/36 of a yard measured from the corner of
@@ -1033,6 +1057,10 @@ fn fields(
                 }
                 section_block(ui, work, record, schema, section);
             }
+            // …and so are the rows that say who has a skill line.
+            if schema.table == "SkillLine" {
+                skill_line_members(ui, work, record);
+            }
         }
         // A table with no schema still opens, as numbered fields with guessed
         // types. This is what `vale dbc <Table>` prints, and it is the
@@ -1040,6 +1068,365 @@ fn fields(
         None => unschemad(ui, work, record),
     }
     ui.add_space(24.0);
+}
+
+/// A spell's Learning section: the skill lines it is in and the spells that
+/// teach it, which are rows of other tables that exist only for this spell.
+///
+/// Neither is required. Most spells are in no skill line and have no teaching
+/// spell, and the section then says so in one line each and offers to make
+/// one. A row made here is an ordinary row of its table: the Abilities tab
+/// lists it, and `open` goes to it.
+fn learning(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
+    use vale_assets::tables::spellbook::spell_fields;
+    let Some((spell, teaches)) = work.session.table("Spell").and_then(|spells| {
+        let learns = spells.u32_at(record, spell_fields::EFFECT)? == vale_mangos::trainer::LEARN_SPELL;
+        let taught = spells.u32_at(record, spell_fields::EFFECT_TRIGGER_SPELL)?;
+        Some((spells.u32_at(record, 0)?, learns.then_some(taught)))
+    }) else {
+        return;
+    };
+    egui::CollapsingHeader::new(egui::RichText::new("Learning").size(14.0).strong())
+        .default_open(true)
+        .show(ui, |ui| {
+            // A teaching spell says what it teaches, which is the one thing
+            // about it that matters to a person.
+            if let Some(taught) = teaches.filter(|taught| *taught != 0) {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("This is a teaching spell for").color(theme::INK_DIM));
+                    let name = work
+                        .browser
+                        .describe_id(work.session, "Spell", taught)
+                        .map(|label| label.line())
+                        .unwrap_or_else(|| format!("spell {taught}"));
+                    if ui
+                        .add(egui::Link::new(egui::RichText::new(name).color(theme::ACCENT)))
+                        .on_hover_text(format!("open Spell {taught}"))
+                        .clicked()
+                    {
+                        follow_reference(work, "Spell", taught);
+                    }
+                });
+                ui.add_space(4.0);
+            }
+            skill_lines_of(ui, work, spell);
+            ui.add_space(8.0);
+            taught_by(ui, work, spell);
+        });
+}
+
+/// One row of another table drawn on the open row's form: a heading line
+/// with what the row is, its id, a link to the row itself and a button that
+/// removes it, then the fields named. Answers whether remove was pressed.
+fn owned_row(
+    ui: &mut egui::Ui,
+    work: &mut Workspace<'_>,
+    schema: &'static Schema,
+    row: usize,
+    title: &str,
+    fields: &[usize],
+    more: &[usize],
+) -> bool {
+    let table = schema.table;
+    let id = work
+        .session
+        .table(table)
+        .and_then(|open| open.u32_at(row, 0))
+        .unwrap_or(0);
+    let mut remove = false;
+    egui::Frame::new()
+        .fill(theme::PANEL)
+        .corner_radius(egui::CornerRadius::same(3))
+        .inner_margin(egui::Margin::same(6))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(title).color(theme::INK));
+                ui.label(theme::number(format!("#{id}")).color(theme::INK_FAINT));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    remove = ui
+                        .small_button("remove")
+                        .on_hover_text(format!("Remove this {table} row. One undo entry."))
+                        .clicked();
+                    if ui
+                        .small_button("open")
+                        .on_hover_text(format!("Open {table} {id} with every field."))
+                        .clicked()
+                    {
+                        follow_reference(work, table, id);
+                    }
+                });
+            });
+            for column in fields.iter().filter_map(|&field| schema.column(field)) {
+                field_in(ui, work, table, row, column);
+            }
+            if !more.is_empty() {
+                egui::CollapsingHeader::new(
+                    egui::RichText::new("Skill values").size(12.0).color(theme::INK_DIM),
+                )
+                .id_salt((table, id, "more"))
+                .default_open(false)
+                .show(ui, |ui| {
+                    for column in more.iter().filter_map(|&field| schema.column(field)) {
+                        field_in(ui, work, table, row, column);
+                    }
+                });
+            }
+        });
+    ui.add_space(2.0);
+    remove
+}
+
+/// The skill lines a spell is in, as the `SkillLineAbility` rows that name
+/// it, each with its skill line, its classes and races, whether learning the
+/// line gives the spell, and the spell that supersedes it.
+fn skill_lines_of(ui: &mut egui::Ui, work: &mut Workspace<'_>, spell: u32) {
+    use tables::ability;
+    ui.label(egui::RichText::new("Skill lines").color(theme::INK_DIM));
+    if !work.session.open_table(work.assets, ability::TABLE) {
+        theme::note(ui, "SkillLineAbility did not open");
+        return;
+    }
+    let rows = tables::abilities_of(work.browser, work.session, spell);
+    if rows.is_empty() {
+        theme::note(
+            ui,
+            "In no skill line, as most spells are. The spellbook files such a spell under \
+             General, and the client leaves a class trainer's service for it out of the \
+             training window.",
+        );
+    }
+    let mut remove: Option<usize> = None;
+    for &row in &rows {
+        let skill = work
+            .session
+            .table(ability::TABLE)
+            .and_then(|open| open.u32_at(row, ability::SKILL))
+            .unwrap_or(0);
+        let title = work
+            .browser
+            .describe_id(work.session, "SkillLine", skill)
+            .map(|label| label.title)
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "no skill line chosen".to_string());
+        if owned_row(
+            ui,
+            work,
+            &schema::SKILL_LINE_ABILITY,
+            row,
+            &title,
+            &[
+                ability::SKILL,
+                ability::CLASSES,
+                ability::RACES,
+                ability::LEARN_ON_GET_SKILL,
+                ability::SUPERSEDED_BY,
+            ],
+            &[
+                ability::REQ_SKILL_VALUE,
+                ability::MIN_VALUE,
+                ability::MAX_VALUE,
+                ability::REQ_TRAIN_POINTS,
+            ],
+        ) {
+            remove = Some(row);
+        }
+    }
+    if ui
+        .button("+ Add to a skill line")
+        .on_hover_text(
+            "A new SkillLineAbility row naming this spell, and the picker for its skill \
+             line. One undo entry. A mask left at zero is every class or every race.",
+        )
+        .clicked()
+    {
+        if let Some(at) = tables::add_ability(work.session, spell) {
+            work.browser.modal = Some(Modal::Pick {
+                table: ability::TABLE.to_string(),
+                record: at,
+                field: ability::SKILL,
+                points_at: "SkillLine",
+            });
+            work.browser.pick_query.clear();
+            work.browser.pick_focus = true;
+        }
+    }
+    if let Some(row) = remove {
+        tables::delete_row(work.session, ability::TABLE, row);
+    }
+}
+
+/// The spells that teach a spell, and a button that makes one.
+///
+/// A trainer's list names a teaching spell and not the spell a player ends
+/// up with, so a spell a trainer is to teach needs one. A spell learned any
+/// other way needs none.
+fn taught_by(ui: &mut egui::Ui, work: &mut Workspace<'_>, spell: u32) {
+    ui.label(egui::RichText::new("Taught by").color(theme::INK_DIM));
+    let teachers = tables::teachers_of(work.browser, work.session, spell);
+    if teachers.is_empty() {
+        theme::note(
+            ui,
+            "No teaching spell, as most spells have none. A trainer's list names a teaching \
+             spell: one whose first effect is Learn Spell and which names this spell.",
+        );
+    }
+    let mut follow: Option<u32> = None;
+    for &(row, instant) in &teachers {
+        let label = work.browser.describe(work.session, "Spell", row);
+        ui.horizontal(|ui| {
+            if ui
+                .add(egui::Link::new(
+                    egui::RichText::new(label.line()).color(theme::ACCENT),
+                ))
+                .on_hover_text(format!("open Spell {}", label.id))
+                .clicked()
+            {
+                follow = Some(label.id);
+            }
+            // The rank, which is what tells one teaching spell's row from the
+            // next rank's.
+            if !label.sub.is_empty() {
+                ui.label(egui::RichText::new(&label.sub).small().color(theme::INK_DIM));
+            }
+            ui.label(
+                egui::RichText::new(match instant {
+                    true => "instant",
+                    false => "has a cast time",
+                })
+                .small()
+                .color(theme::INK_DIM),
+            );
+        });
+    }
+    if let Some(id) = follow {
+        follow_reference(work, "Spell", id);
+    }
+    // A trainer's list wants an instant one. A spell with only a teaching
+    // spell that has a cast time, which is the kind a book casts, is offered
+    // an instant one beside it.
+    if !teachers.iter().any(|&(_, instant)| instant) {
+        let label = match teachers.is_empty() {
+            true => "+ Create a teaching spell",
+            false => "+ Create an instant teaching spell",
+        };
+        if ui
+            .button(label)
+            .on_hover_text(
+                "A new spell under the next id that teaches this one: Learn Spell as its \
+                 first effect, an instant cast, and this spell's name, rank and icon. One \
+                 undo entry. The Trainer window can then add it to a trainer's list.",
+            )
+            .clicked()
+        {
+            match tables::add_teaching_spell(work.session, spell) {
+                Some(id) => work.session.status = format!("spell {id} teaches spell {spell}"),
+                None => work.session.status = "the teaching spell was not made".to_string(),
+            }
+        }
+    }
+}
+
+/// A skill line's two integrated blocks: who has it, as the
+/// `SkillRaceClassInfo` rows that name the line, and how many spells are in
+/// it, with a link to them.
+fn skill_line_members(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
+    use tables::{ability, race_class};
+    let Some(skill) = work
+        .session
+        .table("SkillLine")
+        .and_then(|lines| lines.u32_at(record, 0))
+    else {
+        return;
+    };
+    egui::CollapsingHeader::new(egui::RichText::new("Who has it").size(14.0).strong())
+        .default_open(true)
+        .show(ui, |ui| {
+            if !work.session.open_table(work.assets, race_class::TABLE) {
+                theme::note(ui, "SkillRaceClassInfo did not open");
+                return;
+            }
+            let rows = tables::race_class_rows_of(work.browser, work.session, skill);
+            if rows.is_empty() {
+                theme::note(
+                    ui,
+                    "No race or class has this line: no SkillRaceClassInfo row names it. \
+                     Its spells then go on the spellbook's General tab.",
+                );
+            }
+            let mut remove: Option<usize> = None;
+            for &row in &rows {
+                let title = work.browser.describe(work.session, race_class::TABLE, row).sub;
+                if owned_row(
+                    ui,
+                    work,
+                    &schema::SKILL_RACE_CLASS_INFO,
+                    row,
+                    &title,
+                    &[
+                        race_class::CLASSES,
+                        race_class::RACES,
+                        race_class::FLAGS,
+                        race_class::MIN_LEVEL,
+                        race_class::SKILL_TIER,
+                    ],
+                    &[],
+                ) {
+                    remove = Some(row);
+                }
+            }
+            if ui
+                .button("+ Give it to races and classes")
+                .on_hover_text(
+                    "A new SkillRaceClassInfo row naming this line, for every race and every \
+                     class, with no flag set. One undo entry.",
+                )
+                .clicked()
+            {
+                tables::add_race_class_row(work.session, skill);
+            }
+            if let Some(row) = remove {
+                tables::delete_row(work.session, race_class::TABLE, row);
+            }
+        });
+
+    egui::CollapsingHeader::new(egui::RichText::new("Spells in it").size(14.0).strong())
+        .default_open(true)
+        .show(ui, |ui| {
+            if !work.session.open_table(work.assets, ability::TABLE) {
+                theme::note(ui, "SkillLineAbility did not open");
+                return;
+            }
+            let count = tables::abilities_in(work.browser, work.session, skill).len();
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(match count {
+                        1 => "1 ability".to_string(),
+                        n => format!("{n} abilities"),
+                    })
+                    .color(theme::INK),
+                );
+                if count > 0
+                    && ui
+                        .add(egui::Link::new(
+                            egui::RichText::new("list them").color(theme::ACCENT),
+                        ))
+                        .on_hover_text(
+                            "Open the Abilities tab searched by this line's name. A spell is \
+                             added to the line from the spell's own form.",
+                        )
+                        .clicked()
+                {
+                    let name = work
+                        .session
+                        .table("SkillLine")
+                        .and_then(|lines| lines.string_at(record, 3))
+                        .unwrap_or_default();
+                    work.browser.back.push(("SkillLine".to_string(), record));
+                    work.browser.look_at(ability::TABLE);
+                    work.browser.query = name;
+                }
+            });
+        });
 }
 
 /// A light's whole form, drawn in the inspector: the light picked in the world
@@ -1622,12 +2009,28 @@ fn section_block(
         });
 }
 
-/// One field: its name, and the widget its kind asks for.
+/// One field of the open table: its name, and the widget its kind asks for.
 fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column: &Column) {
     let table_name = work.browser.table.clone();
+    field_in(ui, work, &table_name, record, column);
+}
+
+/// One field of one record of any open table.
+///
+/// The table is named because the record is not always a row of the table
+/// the browser is on: a spell's form draws fields of the `SkillLineAbility`
+/// rows that name the spell. A text column is edited only on its own
+/// table's form, since the text buffers are the open row's.
+fn field_in(
+    ui: &mut egui::Ui,
+    work: &mut Workspace<'_>,
+    table_name: &str,
+    record: usize,
+    column: &Column,
+) {
     let Some(raw) = work
         .session
-        .table(&table_name)
+        .table(table_name)
         .and_then(|table| table.u32_at(record, column.field))
     else {
         return;
@@ -1660,7 +2063,7 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
             Kind::Int | Kind::LocaleFlags => {
                 let mut value = raw;
                 if number(ui, &mut value).changed() {
-                    write(work, record, column, value);
+                    write(work, table_name, record, column, value);
                 }
             }
             // `Unused` is drawn signed for the same reason as `reference`. It is
@@ -1671,7 +2074,7 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
             Kind::Signed | Kind::Unused => {
                 let mut value = raw as i32;
                 if number(ui, &mut value).changed() {
-                    write(work, record, column, value as u32);
+                    write(work, table_name, record, column, value as u32);
                 }
             }
             Kind::Float => {
@@ -1681,13 +2084,13 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                     egui::DragValue::new(&mut value).speed(0.01),
                 );
                 if response.changed() {
-                    write(work, record, column, value.to_bits());
+                    write(work, table_name, record, column, value.to_bits());
                 }
             }
             Kind::Flags(bits) => {
                 let mut value = raw;
                 if number(ui, &mut value).changed() {
-                    write(work, record, column, value);
+                    write(work, table_name, record, column, value);
                 }
                 // A button that opens the list of named bits, when the mask
                 // has one. Everything that reads a mask reads it bit by bit,
@@ -1705,6 +2108,7 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                         .clicked()
                 {
                     work.browser.modal = Some(Modal::Bits {
+                        table: table_name.to_string(),
                         record,
                         field: column.field,
                         column: column.name,
@@ -1738,7 +2142,7 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
             Kind::Bool => {
                 let mut on = raw != 0;
                 if ui.checkbox(&mut on, "").changed() {
-                    write(work, record, column, u32::from(on));
+                    write(work, table_name, record, column, u32::from(on));
                 }
                 // A gate with a value other than 0 or 1 shows the value.
                 if raw > 1 {
@@ -1756,7 +2160,7 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                     .map(|&(_, name)| name.to_string())
                     .unwrap_or_else(|| signed(raw));
                 let mut chosen = raw;
-                egui::ComboBox::from_id_salt((record, column.field))
+                egui::ComboBox::from_id_salt((table_name, record, column.field))
                     .selected_text(egui::RichText::new(shown).size(13.5))
                     .width(TEXT * 0.6)
                     .show_ui(ui, |ui| {
@@ -1765,7 +2169,7 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                         }
                     });
                 if chosen != raw {
-                    write(work, record, column, chosen);
+                    write(work, table_name, record, column, chosen);
                 }
             }
             Kind::Colour => {
@@ -1782,7 +2186,7 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                 if ui.color_edit_button_srgb(&mut rgb).changed() {
                     let packed =
                         (u32::from(rgb[0]) << 16) | (u32::from(rgb[1]) << 8) | u32::from(rgb[2]);
-                    write(work, record, column, keep | packed);
+                    write(work, table_name, record, column, keep | packed);
                 }
                 ui.label(
                     theme::number(format!("{} {} {}", rgb[0], rgb[1], rgb[2]))
@@ -1792,8 +2196,20 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                 // part of this column a reader is most likely to doubt.
                 ui.label(theme::number(format!("0x{raw:06X}")).color(theme::INK_DIM));
             }
-            Kind::Reference(points_at) => reference(ui, work, record, column, points_at, raw),
-            Kind::Item => item_cell(ui, work, record, column, raw),
+            Kind::Reference(points_at) => {
+                reference(ui, work, table_name, record, column, points_at, raw)
+            }
+            Kind::Item => item_cell(ui, work, table_name, record, column, raw),
+            // A text column of a row drawn on another table's form is shown
+            // and not edited: the buffers hold the open row's text.
+            Kind::Text | Kind::Locale(_) if table_name != work.browser.table => {
+                let text = work
+                    .session
+                    .table(table_name)
+                    .and_then(|table| table.string_at(record, column.field))
+                    .unwrap_or_default();
+                ui.label(egui::RichText::new(text).color(theme::INK));
+            }
             Kind::Text | Kind::Locale(_) => {
                 let wide = column.name.contains("Description");
                 let text = work
@@ -1826,13 +2242,13 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                 if response.lost_focus() {
                     let now_in_file = work
                         .session
-                        .table(&table_name)
+                        .table(table_name)
                         .and_then(|table| table.string_at(record, column.field))
                         .unwrap_or_default();
                     if editing != now_in_file {
                         tables::set_text(
                             work.session,
-                            &table_name,
+                            table_name,
                             record,
                             column.field,
                             &editing,
@@ -1848,7 +2264,7 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
                 {
                     let id = work
                         .session
-                        .table(&table_name)
+                        .table(table_name)
                         .and_then(|table| table.u32_at(record, 0))
                         .unwrap_or(0);
                     presence(ui, work.model_present(id));
@@ -1876,13 +2292,24 @@ fn field_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
 /// The name and the picker are the item form's, read from the world
 /// database through the quest tool's cache. Without a database the entry is
 /// drawn alone, since nothing in the archives names an item.
-fn item_cell(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column: &Column, raw: u32) {
-    use crate::tools::quests::{PickFor, Picker, Target};
+fn item_cell(
+    ui: &mut egui::Ui,
+    work: &mut Workspace<'_>,
+    table_name: &str,
+    record: usize,
+    column: &Column,
+    raw: u32,
+) {
+    use crate::tools::quests::{PickFor, Picker, SetFollow, Target};
     let mut value = raw;
     if number(ui, &mut value).changed() {
-        write(work, record, column, value);
+        write(work, table_name, record, column, value);
     }
-    let table = work.browser.table.clone();
+    let table = table_name.to_string();
+    // The set this row is, when the column is one of a set's items.
+    let set = (table_name == "ItemSet")
+        .then(|| work.session.table(table_name)?.u32_at(record, 0))
+        .flatten();
     let Some(quests) = work.quests.as_deref_mut() else {
         ui.label(egui::RichText::new("item").small().color(theme::INK_FAINT))
             .on_hover_text(
@@ -1921,6 +2348,43 @@ fn item_cell(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
         vale_mangos::item::TEMPLATE,
         raw,
     );
+    // The other half of the membership: the item's own `set_id`, which is
+    // what the server counts set pieces by. An item picked through the
+    // dialog has it written for it; one typed as a number, or one the
+    // shipped data disagrees about, is marked here with a button.
+    let Some(set) = set else {
+        return;
+    };
+    let Some(found) = quests.item(raw, &work.session.server_edits) else {
+        return;
+    };
+    let pending = quests.set_follows.iter().any(|follow| follow.joined == raw);
+    if found.set_id != set && !pending {
+        ui.label(
+            egui::RichText::new(match found.set_id {
+                0 => "its set_id is 0".to_string(),
+                other => format!("its set_id is {other}"),
+            })
+            .small()
+            .color(theme::WARN),
+        )
+        .on_hover_text(
+            "The set lists this item, and the item's own row does not name the set. The \
+             server counts set pieces by item_template.set_id, so the item does not count \
+             towards the bonuses until it does.",
+        );
+        if ui
+            .small_button("join")
+            .on_hover_text(format!("Write set_id {set} on this item's row. One undo entry."))
+            .clicked()
+        {
+            quests.set_follows.push(SetFollow {
+                set,
+                left: 0,
+                joined: raw,
+            });
+        }
+    }
 }
 
 /// A reference column: the id, what it resolves to, and the controls to pick
@@ -1931,6 +2395,7 @@ fn item_cell(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, column:
 fn reference(
     ui: &mut egui::Ui,
     work: &mut Workspace<'_>,
+    table_name: &str,
     record: usize,
     column: &Column,
     points_at: &'static str,
@@ -1944,7 +2409,7 @@ fn reference(
     // the box says "none" for it, and the signed box now agrees.
     let mut value = raw as i32;
     if number(ui, &mut value).changed() {
-        write(work, record, column, value as u32);
+        write(work, table_name, record, column, value as u32);
     }
     // The picker, which searches the target table by what its rows resolve
     // to. It is a dialog rather than a popup; see the module comment.
@@ -1956,6 +2421,7 @@ fn reference(
         .clicked()
     {
         work.browser.modal = Some(Modal::Pick {
+            table: table_name.to_string(),
             record,
             field: column.field,
             points_at,
@@ -1963,7 +2429,6 @@ fn reference(
         work.browser.pick_query.clear();
         work.browser.pick_focus = true;
     }
-    let table_name = work.browser.table.clone();
     let chain_table = matches!(
         points_at,
         "SpellVisual" | "SpellVisualKit" | "SpellVisualEffectName"
@@ -1995,7 +2460,7 @@ fn reference(
                 .clicked()
         {
             if let Some(id) =
-                tables::link_new(work.session, &table_name, record, column.field, points_at)
+                tables::link_new(work.session, table_name, record, column.field, points_at)
             {
                 work.browser.forget_buffers();
                 follow_reference(work, points_at, id);
@@ -2074,7 +2539,7 @@ fn reference(
             .clicked()
     {
         if let Some(id) =
-            tables::unshare(work.session, &table_name, record, column.field, points_at)
+            tables::unshare(work.session, table_name, record, column.field, points_at)
         {
             work.browser.forget_buffers();
             follow_reference(work, points_at, id);
@@ -2091,7 +2556,7 @@ fn reference(
             .clicked()
     {
         if let Some(done) =
-            tables::clone_chain(work.session, raw, Some((&table_name, record, column.field)))
+            tables::clone_chain(work.session, raw, Some((table_name, record, column.field)))
         {
             let copy = done.new_id("SpellVisual", raw).unwrap_or(0);
             work.session.status = format!(
@@ -2131,6 +2596,7 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let mut close = false;
     match modal {
         Modal::Pick {
+            table,
             record,
             field,
             points_at,
@@ -2139,7 +2605,7 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 work.browser.modal = None;
                 return;
             }
-            let column_name = schema::for_table(&table_name)
+            let column_name = schema::for_table(&table)
                 .and_then(|schema| schema.column(field))
                 .map(|column| column.name)
                 .unwrap_or("this field");
@@ -2242,7 +2708,7 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             if let Some(id) = picked {
                 tables::set_field(
                     work.session,
-                    &table_name,
+                    &table,
                     record,
                     field,
                     id,
@@ -2334,6 +2800,7 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             }
         }
         Modal::Bits {
+            table,
             record,
             field,
             column,
@@ -2344,8 +2811,8 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             // value is rebuilt from the checkboxes rather than typed.
             let raw = work
                 .session
-                .table(&work.browser.table.clone())
-                .and_then(|table| table.u32_at(record, field))
+                .table(&table)
+                .and_then(|open| open.u32_at(record, field))
                 .unwrap_or(0);
             let mut wanted = raw;
             let response = egui::Modal::new(egui::Id::new("data-bits")).show(ui.ctx(), |ui| {
@@ -2356,8 +2823,7 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 });
                 theme::note(
                     ui,
-                    "The names are vmangos' — 1.12 ships no table for these, so the server's \
-                     own enums are the only authority there is.",
+                    "The names follow vmangos: 1.12 ships no table that names a mask's bits.",
                 );
                 ui.add_space(6.0);
                 egui::ScrollArea::vertical()
@@ -2408,10 +2874,9 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 });
             });
             if wanted != raw {
-                let table_name = work.browser.table.clone();
                 tables::set_field(
                     work.session,
-                    &table_name,
+                    &table,
                     record,
                     field,
                     wanted,
@@ -2965,11 +3430,10 @@ fn loose_text(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, field:
     }
 }
 
-fn write(work: &mut Workspace<'_>, record: usize, column: &Column, value: u32) {
-    let table_name = work.browser.table.clone();
+fn write(work: &mut Workspace<'_>, table_name: &str, record: usize, column: &Column, value: u32) {
     tables::set_field(
         work.session,
-        &table_name,
+        table_name,
         record,
         column.field,
         value,

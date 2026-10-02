@@ -286,6 +286,66 @@ pub struct ItemName {
     pub name: String,
     pub quality: u32,
     pub display_id: u32,
+    /// The content patch of the row the server would load, which with the
+    /// entry is the key an edit to the row is written under. `None` for an
+    /// item the database does not hold, which is one this project creates.
+    pub patch: Option<u32>,
+    /// The `ItemSet.dbc` row the item belongs to, or 0: the project's value
+    /// where it has one, the database's otherwise.
+    pub set_id: u32,
+    /// `set_id` as the database holds it, which is what choosing that value
+    /// clears the edit against. `None` for an item this project creates.
+    pub set_in_database: Option<u32>,
+}
+
+/// A change to a set's item list made in the set's form, waiting for the
+/// items' rows to be read so that their `set_id` can follow it. See
+/// [`Quests::follow_sets`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SetFollow {
+    /// The `ItemSet.dbc` row.
+    pub set: u32,
+    /// The item that left one of the set's item columns, or 0.
+    pub left: u32,
+    /// The item that entered one, or 0.
+    pub joined: u32,
+}
+
+/// Write one item's `set_id`, or clear the project's edit when `wanted` is
+/// what the database holds. `false` when the row's key is not known.
+///
+/// The key is the entry and the content patch. For a row the project
+/// already claims it is the claim's own key; otherwise it is the patch the
+/// name read answered.
+fn write_set_id(session: &mut EditSession, item: u32, found: &ItemName, wanted: u32, now: f64) -> bool {
+    let table = vale_mangos::item::TEMPLATE;
+    let claimed_key = session
+        .server_edits
+        .rows()
+        .filter(|(had, key, _)| *had == table && key.first() == Some(u64::from(item)))
+        .map(|(_, key, _)| key.clone())
+        .max();
+    let Some(key) = claimed_key.or_else(|| found.patch.map(|patch| vale_mangos::item::template_key(item, patch)))
+    else {
+        return false;
+    };
+    let value = match found.set_in_database == Some(wanted) {
+        true => None,
+        false => Some(wanted.to_string()),
+    };
+    let subject = format!("item {item} set_id");
+    session.set_server_edit(
+        table,
+        &key,
+        "set_id",
+        value,
+        Some(crate::session::Gesture {
+            label: "Edit item",
+            subject: &subject,
+            now,
+        }),
+    );
+    true
 }
 
 /// What a reference picker is choosing from.
@@ -358,6 +418,20 @@ impl ColumnTarget {
     /// Write `written` to the column, or clear the edit when `written` is what
     /// the database holds.
     pub fn write(&self, session: &mut EditSession, written: String, now: f64) {
+        // An item's set, chosen in the picker: the set's item list follows in
+        // the same undo entry. A number typed into the cell does not, since
+        // a number being typed passes through other sets' ids; the form shows
+        // the difference and a button instead.
+        let set_change = (self.table == vale_mangos::item::TEMPLATE && self.column == "set_id")
+            .then(|| {
+                let before = session
+                    .server_edits
+                    .get(self.table, &self.key, self.column)
+                    .map(str::to_string)
+                    .or_else(|| self.in_database.clone());
+                let number = |text: Option<&str>| text.and_then(|t| t.trim().parse::<u32>().ok()).unwrap_or(0);
+                (number(before.as_deref()), number(Some(written.as_str())))
+            });
         let value = match Some(&written) == self.in_database.as_ref() {
             true => None,
             false => Some(written),
@@ -373,6 +447,12 @@ impl ColumnTarget {
                 now,
             }),
         );
+        if let (Some((from, to)), Some(item)) = (set_change, self.key.first()) {
+            let said = super::tables::move_between_sets(session, item as u32, from, to, &self.subject, now);
+            if let Some(last) = said.last() {
+                session.status = last.clone();
+            }
+        }
     }
 }
 
@@ -533,6 +613,9 @@ pub struct Quests {
     /// shell holds the tool while the form and the inspector are drawn; see
     /// `crate::ui::draw`.
     pub show_item: Option<u32>,
+    /// Changes to a set's item list whose items' `set_id` has yet to follow.
+    /// See [`Self::follow_sets`].
+    pub set_follows: Vec<SetFollow>,
     /// A quest a form names that was clicked, to be opened in the quest
     /// workspace. The creature and game object forms set it; the quest form
     /// sets [`Self::open`] directly, because it is the workspace.
@@ -1074,6 +1157,7 @@ impl Quests {
         let name = claimed(edits, vale_mangos::item::TEMPLATE, entry, "name");
         let quality = claimed(edits, vale_mangos::item::TEMPLATE, entry, "quality").and_then(|v| v.parse().ok());
         let display = claimed(edits, vale_mangos::item::TEMPLATE, entry, "display_id").and_then(|v| v.parse().ok());
+        let set = claimed(edits, vale_mangos::item::TEMPLATE, entry, "set_id").and_then(|v| v.parse().ok());
         let read = match self.items.get(&entry) {
             Some(found) => found.clone(),
             None => {
@@ -1086,14 +1170,77 @@ impl Quests {
                 name: name.unwrap_or(read.name),
                 quality: quality.unwrap_or(read.quality),
                 display_id: display.unwrap_or(read.display_id),
+                patch: read.patch,
+                set_id: set.unwrap_or(read.set_id),
+                set_in_database: read.set_in_database,
             }),
             (None, Some(name)) => Some(ItemName {
                 name,
                 quality: quality.unwrap_or(0),
                 display_id: display.unwrap_or(0),
+                patch: None,
+                set_id: set.unwrap_or(0),
+                set_in_database: None,
             }),
             (None, None) => None,
         }
+    }
+
+    /// Write the `set_id` side of each pending change to a set's item list,
+    /// once the rows of the items it names have been read. Returns one
+    /// sentence per column written or refused.
+    ///
+    /// The server counts set pieces by `item_template.set_id` and the client
+    /// lists a set's pieces from `ItemSet.dbc`'s item columns, so an item
+    /// in a set is both. An item that joined gets the set's id. An item that
+    /// left has its `set_id` cleared when it named this set and the set no
+    /// longer lists it in any column. A change stays pending while a row is
+    /// still being read, and is dropped when the table has no such item.
+    pub fn follow_sets(&mut self, session: &mut EditSession, now: f64) -> Vec<String> {
+        let mut said = Vec::new();
+        let pending = std::mem::take(&mut self.set_follows);
+        for follow in pending {
+            let ready = [follow.left, follow.joined]
+                .into_iter()
+                .filter(|&item| item != 0)
+                .all(|item| {
+                    self.item(item, &session.server_edits).is_some()
+                        || self.item_known(item, &session.server_edits)
+                });
+            if !ready {
+                self.set_follows.push(follow);
+                continue;
+            }
+            let still_listed = |session: &EditSession, item: u32| {
+                session.table("ItemSet").is_some_and(|sets| {
+                    sets.row_of(follow.set)
+                        .is_some_and(|record| super::tables::set_lists(sets, record, item).is_some())
+                })
+            };
+            for (item, wanted) in [(follow.left, 0), (follow.joined, follow.set)] {
+                if item == 0 {
+                    continue;
+                }
+                let Some(found) = self.item(item, &session.server_edits) else {
+                    said.push(format!("item {item} is not in item_template; its set_id is not written"));
+                    continue;
+                };
+                let leaving = wanted == 0;
+                if leaving && (found.set_id != follow.set || still_listed(session, item)) {
+                    continue;
+                }
+                if found.set_id == wanted {
+                    continue;
+                }
+                if write_set_id(session, item, &found, wanted, now) {
+                    said.push(match leaving {
+                        true => format!("{} leaves set {}: set_id cleared", found.name, follow.set),
+                        false => format!("{} joins set {}: set_id written", found.name, follow.set),
+                    });
+                }
+            }
+        }
+        said
     }
 
     /// Whether an item's name is settled: the project names it, or the
@@ -1566,10 +1713,14 @@ fn fetch_the_names(
                 let Some(entry) = row.integer("entry") else {
                     continue;
                 };
+                let set_id = row.integer("set_id").unwrap_or(0) as u32;
                 let found = ItemName {
                     name: row.text("name").unwrap_or_default().to_string(),
                     quality: row.integer("quality").unwrap_or(0) as u32,
                     display_id: row.integer("display_id").unwrap_or(0) as u32,
+                    patch: row.integer("patch").map(|patch| patch as u32),
+                    set_id,
+                    set_in_database: Some(set_id),
                 };
                 if let Some(slot) = out.items.iter_mut().find(|(had, _)| *had == entry as u32) {
                     slot.1 = Some(found);
@@ -2335,13 +2486,89 @@ mod tests {
         assert_eq!(by_entry.len(), 1);
     }
 
+    /// A set's item list changed in the set's form: the item that joined has
+    /// the set's id written to its row, the item that left has its own
+    /// cleared once the set no longer lists it, and a change whose items are
+    /// still being read stays pending.
+    #[test]
+    fn an_items_set_id_follows_a_change_to_the_sets_list() {
+        let install = std::env::temp_dir().join(format!("vale-quests-sets-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let project = vale_edit::project::Project::open(&install, "default").unwrap();
+        let mut session = EditSession::for_tests(project);
+        // Set 1 lists item 200 and no longer lists item 100.
+        let mut bytes = b"WDBC".to_vec();
+        for word in [0u32, 45, 180, 1] {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        bytes.push(0);
+        let mut sets = vale_edit::dbc::DbcFile::parse(&bytes).unwrap();
+        let blank = sets.blank_record(1);
+        let record = sets.push_record(&blank).unwrap();
+        sets.set_u32(record, 10, 200);
+        session.tables.insert("ItemSet".to_string(), sets);
+
+        let named = |set_id: u32| ItemName {
+            name: "Piece".into(),
+            quality: 3,
+            display_id: 1,
+            patch: Some(2),
+            set_id,
+            set_in_database: Some(set_id),
+        };
+        let mut quests = Quests::default();
+        quests.items.renew(session.database_writes);
+        quests.set_follows.push(SetFollow { set: 1, left: 100, joined: 200 });
+        // Neither row has been read: nothing is written and the change waits.
+        assert!(quests.follow_sets(&mut session, 0.0).is_empty());
+        assert_eq!(quests.set_follows.len(), 1);
+
+        quests.items.insert(100, Some(named(1)));
+        quests.items.insert(200, Some(named(0)));
+        let said = quests.follow_sets(&mut session, 1.0);
+        assert_eq!(said.len(), 2, "{said:?}");
+        assert!(quests.set_follows.is_empty());
+        let table = vale_mangos::item::TEMPLATE;
+        let edit = |session: &EditSession, item: u32| {
+            session
+                .server_edits
+                .get(table, &vale_mangos::item::template_key(item, 2), "set_id")
+                .map(str::to_string)
+        };
+        assert_eq!(edit(&session, 200).as_deref(), Some("1"), "the one that joined");
+        assert_eq!(edit(&session, 100).as_deref(), Some("0"), "the one that left");
+
+        // An item the set still lists is not cleared, and one already in
+        // step is not written again.
+        quests.set_follows.push(SetFollow { set: 1, left: 200, joined: 200 });
+        assert!(quests.follow_sets(&mut session, 2.0).is_empty());
+        assert_eq!(edit(&session, 200).as_deref(), Some("1"));
+        // An item the table does not hold is dropped with a sentence.
+        quests.items.insert(300, None);
+        quests.set_follows.push(SetFollow { set: 1, left: 0, joined: 300 });
+        let said = quests.follow_sets(&mut session, 3.0);
+        assert!(said[0].contains("not in item_template"), "{said:?}");
+        assert!(quests.set_follows.is_empty());
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
     /// An item the project creates is named, coloured and pictured from its
     /// own row, and a column the project leaves alone comes from the database.
     #[test]
     fn an_item_is_named_from_the_projects_row_first() {
         let mut quests = Quests::default();
         quests.items.renew(0);
-        quests.items.insert(2589, Some(ItemName { name: "Linen Cloth".into(), quality: 1, display_id: 7090 }));
+        quests.items.insert(
+            2589,
+            Some(ItemName {
+                name: "Linen Cloth".into(),
+                quality: 1,
+                display_id: 7090,
+                patch: Some(0),
+                set_id: 0,
+                set_in_database: Some(0),
+            }),
+        );
         let mut edits = Edits::default();
         let key = vale_mangos::item::template_key(2589, 0);
         edits.set(vale_mangos::item::TEMPLATE, &key, "name", Some("'Fine Linen'".into()));
