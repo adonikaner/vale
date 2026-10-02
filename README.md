@@ -37,12 +37,14 @@ The workspace builds three programs:
   describes. Player skins are composed at run time from appearance and
   equipment; weapons attach according to sheath state; mounts are drawn under
   their riders. Spell visuals include the cast, the missile, the impact, decals
-  and particles.
+  and particles. Weapon glows and enchantment effects are drawn on held
+  items.
 - **Gameplay.** Targeting, melee, spell casting with the client's own local
   refusals and cooldowns, bags, bank, vendors, trainers, loot and group loot
   rolls, mail, trade, party and raid, duels, quests, flight paths, pets and the
   stable, death and resurrection, instance portals, the minimap and the world
-  map.
+  map. Guilds with their roster, ranks and charters, the tabard designer, and
+  inspecting other players.
 - **Interface.** The client does not reimplement the game's interface. It loads
   the interface's own XML and Lua from the client data, solves the frame
   layout, and runs the Lua in an embedded Lua 5.1 with the client's API
@@ -58,8 +60,8 @@ The workspace builds three programs:
   already there.
 - **Diagnostics.** A debug window (F4) with frame timing, draw calls, scene
   counts, network traffic by opcode, a packet capture with a hex view, world
-  layer switches and a Lua console. It compiles out with
-  `--no-default-features`.
+  layer switches, and a console tab with the log and a Lua command line. It
+  compiles out with `--no-default-features`.
 
 ### Vale IDE
 
@@ -68,19 +70,24 @@ the world it shows is drawn by the client's own renderer.
 
 - **Terrain.** Height brushes (raise, lower, flatten, smooth), ramps between
   two points, texture painting with blend maps, vertex colour, holes, area ids
-  per chunk, and water.
+  per chunk, and water. Whole chunks can be selected, copied, pasted, and
+  stitched to the ground around them.
 - **Placement.** Placing, moving, rotating, scaling and removing models and
   buildings, with group selection, a model picker with previews and
   favourites, and moves across tile borders.
 - **Map.** A map window for selecting, creating, copying and pasting tiles, and
   a find-and-replace over every tile of a map for texture and model paths.
-- **Client tables.** A table editor for the client's data tables, including
-  spell visual previews and an attachment lab for effect models.
+- **Client tables.** A table editor that opens every data table the client
+  ships, with named fields for spells and their visuals, the skill tables and
+  item sets. A spell's skill lines and teaching spells are edited on the
+  spell's own form. Spell visuals, kits and effects are previewed where they
+  are edited and where they are chosen, and an attachment lab positions
+  effect models on a character.
 - **Server content.** Editors for the server's world database: creature and
   game object spawns and templates, items, quests with their giver and taker
-  relations, loot tables, creature AI events, spell lists and scripts, creature
-  waypoint paths, and flight paths. Model pickers show every display id as a
-  picture.
+  relations, loot tables, vendor and trainer lists, creature AI events, spell
+  lists and scripts with their texts, creature waypoint paths, and flight
+  paths. Model pickers show every display id as a picture.
 - **Server data.** The server's navmesh drawn over the ground, and
   regeneration of the server's map, vmap and mmap tiles for changed terrain.
 - **Projects.** Edits are kept per project with undo. Applying writes rows to
@@ -102,10 +109,10 @@ subcommand to print the full list.
 ## Status
 
 Vale is under active development and does not yet cover the whole protocol.
-About 200 of the 441 inbound opcodes are handled. Missing features include
-guilds and petitions, the auction house, battlegrounds and world state, the
-meeting stone and instance saves, GM tickets, cinematics, macros, and parts of
-the interface API. `vale framexml` prints the current count of interface
+About 270 of the 441 inbound opcodes are handled. Missing features include
+the auction house, battlegrounds and world state, the meeting stone and
+instance saves, GM tickets, cinematics, macros, and parts of the interface
+API. `vale framexml` prints the current count of interface
 functions implemented and stubbed.
 
 ## Setup
@@ -128,7 +135,7 @@ The repository root works as a client install folder:
 
 ### Editor server settings
 
-In the editor's **Server** panel, set:
+In the editor's **Server** panel, under **Setup**, set:
 
 - **mangosd.conf**: your MaNGOS folder.
 - **vmangos tools**: the folder holding `mapextractor`, `vmapextractor`,
