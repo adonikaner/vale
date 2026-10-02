@@ -62,12 +62,12 @@
 //! Apply is not on this panel. It is on the bar's Server…, with the
 //! spells' and the creatures' and in the same words, because one vocabulary in
 //! one place is worth more than a button where the edit was made. What this
-//! panel keeps is the *state* — what the project changes and how much of it the
+//! panel keeps is the state — what the project changes and how much of it the
 //! database holds — which is about the item on screen. See [`super::sync`].
 
 use super::rowform::{
     choice_cell, draft_or, finished, flags_cell, meaning, number_cell, number_means, page_row,
-    page_spacing, revert_button, section, text_cell, FORM_ROW, FORM_VALUE,
+    page_spacing, revert_button, section, text_cell, RowAct, FORM_ROW, FORM_VALUE,
 };
 use super::theme;
 use super::thumbnails::Thumbnails;
@@ -308,7 +308,7 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     );
     ui.add_space(4.0);
 
-    let mut open: Option<u32> = None;
+    let mut asked: Option<(Known, RowAct)> = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show_rows(ui, ROW_HEIGHT, matches.len(), |ui, range| {
@@ -318,19 +318,49 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                     continue;
                 };
                 let chosen = work.items.open == Some(known.entry);
-                if row(ui, work, &known, chosen) {
-                    open = Some(known.entry);
+                let response = row(ui, work, &known, chosen);
+                if response.clicked() {
+                    asked = Some((known.clone(), RowAct::Open));
                 }
+                response.context_menu(|ui| {
+                    let act = super::rowform::row_menu(ui, "item", known.entry, known.claim, chosen);
+                    if let Some(act) = act {
+                        asked = Some((known.clone(), act));
+                    }
+                });
             }
         });
-    if let Some(entry) = open {
-        work.items.open = Some(entry);
+    if let Some((known, act)) = asked {
+        let ctx = ui.ctx().clone();
+        act_on(&ctx, work, &known, act);
+    }
+}
+
+/// Carry out one act on one item. The buttons over the list and a row's
+/// right-click menu both call this, so an act is the same from either.
+fn act_on(ctx: &egui::Context, work: &mut Workspace<'_>, known: &Known, act: RowAct) {
+    let (patch, now) = (work.patch, work.now);
+    match act {
+        RowAct::Open => work.items.open = Some(known.entry),
+        RowAct::Copy => {
+            work.items.duplicate(work.session, patch, now);
+        }
+        RowAct::Remove => {
+            if let Err(why) = work.items.remove(work.session, known, now) {
+                work.session.status = why;
+            }
+        }
+        RowAct::Keep => work.items.keep(work.session, known, now),
+        RowAct::CopyEntry => {
+            ctx.copy_text(known.entry.to_string());
+            work.session.status = format!("item entry {} is on the clipboard", known.entry);
+        }
     }
 }
 
 /// New, Copy and Remove — the three things that make or unmake a row.
 ///
-/// An item in the database is *marked*: it stays in the list in red until
+/// An item in the database is marked: it stays in the list in red until
 /// Apply, and Keep takes the mark off. One this project created is in no
 /// database, so removing it gives the claim up. A removal needs a restart of
 /// the server, and the apply sends no reload while one is in the plan — see
@@ -364,9 +394,10 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             .on_disabled_hover_text("Open an item first.")
             .clicked()
         {
-            let patch = work.patch;
-            let now = work.now;
-            work.items.duplicate(work.session, patch, now);
+            if let Some(known) = open.as_ref() {
+                let ctx = ui.ctx().clone();
+                act_on(&ctx, work, known, RowAct::Copy);
+            }
         }
         let removed = open
             .as_ref()
@@ -394,15 +425,12 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             .clicked()
         {
             if let Some(known) = open.as_ref() {
-                let now = work.now;
-                match removed {
-                    true => work.items.keep(work.session, known, now),
-                    false => {
-                        if let Err(why) = work.items.remove(work.session, known, now) {
-                            work.session.status = why;
-                        }
-                    }
-                }
+                let ctx = ui.ctx().clone();
+                let act = match removed {
+                    true => RowAct::Keep,
+                    false => RowAct::Remove,
+                };
+                act_on(&ctx, work, known, act);
             }
         }
     });
@@ -416,7 +444,12 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
 /// fifty. Two things are this panel's: the picture, which is the item's bag
 /// icon out of the thumbnail cache, and the colour of the name, which for
 /// an item is a fact about the row rather than a choice of palette.
-fn row(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, chosen: bool) -> bool {
+fn row(
+    ui: &mut egui::Ui,
+    work: &mut Workspace<'_>,
+    known: &Known,
+    chosen: bool,
+) -> egui::Response {
     // What the project says about the row, on the row. A new item and an
     // edited one are different things and both are invisible in a list that
     // only shows what was read.
@@ -465,7 +498,7 @@ fn row(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, chosen: bool)
             ui.painter().rect_filled(shape.picture, 3.0, theme::SUNK);
         }
     }
-    shape.response.clicked()
+    shape.response
 }
 
 // ---------------------------------------------------------------------------
@@ -615,6 +648,14 @@ fn head(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known) {
             );
             ui.horizontal(|ui| {
                 ui.label(theme::number(format!("entry {}", known.entry)));
+                if ui
+                    .small_button("copy")
+                    .on_hover_text("Put the entry on the clipboard.")
+                    .clicked()
+                {
+                    let ctx = ui.ctx().clone();
+                    act_on(&ctx, work, known, RowAct::CopyEntry);
+                }
                 ui.label(
                     egui::RichText::new(format!("patch {}", known.patch))
                         .small()
@@ -752,7 +793,7 @@ fn field(
             // The key is shown and not typed into — except `entry`.
             // Writing a key column moves the row the edit is about, which for
             // `patch` would silently retarget the statement at a version of the
-            // item the server is not loading. Renumbering an *item* is a thing
+            // item the server is not loading. Renumbering an item is a thing
             // people want, so it has a field of its own: see [`entry_field`],
             // which is not a column edit at all for half the rows it draws.
             Kind::Key if column.name == "entry" => {
@@ -767,8 +808,8 @@ fn field(
             Kind::Flags(bits) => flags_cell(ui, &showing, bits, id),
             Kind::Choice(values) => choice_cell(ui, &showing, values, id),
             // The subclass is the one column whose options depend on another
-            // column of the same row: 0 is *Axe* on a weapon, *Cloth* on a
-            // piece of armour and *Bandage* on a consumable, so the list is
+            // column of the same row: 0 is Axe on a weapon, Cloth on a
+            // piece of armour and Bandage on a consumable, so the list is
             // the class's — see `vale_mangos::item::subclasses`.
             Kind::Subclass => choice_cell(ui, &showing, item::subclasses(known.class), id),
             // A display id is picked by looking at it. The number stays
@@ -1575,10 +1616,10 @@ fn icon_square(ui: &mut egui::Ui, work: &mut Looking<'_>, path: Option<&str>, si
 ///
 /// A helm's row names `Helm_Plate_D_04.mdx` and the archive holds sixteen
 /// files, eight race codes times two genders; and an appearance with no model
-/// of its own is drawn *on* a body, which is a different body per race. Every
+/// of its own is drawn on a body, which is a different body per race. Every
 /// other item is one file whatever is wearing it, so the picker is not drawn.
 fn body_picker(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known, on_a_body: bool) {
-    // A helm, or anything drawn *on* a body. Everything else is one model with
+    // A helm, or anything drawn on a body. Everything else is one model with
     // one file, and a picker that changed nothing would be a control that lies.
     if !on_a_body && known.inventory_type != 1 {
         return;

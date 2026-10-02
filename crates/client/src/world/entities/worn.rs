@@ -195,6 +195,28 @@ impl DisplayCache {
         self.tables.as_deref()
     }
 
+    /// Forget the tables and read them again now, and resolve again every
+    /// display that was resolved.
+    ///
+    /// [`Self::forget`] takes effect on the next entity that needs a display.
+    /// A host whose entities are already standing has no next entity. Its
+    /// effect and pose passes ask [`Self::tables`], which does not load, and
+    /// are answered `None` from then on: a kit pushed onto a standing unit
+    /// hangs no model and plays no animation. This is for that host. The
+    /// client itself does not call it.
+    pub fn reread(&mut self, assets: &GameAssets) {
+        let known: Vec<(bool, u32)> = self.resolved.keys().copied().collect();
+        self.forget();
+        self.tables_now(assets);
+        for (is_object, display_id) in known {
+            let kind = match is_object {
+                true => ObjectType::GameObject,
+                false => ObjectType::Unit,
+            };
+            self.resolve(assets, kind, display_id);
+        }
+    }
+
     /// Which model a `DISPLAYID` means, and which skins to dress it in.
     pub(crate) fn resolve(
         &mut self,

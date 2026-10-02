@@ -19,10 +19,20 @@
 //! have, and a person editing them would be arranging something the file
 //! cannot store. A fixed set of slots is drawn as a fixed set of rows.
 //!
+//! ## The chain is built from the storyboard
+//!
+//! The head card chooses the spell's visual: from the list with each one
+//! playing, by another spell that looks right, as a new blank row, or as a
+//! copy of a shared one. Each lane's card, an empty one included, chooses
+//! its kit the same way, makes a blank one, copies the one it has, or
+//! empties the lane ([`lane_buttons`]). A spell with no visual is therefore
+//! given one here, with the preview beside it, and the per-table tabs are
+//! for the fields these buttons do not reach.
+//!
 //! ## Why the storyboard is a second view of the form, not a second panel
 //!
-//! `Spell.dbc` row 74 is Fireball in both views. **Fields** shows the 173
-//! columns and **Storyboard** shows the same row resolved through three more
+//! `Spell.dbc` row 74 is Fireball in both views. Fields shows the 173
+//! columns and Storyboard shows the same row resolved through three more
 //! tables. The two views share one segmented control, one selection and one
 //! undo stack. A separate panel would have needed its own row selection, kept
 //! in step with the form's.
@@ -55,6 +65,7 @@
 use super::data::Workspace;
 use super::theme;
 use crate::session::EditSession;
+use crate::tools::tables::{self, Command, Modal};
 use vale_assets::tables::schema::{self, Kind};
 use vale_assets::tables::spell::{effect_scale, fields};
 use vale_assets::world::m2::model_path;
@@ -473,6 +484,8 @@ pub fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Storyboard,
             .count(),
         false => 0,
     };
+    let mut make_new = false;
+    let mut make_own = false;
     egui::Frame::new()
         .fill(theme::PANEL)
         .stroke(egui::Stroke::new(1.0, theme::LINE))
@@ -514,10 +527,73 @@ pub fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Storyboard,
                     .on_hover_text("editing a kit here changes every spell that names this visual");
                 }
             });
+            // The chain is built from here: the visual is chosen from the
+            // list, taken from another spell, made blank, or copied so
+            // that it is this spell's own.
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .small_button("choose\u{2026}")
+                    .on_hover_text("Choose a SpellVisual row, each one playing as it is pressed.")
+                    .clicked()
+                {
+                    work.browser.modal = Some(Modal::Pick {
+                        table: "Spell".to_string(),
+                        record,
+                        field: fields::SPELL_VISUAL,
+                        points_at: "SpellVisual",
+                    });
+                    work.browser.pick_query.clear();
+                    work.browser.pick_focus = true;
+                }
+                if ui
+                    .small_button("like a spell\u{2026}")
+                    .on_hover_text(tables::command_about(Command::LookLike))
+                    .clicked()
+                {
+                    let ctx = ui.ctx().clone();
+                    super::data::run_command(&ctx, work, "Spell", record, Command::LookLike);
+                }
+                if board.visual_row.is_none() {
+                    make_new = ui
+                        .small_button("+ new")
+                        .on_hover_text(
+                            "Make a blank SpellVisual row and point this spell at it. Its five \
+                             lanes are then empty cards, each with its own buttons.",
+                        )
+                        .clicked();
+                }
+                if shared > 1 {
+                    make_own = ui
+                        .small_button("own copy")
+                        .on_hover_text(
+                            "Copy this visual with every kit and effect it names and point \
+                             this spell at the copy, so an edit here changes this spell alone.",
+                        )
+                        .clicked();
+                }
+            });
             for note in &board.notes {
                 ui.label(egui::RichText::new(note).small().color(theme::WARN));
             }
         });
+    if make_new {
+        tables::link_new(work.session, "Spell", record, fields::SPELL_VISUAL, "SpellVisual");
+    }
+    if make_own {
+        let visual = board.visual;
+        if let Some(done) = tables::clone_chain(
+            work.session,
+            visual,
+            Some(("Spell", record, fields::SPELL_VISUAL)),
+        ) {
+            let copy = done.new_id("SpellVisual", visual).unwrap_or(0);
+            work.session.status = format!(
+                "visual {visual} copied to {copy} and assigned: {} kits, {} effects",
+                done.count("SpellVisualKit"),
+                done.count("SpellVisualEffectName")
+            );
+        }
+    }
     ui.add_space(8.0);
 
     // Two cards to a row. The pairs are the lanes that belong together: the
@@ -538,7 +614,7 @@ pub fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Storyboard,
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
                         ui.set_max_width(width);
-                        card(ui, work, &board.phases[which]);
+                        card(ui, work, &board.phases[which], board.visual_row);
                     },
                 );
             }
@@ -689,14 +765,84 @@ fn boxed(
         });
 }
 
+/// A lane's own buttons: choose its kit with each one playing, and then
+/// make a blank kit, copy the one the lane has so that it is this visual's
+/// own, or empty the lane. Drawn on an empty lane too, which is where a new
+/// visual is filled in from.
+fn lane_buttons(
+    ui: &mut egui::Ui,
+    work: &mut Workspace<'_>,
+    visual_row: usize,
+    field: usize,
+    name: &str,
+    kit: Option<u32>,
+) {
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .small_button("choose\u{2026}")
+            .on_hover_text("Choose a kit for this lane, each one playing as it is pressed.")
+            .clicked()
+        {
+            work.browser.modal = Some(Modal::Pick {
+                table: "SpellVisual".to_string(),
+                record: visual_row,
+                field,
+                points_at: "SpellVisualKit",
+            });
+            work.browser.pick_query.clear();
+            work.browser.pick_focus = true;
+        }
+        match kit {
+            None => {
+                if ui
+                    .small_button("+ new")
+                    .on_hover_text("Make a blank kit and put it in this lane.")
+                    .clicked()
+                {
+                    tables::link_new(work.session, "SpellVisual", visual_row, field, "SpellVisualKit");
+                }
+            }
+            Some(_) => {
+                if ui
+                    .small_button("copy")
+                    .on_hover_text(
+                        "Copy this kit and put the copy in this lane, leaving the original \
+                         to whatever else names it.",
+                    )
+                    .clicked()
+                {
+                    tables::unshare(work.session, "SpellVisual", visual_row, field, "SpellVisualKit");
+                }
+                if ui
+                    .small_button("clear")
+                    .on_hover_text("Empty this lane. The kit's row is kept.")
+                    .clicked()
+                {
+                    tables::set_field(
+                        work.session,
+                        "SpellVisual",
+                        visual_row,
+                        field,
+                        0,
+                        &format!("Clear {name} kit"),
+                        work.now,
+                    );
+                }
+            }
+        }
+    });
+}
+
 /// One kit, as a card.
-fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, phase: &Phase) {
+fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, phase: &Phase, visual_row: Option<usize>) {
     let empty = phase.kit.is_none();
     let id = match phase.kit {
         Some(kit) => format!("KIT #{kit}"),
         None => "none".to_string(),
     };
     let about = phase.about;
+    let name = phase.name;
+    let field = phase.field;
     let kit = phase.kit;
     let animation = phase.animation.clone();
     let sound = phase.sound;
@@ -707,6 +853,9 @@ fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, phase: &Phase) {
 
     boxed(ui, phase.name, id, empty, work, |ui, work| {
         ui.label(egui::RichText::new(about).small().color(theme::INK_FAINT));
+        if let Some(visual_row) = visual_row {
+            lane_buttons(ui, work, visual_row, field, name, kit);
+        }
         let Some(kit) = kit else {
             return;
         };
@@ -832,19 +981,37 @@ fn effect(ui: &mut egui::Ui, work: &mut Workspace<'_>, row: &EffectRow) {
 /// How tall the phase bar is.
 const BAR_HEIGHT: f32 = 20.0;
 
+/// What the preview pane is asked to play: a spell through the client's own
+/// cast path, or a loop of kits pushed onto the actors, which needs no
+/// spell. See `crate::stage`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Show {
+    Spell(u32),
+    Pushes(crate::stage::Pushes),
+}
+
 /// Draw the preview pane: the picture, the phase bar, and the transport.
 ///
 /// The stage is rendered into an image and drawn here like any other texture,
 /// so this is an ordinary column: a title, the picture, the bar, the buttons.
 /// See `crate::stage`, where the camera that draws it is.
+///
+/// `board` is the open spell's chain, which says which phases of the bar
+/// have a kit in them. Without one every phase is drawn as filled.
 pub fn stage_pane(
     ui: &mut egui::Ui,
     stage: &mut crate::stage::Stage,
-    spell: Option<u32>,
+    show: Option<Show>,
+    title: &str,
     notes: &[String],
-    board: &Storyboard,
+    board: Option<&Storyboard>,
 ) {
-    stage.showing = spell;
+    stage.close();
+    match show {
+        Some(Show::Spell(spell)) => stage.showing = Some(spell),
+        Some(Show::Pushes(pushes)) => stage.pushing = Some(pushes),
+        None => {}
+    }
     let all = ui.available_rect_before_wrap();
     ui.painter().rect_filled(all, 0.0, theme::SHELL);
 
@@ -854,13 +1021,7 @@ pub fn stage_pane(
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
     pane.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(match spell {
-                Some(id) => format!("Preview — spell {id}"),
-                None => "Preview".to_string(),
-            })
-            .color(theme::INK_DIM),
-        );
+        ui.label(egui::RichText::new(title).color(theme::INK_DIM));
         // The first note goes beside the title. A model the archives do not
         // hold draws nothing at all, and an empty pane looks the same whether
         // the preview works or is broken.
@@ -978,7 +1139,7 @@ pub fn stage_pane(
 
 /// The loop as a bar: one segment per phase at its own length, the playhead
 /// across it. A click seeks.
-fn phase_bar(ui: &mut egui::Ui, stage: &mut crate::stage::Stage, board: &Storyboard) {
+fn phase_bar(ui: &mut egui::Ui, stage: &mut crate::stage::Stage, board: Option<&Storyboard>) {
     let width = ui.available_width();
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width, BAR_HEIGHT), egui::Sense::click_and_drag());
@@ -990,6 +1151,9 @@ fn phase_bar(ui: &mut egui::Ui, stage: &mut crate::stage::Stage, board: &Storybo
     // wind-up always runs (it is the cast bar), but a precast kit that is empty
     // shows a caster miming.
     let filled = |name: &str| -> bool {
+        let Some(board) = board else {
+            return true;
+        };
         match name {
             "precast" => board
                 .phases

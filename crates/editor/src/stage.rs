@@ -1,44 +1,44 @@
-//! The preview: a caster, a target, and the spell played on them for real.
+//! The spell preview: a caster, a target, and the spell played on them by the
+//! client's own pipeline.
 //!
-//! ## It is the client's own pipeline, driven without a server
+//! ## The preview drives the client's own pipeline without a server
 //!
-//! Nothing here draws a spell. What it does is **spawn two units and move the
-//! numbers a cast moves**, and then the client's own passes do every part of
-//! the work they do in a session: `spawn_models` resolves the display, `dress`
+//! Nothing here draws a spell. This module spawns two units and changes the
+//! `WorldEntity` counters a cast changes. The client's own passes then do the
+//! work they do in a session: `spawn_models` resolves the display, `dress`
 //! composes the skin, `pose` picks the animation off `SpellVisualKit`'s
 //! `animID`, `spell_effects` hangs the kit's models on the right attachments,
 //! `missiles` throws the missile, `persistent_areas` stands the area art on the
-//! ground, and the particle pass runs the emitters that are most of what a
-//! spell effect *is*.
+//! ground, and the particle pass runs the emitters that make up most of a
+//! spell effect.
 //!
 //! A preview that drew the models itself would be a second renderer, and a
-//! second renderer stops being true the first time the first one is corrected.
+//! correction to the client's renderer would then leave the preview wrong.
 //! `world::crowd` is the precedent: a whole `WorldEntity` through the real
 //! pipeline rather than a stand-in through a shortened one.
 //!
-//! ## The stage is a scene of its own, and that is the second design
+//! ## The stage is a scene of its own
 //!
-//! The first one made the pane a **hole in the chrome** — the one rectangle the
-//! panels did not cover, showing the editor's own camera. It was wrong in three
-//! ways at once and they were all the same mistake:
+//! The pane does not show the editor's own camera through a gap in the
+//! panels. That arrangement fails in three ways:
 //!
-//! * the backdrop was the world, so a spell was judged through waist-high grass
+//! * the backdrop is the world, so a spell is seen through waist-high grass
 //!   with a tree in front of it;
-//! * the camera could not be moved, because moving it would fly the editor's
-//!   camera off across the map;
-//! * only one actor was ever in frame, because the pane is an off-centre *crop*
-//!   of a window-centred view and the other one fell outside it.
+//! * the camera cannot be moved, because moving it moves the editor's camera
+//!   across the map;
+//! * only one actor is in frame, because the pane is an off-centre crop of a
+//!   window-centred view and the other actor falls outside it.
 //!
-//! So the stage is isolated instead, which is how the reference tool does it
-//! too: its own scene on [`STAGE_LAYER`], its own camera drawn into the pane's
-//! own rectangle, its own light, and its own orbit. The world does not draw
-//! into the pane and the stage does not draw into the world, because **a camera
-//! with no `RenderLayers` sees layer 0 and nothing else** — so the client's own
-//! camera needs no change at all.
+//! The stage is isolated instead, as it is in the reference tool: its own
+//! scene on [`STAGE_LAYER`], its own camera drawn into the pane's own
+//! rectangle, its own light, and its own orbit. The world does not draw into
+//! the pane and the stage does not draw into the world, because a camera with
+//! no `RenderLayers` sees layer 0 and nothing else. The client's own camera
+//! therefore needs no change.
 //!
-//! ## The client has **one** camera, and that decides how a preview is built
+//! ## The client's passes assume one camera
 //!
-//! Several of the passes that draw a spell ask for *the* camera by name and
+//! Several of the passes that draw a spell ask for the camera by name and
 //! then use it for more than culling:
 //!
 //! ```text
@@ -48,81 +48,103 @@
 //! render::doodads, shadows      camera.iter().next() — a frustum, a basis
 //! ```
 //!
-//! That is correct in a client, where there is one camera by construction. It
-//! is what a preview breaks: a second camera looking from somewhere else gets
-//! particle quads billboarded toward the *first* one, which is a cloud of
-//! flames seen edge-on — reported as spell effects drawing as "poor 2D
-//! sprites".
+//! That is correct in a client, which has one camera by construction. A
+//! preview breaks the assumption: a second camera looking from somewhere else
+//! gets particle quads billboarded toward the first one, so a cloud of flames
+//! is seen edge-on and spell effects draw as flat 2D sprites.
 //!
-//! **So the world camera is parked on the stage while the preview is open.**
-//! It is the editor's own camera, the person is not flying it while they are
-//! looking at a storyboard, and its output is behind the panels either way — so
-//! pointing it at the same place the stage camera looks from costs nothing and
-//! makes every one of those single-camera assumptions true again. The picture
-//! is still the stage camera's, into its own image, on its own layer.
+//! The world camera is therefore parked on the stage while the preview is
+//! open. It is the editor's own camera, the user is not flying it while
+//! looking at a storyboard, and its output is behind the panels either way.
+//! Pointing it at the place the stage camera looks from costs nothing and
+//! makes each of those single-camera assumptions hold. The picture is still
+//! the stage camera's, drawn into its own image, on its own layer.
 //!
-//! The alternative was to change those passes to take a camera per view, which
-//! is a change to the client for the editor's benefit and is the one thing this
-//! crate may not do.
+//! The alternative is to change those passes to take a camera per view. That
+//! is a change to the client for the editor's benefit, which this crate may
+//! not make.
 //!
-//! ## …and it is drawn into an image rather than into a corner of the window
+//! ## The stage is drawn into an image, not into a viewport of the window
 //!
-//! A second camera with a `viewport` was the first attempt and it draws **over
-//! egui**: bevy_egui's pass hangs off the window's own camera, so anything
-//! ordered after it covers the interface — the transport row and the pane's
-//! own title vanished under a grey rectangle.
+//! A second camera with a `viewport` draws over egui: bevy_egui's pass hangs
+//! off the window's own camera, so anything ordered after it covers the
+//! interface. The transport row and the pane's own title are then hidden
+//! under a grey rectangle.
 //!
-//! So the stage camera renders to an `Image` and the panel draws that image
-//! like any other texture, which is what `ui::thumbnails` already does for a
-//! tileset. Three things fall out of it, all of them better: the pane is an
-//! ordinary egui widget so anything can be drawn over it, the image is sized in
-//! physical pixels so there is no scale-factor arithmetic, and the drag that
-//! turns the stage is that widget's own `Response` rather than a hit test
-//! against a rectangle.
+//! The stage camera renders to an `Image` instead, and the panel draws that
+//! image like any other texture, which is what `ui::thumbnails` already does
+//! for a tileset. This has three consequences: the pane is an ordinary egui
+//! widget, so anything can be drawn over it; the image is sized in physical
+//! pixels, so there is no scale-factor arithmetic; and the drag that turns the
+//! stage is that widget's own `Response` rather than a hit test against a
+//! rectangle.
 //!
 //! `RenderLayers` is not inherited in Bevy: each drawn entity carries its own,
 //! and the client spawns a subtree per unit (batches, attachments, emitters) as
 //! it resolves them. [`stamp_the_layer`] is what puts them on the stage's layer
 //! as they appear.
 //!
-//! ## What a cast *is*, as numbers
+//! ## The counters a cast changes
 //!
 //! `world::entities::effects`, `pose` and `render::missiles` all watch counters
-//! on `WorldEntity` and act on the **change**, because that is what a packet
-//! is:
+//! on `WorldEntity` and act on the change, because the client applies a spell
+//! packet as a change to those counters:
 //!
 //! ```text
 //! begin    caster: last_spell = id, cast_time_ms = ms, casts_begun += 1
 //! release  caster: recent_spells[last] = id, casts_released += 1,
 //!                  last_spell_target(s) = the victim — what a missile flies
-//!                  at and what an impact is owed to;
-//!          …and for a channel, casts_channelled += 1 in the same step, which
-//!          is the order the server's two packets arrive in
-//! impact   caster: casts_landed += 1 — the release the *server* stated, which
+//!                  at and who the impact lands on;
+//!          for a channel, also casts_channelled += 1 in the same step,
+//!          which is the order the server's two packets arrive in
+//! impact   caster: casts_landed += 1 — the release the server stated, which
 //!                  is the counter the impact art hangs off (for a spell with
 //!                  no missile; one with a missile lands when it arrives);
 //!          victim: blows_taken += 1, the flinch;
-//!          …and a DynamicObject at the victim's feet, for the 217 visuals
+//!          also a DynamicObject at the victim's feet, for the 217 visuals
 //!          that state an area
 //! state    the victim's auras gain the spell — an aura is not a counter
 //! ```
 //!
-//! **The impact used to be bumped on the victim and nothing landed.** The
-//! client's effect pass reads `casts_landed` off the *caster* — it is the
-//! caster's `SMSG_SPELL_GO` — and hangs the impact kit on each guid in that
-//! caster's own hit list. Moving the victim's counter with an empty hit list
-//! satisfied nothing, so a Fireball on the stage burst on nobody while a
-//! self-buff, whose victim is its caster, worked. That was reasoned from the
-//! pass rather than seen.
+//! The impact counter is the caster's, not the victim's. The client's effect
+//! pass reads `casts_landed` off the caster, because it is the caster's
+//! `SMSG_SPELL_GO`, and hangs the impact kit on each guid in that caster's own
+//! hit list. Bumping the victim's counter with an empty hit list hangs
+//! nothing: a Fireball on the stage shows no impact, while a self-buff, whose
+//! victim is its caster, still works. This was reasoned from the pass and not
+//! observed in a running preview.
 //!
-//! Two things about the timing come from the reference tool and are worth
-//! keeping, because both are about what can be *seen*:
+//! Two rules about the timing come from the reference tool. Both exist so
+//! that the cast can be seen:
 //!
-//! * **the actors stand five yards apart whatever the spell's range is.** Range
-//!   decides one thing only: a spell with no range at all is a self-cast and has
-//!   a single actor. Thirty yards of separation is two specks.
-//! * **a cast is given a floor of 1.2 seconds.** An instant has no wind-up at
-//!   all, and a precast kit nobody ever sees is a kit that reads as missing.
+//! * the actors stand five yards apart whatever the spell's range is. Range
+//!   decides one thing only: a spell with no range at all is a self-cast and
+//!   has a single actor. At thirty yards of separation the actors are too
+//!   small to see.
+//! * a cast is given a floor of 1.2 seconds. An instant has no wind-up at
+//!   all, so its precast kit would never be shown and would appear to be
+//!   missing.
+//!
+//! ## A kit can be played with no spell
+//!
+//! The timeline above needs a spell: the client's maps from a spell to its
+//! kits are built when the tables are parsed, and a visual no spell names is
+//! in none of them. Two packets name a kit and not a spell,
+//! `SMSG_PLAY_SPELL_VISUAL` and `SMSG_PLAY_SPELL_IMPACT`, and the client
+//! plays what they name off two more counters on `WorldEntity`:
+//!
+//! ```text
+//! visual   unit: last_spell_visual = kit, spell_visuals += 1
+//! impact   unit: last_spell_impact = kit, spell_impacts += 1
+//! ```
+//!
+//! [`Pushes`] is a loop of those: one kit on the caster for a kit's own
+//! preview, or a visual's kits in the order a cast plays them. It is what
+//! the stage plays for a `SpellVisualKit` row and for a `SpellVisual` row no
+//! spell uses, and what a picker plays for the row it is about to choose.
+//! What it cannot show is what only a spell states: the missile's flight,
+//! the area on the ground, and a state kit held for as long as an aura
+//! lasts. A pushed state kit plays once.
 //!
 //! ## Scrubbing is a restart and a fast-forward
 //!
@@ -142,7 +164,7 @@ use bevy::camera::{ClearColorConfig, ImageRenderTarget, RenderTarget};
 use bevy::prelude::*;
 use bevy_egui::egui;
 
-/// **The layer the preview lives on.**
+/// The layer the preview lives on.
 ///
 /// Layer 0 is the world. A camera with no `RenderLayers` sees only layer 0, so
 /// putting the stage anywhere else is the whole of the isolation: the client's
@@ -150,27 +172,26 @@ use bevy_egui::egui;
 /// told to see only this.
 pub(crate) const STAGE_LAYER: usize = 2;
 
-/// **The stage stands where the world is, and that is a measurement rather than
-/// a preference.**
+/// Where the stage stands: the editor camera's focus, inside the loaded world.
 ///
-/// The obvious place for an isolated scene is far from the map — nothing to
-/// collide with, nothing lit by accident. It does not work: actors spawned five
-/// kilometres above Azeroth are **not drawn at all**, and the same actors at
-/// the map's own origin draw immediately. Bisected with a plain cube on the
-/// same layer, which drew in both places — so it is the client's own entity
-/// path that is gated on standing somewhere the world is loaded, and not
-/// anything about the camera, the layer or the render target.
+/// An isolated scene would normally be placed far from the map, where there
+/// is nothing to collide with and nothing lit by accident. That does not work
+/// here: actors spawned five kilometres above Azeroth are not drawn at all,
+/// and the same actors at the map's own origin draw immediately. A plain cube
+/// on the same layer draws in both places, so the gate is in the client's own
+/// entity path, which requires the entity to stand somewhere the world is
+/// loaded. It is not the camera, the layer or the render target.
 ///
-/// What gates it has not been chased down, and is worth knowing before the next
-/// host tries the same thing. It costs nothing here: the stage sits at the
-/// editor camera's own focus, and the picture is isolated by the **layer**
-/// rather than by distance — the world's camera cannot see layer 2 whatever is
-/// standing in it.
+/// What gates it in the entity path has not been found. Another host that
+/// places client entities away from the loaded world will meet the same
+/// limit. It costs nothing here: the stage sits at the editor camera's own
+/// focus, and the picture is isolated by the layer rather than by distance.
+/// The world's camera cannot see layer 2, whatever is standing in it.
 pub(crate) fn stage_at(camera: &crate::camera::EditorCamera) -> Vec3 {
     vale_client::render::axes::to_bevy([camera.target.x, camera.target.y, camera.target.z])
 }
 
-/// **Where the stage stands**, which is the editor's focus while the editor is
+/// Where the stage stands, which is the editor's focus while the editor is
 /// driving and the character's while a playtest is.
 ///
 /// [`stage_at`] reads `EditorCamera::target`, and during a playtest that
@@ -208,14 +229,14 @@ const APART: f32 = 5.0;
 const CAST_FLOOR: f32 = 1.2;
 /// How long the impact is given before the state is put on.
 const IMPACT_SECS: f32 = 1.0;
-/// …and how long the state is worn before the loop rests.
+/// How long the state is worn before the loop rests.
 const STATE_SECS: f32 = 1.2;
-/// …and the pause at the end of a loop, so the last phase is seen before it
+/// The pause at the end of a loop, so the last phase is seen before it
 /// starts again.
 const REST_SECS: f32 = 0.8;
 /// The bounds on how long a channel is shown running. `SpellDuration` states
-/// the real length — Evocation's is eight seconds — and a loop that long is a
-/// loop nobody waits for.
+/// the real length — Evocation's is eight seconds — and a loop of that length
+/// is too long to watch repeatedly.
 const CHANNEL_MIN: f32 = 1.0;
 const CHANNEL_MAX: f32 = 4.0;
 /// The radius a persistent area is given when the spell states none.
@@ -224,12 +245,12 @@ const AREA_RADIUS: f32 = 5.0;
 /// pass's own floor on a one-shot, so a clip is not cut off before it.
 const HOLD_SECS: f32 = 1.5;
 
-/// What the pane's empty parts are painted with. Neutral and dark: a spell's
-/// own colour is what is being judged, and a coloured ground would be a second
-/// opinion about it.
+/// What the pane's empty parts are painted with. Neutral and dark: the
+/// preview is used to judge a spell's own colour, and a coloured backdrop
+/// would change how that colour reads.
 const BACKDROP: Color = Color::srgb(0.20, 0.26, 0.34);
 
-/// **The three guids the stage's objects answer to.** Out of the way of
+/// The three guids the stage's objects answer to. Out of the way of
 /// anything a server issues, since the client keys entities by guid and a
 /// playtest must never index a previewing unit.
 const CASTER_GUID: u64 = 0xED17_0000_0000_0001;
@@ -243,21 +264,140 @@ pub struct StageUnit {
     pub caster: bool,
 }
 
-/// …and the persistent area the spell puts on the ground, while it is there.
+/// Marks the persistent area the spell puts on the ground, while it is there.
 #[derive(Component)]
 pub struct StageArea;
 
-/// …and the camera that draws them.
+/// Marks the camera that draws the stage's units and area.
 #[derive(Component)]
 pub struct StageCamera;
+
+/// One kit pushed onto one actor at one point of the loop.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Push {
+    /// Seconds from the start of the loop.
+    pub at: f32,
+    pub kit: u32,
+    /// Whether the kit lands on the target, as an impact, and not on the
+    /// caster, as something the caster does.
+    pub on_target: bool,
+}
+
+/// A loop of pushed kits, played in place of a spell. See the module
+/// comment.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pushes {
+    /// What the loop is of, as the table and the row's id, so that the same
+    /// loop asked for again on the next frame is not started again.
+    pub of: (&'static str, u32),
+    pub pushes: Vec<Push>,
+    /// The loop as segments, for the bar under the picture.
+    pub segments: Vec<Segment>,
+    pub whole_secs: f32,
+    /// Whether one actor stands alone: nothing lands on a target.
+    pub alone: bool,
+    /// What to say under the pane.
+    pub line: String,
+}
+
+/// How long one kit's own loop is: long enough for a one-shot clip to end.
+const KIT_LOOP_SECS: f32 = 2.5;
+
+impl Pushes {
+    /// One kit on the caster, standing alone, every [`KIT_LOOP_SECS`].
+    pub fn kit(kit: u32) -> Pushes {
+        Pushes {
+            of: ("SpellVisualKit", kit),
+            pushes: vec![Push {
+                at: 0.0,
+                kit,
+                on_target: false,
+            }],
+            segments: vec![Segment {
+                name: "kit",
+                from: 0.0,
+                to: KIT_LOOP_SECS,
+            }],
+            whole_secs: KIT_LOOP_SECS,
+            alone: true,
+            line: format!("kit {kit} played on one body, every {KIT_LOOP_SECS:.1}s"),
+        }
+    }
+
+    /// A visual's kits in the order a cast plays them, read from the edited
+    /// tables: the precast kit as the cast begins, the cast and channel kits
+    /// at the release, the impact kit on the target, and the state kit after
+    /// it. `None` for a visual that is not a row. A visual with no kit at
+    /// all is an empty loop, which the pane shows as two bodies standing.
+    ///
+    /// The times are the spell timeline's floors, since no spell states a
+    /// cast time here.
+    pub fn visual(session: &EditSession, visual: u32) -> Option<Pushes> {
+        use vale_assets::tables::spell::fields as v;
+        let visuals = session.table("SpellVisual")?;
+        let row = visuals.row_of(visual)?;
+        let kit = |field: usize| {
+            visuals
+                .u32_at(row, field)
+                .filter(|kit| *kit != 0 && *kit != u32::MAX)
+        };
+        let released = CAST_FLOOR;
+        let worn = released + IMPACT_SECS;
+        let whole = worn + STATE_SECS + REST_SECS;
+        let lanes = [
+            (v::PRECAST_KIT, 0.0, false),
+            (v::CAST_KIT, released, false),
+            (v::CHANNEL_KIT, released, false),
+            (v::IMPACT_KIT, released, true),
+            (v::STATE_KIT, worn, true),
+        ];
+        let pushes: Vec<Push> = lanes
+            .into_iter()
+            .filter_map(|(field, at, on_target)| {
+                Some(Push {
+                    at,
+                    kit: kit(field)?,
+                    on_target,
+                })
+            })
+            .collect();
+        Some(Pushes {
+            of: ("SpellVisual", visual),
+            pushes,
+            segments: vec![
+                Segment { name: "precast", from: 0.0, to: released },
+                Segment { name: "impact", from: released, to: worn },
+                Segment { name: "state", from: worn, to: worn + STATE_SECS },
+                Segment { name: "rest", from: worn + STATE_SECS, to: whole },
+            ],
+            whole_secs: whole,
+            alone: false,
+            line: format!(
+                "visual {visual}: its kits in order, with no spell behind them, so no \
+                 missile, no area and a state played once"
+            ),
+        })
+    }
+}
+
+/// What [`Stage::staged`] holds while a loop of pushed kits is on the stage:
+/// no spell has this id.
+const PUSHED: u32 = u32::MAX;
 
 /// What the preview is showing, and where it has got to.
 #[derive(Resource)]
 pub struct Stage {
     /// The spell being previewed, and `None` when the pane is not open.
     pub showing: Option<u32>,
-    /// …and what is standing on the stage, so a change of spell does not
-    /// respawn the models.
+    /// A loop of pushed kits played instead, while no spell is showing. See
+    /// [`Pushes`].
+    pub pushing: Option<Pushes>,
+    /// Which loop is on the stage and how many of its pushes have been made
+    /// since the loop last began.
+    pushed_of: Option<(&'static str, u32)>,
+    pushed: usize,
+    /// What is standing on the stage, kept so that a change of spell does
+    /// not respawn the models.
     staged: Option<u32>,
     /// Whether this spell lands on the caster itself — one actor rather than
     /// two. `SpellRange`'s maximum of zero is what says so.
@@ -278,7 +418,7 @@ pub struct Stage {
     pub area: Option<f32>,
     /// Where the timeline has got to, as a step already taken.
     done: Step,
-    /// **The stage has to be put back before the next step is taken** — the
+    /// The stage has to be put back before the next step is taken — the
     /// auras off, the area gone. Set by a restart or a seek and consumed by
     /// [`play`], which is the system holding the units.
     reset: bool,
@@ -289,7 +429,7 @@ pub struct Stage {
     held: f32,
     /// Where the actors are standing, in Bevy's axes — see [`stage_at`].
     pub(crate) middle: Vec3,
-    /// **What the orbit is centred on instead of the actors**, in Bevy's
+    /// What the orbit is centred on instead of the actors, in Bevy's
     /// axes, while something is. The model view sets it to the hung model's
     /// own frame each frame, so the picture is of the model and not of the
     /// hidden body's chest; `None` is the actors, a little above the ground.
@@ -298,7 +438,7 @@ pub struct Stage {
     pub yaw: f32,
     pub pitch: f32,
     pub distance: f32,
-    /// **How big the pane is**, in physical pixels — written by the panel every
+    /// How big the pane is, in physical pixels — written by the panel every
     /// frame, and what the render target is sized to.
     pub pane: Option<UVec2>,
     /// What the stage is drawn into, and what egui draws that by.
@@ -308,13 +448,22 @@ pub struct Stage {
     /// (`-1..1`, y up) and the pane's aspect — written by the panel, read by
     /// [`aim_the_pick`]. `None` when the pointer is elsewhere.
     pub pointer: Option<(Vec2, f32)>,
-    /// **Whether the pane is showing the attachment lab** rather than a spell
+    /// Whether the pane is showing the attachment lab rather than a spell
     /// — see `crate::lab`. The lab stands its own mannequin on the stage and
     /// uses the stage's camera, target, orbit and pick; what it does not use
     /// is the timeline, which is why it is a flag beside [`Self::showing`]
     /// rather than a value of it.
     pub lab: bool,
+    /// How many frames in a row every actor has had its model, and how long
+    /// the timeline has waited for that. See [`Stage::actors_ready`].
+    modelled_frames: u8,
+    waited: f32,
 }
+
+/// How long the timeline waits for the actors' models before it runs
+/// without them, so a model that will not load does not hold the bar at
+/// nought.
+const WAIT_SECS: f32 = 2.0;
 
 /// How far through a cast the stage has got.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord)]
@@ -339,12 +488,15 @@ impl Default for Stage {
     fn default() -> Stage {
         Stage {
             showing: None,
+            pushing: None,
+            pushed_of: None,
+            pushed: 0,
             staged: None,
             self_cast: false,
-            // **Looping and playing from the start.** A cast is under two
-            // seconds and the eye is on the form when it happens; a preview
-            // that played once and stopped is two people standing still, which
-            // is what a broken one looks like too.
+            // Looping and playing from the start. A cast is under two
+            // seconds and the user is looking at the form when it happens. A
+            // preview that played once and stopped would show two actors
+            // standing still, which is also what a broken preview shows.
             playing: true,
             looping: true,
             spinning: false,
@@ -359,7 +511,9 @@ impl Default for Stage {
             reset: false,
             pending_seek: None,
             held: 0.0,
-            // **Off the line between the actors rather than along it**, or one
+            modelled_frames: 0,
+            waited: 0.0,
+            // Off the line between the actors rather than along it, or one
             // stands behind the other, and far enough back that a five-yard
             // pair fits a pane that is usually taller than it is wide.
             yaw: 0.9,
@@ -377,9 +531,50 @@ impl Default for Stage {
 }
 
 impl Stage {
-    /// Whether the pane is up at all: a spell playing, or the lab.
+    /// Whether the pane is up at all: a spell playing, a loop of pushed
+    /// kits, or the lab.
     pub fn is_open(&self) -> bool {
-        self.showing.is_some() || self.lab
+        self.showing.is_some() || self.pushing.is_some() || self.lab
+    }
+
+    /// Close the pane: no spell, no loop of pushed kits and no lab.
+    pub fn close(&mut self) {
+        self.showing = None;
+        self.pushing = None;
+        self.lab = false;
+    }
+
+    /// The loop of pushed kits being played, which a showing spell overrides.
+    fn pushes(&self) -> Option<&Pushes> {
+        match self.showing {
+            Some(_) => None,
+            None => self.pushing.as_ref(),
+        }
+    }
+
+    /// Whether the timeline may run: every actor has had its model for two
+    /// frames, or [`WAIT_SECS`] have passed without that.
+    ///
+    /// The client's effect and pose passes adopt a unit's counters the first
+    /// time they see its model and act on nothing, so a counter moved before
+    /// then is never drawn. A kit's loop is one push at its start. Made on
+    /// the frame new actors are spawned, it is lost, and the pane shows a
+    /// body standing for a whole loop each time it opens or changes from
+    /// two actors to one.
+    fn actors_ready(&mut self, dt: f32, actors: usize, modelled: usize) -> bool {
+        if actors == 0 {
+            self.modelled_frames = 0;
+            self.waited = 0.0;
+            return false;
+        }
+        if modelled >= actors {
+            self.modelled_frames = self.modelled_frames.saturating_add(1);
+            self.waited = 0.0;
+        } else {
+            self.modelled_frames = 0;
+            self.waited += dt;
+        }
+        self.modelled_frames >= 2 || self.waited >= WAIT_SECS
     }
 
     /// Start the timeline again from nothing.
@@ -413,6 +608,9 @@ impl Stage {
 
     /// The timeline as segments, in order and without gaps, for the bar.
     pub fn segments(&self) -> Vec<Segment> {
+        if let Some(pushes) = self.pushes() {
+            return pushes.segments.clone();
+        }
         let mut out = Vec::new();
         let mut at = 0.0;
         let mut push = |name: &'static str, length: f32| {
@@ -445,6 +643,9 @@ impl Stage {
 
     /// What to say under the pane.
     pub fn transport_line(&self) -> String {
+        if let Some(pushes) = self.pushes() {
+            return format!("{:.2}s of {:.2}s · {}", self.at, self.whole_secs, pushes.line);
+        }
         let mut line = format!(
             "{:.2}s of {:.2}s · cast {:.0}ms",
             self.at,
@@ -470,7 +671,7 @@ impl Stage {
 
 /// The timing a spell's own row states.
 ///
-/// **Read from the edited tables**, so a cast time changed on the form changes
+/// Read from the edited tables, so a cast time changed on the form changes
 /// the preview.
 pub struct Timeline {
     pub cast_secs: f32,
@@ -520,7 +721,7 @@ impl Timeline {
             .map(f32::from_bits)
             .unwrap_or(0.0);
 
-        // **The area, off the visual's own gate** — the same column the client
+        // The area, off the visual's own gate — the same column the client
         // refuses to draw a `DynamicObject` without. Its radius is the first
         // effect's, which is what vmangos writes into the object.
         let area = session
@@ -581,20 +782,28 @@ pub fn arrange(
 ) {
     let Some(session) = session else { return };
 
-    let Some(spell) = stage.showing else {
-        // **The lab wants the fixtures and not the actors.** Built here, on
+    // What the actors are wanted for: a spell, or a loop of pushed kits,
+    // which is staged under an id no spell has. Either says whether one
+    // actor stands alone.
+    let wanted = match (stage.showing, stage.pushing.as_ref()) {
+        (Some(spell), _) => Some((spell, Timeline::of(&session, spell).self_cast)),
+        (None, Some(pushes)) => Some((PUSHED, pushes.alone)),
+        (None, None) => None,
+    };
+    let Some((spell, alone)) = wanted else {
+        // The lab wants the fixtures and not the actors. Built here, on
         // the same terms as a spell's, so that the two share one camera and
         // one render target — see the teardown note below.
         if stage.lab && fixtures.is_empty() {
             spawn_fixtures(&mut commands);
         }
         if stage.staged.is_some() {
-            // **The actors go and the fixtures stay.** The camera and its
-            // lights are the preview's, not the spell's, and tearing them down
-            // took the render target with them: coming back built a second
-            // camera while egui still held the first one's texture id, which is
-            // a picture that never updates again. Reported as the preview
-            // freezing after navigating away and back.
+            // The actors go and the fixtures stay. The camera and its
+            // lights are the preview's, not the spell's. Tearing them down
+            // takes the render target with them: reopening the pane then
+            // builds a second camera while egui still holds the first one's
+            // texture id, so the picture never updates again and the preview
+            // is frozen after navigating away and back.
             for entity in &units {
                 commands.entity(entity).despawn();
             }
@@ -604,49 +813,52 @@ pub fn arrange(
     };
 
     // A different spell on a stage that is already up: the actors stay when
-    // both spells have the same number of them, because what they *are* does
+    // both spells have the same number of them, because what they are does
     // not depend on the spell. Only the timeline restarts. A self-cast after a
     // targeted spell has one actor too many, so those are respawned.
+    //
+    // One loop of pushed kits after another keeps the staged id, so the
+    // count of actors is compared for that case too: a kit stands alone and
+    // a visual does not.
     if let Some(staged) = stage.staged {
-        if staged != spell {
-            let alone = Timeline::of(&session, spell).self_cast;
-            if alone != stage.self_cast {
-                for entity in &units {
-                    commands.entity(entity).despawn();
-                }
-                stage.staged = None;
-            } else {
-                stage.staged = Some(spell);
-                stage.restart();
-                return;
+        if alone != stage.self_cast {
+            for entity in &units {
+                commands.entity(entity).despawn();
             }
+            stage.staged = None;
+        } else if staged != spell {
+            stage.staged = Some(spell);
+            stage.restart();
+            return;
         } else {
             return;
         }
     }
 
-    // **Both layers, and the world's is not an accident.** The stage camera
-    // draws the picture from layer 2; the *client's* own per-frame work —
+    // Both layers, and the world's layer is required. The stage camera
+    // draws the picture from layer 2; the client's own per-frame work —
     // the particle simulation, the LOD, the UV scroll — keys on what the world
-    // camera can see, so an actor it cannot see is an actor whose effects never
-    // advance. See the module comment.
+    // camera can see, so the effects of an actor it cannot see never advance.
+    // See the module comment.
     let layer = RenderLayers::from_layers(&[0, STAGE_LAYER]);
     let middle = home(&camera, &playing, &focus);
     stage.middle = middle;
     let first_time = fixtures.is_empty();
-    // **A self-cast stands alone.** Everything lands on the caster, so a second
-    // body is a second body doing nothing — reported as *target: self* drawing
-    // two players. Whether it is one is the spell's own `SpellRange` maximum;
-    // see [`Timeline`].
-    let alone = Timeline::of(&session, spell).self_cast;
+    // A self-cast stands alone. Everything lands on the caster, so a second
+    // body would stand idle: a spell with target self would draw two players.
+    // Whether a spell is a self-cast is its own `SpellRange` maximum; see
+    // [`Timeline`].
     stage.self_cast = alone;
     for caster in [true, false] {
         if alone && !caster {
             continue;
         }
-        let side = match caster {
-            true => -APART / 2.0,
-            false => APART / 2.0,
+        // A lone actor stands in the middle, which is what the orbit turns
+        // about. At the caster's end of the line it is drawn off-centre.
+        let side = match (alone, caster) {
+            (true, _) => 0.0,
+            (false, true) => -APART / 2.0,
+            (false, false) => APART / 2.0,
         };
         commands.spawn((
             stage_unit(caster),
@@ -657,11 +869,11 @@ pub fn arrange(
                     false => std::f32::consts::FRAC_PI_2,
                 })),
             Visibility::default(),
-            // **Without a `Sheath` the unit is never drawn and nothing says
-            // so**: `spawn_models` takes it in its query rather than as an
-            // option, so an entity that has none simply does not match — no
-            // model, no fallback box, and not even the "no model for display N"
-            // line every other failure there prints.
+            // Without a `Sheath` the unit is never drawn and nothing is
+            // logged: `spawn_models` takes it in its query rather than as an
+            // option, so an entity that has none does not match. There is no
+            // model, no fallback box, and no "no model for display N" line,
+            // which every other failure there prints.
             vale_client::world::entities::Sheath::seeded(0),
             layer.clone(),
             StageUnit { caster },
@@ -684,29 +896,28 @@ pub fn arrange(
 /// [`keep_the_target`] gives it and is switched on by [`follow_the_pane`]
 /// while the pane is open.
 fn spawn_fixtures(commands: &mut Commands) {
-    // **The camera sees layer 2 and nothing else**, which is what keeps the
-    // world out of the picture. The *actors* are on both layers and the camera
-    // must not copy them: sharing one `RenderLayers` between the two put the
-    // whole of Elwynn in the preview.
+    // The camera sees layer 2 and nothing else, which is what keeps the
+    // world out of the picture. The actors are on both layers and the camera
+    // must not copy them: a camera sharing the actors' `RenderLayers` also
+    // sees layer 0 and draws the surrounding world in the preview.
     let only_the_stage = RenderLayers::layer(STAGE_LAYER);
     commands.spawn((
         StageCamera,
         Camera3d::default(),
-        // **No depth prepass, which the world's camera has only when F6 asks
-        // for one.** Adding one here to "match the client" was the grey panels
-        // laid over the characters at hard straight edges: the M2 materials
-        // write depth in the prepass and then blend in the forward pass, so a
-        // view with a prepass the game does not use draws the body against its
-        // own depth. A preview differing from the game is the fault, whichever
-        // direction it differs in.
+        // No depth prepass. The world's camera has one only when F6 asks for
+        // it. A prepass here draws grey panels over the characters, with hard
+        // straight edges: the M2 materials write depth in the prepass and
+        // then blend in the forward pass, so a view with a prepass the game
+        // does not use draws the body against its own depth. A preview that
+        // differs from the game is wrong, whichever direction it differs in.
         //
         // `Msaa::Off` stays: this target is an image, and a multisampled one
         // needs a resolve of its own.
         bevy::render::view::Msaa::Off,
         Camera {
-            // **Before the window's**, and into an image rather than onto it —
-            // see the module comment. A camera ordered *after* the window's
-            // draws over egui, which is where the transport row went.
+            // Before the window's, and into an image rather than onto it —
+            // see the module comment. A camera ordered after the window's
+            // draws over egui and hides the transport row.
             order: -1,
             is_active: false,
             clear_color: ClearColorConfig::Custom(BACKDROP),
@@ -717,9 +928,9 @@ fn spawn_fixtures(commands: &mut Commands) {
     ));
 }
 
-/// One of the two, as the world would have described it.
+/// One of the two actors, as the world would have described it.
 ///
-/// **A player rather than a creature**, because a player's skin is *composed*
+/// A player rather than a creature, because a player's skin is composed
 /// and a creature's is a file: display 49 is `HumanMale.m2` with no texture of
 /// its own, so a unit standing on that display id draws magenta. The reference
 /// tool uses the same model for the same reason — it is the one body in the
@@ -764,15 +975,15 @@ fn stage_area(spell: u32, radius: f32) -> WorldEntity {
     }
 }
 
-/// **Light the stage with the world's own sun.**
+/// Light the stage with the world's own sun.
 ///
 /// The client's `DirectionalLight`s carry no `RenderLayers`, which means layer
 /// 0, which means they do not reach the stage's view. Adding layer 2 to them
 /// changes nothing about the world — the mask still holds layer 0 — and makes
 /// the preview lit by exactly what the game is lit by.
 ///
-/// The alternative, lights of the stage's own, is what produced the teal
-/// patchwork: see the module comment.
+/// The alternative, lights of the stage's own, draws the actors as a teal
+/// patchwork.
 pub fn light_the_stage(
     mut commands: Commands,
     lights: Query<(Entity, Option<&RenderLayers>), With<DirectionalLight>>,
@@ -786,7 +997,7 @@ pub fn light_the_stage(
     }
 }
 
-/// **Put everything the client hangs under an actor on the stage's layer.**
+/// Put everything the client hangs under an actor on the stage's layer.
 ///
 /// `RenderLayers` is not inherited: each drawn entity carries its own and
 /// defaults to layer 0. The client resolves a unit into a subtree over the
@@ -798,14 +1009,14 @@ pub fn light_the_stage(
 /// walk of a few dozen entities; the world's is thirty thousand and is not
 /// touched.
 ///
-/// **Most of a spell is not under the actor at all.** The client spawns a
+/// Most of a spell is not under the actor at all. The client spawns a
 /// missile, every particle emitter, every ribbon trail, every ground quad and
-/// every chain bolt **at the world's root**, tied to what owns them by an
-/// `owner` entity or a guid rather than by the hierarchy — so the walk above
-/// never reaches them, and a stage that stamped only the descendants drew the
-/// bodies, the poses and the hand models and none of the fire. That was the
-/// report: most spell effects not rendering at all. Each of those kinds is
-/// found by what it *is* and stamped when its owner is one of the stage's
+/// every chain bolt at the world's root, tied to what owns them by an
+/// `owner` entity or a guid rather than by the hierarchy, so the walk above
+/// never reaches them. A stage that stamps only the descendants draws the
+/// bodies, the poses and the hand models and none of those root-level
+/// effects, so most spell effects do not render at all. Each of those kinds
+/// is found by its component and stamped when its owner is one of the stage's
 /// own; the owner join is the client's read-only accessor on each component.
 #[allow(clippy::too_many_arguments)]
 pub fn stamp_the_layer(
@@ -818,7 +1029,7 @@ pub fn stamp_the_layer(
             With<crate::lab::Mannequin>,
         )>,
     >,
-    // **The model view hides the body and not what hangs on it.** With the
+    // The model view hides the body and not what hangs on it. With the
     // lab's `alone` set, the mannequin's own parts are stamped with the
     // world's layer only, so the stage camera does not see them, and only
     // what hangs under one of its hung roots is stamped onto the stage. The
@@ -830,7 +1041,7 @@ pub fn stamp_the_layer(
     >,
     children: Query<&Children>,
     already: Query<&RenderLayers>,
-    // **A missile is not a child of its caster.** `render::missiles` spawns it
+    // A missile is not a child of its caster. `render::missiles` spawns it
     // at the root of the world with a transform of its own. There are none in
     // an editor that is not previewing, so this needs no proximity test: the
     // only thing throwing one is the stage.
@@ -845,8 +1056,8 @@ pub fn stamp_the_layer(
     // Everything that hangs under a stage root or a missile, as a set — the
     // owners the root-level effects are matched against.
     let mut ours: std::collections::HashSet<Entity> = std::collections::HashSet::new();
-    // …and the mannequin's own body, when it is to be kept off the stage:
-    // its descendants that are not under one of its hung roots.
+    // The mannequin's own body, when it is to be kept off the stage: its
+    // descendants that are not under one of its hung roots.
     let mut hidden: std::collections::HashSet<Entity> = std::collections::HashSet::new();
     for root in roots.iter().chain(missiles.iter()) {
         ours.insert(root);
@@ -925,7 +1136,7 @@ pub fn stamp_the_layer(
     }
 }
 
-/// **Keep the render target the size of the pane**, and register it with egui.
+/// Keep the render target the size of the pane, and register it with egui.
 ///
 /// Resized rather than made once, because the pane is resizable and the window
 /// is: an image stretched from 300 points to 900 is a preview drawn at a third
@@ -941,9 +1152,9 @@ pub fn keep_the_target(
 
     let Some(want) = stage.pane else { return };
     let want = want.max(UVec2::new(16, 16));
-    // **Compared against the image itself** rather than against a remembered
+    // Compared against the image itself rather than against a remembered
     // size: a `Local` outlives a teardown, and after one the remembered size
-    // matched an image nothing was rendering into any more.
+    // matches an image nothing is rendering into any more.
     let have = stage
         .target
         .as_ref()
@@ -963,9 +1174,9 @@ pub fn keep_the_target(
         TextureFormat::Bgra8UnormSrgb,
         RenderAssetUsages::all(),
     );
-    // **Both usages.** A render target has to be written by a pass and read by
-    // egui's own sampler, and an image that declares only one of the two is a
-    // black rectangle with a validation error behind it.
+    // Both usages. A render target has to be written by a pass and read by
+    // egui's own sampler, and an image that declares only one of the two draws
+    // as a black rectangle and raises a validation error.
     image.texture_descriptor.usage =
         TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT;
 
@@ -974,10 +1185,10 @@ pub fn keep_the_target(
     stage.target = Some(handle);
 }
 
-/// **Park the editor's own camera on the stage while the preview is open.**
+/// Park the editor's own camera on the stage while the preview is open.
 ///
 /// Not for the picture — that is the stage camera's — but because the client's
-/// particle, LOD and billboard passes all ask for the *world* camera and use it
+/// particle, LOD and billboard passes all ask for the world camera and use it
 /// as the one point of view there is. See the module comment. Restored to where
 /// the person left it when the preview closes.
 pub fn park_the_world_camera(
@@ -987,7 +1198,7 @@ pub fn park_the_world_camera(
     mut camera: ResMut<crate::camera::EditorCamera>,
     mut parked: Local<Option<(Vec3, f32, f32, f32)>>,
 ) {
-    // **Nothing to park during a playtest.** `camera::drive` returns while the
+    // Nothing to park during a playtest. `camera::drive` returns while the
     // editor is not driving, so every write below would reach a resource the
     // rig never reads — and the saved value would then be restored over the
     // editor's own camera on the way out of the playtest, moving it to wherever
@@ -1001,13 +1212,13 @@ pub fn park_the_world_camera(
             if parked.is_none() {
                 *parked = Some((camera.target, camera.distance, camera.pitch, camera.yaw));
             }
-            // **The stage's orbit is the rig's orbit, in the rig's own terms.**
+            // The stage's orbit is the rig's orbit, in the rig's own terms.
             // The stage camera used to compute an eye of its own from these
             // three numbers in Bevy's axes, and this converted them into the
             // rig's — with the yaw mirrored, so the world camera looked from
             // the other side of the actors. Everything the client billboards
             // and culls against the world camera was then built for a mirrored
-            // view, and the hover pick lit the *other* character. The rig is
+            // view, and the hover pick lit the other character. The rig is
             // the one authority now: this writes it, and `follow_the_pane`
             // copies what the client placed.
             camera.target = match stage.look_at {
@@ -1036,11 +1247,11 @@ pub fn park_the_world_camera(
     }
 }
 
-/// **The stage camera stands exactly where the world camera stands**, and
+/// The stage camera stands exactly where the world camera stands, and
 /// draws into the pane's image.
 ///
 /// Copied from the client's own camera rather than computed here, because
-/// every pass that billboards, culls or LODs asks the *world* camera and the
+/// every pass that billboards, culls or LODs asks the world camera and the
 /// picture is only right when the two coincide — see
 /// [`park_the_world_camera`], which is what puts the world camera on the
 /// stage's orbit. The field of view is copied too, so the picture frames what
@@ -1069,8 +1280,8 @@ pub fn follow_the_pane(
         return;
     };
     camera.is_active = stage.is_open();
-    // **`RenderTarget` is a component in this Bevy and not a field of
-    // `Camera`.** Inserted when the handle changes rather than every frame:
+    // `RenderTarget` is a component in this Bevy and not a field of `Camera`.
+    // It is inserted when the handle changes rather than every frame:
     // inserting a component marks the entity changed, and the render world
     // rebuilds a view for a camera whose target it thinks moved.
     if aimed_at.as_ref() != Some(&target) {
@@ -1086,19 +1297,19 @@ pub fn follow_the_pane(
     let Ok((world_placement, world_projection)) = world.single() else {
         return;
     };
-    // **During a playtest the pane aims itself**, because the world camera is
+    // During a playtest the pane aims itself, because the world camera is
     // the character's and [`park_the_world_camera`] cannot move it. Copying it
-    // then points the pane at whatever the player is looking at, with the actors
-    // standing off to one side of it — which is a pane that draws the world and
-    // none of the preview, reported as the storyboard and the lab showing
-    // nothing at all.
+    // then would point the pane at whatever the player is looking at, with the
+    // actors standing off to one side of it: the pane would draw the world and
+    // none of the preview, and the storyboard and the lab would show nothing
+    // at all.
     //
-    // What it costs is the reason the copying exists at all, and it is worth
-    // knowing before reading a picture taken this way: the client's particle,
-    // LOD and billboard passes ask for the *world* camera, so an emitter in the
-    // pane is billboarded against the player's point of view rather than the
-    // pane's. Models, attachments, skins and animation are unaffected, which is
-    // the whole of what the attachment lab and the model view show.
+    // The cost is the fault the copying exists to prevent: the client's
+    // particle, LOD and billboard passes ask for the world camera, so an
+    // emitter in the pane is billboarded against the player's point of view
+    // rather than the pane's. A picture taken during a playtest has that
+    // error in it. Models, attachments, skins and animation are unaffected,
+    // and those are all that the attachment lab and the model view show.
     let wanted = match playing.playing() {
         true => own_view(&stage, time.elapsed_secs()),
         false => *world_placement,
@@ -1119,7 +1330,7 @@ pub fn follow_the_pane(
     }
 }
 
-/// **Where the pane's own camera stands**, for the state in which it cannot
+/// Where the pane's own camera stands, for the state in which it cannot
 /// copy the world's.
 ///
 /// The stage's three orbit numbers are the rig's — a target, a distance, a
@@ -1153,9 +1364,9 @@ fn own_view(stage: &Stage, spin: f32) -> Transform {
     Transform::from_translation(eye).looking_at(at, Vec3::Y)
 }
 
-/// **Route the hover pick through the pane.**
+/// Route the hover pick through the pane.
 ///
-/// The client's pick casts the window's cursor through the *world* camera and
+/// The client's pick casts the window's cursor through the world camera and
 /// the world camera renders the whole window; the picture is the stage camera's
 /// and covers one rectangle of it at another aspect. So a pointer over the pane
 /// is re-expressed as the window position that casts the same ray: the two
@@ -1192,25 +1403,26 @@ pub fn aim_the_pick(
 
 /// Turn and zoom the stage.
 ///
-/// **Driven by the pane's own widget response**, not by a hit test: the image
-/// is an ordinary egui widget, so "was this drag mine" is a question egui has
-/// already answered — and a drag that began on the form and wandered over the
-/// preview is not the preview's, which is the fault the shell's own chrome rule
-/// exists for one layer up.
+/// Driven by the pane's own widget response, not by a hit test: the image
+/// is an ordinary egui widget, so egui has already decided whether a drag
+/// belongs to it. A drag that began on the form and moved over the preview is
+/// not the preview's. The shell's own chrome rule prevents the same fault one
+/// layer up.
 impl Stage {
     pub fn turn(&mut self, by: egui::Vec2) {
         self.yaw -= by.x * 0.01;
         self.pitch = (self.pitch + by.y * 0.008).clamp(-1.2, 1.3);
     }
 
-    /// `by` is egui's scroll delta in **points**, which is fifty or so per
+    /// `by` is egui's scroll delta in points, which is fifty or so per
     /// notch and decays over several frames rather than arriving in one.
     ///
-    /// The first draft took its sign and multiplied by 0.12 a frame, so one
-    /// notch ran the whole range: reported as any scroll going all the way in
-    /// or all the way out. Proportional to the delta, at a rate that makes one
-    /// notch about a tenth of the distance, and clamped per frame so a
-    /// trackpad's fling cannot jump the camera through the floor.
+    /// The zoom is proportional to the delta, at a rate that makes one notch
+    /// about a tenth of the distance, and clamped per frame so a trackpad's
+    /// fling cannot move the camera through the floor. Taking only the sign
+    /// of the delta and multiplying by 0.12 a frame does not work: the delta
+    /// lasts several frames, so one notch runs the whole range and any scroll
+    /// goes all the way in or all the way out.
     pub fn zoom(&mut self, by: f32) {
         let step = 1.0 - (by * 0.002).clamp(-0.2, 0.2);
         self.distance = (self.distance * step).clamp(2.5, 40.0);
@@ -1219,7 +1431,7 @@ impl Stage {
 
 /// Run the timeline: begin, release, land, wear, and round again.
 ///
-/// Every step is a **change to a counter** — except the state, which is an
+/// Every step is a change to a counter — except the state, which is an
 /// aura, because that is what the client watches for it. The steps are taken
 /// whether or not the clock is running, so a seek while paused still lands
 /// where it was asked to.
@@ -1230,8 +1442,20 @@ pub fn play(
     session: Option<Res<EditSession>>,
     mut units: Query<(&StageUnit, &mut WorldEntity, &Transform)>,
     areas: Query<Entity, With<StageArea>>,
+    modelled: Query<(), (With<StageUnit>, With<vale_client::world::entities::EntityModel>)>,
 ) {
-    let (Some(session), Some(spell)) = (session, stage.showing) else {
+    let Some(session) = session else {
+        return;
+    };
+    let ready = stage.actors_ready(
+        time.delta_secs(),
+        units.iter().count(),
+        modelled.iter().count(),
+    );
+    let Some(spell) = stage.showing else {
+        if stage.pushing.is_some() {
+            play_pushes(&time, &mut stage, &mut units, ready);
+        }
         return;
     };
     if stage.staged != Some(spell) {
@@ -1246,14 +1470,18 @@ pub fn play(
     stage.self_cast = timing.self_cast;
     stage.area = timing.area;
     stage.whole_secs = timing.whole();
+    // The clock and the steps wait for the actors' models.
+    if !ready {
+        return;
+    }
 
-    // **A pause holds the phase rather than freezing the frame.** The clips
+    // A pause holds the phase rather than freezing the frame. The clips
     // the effect pass hangs run on the world's clock, not the stage's, so a
-    // paused stage plays its one-shots out and then shows two people standing
-    // — which is what the first `--seek 1.9` photograph of Fireball was: the
+    // paused stage plays its one-shots out and then shows two actors standing:
+    // a capture of Fireball taken with `--seek 1.9` and no re-seek has the
     // playhead in the impact and nothing on the target. Re-seeking to the same
     // point every [`HOLD_SECS`] re-hangs them, so what is on screen while
-    // paused is the first second and a half of that phase, over and over.
+    // paused is the first second and a half of that phase, repeated.
     if stage.playing {
         stage.held = 0.0;
     } else {
@@ -1263,17 +1491,17 @@ pub fn play(
             stage.seek(at);
         }
     }
-    // **A pending seek pauses where it lands.** It is `--seek`'s, and the
-    // stage's own first `restart` — which runs in `arrange` after the flag was
-    // read — put the clock back to playing, so a shot taken "at 1.9 s" was
-    // taken wherever the loop had got to since.
+    // A pending seek pauses where it lands. It is `--seek`'s. The stage's
+    // own first `restart`, which runs in `arrange` after the flag is read,
+    // sets the clock playing, so without the pause a capture asked for at
+    // 1.9 s is taken wherever the loop has got to since.
     if let Some(secs) = stage.pending_seek.take() {
         stage.seek(secs);
         stage.playing = false;
     }
     if stage.reset {
         stage.reset = false;
-        // **The aura comes off between loops**, or the state art of the last
+        // The aura comes off between loops, or the state art of the last
         // pass is still up during the next one's wind-up; and the area goes
         // with it.
         for (_, mut unit, _) in units.iter_mut() {
@@ -1309,13 +1537,12 @@ pub fn play(
         };
         step(&mut commands, &mut units, spell, next, &timing);
         stage.done = next;
-        // **…and a channel's area comes down when the channel stops**, which is
-        // the other half of putting it down at the release: vmangos destroys
-        // the `DynamicObject` when the channel ends, so an area still standing
-        // through the impact and the worn state would be three seconds of a
-        // Blizzard nobody is casting. An instant area spell's is left up for
-        // the rest of the loop, because for that one the impact is when it
-        // arrived.
+        // A channel's area comes down when the channel stops. `step` puts
+        // it down at the release, and vmangos destroys the `DynamicObject`
+        // when the channel ends, so an area still standing through the impact
+        // and the worn state would show three seconds of a Blizzard nobody is
+        // casting. An instant area spell's area is left up for the rest of the
+        // loop, because for that spell the impact is when the area arrives.
         if next == Step::Landed && timing.channel_secs > 0.0 {
             for area in &areas {
                 commands.entity(area).despawn();
@@ -1323,6 +1550,100 @@ pub fn play(
         }
     }
 
+    if stage.at >= stage.whole_secs {
+        match stage.looping {
+            true => stage.restart(),
+            false => {
+                stage.playing = false;
+                stage.at = stage.whole_secs;
+            }
+        }
+    }
+}
+
+/// Run a loop of pushed kits: each kit is pushed onto its actor when the
+/// clock reaches it, and the loop begins again at its end.
+///
+/// The spell timeline's rules hold here too. A seek is a restart and a
+/// fast-forward, so every push up to the asked-for time is made in one
+/// frame, and a paused stage pushes its phase again every [`HOLD_SECS`] so
+/// that what is on screen is the phase and not two bodies standing after a
+/// one-shot clip has ended.
+fn play_pushes(
+    time: &Time,
+    stage: &mut Stage,
+    units: &mut Query<(&StageUnit, &mut WorldEntity, &Transform)>,
+    ready: bool,
+) {
+    if stage.staged != Some(PUSHED) {
+        return;
+    }
+    let Some(pushes) = stage.pushing.clone() else {
+        return;
+    };
+    // A different loop on the same actors starts from nothing.
+    if stage.pushed_of != Some(pushes.of) {
+        stage.pushed_of = Some(pushes.of);
+        stage.restart();
+    }
+    stage.cast_secs = 0.0;
+    stage.channel_secs = 0.0;
+    stage.flight_secs = 0.0;
+    stage.missile_speed = 0.0;
+    stage.area = None;
+    stage.self_cast = pushes.alone;
+    stage.whole_secs = pushes.whole_secs;
+    // The clock and the pushes wait for the actors' models.
+    if !ready {
+        return;
+    }
+
+    if stage.playing {
+        stage.held = 0.0;
+    } else {
+        stage.held += time.delta_secs();
+        if stage.held >= HOLD_SECS && stage.at < stage.whole_secs {
+            let at = stage.at;
+            stage.seek(at);
+        }
+    }
+    if let Some(secs) = stage.pending_seek.take() {
+        stage.seek(secs);
+        stage.playing = false;
+    }
+    if stage.reset {
+        stage.reset = false;
+        stage.pushed = 0;
+        // A spell played before this loop may have left its aura on.
+        for (_, mut unit, _) in units.iter_mut() {
+            if !unit.auras.is_empty() {
+                unit.auras.clear();
+            }
+        }
+    }
+    if stage.playing {
+        stage.at += time.delta_secs();
+    }
+    while let Some(push) = pushes.pushes.get(stage.pushed).filter(|push| push.at <= stage.at) {
+        // With one actor everything lands on it, as a self-cast does.
+        let on_target = push.on_target && !pushes.alone;
+        for (which, mut unit, _) in units.iter_mut() {
+            if which.caster == on_target {
+                continue;
+            }
+            match push.on_target {
+                true => {
+                    unit.last_spell_impact = push.kit;
+                    unit.spell_impacts = unit.spell_impacts.wrapping_add(1);
+                }
+                false => {
+                    unit.last_spell_visual = push.kit;
+                    unit.spell_visuals = unit.spell_visuals.wrapping_add(1);
+                }
+            }
+        }
+        stage.pushed += 1;
+    }
     if stage.at >= stage.whole_secs {
         match stage.looping {
             true => stage.restart(),
@@ -1363,12 +1684,13 @@ fn step(
                 unit.cast_time_ms = (timing.cast_secs * 1000.0) as u32;
                 unit.casts_begun = unit.casts_begun.wrapping_add(1);
             }
-            // **The ring and the counter together**: the pass reads the spells
+            // The ring and the counter together: the pass reads the spells
             // released since it last looked, which is a window into
-            // `recent_spells` rather than a single field. And the victim, in
-            // both of its spellings: the singular is what a missile flies at,
-            // the list is who the impact is owed to. A self-cast has nowhere
-            // to fly, so its singular stays 0 and its list names the caster,
+            // `recent_spells` rather than a single field. The victim is
+            // written to both of its fields: `last_spell_target` is what a
+            // missile flies at, and `last_spell_targets` is who the impact
+            // lands on. A self-cast has nowhere to fly, so its
+            // `last_spell_target` stays 0 and its list names the caster,
             // which is what the server's own hit list carries for a buff.
             (Step::Released, true, _) => {
                 let last = unit.recent_spells.len() - 1;
@@ -1379,35 +1701,34 @@ fn step(
                     false => victim_guid,
                 };
                 unit.last_spell_targets = vec![victim_guid];
-                // **A channel begins in the same step it is released**, which
+                // A channel begins in the same step it is released, which
                 // is the order vmangos sends the two packets in and the order
                 // the pose and effect passes are written against. The cast
                 // time restated is the channel's length, which is what holds
                 // the channel art up.
                 //
-                // **It is a `begun` as well as a `channelled`**, and that was
-                // the whole of the report that a channelled spell played no
-                // animation. `ObjectManager::apply_channel_start` — the one
-                // thing on the wire that states a channel — bumps *three*
-                // fields, `casts_begun` among them, and this reproduced two of
-                // them. Both passes that draw a channel are written against the
-                // begin: `pose` arms its held pose there and `effects` hangs its
-                // models there, so a channel with no begin left the wind-up's
-                // `Casting::until` to expire a moment later and the caster
-                // stood empty-handed for the whole of it. Blizzard is the
-                // report and the fix is in three places; this is the one that
-                // made the stage disagree with a session.
+                // It is a `begun` as well as a `channelled`.
+                // `ObjectManager::apply_channel_start`, which applies the one
+                // packet that states a channel, bumps three fields,
+                // `casts_begun` among them, and the stage has to bump the same
+                // three to agree with a session. Both passes that draw a
+                // channel are written against the begin: `pose` arms its held
+                // pose there and `effects` hangs its models there. A channel
+                // with no begin leaves the wind-up's `Casting::until` to
+                // expire a moment later, and the caster stands empty-handed
+                // and plays no animation for the whole of the channel.
+                // Blizzard is a spell that shows it.
                 if timing.channel_secs > 0.0 {
                     unit.cast_time_ms = (timing.channel_secs * 1000.0) as u32;
                     unit.casts_channelled = unit.casts_channelled.wrapping_add(1);
                     unit.casts_begun = unit.casts_begun.wrapping_add(1);
                 }
             }
-            // **The impact is the caster's counter**, because it is the
+            // The impact is the caster's counter, because it is the
             // caster's `SMSG_SPELL_GO` — see the module comment. The effect
             // pass hangs the impact kit on every guid in the caster's hit
-            // list, and skips the lot for a spell that throws a missile,
-            // whose arrival lands it instead.
+            // list, and skips all of them for a spell that throws a missile,
+            // whose arrival lands the impact instead.
             (Step::Landed, true, _) => {
                 unit.last_spell = spell;
                 unit.casts_landed = unit.casts_landed.wrapping_add(1);
@@ -1419,10 +1740,10 @@ fn step(
         if step == Step::Landed && victim && !timing.self_cast {
             unit.blows_taken = unit.blows_taken.wrapping_add(1);
         }
-        // **An aura and not a counter.** A state kit is worn for as long as
+        // An aura and not a counter. A state kit is worn for as long as
         // the aura is on the unit, so the client watches the aura list rather
         // than anything that counts — see `world::entities::effects`, where
-        // the state set is rebuilt when the *visible* auras change.
+        // the state set is rebuilt when the visible auras change.
         if step == Step::Worn && victim {
             unit.auras = vec![AuraSlot {
                 slot: 0,
@@ -1433,19 +1754,20 @@ fn step(
             }];
         }
     }
-    // **The area, at the victim's feet.** A `DynamicObject` the server would
+    // The area, at the victim's feet. A `DynamicObject` the server would
     // have put there; the client's own pass hangs the visual's area model on it
     // and runs its rain.
     //
-    // **A channel's area goes down when the channel starts, not when it ends.**
+    // A channel's area goes down when the channel starts, not when it ends.
     // vmangos creates the `DynamicObject` in `Spell::EffectPersistentAA`, which
-    // for a channelled spell runs as the channel begins and is destroyed when it
-    // stops — the area *is* the channel, and for Blizzard the falling ice is the
-    // area's rain rather than anything the impact hangs. Putting it down at
-    // `Landed` for every spell meant the four seconds of Blizzard's channel
-    // showed nothing and the one second after it showed the whole spell. That is
-    // the report. An instant area spell — Flamestrike — still lands its at the
-    // impact, which is the same rule: the area appears when the server makes it.
+    // for a channelled spell runs as the channel begins, and destroys it when
+    // the channel stops. The area lasts as long as the channel, and for
+    // Blizzard the falling ice is the area's rain rather than anything the
+    // impact hangs. Putting the area down at `Landed` for every spell shows
+    // nothing for the four seconds of Blizzard's channel and the whole spell
+    // in the one second after it. An instant area spell such as Flamestrike
+    // still puts its area down at the impact, which is the same rule: the area
+    // appears when the server makes it.
     let when = match timing.channel_secs > 0.0 {
         true => Step::Released,
         false => Step::Landed,
@@ -1467,7 +1789,7 @@ impl Plugin for StagePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Stage>().add_systems(
             Update,
-            // **Before the entity passes**, which read the counters `play`
+            // Before the entity passes, which read the counters `play`
             // writes: a step taken after them is a step drawn a frame late, and
             // for an impact that is half of it.
             (
@@ -1557,5 +1879,109 @@ mod tests {
         assert_eq!(stage.at, 5.0);
         assert!(stage.reset, "a seek puts the stage back before stepping");
         assert_eq!(stage.done, Step::Nothing);
+    }
+
+    /// A kit by itself is one push on one body at the start of a loop of one
+    /// segment.
+    #[test]
+    fn a_kit_is_pushed_onto_one_body_at_the_start_of_its_loop() {
+        let pushes = Pushes::kit(21);
+        assert_eq!(pushes.of, ("SpellVisualKit", 21));
+        assert!(pushes.alone);
+        assert_eq!(
+            pushes.pushes,
+            vec![Push {
+                at: 0.0,
+                kit: 21,
+                on_target: false
+            }]
+        );
+        assert_eq!(pushes.segments.len(), 1);
+        assert_eq!(pushes.segments[0].to, pushes.whole_secs);
+
+        let mut stage = Stage::default();
+        assert!(!stage.is_open());
+        stage.pushing = Some(pushes);
+        assert!(stage.is_open());
+        assert_eq!(stage.segments()[0].name, "kit");
+        stage.close();
+        assert!(!stage.is_open());
+    }
+
+    /// A visual's kits are pushed in the order a cast plays them: the precast
+    /// kit as the loop starts, the cast kit at the release with the impact on
+    /// the target, and the state after the impact. An empty lane pushes
+    /// nothing, a visual with no kit is an empty loop, and an id that is no
+    /// row is no loop.
+    #[test]
+    fn a_visual_s_kits_are_pushed_in_the_order_a_cast_plays_them() {
+        use vale_assets::tables::spell::fields as v;
+        let install =
+            std::env::temp_dir().join(format!("vale-stage-pushes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let project = vale_edit::project::Project::open(&install, "default").unwrap();
+        let mut session = EditSession::for_tests(project);
+        let mut bytes = b"WDBC".to_vec();
+        for word in [0u32, 15, 60, 1] {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        bytes.push(0);
+        let mut visuals = vale_edit::dbc::DbcFile::parse(&bytes).expect("an empty table");
+        for (id, set) in [
+            (
+                31u32,
+                vec![
+                    (v::PRECAST_KIT, 1u32),
+                    (v::CAST_KIT, 2),
+                    (v::IMPACT_KIT, 3),
+                    (v::STATE_KIT, 4),
+                    (v::CHANNEL_KIT, u32::MAX),
+                ],
+            ),
+            (32, Vec::new()),
+        ] {
+            let blank = visuals.blank_record(id);
+            let record = visuals.push_record(&blank).expect("a record");
+            for (field, value) in set {
+                visuals.set_u32(record, field, value);
+            }
+        }
+        session.tables.insert("SpellVisual".to_string(), visuals);
+
+        let pushes = Pushes::visual(&session, 31).expect("a row");
+        assert!(!pushes.alone);
+        let order: Vec<(u32, bool)> = pushes.pushes.iter().map(|p| (p.kit, p.on_target)).collect();
+        assert_eq!(order, vec![(1, false), (2, false), (3, true), (4, true)]);
+        let at: Vec<f32> = pushes.pushes.iter().map(|p| p.at).collect();
+        assert_eq!(at, vec![0.0, CAST_FLOOR, CAST_FLOOR, CAST_FLOOR + IMPACT_SECS]);
+        for pair in pushes.segments.windows(2) {
+            assert!((pair[0].to - pair[1].from).abs() < 1e-6, "{pair:?}");
+        }
+        assert!((pushes.segments.last().unwrap().to - pushes.whole_secs).abs() < 1e-6);
+
+        let empty = Pushes::visual(&session, 32).expect("a row");
+        assert!(empty.pushes.is_empty());
+        assert!(Pushes::visual(&session, 99).is_none());
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// The timeline waits until every actor has had its model for two
+    /// frames, starts over when an actor is replaced, and runs without the
+    /// models once it has waited long enough.
+    #[test]
+    fn the_timeline_waits_for_the_actors_models() {
+        let mut stage = Stage::default();
+        assert!(!stage.actors_ready(0.016, 0, 0), "no actors");
+        assert!(!stage.actors_ready(0.016, 2, 1), "one has no model yet");
+        assert!(!stage.actors_ready(0.016, 2, 2), "the first frame with both");
+        assert!(stage.actors_ready(0.016, 2, 2));
+        // New actors: the wait starts again.
+        assert!(!stage.actors_ready(0.016, 1, 0));
+        assert!(!stage.actors_ready(0.016, 1, 1));
+        assert!(stage.actors_ready(0.016, 1, 1));
+        // A model that never arrives does not hold the timeline for ever.
+        assert!(!stage.actors_ready(1.0, 1, 0));
+        assert!(!stage.actors_ready(0.9, 1, 0));
+        assert!(stage.actors_ready(0.2, 1, 0));
     }
 }

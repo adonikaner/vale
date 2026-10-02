@@ -101,6 +101,22 @@
 //! twice, in a DBC table and in a server row. [`move_between_sets`] is
 //! the table half of keeping them in step.
 //!
+//! ## Commands on a row
+//!
+//! What is done to a row other than editing a field is a [`Command`]:
+//! clone, delete, copy the id, and a table's own, such as making a spell's
+//! teaching spell. [`commands`] lists a table's and [`command_label`] words
+//! one for a row, or says it does not apply to that row. The panel's buttons
+//! and its right-click menus read both, so the two cannot differ.
+//!
+//! ## A row of the spell chain is found and pictured by its models
+//!
+//! A kit's label names its first model and a visual's the first spell that
+//! uses it. The search index also holds every model a kit hangs, by effect
+//! name and by file name, and every spell that uses a visual
+//! ([`search_words`]), and [`first_model`] is the model a list draws beside
+//! the row.
+//!
 //! The contents of a blank row are the only table-specific rule here: a kit's
 //! effect and procedural slots are `-1` for none ([`blank_defaults`]), which is
 //! the convention the shipped rows use.
@@ -179,6 +195,9 @@ pub enum Modal {
         column: &'static str,
         bits: &'static [(u32, &'static str, &'static str)],
     },
+    /// Choose the visual of the `Spell` row at `record` by another spell,
+    /// which is played, and either share that spell's visual or clone it.
+    LooksLike { record: usize },
 }
 
 /// The folders the model browser can be narrowed to, as path prefixes; the
@@ -252,6 +271,10 @@ pub struct Browser {
     /// Whether the picker's box should take the keyboard on the next frame,
     /// which is the frame after it opens.
     pub pick_focus: bool,
+    /// The row a picker that plays its rows has selected, by its id. A
+    /// press selects a row and plays it, and a second action chooses it;
+    /// see `ui::data`.
+    pub pick_selected: Option<u32>,
     /// The open dialog, if any; see [`Modal`].
     pub modal: Option<Modal>,
     /// Every `.m2` the archives list, lower case, read once for the model
@@ -557,7 +580,8 @@ impl Browser {
         let rows = (0..count)
             .map(|record| {
                 let label = describe(self, session, table_name, record);
-                format!("{} {}", label.title, label.sub).to_ascii_lowercase()
+                let words = search_words(self, session, table_name, record);
+                format!("{} {}{words}", label.title, label.sub).to_ascii_lowercase()
             })
             .collect();
         self.names.insert(
@@ -1888,6 +1912,260 @@ fn record_cloned(session: &mut EditSession, done: chain::Cloned) {
     }
 }
 
+/// A command on one row of a table.
+///
+/// The list's buttons, the form's buttons and a row's right-click menu all
+/// take a row's commands from [`commands`] and word them through
+/// [`command_label`], so a command reads the same wherever it is pressed,
+/// and one that does not apply to a row is offered in none of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Command {
+    AddToSkillLine,
+    CreateTeachingSpell,
+    LookLike,
+    CloneChain,
+    GiveToRacesAndClasses,
+    Clone,
+    Delete,
+    CopyId,
+}
+
+/// The commands the rows of a table take, in the order a menu lists them:
+/// the table's own first, then the three every row has.
+pub fn commands(table: &str) -> Vec<Command> {
+    let mut all = match table {
+        "Spell" => vec![
+            Command::AddToSkillLine,
+            Command::CreateTeachingSpell,
+            Command::LookLike,
+        ],
+        "SpellVisual" => vec![Command::CloneChain],
+        "SkillLine" => vec![Command::GiveToRacesAndClasses],
+        _ => Vec::new(),
+    };
+    all.extend([Command::Clone, Command::Delete, Command::CopyId]);
+    all
+}
+
+/// What a command is called for one row, or `None` when it does not apply to
+/// that row. A command with a consequence states it in its name: a menu acts
+/// on a row that has not been opened, so there is no form to read it from.
+pub fn command_label(
+    browser: &mut Browser,
+    session: &EditSession,
+    table: &str,
+    record: usize,
+    command: Command,
+) -> Option<String> {
+    let id = session.table(table)?.u32_at(record, 0)?;
+    Some(match command {
+        Command::AddToSkillLine => "Add to a skill line".to_string(),
+        // Offered while the spell has no instant teaching spell, which is the
+        // one a trainer's list names.
+        Command::CreateTeachingSpell => {
+            let teachers = teachers_of(browser, session, id);
+            if teachers.iter().any(|&(_, instant)| instant) {
+                return None;
+            }
+            match teachers.is_empty() {
+                true => "Create a teaching spell".to_string(),
+                false => "Create an instant teaching spell".to_string(),
+            }
+        }
+        Command::LookLike => "Look like a spell\u{2026}".to_string(),
+        Command::CloneChain => "Clone chain".to_string(),
+        Command::GiveToRacesAndClasses => "Give it to races and classes".to_string(),
+        Command::Clone => "Clone".to_string(),
+        Command::Delete => match browser.used_by(session, table, id).len() {
+            0 => "Delete".to_string(),
+            1 => "Delete: 1 reference will point at nothing".to_string(),
+            n => format!("Delete: {n} references will point at nothing"),
+        },
+        Command::CopyId => format!("Copy id {id}"),
+    })
+}
+
+/// What a command does, for the tooltip on its button and its menu entry.
+pub fn command_about(command: Command) -> &'static str {
+    match command {
+        Command::AddToSkillLine => {
+            "A new SkillLineAbility row naming this spell, and the picker for its skill \
+             line. One undo entry. A mask left at zero is every class or every race."
+        }
+        Command::CreateTeachingSpell => {
+            "A new spell under the next id that teaches this one: Learn Spell as its first \
+             effect, an instant cast, and this spell's name, rank and icon. One undo entry. \
+             The Trainer window can then add it to a trainer's list."
+        }
+        Command::LookLike => {
+            "Choose this spell's visual by another spell, with that spell playing: share \
+             its visual, or clone it."
+        }
+        Command::CloneChain => {
+            "Copy this visual with every kit and effect it names, each rewired to the \
+             copies, and open the copy. The original and the spells that share it are \
+             untouched."
+        }
+        Command::GiveToRacesAndClasses => {
+            "A new SkillRaceClassInfo row naming this line, for every race and every class, \
+             with no flag set. One undo entry."
+        }
+        Command::Clone => "A copy of the row under the next id; a copied name gets \" (copy)\".",
+        Command::Delete => "Remove the row. One undo entry.",
+        Command::CopyId => "Put the row's id on the clipboard.",
+    }
+}
+
+/// The model that pictures a row of the spell chain in a list: an effect's
+/// own, a kit's first, and for a visual the first model of the first kit
+/// that has one, then its missile's and its area's. `None` for a row with no
+/// model and for a row of any other table.
+pub fn first_model(
+    browser: &mut Browser,
+    session: &EditSession,
+    table: &str,
+    record: usize,
+) -> Option<String> {
+    use vale_assets::tables::spell::fields;
+    let named = |id: &u32| *id != 0 && *id != u32::MAX;
+    match table {
+        "SpellVisualEffectName" => session
+            .table(table)?
+            .string_at(record, fields::EFFECT_MODEL)
+            .filter(|path| !path.is_empty()),
+        "SpellVisualKit" => {
+            let kits = session.table(table)?;
+            let effects: Vec<u32> = KIT_MODELS
+                .iter()
+                .filter_map(|&field| kits.u32_at(record, field))
+                .filter(named)
+                .collect();
+            effects.into_iter().find_map(|effect| {
+                let row = browser.record_of(session, "SpellVisualEffectName", effect)?;
+                first_model(browser, session, "SpellVisualEffectName", row)
+            })
+        }
+        "SpellVisual" => {
+            let visuals = session.table(table)?;
+            let kits: Vec<u32> = VISUAL_SLOTS
+                .iter()
+                .filter_map(|&(field, _)| visuals.u32_at(record, field))
+                .filter(named)
+                .collect();
+            let of_a_kit = kits.into_iter().find_map(|kit| {
+                let row = browser.record_of(session, "SpellVisualKit", kit)?;
+                first_model(browser, session, "SpellVisualKit", row)
+            });
+            if of_a_kit.is_some() {
+                return of_a_kit;
+            }
+            [fields::MISSILE_MODEL, fields::AREA_MODEL]
+                .into_iter()
+                .filter_map(|field| visuals.u32_at(record, field))
+                .filter(named)
+                .find_map(|effect| {
+                    let row = browser.record_of(session, "SpellVisualEffectName", effect)?;
+                    first_model(browser, session, "SpellVisualEffectName", row)
+                })
+        }
+        _ => None,
+    }
+}
+
+/// What a row of the spell chain is found by in a search and is not labelled
+/// with: every model a kit hangs, by its effect's name and its file's name,
+/// and for a visual the models of each of its kits, its missile and its area,
+/// and the name of every spell that uses it.
+///
+/// A label has room for one model and one spell. A person looking for a kit
+/// remembers a model, such as a file with `frost` in its name, and the kit
+/// that hangs it third is the one they want as often as the kit that hangs
+/// it first.
+fn search_words(
+    browser: &mut Browser,
+    session: &EditSession,
+    table: &str,
+    record: usize,
+) -> String {
+    use vale_assets::tables::spell::fields;
+    let mut words = String::new();
+    match table {
+        "SpellVisualKit" => kit_words(browser, session, &mut words, record),
+        "SpellVisual" => {
+            let Some(visuals) = session.table(table) else {
+                return words;
+            };
+            for &(field, _) in &VISUAL_SLOTS {
+                let row = visuals
+                    .u32_at(record, field)
+                    .filter(|kit| *kit != 0 && *kit != u32::MAX)
+                    .and_then(|kit| browser.record_of(session, "SpellVisualKit", kit));
+                if let Some(row) = row {
+                    kit_words(browser, session, &mut words, row);
+                }
+            }
+            for field in [fields::MISSILE_MODEL, fields::AREA_MODEL] {
+                if let Some(effect) = visuals.u32_at(record, field) {
+                    effect_words(browser, session, &mut words, effect);
+                }
+            }
+            // Each name once: the nine ranks of a spell share a visual.
+            let id = visuals.u32_at(record, 0).unwrap_or_default();
+            let mut seen: Vec<String> = Vec::new();
+            for at in browser.used_by(session, "SpellVisual", id) {
+                if at.table != "Spell" {
+                    continue;
+                }
+                let name = session
+                    .table("Spell")
+                    .and_then(|spells| {
+                        spells.string_at(
+                            at.record,
+                            vale_assets::tables::spellbook::spell_fields::NAME,
+                        )
+                    })
+                    .unwrap_or_default();
+                if !name.is_empty() && !seen.contains(&name) {
+                    words.push(' ');
+                    words.push_str(&name);
+                    seen.push(name);
+                }
+            }
+        }
+        _ => {}
+    }
+    words
+}
+
+/// Add the name and the model file's name of every effect a kit hangs.
+fn kit_words(browser: &mut Browser, session: &EditSession, words: &mut String, record: usize) {
+    let Some(kits) = session.table("SpellVisualKit") else {
+        return;
+    };
+    for &field in &KIT_MODELS {
+        if let Some(effect) = kits.u32_at(record, field) {
+            effect_words(browser, session, words, effect);
+        }
+    }
+}
+
+/// Add an effect's name and its model file's name. An id that is no row,
+/// which includes the two values for none, adds nothing.
+fn effect_words(browser: &mut Browser, session: &EditSession, words: &mut String, effect: u32) {
+    use vale_assets::tables::spell::fields;
+    let Some(names) = session.table("SpellVisualEffectName") else {
+        return;
+    };
+    let Some(row) = browser.record_of(session, "SpellVisualEffectName", effect) else {
+        return;
+    };
+    for field in [fields::EFFECT_NAME, fields::EFFECT_MODEL] {
+        let text = names.string_at(row, field).unwrap_or_default();
+        words.push(' ');
+        words.push_str(basename(&text));
+    }
+}
+
 /// The kit column that names an effect, if exactly one kit column does.
 ///
 /// Returns `(record, field)` of the `SpellVisualKit` row and the kit's own id.
@@ -2082,6 +2360,9 @@ pub fn open_tables(
     mut stage: ResMut<crate::stage::Stage>,
     mut lab: ResMut<crate::lab::Lab>,
     mut pointed: Local<Option<String>>,
+    time: Res<Time>,
+    // When `--row` opened its row, and whether `--set` has been written.
+    mut scripted: Local<(Option<f64>, bool)>,
 ) {
     let (Some(mut session), Some(mut browser)) = (session, browser) else {
         return;
@@ -2091,8 +2372,7 @@ pub fn open_tables(
         // `showing`, and the panel is not drawn once the rail moves to a World
         // tool, so without this the stage stayed up, the actors stayed in the
         // world and the camera stayed locked on the storyboard's characters.
-        stage.showing = None;
-        stage.lab = false;
+        stage.close();
         return;
     };
     // The rail's table is where the browser starts, not a table it is held on.
@@ -2144,8 +2424,7 @@ pub fn open_tables(
     // there is none.
     let open = browser.table.clone();
     if open.is_empty() {
-        stage.showing = None;
-        stage.lab = false;
+        stage.close();
         return;
     }
     if !session.open_table(&assets, &open) {
@@ -2230,6 +2509,41 @@ pub fn open_tables(
                         None => warn!("--bits {wanted}: {open} has no named mask by that name"),
                     }
                 }
+                // `--choose <column>` opens the reference picker on that
+                // column, for the same reason. The picker selects the row
+                // the column holds, so one over the spell chain opens
+                // playing it.
+                if let Some(wanted) = args.choose.as_deref() {
+                    match schema::for_table(&open).and_then(|schema| {
+                        schema.columns.iter().find_map(|column| match column.kind {
+                            Kind::Reference(points_at)
+                                if column.name.eq_ignore_ascii_case(wanted.trim()) =>
+                            {
+                                Some((column.field, points_at))
+                            }
+                            _ => None,
+                        })
+                    }) {
+                        Some((field, points_at)) => {
+                            browser.modal = Some(Modal::Pick {
+                                table: open.clone(),
+                                record,
+                                field,
+                                points_at,
+                            });
+                            browser.pick_query.clear();
+                            browser.pick_focus = true;
+                        }
+                        None => warn!("--choose {wanted}: {open} has no reference by that name"),
+                    }
+                }
+                // `--like <spell id>` opens the dialog that takes another
+                // spell's look, with that spell selected.
+                if let (Some(like), true) = (args.like, open == "Spell") {
+                    browser.modal = Some(Modal::LooksLike { record });
+                    browser.pick_query.clear();
+                    browser.pick_selected = Some(like);
+                }
                 // `--browse` opens the model browser over the row. It is
                 // otherwise two presses in, so a scripted `--shot` could not
                 // reach it.
@@ -2243,6 +2557,41 @@ pub fn open_tables(
                 }
             }
             None => session.status = format!("{open} has no row {id}"),
+        }
+    }
+
+    // `--set <column>=<value>`, once the row has been open for
+    // [`SET_AFTER`] seconds: long enough for a preview beside the form to be
+    // playing, so the write is an edit made under a standing preview.
+    /// How long after the row opens `--set` writes its field.
+    const SET_AFTER: f64 = 6.0;
+    if let (Some((wanted, value)), Some(record), false) =
+        (args.set.as_ref(), browser.open, scripted.1)
+    {
+        let now = time.elapsed_secs_f64();
+        let since = *scripted.0.get_or_insert(now);
+        if browser.seeded && now - since >= SET_AFTER {
+            scripted.1 = true;
+            let column = schema::for_table(&open).and_then(|schema| {
+                schema
+                    .columns
+                    .iter()
+                    .find(|column| column.name.eq_ignore_ascii_case(wanted))
+            });
+            match column {
+                Some(column) => {
+                    set_field(
+                        &mut session,
+                        &open,
+                        record,
+                        column.field,
+                        *value,
+                        &format!("Edit {}", column.name),
+                        now,
+                    );
+                }
+                None => warn!("--set {wanted}: {open} has no column by that name"),
+            }
         }
     }
 }
@@ -2721,5 +3070,156 @@ mod tests {
             ..RowLabel::default()
         };
         assert_eq!(bare.line(), "12");
+    }
+
+    /// A table's commands are its own and then the three every row has, and
+    /// a command that does not apply to a row has no label: a spell with an
+    /// instant teaching spell is not offered another. A delete says how many
+    /// references it leaves pointing at nothing.
+    #[test]
+    fn a_row_s_commands_are_its_table_s_and_are_worded_for_the_row() {
+        use vale_assets::tables::spell::fields::SPELL_VISUAL;
+        assert_eq!(
+            commands("Spell"),
+            vec![
+                Command::AddToSkillLine,
+                Command::CreateTeachingSpell,
+                Command::LookLike,
+                Command::Clone,
+                Command::Delete,
+                Command::CopyId,
+            ]
+        );
+        assert_eq!(commands("SpellVisual")[0], Command::CloneChain);
+        assert_eq!(commands("SkillLine")[0], Command::GiveToRacesAndClasses);
+        assert_eq!(
+            commands("AreaTable"),
+            vec![Command::Clone, Command::Delete, Command::CopyId]
+        );
+
+        let (mut session, install) = session("commands");
+        let mut spells = empty(173);
+        add(&mut spells, 133, &[(SPELL_VISUAL, 7)], &[]);
+        add(&mut spells, 143, &[(SPELL_VISUAL, 7)], &[]);
+        let mut visuals = empty(15);
+        add(&mut visuals, 7, &[], &[]);
+        add(&mut visuals, 8, &[], &[]);
+        session.tables.insert("Spell".to_string(), spells);
+        session.tables.insert("SpellVisual".to_string(), visuals);
+        let mut browser = Browser::default();
+        let mut label = |table: &str, record: usize, command: Command| {
+            command_label(&mut browser, &session, table, record, command)
+        };
+        assert_eq!(
+            label("SpellVisual", 0, Command::Delete).as_deref(),
+            Some("Delete: 2 references will point at nothing")
+        );
+        assert_eq!(label("SpellVisual", 1, Command::Delete).as_deref(), Some("Delete"));
+        assert_eq!(label("SpellVisual", 1, Command::CopyId).as_deref(), Some("Copy id 8"));
+        assert_eq!(
+            label("Spell", 0, Command::CreateTeachingSpell).as_deref(),
+            Some("Create a teaching spell")
+        );
+        assert_eq!(label("Spell", 9, Command::Clone), None, "no such row");
+
+        let made = add_teaching_spell(&mut session, 133).expect("a teaching spell");
+        assert!(session.tables["Spell"].row_of(made).is_some());
+        let mut browser = Browser::default();
+        assert_eq!(
+            command_label(&mut browser, &session, "Spell", 0, Command::CreateTeachingSpell),
+            None,
+            "an instant teaching spell exists"
+        );
+        assert!(
+            command_label(&mut browser, &session, "Spell", 1, Command::CreateTeachingSpell)
+                .is_some()
+        );
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// A kit is pictured by the first model it hangs and a visual by its
+    /// first kit's, or by its missile's when no kit has one. Both are found
+    /// by the name of a model's file wherever in the kit it hangs, and a
+    /// visual by the name of a spell that uses it.
+    #[test]
+    fn a_kit_and_a_visual_are_pictured_and_found_by_their_models() {
+        use vale_assets::tables::spell::fields;
+        let (mut session, install) = session("models");
+        let mut effects = empty(5);
+        add(
+            &mut effects,
+            11,
+            &[],
+            &[
+                (fields::EFFECT_NAME, "Fire hand"),
+                (fields::EFFECT_MODEL, "Spells\\Fire_Hand.mdx"),
+            ],
+        );
+        add(
+            &mut effects,
+            12,
+            &[],
+            &[
+                (fields::EFFECT_NAME, "Frost base"),
+                (fields::EFFECT_MODEL, "Spells\\Frost_Nova_Base.mdx"),
+            ],
+        );
+        let mut kits = empty(35);
+        // The right hand and then the base, in the order a label reads them.
+        add(&mut kits, 21, &[(7, 11), (5, 12)], &[]);
+        add(&mut kits, 22, &[], &[]);
+        let mut visuals = empty(15);
+        add(&mut visuals, 31, &[(fields::CAST_KIT, 21)], &[]);
+        add(&mut visuals, 32, &[(fields::MISSILE_MODEL, 12)], &[]);
+        add(&mut visuals, 33, &[(fields::IMPACT_KIT, 22)], &[]);
+        let mut spells = empty(173);
+        add(
+            &mut spells,
+            133,
+            &[(fields::SPELL_VISUAL, 31)],
+            &[(vale_assets::tables::spellbook::spell_fields::NAME, "Fireball")],
+        );
+        session.tables.insert("SpellVisualEffectName".to_string(), effects);
+        session.tables.insert("SpellVisualKit".to_string(), kits);
+        session.tables.insert("SpellVisual".to_string(), visuals);
+        session.tables.insert("Spell".to_string(), spells);
+        let mut browser = Browser::default();
+
+        let model = |browser: &mut Browser, table: &str, record: usize| {
+            first_model(browser, &session, table, record)
+        };
+        assert_eq!(
+            model(&mut browser, "SpellVisualEffectName", 1).as_deref(),
+            Some("Spells\\Frost_Nova_Base.mdx")
+        );
+        assert_eq!(
+            model(&mut browser, "SpellVisualKit", 0).as_deref(),
+            Some("Spells\\Fire_Hand.mdx")
+        );
+        assert_eq!(model(&mut browser, "SpellVisualKit", 1), None);
+        assert_eq!(
+            model(&mut browser, "SpellVisual", 0).as_deref(),
+            Some("Spells\\Fire_Hand.mdx")
+        );
+        assert_eq!(
+            model(&mut browser, "SpellVisual", 1).as_deref(),
+            Some("Spells\\Frost_Nova_Base.mdx"),
+            "the missile, when no kit has a model"
+        );
+        assert_eq!(model(&mut browser, "SpellVisual", 2), None);
+        assert_eq!(model(&mut browser, "Spell", 0), None);
+
+        let mut found = |table: &str, query: &str| -> Vec<usize> {
+            browser.look_at(table);
+            browser.query = query.to_string();
+            browser.matches(&session).to_vec()
+        };
+        // The second model of the kit, which the kit's label does not name.
+        assert_eq!(found("SpellVisualKit", "frost_nova"), vec![0]);
+        assert_eq!(found("SpellVisual", "fire_hand"), vec![0]);
+        assert_eq!(found("SpellVisual", "frost_nova"), vec![0, 1]);
+        assert_eq!(found("SpellVisual", "fireball"), vec![0]);
+        assert!(found("SpellVisual", "arcane").is_empty());
+        let _ = std::fs::remove_dir_all(&install);
     }
 }

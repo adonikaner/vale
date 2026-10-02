@@ -735,6 +735,25 @@ pub struct Args {
     /// field, which a scripted run cannot press, so without this a scripted run
     /// cannot photograph the widest dialog added to the spell workspace.
     pub bits: Option<String>,
+    /// `--choose <column>`: open the reference picker on that column of
+    /// `--row`, selecting the row the column holds.
+    ///
+    /// Same reason as `--bits`. On a column of the spell chain the picker
+    /// plays the selected row, and this is how a scripted run photographs it.
+    pub choose: Option<String>,
+    /// `--like <spell id>`: open the dialog that chooses the look of the
+    /// spell `--row` names by another spell, with that spell selected and
+    /// playing. Same reason as `--bits`.
+    pub like: Option<u32>,
+    /// `--set <column>=<value>`: write one field of the row `--row` names,
+    /// a few seconds after the row opens.
+    ///
+    /// An edit made while a preview is playing takes a different path from
+    /// one made before the preview opens: the actors are already standing
+    /// when the tables are read again. A scripted run cannot type into a
+    /// field, so without this that path cannot be photographed or timed.
+    /// The value is signed, so `-1` empties a kit's slot.
+    pub set: Option<(String, u32)>,
     /// `--enclose <x0,y0,x1,y1>`: a rectangle in window pixels, released over
     /// the world once it has streamed in, as though it had been dragged on
     /// empty ground with the chosen tool. See `tools::group`.
@@ -786,6 +805,9 @@ impl Default for Args {
             regenerate: false,
             migration: false,
             bits: None,
+            choose: None,
+            like: None,
+            set: None,
             enclose: None,
             taxi_node: None,
             taxi_path: None,
@@ -1184,6 +1206,19 @@ impl Args {
                 "--migration" => parsed.migration = true,
                 "--bits" => {
                     parsed.bits = args.next().filter(|name| !name.trim().is_empty());
+                }
+                "--choose" => {
+                    parsed.choose = args.next().filter(|name| !name.trim().is_empty());
+                }
+                "--set" => {
+                    parsed.set = args.next().and_then(|pair| {
+                        let (column, value) = pair.split_once('=')?;
+                        let value: i64 = value.trim().parse().ok()?;
+                        Some((column.trim().to_string(), value as u32))
+                    });
+                }
+                "--like" => {
+                    parsed.like = args.next().as_deref().and_then(|v| v.trim().parse().ok());
                 }
                 "--playtest" => {
                     parsed.playtest = args.next().as_deref().and_then(parse_playtest);

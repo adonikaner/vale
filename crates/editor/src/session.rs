@@ -766,6 +766,20 @@ impl EditSession {
         }
     }
 
+    /// Take a table's bytes back out of the overlay, so the project folder
+    /// or the archives answer for its path again, and have the client read
+    /// its tables again. The counterpart of [`Self::publish_table`].
+    pub fn unpublish_table(&mut self, name: &str) {
+        let path = vale_assets::tables::dbc::dbc_path(name).to_ascii_lowercase();
+        let had = match self.edited.write() {
+            Ok(mut edited) => edited.remove(&path).is_some(),
+            Err(_) => false,
+        };
+        if had {
+            self.tables_republished = true;
+        }
+    }
+
     /// Put any file's bytes into the overlay under a virtual path, so the
     /// next read of that path answers with them — a model just baked, before
     /// or instead of writing it anywhere.
@@ -845,6 +859,11 @@ impl EditSession {
         let dropped = self.history.forget_table(name);
         let had_edits = self.unsaved_tables.remove(name);
         self.table_revision += 1;
+        // A preview puts the edited table in the overlay, and the overlay
+        // answers a read before the project folder and the archives do.
+        // Left there, the read below is answered with the edits it is meant
+        // to drop, and the client goes on drawing them.
+        self.unpublish_table(name);
         if !self.open_table(assets, name) {
             return false;
         }
@@ -2208,25 +2227,37 @@ pub fn forget_what_changed(
     // The tables first, because a display the models are then asked for
     // is resolved through them.
     if std::mem::take(&mut session.tables_republished) {
-        assets.forget_tables();
-        if let Some(mut displays) = displays {
-            displays.forget();
-        }
-        // What is standing is told to look again. The effect pass hangs
-        // a kit when a counter changes, so a re-read the actors are not
-        // restarted for shows on the next loop and not before; and the lab's
-        // compare keys on the revision below, so without the bump the model
-        // view keeps the effect it hung off the tables from before.
-        session.republished_revision += 1;
-        if stage.showing.is_some() {
-            stage.restart();
-        }
-        // Forced here rather than left to the first frame that needs it.
-        // The re-parse is 73 reads with `Spell.dbc` among them twice, so
-        // leaving it to land inside whichever frame first asks puts it in the
-        // middle of a preview; doing it now puts it where the person is
-        // already waiting, and gives it somewhere to be measured.
         let began = std::time::Instant::now();
+        assets.forget_tables();
+        // Read again here, and not on the next entity that needs a display.
+        // The stage's actors are already standing when a kit is edited
+        // beside its preview, so there is no next entity: the effect and
+        // pose passes would find no tables from then on, and the actors
+        // would stand idle with nothing hung on them.
+        //
+        // The re-parse is 73 reads with `Spell.dbc` among them twice, about
+        // a tenth of a second. Doing it in this call puts it where the
+        // person has just made an edit, and gives it somewhere to be
+        // measured.
+        if let Some(mut displays) = displays {
+            displays.reread(&assets);
+        }
+        // The lab's compare keys on this revision, so without the bump the
+        // model view keeps the effect it hung off the tables from before.
+        session.republished_revision += 1;
+        // What is standing is shown the edit now. The effect pass hangs a
+        // kit when a counter changes, so a playing stage starts its loop
+        // again, and a paused one is put back at its own time, which moves
+        // the counters of its phase again and leaves it paused.
+        if stage.showing.is_some() || stage.pushing.is_some() {
+            match stage.playing {
+                true => stage.restart(),
+                false => {
+                    let at = stage.at;
+                    stage.seek(at);
+                }
+            }
+        }
         let ok = assets.display_tables().is_ok();
         info!(
             "tables re-read in {:?}{}",
@@ -2283,9 +2314,11 @@ pub fn publish_for_the_preview(
     mut seen: Local<(u64, f64, u64, bool)>,
 ) {
     /// How long a run of edits is left to settle before the tables are put
-    /// where the client reads them. The lab's own debounce, for its reason: a
-    /// field edit arrives on every frame of a drag.
-    const SETTLE: f64 = 0.35;
+    /// where the client reads them. A field edit arrives on every frame of a
+    /// drag and the re-read is about a tenth of a second, so it is not done
+    /// per frame. It is kept short because a choice in a picker or a typed
+    /// number is one edit, and the person is looking at the preview for it.
+    const SETTLE: f64 = 0.15;
 
     let Some(mut session) = session else { return };
     let (had, changed_at, published, was_open) = &mut *seen;
@@ -2582,5 +2615,44 @@ fn follow_the_camera(
     let wanted = WorldFocus::at(editing.map_id, editing.map.clone(), at);
     if !focus.same_place(&wanted, 0.05) || focus.map_name != wanted.map_name {
         *focus = wanted;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A table a preview published is taken back out of the overlay, and the
+    /// client is told to read its tables again. Discard depends on this: it
+    /// reads the table again, and the overlay answers before the project
+    /// folder and the archives.
+    #[test]
+    fn a_published_table_is_taken_back_out_of_the_overlay() {
+        let install =
+            std::env::temp_dir().join(format!("vale-session-unpublish-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let project = Project::open(&install, "default").unwrap();
+        let mut session = EditSession::for_tests(project);
+        let mut bytes = b"WDBC".to_vec();
+        for word in [0u32, 35, 140, 1] {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        bytes.push(0);
+        let table = DbcFile::parse(&bytes).expect("an empty table");
+        session.tables.insert("SpellVisualKit".to_string(), table);
+        let path = vale_assets::tables::dbc::dbc_path("SpellVisualKit").to_ascii_lowercase();
+
+        session.publish_table("SpellVisualKit");
+        assert!(session.edited.read().unwrap().contains_key(&path));
+        session.tables_republished = false;
+        session.unpublish_table("SpellVisualKit");
+        assert!(!session.edited.read().unwrap().contains_key(&path));
+        assert!(session.tables_republished);
+
+        // A table that was never published asks for no re-read.
+        session.tables_republished = false;
+        session.unpublish_table("SpellVisualKit");
+        assert!(!session.tables_republished);
+        let _ = std::fs::remove_dir_all(&install);
     }
 }

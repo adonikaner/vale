@@ -65,7 +65,7 @@
 
 use super::rowform::{
     choice_cell, draft_or, finished, flags_cell, meaning, number_cell, number_means, page_row,
-    page_spacing, paragraph_cell, revert_button, section, text_cell, unquote, FORM_ROW,
+    page_spacing, paragraph_cell, revert_button, section, text_cell, unquote, RowAct, FORM_ROW,
 };
 use super::theme;
 use super::thumbnails::Thumbnails;
@@ -422,7 +422,7 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>) {
     );
     ui.add_space(4.0);
 
-    let mut open: Option<u32> = None;
+    let mut asked: Option<(Known, RowAct)> = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show_rows(ui, theme::LIST_ROW, matches.len(), |ui, range| {
@@ -431,13 +431,39 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>) {
                     continue;
                 };
                 let chosen = work.quests.open == Some(known.entry);
-                if row(ui, &known, chosen) {
-                    open = Some(known.entry);
+                let response = row(ui, &known, chosen);
+                if response.clicked() {
+                    asked = Some((known.clone(), RowAct::Open));
                 }
+                response.context_menu(|ui| {
+                    let act = super::rowform::row_menu(ui, "quest", known.entry, known.claim, chosen);
+                    if let Some(act) = act {
+                        asked = Some((known.clone(), act));
+                    }
+                });
             }
         });
-    if let Some(entry) = open {
-        work.quests.open = Some(entry);
+    if let Some((known, act)) = asked {
+        let ctx = ui.ctx().clone();
+        act_on(&ctx, work, shell.patch, &known, act);
+    }
+}
+
+/// Carry out one act on one quest. The buttons over the list and a row's
+/// right-click menu both call this, so an act is the same from either.
+fn act_on(ctx: &egui::Context, work: &mut Workspace<'_>, patch: u32, known: &Known, act: RowAct) {
+    let now = work.now;
+    match act {
+        RowAct::Open => work.quests.open = Some(known.entry),
+        RowAct::Copy => {
+            work.quests.duplicate(work.session, patch, now);
+        }
+        RowAct::Remove => work.quests.remove(work.session, known, now),
+        RowAct::Keep => work.quests.keep(work.session, known, now),
+        RowAct::CopyEntry => {
+            ctx.copy_text(known.entry.to_string());
+            work.session.status = format!("quest entry {} is on the clipboard", known.entry);
+        }
     }
 }
 
@@ -492,7 +518,7 @@ fn narrowing(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>)
 /// New, Copy and Remove.
 ///
 /// Unlike an item, a quest can be removed — see `vale_mangos::quest`, where
-/// the reason is. A quest in the database is *marked*: it stays in the list in
+/// the reason is. A quest in the database is marked: it stays in the list in
 /// red until Apply, and Keep takes the mark off. One this project created
 /// is in no database, so removing it gives the claim up.
 fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>) {
@@ -521,8 +547,10 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_
             .on_disabled_hover_text("Open a quest first.")
             .clicked()
         {
-            let (patch, now) = (shell.patch, work.now);
-            work.quests.duplicate(work.session, patch, now);
+            if let Some(known) = open.as_ref() {
+                let ctx = ui.ctx().clone();
+                act_on(&ctx, work, shell.patch, known, RowAct::Copy);
+            }
         }
         let removed = open
             .as_ref()
@@ -547,18 +575,19 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_
             .clicked()
         {
             if let Some(known) = open.as_ref() {
-                let now = work.now;
-                match removed {
-                    true => work.quests.keep(work.session, known, now),
-                    false => work.quests.remove(work.session, known, now),
-                }
+                let ctx = ui.ctx().clone();
+                let act = match removed {
+                    true => RowAct::Keep,
+                    false => RowAct::Remove,
+                };
+                act_on(&ctx, work, shell.patch, known, act);
             }
         }
     });
 }
 
 /// One row of the list — [`theme::list_row`], with no picture: a quest has none.
-fn row(ui: &mut egui::Ui, known: &Known, chosen: bool) -> bool {
+fn row(ui: &mut egui::Ui, known: &Known, chosen: bool) -> egui::Response {
     let (sub, tint) = match known.claim {
         Life::Insert => (format!("{} \u{b7} new", known.sub()), theme::INK),
         Life::Delete => (
@@ -583,7 +612,6 @@ fn row(ui: &mut egui::Ui, known: &Known, chosen: bool) -> bool {
         chosen,
     )
     .response
-    .clicked()
 }
 
 // ---------------------------------------------------------------------------
@@ -673,6 +701,13 @@ fn head(ui: &mut egui::Ui, open: &Open) {
     );
     ui.horizontal(|ui| {
         ui.label(theme::number(format!("entry {}", known.entry)));
+        if ui
+            .small_button("copy")
+            .on_hover_text("Put the entry on the clipboard.")
+            .clicked()
+        {
+            ui.ctx().copy_text(known.entry.to_string());
+        }
         ui.label(
             egui::RichText::new(format!("patch {}", known.patch))
                 .small()

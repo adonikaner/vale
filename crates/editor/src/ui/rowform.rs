@@ -28,6 +28,14 @@
 //! the same rows with the name cell at 135 points; a cell that needs more room
 //! than that leaves says so in its own doc comment.
 //!
+//! ## A list row's right-click menu
+//!
+//! The item list and the quest list have the same three buttons over them
+//! and the same menu on a row ([`row_menu`]), which answers a [`RowAct`].
+//! Each panel carries an act out in one function that its buttons and its
+//! menu both call, so every entry of the menu is also a button and both do
+//! the same thing.
+//!
 //! ## Every widget answers the literal it wrote, or nothing
 //!
 //! Each widget answers `Option<String>`, and the string is already a SQL
@@ -542,6 +550,71 @@ pub fn revert_button(ui: &mut egui::Ui, in_database: Option<&str>) -> bool {
         .clicked()
 }
 
+/// What is done to a row of a server table's list other than editing a
+/// column: what the three buttons over the list do, and a row's menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowAct {
+    Open,
+    Copy,
+    Remove,
+    Keep,
+    CopyEntry,
+}
+
+/// What removing a row is called, with what it comes to. A menu acts on a
+/// row whose form may not be open, so the consequence is in the name.
+pub fn remove_label(word: &str, claim: vale_mangos::row::Life) -> String {
+    use vale_mangos::row::Life;
+    match claim {
+        Life::Delete => "Keep: take the removal mark off".to_string(),
+        Life::Insert => format!("Remove: give this new {word} up"),
+        Life::Update => "Remove: mark it, and Apply deletes it".to_string(),
+    }
+}
+
+/// The right-click menu of a row of the item list or the quest list.
+/// `word` is what a row is called, `entry` its key, `claim` what the project
+/// says about it, and `is_open` whether its form is the one open.
+///
+/// Copy is offered on the open row only: a copy is made from the whole row
+/// as it was read, and the list holds a few columns of each row.
+pub fn row_menu(
+    ui: &mut egui::Ui,
+    word: &str,
+    entry: u32,
+    claim: vale_mangos::row::Life,
+    is_open: bool,
+) -> Option<RowAct> {
+    use vale_mangos::row::Life;
+    let mut act = None;
+    if !is_open && ui.button("Open").clicked() {
+        act = Some(RowAct::Open);
+    }
+    if ui
+        .add_enabled(is_open, egui::Button::new("Copy"))
+        .on_disabled_hover_text(format!(
+            "Open the {word} first. A copy is made from the row as it was read."
+        ))
+        .clicked()
+    {
+        act = Some(RowAct::Copy);
+    }
+    if ui.button(remove_label(word, claim)).clicked() {
+        act = Some(match claim {
+            Life::Delete => RowAct::Keep,
+            _ => RowAct::Remove,
+        });
+    }
+    ui.separator();
+    if ui.button(format!("Copy entry {entry}")).clicked() {
+        act = Some(RowAct::CopyEntry);
+    }
+    if act.is_some() {
+        ui.close();
+    }
+    act
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -749,5 +822,18 @@ mod tests {
             let away = form.next_at;
             assert_eq!(form.click(away, &showing, multiline), None);
         }
+    }
+
+    /// A removal is named with what it comes to, which differs by what the
+    /// project says about the row.
+    #[test]
+    fn a_removal_is_named_with_what_it_comes_to() {
+        use vale_mangos::row::Life;
+        assert_eq!(remove_label("item", Life::Delete), "Keep: take the removal mark off");
+        assert_eq!(remove_label("quest", Life::Insert), "Remove: give this new quest up");
+        assert_eq!(
+            remove_label("item", Life::Update),
+            "Remove: mark it, and Apply deletes it"
+        );
     }
 }

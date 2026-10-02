@@ -2,12 +2,12 @@
 //!
 //! ## Why a data subject replaces the viewport
 //!
-//! For the tools on the rail's world half, *Terrain* and *World*, the world is
+//! For the tools on the rail's world half, Terrain and World, the world is
 //! the thing being edited: the panels surround it and it fills the middle. A
 //! spell has no place in the world, and a 300-point inspector beside an
 //! unrelated view of terrain is too narrow for its form.
 //!
-//! A *Data* subject therefore replaces the middle region with a searchable list
+//! A Data subject therefore replaces the middle region with a searchable list
 //! on the left and the row's fields in the rest. The rest of the shell is
 //! unchanged: the same top bar, rail, view bar, status line and undo stack, so
 //! `Ctrl+Z` undoes the last edit whether it was to a wall or to a spell's name.
@@ -92,12 +92,34 @@
 //! `Clone` and `Delete` are the same three operations on the open table. Each
 //! of these operations is one entry on the undo stack. See `tools::tables`.
 //!
+//! ## A picker over the spell chain plays its rows
+//!
+//! A visual has no name and a kit is named by its models, so neither can be
+//! chosen from a list of labels. The picker for a `SpellVisual`, a
+//! `SpellVisualKit` or a `SpellVisualEffectName` column has the preview in
+//! the dialog ([`pick_previewing`]): a press on a row plays it, and a double
+//! press, Enter or Use writes it. `Look like a spell…` ([`looks_like`])
+//! chooses a spell's visual by another spell, played, and either shares that
+//! spell's visual or clones it. The Visuals and Kits tabs have the same
+//! preview beside their fields ([`chain_show`]). The stage is one picture,
+//! so while a dialog plays, the pane behind it draws a placeholder.
+//!
+//! ## Commands and right-click menus
+//!
+//! What is done to a row other than editing a field is a
+//! `tools::tables::Command`, carried out by [`run_command`]. A row's
+//! right-click menu ([`row_menu`]) lists the table's commands, and the
+//! buttons on the list and the form run the same ones, so every menu entry
+//! is also a button and both do the same thing. A field's name takes a
+//! right-click too ([`field_menu`]), and so does the title of a block drawn
+//! for another table's row.
+//!
 //! ## Other locales are folded
 //!
 //! Every string in `Spell.dbc` is eight columns and a flags word, and an enUS
 //! install leaves seven of the eight empty, so drawing them all would make two
 //! thirds of the form blank boxes. They are real columns and stay editable,
-//! under an *Other locales* fold at the end of the section that is closed by
+//! under an Other locales fold at the end of the section that is closed by
 //! default.
 //!
 //! ## Field widths
@@ -110,10 +132,11 @@
 //! what the schema knows about the column are in the label's tooltip rather
 //! than a suffix on every label.
 
+use super::storyboard::Show;
 use super::theme;
 use super::thumbnails::Thumbnails;
 use crate::session::EditSession;
-use crate::tools::tables::{self, Browser, Modal, RowLabel, MODEL_FOLDERS};
+use crate::tools::tables::{self, Browser, Command, Modal, RowLabel, MODEL_FOLDERS};
 use vale_assets::tables::schema::{self, Column, Kind, Schema};
 use vale_client::assets::GameAssets;
 use bevy_egui::egui;
@@ -144,6 +167,14 @@ const TEXT: f32 = super::rowform::FORM_TEXT;
 /// How wide the visual chain is on the storyboard view, leaving the rest of the
 /// middle for the preview.
 const CHAIN_WIDTH: f32 = 480.0;
+/// How wide a visual's or a kit's fields are beside their preview. Wider
+/// than the storyboard's cards: a reference's row is a number, a button, a
+/// name and a second line of text.
+const CHAIN_FORM: f32 = 680.0;
+/// The narrowest the preview beside a visual's or a kit's fields is made.
+/// Less than [`STAGE_FLOOR`], because these fields need the width more than
+/// the storyboard's cards do.
+const CHAIN_STAGE_FLOOR: f32 = 300.0;
 /// The minimum width of the storyboard preview.
 const STAGE_FLOOR: f32 = 360.0;
 /// How wide a reference picker's dialog is, and how many rows a page of it
@@ -392,8 +423,7 @@ pub fn draw(
                     .color(theme::INK_DIM),
             );
         });
-        stage.showing = None;
-        stage.lab = false;
+        stage.close();
         return;
     }
     if work.session.table(&table_name).is_none() {
@@ -633,7 +663,10 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let width = ui.available_width();
     ui.add(
         egui::TextEdit::singleline(&mut work.browser.query)
-            .hint_text("name, id, or what it belongs to")
+            .hint_text(match previews(&table_name) {
+                true => "name, id, a model's name, or what it belongs to",
+                false => "name, id, or what it belongs to",
+            })
             .desired_width(width),
     );
     ui.add_space(4.0);
@@ -652,10 +685,7 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     );
     ui.add_space(4.0);
 
-    let pictured = matches!(
-        table_name.as_str(),
-        "Spell" | "SpellIcon" | "SkillLine" | "SkillLineAbility"
-    );
+    let mut run: Option<(usize, Command)> = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show_rows(ui, ROW_HEIGHT, matches.len(), |ui, range| {
@@ -663,13 +693,25 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 let record = matches[at];
                 let label = work.browser.describe(work.session, &table_name, record);
                 let chosen = work.browser.open == Some(record);
-                let icon = pictured.then(|| work.icon_of(record)).flatten();
-                if row(ui, work, &label, icon, chosen).clicked() {
+                let picture = row_picture(work, &table_name, record);
+                let response = row_pictured(ui, work, &label, picture, chosen);
+                if response.clicked() {
                     work.browser.open = Some(record);
                     work.browser.forget_buffers();
                 }
+                response.context_menu(|ui| {
+                    if let Some(command) = row_menu(ui, work, &table_name, record) {
+                        run = Some((record, command));
+                    }
+                });
             }
         });
+    // Run once the list is drawn: a command that adds or removes a row
+    // changes which rows the indices the list was drawn from name.
+    if let Some((record, command)) = run {
+        let ctx = ui.ctx().clone();
+        run_command(&ctx, work, &table_name, record, command);
+    }
 }
 
 /// `Undo`, `Redo`, `Save`, `Discard`: the four actions on the table as a file
@@ -743,18 +785,13 @@ fn table_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     });
 }
 
-/// `+ New`, `Clone`, `Delete` — the three things that make or unmake a row of
+/// `+ New`, `Clone`, `Delete`: the three things that make or unmake a row of
 /// the open table, each one entry on the undo stack. See `tools::tables`.
+/// Clone and Delete are two of the row's commands, which its right-click
+/// menu also lists.
 fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let table_name = work.browser.table.clone();
     let open = work.browser.open;
-    let id = open
-        .and_then(|record| work.session.table(&table_name)?.u32_at(record, 0))
-        .unwrap_or(0);
-    let uses = match open {
-        Some(_) => work.browser.used_by(work.session, &table_name, id).len(),
-        None => 0,
-    };
     ui.horizontal(|ui| {
         let third = ((ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0).max(40.0);
         let size = egui::vec2(third, 22.0);
@@ -767,31 +804,26 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 work.browser.open_row(at);
             }
         }
-        if ui
-            .add_enabled(open.is_some(), egui::Button::new("Clone").min_size(size))
-            .on_hover_text(
-                "a copy of the open row under the next id; a copied name gets \" (copy)\"",
-            )
-            .clicked()
-        {
-            if let Some(at) =
-                open.and_then(|record| tables::clone_row(work.session, &table_name, record))
+        for (name, command) in [("Clone", Command::Clone), ("Delete", Command::Delete)] {
+            // The button keeps its one word. What the menu's entry says after
+            // it, which for a delete is what it breaks, is in the tooltip.
+            let said = open.and_then(|record| {
+                tables::command_label(work.browser, work.session, &table_name, record, command)
+            });
+            let about = tables::command_about(command);
+            let tip = match &said {
+                Some(said) if said != name => format!("{said}. {about}"),
+                _ => about.to_string(),
+            };
+            if ui
+                .add_enabled(open.is_some(), egui::Button::new(name).min_size(size))
+                .on_hover_text(tip)
+                .on_disabled_hover_text("Open a row first.")
+                .clicked()
             {
-                work.browser.open_row(at);
-            }
-        }
-        let warning = match uses {
-            0 => "remove the open row".to_string(),
-            n => format!("remove the open row; {n} open reference(s) will then point at nothing"),
-        };
-        if ui
-            .add_enabled(open.is_some(), egui::Button::new("Delete").min_size(size))
-            .on_hover_text(warning)
-            .clicked()
-        {
-            if let Some(record) = open {
-                if tables::delete_row(work.session, &table_name, record) {
-                    work.browser.close_row();
+                if let Some(record) = open {
+                    let ctx = ui.ctx().clone();
+                    run_command(&ctx, work, &table_name, record, command);
                 }
             }
         }
@@ -811,6 +843,18 @@ fn row(
     icon: Option<String>,
     chosen: bool,
 ) -> egui::Response {
+    row_pictured(ui, work, label, icon.map(Picture::Icon), chosen)
+}
+
+/// [`row`] with the picture from either source: an icon from the thumbnail
+/// cache, or a model from the portrait rig. See [`Picture`].
+fn row_pictured(
+    ui: &mut egui::Ui,
+    work: &mut Workspace<'_>,
+    label: &RowLabel,
+    picture: Option<Picture>,
+    chosen: bool,
+) -> egui::Response {
     let title = match label.title.is_empty() {
         true => format!("row {}", label.id),
         false => label.title.clone(),
@@ -822,19 +866,37 @@ fn row(
             sub: &label.sub,
             trailing: &label.id.to_string(),
             tint: theme::INK,
-            picture: icon.is_some(),
+            picture: picture.is_some(),
         },
         chosen,
     );
-    if let Some(path) = icon {
-        if let Some(texture) = work.picture(&path, ICON) {
-            ui.painter().image(
-                texture,
-                shape.picture,
-                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                egui::Color32::WHITE,
-            );
+    match picture {
+        Some(Picture::Icon(path)) => {
+            if let Some(texture) = work.picture(&path, ICON) {
+                ui.painter().image(
+                    texture,
+                    shape.picture,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
         }
+        // The rig frames a model by its meshes, so an effect that is only
+        // particles has no picture. Its square is left empty and is not
+        // crossed out as a model that will not open is: nothing is wrong
+        // with the model.
+        Some(Picture::Model(path)) => {
+            work.portraits.want(&path);
+            if let crate::portraits::Status::Ready(texture) = work.portraits.status(&path) {
+                ui.painter().image(
+                    texture,
+                    shape.picture,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
+        }
+        Some(Picture::Blank) | None => {}
     }
     shape.response
 }
@@ -870,9 +932,8 @@ fn form(
                     .color(theme::INK_DIM),
             );
         });
-        stage.showing = None;
-        stage.lab = false;
-        modals(ui, work);
+        stage.close();
+        modals(ui, work, Some((stage, lab)));
         return;
     };
 
@@ -930,14 +991,31 @@ fn form(
                         super::storyboard::draw(ui, work, board, record);
                     });
             });
-        super::storyboard::stage_pane(ui, stage, spell, &board.notes, board);
-        modals(ui, work);
+        // A dialog that plays its own rows has the stage while it is up.
+        match dialog_previews(work) {
+            true => empty_pane(ui, "the preview is in the dialog"),
+            false => {
+                let title = match spell {
+                    Some(id) => format!("Preview — spell {id}"),
+                    None => "Preview".to_string(),
+                };
+                super::storyboard::stage_pane(
+                    ui,
+                    stage,
+                    spell.map(Show::Spell),
+                    &title,
+                    &board.notes,
+                    Some(&*board),
+                );
+            }
+        }
+        modals(ui, work, Some((stage, lab)));
         return;
     }
 
     // An effect always has the preview pane, laid out like the storyboard: the
     // fields on the left and the stage on the right with the model alone. Once
-    // *Position on character…* is pressed, the lab's card is added above the
+    // Position on character… is pressed, the lab's card is added above the
     // fields and the mannequin under the model. See `crate::lab`.
     let id = work
         .session
@@ -960,7 +1038,6 @@ fn form(
         }
         // The browser's preview reaches the stage through the lab.
         lab.preview = work.browser.model_preview.clone();
-        stage.showing = None;
         let here = ui.available_width();
         // The lab's card needs width and an effect's five fields do not, so
         // the model view gives the extra room to the pane. The two modes use
@@ -1006,13 +1083,62 @@ fn form(
         });
         lab.panel_width = shown.response.rect.width();
         super::lab::pane(ui, work, stage, lab);
-        modals(ui, work);
+        modals(ui, work, Some((stage, lab)));
         return;
     }
-    // Outside the storyboard and the lab nothing is previewed. Clearing these
-    // removes the units from the stage and returns the camera.
-    stage.showing = None;
-    stage.lab = false;
+    // A visual and a kit have the preview pane beside their fields, as a
+    // spell's storyboard and an effect have, so the row is seen as it is
+    // edited. See [`chain_show`] for what is played.
+    if matches!(table_name.as_str(), "SpellVisual" | "SpellVisualKit") {
+        let here = ui.available_width();
+        let room = (here - CHAIN_STAGE_FLOOR).max(320.0);
+        // The contents are limited to the width the panel took on the last
+        // frame, as the effect's form is, and for the same reason. A row
+        // wider than that scrolls sideways, so the buttons at its end can
+        // be reached on a narrow window.
+        let width_id = egui::Id::new("chain-form-width");
+        let known: f32 = ui.data(|data| data.get_temp(width_id)).unwrap_or(0.0);
+        let shown = egui::Panel::left("chain-form")
+            .default_size(CHAIN_FORM.min(room))
+            .min_size(320.0)
+            .max_size(room)
+            .resizable(true)
+            .frame(egui::Frame::new().fill(theme::SHELL).inner_margin(4.0))
+            .show(ui, |ui| {
+                egui::ScrollArea::both()
+                    .id_salt("data-chain-form")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if known > 0.0 {
+                            ui.set_max_width(known - 24.0);
+                        }
+                        ui.spacing_mut().item_spacing = egui::vec2(8.0, 7.0);
+                        ui.spacing_mut().interact_size.y = 24.0;
+                        fields(ui, work, record, schema);
+                    });
+            });
+        ui.data_mut(|data| data.insert_temp(width_id, shown.response.rect.width()));
+        match dialog_previews(work) {
+            true => empty_pane(ui, "the preview is in the dialog"),
+            false => match chain_show(work, &table_name, id) {
+                Some((show, title)) => {
+                    super::storyboard::stage_pane(ui, stage, Some(show), &title, &[], None)
+                }
+                None => {
+                    stage.close();
+                    empty_pane(ui, "nothing to play");
+                }
+            },
+        }
+        modals(ui, work, Some((stage, lab)));
+        return;
+    }
+    // Outside the storyboard, the chain's panes and the lab nothing is
+    // previewed, unless a dialog plays its rows. Closing the stage removes
+    // the units from it and returns the camera.
+    if !dialog_previews(work) {
+        stage.close();
+    }
 
     egui::ScrollArea::vertical()
         .id_salt("data-form")
@@ -1026,7 +1152,7 @@ fn form(
             ui.spacing_mut().interact_size.y = 24.0;
             fields(ui, work, record, schema);
         });
-    modals(ui, work);
+    modals(ui, work, Some((stage, lab)));
 }
 
 /// The row's fields, section by section — or numbered, for a table with no
@@ -1140,10 +1266,25 @@ fn owned_row(
         .inner_margin(egui::Margin::same(6))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(title).color(theme::INK));
+                // The title takes a right-click, for the two buttons at the
+                // right of the line.
+                ui.add(
+                    egui::Label::new(egui::RichText::new(title).color(theme::INK))
+                        .sense(egui::Sense::click()),
+                )
+                .context_menu(|ui| {
+                    if ui.button(format!("Open {table} {id}")).clicked() {
+                        follow_reference(work, table, id);
+                        ui.close();
+                    }
+                    if ui.button("Remove").clicked() {
+                        remove = true;
+                        ui.close();
+                    }
+                });
                 ui.label(theme::number(format!("#{id}")).color(theme::INK_FAINT));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    remove = ui
+                    remove |= ui
                         .small_button("remove")
                         .on_hover_text(format!("Remove this {table} row. One undo entry."))
                         .clicked();
@@ -1233,21 +1374,12 @@ fn skill_lines_of(ui: &mut egui::Ui, work: &mut Workspace<'_>, spell: u32) {
     }
     if ui
         .button("+ Add to a skill line")
-        .on_hover_text(
-            "A new SkillLineAbility row naming this spell, and the picker for its skill \
-             line. One undo entry. A mask left at zero is every class or every race.",
-        )
+        .on_hover_text(tables::command_about(Command::AddToSkillLine))
         .clicked()
     {
-        if let Some(at) = tables::add_ability(work.session, spell) {
-            work.browser.modal = Some(Modal::Pick {
-                table: ability::TABLE.to_string(),
-                record: at,
-                field: ability::SKILL,
-                points_at: "SkillLine",
-            });
-            work.browser.pick_query.clear();
-            work.browser.pick_focus = true;
+        if let Some(record) = work.browser.record_of(work.session, "Spell", spell) {
+            let ctx = ui.ctx().clone();
+            run_command(&ctx, work, "Spell", record, Command::AddToSkillLine);
         }
     }
     if let Some(row) = remove {
@@ -1304,24 +1436,29 @@ fn taught_by(ui: &mut egui::Ui, work: &mut Workspace<'_>, spell: u32) {
     // A trainer's list wants an instant one. A spell with only a teaching
     // spell that has a cast time, which is the kind a book casts, is offered
     // an instant one beside it.
-    if !teachers.iter().any(|&(_, instant)| instant) {
-        let label = match teachers.is_empty() {
-            true => "+ Create a teaching spell",
-            false => "+ Create an instant teaching spell",
-        };
+    // The command's label says which, and is `None` when an instant one
+    // exists.
+    let offered = work
+        .browser
+        .record_of(work.session, "Spell", spell)
+        .and_then(|record| {
+            let label = tables::command_label(
+                work.browser,
+                work.session,
+                "Spell",
+                record,
+                Command::CreateTeachingSpell,
+            )?;
+            Some((record, label))
+        });
+    if let Some((record, label)) = offered {
         if ui
-            .button(label)
-            .on_hover_text(
-                "A new spell under the next id that teaches this one: Learn Spell as its \
-                 first effect, an instant cast, and this spell's name, rank and icon. One \
-                 undo entry. The Trainer window can then add it to a trainer's list.",
-            )
+            .button(format!("+ {label}"))
+            .on_hover_text(tables::command_about(Command::CreateTeachingSpell))
             .clicked()
         {
-            match tables::add_teaching_spell(work.session, spell) {
-                Some(id) => work.session.status = format!("spell {id} teaches spell {spell}"),
-                None => work.session.status = "the teaching spell was not made".to_string(),
-            }
+            let ctx = ui.ctx().clone();
+            run_command(&ctx, work, "Spell", record, Command::CreateTeachingSpell);
         }
     }
 }
@@ -1376,13 +1513,11 @@ fn skill_line_members(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize
             }
             if ui
                 .button("+ Give it to races and classes")
-                .on_hover_text(
-                    "A new SkillRaceClassInfo row naming this line, for every race and every \
-                     class, with no flag set. One undo entry.",
-                )
+                .on_hover_text(tables::command_about(Command::GiveToRacesAndClasses))
                 .clicked()
             {
-                tables::add_race_class_row(work.session, skill);
+                let ctx = ui.ctx().clone();
+                run_command(&ctx, work, "SkillLine", record, Command::GiveToRacesAndClasses);
             }
             if let Some(row) = remove {
                 tables::delete_row(work.session, race_class::TABLE, row);
@@ -1435,7 +1570,7 @@ fn skill_line_members(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize
 /// This is the lights tool's only panel. A light is chosen by picking it in
 /// the viewport rather than from a list, and the shell's rule is that the
 /// inspector shows the selection, so the form is drawn here. The list of all
-/// 374 lights is a dialog behind *Browse…*, for finding one that is not on
+/// 374 lights is a dialog behind Browse…, for finding one that is not on
 /// screen.
 ///
 /// Its contents, in the order they are used: which light this is, a button to
@@ -1470,7 +1605,7 @@ pub fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
              is marked; the one you pick gets its falloff drawn and its numbers \
              here.",
         );
-        modals(ui, &mut work);
+        modals(ui, &mut work, None);
         return;
     };
 
@@ -1562,7 +1697,7 @@ pub fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
             }
             ui.add_space(12.0);
         });
-    modals(ui, &mut work);
+    modals(ui, &mut work, None);
 }
 
 /// A button that opens the list of all lights as a dialog, for finding a light
@@ -1810,6 +1945,7 @@ fn head(
     let icon = work.icon_of(record);
     let mut open_lab = false;
     let mut clone_chain = false;
+    let mut copy_id = false;
     ui.horizontal(|ui| {
         if !work.browser.back.is_empty() && ui.button("< back").clicked() {
             work.browser.go_back();
@@ -1832,11 +1968,7 @@ fn head(
                     "SpellVisual" => {
                         clone_chain = ui
                             .button("Clone chain")
-                            .on_hover_text(
-                                "Copy this visual with every kit and effect it names, each rewired \
-                                 to the copies, and open the copy. The original and the spells that \
-                                 share it are untouched.",
-                            )
+                            .on_hover_text(tables::command_about(Command::CloneChain))
                             .clicked();
                     }
                     "SpellVisualEffectName" if !lab.on_character(label.id) => {
@@ -1861,6 +1993,10 @@ fn head(
                         .small()
                         .color(theme::INK_FAINT),
                 );
+                copy_id = ui
+                    .small_button("copy id")
+                    .on_hover_text(tables::command_about(Command::CopyId))
+                    .clicked();
             });
         });
     });
@@ -1874,17 +2010,12 @@ fn head(
     if open_lab {
         super::lab::open_on(lab, stage, work.browser, work.session, record);
     }
+    let ctx = ui.ctx().clone();
     if clone_chain {
-        if let Some(done) = tables::clone_chain(work.session, label.id, None) {
-            let copy = done.new_id("SpellVisual", label.id).unwrap_or(0);
-            work.session.status = format!(
-                "visual {} copied to {copy}: {} kits, {} effects",
-                label.id,
-                done.count("SpellVisualKit"),
-                done.count("SpellVisualEffectName")
-            );
-            follow_reference(work, "SpellVisual", copy);
-        }
+        run_command(&ctx, work, &table_name, record, Command::CloneChain);
+    }
+    if copy_id {
+        run_command(&ctx, work, &table_name, record, Command::CopyId);
     }
 }
 
@@ -2051,11 +2182,15 @@ fn field_in(
         // 210 clipped the resolved name of every reference at the window's
         // edge.
         let label_width = LABEL.min(ui.available_width() * 0.45);
+        // The name takes a right-click; see [`field_menu`].
         ui.add_sized(
             egui::vec2(label_width, 22.0),
-            egui::Label::new(egui::RichText::new(column.name).color(theme::INK_DIM)).truncate(),
+            egui::Label::new(egui::RichText::new(column.name).color(theme::INK_DIM))
+                .truncate()
+                .sense(egui::Sense::click()),
         )
-        .on_hover_text(tip);
+        .on_hover_text(tip)
+        .context_menu(|ui| field_menu(ui, work, table_name, record, column, raw));
         match column.kind {
             Kind::Id => {
                 ui.label(theme::number(format!("{raw}")));
@@ -2417,7 +2552,10 @@ fn reference(
         .add(
             egui::Button::new(egui::RichText::new("…").size(13.0)).min_size(egui::vec2(24.0, 22.0)),
         )
-        .on_hover_text(format!("choose a {points_at} row by name"))
+        .on_hover_text(match previews(points_at) {
+            true => format!("choose a {points_at} row, each one playing as it is pressed"),
+            false => format!("choose a {points_at} row by name"),
+        })
         .clicked()
     {
         work.browser.modal = Some(Modal::Pick {
@@ -2428,6 +2566,16 @@ fn reference(
         });
         work.browser.pick_query.clear();
         work.browser.pick_focus = true;
+    }
+    if table_name == "Spell"
+        && points_at == "SpellVisual"
+        && ui
+            .small_button("like a spell\u{2026}")
+            .on_hover_text(tables::command_about(Command::LookLike))
+            .clicked()
+    {
+        let ctx = ui.ctx().clone();
+        run_command(&ctx, work, table_name, record, Command::LookLike);
     }
     let chain_table = matches!(
         points_at,
@@ -2580,6 +2728,672 @@ fn presence(ui: &mut egui::Ui, present: Option<bool>) {
     response.on_hover_text(why);
 }
 
+/// The size of the preview inside a picker's dialog, in points.
+const DIALOG_PREVIEW: egui::Vec2 = egui::vec2(420.0, 440.0);
+
+/// Whether a picker over `points_at` plays the row it is about to choose: the
+/// three tables of the spell chain a reference can name. A visual and a kit
+/// are played on the stage, and an effect's model is shown in the model view.
+fn previews(points_at: &str) -> bool {
+    matches!(
+        points_at,
+        "SpellVisual" | "SpellVisualKit" | "SpellVisualEffectName"
+    )
+}
+
+/// Whether the open dialog is drawing the stage. The form's own pane then
+/// draws a placeholder: the stage is one picture, sized for one rectangle.
+fn dialog_previews(work: &Workspace<'_>) -> bool {
+    match &work.browser.modal {
+        Some(Modal::Pick { points_at, .. }) => previews(points_at),
+        Some(Modal::LooksLike { .. }) => true,
+        _ => false,
+    }
+}
+
+/// A pane with nothing to play: the background and one line saying why.
+fn empty_pane(ui: &mut egui::Ui, why: &str) {
+    let all = ui.available_rect_before_wrap();
+    ui.painter().rect_filled(all, 0.0, theme::SHELL);
+    ui.painter().text(
+        all.center(),
+        egui::Align2::CENTER_CENTER,
+        why,
+        egui::FontId::proportional(theme::SMALL),
+        theme::INK_FAINT,
+    );
+    ui.allocate_rect(all, egui::Sense::hover());
+}
+
+/// A `Ui` of exactly [`DIALOG_PREVIEW`] inside a dialog. Both panes fill the
+/// rectangle they are given, and a dialog's own `Ui` has no fixed height to
+/// fill.
+fn dialog_pane(ui: &mut egui::Ui) -> egui::Ui {
+    let (rect, _) = ui.allocate_exact_size(DIALOG_PREVIEW, egui::Sense::hover());
+    ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    )
+}
+
+/// What the stage plays for a row of the spell chain, and the pane's title.
+///
+/// A spell is played as itself. A kit is pushed onto one body. A visual a
+/// spell uses is played as the first such spell, which shows its missile and
+/// its area as well as its kits; a visual no spell uses has its kits pushed
+/// in order. `None` for a row of any other table and for an id that is no
+/// row.
+fn chain_show(work: &mut Workspace<'_>, table: &str, id: u32) -> Option<(Show, String)> {
+    match table {
+        "Spell" => Some((Show::Spell(id), format!("Preview — spell {id}"))),
+        "SpellVisualKit" => Some((
+            Show::Pushes(crate::stage::Pushes::kit(id)),
+            format!("Preview — kit {id}"),
+        )),
+        "SpellVisual" => {
+            let user = work
+                .browser
+                .used_by(work.session, "SpellVisual", id)
+                .into_iter()
+                .find(|at| at.table == "Spell")
+                .and_then(|at| work.session.table("Spell")?.u32_at(at.record, 0));
+            match user {
+                Some(spell) => Some((
+                    Show::Spell(spell),
+                    format!("Preview — visual {id}, as spell {spell}"),
+                )),
+                None => crate::stage::Pushes::visual(work.session, id)
+                    .map(|pushes| (Show::Pushes(pushes), format!("Preview — visual {id}"))),
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The preview inside a picker's dialog, for the row that is selected in it.
+fn preview_of(
+    ui: &mut egui::Ui,
+    work: &mut Workspace<'_>,
+    stage: &mut crate::stage::Stage,
+    lab: &mut crate::lab::Lab,
+    table: &str,
+    selected: Option<u32>,
+) {
+    let Some(id) = selected else {
+        stage.close();
+        empty_pane(ui, "press a row to play it");
+        return;
+    };
+    // An effect is a model and not a cast, so it is shown as the Effects tab
+    // shows one: alone, in the model view.
+    if table == "SpellVisualEffectName" {
+        match work.browser.record_of(work.session, table, id) {
+            Some(row) => {
+                if !lab.is_open_on(id) {
+                    super::lab::open_alone(lab, stage, work.browser, work.session, row);
+                }
+                lab.preview = None;
+                super::lab::pane(ui, work, stage, lab);
+            }
+            None => {
+                stage.close();
+                empty_pane(ui, "not a row of SpellVisualEffectName");
+            }
+        }
+        return;
+    }
+    match chain_show(work, table, id) {
+        Some((show, title)) => {
+            super::storyboard::stage_pane(ui, stage, Some(show), &title, &[], None)
+        }
+        None => {
+            stage.close();
+            empty_pane(ui, "nothing to play");
+        }
+    }
+}
+
+/// The picker for a visual, a kit or an effect: the list on the left and the
+/// selected row playing on the right. A press on a row plays it; a double
+/// press, Enter or Use writes it to the field. Answers whether the dialog
+/// closes.
+///
+/// A list of names cannot be chosen from when the names are not what is
+/// being chosen: a visual is labelled by the spells that use it and a kit by
+/// its models' names, and what a person wants to know is what it looks like.
+#[allow(clippy::too_many_arguments)]
+fn pick_previewing(
+    ui: &mut egui::Ui,
+    work: &mut Workspace<'_>,
+    stage: &mut crate::stage::Stage,
+    lab: &mut crate::lab::Lab,
+    table: &str,
+    record: usize,
+    field: usize,
+    points_at: &'static str,
+) -> bool {
+    if !work.session.open_table(work.assets, points_at) {
+        return true;
+    }
+    let column_name = schema::for_table(table)
+        .and_then(|schema| schema.column(field))
+        .map(|column| column.name)
+        .unwrap_or("this field");
+    // The dialog opens on the row the field holds, playing what is chosen now.
+    if work.browser.pick_focus {
+        work.browser.pick_selected = work
+            .session
+            .table(table)
+            .and_then(|open| open.u32_at(record, field))
+            .filter(|id| *id != 0 && *id != u32::MAX);
+    }
+    let mut close = false;
+    let mut chosen: Option<u32> = None;
+    // A lighter backdrop than a plain picker's, as the model browser has: the
+    // picture is in the dialog and the form behind it does not need to be
+    // dimmed far.
+    let response = egui::Modal::new(egui::Id::new("data-pick-preview"))
+        .backdrop_color(egui::Color32::from_black_alpha(90))
+        .show(ui.ctx(), |ui| {
+            ui.set_width(PICKER_WIDTH + DIALOG_PREVIEW.x + 16.0);
+            ui.label(
+                egui::RichText::new(format!("{points_at} for {column_name}"))
+                    .strong()
+                    .size(14.0),
+            );
+            ui.horizontal_top(|ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(PICKER_WIDTH);
+                    let box_ = ui.add(
+                        egui::TextEdit::singleline(&mut work.browser.pick_query)
+                            .hint_text("name, id, or a model's name")
+                            .desired_width(PICKER_WIDTH),
+                    );
+                    if work.browser.pick_focus {
+                        box_.request_focus();
+                        work.browser.pick_focus = false;
+                    }
+                    let total = work
+                        .browser
+                        .picks(work.session, points_at)
+                        .map(|hits| hits.len())
+                        .unwrap_or(0);
+                    let range = pager(ui, &mut work.browser.pick_page, total, PICKER_PAGE);
+                    let rows: Vec<usize> = work
+                        .browser
+                        .picks(work.session, points_at)
+                        .map(|hits| hits[range.clone()].to_vec())
+                        .unwrap_or_default();
+                    let page = work.browser.pick_page;
+                    egui::ScrollArea::vertical()
+                        .id_salt(("pick-preview-rows", page))
+                        .max_height(DIALOG_PREVIEW.y - 60.0)
+                        .auto_shrink([false, false])
+                        .show_rows(ui, ROW_HEIGHT, rows.len(), |ui, range| {
+                            for at in range {
+                                let here = rows[at];
+                                let label = work.browser.describe(work.session, points_at, here);
+                                let lit = work.browser.pick_selected == Some(label.id);
+                                let picture = row_picture(work, points_at, here);
+                                let pressed = row_pictured(ui, work, &label, picture, lit);
+                                if pressed.double_clicked() {
+                                    chosen = Some(label.id);
+                                } else if pressed.clicked() {
+                                    work.browser.pick_selected = Some(label.id);
+                                }
+                            }
+                        });
+                });
+                let mut pane = dialog_pane(ui);
+                let selected = work.browser.pick_selected;
+                preview_of(&mut pane, work, stage, lab, points_at, selected);
+            });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let selected = work.browser.pick_selected;
+                if ui
+                    .add_enabled(selected.is_some(), egui::Button::new("Use"))
+                    .on_hover_text("Write the selected row to the field.")
+                    .on_disabled_hover_text("Press a row first.")
+                    .clicked()
+                {
+                    chosen = selected;
+                }
+                if ui.button("Cancel").clicked() {
+                    close = true;
+                }
+                ui.label(
+                    egui::RichText::new(
+                        "a press plays the row · a double press, Enter or Use chooses it · \
+                         Esc closes",
+                    )
+                    .small()
+                    .color(theme::INK_FAINT),
+                );
+                if selected.is_some() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                    chosen = selected;
+                }
+            });
+        });
+    if let Some(id) = chosen {
+        tables::set_field(
+            work.session,
+            table,
+            record,
+            field,
+            id,
+            &format!("Edit {column_name}"),
+            work.now,
+        );
+        close = true;
+    }
+    close || response.should_close()
+}
+
+/// The picker that chooses a spell's look by another spell: a search over
+/// the spells that have a visual, the selected one playing beside the list,
+/// and two ways to take it. Answers whether the dialog closes.
+///
+/// A visual has no name, so a person does not know which one they want. They
+/// know a spell that looks right. Using its visual makes the two spells share
+/// one `SpellVisual` row, which is how the ranks of one spell are stored.
+/// Cloning it copies the visual with its kits and effects, for a look that
+/// starts the same and is then changed.
+fn looks_like(
+    ui: &mut egui::Ui,
+    work: &mut Workspace<'_>,
+    stage: &mut crate::stage::Stage,
+    record: usize,
+) -> bool {
+    use vale_assets::tables::spell::fields::SPELL_VISUAL;
+    if !work.session.open_table(work.assets, "Spell") {
+        return true;
+    }
+    if work.browser.pick_focus {
+        work.browser.pick_selected = None;
+    }
+    let own = work
+        .session
+        .table("Spell")
+        .and_then(|spells| spells.u32_at(record, 0))
+        .unwrap_or(0);
+    let mut close = false;
+    // `false` shares the visual and `true` clones it.
+    let mut taken: Option<(u32, bool)> = None;
+    let response = egui::Modal::new(egui::Id::new("data-looks-like"))
+        .backdrop_color(egui::Color32::from_black_alpha(90))
+        .show(ui.ctx(), |ui| {
+            ui.set_width(PICKER_WIDTH + DIALOG_PREVIEW.x + 16.0);
+            ui.label(
+                egui::RichText::new(format!("Make spell {own} look like another spell"))
+                    .strong()
+                    .size(14.0),
+            );
+            ui.horizontal_top(|ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(PICKER_WIDTH);
+                    let box_ = ui.add(
+                        egui::TextEdit::singleline(&mut work.browser.pick_query)
+                            .hint_text("a spell's name or id")
+                            .desired_width(PICKER_WIDTH),
+                    );
+                    if work.browser.pick_focus {
+                        box_.request_focus();
+                        work.browser.pick_focus = false;
+                    }
+                    // Only a spell with a visual is a look to take.
+                    let hits: Vec<usize> = {
+                        let all: Vec<usize> = work
+                            .browser
+                            .picks(work.session, "Spell")
+                            .map(|hits| hits.to_vec())
+                            .unwrap_or_default();
+                        let spells = work.session.table("Spell");
+                        all.into_iter()
+                            .filter(|&at| {
+                                spells
+                                    .and_then(|spells| spells.u32_at(at, SPELL_VISUAL))
+                                    .is_some_and(|visual| visual != 0 && visual != u32::MAX)
+                            })
+                            .collect()
+                    };
+                    let range = pager(ui, &mut work.browser.pick_page, hits.len(), PICKER_PAGE);
+                    let rows: Vec<usize> = hits[range].to_vec();
+                    let page = work.browser.pick_page;
+                    egui::ScrollArea::vertical()
+                        .id_salt(("looks-like-rows", page))
+                        .max_height(DIALOG_PREVIEW.y - 60.0)
+                        .auto_shrink([false, false])
+                        .show_rows(ui, ROW_HEIGHT, rows.len(), |ui, range| {
+                            for at in range {
+                                let here = rows[at];
+                                let label = work.browser.describe(work.session, "Spell", here);
+                                let icon = work
+                                    .session
+                                    .table("Spell")
+                                    .and_then(|spells| spells.u32_at(here, schema::SPELL_ICON_FIELD))
+                                    .and_then(|icon| work.icon_by_id(icon));
+                                let lit = work.browser.pick_selected == Some(label.id);
+                                if row(ui, work, &label, icon, lit).clicked() {
+                                    work.browser.pick_selected = Some(label.id);
+                                }
+                            }
+                        });
+                });
+                let mut pane = dialog_pane(ui);
+                match work.browser.pick_selected {
+                    Some(id) => super::storyboard::stage_pane(
+                        &mut pane,
+                        stage,
+                        Some(Show::Spell(id)),
+                        &format!("Preview — spell {id}"),
+                        &[],
+                        None,
+                    ),
+                    None => {
+                        stage.close();
+                        empty_pane(&mut pane, "press a spell to play it");
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let visual = work.browser.pick_selected.and_then(|id| {
+                    let spells = work.session.table("Spell")?;
+                    spells
+                        .u32_at(spells.row_of(id)?, SPELL_VISUAL)
+                        .filter(|visual| *visual != 0 && *visual != u32::MAX)
+                });
+                if ui
+                    .add_enabled(visual.is_some(), egui::Button::new("Use its visual"))
+                    .on_hover_text(
+                        "Name the same SpellVisual row. The two spells then share it, and an \
+                         edit to its kits changes both.",
+                    )
+                    .on_disabled_hover_text("Press a spell first.")
+                    .clicked()
+                {
+                    taken = visual.map(|visual| (visual, false));
+                }
+                if ui
+                    .add_enabled(visual.is_some(), egui::Button::new("Clone its visual"))
+                    .on_hover_text(
+                        "Copy that visual with every kit and effect it names, and name the \
+                         copy. This spell's look then starts the same and is its own to change.",
+                    )
+                    .on_disabled_hover_text("Press a spell first.")
+                    .clicked()
+                {
+                    taken = visual.map(|visual| (visual, true));
+                }
+                if ui.button("Cancel").clicked() {
+                    close = true;
+                }
+                ui.label(
+                    egui::RichText::new("a press plays the spell · Esc closes")
+                        .small()
+                        .color(theme::INK_FAINT),
+                );
+            });
+        });
+    match taken {
+        Some((visual, false)) => {
+            tables::set_field(
+                work.session,
+                "Spell",
+                record,
+                SPELL_VISUAL,
+                visual,
+                "Edit SpellVisual",
+                work.now,
+            );
+            work.session.status = format!("spell {own} names visual {visual}");
+            close = true;
+        }
+        Some((visual, true)) => {
+            if let Some(done) =
+                tables::clone_chain(work.session, visual, Some(("Spell", record, SPELL_VISUAL)))
+            {
+                let copy = done.new_id("SpellVisual", visual).unwrap_or(0);
+                work.session.status = format!(
+                    "visual {visual} copied to {copy} for spell {own}: {} kits, {} effects",
+                    done.count("SpellVisualKit"),
+                    done.count("SpellVisualEffectName")
+                );
+            }
+            close = true;
+        }
+        None => {}
+    }
+    close || response.should_close()
+}
+
+/// Run a command on one row. A command whose result is read on the row's own
+/// form opens the row, so one run from a menu on a row that is not open
+/// shows what it did.
+///
+/// This is the one place a [`Command`] is carried out. The buttons and the
+/// menus both call it, so a command does the same thing from either.
+pub(super) fn run_command(
+    ctx: &egui::Context,
+    work: &mut Workspace<'_>,
+    table: &str,
+    record: usize,
+    command: Command,
+) {
+    use tables::{ability, race_class};
+    let Some(id) = work
+        .session
+        .table(table)
+        .and_then(|open| open.u32_at(record, 0))
+    else {
+        return;
+    };
+    let here = table == work.browser.table;
+    let show = |work: &mut Workspace<'_>| {
+        if here && work.browser.open != Some(record) {
+            work.browser.open = Some(record);
+            work.browser.forget_buffers();
+        }
+    };
+    match command {
+        Command::AddToSkillLine => {
+            if !work.session.open_table(work.assets, ability::TABLE) {
+                return;
+            }
+            if let Some(at) = tables::add_ability(work.session, id) {
+                show(work);
+                // The new row is drawn in the fields view's Learning section.
+                work.browser.view = View::Fields;
+                work.browser.modal = Some(Modal::Pick {
+                    table: ability::TABLE.to_string(),
+                    record: at,
+                    field: ability::SKILL,
+                    points_at: "SkillLine",
+                });
+                work.browser.pick_query.clear();
+                work.browser.pick_focus = true;
+            }
+        }
+        Command::CreateTeachingSpell => {
+            work.session.status = match tables::add_teaching_spell(work.session, id) {
+                Some(made) => format!("spell {made} teaches spell {id}"),
+                None => "the teaching spell was not made".to_string(),
+            };
+            show(work);
+        }
+        Command::LookLike => {
+            show(work);
+            work.browser.modal = Some(Modal::LooksLike { record });
+            work.browser.pick_query.clear();
+            work.browser.pick_focus = true;
+        }
+        Command::CloneChain => {
+            if let Some(done) = tables::clone_chain(work.session, id, None) {
+                let copy = done.new_id("SpellVisual", id).unwrap_or(0);
+                work.session.status = format!(
+                    "visual {id} copied to {copy}: {} kits, {} effects",
+                    done.count("SpellVisualKit"),
+                    done.count("SpellVisualEffectName")
+                );
+                follow_reference(work, "SpellVisual", copy);
+            }
+        }
+        Command::GiveToRacesAndClasses => {
+            if !work.session.open_table(work.assets, race_class::TABLE) {
+                return;
+            }
+            tables::add_race_class_row(work.session, id);
+            show(work);
+        }
+        Command::Clone => {
+            if let Some(at) = tables::clone_row(work.session, table, record) {
+                if here {
+                    work.browser.open_row(at);
+                }
+            }
+        }
+        Command::Delete => {
+            if tables::delete_row(work.session, table, record) && here {
+                // The open row is found by its place in the file, and the
+                // rows after a removed one have each moved up by one.
+                match work.browser.open {
+                    Some(open) if open == record => work.browser.close_row(),
+                    Some(open) if open > record => {
+                        work.browser.open = Some(open - 1);
+                        work.browser.forget_buffers();
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Command::CopyId => {
+            ctx.copy_text(id.to_string());
+            work.session.status = format!("{table} id {id} is on the clipboard");
+        }
+    }
+}
+
+/// A row's right-click menu: the table's commands, each offered where it
+/// applies to the row. Answers the one that was pressed, for the caller to
+/// run once the list is drawn.
+///
+/// Every entry is also a button somewhere: the list's own row of buttons,
+/// the form's head, or a section of the form. The menu is the shorter way to
+/// a command and never the only way.
+fn row_menu(
+    ui: &mut egui::Ui,
+    work: &mut Workspace<'_>,
+    table: &str,
+    record: usize,
+) -> Option<Command> {
+    let mut pressed = None;
+    let mut drawn = 0;
+    for command in tables::commands(table) {
+        let Some(label) =
+            tables::command_label(work.browser, work.session, table, record, command)
+        else {
+            continue;
+        };
+        // A line between the table's own commands and the three every row has.
+        if command == Command::Clone && drawn > 0 {
+            ui.separator();
+        }
+        drawn += 1;
+        if ui
+            .button(label)
+            .on_hover_text(tables::command_about(command))
+            .clicked()
+        {
+            pressed = Some(command);
+            ui.close();
+        }
+    }
+    pressed
+}
+
+/// A field's right-click menu, on its name: for a reference, the three
+/// things its row of controls does, and for every field its value to the
+/// clipboard.
+fn field_menu(
+    ui: &mut egui::Ui,
+    work: &mut Workspace<'_>,
+    table_name: &str,
+    record: usize,
+    column: &Column,
+    raw: u32,
+) {
+    if let Kind::Reference(points_at) = column.kind {
+        let named = raw != 0 && raw != u32::MAX;
+        if named && ui.button(format!("Open {points_at} {}", signed(raw))).clicked() {
+            follow_reference(work, points_at, raw);
+            ui.close();
+        }
+        if ui.button("Choose\u{2026}").clicked() {
+            work.browser.modal = Some(Modal::Pick {
+                table: table_name.to_string(),
+                record,
+                field: column.field,
+                points_at,
+            });
+            work.browser.pick_query.clear();
+            work.browser.pick_focus = true;
+            ui.close();
+        }
+        if named && ui.button("Set to none").clicked() {
+            // A kit's slots hold -1 for nothing and every other reference 0,
+            // which is what a blank row of the table holds in the field.
+            let none = tables::blank_defaults(table_name)
+                .iter()
+                .find(|(field, _)| *field == column.field)
+                .map(|(_, value)| *value)
+                .unwrap_or(0);
+            write(work, table_name, record, column, none);
+            ui.close();
+        }
+        ui.separator();
+    }
+    let value = match column.kind {
+        Kind::Float => format!("{}", f32::from_bits(raw)),
+        Kind::Flags(_) => format!("0x{raw:08X}"),
+        _ => signed(raw),
+    };
+    if ui.button(format!("Copy value {value}")).clicked() {
+        ui.ctx().copy_text(value);
+        ui.close();
+    }
+}
+
+/// What a list row's picture is drawn from.
+enum Picture {
+    /// An icon's archive path, drawn from the thumbnail cache.
+    Icon(String),
+    /// A model's archive path, drawn from the portrait rig.
+    Model(String),
+    /// Nothing, with the room for a picture left: a kit with no model in a
+    /// list of kits that have one, so the names stay in one column.
+    Blank,
+}
+
+/// The picture for a row of a list: a spell's or a skill's icon in the open
+/// table's list, and for the three tables of the spell chain the first model
+/// the row draws, in any list.
+fn row_picture(work: &mut Workspace<'_>, table: &str, record: usize) -> Option<Picture> {
+    match table {
+        "SpellVisual" | "SpellVisualKit" | "SpellVisualEffectName" => Some(
+            tables::first_model(work.browser, work.session, table, record)
+                .map_or(Picture::Blank, Picture::Model),
+        ),
+        "Spell" | "SpellIcon" | "SkillLine" | "SkillLineAbility"
+            if table == work.browser.table =>
+        {
+            work.icon_of(record).map(Picture::Icon)
+        }
+        _ => None,
+    }
+}
+
 /// The dialog that is up, if one is: a reference picker or the model browser.
 /// Drawn once per frame from the form, whichever field opened it.
 ///
@@ -2588,10 +3402,38 @@ fn presence(ui: &mut egui::Ui, present: Option<bool>) {
 /// icons or six thousand models unreachable. A page is turned with the arrows,
 /// `PageUp` and `PageDown`, and a search narrows the list. The page returns to
 /// the first whenever the hits are rebuilt.
-fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
+///
+/// `preview` is the stage and the lab, for the two dialogs that play what
+/// they list ([`pick_previewing`], [`looks_like`]). A caller with no stage
+/// passes `None`, and a chain picker is then the plain list.
+fn modals(
+    ui: &mut egui::Ui,
+    work: &mut Workspace<'_>,
+    preview: Option<(&mut crate::stage::Stage, &mut crate::lab::Lab)>,
+) {
     let Some(modal) = work.browser.modal.clone() else {
         return;
     };
+    if let Some((stage, lab)) = preview {
+        let closes = match &modal {
+            Modal::Pick {
+                table,
+                record,
+                field,
+                points_at,
+            } if previews(points_at) => Some(pick_previewing(
+                ui, work, stage, lab, table, *record, *field, *points_at,
+            )),
+            Modal::LooksLike { record } => Some(looks_like(ui, work, stage, *record)),
+            _ => None,
+        };
+        if let Some(closes) = closes {
+            if closes {
+                work.browser.modal = None;
+            }
+            return;
+        }
+    }
     let table_name = work.browser.table.clone();
     let mut close = false;
     match modal {
@@ -2720,6 +3562,11 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             if response.should_close() {
                 close = true;
             }
+        }
+        // Drawn above when there is a stage to play on. Where there is
+        // none the dialog has nothing to show.
+        Modal::LooksLike { .. } => {
+            close = true;
         }
         Modal::Rows { table } => {
             if !work.session.open_table(work.assets, table) {
@@ -2901,7 +3748,7 @@ fn modals(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 );
             }
             // The dialog opens with the field's current model previewed.
-            // Otherwise it opened with no preview pane and *Use* disabled,
+            // Otherwise it opened with no preview pane and Use disabled,
             // reading "nothing chosen", even though the row already named a
             // model. The preview is set here rather than where the dialog is
             // opened, because there are two such places: the form's `browse…`

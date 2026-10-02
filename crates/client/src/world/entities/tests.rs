@@ -4806,3 +4806,21 @@ fn jump_pose_continuity() {
     };
     eprintln!("  median frame-to-frame move {typical:.3}; the eight largest are marked");
 }
+
+/// A re-read asks for the tables in the call and does not wait for the
+/// next entity, and what was resolved before it is resolved again. With
+/// archives that cannot supply the tables the ask is still made and
+/// recorded, so it is not repeated per entity.
+#[test]
+fn a_reread_asks_for_the_tables_at_once() {
+    let assets = GameAssets::new(String::new());
+    let mut cache = DisplayCache::default();
+    cache.resolved.insert((false, 49), None);
+    cache.forget();
+    assert!(!cache.tried, "a forget alone waits for the next entity");
+    cache.resolved.insert((false, 49), None);
+    cache.reread(&assets);
+    assert!(cache.tried);
+    assert!(cache.resolved.contains_key(&(false, 49)));
+    assert!(cache.tables().is_none(), "these archives hold no table");
+}

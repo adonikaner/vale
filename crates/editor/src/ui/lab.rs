@@ -6,7 +6,7 @@
 //! takes the storyboard's place on the right and shows the stage with the
 //! mannequin on it, the three arrows painted over the picture, and the drags
 //! that move the model. In the model view — every effect row, until
-//! **Position on character…** is pressed — the same pane shows the model by
+//! Position on character… is pressed — the same pane shows the model by
 //! itself, with what the file says about it under the title and the
 //! reference tool's switches along the foot: wireframe, spin, particles.
 //!
@@ -109,7 +109,7 @@ pub fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: 
             // rectangle (which filled the card), and an
             // `allocate_ui_with_layout` laying out from the right overflows to
             // the left when its contents do not fit (which pushed the card off
-            // the panel). The way out is the button beside **Bake & Apply**,
+            // the panel). The way out is the button beside Bake & Apply,
             // where a person looks for it, and the card has only that one.
             ui.horizontal(|ui| {
                 ui.label(
@@ -506,7 +506,7 @@ fn export(work: &mut Workspace<'_>, lab: &mut Lab, record: usize) {
 /// title says which model is on show, and the foot carries the switches.
 pub fn pane(ui: &mut egui::Ui, work: &mut Workspace<'_>, stage: &mut Stage, lab: &mut Lab) {
     let now = work.now;
-    stage.showing = None;
+    stage.close();
     stage.lab = true;
     let all = ui.available_rect_before_wrap();
     ui.painter().rect_filled(all, 0.0, theme::SHELL);
