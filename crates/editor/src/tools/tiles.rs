@@ -79,6 +79,16 @@ pub struct Tiles {
     /// the rest of this editor uses — a resource says what is wanted and a
     /// system does it.
     pub asked: Option<crate::ui::mapview::Asked>,
+    /// The building the map is, when it is one, read from its WDT for the
+    /// map named in `building_for`; and the path typed to make it one. See
+    /// [`read_building`].
+    pub building: Option<String>,
+    pub building_for: String,
+    pub building_path: String,
+    /// Whether a minimap run is going, and the switch that stops it between
+    /// tiles. See [`start_minimaps`].
+    pub drawing: bool,
+    pub stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// …and the same for the two derived pictures, which are asked for from the
     /// inspector rather than from the map.
     pub derive: Option<Derived>,
@@ -88,7 +98,10 @@ pub struct Tiles {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Derived {
     Shadows,
+    /// The selection's minimaps.
     Minimap,
+    /// Every tile of the map's.
+    MinimapsAll,
 }
 
 impl Default for Tiles {
@@ -101,6 +114,11 @@ impl Default for Tiles {
             objects_follow: true,
             said: String::new(),
             asked: None,
+            building: None,
+            building_for: String::new(),
+            building_path: String::new(),
+            drawing: false,
+            stop: Default::default(),
             derive: None,
         }
     }
@@ -313,38 +331,22 @@ pub fn collect_bakes(
     }
 }
 
-/// **Redraw one tile's minimap picture, and write it into the project.**
+/// **Draw one tile's minimap picture**, as the DXT1 BLP the archives carry.
 ///
-/// The picture is keyed by an MD5 the archives' own index states, so a tile the
-/// index already carries is written over its existing name and is picked up with
-/// no further work. A tile the index has never heard of — one this editor just
-/// made — has nowhere to be written, and that is reported rather than papered
-/// over: joining it means editing `md5translate.trs`, which is one 727 KB file
-/// for the whole game.
-///
-/// **Published as well as written**, which is what makes a *second* redraw
-/// reach a playtest. The client keeps every minimap picture it has drawn in a
-/// cache keyed by path for the life of the process, so a redraw that only
-/// wrote the file was read once — at the first playtest — and never again:
-/// reported from the window as regeneration working once. `publish_bytes`
-/// records the path for `session::forget_what_changed`, which tells both
-/// painters' caches to drop it.
-pub fn redraw_minimap(
-    session: &mut EditSession,
-    assets: &GameAssets,
+/// Everything it reads comes through `reader`, so it runs on a worker: the
+/// textures it takes swatches of, the models it measures and the buildings
+/// it draws from above. `neighbours` are the eight tiles around, parsed, for
+/// the placements that stand across a seam, and `tables` colour the water.
+/// See `vale_edit::minimap::render`.
+fn draw_picture(
+    raw: &[u8],
+    neighbours: &[vale_assets::world::adt::Adt],
     at: (u32, u32),
-) -> Result<String, String> {
-    let Some(tile) = session.tiles.get(&at) else {
-        return Err(format!("{}, {} is not open", at.0, at.1));
-    };
-    let raw = tile.write();
-    let adt = vale_assets::world::adt::Adt::parse(&raw).map_err(|e| e.to_string())?;
-    // **And the neighbours, for their placements** — a building on the next
-    // tile that stands across the seam is on this picture. See
-    // `vale_edit::minimap::render`.
-    let neighbours = neighbours_of(session, assets, at);
-
-    let reader = assets.reader();
+    map_id: u32,
+    reader: &dyn Fn(&str) -> Option<Vec<u8>>,
+    tables: Option<&vale_assets::tables::dbc::DisplayTables>,
+) -> Result<Vec<u8>, String> {
+    let adt = vale_assets::world::adt::Adt::parse(raw).map_err(|e| e.to_string())?;
     let swatch_of = |name: &str| -> Option<minimap::Swatch> {
         let bytes = reader(name)?;
         let decoded = vale_assets::world::blp::decode_mipped(&bytes).ok()?;
@@ -425,11 +427,9 @@ pub fn redraw_minimap(
     // **The water's colour is the zone's**, off the same chain the world tints
     // it by — see `minimap::Sources::water_of`. A chain with no light draws
     // the fallback blue rather than nothing.
-    let tables = assets.display_tables().ok();
     let centre = vale_assets::world::terrain::tile_centre(at.0, at.1);
-    let map_id = session.map_id;
     let water_of = |kind: vale_assets::world::wmo::Liquid| {
-        tables.as_ref()?.liquid_depth_light(
+        tables?.liquid_depth_light(
             map_id,
             centre,
             kind,
@@ -439,7 +439,7 @@ pub fn redraw_minimap(
 
     let picture = minimap::render(
         &adt,
-        &neighbours,
+        neighbours,
         &minimap::Sources {
             swatch_of: &swatch_of,
             radius_of: &radius_of,
@@ -449,28 +449,186 @@ pub fn redraw_minimap(
         &minimap::Look::default(),
     );
 
-    let blp = vale_assets::world::blp::encode_dxt1(
-        &picture,
-        minimap::SIDE as u32,
-        minimap::SIDE as u32,
-    )
-    .map_err(|e| e.to_string())?;
+    vale_assets::world::blp::encode_dxt1(&picture, minimap::SIDE as u32, minimap::SIDE as u32)
+        .map_err(|e| e.to_string())
+}
 
-    let Some(name) = minimap_name(assets, &session.map, at) else {
-        return Err(format!(
-            "the archives' minimap index has no entry for {}, {}; a new tile \
-             needs md5translate.trs edited before it can have a picture",
-            at.0, at.1
-        ));
+/// How long one minimap picture takes, in seconds, for the estimate the map
+/// window gives before a run. Nine tiles round Goldshire took 17.4 s.
+pub const MINIMAP_SECONDS: f32 = 2.0;
+
+/// **Start drawing the minimaps of `chosen`, one after another, on the task
+/// pool.** [`collect_minimaps`] writes what comes back.
+///
+/// A whole map is several hundred tiles and tens of minutes, so it runs as
+/// one job with a bar and can be stopped between tiles through `stop`. Each
+/// tile is read as the session has it: an open tile with its edits, any
+/// other through the project and then the archives.
+pub fn start_minimaps(
+    session: &EditSession,
+    assets: &GameAssets,
+    chosen: Vec<(u32, u32)>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> crate::jobs::Job<Drawn> {
+    use bevy::tasks::AsyncComputeTaskPool;
+    use std::sync::atomic::Ordering;
+
+    let reader = assets.shared_reader();
+    let tables = assets.display_tables().ok();
+    let map = session.map.clone();
+    let map_id = session.map_id;
+    // The open tiles a picture can need: the chosen ones and their
+    // neighbours. Written here, since the worker cannot reach the session.
+    let near = |at: (u32, u32)| {
+        chosen
+            .iter()
+            .any(|c| c.0.abs_diff(at.0) <= 1 && c.1.abs_diff(at.1) <= 1)
     };
-    let path = minimap::texture_path(&name);
-    session
-        .project
-        .write(&path, &blp)
-        .map_err(|e| e.to_string())?;
-    let size = blp.len();
-    session.publish_bytes(&path, blp);
-    Ok(format!("drew {}, {} — {size} bytes to {path}", at.0, at.1))
+    let open: std::collections::HashMap<(u32, u32), Vec<u8>> = session
+        .tiles
+        .iter()
+        .filter(|(at, _)| near(**at))
+        .map(|(at, tile)| (*at, tile.write()))
+        .collect();
+    let count = chosen.len();
+    let progress = crate::jobs::Progress::new(count);
+    let watched = progress.clone();
+
+    let task = AsyncComputeTaskPool::get().spawn(async move {
+        let bytes_of = |at: (u32, u32)| {
+            open.get(&at)
+                .cloned()
+                .or_else(|| reader(&vale_assets::adt_path(&map, at.0, at.1)))
+        };
+        let mut drawn = Drawn {
+            pictures: Vec::new(),
+            failed: Vec::new(),
+            stopped: false,
+        };
+        for (done, at) in chosen.into_iter().enumerate() {
+            if stop.load(Ordering::Relaxed) {
+                drawn.stopped = true;
+                break;
+            }
+            let picture = bytes_of(at)
+                .ok_or_else(|| "no tile there".to_string())
+                .and_then(|raw| {
+                    let neighbours = neighbours(at, &bytes_of);
+                    draw_picture(&raw, &neighbours, at, map_id, &*reader, tables.as_deref())
+                });
+            match picture {
+                Ok(blp) => drawn.pictures.push((at, blp)),
+                Err(why) => drawn.failed.push((at, why)),
+            }
+            watched.set(done + 1);
+        }
+        drawn
+    });
+
+    crate::jobs::Job {
+        label: match count {
+            1 => "drawing 1 minimap".to_string(),
+            n => format!("drawing {n} minimaps"),
+        },
+        progress,
+        task,
+    }
+}
+
+/// Minimap pictures, drawn and on their way back to the main thread.
+pub struct Drawn {
+    /// Each tile drawn, with its picture as BLP bytes.
+    pub pictures: Vec<((u32, u32), Vec<u8>)>,
+    /// …and each that could not be, with why.
+    pub failed: Vec<((u32, u32), String)>,
+    /// Whether Stop ended the run before the last tile.
+    pub stopped: bool,
+}
+
+/// **Write finished minimap pictures into the project.**
+///
+/// A tile the archives' index already names is written under that name. A
+/// tile it does not name gets one, the MD5 of its picture as the shipped
+/// names are, and the index is written into the project with an entry for
+/// each. Both are published, so a playtest's minimap reads them.
+pub fn collect_minimaps(
+    mut running: ResMut<crate::jobs::Running<Drawn>>,
+    mut tiles: ResMut<Tiles>,
+    session: Option<ResMut<EditSession>>,
+    assets: Res<GameAssets>,
+) {
+    let done = running.collect();
+    if done.is_empty() {
+        return;
+    }
+    tiles.drawing = !running.is_empty();
+    let Some(mut session) = session else { return };
+    for drawn in done {
+        tiles.said = land_minimaps(&mut session, &assets, drawn);
+        info!("minimaps: {}", tiles.said);
+        session.status = tiles.said.clone();
+    }
+}
+
+fn land_minimaps(session: &mut EditSession, assets: &GameAssets, drawn: Drawn) -> String {
+    use md5::{Digest, Md5};
+    use vale_assets::tables::minimap::{MinimapTiles, MD5_TRANSLATE};
+
+    let index = assets
+        .with_archive(|chain| Ok(chain.read(MD5_TRANSLATE).ok()))
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let known = MinimapTiles::parse(&index);
+    let mut added: Vec<(String, u32, u32, String)> = Vec::new();
+    let mut written = 0usize;
+    let mut problems: Vec<String> = drawn
+        .failed
+        .iter()
+        .map(|(at, why)| format!("{}, {}: {why}", at.0, at.1))
+        .collect();
+    for (at, blp) in drawn.pictures {
+        let name = match known.texture(&session.map, at.0, at.1) {
+            Some(full) => full.rsplit(['\\', '/']).next().unwrap_or_default().to_string(),
+            None => {
+                let name = format!("{:x}.blp", Md5::digest(&blp));
+                added.push((session.map.clone(), at.0, at.1, name.clone()));
+                name
+            }
+        };
+        let path = minimap::texture_path(&name);
+        if let Err(why) = session.project.write(&path, &blp) {
+            problems.push(format!("{}, {}: {why}", at.0, at.1));
+            continue;
+        }
+        session.publish_bytes(&path, blp);
+        written += 1;
+    }
+    if !added.is_empty() {
+        let index = minimap::with_entries(&index, &added);
+        match session.project.write(MD5_TRANSLATE, &index) {
+            Ok(_) => {
+                session.publish_bytes(MD5_TRANSLATE, index);
+                // The client keeps the parsed index with the tables.
+                session.tables_republished = true;
+            }
+            Err(why) => problems.push(format!("the minimap index: {why}")),
+        }
+    }
+    let mut said = match written {
+        1 => "drew 1 minimap".to_string(),
+        n => format!("drew {n} minimaps"),
+    };
+    if !added.is_empty() {
+        said.push_str(&format!(", {} new in the index", added.len()));
+    }
+    if drawn.stopped {
+        said.push_str(", stopped");
+    }
+    if let Some(first) = problems.first() {
+        said.push_str(&format!("; {} failed, first {first}", problems.len()));
+    }
+    said
 }
 
 /// **The eight tiles around one, parsed** — those that exist. An open tile
@@ -480,6 +638,14 @@ fn neighbours_of(
     session: &EditSession,
     assets: &GameAssets,
     at: (u32, u32),
+) -> Vec<vale_assets::world::adt::Adt> {
+    neighbours(at, &|near| session.tile_bytes(assets, near))
+}
+
+/// …from whatever answers a tile's bytes.
+fn neighbours(
+    at: (u32, u32),
+    bytes_of: &dyn Fn((u32, u32)) -> Option<Vec<u8>>,
 ) -> Vec<vale_assets::world::adt::Adt> {
     let mut out = Vec::new();
     for dy in -1i64..=1 {
@@ -496,8 +662,7 @@ fn neighbours_of(
             if nx >= 64 || ny >= 64 {
                 continue;
             }
-            if let Some(adt) = session
-                .tile_bytes(assets, (nx, ny))
+            if let Some(adt) = bytes_of((nx, ny))
                 .and_then(|raw| vale_assets::world::adt::Adt::parse(&raw).ok())
             {
                 out.push(adt);
@@ -507,23 +672,33 @@ fn neighbours_of(
     out
 }
 
+/// The background work the status line shows: shadow rebakes and minimap
+/// runs. One parameter, since the panel system that draws the line has no
+/// room for two.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Background<'w> {
+    shadows: Res<'w, crate::jobs::Running<Baked>>,
+    minimaps: Res<'w, crate::jobs::Running<Drawn>>,
+}
+
+impl Background<'_> {
+    /// Each kind that is running: its name on the map window, what the first
+    /// job says, and how far it has got.
+    pub fn summaries(&self) -> Vec<(&'static str, String, f32)> {
+        let mut out = Vec::new();
+        if let Some((label, fraction)) = self.shadows.summary() {
+            out.push(("Shadows", label, fraction));
+        }
+        if let Some((label, fraction)) = self.minimaps.summary() {
+            out.push(("Minimaps", label, fraction));
+        }
+        out
+    }
+}
+
 /// How many texels a swatch is. Four — at sixteen pixels a chunk and eight
 /// repeats across it, anything finer is below what the picture resolves.
 const SWATCH: u32 = 4;
-
-/// The file name the archives' index gives this tile's picture.
-fn minimap_name(assets: &GameAssets, map: &str, at: (u32, u32)) -> Option<String> {
-    let index = assets.with_archive(|chain| {
-        Ok(chain
-            .read(vale_assets::tables::minimap::MD5_TRANSLATE)
-            .ok())
-    });
-    let index = index.ok().flatten()?;
-    let tiles = vale_assets::tables::minimap::MinimapTiles::parse(&index);
-    let full = tiles.texture(map, at.0, at.1)?;
-    // `texture` answers the whole virtual path; what is wanted is the leaf.
-    full.rsplit(['\\', '/']).next().map(str::to_string)
-}
 
 /// The tile's WDT, from the project if it has been edited and the archives
 /// otherwise.
@@ -546,6 +721,57 @@ fn save_wdt(session: &EditSession, wdt: &wdt::WdtFile) -> Result<(), String> {
         .write(&wdt::wdt_path(&session.map), &wdt.write())
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// Make the map the building typed in [`Tiles::building_path`], or terrain
+/// again, in the project's copy of its WDT.
+///
+/// Only a map with no tiles is made a building, since the client draws a
+/// map as one or the other. The building's box is read from its root file.
+fn make_building(
+    session: &mut EditSession,
+    assets: &GameAssets,
+    tiles: &mut Tiles,
+    building: bool,
+) -> Result<String, String> {
+    let mut wdt = load_wdt(session, assets)?;
+    let map = session.map.clone();
+    if !building {
+        wdt.set_building(None);
+        save_wdt(session, &wdt)?;
+        tiles.building = None;
+        return Ok(format!("{map} is terrain again. Open the map again to see it."));
+    }
+    let count = wdt.tile_count();
+    if count > 0 {
+        return Err(format!("{map} has {count} tiles; only a map with none can be one building"));
+    }
+    let path = tiles.building_path.trim().to_string();
+    let root = assets
+        .with_archive(|chain| Ok(chain.read(&path).ok()))
+        .ok()
+        .flatten()
+        .ok_or_else(|| format!("{path} is not in the archives or the project"))?;
+    let root = vale_assets::world::wmo::WmoRoot::parse(&root)
+        .map_err(|e| format!("{path} does not read as a building: {e}"))?;
+    wdt.set_building(Some((&path, root.bounds)));
+    save_wdt(session, &wdt)?;
+    tiles.building = Some(path.clone());
+    Ok(format!("{map} is now one building: {path}. Open the map again to see it."))
+}
+
+/// Keep [`Tiles::building`] in step with the map that is open.
+fn read_building(
+    session: Option<Res<EditSession>>,
+    assets: Res<GameAssets>,
+    mut tiles: ResMut<Tiles>,
+) {
+    let Some(session) = session else { return };
+    if tiles.building_for == session.map {
+        return;
+    }
+    tiles.building_for = session.map.clone();
+    tiles.building = load_wdt(&session, &assets).ok().and_then(|wdt| wdt.building());
 }
 
 /// A tile's placed hulls, as something a bake can ask.
@@ -629,6 +855,15 @@ pub fn run_asked(
         return;
     }
 
+    // What the map is acts on the map and wants no selection.
+    if matches!(asked, Asked::MakeBuilding | Asked::MakeTerrain) {
+        tiles.said = match make_building(&mut session, &assets, &mut tiles, asked == Asked::MakeBuilding) {
+            Ok(said) | Err(said) => said,
+        };
+        session.status = tiles.said.clone();
+        return;
+    }
+
     // **In a fixed order**, so a selection spanning a map writes the same files
     // whichever way it happened to be dragged.
     let mut chosen: Vec<(u32, u32)> = view.selection.iter().copied().collect();
@@ -640,10 +875,11 @@ pub fn run_asked(
 
     // The two derived pictures go the other way: they are slow per tile and are
     // reported per tile, so they have their own runner.
-    if matches!(asked, Asked::Rebake | Asked::Minimap) {
+    if matches!(asked, Asked::Rebake | Asked::Minimap | Asked::MinimapsAll) {
         tiles.derive = Some(match asked {
             Asked::Rebake => Derived::Shadows,
-            _ => Derived::Minimap,
+            Asked::Minimap => Derived::Minimap,
+            _ => Derived::MinimapsAll,
         });
         return;
     }
@@ -687,6 +923,9 @@ pub fn run_asked(
         Asked::FlyTo(_) => unreachable!("answered above"),
         Asked::Rebake
         | Asked::Minimap
+        | Asked::MinimapsAll
+        | Asked::MakeBuilding
+        | Asked::MakeTerrain
         | Asked::ServerFiles
         | Asked::ExportImages
         | Asked::ImportImages => unreachable!("answered above"),
@@ -807,11 +1046,39 @@ pub fn run_derive(
     session: Option<ResMut<EditSession>>,
     assets: Res<GameAssets>,
     mut running: ResMut<crate::jobs::Running<Baked>>,
+    mut drawing: ResMut<crate::jobs::Running<Drawn>>,
 ) {
     let Some(what) = tiles.derive.take() else {
         return;
     };
     let Some(mut session) = session else { return };
+
+    // Minimaps are one job for the whole list, of the tiles that exist.
+    if matches!(what, Derived::Minimap | Derived::MinimapsAll) {
+        if tiles.drawing {
+            tiles.said = "minimaps are already being drawn".into();
+            return;
+        }
+        let mut chosen: Vec<(u32, u32)> = match what {
+            Derived::MinimapsAll => (0..64u32)
+                .flat_map(|y| (0..64u32).map(move |x| (x, y)))
+                .collect(),
+            _ => view.selection.iter().copied().collect(),
+        };
+        chosen.retain(|&at| session.wdt_claims(at));
+        chosen.sort_unstable();
+        if chosen.is_empty() {
+            tiles.said = "no tile to draw: select tiles that exist".into();
+            return;
+        }
+        tiles.stop.store(false, std::sync::atomic::Ordering::Relaxed);
+        let job = start_minimaps(&session, &assets, chosen, tiles.stop.clone());
+        tiles.said = job.label.clone();
+        session.status = tiles.said.clone();
+        drawing.jobs.push(job);
+        tiles.drawing = true;
+        return;
+    }
 
     // The selection, since that is what the map window is for — and one tile is
     // the ordinary case.
@@ -836,9 +1103,7 @@ pub fn run_derive(
                 }
                 Err(why) => Err(why),
             },
-            // The minimap is a second or two and stays on the frame: a job for
-            // it would be machinery around something nobody notices.
-            Derived::Minimap => redraw_minimap(&mut session, &assets, at),
+            Derived::Minimap | Derived::MinimapsAll => unreachable!("started above"),
         };
         match result {
             Ok(said) => {
@@ -1050,14 +1315,64 @@ fn images_on_the_command_line(
     session.status = said;
 }
 
+/// `--minimaps`: draw the minimaps of the tile under the camera and the
+/// eight around it, through the same job the map window starts.
+fn minimaps_on_the_command_line(
+    args: Res<crate::Args>,
+    session: Option<Res<EditSession>>,
+    assets: Res<GameAssets>,
+    focus: Res<vale_client::render::focus::WorldFocus>,
+    mut tiles: ResMut<Tiles>,
+    mut drawing: ResMut<crate::jobs::Running<Drawn>>,
+    mut done: Local<bool>,
+) {
+    if *done || !args.minimaps {
+        return;
+    }
+    let Some(session) = session else { return };
+    let at = vale_assets::tile_for_position(focus.position.x, focus.position.y);
+    if !focus.present || !is_open(&session, at) {
+        return;
+    }
+    *done = true;
+    let chosen: Vec<(u32, u32)> = (-1i64..=1)
+        .flat_map(|dy| (-1i64..=1).map(move |dx| (dx, dy)))
+        .filter_map(|(dx, dy)| {
+            Some((
+                u32::try_from(i64::from(at.0) + dx).ok()?,
+                u32::try_from(i64::from(at.1) + dy).ok()?,
+            ))
+        })
+        .filter(|&near| session.wdt_claims(near))
+        .collect();
+    let job = start_minimaps(&session, &assets, chosen, tiles.stop.clone());
+    info!("--minimaps: {}", job.label);
+    drawing.jobs.push(job);
+    tiles.drawing = true;
+}
+
 pub struct TilePlugin;
 
 impl Plugin for TilePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Tiles>()
             .init_resource::<crate::jobs::Running<Baked>>()
-            .add_systems(Update, (run_asked, run_derive, restream, collect_bakes))
-            .add_systems(Update, images_on_the_command_line);
+            .init_resource::<crate::jobs::Running<Drawn>>()
+            .add_systems(
+                Update,
+                (
+                    run_asked,
+                    run_derive,
+                    restream,
+                    collect_bakes,
+                    collect_minimaps,
+                    read_building,
+                ),
+            )
+            .add_systems(
+                Update,
+                (images_on_the_command_line, minimaps_on_the_command_line),
+            );
     }
 }
 

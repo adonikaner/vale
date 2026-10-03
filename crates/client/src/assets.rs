@@ -288,6 +288,23 @@ impl GameAssets {
             .flatten()
         })
     }
+
+    /// [`Self::reader`] for another thread: the same chain and overlay behind
+    /// the same lock, so reads from a worker queue behind the main thread's
+    /// rather than opening the archives a second time.
+    pub fn shared_reader(&self) -> Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync> {
+        let archive = Arc::clone(&self.archive);
+        let overlay = Arc::clone(&self.overlay);
+        let gamedata = self.gamedata_dir.clone();
+        let root = self.root.clone();
+        Arc::new(move |path: &str| {
+            with_chain(&archive, &gamedata, &root, &overlay, |chain| {
+                Ok(chain.read(path).ok())
+            })
+            .ok()
+            .flatten()
+        })
+    }
 }
 
 /// [`GameAssets::with_archive`]'s body, shared with the readers it hands out.

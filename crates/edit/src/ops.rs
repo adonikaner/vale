@@ -712,6 +712,11 @@ pub struct WaterBrush {
     /// here could be fished; the shipped sea carries `FISHABLE` on nearly
     /// every cell. [`WaterAction::Mark`] writes it without moving the water.
     pub cell_flags: u8,
+    /// A sloped surface in place of [`Self::level`]: two points, each a world
+    /// position and a surface height. The surface runs straight from one to
+    /// the other and is level past either end, so a river is laid as a chain
+    /// of these. See [`Self::level_at`].
+    pub slope: Option<[[f32; 3]; 2]>,
 }
 
 impl Default for WaterBrush {
@@ -721,6 +726,7 @@ impl Default for WaterBrush {
             level: 0.0,
             kind: vale_assets::world::wmo::Liquid::Water,
             cell_flags: liquid::FISHABLE,
+            slope: None,
         }
     }
 }
@@ -736,6 +742,21 @@ pub enum WaterAction {
     /// the water where it is — the way to make an existing lake fishable, or
     /// an existing sea deep, without repainting it.
     Mark,
+    /// Work the depth bytes of the wet cells out again from the ground under
+    /// them, and leave the water where it is. The depth is taken when a cell
+    /// is flooded, so it is out of date once the bed under it is reshaped.
+    Depth,
+}
+
+/// The four corners of a liquid cell: each one's place in the 9x9 vertex
+/// grid and its world position, from the cell's square.
+fn corners(high: [f32; 2], low: [f32; 2], row: usize, col: usize) -> [(usize, usize, f32, f32); 4] {
+    [
+        (row, col, high[0], high[1]),
+        (row, col + 1, high[0], low[1]),
+        (row + 1, col, low[0], high[1]),
+        (row + 1, col + 1, low[0], low[1]),
+    ]
 }
 
 /// What one step of a water stroke did.
@@ -747,6 +768,23 @@ pub struct Flooded {
 }
 
 impl WaterBrush {
+    /// The surface height this brush floods to at a world position: the
+    /// level, or along the slope. The height at a point between the two
+    /// ends is the two heights mixed by how far along the line between them
+    /// the point is; across the line it does not change.
+    pub fn level_at(&self, x: f32, y: f32) -> f32 {
+        let Some([start, end]) = self.slope else {
+            return self.level;
+        };
+        let along = [end[0] - start[0], end[1] - start[1]];
+        let length = along[0] * along[0] + along[1] * along[1];
+        if length < 1e-6 {
+            return start[2];
+        }
+        let t = (((x - start[0]) * along[0] + (y - start[1]) * along[1]) / length).clamp(0.0, 1.0);
+        start[2] + t * (end[2] - start[2])
+    }
+
     /// Wet every cell the circle covers, or dry them.
     ///
     /// `ground` answers the terrain height at a world position, and is the
@@ -809,27 +847,54 @@ impl WaterBrush {
                             }
                             continue;
                         }
+                        WaterAction::Depth => {
+                            for pool in pools.iter_mut().filter(|pool| pool.has_depth()) {
+                                if !pool.is_wet(row, col) {
+                                    continue;
+                                }
+                                let mut changed = false;
+                                for (r, c, x, y) in corners(high, low, row, col) {
+                                    let Some(floor) = ground(x, y) else { continue };
+                                    let depth = liquid::Pool::depth_for(pool.height(r, c) - floor);
+                                    if pool.depth(r, c) != depth {
+                                        pool.set_depth(r, c, depth);
+                                        changed = true;
+                                    }
+                                }
+                                touched += usize::from(changed);
+                            }
+                            continue;
+                        }
                         WaterAction::Flood => {}
                     }
                     let slot = match pools.iter().position(|pool| pool.kind == self.kind) {
                         Some(slot) => slot,
                         None => {
-                            pools.push(liquid::Pool::flat(self.kind, self.level));
+                            pools.push(liquid::Pool::flat(self.kind, self.level_at(at[0], at[1])));
                             pools.len() - 1
                         }
                     };
                     let pool = &mut pools[slot];
+                    // Each corner at the surface over it, so a sloped surface
+                    // is a slope and two cells that share a corner agree on it.
+                    let surface = corners(high, low, row, col)
+                        .map(|(r, c, x, y)| (r, c, x, y, self.level_at(x, y)));
                     if pool.is_wet(row, col)
-                        && (pool.height(row, col) - self.level).abs() < 1e-3
+                        && surface
+                            .iter()
+                            .all(|&(r, c, _, _, h)| (pool.height(r, c) - h).abs() < 1e-3)
                         && pool.cell_flags(row, col) == self.cell_flags & 0xF0
                     {
                         continue;
                     }
                     pool.set_wet(row, col, true);
                     pool.set_cell_flags(row, col, self.cell_flags);
-                    let above = ground(centre[0], centre[1]).map(|g| self.level - g);
-                    let depth = liquid::Pool::depth_for(above.unwrap_or(0.0));
-                    pool.fill_cell(row, col, self.level, depth);
+                    // The depth at each corner, from the ground under that
+                    // corner, so the shallows follow the shore.
+                    for (r, c, x, y, height) in surface {
+                        let above = ground(x, y).map(|floor| height - floor);
+                        pool.set_vertex(r, c, height, liquid::Pool::depth_for(above.unwrap_or(0.0)));
+                    }
                     touched += 1;
                 }
             }
@@ -1208,7 +1273,7 @@ impl Brush {
         seconds: f32,
         level: Option<f32>,
     ) -> Vec<Edit> {
-        self.stroke_keeping(tile, at, seconds, level, None)
+        self.stroke_masked(tile, at, seconds, level, None)
     }
 
     /// The slope [`Self::tilt`] holds for a plane that rises `angle` degrees
@@ -1220,19 +1285,18 @@ impl Brush {
         [rise * bearing.cos(), -rise * bearing.sin()]
     }
 
-    /// [`Self::stroke`], leaving every vertex in `kept` where it is.
-    ///
-    /// `kept` is a set of this tile's vertices that the stroke may not move:
-    /// a selection used as a lock. The shading is still recomputed for every
-    /// chunk the stroke reached, since a kept vertex's normal depends on its
-    /// neighbours.
-    pub fn stroke_keeping(
+    /// [`Self::stroke`] through a selection of this tile's vertices: with
+    /// [`vertices::Mask::Protect`] the stroke leaves them where they are, and
+    /// with [`vertices::Mask::Confine`] it moves only them. The shading is
+    /// recomputed for every chunk the stroke reached either way, since a
+    /// vertex's normal depends on its neighbours.
+    pub fn stroke_masked(
         &self,
         tile: &mut AdtFile,
         at: [f32; 2],
         seconds: f32,
         level: Option<f32>,
-        kept: Option<&vertices::Selected>,
+        mask: Option<(&vertices::Selected, vertices::Mask)>,
     ) -> Vec<Edit> {
         let touched = self.chunks_under(tile, at);
         let mut edits = Vec::new();
@@ -1259,9 +1323,9 @@ impl Brush {
                 continue;
             }
             let mut after = self.moved(&before, origin, at, seconds, level);
-            if let Some(kept) = kept {
+            if let Some((selected, mask)) = mask {
                 for (vertex, height) in after.iter_mut().enumerate() {
-                    if kept.holds(index, vertex) {
+                    if !mask.lets(selected, index, vertex) {
                         *height = before[vertex];
                     }
                 }

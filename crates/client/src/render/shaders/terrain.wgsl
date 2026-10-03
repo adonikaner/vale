@@ -69,9 +69,10 @@ struct TerrainParams {
 const CHUNK_YARDS: f32 = 33.333332;
 const TILE_YARDS: f32 = 533.33331;
 const GUIDE_STEEP: vec3<f32> = vec3<f32>(0.62, 0.22, 0.88);
-// Dark, where the two grids are light, so a contour is not taken for a
-// chunk border where they cross.
-const GUIDE_CONTOUR: vec3<f32> = vec3<f32>(0.08, 0.05, 0.03);
+// Bright cyan, which no ground texture and neither grid colour is near, so a
+// contour shows on grass, rock and sand, and in shade, where a dark line was
+// lost.
+const GUIDE_CONTOUR: vec3<f32> = vec3<f32>(0.15, 0.95, 1.0);
 const GUIDE_CHUNK: vec3<f32> = vec3<f32>(1.0, 1.0, 1.0);
 const GUIDE_TILE: vec3<f32> = vec3<f32>(1.0, 0.78, 0.25);
 
@@ -105,8 +106,13 @@ fn guided(
         out = mix(out, GUIDE_STEEP, 0.55);
     }
     if guides.y > 0.0 {
-        let line = guide_line(world.y / guides.y, rate.y / guides.y, 1.0);
-        out = mix(out, GUIDE_CONTOUR, 0.7 * line);
+        // Every fifth contour is wider, as on a map, and since it is five
+        // times further apart it still draws where the others have faded.
+        let line = max(
+            guide_line(world.y / guides.y, rate.y / guides.y, 1.5),
+            guide_line(world.y / (guides.y * 5.0), rate.y / (guides.y * 5.0), 3.0),
+        );
+        out = mix(out, GUIDE_CONTOUR, 0.9 * line);
     }
     if grid == 1.0 || grid == 3.0 {
         let line = max(

@@ -329,20 +329,30 @@ fn water(ui: &mut egui::Ui, water: &mut crate::tools::water::Water) {
     }
 
     ui.add_space(4.0);
-    theme::heading(ui, "Level");
-    theme::row(ui, "height", |ui| {
-        ui.add(
-            egui::DragValue::new(&mut water.brush.level)
-                .speed(0.1)
-                .range(water::LEVEL)
-                .fixed_decimals(2),
-        );
-    });
-    // The level relative to the ground under the pointer. A negative
+    theme::heading(ui, "Surface");
+    theme::segmented(ui, &mut water.sloped, &[("Flat", false), ("Sloped", true)], |a, b| a == b);
+    match water.sloped {
+        false => {
+            theme::row(ui, "height", |ui| {
+                ui.add(
+                    egui::DragValue::new(&mut water.brush.level)
+                        .speed(0.1)
+                        .range(water::LEVEL)
+                        .fixed_decimals(2),
+                );
+            });
+        }
+        true => slope_rows(ui, water),
+    }
+    // The surface relative to the ground under the pointer. A negative
     // difference is printed as "under the ground" in the warning colour,
     // because that is the mistake this panel is meant to catch.
-    if let Some(ground) = water.ground {
-        let over = water.brush.level - ground;
+    let here = water
+        .point
+        .map(|point| water.brush.level_at(point.x, point.y))
+        .unwrap_or(water.brush.level);
+    if let (Some(ground), false) = (water.ground, water.sloped && water.brush.slope.is_none()) {
+        let over = here - ground;
         ui.label(
             egui::RichText::new(match over >= 0.0 {
                 true => format!("{over:.2} yd over the ground here"),
@@ -355,8 +365,17 @@ fn water(ui: &mut egui::Ui, water: &mut crate::tools::water::Water) {
             }),
         );
     }
-    theme::note(ui, "space takes the level from the water under the pointer");
-    theme::note(ui, "ctrl + space takes it from the ground");
+    match water.sloped {
+        false => {
+            theme::note(ui, "space takes the level from the water under the pointer");
+            theme::note(ui, "ctrl + space takes it from the ground");
+        }
+        true => {
+            theme::note(ui, "space sets the start, shift + space the end");
+            theme::note(ui, "height from the water there, or with ctrl the ground");
+            theme::note(ui, "level past either end");
+        }
+    }
 
     ui.add_space(4.0);
     theme::heading(ui, "Liquid");
@@ -415,9 +434,43 @@ fn water(ui: &mut egui::Ui, water: &mut crate::tools::water::Water) {
         ui,
         "alt + left marks the wet cells with the two flags, moving nothing",
     );
+    theme::note(ui, "ctrl + left updates depth from the ground below");
     theme::note(ui, "ctrl + wheel resizes");
-    theme::note(ui, "one level per stroke: the surface is flat");
     theme::note(ui, "the character mover reads the same file");
+}
+
+/// The two ends of a sloped surface: each one's height, or that it is not
+/// set, and how far the surface falls between them.
+fn slope_rows(ui: &mut egui::Ui, water: &mut crate::tools::water::Water) {
+    for (at, label) in [(0, "start"), (1, "end")] {
+        theme::row(ui, label, |ui| match &mut water.ends[at] {
+            Some(end) => {
+                ui.add(
+                    egui::DragValue::new(&mut end[2])
+                        .speed(0.1)
+                        .range(crate::tools::water::LEVEL)
+                        .fixed_decimals(2),
+                );
+                if ui.small_button("Clear").clicked() {
+                    water.ends[at] = None;
+                }
+            }
+            None => {
+                ui.label(egui::RichText::new("not set").color(theme::INK_FAINT));
+            }
+        });
+    }
+    if let [Some(start), Some(end)] = water.ends {
+        let run = ((end[0] - start[0]).powi(2) + (end[1] - start[1]).powi(2)).sqrt();
+        let fall = start[2] - end[2];
+        theme::note(
+            ui,
+            match fall >= 0.0 {
+                true => format!("falls {fall:.1} yd over {run:.0} yd"),
+                false => format!("rises {:.1} yd over {run:.0} yd", -fall),
+            },
+        );
+    }
 }
 
 /// What `MCLY`'s animation bits come to, in words: which way the texture
@@ -2892,12 +2945,12 @@ fn brush(ui: &mut egui::Ui, terrain: &mut Terrain) {
     theme::heading(ui, "Objects");
     objects_follow(ui, &mut terrain.objects_follow);
 
-    // The selection, while there is one: whether a stroke leaves it alone.
-    // The rest of what is done with it is on the Select vertices half.
+    // The selection, while there is one: how a stroke treats it. The rest
+    // of what is done with it is on the Select vertices half.
     if terrain.selected > 0 {
         ui.add_space(4.0);
         theme::heading(ui, "Selected vertices");
-        vertex_lock(ui, terrain);
+        vertex_mask(ui, terrain);
     }
 
     ui.add_space(6.0);
@@ -2915,14 +2968,8 @@ fn flatten_panel(ui: &mut egui::Ui, terrain: &mut Terrain) {
     use vale_edit::ops::Only;
     ui.add_space(4.0);
     theme::heading(ui, "Flatten to");
-    ui.checkbox(
-        &mut terrain.flatten_to_cursor,
-        "the height under the pointer",
-    )
-    .on_hover_text(
-        "Taken where the stroke begins. Off, the stroke goes to the height typed below, \
-         wherever it begins.",
-    );
+    ui.checkbox(&mut terrain.flatten_to_cursor, "height under the pointer")
+        .on_hover_text("Taken where the stroke starts. Off: the height below.");
     if !terrain.flatten_to_cursor {
         theme::row(ui, "height", |ui| {
             ui.add(
@@ -2942,42 +2989,51 @@ fn flatten_panel(ui: &mut egui::Ui, terrain: &mut Terrain) {
     theme::note(
         ui,
         match terrain.brush.only {
-            Only::Both => "raises what is under the height and lowers what is over it",
-            Only::Fill => "raises what is under the height and leaves the rest",
-            Only::Cut => "lowers what is over the height and leaves the rest",
+            Only::Both => "raises low ground and lowers high ground",
+            Only::Fill => "only raises low ground",
+            Only::Cut => "only lowers high ground",
         },
     );
-    // A level flatten is the common one, so the bearing is shown only once
-    // there is a tilt for it to be the bearing of.
+    tilt_rows(ui, &mut terrain.tilt_angle, &mut terrain.tilt_toward);
+    if terrain.tilt_angle > 0.0 {
+        theme::note(ui, "the slope pivots where the stroke starts");
+    }
+}
+
+/// A tilt's two numbers: how steep, and which way is up. Answers whether
+/// either changed.
+fn tilt_rows(ui: &mut egui::Ui, angle: &mut f32, toward: &mut f32) -> bool {
+    let mut changed = false;
     theme::row(ui, "tilt", |ui| {
-        ui.add(
-            egui::DragValue::new(&mut terrain.tilt_angle)
+        changed |= ui.add(
+            egui::DragValue::new(angle)
                 .speed(0.25)
                 .range(0.0..=60.0)
                 .fixed_decimals(0)
                 .suffix("\u{b0}"),
         )
-        .on_hover_text(
-            "Flatten to a plane this steep, through the point where the stroke begins: a \
-             ramp. Zero is level.",
-        );
-        if terrain.tilt_angle == 0.0 {
+        .on_hover_text("Slope in degrees. 0 is level.")
+        .changed();
+        if *angle == 0.0 {
             theme::note(ui, "level");
         }
     });
-    if terrain.tilt_angle > 0.0 {
-        theme::row(ui, "rising", |ui| {
-            ui.add(
-                egui::DragValue::new(&mut terrain.tilt_toward)
+    // The bearing only matters once there is a slope.
+    if *angle > 0.0 {
+        theme::row(ui, "uphill", |ui| {
+            changed |= ui.add(
+                egui::DragValue::new(&mut *toward)
                     .speed(1.0)
                     .range(0.0..=359.0)
                     .fixed_decimals(0)
                     .suffix("\u{b0}"),
             )
-            .on_hover_text("The compass bearing the plane rises toward: 0 is north, 90 east.");
-            theme::note(ui, compass(terrain.tilt_toward));
+            .on_hover_text("Compass bearing of the uphill side. 0 is north, 90 east.")
+            .changed();
+            theme::note(ui, compass(*toward));
         });
     }
+    changed
 }
 
 /// The nearest of the eight compass points to a bearing in degrees.
@@ -2986,15 +3042,28 @@ fn compass(bearing: f32) -> &'static str {
     POINTS[((bearing.rem_euclid(360.0) / 45.0).round() as usize) % 8]
 }
 
-/// The switch that makes the selection a lock, with how much is selected.
-fn vertex_lock(ui: &mut egui::Ui, terrain: &mut Terrain) {
-    ui.checkbox(&mut terrain.lock, "Brush strokes leave them alone")
-        .on_hover_text(
-            "A stroke moves the ground round the selected vertices and not the vertices: \
-             a cliff's edge or a building's pad is selected once and sculpted up to. The \
-             marks are red while this is on.",
-        );
-    theme::note(ui, format!("{} selected", terrain.selected));
+/// How brush strokes treat the selection.
+fn vertex_mask(ui: &mut egui::Ui, terrain: &mut Terrain) {
+    use vale_edit::ops::vertices::Mask;
+    ui.label(egui::RichText::new("Brush strokes").color(theme::INK_DIM));
+    theme::segmented(
+        ui,
+        &mut terrain.mask,
+        &[
+            ("Anywhere", None),
+            ("Outside", Some(Mask::Protect)),
+            ("Inside", Some(Mask::Confine)),
+        ],
+        |a, b| a == b,
+    );
+    theme::note(
+        ui,
+        match terrain.mask {
+            None => "strokes ignore the selection",
+            Some(Mask::Protect) => "strokes leave the selection alone (red)",
+            Some(Mask::Confine) => "strokes only move the selection (green)",
+        },
+    );
 }
 
 /// The terrain tool's panel while the left button selects vertices: the
@@ -3035,7 +3104,7 @@ fn vertex_panel(ui: &mut egui::Ui, terrain: &mut Terrain) {
             }
         });
     });
-    // The mean height, dragged: every selected vertex moves by the same
+    // Dragging the mean height moves every selected vertex by the same
     // amount, so the shape they make is kept.
     theme::row(ui, "height", |ui| {
         let mut mean = terrain.selected_mean;
@@ -3047,32 +3116,52 @@ fn vertex_panel(ui: &mut egui::Ui, terrain: &mut Terrain) {
                     .fixed_decimals(1)
                     .suffix(" yd"),
             )
-            .on_hover_text(
-                "The mean height of the selection. Drag it, or type a height: every selected \
-                 vertex moves by the same amount, with no falloff, as one undo entry.",
-            )
+            .on_hover_text("Mean height. Drag or type to move the selection up or down.")
             .on_disabled_hover_text("Select some vertices first.");
         if moved.changed() && mean != terrain.selected_mean {
             terrain.ask = Some(VertexAsk::MoveTo(mean));
         }
     });
-    if ui
-        .add_enabled(any, egui::Button::new("Level to that height"))
-        .on_hover_text(
-            "Put every selected vertex at the selection's mean height: a flat top with a \
-             hard edge, which a brush's falloff cannot make.",
-        )
-        .on_disabled_hover_text("Select some vertices first.")
-        .clicked()
-    {
-        terrain.ask = Some(VertexAsk::Level);
+    ui.horizontal(|ui| {
+        for (label, ask, about) in [
+            ("Level", VertexAsk::Level, "Flatten the selection at its mean height."),
+            (
+                "Smooth",
+                VertexAsk::Smooth,
+                "Smooth the selection. Click again to smooth more.",
+            ),
+        ] {
+            if ui
+                .add_enabled(any, egui::Button::new(label))
+                .on_hover_text(about)
+                .on_disabled_hover_text("Select some vertices first.")
+                .clicked()
+            {
+                terrain.ask = Some(ask);
+            }
+        }
+    });
+
+    ui.add_space(4.0);
+    theme::heading(ui, "Tilt");
+    // The selection follows the sliders, pivoting on its centre.
+    let [angle, toward] = &mut terrain.vertex_tilt;
+    if tilt_rows(ui, angle, toward) && any {
+        terrain.ask = Some(VertexAsk::Tilt);
     }
-    ui.add_space(2.0);
-    ui.checkbox(&mut terrain.lock, "Brush strokes leave them alone")
-        .on_hover_text(
-            "With Sculpt chosen, a stroke moves the ground round the selected vertices and \
-             not the vertices. The marks are red while this is on.",
-        );
+    ui.checkbox(&mut terrain.tilt_flat, "flatten onto the slope")
+        .on_hover_text("Off: the selection leans and keeps its bumps. On: it becomes a flat ramp.");
+    theme::note(
+        ui,
+        match any {
+            true => "changing these tilts the selection",
+            false => "select some vertices to tilt them",
+        },
+    );
+
+    ui.add_space(4.0);
+    theme::heading(ui, "Brush");
+    vertex_mask(ui, terrain);
     objects_follow(ui, &mut terrain.objects_follow);
 
     ui.add_space(6.0);

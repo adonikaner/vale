@@ -4,11 +4,13 @@
 //! Every other way of moving the ground here is a brush: a footprint and a
 //! falloff, applied where the pointer is. A selection is the other kind of
 //! tool. The vertices are chosen first, by painting over them, and then moved
-//! together by one amount or put at one height, with no falloff. That is how
-//! a cliff gets a straight top and a building a level pad with a hard edge.
+//! together by one amount, put at one height or on one tilted plane, or
+//! smoothed, with no falloff. That is how a cliff gets a straight top and a
+//! building a level pad with a hard edge.
 //!
-//! The same set can protect ground instead: a brush given it leaves every
-//! vertex in it where it is ([`super::Brush::stroke_keeping`]).
+//! The same set can mask a brush instead: a stroke leaves every vertex in it
+//! where it is, or moves nothing else ([`Mask`], and
+//! [`super::Brush::stroke_masked`]).
 //!
 //! ## A vertex two chunks share is in the set twice
 //!
@@ -110,33 +112,29 @@ impl Selected {
         found
     }
 
-    /// The sum of the selected vertices' heights and how many there are, so a
-    /// caller with several tiles can add them up before dividing.
-    pub fn weighed(&self, tile: &AdtFile) -> (f64, usize) {
-        let (mut sum, mut count) = (0.0f64, 0usize);
-        for (&index, flags) in &self.chunks {
-            let Some(chunk) = tile.chunk(index) else {
-                continue;
-            };
-            let all = heights::heights(chunk);
-            for (vertex, _) in flags.iter().enumerate().filter(|(_, on)| **on) {
-                if let Some(&height) = all.get(vertex) {
-                    sum += f64::from(height);
-                    count += 1;
-                }
+    /// The sums of the selected vertices' x, y and height, and how many
+    /// there are, so a caller with several tiles can add them up before
+    /// dividing. The quotient is the selection's centre at its mean height.
+    pub fn weighed(&self, tile: &AdtFile) -> ([f64; 3], usize) {
+        let (mut sum, mut count) = ([0.0f64; 3], 0usize);
+        for position in self.positions(tile) {
+            for axis in 0..3 {
+                sum[axis] += f64::from(position[axis]);
             }
+            count += 1;
         }
         (sum, count)
     }
 
-    /// Write a new height to every selected vertex, and return the edits,
-    /// already applied, with the normals that follow.
-    fn rewrite(&self, tile: &mut AdtFile, to: impl Fn(f32) -> f32) -> Vec<Edit> {
-        let mut edits = Vec::new();
+    /// The heights the selected vertices would have, each given by `to` from
+    /// its world position, without writing them. See [`Plan`].
+    pub fn plan(&self, tile: &AdtFile, to: impl Fn([f32; 3]) -> f32) -> Plan {
+        let mut chunks = Vec::new();
         for (&index, flags) in &self.chunks {
             let Some(chunk) = tile.chunk(index) else {
                 continue;
             };
+            let origin = chunk.head().position();
             let before = heights::heights(chunk);
             if before.is_empty() {
                 continue;
@@ -145,18 +143,94 @@ impl Selected {
                 .iter()
                 .enumerate()
                 .map(|(vertex, &height)| match flags.get(vertex) {
-                    Some(true) => to(height),
+                    Some(true) => to(heights::vertex_position(origin, vertex, height)),
                     _ => height,
                 })
                 .collect();
-            if after == before {
+            if after != before {
+                chunks.push((index, before, after));
+            }
+        }
+        Plan { chunks }
+    }
+
+    /// Move every selected vertex up or down by `by` yards. The shape the
+    /// vertices make is kept.
+    pub fn shift(&self, tile: &mut AdtFile, by: f32) -> Vec<Edit> {
+        self.plan(tile, |at| at[2] + by).write(tile)
+    }
+
+    /// Put every selected vertex at one height.
+    pub fn level(&self, tile: &mut AdtFile, to: f32) -> Vec<Edit> {
+        self.plan(tile, |_| to).write(tile)
+    }
+
+    /// Put every selected vertex on the plane through `pivot` with the slope
+    /// `slope`, in yards of rise per yard along world x and y. See
+    /// [`super::Brush::tilted`] for a slope from an angle and a bearing.
+    pub fn tilt(&self, tile: &mut AdtFile, pivot: [f32; 3], slope: [f32; 2]) -> Vec<Edit> {
+        self.plan(tile, |at| plane(pivot, slope, at)).write(tile)
+    }
+
+    /// The heights one pass of smoothing gives the selected vertices: each
+    /// moves `amount` of the way, 0 to 1, toward the mean of the four
+    /// vertices beside it. `ground` answers the height at a world position.
+    /// A caller with several tiles open answers from all of them, so the two
+    /// copies of a vertex on a tile's side move alike.
+    pub fn smoothed(
+        &self,
+        tile: &AdtFile,
+        amount: f32,
+        ground: impl Fn(f32, f32) -> Option<f32>,
+    ) -> Plan {
+        // The spacing of the vertex grid. An outer vertex's four neighbours
+        // are outer vertices and an inner one's are inner.
+        const STEP: f32 = CHUNK_SIZE / 8.0;
+        self.plan(tile, |at| {
+            let (mut sum, mut count) = (0.0, 0);
+            for (dx, dy) in [(STEP, 0.0), (-STEP, 0.0), (0.0, STEP), (0.0, -STEP)] {
+                if let Some(height) = ground(at[0] + dx, at[1] + dy) {
+                    sum += height;
+                    count += 1;
+                }
+            }
+            match count {
+                0 => at[2],
+                n => at[2] + amount.clamp(0.0, 1.0) * (sum / n as f32 - at[2]),
+            }
+        })
+    }
+}
+
+/// The height of a plane at a position: the plane through `pivot` that rises
+/// `slope[0]` yards per yard along world x and `slope[1]` along world y.
+pub fn plane(pivot: [f32; 3], slope: [f32; 2], at: [f32; 3]) -> f32 {
+    pivot[2] + slope[0] * (at[0] - pivot[0]) + slope[1] * (at[1] - pivot[1])
+}
+
+/// New heights for some chunks of one tile, worked out and not yet written.
+///
+/// Working out and writing are separate so that an operation which reads the
+/// ground round a vertex reads it as it was, on every tile, before any of it
+/// moves.
+#[derive(Debug, Clone, Default)]
+pub struct Plan {
+    /// Per chunk: its index, its heights now, and its heights after.
+    chunks: Vec<(usize, Vec<f32>, Vec<f32>)>,
+}
+
+impl Plan {
+    /// Write the heights, and return the edits, already applied, with the
+    /// normals that follow.
+    pub fn write(self, tile: &mut AdtFile) -> Vec<Edit> {
+        let mut edits = Vec::new();
+        for (chunk, before, after) in self.chunks {
+            let Some(mesh) = tile.chunk_mut(chunk) else {
                 continue;
-            }
-            if let Some(chunk) = tile.chunk_mut(index) {
-                heights::set_heights(chunk, &after);
-            }
+            };
+            heights::set_heights(mesh, &after);
             edits.push(Edit::Heights {
-                chunk: index,
+                chunk,
                 before,
                 after,
             });
@@ -166,15 +240,24 @@ impl Selected {
         }
         edits
     }
+}
 
-    /// Move every selected vertex up or down by `by` yards. The shape the
-    /// vertices make is kept.
-    pub fn shift(&self, tile: &mut AdtFile, by: f32) -> Vec<Edit> {
-        self.rewrite(tile, |height| height + by)
-    }
+/// How a brush stroke treats a selection. See
+/// [`super::Brush::stroke_masked`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mask {
+    /// The stroke moves the ground round the selection and not the selection.
+    Protect,
+    /// The stroke moves the selection and nothing else.
+    Confine,
+}
 
-    /// Put every selected vertex at one height.
-    pub fn level(&self, tile: &mut AdtFile, to: f32) -> Vec<Edit> {
-        self.rewrite(tile, |_| to)
+impl Mask {
+    /// Whether a stroke under this mask may move one vertex of one chunk.
+    pub fn lets(self, selected: &Selected, chunk: usize, vertex: usize) -> bool {
+        match self {
+            Mask::Protect => !selected.holds(chunk, vertex),
+            Mask::Confine => selected.holds(chunk, vertex),
+        }
     }
 }

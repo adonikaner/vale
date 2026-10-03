@@ -1047,12 +1047,11 @@ fn normalise(v: [f32; 3]) -> [f32; 3] {
 
 /// **Where a tile's picture goes, and what it is called.**
 ///
-/// The archives key these by an MD5 through `md5translate.trs`, which is a
-/// lookup a project cannot join: the index is one flat file for the whole game
-/// and an edit that rewrote it would have to carry all 727 KB of it. So an
-/// edited picture is written under the name the index *would* have resolved to
-/// — the caller reads the real index, finds the tile's MD5, and writes there —
-/// and a tile the index has never heard of needs the index edited too.
+/// The archives key these by an MD5 through `md5translate.trs`, one flat file
+/// for the whole game. An edited picture is written under the name the index
+/// already gives it, so the index is untouched. A tile the index has never
+/// heard of needs an entry, which [`with_entries`] adds; the project then
+/// carries the whole 727 KB index.
 ///
 /// [`crate::project::Project`] shadows a virtual path, so writing this path is
 /// enough for the editor's own archive overlay to answer with it.
@@ -1066,12 +1065,79 @@ pub fn index_name(map: &str, tile_x: u32, tile_y: u32) -> String {
     format!(r"{map}\map{tile_x}_{tile_y}.blp")
 }
 
+/// The index with entries added for tiles it does not carry: each is a map
+/// directory, a tile, and the picture's file name in [`texture_path`]'s
+/// directory. An entry goes at the end of its map's `dir:` section, and a map
+/// with no section gets one at the end of the file. Lines end in CRLF, as the
+/// shipped index's do.
+pub fn with_entries(index: &[u8], entries: &[(String, u32, u32, String)]) -> Vec<u8> {
+    let text = String::from_utf8_lossy(index);
+    let mut lines: Vec<String> = text
+        .split('\n')
+        .map(|line| line.trim_end_matches('\r').to_string())
+        .collect();
+    // A file that ends in a line break splits into a last empty line, which
+    // is put back on the way out.
+    if lines.last().is_some_and(|line| line.is_empty()) {
+        lines.pop();
+    }
+    for (map, x, y, file) in entries {
+        let entry = format!("{}\t{file}", index_name(map, *x, *y));
+        let heading = |line: &str| {
+            line.strip_prefix("dir:")
+                .map(|name| name.trim().to_ascii_lowercase())
+        };
+        let wanted = map.to_ascii_lowercase();
+        match lines.iter().position(|line| heading(line).as_deref() == Some(wanted.as_str())) {
+            Some(at) => {
+                let end = lines[at + 1..]
+                    .iter()
+                    .position(|line| heading(line).is_some())
+                    .map_or(lines.len(), |next| at + 1 + next);
+                lines.insert(end, entry);
+            }
+            None => {
+                lines.push(format!("dir: {map}"));
+                lines.push(entry);
+            }
+        }
+    }
+    let mut out = lines.join("\r\n");
+    out.push_str("\r\n");
+    out.into_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use vale_assets::world::adt::placement_from_world;
 
     const GRASS: &str = r"Tileset\Elwynn\ElwynnGrassBase.blp";
+
+    /// An entry lands in its map's section, a new map gets a section, and the
+    /// index reads both back.
+    #[test]
+    fn an_index_takes_new_entries_in_their_maps_sections() {
+        use vale_assets::tables::minimap::MinimapTiles;
+        let index = b"dir: Azeroth\r\nAzeroth\\map32_48.blp\taaaa.blp\r\ndir: Kalimdor\r\nKalimdor\\map30_30.blp\tbbbb.blp\r\n";
+        let added = with_entries(
+            index,
+            &[
+                ("Azeroth".into(), 10, 11, "cccc.blp".into()),
+                ("Vale".into(), 1, 2, "dddd.blp".into()),
+            ],
+        );
+        let text = String::from_utf8(added.clone()).unwrap();
+        assert_eq!(
+            text,
+            "dir: Azeroth\r\nAzeroth\\map32_48.blp\taaaa.blp\r\nAzeroth\\map10_11.blp\tcccc.blp\r\n\
+             dir: Kalimdor\r\nKalimdor\\map30_30.blp\tbbbb.blp\r\ndir: Vale\r\nVale\\map1_2.blp\tdddd.blp\r\n"
+        );
+        let tiles = MinimapTiles::parse(&added);
+        assert_eq!(tiles.len(), 4);
+        assert!(tiles.texture("azeroth", 10, 11).unwrap().ends_with("cccc.blp"));
+        assert!(tiles.texture("Vale", 1, 2).unwrap().ends_with("dddd.blp"));
+    }
 
     fn tile(height: f32) -> Adt {
         let raw = crate::adt::blank_tile(32, 48, GRASS, height, 0).write();

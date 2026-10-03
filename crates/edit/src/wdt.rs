@@ -44,6 +44,17 @@ use vale_assets::world::wdt::MAP_TILES;
 /// this crate writes it and the reader's copy is private.
 pub const HAS_ADT: u32 = 0x1;
 
+/// `MPHD` flag: the map is one building, named in `MWMO` and placed by
+/// `MODF`, and has no tiles.
+///
+/// The only `MPHD` bit 1.12 uses. Over the 43 maps it ships, the first word
+/// is 1 on exactly the 20 that are one building and 0 on every terrain map,
+/// and the other seven words are zero on all of them.
+pub const ONE_BUILDING: u32 = 0x1;
+
+/// Bytes in a `MODF` record.
+const BUILDING_RECORD: usize = 64;
+
 /// Bytes per `MAIN` entry: `u32 flags` + `u32 asyncId`.
 pub const ENTRY: usize = 8;
 
@@ -201,6 +212,94 @@ impl WdtFile {
         self.tiles().len()
     }
 
+    /// `MPHD`'s first word.
+    pub fn flags(&self) -> u32 {
+        self.chunks
+            .iter()
+            .find(|chunk| &chunk.magic == b"MPHD")
+            .filter(|chunk| chunk.data.len() >= 4)
+            .map_or(0, |chunk| u32_at(&chunk.data, 0))
+    }
+
+    /// The building the map is, when it is one: `MWMO`'s path.
+    pub fn building(&self) -> Option<String> {
+        if self.flags() & ONE_BUILDING == 0 {
+            return None;
+        }
+        let names = &self.chunks.iter().find(|chunk| &chunk.magic == b"MWMO")?.data;
+        let path = String::from_utf8_lossy(names.split(|b| *b == 0).next()?).to_string();
+        (!path.is_empty()).then_some(path)
+    }
+
+    /// Make the map one building, or terrain again with `None`.
+    ///
+    /// A building is its path and the root's bounding box, WMO-local. It is
+    /// written as every shipped one is: name 0, unique id `0xFFFFFFFF`, at
+    /// the origin with no rotation, the box as its extents in the record's
+    /// axis order (the WMO's y, z and x), and no doodad or name set. The
+    /// shipped extents are that box or a little larger.
+    ///
+    /// Terrain again is the shape a terrain map ships in: the flag clear, a
+    /// zero-length `MWMO` and no `MODF`. Which tiles exist is not touched;
+    /// a map with tiles is not made a building by the caller.
+    pub fn set_building(&mut self, building: Option<(&str, [[f32; 3]; 2])>) {
+        if let Some(mphd) = self.chunks.iter_mut().find(|chunk| &chunk.magic == b"MPHD") {
+            if mphd.data.len() < 4 {
+                mphd.data.resize(32, 0);
+            }
+            let flags = u32_at(&mphd.data, 0);
+            let flags = match building {
+                Some(_) => flags | ONE_BUILDING,
+                None => flags & !ONE_BUILDING,
+            };
+            put_u32(&mut mphd.data, 0, flags);
+        }
+        let names = match building {
+            Some((path, _)) => {
+                let mut names = path.as_bytes().to_vec();
+                names.push(0);
+                names
+            }
+            None => Vec::new(),
+        };
+        let record = building.map(|(_, [lower, upper])| {
+            let mut record = vec![0u8; BUILDING_RECORD];
+            put_u32(&mut record, 4, u32::MAX);
+            for (axis, from) in [1, 2, 0].into_iter().enumerate() {
+                record[32 + axis * 4..36 + axis * 4].copy_from_slice(&lower[from].to_le_bytes());
+                record[44 + axis * 4..48 + axis * 4].copy_from_slice(&upper[from].to_le_bytes());
+            }
+            record
+        });
+        // `MWMO` after `MAIN`, and `MODF` after that.
+        self.chunks.retain(|chunk| &chunk.magic != b"MODF");
+        let main = self.chunks.iter().position(|chunk| &chunk.magic == b"MAIN");
+        let mwmo = match self.chunks.iter().position(|chunk| &chunk.magic == b"MWMO") {
+            Some(at) => at,
+            None => {
+                let at = main.map_or(self.chunks.len(), |main| main + 1);
+                self.chunks.insert(
+                    at,
+                    Chunk {
+                        magic: *b"MWMO",
+                        data: Vec::new(),
+                    },
+                );
+                at
+            }
+        };
+        self.chunks[mwmo].data = names;
+        if let Some(record) = record {
+            self.chunks.insert(
+                mwmo + 1,
+                Chunk {
+                    magic: *b"MODF",
+                    data: record,
+                },
+            );
+        }
+    }
+
     /// **A map with no tiles at all**, for making one from nothing.
     ///
     /// `MVER` 18, a zeroed 32-byte `MPHD`, and an empty `MAIN` — which is the
@@ -248,6 +347,34 @@ pub fn wdt_path(map: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A map made one building reads back as one through the reader the
+    /// renderer uses, and made terrain again it is the terrain shape.
+    #[test]
+    fn a_map_can_be_made_one_building_and_terrain_again() {
+        let path = r"World\wmo\Dungeon\Test\Room.wmo";
+        let bounds = [[-10.0, -20.0, -5.0], [10.0, 20.0, 15.0]];
+        let mut file = WdtFile::blank();
+        file.set_building(Some((path, bounds)));
+        assert_eq!(file.flags(), ONE_BUILDING);
+        assert_eq!(file.building().as_deref(), Some(path));
+
+        let read = vale_assets::world::wdt::Wdt::parse(&file.write()).expect("parses");
+        assert!(read.is_wmo_only());
+        assert_eq!(read.global_wmos, vec![path.to_string()]);
+        assert_eq!(read.global_placements.len(), 1);
+        let placed = &read.global_placements[0];
+        assert_eq!(placed.unique_id, u32::MAX);
+        assert_eq!(placed.position, [0.0, 0.0, 0.0]);
+
+        file.set_building(None);
+        assert_eq!(file.flags(), 0);
+        assert_eq!(file.building(), None);
+        let read = vale_assets::world::wdt::Wdt::parse(&file.write()).expect("parses");
+        assert!(read.global_wmos.is_empty() && read.global_placements.is_empty());
+        let magics: Vec<[u8; 4]> = file.chunks.iter().map(|chunk| chunk.magic).collect();
+        assert_eq!(magics, vec![*b"MVER", *b"MPHD", *b"MAIN", *b"MWMO"]);
+    }
 
     fn encode(magic: &[u8; 4], data: &[u8]) -> Vec<u8> {
         let mut v = vec![magic[3], magic[2], magic[1], magic[0]];

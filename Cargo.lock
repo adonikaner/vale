@@ -6450,6 +6450,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_egui",
+ "md-5",
  "png",
  "vale-assets",
  "vale-client",

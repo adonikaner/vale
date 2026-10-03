@@ -26,8 +26,12 @@
 //!                or only filling, or only cutting; level, or a plane tilted
 //!                toward a compass bearing through where the stroke began
 //! select         the left button chooses vertices in place of sculpting;
-//!                the panel then moves them together, levels them, or locks
-//!                them so a stroke leaves them alone ([`Terrain::vertices`])
+//!                the panel then moves, levels, tilts or smooths them, and
+//!                can keep strokes out of them or inside them
+//!                ([`Terrain::vertices`], [`Terrain::mask`])
+//! tilt           a tilted flatten, and a selection with a tilt set, draw
+//!                the plane's slope: a level line, the plane's line and an
+//!                arrow uphill ([`draw_tilt`])
 //! tile sides     a stroke shades each tile from its own heights, and the
 //!                release shades the chunks on a tile's side again from both
 //!                tiles ([`shade_seams`])
@@ -101,7 +105,7 @@ use vale_client::render::foliage::TileFoliagePlans;
 use vale_client::render::terrain::{GroundSources, LoadedTiles, TerrainTile};
 use super::chunks::Cell;
 use std::collections::{BTreeMap, BTreeSet};
-use vale_edit::ops::vertices::Selected;
+use vale_edit::ops::vertices::{Mask, Selected};
 use vale_edit::ops::Edit;
 use vale_edit::ops::{Brush, Falloff, Mode, Shape};
 use bevy::input::mouse::AccumulatedMouseScroll;
@@ -162,12 +166,11 @@ pub struct Terrain {
     /// [`Self::vertices`].
     pub selecting: bool,
     /// The selected vertices, per open tile. Chosen by painting over them
-    /// while [`Self::selecting`] is on, then moved together or levelled from
-    /// the panel, or kept from the brush by [`Self::lock`]. See
-    /// `vale_edit::ops::vertices`.
+    /// while [`Self::selecting`] is on, then changed from the panel, or used
+    /// to mask the brush by [`Self::mask`]. See `vale_edit::ops::vertices`.
     pub vertices: bevy::platform::collections::HashMap<(u32, u32), Selected>,
-    /// Whether a brush stroke leaves the selected vertices where they are.
-    pub lock: bool,
+    /// How a brush stroke treats the selection: `None` ignores it.
+    pub mask: Option<Mask>,
     /// What the panel asks to be done with the selection, taken by
     /// [`vertex_asks`]. The panel holds no session.
     pub ask: Option<VertexAsk>,
@@ -175,6 +178,22 @@ pub struct Terrain {
     /// panel. Written by [`vertex_asks`] each frame the tool is chosen.
     pub selected: usize,
     pub selected_mean: f32,
+    /// The selection's centre, where a tilt pivots.
+    pub selected_centre: [f32; 2],
+    /// The selection's own tilt: degrees from level and the bearing uphill,
+    /// as the flatten's are. Back to level whenever the selection changes,
+    /// so the sliders say how far this selection has been tilted.
+    pub vertex_tilt: [f32; 2],
+    /// Whether a tilt puts the selection on a flat slope through its centre,
+    /// in place of leaning it with its bumps kept.
+    pub tilt_flat: bool,
+    /// The slope this selection has been given so far, and the point it
+    /// pivots on. A lean adds only the change, so the sliders can be dragged
+    /// back and forth. See [`VertexAsk::Tilt`].
+    tilt_applied: [f32; 2],
+    tilt_pivot: Option<[f32; 2]>,
+    /// The count and centre the selection had when its tilt was last reset.
+    tilt_for: (usize, [f32; 2]),
 }
 
 /// What the panel asks to be done with the selected vertices.
@@ -184,9 +203,23 @@ pub enum VertexAsk {
     MoveTo(f32),
     /// Put every one at their mean height.
     Level,
+    /// Tilt them by [`Terrain::vertex_tilt`], pivoting on their centre.
+    /// Asked on every change of the sliders, so the selection follows them.
+    ///
+    /// By default the selection leans: each vertex moves by the change in a
+    /// plane's height under it, so its bumps are kept, and only the change
+    /// since the last ask is added. With [`Terrain::tilt_flat`] each vertex
+    /// is put on the plane through the centre at the mean height, a flat
+    /// ramp; the mean does not move, so asking again is stable.
+    Tilt,
+    /// Move each part of the way toward the vertices beside it.
+    Smooth,
     /// Select nothing.
     Clear,
 }
+
+/// How far one Smooth moves a selected vertex toward its neighbours' mean.
+const SMOOTH_PASS: f32 = 0.5;
 
 impl Default for Terrain {
     fn default() -> Terrain {
@@ -199,10 +232,16 @@ impl Default for Terrain {
             tilt_toward: 0.0,
             selecting: false,
             vertices: Default::default(),
-            lock: false,
+            mask: None,
             ask: None,
             selected: 0,
             selected_mean: 0.0,
+            selected_centre: [0.0; 2],
+            vertex_tilt: [0.0; 2],
+            tilt_flat: false,
+            tilt_applied: [0.0; 2],
+            tilt_pivot: None,
+            tilt_for: (0, [0.0; 2]),
         }
     }
 }
@@ -459,12 +498,14 @@ fn stroke(
             held.standing
                 .insert(coord, vale_edit::ops::follow::standing(tile));
         }
-        // A locked selection is this tile's vertices the stroke may not move.
-        let kept = match terrain.lock {
-            true => terrain.vertices.get(&coord),
-            false => None,
+        // The selection masks the stroke. A stroke kept inside it does
+        // nothing on a tile with none of it.
+        let mask = match (terrain.mask, terrain.vertices.get(&coord)) {
+            (Some(Mask::Confine), None) => continue,
+            (Some(mask), Some(set)) => Some((set, mask)),
+            _ => None,
         };
-        let edits = brush.stroke_keeping(tile, [at.x, at.y], seconds, level, kept);
+        let edits = brush.stroke_masked(tile, [at.x, at.y], seconds, level, mask);
         if edits.is_empty() {
             continue;
         }
@@ -554,51 +595,103 @@ fn vertex_asks(
         }
     }
 
-    let mean_of = |terrain: &Terrain, session: &EditSession| -> (usize, f32) {
-        let (mut sum, mut count) = (0.0f64, 0usize);
+    // How many are selected, and their centre at their mean height.
+    let centre_of = |terrain: &Terrain, session: &EditSession| -> (usize, [f32; 3]) {
+        let (mut sum, mut count) = ([0.0f64; 3], 0usize);
         for (coord, set) in &terrain.vertices {
             if let Some(tile) = session.tiles.get(coord) {
                 let (s, n) = set.weighed(tile);
-                sum += s;
+                for axis in 0..3 {
+                    sum[axis] += s[axis];
+                }
                 count += n;
             }
         }
         match count {
-            0 => (0, 0.0),
-            n => (n, (sum / n as f64) as f32),
+            0 => (0, [0.0; 3]),
+            n => (n, sum.map(|axis| (axis / n as f64) as f32)),
         }
     };
-    let (count, mean) = mean_of(&terrain, session);
+    let (count, centre) = centre_of(&terrain, session);
 
-    if let Some(ask) = terrain.ask.take() {
+    let asked = terrain.ask.take();
+    if let Some(ask) = asked {
         match ask {
             VertexAsk::Clear => terrain.vertices.clear(),
-            VertexAsk::MoveTo(_) | VertexAsk::Level if count == 0 => {}
-            VertexAsk::MoveTo(_) | VertexAsk::Level => {
+            _ if count == 0 => {}
+            _ => {
                 match ask {
                     VertexAsk::MoveTo(_) => session.history.begin_gesture(
                         "Move vertices",
                         "terrain vertices",
                         time.elapsed_secs_f64(),
                     ),
-                    _ => session.history.begin("Level vertices"),
+                    VertexAsk::Level => session.history.begin("Level vertices"),
+                    VertexAsk::Tilt => session.history.begin_gesture(
+                        "Tilt vertices",
+                        "terrain tilt",
+                        time.elapsed_secs_f64(),
+                    ),
+                    _ => session.history.begin("Smooth vertices"),
                 }
-                let coords: Vec<(u32, u32)> = terrain.vertices.keys().copied().collect();
+                // Every tile's new heights are worked out before any is
+                // written, so a smooth reads the ground on both sides of a
+                // tile's edge as it was and the two copies of an edge vertex
+                // move alike.
+                let slope = Brush::tilted(terrain.vertex_tilt[0], terrain.vertex_tilt[1]);
+                let pivot = *terrain.tilt_pivot.get_or_insert([centre[0], centre[1]]);
+                let change = [
+                    slope[0] - terrain.tilt_applied[0],
+                    slope[1] - terrain.tilt_applied[1],
+                ];
+                let flat = terrain.tilt_flat;
+                let ground = |x: f32, y: f32| {
+                    let coord = vale_assets::tile_for_position(x, y);
+                    session
+                        .tiles
+                        .get(&coord)
+                        .and_then(|tile| vale_edit::adt::heights::height_at(tile, x, y))
+                };
+                let plans: Vec<((u32, u32), vale_edit::ops::vertices::Plan)> = terrain
+                    .vertices
+                    .iter()
+                    .filter_map(|(coord, set)| {
+                        let tile = session.tiles.get(coord)?;
+                        let plan = match ask {
+                            VertexAsk::MoveTo(to) => {
+                                set.plan(tile, |at| at[2] + to - centre[2])
+                            }
+                            VertexAsk::Level => set.plan(tile, |_| centre[2]),
+                            VertexAsk::Tilt if flat => set.plan(tile, |at| {
+                                vale_edit::ops::vertices::plane(
+                                    [pivot[0], pivot[1], centre[2]],
+                                    slope,
+                                    at,
+                                )
+                            }),
+                            VertexAsk::Tilt => set.plan(tile, |at| {
+                                at[2] + vale_edit::ops::vertices::plane(
+                                    [pivot[0], pivot[1], 0.0],
+                                    change,
+                                    at,
+                                )
+                            }),
+                            _ => set.smoothed(tile, SMOOTH_PASS, &ground),
+                        };
+                        Some((*coord, plan))
+                    })
+                    .collect();
                 let mut standing = Vec::new();
                 let mut sides: BTreeSet<Cell> = BTreeSet::new();
-                for coord in coords {
+                for (coord, plan) in plans {
                     let key = session.key(coord);
                     let Some(tile) = session.tiles.get_mut(&coord) else {
                         continue;
                     };
-                    let set = &terrain.vertices[&coord];
                     if terrain.objects_follow {
                         standing.push((coord, vale_edit::ops::follow::standing(tile)));
                     }
-                    let edits = match ask {
-                        VertexAsk::MoveTo(to) => set.shift(tile, to - mean),
-                        _ => set.level(tile, mean),
-                    };
+                    let edits = plan.write(tile);
                     if edits.is_empty() {
                         continue;
                     }
@@ -617,10 +710,32 @@ fn vertex_asks(
         }
     }
 
-    let (count, mean) = mean_of(&terrain, session);
-    if terrain.selected != count || terrain.selected_mean != mean {
+    if matches!(asked, Some(VertexAsk::Tilt)) {
+        terrain.tilt_applied = Brush::tilted(terrain.vertex_tilt[0], terrain.vertex_tilt[1]);
+    }
+    let (count, centre) = centre_of(&terrain, session);
+    // A different selection starts level: its tilt so far is none, and its
+    // pivot is its own centre. A tilt moves no vertex sideways, so the count
+    // and the centre across are the same before and after one.
+    // A Level takes any lean out, so it starts the tilt over too.
+    let shape = (count, [centre[0], centre[1]]);
+    match asked {
+        Some(VertexAsk::Tilt) => terrain.tilt_for = shape,
+        Some(VertexAsk::Level) => terrain.tilt_for = (usize::MAX, [0.0; 2]),
+        _ => {}
+    }
+    if terrain.tilt_for != shape {
+        terrain.tilt_for = shape;
+        terrain.vertex_tilt[0] = 0.0;
+        terrain.tilt_applied = [0.0; 2];
+        terrain.tilt_pivot = None;
+    }
+    if terrain.selected != count || terrain.selected_mean != centre[2] {
         terrain.selected = count;
-        terrain.selected_mean = mean;
+        terrain.selected_mean = centre[2];
+    }
+    if terrain.selected_centre != [centre[0], centre[1]] {
+        terrain.selected_centre = [centre[0], centre[1]];
     }
     if !unpublished.is_empty() && !buttons.pressed(MouseButton::Left) {
         for coord in std::mem::take(&mut *unpublished) {
@@ -642,6 +757,12 @@ fn vertices_on_the_command_line(
     let Some((radius, rise)) = args.vertices else {
         return;
     };
+    if *done == 0 {
+        if let Some((angle, toward)) = args.tilt {
+            terrain.tilt_angle = angle;
+            terrain.tilt_toward = toward;
+        }
+    }
     let Some(session) = session else { return };
     let at = focus.position;
     match *done {
@@ -673,11 +794,18 @@ fn vertices_on_the_command_line(
             );
             if let Some(rise) = rise {
                 terrain.ask = Some(VertexAsk::MoveTo(terrain.selected_mean + rise));
+            } else if let Some((angle, toward)) = args.tilt {
+                // Set once the selection is made, which starts it level.
+                terrain.vertex_tilt = [angle, toward];
+                terrain.ask = Some(VertexAsk::Tilt);
             }
         }
-        2 if rise.is_some() && terrain.ask.is_none() => {
+        2 if (rise.is_some() || args.tilt.is_some()) && terrain.ask.is_none() => {
             *done = 3;
-            info!("--vertices: moved to a mean of {:.2} yd", terrain.selected_mean);
+            info!(
+                "--vertices: moved to a mean of {:.2} yd, tilt {} toward {}",
+                terrain.selected_mean, terrain.vertex_tilt[0], terrain.vertex_tilt[1]
+            );
         }
         _ => {}
     }
@@ -698,12 +826,26 @@ fn draw_vertices(
         return;
     }
     let Some(session) = session else { return };
-    // Yellow while the selection is only a selection, and red while it is
-    // also a lock, which is the state that changes what a stroke does.
-    let colour = match terrain.lock {
-        true => Color::srgb(1.0, 0.45, 0.4),
-        false => Color::srgb(1.0, 0.9, 0.35),
+    // Yellow while the selection is only a selection, red while strokes are
+    // kept out of it and green while they are kept inside it.
+    let colour = match terrain.mask {
+        None => Color::srgb(1.0, 0.9, 0.35),
+        Some(Mask::Protect) => Color::srgb(1.0, 0.45, 0.4),
+        Some(Mask::Confine) => Color::srgb(0.45, 1.0, 0.5),
     };
+    // While selecting with a tilt set, the plane a Tilt would put the
+    // selection on, through its centre.
+    if terrain.selecting && terrain.vertex_tilt[0] > 0.0 && terrain.selected > 0 {
+        let [x, y] = terrain.tilt_pivot.unwrap_or(terrain.selected_centre);
+        draw_tilt(
+            &mut gizmos,
+            Vec3::new(x, y, terrain.selected_mean),
+            terrain.brush.radius,
+            terrain.vertex_tilt[0],
+            terrain.vertex_tilt[1],
+            TILT_COLOUR,
+        );
+    }
     let mut drawn = 0;
     for (coord, set) in &terrain.vertices {
         let Some(tile) = session.tiles.get(coord) else {
@@ -724,6 +866,44 @@ fn draw_vertices(
                 colour,
             );
         }
+    }
+}
+
+/// The colour of [`draw_tilt`]'s lines.
+const TILT_COLOUR: Color = Color::srgb(0.35, 0.95, 1.0);
+
+/// The slope of a plane, drawn at a point on it: a dim level line and the
+/// plane's own line, crossing at `at` and running `reach` yards each way
+/// along the bearing the plane rises toward, the rise between their uphill
+/// ends, and an arrowhead on the plane's uphill end. `at` is in world
+/// coordinates, its height on the plane.
+///
+/// Drawn in front of the ground, since half the plane is usually under it.
+fn draw_tilt(
+    gizmos: &mut Gizmos<super::gizmo::EditorHandles>,
+    at: Vec3,
+    reach: f32,
+    angle: f32,
+    toward: f32,
+    colour: Color,
+) {
+    let world = |point: Vec3| vale_client::render::axes::to_bevy(point.to_array());
+    // 0 is north, world +x, and 90 east, world -y. See `Brush::tilted`.
+    let bearing = toward.to_radians();
+    let along = Vec3::new(bearing.cos(), -bearing.sin(), 0.0);
+    let rise = angle.clamp(0.0, 89.0).to_radians().tan();
+    let up = along + Vec3::Z * rise;
+    let dim = colour.with_alpha(0.45);
+    let (level_low, level_high) = (at - along * reach, at + along * reach);
+    let (low, high) = (at - up * reach, at + up * reach);
+    gizmos.line(world(level_low), world(level_high), dim);
+    gizmos.line(world(level_high), world(high), dim);
+    gizmos.line(world(low), world(high), colour);
+    // The arrowhead lies across the plane, so it reads from above.
+    let side = Vec3::new(-along.y, along.x, 0.0);
+    let back = up.normalize() * (reach * 0.15);
+    for wing in [1.0, -1.0] {
+        gizmos.line(world(high), world(high - back + side * wing * reach * 0.08), colour);
     }
 }
 
@@ -1248,10 +1428,12 @@ fn swap(
 /// thing on screen that is up to date.
 fn draw_brush(
     mut gizmos: Gizmos,
+    mut handles: Gizmos<super::gizmo::EditorHandles>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
     terrain: Res<Terrain>,
     cursor: Res<Cursor>,
+    held: Res<Held>,
 ) {
     if *tool != Tool::Terrain {
         return;
@@ -1284,6 +1466,30 @@ fn draw_brush(
         terrain.brush.shape,
         colour,
     );
+    // A tilted flatten: the plane it goes to, at the pointer. While a stroke
+    // is held that is the plane through where it began; before, the plane
+    // the next press would take.
+    if let (false, Mode::Flatten { to }) = (terrain.selecting, terrain.brush.mode) {
+        if terrain.tilt_angle > 0.0 {
+            let height = match (held.on, terrain.flatten_to_cursor) {
+                (true, _) => vale_edit::ops::vertices::plane(
+                    [terrain.brush.pivot[0], terrain.brush.pivot[1], to],
+                    terrain.brush.tilt,
+                    at.to_array(),
+                ),
+                (false, true) => at.z,
+                (false, false) => terrain.flatten_height,
+            };
+            draw_tilt(
+                &mut handles,
+                Vec3::new(at.x, at.y, height),
+                terrain.brush.radius,
+                terrain.tilt_angle,
+                terrain.tilt_toward,
+                TILT_COLOUR,
+            );
+        }
+    }
 }
 
 /// The two rings every brush draws: the radius, and the core inside it.

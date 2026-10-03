@@ -482,7 +482,7 @@ fn draw(
     mut popovers: ResMut<popover::Popovers>,
     mut viewport: ResMut<Viewport>,
     mut viewing: Viewing,
-    baking: Res<crate::jobs::Running<crate::tools::tiles::Baked>>,
+    background: crate::tools::tiles::Background,
 ) -> Result {
     let Some(session) = session.as_mut() else {
         return Ok(());
@@ -586,15 +586,11 @@ fn draw(
             );
         });
 
-    // The background work the status line shows: the shadow rebakes, and the
-    // server's tile tools while a publish or a regeneration runs them.
-    // Each entry carries a name so the two progress bars can be told apart
-    // when both run; the names are the map window's own button names.
-    let mut working: Vec<(&str, String, f32)> = baking
-        .summary()
-        .into_iter()
-        .map(|(label, fraction)| ("Shadows", label, fraction))
-        .collect();
+    // The background work the status line shows: shadow rebakes, minimap
+    // runs, and the server's tile tools while a publish or a regeneration
+    // runs them. Each entry carries a name so the progress bars can be told
+    // apart when several run; the names are the map window's own.
+    let mut working: Vec<(&str, String, f32)> = background.summaries();
     if playing.queue.busy() {
         working.extend(
             playing

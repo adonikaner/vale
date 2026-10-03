@@ -292,6 +292,13 @@ pub struct Args {
     /// many yards. A selection is a drag, which a scripted run cannot make.
     /// See `tools::terrain`.
     pub vertices: Option<(f32, Option<f32>)>,
+    /// `--minimaps`: draw the minimaps of the tile under the camera and its
+    /// eight neighbours, in the background, into the project. See
+    /// `tools::tiles::start_minimaps`.
+    pub minimaps: bool,
+    /// `--tilt <angle>,<bearing>`: the terrain tool's tilt, in degrees, and
+    /// with `--vertices` and no rise, the selection tilted by it.
+    pub tilt: Option<(f32, f32)>,
     /// `--view <distance>[,<pitch°>[,<yaw°>]]`: where the camera stands.
     ///
     /// `--at` sets where the editor looks and this sets the distance and angle,
@@ -818,6 +825,8 @@ impl Default for Args {
             export_images: false,
             import_images: false,
             vertices: None,
+            tilt: None,
+            minimaps: false,
             view: None,
             reach: None,
             size: None,
@@ -948,6 +957,13 @@ impl Args {
                 "--guides-menu" => parsed.guides_menu = true,
                 "--export-images" => parsed.export_images = true,
                 "--import-images" => parsed.import_images = true,
+                "--minimaps" => parsed.minimaps = true,
+                "--tilt" => {
+                    parsed.tilt = args.next().and_then(|text| {
+                        let (angle, toward) = text.split_once(',')?;
+                        Some((angle.trim().parse().ok()?, toward.trim().parse().ok()?))
+                    });
+                }
                 "--vertices" => {
                     parsed.vertices = args.next().and_then(|text| {
                         let mut numbers = text.split(',').map(|part| part.trim().parse::<f32>());

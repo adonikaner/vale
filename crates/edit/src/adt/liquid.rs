@@ -279,6 +279,32 @@ impl Pool {
         }
     }
 
+    /// Set the surface height at one vertex of the 9x9 grid, and its depth
+    /// byte when the kind has one. For magma and slime that byte is part of a
+    /// texture coordinate and is left alone. See the module comment.
+    pub fn set_vertex(&mut self, row: usize, col: usize, height: f32, depth: u8) {
+        let at = 8 + (row * SIDE + col) * VERTEX;
+        if row >= SIDE || col >= SIDE {
+            return;
+        }
+        if self.has_depth() {
+            self.bytes[at] = depth;
+        }
+        self.bytes[at + 4..at + 8].copy_from_slice(&height.to_le_bytes());
+    }
+
+    /// …and the depth byte alone, for a kind that has one.
+    pub fn set_depth(&mut self, row: usize, col: usize, depth: u8) {
+        if row < SIDE && col < SIDE && self.has_depth() {
+            self.bytes[8 + (row * SIDE + col) * VERTEX] = depth;
+        }
+    }
+
+    /// Whether byte 0 of a vertex is a depth: water and ocean.
+    pub fn has_depth(&self) -> bool {
+        matches!(self.kind, Liquid::Water | Liquid::Ocean)
+    }
+
     /// **The depth byte for a surface standing this far above the ground**, on
     /// the curve the shipped tiles measure.
     ///

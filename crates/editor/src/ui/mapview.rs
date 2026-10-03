@@ -198,8 +198,10 @@ pub enum Asked {
     FlyTo((u32, u32)),
     /// Rebake the selection's `MCSH` from what stands on it.
     Rebake,
-    /// Redraw the selection's minimap picture.
+    /// Redraw the selection's minimap pictures.
     Minimap,
+    /// …and every tile of the map's.
+    MinimapsAll,
     /// Regenerate the server's files for the selection: `maps`, `vmaps`,
     /// `mmaps`.
     ServerFiles,
@@ -208,6 +210,10 @@ pub enum Asked {
     ExportImages,
     /// Read them back onto the selection.
     ImportImages,
+    /// Make the map one building, the WMO in `Tiles::building_path`.
+    MakeBuilding,
+    /// …or terrain again.
+    MakeTerrain,
 }
 
 /// The tiles a zoom draws: the top-left tile, how many across and down, and
@@ -707,6 +713,49 @@ fn foot_panel(
             ),
         );
     };
+    // Every tile the map has, for the whole-map buttons and the map's kind.
+    let whole = (0..64u32)
+        .flat_map(|y| (0..64u32).map(move |x| (x, y)))
+        .filter(|&at| session.wdt_claims(at))
+        .count();
+
+    // What the map is: terrain, or one building with no tiles (most
+    // dungeons). See `vale_edit::wdt::ONE_BUILDING`.
+    ui.horizontal(|ui| {
+        label(ui, "Map");
+        match (&tiles.building, whole) {
+            (Some(path), _) => {
+                let leaf = path.rsplit(['\\', '/']).next().unwrap_or(path);
+                ui.label(format!("one building: {leaf}")).on_hover_text(path.clone());
+                if ui
+                    .button("Make it terrain")
+                    .on_hover_text("Remove the building. The map then has no ground until tiles are made.")
+                    .clicked()
+                {
+                    asked = Some(Asked::MakeTerrain);
+                }
+            }
+            (None, 0) => {
+                ui.add(
+                    egui::TextEdit::singleline(&mut tiles.building_path)
+                        .desired_width(260.0)
+                        .hint_text(r"World\wmo\…\name.wmo"),
+                );
+                let ready = tiles.building_path.trim().to_ascii_lowercase().ends_with(".wmo");
+                if ui
+                    .add_enabled(ready, egui::Button::new("Make it one building"))
+                    .on_hover_text("The map becomes this building, as a dungeon is.")
+                    .on_disabled_hover_text("Type the path of a .wmo file.")
+                    .clicked()
+                {
+                    asked = Some(Asked::MakeBuilding);
+                }
+            }
+            (None, n) => {
+                theme::note(ui, format!("terrain, {n} tiles"));
+            }
+        }
+    });
 
     // What new ground is made of, which only matters while there is some to
     // make. `Create` itself is on the toolbar with the other operations.
@@ -765,19 +814,52 @@ fn foot_panel(
         {
             asked = Some(Asked::Rebake);
         }
-        if ui
-            .add_enabled(
-                open > 0,
-                egui::Button::new(format!("Redraw minimap ({open})")),
-            )
-            .on_hover_text(
-                "Draws each open selected tile's 256x256 picture from its own layers, \
-                 light, shadow and water, and writes it into the project as DXT1.",
-            )
-            .on_disabled_hover_text("None of the selection is open: fly to a tile to open it.")
-            .clicked()
-        {
-            asked = Some(Asked::Minimap);
+        // Minimaps are drawn in the background for any tile that exists,
+        // open or not, so these count the tiles there are.
+        let selected = view
+            .selection
+            .iter()
+            .filter(|&&at| session.wdt_claims(at))
+            .count();
+        if tiles.drawing {
+            if ui
+                .button("Stop minimaps")
+                .on_hover_text("Stop after the tile being drawn. What is drawn is kept.")
+                .clicked()
+            {
+                tiles.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        } else {
+            let minutes = |tiles: usize| {
+                let seconds = tiles as f32 * tool::MINIMAP_SECONDS;
+                match seconds < 90.0 {
+                    true => format!("about {seconds:.0} s"),
+                    false => format!("about {:.0} min", seconds / 60.0),
+                }
+            };
+            if ui
+                .add_enabled(selected > 0, egui::Button::new(format!("Minimaps ({selected})")))
+                .on_hover_text(format!(
+                    "Draw the selected tiles' minimap pictures into the project, in the \
+                     background: {}.",
+                    minutes(selected)
+                ))
+                .on_disabled_hover_text("Select tiles that exist.")
+                .clicked()
+            {
+                asked = Some(Asked::Minimap);
+            }
+            if ui
+                .add_enabled(whole > 0, egui::Button::new(format!("Whole map ({whole})")))
+                .on_hover_text(format!(
+                    "Draw every tile's minimap picture into the project, in the background: \
+                     {}. New tiles are added to the minimap index.",
+                    minutes(whole)
+                ))
+                .clicked()
+            {
+                asked = Some(Asked::MinimapsAll);
+            }
         }
         ui.checkbox(&mut tiles.cast_from_ground, "shadow from the ground too")
             .on_hover_text(

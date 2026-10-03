@@ -1325,6 +1325,74 @@ fn a_pool_survives_being_read_out_and_written_back() {
     }
 }
 
+/// A sloped brush lays a surface that falls along the line between its two
+/// ends and is level past them; two neighbouring chunks agree along the edge
+/// they share; and a depth pass after the bed has moved works the depth
+/// bytes out again without moving the water.
+#[test]
+fn a_sloped_river_falls_between_its_ends_and_its_depth_follows_the_bed() {
+    use crate::adt::liquid;
+    use crate::ops::{WaterAction, WaterBrush};
+    use vale_assets::world::adt::{cell_square, CHUNK_SIZE};
+    let Some((_, bytes)) = real_tiles().into_iter().next() else {
+        return;
+    };
+    let mut tile = AdtFile::parse(&bytes).expect("a shipped tile parses");
+    // Two dry chunks side by side along a row of the tile.
+    let Some(first) = (0..tile.chunks.len() - 1).find(|&i| {
+        i % 16 != 15 && liquid::pools(&tile, i).is_empty() && liquid::pools(&tile, i + 1).is_empty()
+    }) else {
+        return;
+    };
+    let origin = tile.chunk(first).unwrap().head().position();
+    // The river runs along decreasing world y, across both chunks, from
+    // 120 yards down to 110.
+    let start = [origin[0] - 16.0, origin[1], 120.0];
+    let end = [origin[0] - 16.0, origin[1] - 2.0 * CHUNK_SIZE, 110.0];
+    let brush = WaterBrush {
+        radius: 80.0,
+        slope: Some([start, end]),
+        ..WaterBrush::default()
+    };
+    assert_eq!(brush.level_at(start[0], start[1]), 120.0);
+    assert_eq!(brush.level_at(end[0], end[1] - 50.0), 110.0, "level past the end");
+    assert!((brush.level_at(origin[0] - 40.0, origin[1] - CHUNK_SIZE) - 115.0).abs() < 1e-3);
+
+    let bed = |_: f32, _: f32| Some(100.0);
+    let at = [origin[0] - 16.0, origin[1] - CHUNK_SIZE];
+    let done = brush.stroke(&mut tile, at, WaterAction::Flood, bed);
+    assert!(done.cells > 0);
+    let left = liquid::pools(&tile, first);
+    let right = liquid::pools(&tile, first + 1);
+    let (left, right) = (&left[0], &right[0]);
+    // Along the row the surface falls, by the ramp's slope per cell.
+    let step = 10.0 / (2.0 * CHUNK_SIZE) * (CHUNK_SIZE / 8.0);
+    assert!((left.height(4, 0) - left.height(4, 1) - step).abs() < 1e-3);
+    // The last column of the first chunk is the first of the second.
+    for row in 0..liquid::SIDE {
+        assert!((left.height(row, 8) - right.height(row, 0)).abs() < 1e-3, "row {row}");
+    }
+    // Twenty yards over the bed at the start and ten at the end: the depth
+    // bytes say so.
+    assert!(left.depth(4, 0) > right.depth(4, 8));
+    let (high, _) = cell_square(origin, 4, 0, 1);
+    assert!((brush.level_at(high[0], high[1]) - left.height(4, 0)).abs() < 1e-3);
+
+    // The bed is dug out: a depth pass deepens every corner and moves no
+    // surface.
+    let heights_before: Vec<f32> = (0..liquid::SIDE).map(|c| left.height(4, c)).collect();
+    let depth_before = left.depth(4, 4);
+    let dug = |_: f32, _: f32| Some(95.0);
+    let deeper = brush.stroke(&mut tile, at, WaterAction::Depth, dug);
+    assert!(deeper.cells > 0);
+    let left = &liquid::pools(&tile, first)[0];
+    assert!(left.depth(4, 4) > depth_before);
+    let heights_after: Vec<f32> = (0..liquid::SIDE).map(|c| left.height(4, c)).collect();
+    assert_eq!(heights_before, heights_after);
+    // A second pass over the same bed changes nothing.
+    assert_eq!(brush.stroke(&mut tile, at, WaterAction::Depth, dug).cells, 0);
+}
+
 /// Water painted onto a dry chunk comes back as water, at the level it was
 /// given and only where the brush reached.
 #[test]
@@ -1352,6 +1420,7 @@ fn a_painted_pool_lands_where_the_brush_was_and_nowhere_else() {
             level: 123.5,
             kind: vale_assets::world::wmo::Liquid::Water,
             cell_flags: liquid::FISHABLE,
+            slope: None,
         };
         let done = brush.stroke(&mut flooded, at, crate::ops::WaterAction::Flood, |_, _| Some(100.0));
         assert_eq!(done.cells, 1, "{path}: one cell, not {}", done.cells);

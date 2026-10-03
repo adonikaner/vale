@@ -20,6 +20,22 @@
 //!   surface arrives at that height.
 //! * …and the number field, for when the answer is a number.
 //!
+//! ## A river is a slope between two points
+//!
+//! A surface can instead be **sloped** ([`Water::sloped`]): `Space` marks the
+//! start of the slope and `Shift+Space` its end, each at the water or ground
+//! under the pointer as above, and the two heights can be typed. The surface
+//! falls straight from one to the other and is level past either end, so a
+//! river is laid one stretch at a time, each starting where the last ended.
+//! See `vale_edit::ops::WaterBrush::level_at`.
+//!
+//! ## Depth is taken when water is laid
+//!
+//! Each vertex's depth byte is worked out from the ground under it when it
+//! is flooded. Reshaping the bed afterwards leaves it as it was, so
+//! `Ctrl` with the left button works it out again under the brush without
+//! moving the water (`WaterAction::Depth`).
+//!
 //! ## Drying takes every liquid and wetting takes one
 //!
 //! A chunk may carry up to four — a river and the ocean it flows into is the
@@ -95,6 +111,12 @@ pub struct Water {
     pub flags: Option<u8>,
     /// How many cells this session has wet, less the ones it dried.
     pub wet: i32,
+    /// Whether the surface is sloped between [`Self::ends`] in place of
+    /// level at the brush's level.
+    pub sloped: bool,
+    /// The slope's start and end: a world position and a surface height
+    /// each, set by `Space` and `Shift+Space`.
+    pub ends: [Option<[f32; 3]>; 2],
     /// Whether the level has ever been chosen.
     ///
     /// **A level of zero is almost always underground**, which is the one
@@ -165,10 +187,26 @@ fn aim(
     // The ground answers on the two occasions the plane cannot: before a level
     // has ever been chosen, when it is still zero and would be a plane under the
     // world, and when the ray does not meet the plane at all.
-    let point = match water.seeded {
-        true => crate::pick::on_plane(water.brush.level, &windows, &camera)
+    // The slope the brush floods to, while both ends are set.
+    water.brush.slope = match (water.sloped, water.ends) {
+        (true, [Some(start), Some(end)]) => Some([start, end]),
+        _ => None,
+    };
+    // A sloped surface is met in two steps: the plane at the slope's middle
+    // height, then the plane at the slope's height there. Enough for a
+    // river's fall; a steep slope with no end set aims at the ground.
+    let point = match (water.seeded, water.sloped, water.brush.slope) {
+        (false, ..) | (true, true, None) => crate::pick::solid_under(&session, &windows, &camera),
+        (true, false, _) => crate::pick::on_plane(water.brush.level, &windows, &camera)
             .or_else(|| crate::pick::solid_under(&session, &windows, &camera)),
-        false => crate::pick::solid_under(&session, &windows, &camera),
+        (true, true, Some([start, end])) => {
+            crate::pick::on_plane((start[2] + end[2]) * 0.5, &windows, &camera)
+                .and_then(|near| {
+                    let height = water.brush.level_at(near.x, near.y);
+                    crate::pick::on_plane(height, &windows, &camera)
+                })
+                .or_else(|| crate::pick::solid_under(&session, &windows, &camera))
+        }
     };
     let Some(point) = point else {
         return;
@@ -210,8 +248,12 @@ fn aim(
             true => water.ground,
             false => water.surface.map(|(_, z)| z).or(water.ground),
         };
-        if let Some(level) = taken {
-            water.brush.level = level;
+        let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+        match (water.sloped, taken) {
+            (false, Some(level)) => water.brush.level = level,
+            // Sloped: the start, or with shift the end, here at that height.
+            (true, Some(height)) => water.ends[usize::from(shift)] = Some([point.x, point.y, height]),
+            (_, None) => {}
         }
         // …and the kind with it, so extending a lava flow does not paint water
         // into it.
@@ -296,11 +338,18 @@ fn stroke(
     // it is — see `WaterAction::Mark`.
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     let alt = keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight);
-    let action = match (shift, alt) {
-        (true, _) => WaterAction::Drain,
-        (false, true) => WaterAction::Mark,
-        (false, false) => WaterAction::Flood,
+    let control = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    let action = match (shift, alt, control) {
+        (true, ..) => WaterAction::Drain,
+        (false, true, _) => WaterAction::Mark,
+        (false, false, true) => WaterAction::Depth,
+        (false, false, false) => WaterAction::Flood,
     };
+    // A sloped surface needs both its ends before anything can be flooded.
+    if action == WaterAction::Flood && water.sloped && water.brush.slope.is_none() {
+        session.status = "set the slope's start and end first: space, then shift + space".to_string();
+        return;
+    }
 
     // **The one `aim` found**, rather than a second ray of this system's own.
     // Two readings of where the pointer is are two answers, and the one that
@@ -339,6 +388,7 @@ fn stroke(
                 WaterAction::Flood => "Add water".to_string(),
                 WaterAction::Drain => "Remove water".to_string(),
                 WaterAction::Mark => "Mark water".to_string(),
+                WaterAction::Depth => "Update water depth".to_string(),
             });
         }
         session.history.record(&key, done.edits);
@@ -352,12 +402,14 @@ fn stroke(
         match action {
             WaterAction::Flood => water.wet += cells as i32,
             WaterAction::Drain => water.wet -= cells as i32,
-            WaterAction::Mark => {}
+            WaterAction::Mark | WaterAction::Depth => {}
         }
+        let level = brush.level_at(point.x, point.y);
         session.status = match action {
-            WaterAction::Flood => format!("flooded {cells} cell(s) at {:.1}", brush.level),
-            WaterAction::Drain => format!("drained {cells} cell(s) at {:.1}", brush.level),
+            WaterAction::Flood => format!("flooded {cells} cell(s) at {level:.1}"),
+            WaterAction::Drain => format!("drained {cells} cell(s)"),
             WaterAction::Mark => format!("marked {cells} cell(s) {}", flag_words(brush.cell_flags)),
+            WaterAction::Depth => format!("updated the depth of {cells} cell(s)"),
         };
     }
 }
@@ -444,13 +496,38 @@ fn draw(
     // **A square and not a ring.** What lands is a set of 4.17-yard cells, so a
     // circle would promise a shape the format cannot hold; the square is the
     // brush's own bounds and the cells inside it are what a stroke takes.
-    outline(
-        &mut gizmos,
-        [point.x + radius, point.y + radius],
-        [point.x - radius, point.y - radius],
-        water.brush.level + LIFT,
-        colour_of(water.brush.kind),
-    );
+    let colour = colour_of(water.brush.kind);
+    let corner = |x: f32, y: f32| {
+        Vec3::from(axes::to_bevy([x, y, water.brush.level_at(x, y) + LIFT]))
+    };
+    let (high, low) = ([point.x + radius, point.y + radius], [point.x - radius, point.y - radius]);
+    let square = [
+        corner(high[0], high[1]),
+        corner(low[0], high[1]),
+        corner(low[0], low[1]),
+        corner(high[0], low[1]),
+    ];
+    for at in 0..4 {
+        gizmos.line(square[at], square[(at + 1) % 4], colour);
+    }
+
+    // The slope's ends, each a short upright at its height, and the line
+    // the surface falls along between them.
+    if water.sloped {
+        let mark = |end: [f32; 3]| {
+            Vec3::from(axes::to_bevy([end[0], end[1], end[2] + LIFT]))
+        };
+        let up = |end: [f32; 3]| Vec3::from(axes::to_bevy([end[0], end[1], end[2] + 3.0]));
+        for end in water.ends.iter().flatten() {
+            gizmos.line(mark(*end), up(*end), colour);
+        }
+        if let [Some(start), Some(end)] = water.ends {
+            gizmos.line(mark(start), mark(end), colour);
+            // The start is the one with a crossbar.
+            let across = Vec3::from(axes::to_bevy([2.0, 0.0, 0.0])) - Vec3::from(axes::to_bevy([0.0, 0.0, 0.0]));
+            gizmos.line(up(start) - across, up(start) + across, colour);
+        }
+    }
 }
 
 /// A colour for a liquid kind, so a lava flow does not read as a lake.
@@ -463,7 +540,7 @@ fn colour_of(kind: Liquid) -> Color {
     }
 }
 
-/// One flat square, at a fixed height.
+/// One flat square, at a fixed height, for the wet cells.
 ///
 /// **Flat and not draped**, unlike the hole and zone outlines: what this draws
 /// is a *liquid surface*, which is level by definition. Draping it over the

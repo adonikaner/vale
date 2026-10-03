@@ -1452,11 +1452,11 @@ fn a_tilted_flatten_makes_a_ramp_through_its_pivot() {
 }
 
 /// A selection is marked by position, moves as one, levels to one height,
-/// and a brush told to keep it leaves it where it is.
+/// and a brush told to protect it leaves it where it is.
 #[test]
 fn a_selection_of_vertices_moves_together_and_can_be_kept_from_a_brush() {
     use crate::adt::heights;
-    use crate::ops::vertices::Selected;
+    use crate::ops::vertices::{Mask, Selected};
     let Some(mut tile) = tile() else { return };
     let bytes = tile.write();
     // The corner four chunks share: chunk 0's last outer vertex.
@@ -1470,7 +1470,7 @@ fn a_selection_of_vertices_moves_together_and_can_be_kept_from_a_brush() {
     assert_eq!(selected.positions(&tile).len(), 4);
 
     let (sum, count) = selected.weighed(&tile);
-    let was = (sum / count as f64) as f32;
+    let was = (sum[2] / count as f64) as f32;
     let edits = selected.shift(&mut tile, 5.0);
     let corner = |tile: &AdtFile, chunk: usize, row: usize, column: usize| {
         heights::heights(tile.chunk(chunk).unwrap())[heights::outer(row, column).unwrap()]
@@ -1489,7 +1489,7 @@ fn a_selection_of_vertices_moves_together_and_can_be_kept_from_a_brush() {
     };
     let mut more = Vec::new();
     for _ in 0..10 {
-        more.extend(brush.stroke_keeping(&mut tile, at, 0.1, None, Some(&selected)));
+        more.extend(brush.stroke_masked(&mut tile, at, 0.1, None, Some((&selected, Mask::Protect))));
     }
     assert_eq!(corner(&tile, 0, 8, 8), held, "the kept vertex did not move");
     assert_eq!(corner(&tile, 17, 0, 0), held);
@@ -1509,6 +1509,76 @@ fn a_selection_of_vertices_moves_together_and_can_be_kept_from_a_brush() {
     gone.mark(&tile, at, 30.0, Shape::Square, false);
     assert!(gone.is_empty());
     for edit in levelled.iter().rev().chain(more.iter().rev()).chain(edits.iter().rev()) {
+        edit.revert(&mut tile);
+    }
+    assert_eq!(tile.write(), bytes);
+}
+
+/// A selection tilts onto a plane through its centre, smooths toward its
+/// neighbours, and a brush confined to it moves nothing outside it.
+#[test]
+fn a_selection_tilts_smooths_and_confines_a_brush() {
+    use crate::adt::heights;
+    use crate::ops::vertices::{plane, Mask, Selected};
+    let Some(mut tile) = tile() else { return };
+    let bytes = tile.write();
+    let origin = tile.chunk(17).unwrap().head().position();
+    let at = [origin[0], origin[1]];
+    let mut selected = Selected::default();
+    selected.mark(&tile, at, 15.0, Shape::Circle, true);
+
+    // Ten degrees, rising north: every vertex on the plane, and the centre
+    // where it was.
+    let (sum, count) = selected.weighed(&tile);
+    let centre = sum.map(|axis| (axis / count as f64) as f32);
+    let slope = Brush::tilted(10.0, 0.0);
+    assert!(slope[0] > 0.17 && slope[0] < 0.18 && slope[1].abs() < 1e-6);
+    let tilted = selected.tilt(&mut tile, centre, slope);
+    for position in selected.positions(&tile) {
+        let wanted = plane(centre, slope, position);
+        assert!((position[2] - wanted).abs() < 1e-3, "{position:?} against {wanted}");
+    }
+    let (after, _) = selected.weighed(&tile);
+    assert!(((after[2] / count as f64) as f32 - centre[2]).abs() < 1e-2, "mean kept");
+
+    // A spike in the middle, smoothed: it comes down toward its neighbours.
+    let mut spike = Selected::default();
+    spike.mark(&tile, at, 1.0, Shape::Circle, true);
+    let raised = spike.shift(&mut tile, 30.0);
+    let peak = spike.positions(&tile)[0][2];
+    let plan = spike.smoothed(&tile, 1.0, |x, y| heights::height_at(&tile, x, y));
+    let smoothed = plan.write(&mut tile);
+    let now = spike.positions(&tile)[0][2];
+    assert!(now < peak - 20.0, "{peak} to {now}");
+    let welded: Vec<f32> = spike.positions(&tile).iter().map(|p| p[2]).collect();
+    // A shared vertex's copies are placed from different chunk origins, so
+    // they sample the ground a rounding apart.
+    assert!(welded.windows(2).all(|pair| (pair[0] - pair[1]).abs() < 1e-3), "still welded: {welded:?}");
+
+    // A brush confined to the selection raises it and nothing round it.
+    let outside = |tile: &AdtFile| heights::heights(tile.chunk(17).unwrap())[heights::outer(4, 4).unwrap()];
+    let left = outside(&tile);
+    let (inside_was, _) = selected.weighed(&tile);
+    let brush = Brush {
+        radius: 40.0,
+        strength: 10.0,
+        ..Brush::default()
+    };
+    let mut confined = Vec::new();
+    for _ in 0..5 {
+        confined.extend(brush.stroke_masked(&mut tile, at, 0.1, None, Some((&selected, Mask::Confine))));
+    }
+    assert_eq!(outside(&tile), left, "outside the selection, nothing moved");
+    let (inside_now, _) = selected.weighed(&tile);
+    assert!(inside_now[2] > inside_was[2] + 1.0, "the selection rose");
+
+    for edit in confined
+        .iter()
+        .rev()
+        .chain(smoothed.iter().rev())
+        .chain(raised.iter().rev())
+        .chain(tilted.iter().rev())
+    {
         edit.revert(&mut tile);
     }
     assert_eq!(tile.write(), bytes);
