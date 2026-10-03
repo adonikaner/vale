@@ -384,6 +384,21 @@ pub fn can_attack_between(
     }
 }
 
+/// May `a` assist `b`? The same construction as [`can_attack_between`], over
+/// [`vale_assets::tables::faction::Factions::can_assist`]. With no faction
+/// table nothing is assistable, which is the direction that sends nothing.
+pub fn can_assist_between(
+    tables: &vale_assets::tables::dbc::DisplayTables,
+    party: &crate::interface::party::Party,
+    standing: &crate::interface::reputation::PlayerStanding,
+    a: &WorldEntity,
+    b: &WorldEntity,
+) -> bool {
+    tables.factions().is_some_and(|factions| {
+        factions.can_assist(&faction_party(a, party), &faction_party(b, party), &standing.lend())
+    })
+}
+
 impl Units<'_, '_> {
     /// The entity a token names, if it currently names one.
     pub fn resolve(&self, id: UnitId) -> Option<Entity> {
@@ -1087,6 +1102,23 @@ impl Units<'_, '_> {
             );
         };
         factions.can_attack(&a, &b, &self.standing.lend())
+    }
+
+    /// `UnitCanAssist(a, b)`; see
+    /// [`vale_assets::tables::faction::Factions::can_assist`]. No answer
+    /// without the faction table.
+    pub fn can_assist(
+        &self,
+        tables: &vale_assets::tables::dbc::DisplayTables,
+        a: UnitId,
+        b: UnitId,
+    ) -> bool {
+        let (Some(a), Some(b)) = (self.party_of(a), self.party_of(b)) else {
+            return false;
+        };
+        tables
+            .factions()
+            .is_some_and(|factions| factions.can_assist(&a, &b, &self.standing.lend()))
     }
 
     /// `UnitPlayerControlled`: whether a player controls this unit.
@@ -2789,6 +2821,7 @@ pub fn is_action_in_range(
 pub fn is_usable_action(
     bar: &ActionBar,
     units: &Units,
+    inventory: &crate::interface::items::Inventory,
     slot: u8,
     // How many of the slot's item the character is carrying, for an item slot.
     // `None` for a slot that is not an item. See the item branch below.
@@ -2816,7 +2849,43 @@ pub fn is_usable_action(
     let Some(info) = action.spell.as_ref() else {
         return (false, false);
     };
-    spell_is_usable(info, units)
+    spell_is_usable(info, units, inventory)
+}
+
+/// Whether the character's equipment meets the spell's equipped-item condition;
+/// see [`vale_assets::tables::item::meets_equipped_requirement`]. An equipped
+/// item whose template has not arrived is left out, so a spell that needs it
+/// reads as unusable until the reply lands, a fraction of a second after login.
+fn worn_meets(
+    info: &vale_assets::tables::spellbook::SpellInfo,
+    inventory: &crate::interface::items::Inventory,
+) -> bool {
+    if info.equipped_item_class < 0 {
+        return true;
+    }
+    let worn: Vec<vale_assets::tables::item::Worn> = inventory
+        .carried
+        .equipped
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, item)| {
+            let item = item.as_ref()?;
+            let template = inventory.template_of(item)?;
+            Some(vale_assets::tables::item::Worn {
+                slot,
+                class: template.class,
+                subclass: template.subclass,
+                inventory_type: template.inventory_type,
+                broken: item.max_durability > 0 && item.durability == 0,
+            })
+        })
+        .collect();
+    vale_assets::tables::item::meets_equipped_requirement(
+        info.equipped_item_class,
+        info.equipped_item_subclass_mask,
+        info.equipped_item_inventory_type_mask,
+        &worn,
+    )
 }
 
 /// Whether this spell can be cast now, as `(usable, notEnoughMana)`, the pair
@@ -2829,6 +2898,7 @@ pub fn is_usable_action(
 pub fn spell_is_usable(
     info: &vale_assets::tables::spellbook::SpellInfo,
     units: &Units,
+    inventory: &crate::interface::items::Inventory,
 ) -> (bool, bool) {
     // The conditions the spell row states are tested before the cost. A spell
     // that cannot be cast at all is grey, not blue: the three cases of
@@ -2838,16 +2908,16 @@ pub fn spell_is_usable(
     // afford, which names the wrong problem.
     //
     // See [`SpellInfo::castable_now`] for the five conditions and an example
-    // ability for each. The row's equipped-item condition is not tested here.
-    // It needs the character's weapons, which the inventory holds; it is named
-    // there.
+    // ability for each. The row's equipped-item condition is tested after
+    // them, against the inventory; see [`worn_meets`].
     let me = units.get(UnitId::Player);
     if !info.castable_now(
         me.map_or(0, |me| me.aura_state),
         units.get(UnitId::Target).map(|t| t.aura_state),
         me.map_or(0, |me| me.combo_points),
         me.map_or(0, |me| me.shapeshift_form),
-    ) {
+    ) || !worn_meets(info, inventory)
+    {
         return (false, false);
     }
     if info.power_cost == 0 {
@@ -2871,9 +2941,9 @@ mod tests {
     /// The Attack button is current while the server says the character is
     /// swinging. `IsCurrentAction` tests nothing else for it.
     ///
-    /// This function answered correctly before the fix this test accompanies.
-    /// The fault was that nothing called it again when the state changed. See
-    /// `crate::interface::action::follow_attack_state`.
+    /// This test pins the function's answer. The button also needs the
+    /// function to be called again when the attack state changes, which
+    /// `crate::interface::action::follow_attack_state` does.
     #[test]
     fn the_attack_slot_is_current_exactly_while_attacking() {
         let mut bar = ActionBar::default();

@@ -64,6 +64,7 @@
 //! trade.rs       the trade window
 //! tradeskill.rs  the trade-skill and craft windows
 //! trainer.rs     the training window
+//! uioptions.rs   the options panel's show-helm and show-cloak checkboxes
 //! untrainer.rs   resetting a pet's skills
 //! vitals.rs      the unit frames' health, power and level events
 //! worldmap.rs    where the character is, and which world map is showing
@@ -161,6 +162,7 @@ pub mod stable;
 pub mod stats;
 pub mod summon;
 pub mod tabard;
+pub mod uioptions;
 pub mod inspect;
 pub mod supersede;
 pub mod talents;
@@ -252,6 +254,7 @@ impl Plugin for InterfacePlugins {
                 summon::SummonPlugin,
                 inspect::InspectPlugin,
                 played::PlayedPlugin,
+                uioptions::UiOptionsPlugin,
                 logout::LogoutPlugin,
             ),
             (worldmap::WorldMapPlugin, minimap::MinimapPlugin),

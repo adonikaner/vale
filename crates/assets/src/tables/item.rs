@@ -1417,5 +1417,69 @@ fn first_variant(group: u16) -> u16 {
     }
 }
 
+/// One equipped item, as a spell's equipped-item condition sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Worn {
+    /// The equipment slot, 0..18 (`EQUIPMENT_SLOT_*`).
+    pub slot: usize,
+    /// `item_template.class`, `.subclass` and `.InventoryType`.
+    pub class: u32,
+    pub subclass: u32,
+    pub inventory_type: u32,
+    /// Durability 0 of a non-zero maximum. A broken item satisfies nothing.
+    pub broken: bool,
+}
+
+/// `ITEM_CLASS_WEAPON` and `ITEM_CLASS_ARMOR`, the two classes a spell's
+/// `EquippedItemClass` names.
+const ITEM_CLASS_WEAPON: i32 = 2;
+const ITEM_CLASS_ARMOR: i32 = 4;
+/// `EQUIPMENT_SLOT_MAINHAND`, `_OFFHAND` and `_RANGED`.
+const SLOT_MAINHAND: usize = 15;
+const SLOT_OFFHAND: usize = 16;
+const SLOT_RANGED: usize = 17;
+
+/// Whether the character's equipment meets a spell's equipped-item condition:
+/// `Spell.dbc`'s `EquippedItemClass`, `EquippedItemSubClassMask` and
+/// `EquippedItemInventoryTypeMask`. It is what makes Sunder Armor unusable
+/// with no weapon in hand.
+///
+/// The rule follows vmangos' `Player::HasItemFitToSpellReqirements` and
+/// `Item::IsFitToSpellRequirements`, which refuse the cast with
+/// `SPELL_FAILED_EQUIPPED_ITEM_CLASS`:
+///
+/// ```text
+/// class < 0                 no condition
+/// class 2 (weapon)          main hand, off hand or ranged
+/// class 4 (armour)          slots 0..14, the off hand or the ranged slot
+/// an item fits when its class is the spell's, its subclass is in the mask
+/// (0 = any), its inventory type is in the mask (0 = any), and it is not broken
+/// ```
+///
+/// Any other class satisfies nothing, as on the server.
+pub fn meets_equipped_requirement(
+    class: i32,
+    subclass_mask: u32,
+    inventory_type_mask: u32,
+    worn: &[Worn],
+) -> bool {
+    if class < 0 {
+        return true;
+    }
+    let in_slots = |slot: usize| match class {
+        ITEM_CLASS_WEAPON => (SLOT_MAINHAND..=SLOT_RANGED).contains(&slot),
+        ITEM_CLASS_ARMOR => slot < SLOT_MAINHAND || slot == SLOT_OFFHAND || slot == SLOT_RANGED,
+        _ => false,
+    };
+    let bit = |mask: u32, n: u32| mask == 0 || (n < 32 && mask & (1 << n) != 0);
+    worn.iter().any(|item| {
+        in_slots(item.slot)
+            && !item.broken
+            && item.class as i32 == class
+            && bit(subclass_mask, item.subclass)
+            && bit(inventory_type_mask, item.inventory_type)
+    })
+}
+
 #[cfg(test)]
 mod tests;

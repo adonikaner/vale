@@ -1246,6 +1246,9 @@ struct Counters {
     /// 255 means "not a game object", so a unit never looks like an object that
     /// changed state.
     object_state: u8,
+    /// One-shot animations the server asked a game object to play; see
+    /// [`WorldEntity::object_anims`].
+    object_anims: u32,
 }
 
 impl Counters {
@@ -1263,6 +1266,7 @@ impl Counters {
             casts_delayed: world.casts_delayed,
             airborne: world.airborne,
             object_state: world.object_state.unwrap_or(u8::MAX),
+            object_anims: world.object_anims,
         }
     }
 }

@@ -1953,6 +1953,13 @@ impl WorldSession {
         self.send(Opcode::CMSG_PLAYED_TIME, &[])
     }
 
+    /// `CMSG_TOGGLE_HELM` when `helm`, else `CMSG_TOGGLE_CLOAK`. Both have no
+    /// body, and each flips one bit of `PLAYER_FLAGS`.
+    pub fn toggle_worn(&mut self, helm: bool) -> io::Result<()> {
+        let opcode = if helm { Opcode::CMSG_TOGGLE_HELM } else { Opcode::CMSG_TOGGLE_CLOAK };
+        self.send(opcode, &[])
+    }
+
     /// Inspect a player: `CMSG_INSPECT`, whose body is the guid.
     pub fn inspect(&mut self, guid: u64) -> io::Result<()> {
         self.send(Opcode::CMSG_INSPECT, &crate::play::inspect::inspect_body(guid))

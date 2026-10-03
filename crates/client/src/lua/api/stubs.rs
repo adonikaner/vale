@@ -57,7 +57,7 @@ use super::super::api::one_or_nil;
 /// Every name this module registers with nothing behind it. Sorted.
 ///
 /// This count is not a measure of progress. See the module comment.
-pub const REGISTERED: [&str; 107] = [
+pub const REGISTERED: [&str; 106] = [
     "AcceptAreaSpiritHeal",
     "CanJoinBattlefieldAsGroup",
     "CanMerchantRepair",
@@ -80,7 +80,6 @@ pub const REGISTERED: [&str; 107] = [
     "GetCurrentResolution",
     "GetCursorMoney",
     "GetDefaultLanguage",
-    "GetFramerate",
     "GetGMStatus",
     "GetGMTicket",
     "GetGamma",
@@ -171,10 +170,13 @@ pub const REGISTERED: [&str; 107] = [
 ///
 /// Kept apart from [`REGISTERED`] so that the share of the API that is real
 /// can be counted.
-pub const ANSWERED: [&str; 7] = [
+pub const ANSWERED: [&str; 8] = [
     // `GetChatWindowMessages` is derived from the directory's `ChatTypeGroup`
     // and is not a constant. See the note where it is registered.
     "GetChatWindowMessages",
+    // `GetFramerate` reads the interface clock's frame count; see
+    // [`set_framerate`].
+    "GetFramerate",
     "GetItemQualityColor",
     "GetScreenHeight",
     "GetScreenWidth",
@@ -182,6 +184,16 @@ pub const ANSWERED: [&str; 7] = [
     "IsControlKeyDown",
     "IsShiftKeyDown",
 ];
+
+/// The registry key that holds the rendered frame rate; see [`set_framerate`].
+const REG_FRAMERATE: &str = "vale.framerate";
+
+/// Store the frame rate `GetFramerate()` answers: rendered frames a second,
+/// counted by `InterfaceClock` over its last closed window and written once a
+/// tick. pfUI's and other addons' frame-rate displays read it.
+pub(in crate::lua) fn set_framerate(lua: &mlua::Lua, framerate: f64) {
+    let _ = lua.set_named_registry_value(REG_FRAMERATE, framerate);
+}
 
 /// The registry key that holds the modifier state. It is a registry value and
 /// not a global, for the reason [`super::super::widgets::frames`] gives for
@@ -1072,11 +1084,8 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // of kind `ADDON`, which `crate::interface::chat` does not route. Two
     // addons call it on `PARTY_MEMBERS_CHANGED` to announce their version.
     nothing!("SendAddonMessage");
-    // `GetFramerate()` answers 0: the interpreter has no frame clock to read
-    // here, and an invented number would be displayed as a real one.
     // `GetKeyRingSize()` is 0 because this client has no keyring slots; an
     // addon that draws them draws none.
-    answers!("GetFramerate", 0);
     answers!("GetKeyRingSize", 0);
 
     // === the functions that answer from real state ===
@@ -1100,6 +1109,13 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // `GetCVar`, `SetCVar` and `GetCVarDefault` are registered by
     // [`super::cvars`]. They answer the client's settings and not a constant,
     // and other systems act on the values they hold.
+
+    // `GetFramerate()`: 0 until the first window closes, and in a headless
+    // run that never advances the clock.
+    let framerate = lua.create_function(|lua, ()| {
+        Ok(lua.named_registry_value::<Option<f64>>(REG_FRAMERATE)?.unwrap_or(0.0))
+    })?;
+    globals.set("GetFramerate", framerate)?;
 
     let quality = lua.create_function(|_, quality: Option<i64>| {
         let index = quality.unwrap_or(1).clamp(0, QUALITY_COLOURS.len() as i64 - 1) as usize;

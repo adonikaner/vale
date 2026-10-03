@@ -58,6 +58,28 @@ const SHEATH_STATE_UNARMED: u8 = 0;
 const SHEATH_STATE_MELEE: u8 = 1;
 const SHEATH_STATE_RANGED: u8 = 2;
 
+/// `PLAYER_FLAGS_HIDE_HELM` and `PLAYER_FLAGS_HIDE_CLOAK` (vmangos'
+/// `Player.h`): the two interface options that leave the helm and the cloak
+/// undrawn. `CMSG_TOGGLE_HELM` and `CMSG_TOGGLE_CLOAK` flip them, and the
+/// character list's `CHARACTER_FLAG_HIDE_HELM`/`_HIDE_CLOAK` carry the same two
+/// bits, so [`worn_is_shown`] serves the world and the character screen.
+pub const HIDE_HELM: u32 = 0x0000_0400;
+pub const HIDE_CLOAK: u32 = 0x0000_0800;
+
+/// Whether an equipped piece of `inventory_type` is drawn on a player whose
+/// `PLAYER_FLAGS` (or character-list flags) are `flags`.
+///
+/// A head piece is left off under [`HIDE_HELM`] and a cloak under
+/// [`HIDE_CLOAK`]. Every other piece is drawn. The item is still worn: its
+/// stats and its tooltip are unchanged, and only the model leaves it out.
+pub fn worn_is_shown(inventory_type: u32, flags: u32) -> bool {
+    match Slot::from_inventory_type(inventory_type) {
+        Slot::Head => flags & HIDE_HELM == 0,
+        Slot::Back => flags & HIDE_CLOAK == 0,
+        _ => true,
+    }
+}
+
 /// What the server says about an entity, for dressing it.
 ///
 /// Everything here comes from the wire. What the tables say arrives
@@ -504,6 +526,25 @@ fn held_weapons(tables: &DisplayTables, weapons: &[Weapon; 3], sheath_state: u8)
 mod tests {
     use super::*;
     use crate::tables::dbc::testing;
+
+    /// Each hide flag removes its own slot and nothing else, and a flag word
+    /// with neither bit set removes nothing.
+    #[test]
+    fn the_two_hide_flags_each_remove_one_slot() {
+        const HEAD: u32 = 1;
+        const CHEST: u32 = 5;
+        const BACK: u32 = 16;
+        for kind in [HEAD, CHEST, BACK] {
+            assert!(worn_is_shown(kind, 0));
+        }
+        assert!(!worn_is_shown(HEAD, HIDE_HELM));
+        assert!(worn_is_shown(BACK, HIDE_HELM));
+        assert!(!worn_is_shown(BACK, HIDE_CLOAK));
+        assert!(worn_is_shown(HEAD, HIDE_CLOAK));
+        assert!(worn_is_shown(CHEST, HIDE_HELM | HIDE_CLOAK));
+        // `PLAYER_FLAGS_GHOST` (0x10) and the AFK bit (0x2) are not about gear.
+        assert!(worn_is_shown(HEAD, 0x12));
+    }
 
     /// An `ItemDisplayInfo` with one row: display 5224, a mace, naming a model
     /// and nothing else.

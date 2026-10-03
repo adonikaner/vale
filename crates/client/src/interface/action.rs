@@ -1,77 +1,76 @@
-//! **Pressing a button**: the action bar, the cooldowns that gate it, the cast
-//! it sends, and the swing.
+//! Action bar input: the action bar, the cooldowns that gate it, the cast a
+//! button sends, and the melee swing.
 //!
-//! The bar itself is the server's — `SMSG_ACTION_BUTTONS` says where the last
-//! session left it — and everything about *using* one is the client's. Four rules
-//! here are the game's own and each is load-bearing:
+//! The server owns the bar's contents: `SMSG_ACTION_BUTTONS` restores the
+//! layout the last session left. Using a button is the client's job. Four rules
+//! of the 1.12.1 client apply here, and the bar does not work without each of
+//! them:
 //!
-//! * **Attack is not a cast.** Spell 6603 is the pseudo-spell every character
+//! * Attack is not a cast. Spell 6603 is the pseudo-spell every character
 //!   carries in slot 1, and pressing it sends `CMSG_ATTACKSWING` at the
-//!   selection. `CMSG_CAST_SPELL` with that id is refused by the server's own
-//!   "which he shouldn't have" branch, so a client that treats the bar
-//!   uniformly cannot melee at all.
-//! * **A swing with no target acquires one.** The client picks the best
-//!   candidate and swings at it, which is why pressing attack in a fight that
-//!   started behind you works.
-//! * **The target is resolved from the spell, not from the selection.** See
-//!   [`vale_assets::tables::spellbook::resolve_aim`] — 14,002 of the game's 22,360
-//!   spells commit with *no target at all*, and shipping the selection with one
-//!   of those is how a self-buff comes back "Invalid target".
-//! * **The global cooldown starts locally, at send.** Not on any packet: the
-//!   client starts it the moment the cast goes out, and vmangos
-//!   sends nothing for it. A client waiting for the server to say so has a bar that responds a round trip late and swings
-//!   twice on a double press.
+//!   selection. The server refuses `CMSG_CAST_SPELL` with that id in its
+//!   "which he shouldn't have" branch, so a client that sends every button as
+//!   a cast cannot melee.
+//! * A swing with no target acquires one. The client picks the best candidate
+//!   and swings at it, so pressing attack in a fight that started behind the
+//!   character works.
+//! * The target comes from the spell, not from the selection. See
+//!   [`vale_assets::tables::spellbook::resolve_aim`]: 14,002 of the game's
+//!   22,360 spells are cast with no target, and sending the selection with one
+//!   of those makes a self-buff fail with "Invalid target".
+//! * The global cooldown starts locally, when the cast is sent. No packet
+//!   starts it: the client starts it as the cast goes out, and vmangos sends
+//!   nothing for it. A client that waited for the server would update the bar
+//!   a round trip late and send two casts on a double press.
 //!
 //! ## Which clock a cooldown runs on
 //!
-//! Three of them, per spell, exactly as the client's own `SpellHistory` records
-//! do — the spell's own recovery, its category's, and the global. The read takes
-//! the longest of the three that apply, which is the mechanism that spreads one
-//! cast's GCD across every other button. Who *starts* which is the part that is
-//! easy to get wrong:
+//! Each spell has three timers: its own recovery, its category's recovery, and
+//! the global cooldown. A read takes the longest of the three that apply, which
+//! is how one cast's GCD reaches every other button. Each timer is started by a
+//! different event:
 //!
 //! ```text
 //! global cooldown   locally, when the cast is sent
-//! own recovery      when *our own* SMSG_SPELL_GO comes back
+//! own recovery      when this character's SMSG_SPELL_GO comes back
 //! override/lockout  SMSG_SPELL_COOLDOWN — a counterspell, a GM reset
 //! parked release    SMSG_COOLDOWN_EVENT — Stealth, Feign Death
 //! a failed cast     clears the global cooldown only
 //! ```
 //!
-//! The last line matters: a refused cast never reached its `SPELL_GO`, so there
-//! is no recovery to clear — but the GCD was already started locally and would
-//! otherwise lock the bar for a second and a half for nothing.
+//! A refused cast never reached its `SPELL_GO`, so it has no recovery to clear.
+//! Its GCD was already started locally, and without the clear it would lock the
+//! bar for 1.5 seconds.
 //!
-//! ## …and the cast itself is the server's, which is the opposite rule
+//! ## The server owns the cast itself
 //!
-//! The global cooldown is the one thing a press starts. **Everything else about
-//! a cast waits for the server to say it happened**: the bar, the wind-up pose,
-//! the art on the caster's hands, the missile, the sound. This client used to
-//! draw all of it at the press and take it back off on a refusal, which is what
-//! "the animation plays but the spell was not really cast" is — a spell that
-//! never happened, drawn in full, twice a second while a key is held.
+//! The global cooldown is the only thing a press starts. Everything else about
+//! a cast waits for the server to confirm it: the cast bar, the wind-up pose,
+//! the spell art on the caster's hands, the missile, the sound. This client
+//! used to draw all of it at the press and remove it on a refusal, so a refused
+//! spell ("the animation plays but the spell was not really cast") played in
+//! full, twice a second while a key was held.
 //!
-//! 5875 does not do it, and the two sides agree about that. The client's press
-//! is its local refusals, the pending record, the GCD (started from inside the
-//! send) and the send; `SPELLCAST_START` is raised inside `SMSG_SPELL_START`'s
-//! handler and in no other place. And vmangos labels its own `SendSpellStart()` `// will show cast bar` and its
-//! `AddGCD` `// add gcd server side (client side is handled by client itself)`.
-//! So the split is exactly: the cooldown is ours, the cast is theirs.
+//! The 1.12.1 client (build 5875) and vmangos agree on this split. The client's
+//! press does four things: its local refusals, the pending record, the GCD, and
+//! the send. It raises `SPELLCAST_START` only on receiving `SMSG_SPELL_START`.
+//! vmangos comments its `SendSpellStart()` with `// will show cast bar` and its
+//! `AddGCD` with `// add gcd server side (client side is handled by client itself)`.
+//! The client owns the cooldown and the server owns the cast.
 //!
-//! What covers the round trip is [`Casting::pending`] — the 1.12 client's own
-//! pending-cast record — which draws nothing and exists so that a repeat press is
-//! dropped rather than sent again.
+//! [`Casting::pending`], the equivalent of the 1.12.1 client's pending-cast
+//! record, covers the round trip. It draws nothing; it exists so that a
+//! repeated press is dropped instead of sent again.
 //!
-//! ## The verb and the key that runs it are different things
+//! ## The verb and the key that runs it are separate
 //!
-//! [`use_action`] is this module's `UseAction` — the C function
-//! `ActionButton.lua` calls, taking a **one-based slot** and the game's own
-//! `onSelf` flag. It does not know which key was pressed and must not: the key
-//! is `Bindings.xml`'s business, it arrives here as a
+//! [`use_action`] is this module's `UseAction`, the C function
+//! `ActionButton.lua` calls with a one-based slot and the game's `onSelf` flag.
+//! It does not know which key was pressed. The key belongs to `Bindings.xml`;
+//! it arrives here as a
 //! [`Binding::ActionButton`][crate::input::bindings::Binding::ActionButton] message, and
 //! `SELFACTIONBUTTON1` is the same verb with the flag set. See
-//! [`crate::input::bindings`] for why that separation is the game's own rather than a
-//! preference.
+//! [`crate::input::bindings`] for why the game itself keeps the two separate.
 
 use super::api;
 use crate::input::bindings::{Binding, BindingPressed, BindingSet};
@@ -94,22 +93,21 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use std::time::{Duration, Instant};
 
-/// **How many slots this client holds — all 120 of them**, which is what
+/// The number of action slots this client holds: 120, which is what
 /// `SMSG_ACTION_BUTTONS` carries and what the interface asks about.
 ///
-/// It was twelve for as long as twelve was all anything could reach: the game's
-/// main bar is `1`..`=` and nothing else pressed a button. But the bar has
-/// **pages** — six of them — and `ActionButton_GetPagedID` is
-/// `id + (page - 1) * NUM_ACTIONBAR_BUTTONS`, so the moment the arrows either
-/// side of it work (`--audit --clicks`, this round) the interface starts asking
-/// about slot 13 through 72, and a twelve-slot vector answers "empty" to every
-/// one of them. The server has always sent the whole 120.
+/// The bar has six pages, and `ActionButton_GetPagedID` computes
+/// `id + (page - 1) * NUM_ACTIONBAR_BUTTONS`. Once the page arrows on either
+/// side of the main bar work (`--audit --clicks`), the interface asks about
+/// slots 13 to 72, and a twelve-slot vector answers "empty" for all of them.
+/// The value was 12 while the main bar's keys `1`..`=` were the only way to
+/// press a button. The server has always sent all 120.
 ///
-/// **Which** twelve of them the interface is looking at is not this side's
-/// question at all: `CURRENT_ACTIONBAR_PAGE` is a Lua global and
-/// `GetBonusBarOffset()` is answered off [`ActionBar::bonus_bar`], and every
-/// button adds the two to its own id before it asks anything here. So a slot
-/// number arriving from the interface is already absolute.
+/// The interface chooses which twelve slots it shows, not this module:
+/// `CURRENT_ACTIONBAR_PAGE` is a Lua global, `GetBonusBarOffset()` is answered
+/// from [`ActionBar::bonus_bar`], and every button adds both to its own id
+/// before it asks anything here. A slot number from the interface is therefore
+/// already absolute.
 pub const BAR_SLOTS: usize = 120;
 
 /// One slot of the bar, resolved against the archives.
@@ -132,7 +130,8 @@ impl Slot {
         }
     }
 
-    /// The auto-attack toggle rather than a cast — see the module comment.
+    /// Whether this slot is the auto-attack toggle rather than a cast. See the
+    /// module comment.
     pub fn is_auto_attack(&self) -> bool {
         self.kind == action_kind::SPELL && self.action == SPELL_ATTACK
     }
@@ -143,61 +142,62 @@ impl Slot {
 pub struct ActionBar {
     pub slots: Vec<Option<Slot>>,
     /// The `spellbook_version` these were built from, so the rebuild happens on
-    /// a difference rather than every frame — resolving twelve spells means
-    /// twelve string reads out of a 22,360-row DBC.
+    /// a difference rather than every frame. Resolving twelve spells means
+    /// twelve string reads from a 22,360-row DBC.
     built_from: Option<u32>,
-    /// **Which parse of the DBCs the slots were resolved from** — see
-    /// `GameAssets::tables_generation`, and [`rebuild_bar`], where the reason
-    /// the server's version is not enough on its own is.
+    /// Which parse of the DBCs the slots were resolved from. See
+    /// `GameAssets::tables_generation`, and [`rebuild_bar`] for why the
+    /// server's version alone is not enough.
     built_with: u64,
-    /// Every spell the character knows and could actually press — the
-    /// press-able subset, which is not the spellbook's list; see
-    /// [`super::spellbook`] for the one filter that differs.
+    /// Every spell the character knows and can press. This list differs from
+    /// the spellbook's list by one filter; see [`super::spellbook`].
     pub known: Vec<SpellInfo>,
-    /// **`GetBonusBarOffset()`** — which of the four bonus bars the character's
-    /// current form is showing, or 0 for the ordinary paged bar.
+    /// `GetBonusBarOffset()`: which of the four bonus bars the character's
+    /// current form shows, or 0 for the ordinary paged bar.
     ///
-    /// Off `UNIT_FIELD_BYTES_1`'s form byte through
+    /// Read from `UNIT_FIELD_BYTES_1`'s form byte through
     /// `SpellShapeshiftForm.dbc`'s `bonusActionBar` column
-    /// ([`vale_assets::tables::spellbook::ShapeshiftForms`]) — a client answer rather
-    /// than a server one, because the packet carries the form and never the bar.
-    /// See [`ActionbarBonusChanged`], which is what the interface redraws on.
+    /// ([`vale_assets::tables::spellbook::ShapeshiftForms`]). The client
+    /// computes this value itself, because the packet carries the form and
+    /// never the bar. See [`ActionbarBonusChanged`], the event the interface
+    /// redraws on.
     pub bonus_bar: u8,
-    /// **`GetActionBarToggles()`** — which of the four extra bars this character
+    /// `GetActionBarToggles()`: which of the four extra bars this character
     /// has switched on, as a mask of
     /// [`vale_protocol::play::spells::multi_bar`] bits.
     ///
-    /// The *only* piece of interface layout in 1.12 that the server keeps: it is
-    /// `PLAYER_FIELD_BYTES` byte 2, written by `CMSG_SET_ACTIONBAR_TOGGLES` and
-    /// handed straight back. See [`follow_bar_toggles`] for the copy and
+    /// This is the only piece of interface layout in 1.12 that the server
+    /// keeps: `PLAYER_FIELD_BYTES` byte 2, written by
+    /// `CMSG_SET_ACTIONBAR_TOGGLES` and sent back unchanged. See
+    /// [`follow_bar_toggles`] for the copy and
     /// [`vale_protocol::state::objects::Entity::action_bar_toggles`] for the field.
     ///
-    /// **No event goes with it**, unlike [`Self::bonus_bar`], and that is the
-    /// interface's own arrangement rather than a gap: `UIParent.lua` reads this
-    /// once, on `PLAYER_ENTERING_WORLD`, and every later change comes from the
-    /// options panel — which writes its own `SHOW_MULTI_ACTIONBAR_*` globals and
-    /// calls `MultiActionBar_Update()` itself, without ever asking again.
+    /// No event goes with it, unlike [`Self::bonus_bar`], and the interface
+    /// does not need one: `UIParent.lua` reads the value once, on
+    /// `PLAYER_ENTERING_WORLD`. Every later change comes from the options
+    /// panel, which writes its own `SHOW_MULTI_ACTIONBAR_*` globals and calls
+    /// `MultiActionBar_Update()` itself without reading the value again.
     pub toggles: u8,
 }
 
-/// **The ranged attack that is repeating itself**, or `None`.
+/// The ranged attack that is repeating, or `None`.
 ///
-/// Auto Shot and a wand's Shoot are not casts and they are not the melee
-/// auto-attack either; they are the one press in the game whose *effect is a
-/// loop the server runs*. `Spell::prepare` files an
-/// `IsAutoRepeatRangedSpell()` in `CURRENT_AUTOREPEAT_SPELL` instead of casting
-/// it, and `Unit::_UpdateAutoRepeatSpell` fires a triggered copy on the ranged
-/// attack timer for as long as it stands — so **one `CMSG_CAST_SPELL` buys an
-/// indefinite stream of `SMSG_SPELL_GO`s**, and until this existed the only
-/// thing a player could do with the button was turn it on.
+/// Auto Shot and a wand's Shoot are neither ordinary casts nor the melee
+/// auto-attack. Pressing one starts a loop that the server runs.
+/// `Spell::prepare` files an `IsAutoRepeatRangedSpell()` in
+/// `CURRENT_AUTOREPEAT_SPELL` instead of casting it, and
+/// `Unit::_UpdateAutoRepeatSpell` fires a triggered copy on the ranged attack
+/// timer for as long as it stays there. One `CMSG_CAST_SPELL` therefore
+/// produces an indefinite stream of `SMSG_SPELL_GO`s. Before this resource
+/// existed, the button could only turn the loop on.
 ///
-/// Held here rather than in `SessionStatus` because the *start* is entirely
-/// this client's: the server acknowledges the cast like any other and says
-/// nothing about the loop it began. What it does say is
-/// [`vale_protocol::play::spells::PlayerEvent::AutoRepeatCancelled`], and every
-/// way the loop can end — the press, the target dying, walking out of range, a
-/// wand-user moving — comes through that one packet, which is why [`Self::stop`]
-/// is reached from the drain rather than from the press.
+/// It lives here rather than in `SessionStatus` because the client records the
+/// start itself: the server acknowledges the cast like any other and says
+/// nothing about the loop. The end does come from the server, as
+/// [`vale_protocol::play::spells::PlayerEvent::AutoRepeatCancelled`]. Every way
+/// the loop can end (the press, the target dying, walking out of range, a wand
+/// user moving) produces that one packet, so [`Self::stop`] is called from the
+/// event drain rather than from the press.
 #[derive(Resource, Default)]
 pub struct AutoRepeat {
     /// Which spell, for `IsAutoRepeatAction`.
@@ -211,25 +211,25 @@ impl AutoRepeat {
         self.spell == Some(spell_id)
     }
 
-    /// Note that it has started, and say so **once**.
+    /// Record that the loop has started, and announce it once.
     ///
-    /// Idempotent on the spell for the reason every other edge in this module
-    /// is: `START_AUTOREPEAT_SPELL` starts a flash clock in
-    /// `ActionButton_OnEvent`, and re-arming it every press would leave the
-    /// button lit or dark depending on how the two clocks happened to line up.
+    /// Idempotent on the spell, like every other edge in this module:
+    /// `START_AUTOREPEAT_SPELL` starts a flash clock in `ActionButton_OnEvent`,
+    /// and restarting it on every press would leave the button lit or dark
+    /// depending on how the two clocks line up.
     pub(crate) fn begin(&mut self, spell_id: u32, events: &mut ActionEvents) {
         if self.spell == Some(spell_id) {
             return;
         }
         self.spell = Some(spell_id);
         events.autorepeat_start.write(StartAutorepeatSpell);
-        // The checked border is a different reading from the flash —
+        // The checked border is a separate reading from the flash:
         // `ActionButton_UpdateState` asks `IsCurrentAction or
-        // IsAutoRepeatAction` — and nothing else re-runs it.
+        // IsAutoRepeatAction`, and nothing else re-runs it.
         events.state.write(ActionbarUpdateState);
     }
 
-    /// …and that it has stopped, likewise once.
+    /// Record that the loop has stopped, and announce it once.
     pub(crate) fn stop(&mut self, events: &mut ActionEvents) {
         if self.spell.take().is_none() {
             return;
@@ -239,20 +239,18 @@ impl AutoRepeat {
     }
 }
 
-/// **The four resources a keypress writes**, bundled — and the bundle exists
-/// for a hard reason rather than for tidiness.
+/// The four resources a keypress writes, bundled into one system parameter.
 ///
-/// A Bevy function system takes its parameters as one tuple and `SystemParam` is
-/// implemented for tuples up to **sixteen**; [`run_bindings`] was at exactly
-/// sixteen, so the next resource a press needed would not have been a
-/// compile error about a limit — it is a "the method `chain` exists but its
-/// trait bounds were not satisfied" on the *plugin*, one screen away from the
-/// system that caused it. `LuaWorld` in `lua::api` carries the same note for the
-/// same reason.
+/// A Bevy function system takes its parameters as one tuple, and `SystemParam`
+/// is implemented for tuples of up to sixteen elements. [`run_bindings`] had
+/// exactly sixteen. A seventeenth parameter does not produce an error about
+/// the limit; it produces "the method `chain` exists but its trait bounds were
+/// not satisfied" on the plugin, away from the system that caused it.
+/// `LuaWorld` in `lua::api` is bundled for the same reason.
 ///
-/// The membership is "what a press changes about *this character's* casting",
-/// which is why the bar and the spellbook are not in it: those are rebuilt from
-/// the server and read here.
+/// The members are what a press changes about this character's casting. The
+/// bar and the spellbook are not members: they are rebuilt from the server and
+/// only read here.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct PressState<'w> {
     pub cooldowns: ResMut<'w, Cooldowns>,
@@ -263,110 +261,103 @@ pub struct PressState<'w> {
 
 /// The cast this client believes is in progress, for the cast bar.
 ///
-/// **The server's state, not a prediction — and that is this round's
-/// correction.** It used to begin at the send, on the argument that waiting a
-/// round trip would leave the bar starting late. The reference does wait:
-/// `SPELLCAST_START` is raised in exactly one place in the 1.12 client and
-/// that place is `SMSG_SPELL_START`'s own handler, while vmangos labels the packet `// will show cast bar`. So a
-/// cast this client shows is a cast the server took, and a refused press now
-/// shows nothing at all where it used to show a wind-up and then take it back.
+/// This is the server's state, not a prediction. The cast used to begin at the
+/// send, so that the bar would not start a round trip late. The 1.12.1 client
+/// waits: it raises `SPELLCAST_START` only on receiving `SMSG_SPELL_START`, and
+/// vmangos comments that packet `// will show cast bar`. A cast this client
+/// shows is therefore one the server accepted, and a refused press shows
+/// nothing, where it used to show a wind-up and then remove it.
 ///
-/// [`Self::pending`] is the state that covers the gap, and it is the
-/// reference's too.
+/// [`Self::pending`] covers the time between the press and the answer. The
+/// 1.12.1 client keeps the same state.
 #[derive(Resource, Default)]
 pub struct Casting {
     pub spell_id: u32,
     pub name: String,
     pub started: Option<Instant>,
     pub duration: Duration,
-    /// **What has been asked for and not yet answered** — the spell id sent to
-    /// the server, held until it says yes (`SMSG_SPELL_START`), no
-    /// (`SMSG_CAST_RESULT` with a failure) or nothing more (a next-swing
-    /// ability's own release).
+    /// The spell id sent to the server and not yet answered. It is held until
+    /// the server accepts (`SMSG_SPELL_START`), refuses (`SMSG_CAST_RESULT`
+    /// with a failure), or a next-swing ability is released.
     ///
-    /// The 1.12 client keeps the same record: the press writes the spell and its
-    /// targets into it and the failure handler clears it. Two things here read it, and neither is a cast bar — it
-    /// draws nothing:
+    /// The 1.12.1 client keeps the same record: the press fills it with the
+    /// spell and its targets, and a cast failure clears it. Two things here read
+    /// it, and neither draws anything:
     ///
-    /// * the **repeat press**, which is dropped rather than sent again. The
-    ///   reference does send, and the server answers every one of them with
-    ///   `SPELL_FAILED_SPELL_IN_PROGRESS`; dropping it locally is the same
-    ///   outcome with one packet instead of ten, and it is the same judgement
-    ///   already made one screen down for a cast that *is* running.
-    /// * the **spell targeting cursor**, so that a second press while the first
-    ///   is in flight does not put the cursor back up.
+    /// * A repeated press, which is dropped instead of sent again. The 1.12.1
+    ///   client does send it, and the server answers each repeat with
+    ///   `SPELL_FAILED_SPELL_IN_PROGRESS`. Dropping it locally has the same
+    ///   result with one packet instead of ten, and matches the rule applied in
+    ///   [`cast_known_spell`] to a cast that is already running.
+    /// * The spell targeting cursor, so that a second press while the first is
+    ///   in flight does not put the cursor back up.
     ///
-    /// **An ask is always answered**, which is what makes it safe to gate on:
-    /// `Spell::SendCastResult` writes a status byte on both paths and always
-    /// sends, so every `CMSG_CAST_SPELL` that reaches `Spell::prepare` comes
-    /// back as an acceptance or a refusal. The one exception is
-    /// `HandleCastSpellOpcode`'s "which he shouldn't have" branch — a spell the
-    /// character does not know, or a passive — which returns with no reply at
-    /// all; a passive is refused here before the send and nothing else in this
-    /// client casts a spell that is not in the character's own book, so that
-    /// branch is unreachable rather than merely unlikely. Leaving the world
-    /// resets the whole resource either way (see `forget`).
+    /// The gate relies on every ask being answered. `Spell::SendCastResult`
+    /// writes a status byte on both paths and always sends, so every
+    /// `CMSG_CAST_SPELL` that reaches `Spell::prepare` gets an acceptance or a
+    /// refusal. The exception is `HandleCastSpellOpcode`'s "which he shouldn't
+    /// have" branch (a spell the character does not know, or a passive), which
+    /// returns without a reply. That branch was assumed unreachable: a passive
+    /// is refused here before the send, and this client casts only spells from
+    /// the character's own book. Leaving the world resets the whole resource
+    /// either way (see `forget`).
     ///
-    /// **That last paragraph was wrong, and the character it wedged is the
-    /// proof.** `HandleCastSpellOpcode` returns silently on
-    /// `!HasActiveSpell(spellId)` — *has it as an active spell*, not *knows it* —
-    /// and an action button holding a **superseded rank** is exactly that: the
-    /// server sends `SMSG_SUPERCEDED_SPELL` when a higher rank is learned so the
-    /// client can swap it in the bar and the book, this client does not read that
-    /// opcode at all, and the stale id stays in `character_action` for ever.
-    /// Measured on the reporter's own warrior: button 73 holds Heroic Strike
-    /// 11566 and `character_spell` has only 11567; button 75 holds Rend 11572
-    /// against 11573.
+    /// The assumption is wrong. `HandleCastSpellOpcode` returns without a reply
+    /// on `!HasActiveSpell(spellId)`, which tests whether the spell is active,
+    /// not whether it is known. An action button holding a superseded rank
+    /// fails that test. The server sends `SMSG_SUPERCEDED_SPELL` when a higher
+    /// rank is learned so the client can replace the id in the bar and the
+    /// book; this client does not read that opcode, and the old id stays in
+    /// `character_action` permanently. Measured on the reporting player's
+    /// warrior: button 73 holds Heroic Strike 11566 while `character_spell` has
+    /// only 11567, and button 75 holds Rend 11572 against 11573.
     ///
-    /// So the ask is **not** always answered, and one unanswerable press used to
-    /// take the character out for the rest of the session: every later press of
-    /// any other spell met the gate below and printed "another action is in
-    /// progress". [`Self::asked_at`] is the deadline that keeps a dropped reply
-    /// to the one press it belongs to.
+    /// Without a deadline, one unanswered press blocked the character for the
+    /// rest of the session: every later press of any spell met the gate in
+    /// [`cast_known_spell`] and printed "another action is in progress".
+    /// [`Self::asked_at`] is the deadline that limits a dropped reply to the
+    /// press it belongs to.
     pub pending: Option<u32>,
-    /// When [`Self::pending`] was armed, so an ask nobody answers expires.
+    /// When [`Self::pending`] was set, so that an unanswered ask expires.
     ///
-    /// The same judgement `session::logout` and the character delete already
-    /// make: **where the server has a path that sends nothing at all, a deadline
-    /// is a refusal rather than a dead socket.** It is deliberately not a
-    /// message — the reference shows nothing here either, and the press really
-    /// did do nothing — so what it restores is only the ability to press
-    /// something else.
+    /// `session::logout` and the character delete apply the same rule: where
+    /// the server has a path that sends nothing, a deadline counts as a refusal
+    /// rather than as a dead socket. The expiry shows no message, because the
+    /// 1.12.1 client shows nothing here either and the press did nothing. It
+    /// only lets the player press something else.
     pub asked_at: Option<Instant>,
-    /// **The spell being channelled, if one is** — a different state from
-    /// [`Self::started`] and deliberately not the same field.
+    /// The spell being channelled, if any. This is a separate state from
+    /// [`Self::started`] and is kept in a separate field.
     ///
-    /// A channel has no wind-up: it is an instant on the wire, so `started` is
-    /// `None` for one and the *whole* of it happens after `SMSG_SPELL_GO`. The
-    /// two must be told apart because the server tells them apart —
+    /// A channel has no wind-up: on the wire it is an instant, so `started` is
+    /// `None` and the whole channel happens after `SMSG_SPELL_GO`. The two must
+    /// be distinguished because the server distinguishes them.
     /// `Spell::prepare`'s "another action is in progress" refusal skips
     /// channels (`IsNonMeleeSpellCasted(false, true, true)`, whose second
     /// argument is `skipChanneled`), so a cast pressed during a channel is
-    /// *accepted* and simply replaces it, where one pressed during a wind-up is
-    /// not. See [`in_progress`].
+    /// accepted and replaces it, while one pressed during a wind-up is refused.
+    /// See [`in_progress`].
     pub channelling: Option<u32>,
-    /// **The next-swing ability waiting on the weapon** — Heroic Strike,
-    /// Raptor Strike, Cleave — and a third state again rather than a variation
-    /// on the two above.
+    /// The next-swing ability waiting on the weapon (Heroic Strike, Raptor
+    /// Strike, Cleave). This is a third state, separate from the two above.
     ///
-    /// It draws **no bar at all** and must not: nothing is winding up, and
-    /// `in_progress` deliberately does not consult it, because the server does
-    /// not either — `Spell::prepare` refuses on `CURRENT_GENERIC_SPELL` and a
-    /// melee spell is not one, so a Fireball pressed with Heroic Strike queued
-    /// is accepted by the server and must be accepted here.
+    /// It draws no bar, because nothing is winding up. `in_progress` does not
+    /// consult it, because the server does not either: `Spell::prepare`
+    /// refuses on `CURRENT_GENERIC_SPELL`, and a melee spell is not one, so a
+    /// Fireball pressed with Heroic Strike queued is accepted by the server and
+    /// must be accepted here.
     ///
-    /// What it is for is **`IsCurrentAction`**, which is the reference's own
-    /// use of the same slot: it compares the button's spell against the
-    /// client's `CURRENT_MELEE_SPELL` before it looks at
-    /// anything else, which is what lights Heroic Strike's border the moment it
-    /// is pressed and leaves it lit until the swing lands. Without it the whole
-    /// family was pressable and drew no state at all.
+    /// It exists for `IsCurrentAction`. The 1.12.1 client answers
+    /// `IsCurrentAction` true for the button holding the queued next-swing
+    /// spell, which lights Heroic Strike's border from the press until the
+    /// swing lands. Without this field the whole family of abilities could be
+    /// pressed but showed no state.
     ///
-    /// **Cleared by the server and never by a clock here**: the release
-    /// (`SMSG_SPELL_GO` naming us), a refusal, or an interrupt. See
-    /// [`drain_events`], and note that a queue nothing discharges *stays*
-    /// queued — a player standing out of reach keeps the ability armed, which
-    /// is the reference's behaviour and not a leak.
+    /// Only the server clears it, never a timer here: the release
+    /// (`SMSG_SPELL_GO` naming this character), a refusal, or an interrupt. See
+    /// [`drain_events`]. A queued ability that nothing releases stays queued: a
+    /// player standing out of reach keeps it armed, as in the 1.12.1 client.
+    /// This is not a leak.
     pub next_swing: Option<u32>,
 }
 
@@ -381,44 +372,42 @@ impl Casting {
         (elapsed <= 1.0).then_some(elapsed)
     }
 
-    /// **Put a cast on the bar, on the server's word.**
+    /// Put a cast on the bar, on the server's word.
     ///
-    /// The duration is `SMSG_SPELL_START`'s own `m_timer` rather than
-    /// `Spell.dbc`'s base cast time, which is the second thing waiting for the
-    /// packet buys: the server has already folded in haste, talents and any
-    /// modifier this client does not model, so the bar is the length the cast
-    /// really is instead of the length the file says.
+    /// The duration is `SMSG_SPELL_START`'s `m_timer`, not `Spell.dbc`'s base
+    /// cast time. The server has already applied haste, talents and any
+    /// modifier this client does not model, so the bar has the cast's real
+    /// length. This is a second benefit of waiting for the packet.
     ///
-    /// `name` is the caller's, because the id has to be resolved through the
-    /// catalog and this module is not the one that holds it.
+    /// The caller supplies `name`, because the id is resolved through the
+    /// catalog, which this module does not hold.
     pub(crate) fn begin(&mut self, spell_id: u32, name: String, cast_time_ms: u32) {
         self.spell_id = spell_id;
         self.name = name;
         self.duration = Duration::from_millis(u64::from(cast_time_ms));
         self.started = (cast_time_ms > 0).then(Instant::now);
-        // The cast the server took ends whatever was being channelled — its own
-        // behaviour, since it accepts the cast and drops the channel.
+        // The accepted cast ends any channel, as on the server, which accepts
+        // the cast and drops the channel.
         self.channelling = None;
-        // …and it is no longer waiting for an answer, whatever it was — nor for
-        // the deadline that would have let go of one. See [`Self::asked_at`].
+        // The cast is no longer waiting for an answer, so the pending id and its
+        // deadline are cleared. See [`Self::asked_at`].
         self.pending = None;
         self.asked_at = None;
     }
 
-    /// **Push the cast back**, and say whether there was a cast to push.
+    /// Lengthen the cast, and return whether there was a cast to lengthen.
     ///
-    /// `SMSG_SPELL_DELAYED` is a difference the server has already applied to
-    /// its own `m_timer`, so the bar simply gets longer: `started` stays where
-    /// it is and the finish line moves, which is exactly what
-    /// `CastingBarFrame_OnEvent`'s own arm does with `arg1` (it slides *both*
-    /// ends, which comes to the same thing since it re-states the range).
+    /// `SMSG_SPELL_DELAYED` carries a difference the server has already applied
+    /// to its own `m_timer`, so the bar gets longer: `started` stays and the end
+    /// moves. `CastingBarFrame_OnEvent` does the same with `arg1` (it moves both
+    /// ends, which has the same effect because it restates the range).
     ///
-    /// **A channel is refused here.** vmangos pushes one back through
-    /// `DelayedChannel`, which *shortens* `m_timer` and announces itself as
-    /// `MSG_CHANNEL_UPDATE`; a `SPELLCAST_DELAYED` raised over a channelling bar
-    /// would move the wrong end of it. And a cast with no wind-up has no bar at
-    /// all — an instant's `SMSG_SPELL_DELAYED` cannot happen, but the answer to
-    /// one is "nothing to lengthen" rather than a bar conjured out of it.
+    /// A channel is refused. vmangos delays a channel through `DelayedChannel`,
+    /// which shortens `m_timer` and is announced as `MSG_CHANNEL_UPDATE`; a
+    /// `SPELLCAST_DELAYED` raised over a channel bar would move the wrong end of
+    /// it. A cast with no wind-up has no bar. An instant cannot receive
+    /// `SMSG_SPELL_DELAYED`, but if one did, there is nothing to lengthen and no
+    /// bar is created.
     pub(crate) fn delay(&mut self, delay_ms: u32) -> bool {
         if self.started.is_none() || self.channelling.is_some() {
             return false;
@@ -427,26 +416,27 @@ impl Casting {
         true
     }
 
-    /// End whatever was on the bar, and say whether there was anything on it.
+    /// End whatever was on the bar, and return whether anything was on it.
     ///
-    /// **The answer is what decides whether `SPELLCAST_STOP` is raised**, and it
-    /// is the symmetric half of [`send_cast`]'s rule that an *instant* raises no
-    /// `SPELLCAST_START`: a stop for a bar that never appeared is at best a
-    /// no-op and at worst arrives while a channel bar is up, where
-    /// `CastingBarFrame_OnEvent` greens it out and fades it — which is a
-    /// channel bar that vanishes a frame after it appears.
+    /// The return value decides whether `SPELLCAST_STOP` is raised. It mirrors
+    /// [`send_cast`]'s rule that an instant raises no `SPELLCAST_START`. A stop
+    /// for a bar that never appeared is at best a no-op. At worst it arrives
+    /// while a channel bar is up, and `CastingBarFrame_OnEvent` turns that bar
+    /// green and fades it, so the channel bar vanishes a frame after it
+    /// appears.
     pub(crate) fn end(&mut self) -> bool {
         self.channelling = None;
         self.started.take().is_some()
     }
 }
 
-/// **Take the queued swing back off**, if it is the spell this packet is about.
+/// Clear the queued next-swing ability, if it is the spell this packet names.
 ///
-/// One door for the three packets that can empty the queue, and it raises the
-/// bar's own event exactly once: `ActionButton_UpdateState` is the only thing
-/// that re-reads `IsCurrentAction`, and nothing else in the directory would run
-/// it — the border would stay lit until the next unrelated slot update.
+/// The three packets that can empty the queue all call this, and it raises the
+/// bar's event once. `ActionButton_UpdateState` is the only function that
+/// re-reads `IsCurrentAction`, and nothing else in FrameXML would run it, so
+/// without the event the border would stay lit until the next unrelated slot
+/// update.
 pub(crate) fn disarm_next_swing(casting: &mut Casting, spell_id: u32, events: &mut ActionEvents) {
     if casting.next_swing != Some(spell_id) {
         return;
@@ -455,29 +445,28 @@ pub(crate) fn disarm_next_swing(casting: &mut Casting, spell_id: u32, events: &m
     events.state.write(ActionbarUpdateState);
 }
 
-/// **Take the volley back off when the server refuses the press that armed
-/// it** — the one end of an auto-repeat that no packet announces.
+/// Clear the auto-repeat when the server refuses the press that started it.
+/// No packet announces this end of the loop.
 ///
-/// [`AutoRepeat::stop`] is otherwise reached only from `SMSG_CANCEL_AUTO_REPEAT`,
-/// and that packet cannot arrive for this case. `SpellCaster::InterruptSpell`
-/// sends it from inside a guard on `m_currentSpells[CURRENT_AUTOREPEAT_SPELL]`
-/// being set, and a press the server refuses never installs one: `Spell::prepare`
-/// runs `CheckCast`, finds the refusal is not one of the two
-/// `IsAcceptableAutorepeatError` lets through (`SPELL_CAST_OK` and
-/// `SPELL_FAILED_MOVING`, the second so a hunter may arm the loop on the run),
-/// sends `SMSG_CAST_FAILED` and calls `finish(false)`.
+/// [`AutoRepeat::stop`] is otherwise called only on `SMSG_CANCEL_AUTO_REPEAT`,
+/// which cannot arrive in this case. `SpellCaster::InterruptSpell` sends it
+/// only when `m_currentSpells[CURRENT_AUTOREPEAT_SPELL]` is set, and a refused
+/// press never sets it: `Spell::prepare` runs `CheckCast`, finds that the
+/// result is not one of the two `IsAcceptableAutorepeatError` accepts
+/// (`SPELL_CAST_OK` and `SPELL_FAILED_MOVING`, the second so that a hunter can
+/// start the loop while running), sends `SMSG_CAST_FAILED` and calls
+/// `finish(false)`.
 ///
-/// So the refusal packet is the only thing that will ever be said about it, and
-/// a client that does not read it here keeps the checked border lit for the
-/// session. Pressing the button again makes it worse rather than better: a
-/// client that believes the loop is running sends
-/// `CMSG_CANCEL_AUTO_REPEAT_SPELL`, which the server answers by interrupting a
-/// spell it does not have, and says nothing about that either.
+/// The refusal packet is therefore the only notice of this end. A client that
+/// ignores it keeps the checked border lit for the session. Pressing the
+/// button again does not help: a client that believes the loop is running
+/// sends `CMSG_CANCEL_AUTO_REPEAT_SPELL`, the server interrupts a spell it does
+/// not have, and it sends nothing about that either.
 ///
-/// **Gated on the id**, unlike [`Casting::pending`] one line up in the same
-/// arm: a refusal for some *other* spell says nothing about a volley that is
-/// genuinely running, and the ranged loop survives casting through it — that is
-/// what `SetCurrentCastedSpell`'s `Category == 351` test is for.
+/// This checks the spell id, unlike the [`Casting::pending`] clear next to it
+/// in the same arm. A refusal for a different spell says nothing about a loop
+/// that is running, and the ranged loop survives other casts; that is what
+/// `SetCurrentCastedSpell`'s `Category == 351` test is for.
 pub(crate) fn disarm_auto_repeat(
     auto_repeat: &mut AutoRepeat,
     spell_id: u32,
@@ -489,52 +478,53 @@ pub(crate) fn disarm_auto_repeat(
     auto_repeat.stop(events);
 }
 
-/// **A cast waiting to be pointed at something** — 1.12's targeting cursor.
+/// A cast waiting for the player to choose its target: 1.12's targeting
+/// cursor.
 ///
-/// The third outcome of the aiming rule, and the one this client did not have:
-/// press a heal with nothing selected and the reference client does not refuse,
-/// it hands you the cursor and waits for a click. `resolve_aim`'s own doc has
-/// the branch and it turns on one bit — a spell that
-/// wants a hostile unit gets a message, and everything else gets asked.
+/// This is the third outcome of the aiming rule. Pressing a heal with nothing
+/// selected does not fail in the 1.12.1 client; the client shows the targeting
+/// cursor and waits for a click. `resolve_aim`'s doc describes the decision,
+/// which depends on one bit: a spell that requires a hostile unit gets an
+/// error message, and every other spell asks.
 ///
-/// **The state is a spell id and nothing else.** Which unit satisfies it is
-/// re-asked at the click, through the same [`resolve_aim`] the press went
-/// through, because the world moves between the two: the candidate you pointed
-/// at may have died, changed faction or walked out of range while the cursor
-/// was up, and a cached answer would cast at it anyway.
+/// The state is only a spell id. The unit that satisfies it is resolved again
+/// at the click, through the same [`resolve_aim`] the press used, because the
+/// world changes in between: the unit under the pointer may have died, changed
+/// faction or moved out of range while the cursor was up, and a cached answer
+/// would cast at it anyway.
 #[derive(Resource, Default)]
 pub struct SpellTargeting {
     /// The spell awaiting a target, if any.
     spell: Option<u32>,
-    /// **Whether it is waiting for a *place* rather than for a unit** — the same
-    /// cursor's other job, and the whole of Blizzard, Flamestrike and Rain of
-    /// Fire. See [`vale_assets::tables::spellbook::CastAim::WantsGround`].
+    /// What the cursor is waiting for: a unit, a location or an item. Blizzard,
+    /// Flamestrike and Rain of Fire use the location mode. See
+    /// [`vale_assets::tables::spellbook::CastAim::WantsGround`].
     ///
-    /// A field beside the id rather than three resources, because everything
-    /// else about the mode is identical: one spell waiting, one cursor, one
-    /// click to end it, one Escape to stand it down. What differs is only what
-    /// the click resolves to.
+    /// It is a field beside the id rather than three resources, because the
+    /// modes are otherwise identical: one spell waiting, one cursor, one click
+    /// to end it, one Escape to cancel it. Only what the click resolves to
+    /// differs.
     asking: Asking,
-    /// Where the pointer is on the floor this frame, in **WoW axes** — `None`
-    /// when it is on the sky, or off the loaded world. Written by
-    /// [`crate::interface::target::spell_ground_under_pointer`] and only while
-    /// [`Self::wants_ground`] is true, because the ray it costs is a walk down
-    /// the terrain.
+    /// Where the pointer meets the floor this frame, in WoW axes. `None` when
+    /// the pointer is on the sky or off the loaded world. Written by
+    /// [`crate::interface::target::spell_ground_under_pointer`], only while
+    /// [`Self::wants_ground`] is true, because the ray walks the terrain.
     pub over_ground: Option<[f32; 3]>,
-    /// Whether whatever the pointer is over right now would satisfy it — which
-    /// is the whole of `Cast.blp` against `UnableCast.blp`, and the only
-    /// feedback the player gets before committing.
+    /// Whether the unit under the pointer would satisfy the spell. It selects
+    /// `Cast.blp` or `UnableCast.blp`, the only feedback the player gets before
+    /// clicking.
     pub over_valid: bool,
-    /// **True for the frame a click was taken by this mode.** A click that casts
-    /// must not also retarget, and the two decisions are made by two systems:
-    /// `pick_spell_target` runs first and sets this, `target::select_on_click`
-    /// reads it and stands down. A flag rather than an ordering alone, because
-    /// ordering says which runs first and not which one *acted*.
+    /// True for the frame in which this mode consumed a click. A click that
+    /// casts must not also change the target, and two systems make those
+    /// decisions: `pick_spell_target` runs first and sets this flag, and
+    /// `target::select_on_click` reads it and does nothing. System order alone
+    /// is not enough, because it says which system runs first, not which one
+    /// acted.
     pub took_click: bool,
 }
 
 impl SpellTargeting {
-    /// `SpellIsTargeting()` — is the cursor up?
+    /// `SpellIsTargeting()`: whether the cursor is up.
     pub fn is_targeting(&self) -> bool {
         self.spell.is_some()
     }
@@ -544,28 +534,29 @@ impl SpellTargeting {
         self.spell
     }
 
-    /// Is the cursor waiting for a **patch of floor** rather than for a unit?
+    /// Whether the cursor is waiting for a location rather than a unit.
     pub fn wants_ground(&self) -> bool {
         self.spell.is_some() && self.asking == Asking::Ground
     }
 
-    /// …or for an **item** — the enchanting formulas, the poisons and the
-    /// sharpening stones, which 1.12 aims by clicking a bag square.
+    /// Whether the cursor is waiting for an item: the enchanting formulas, the
+    /// poisons and the sharpening stones, which 1.12 aims by clicking a bag
+    /// slot.
     ///
-    /// The interface has no verb of its own for it: `ContainerFrame.lua:596` is
-    /// a plain `UseContainerItem(bag, slot)` and the C side decides whether
-    /// that is a use or an answer. So the reader is
-    /// [`crate::interface::items`]' own use path, which is where the
-    /// clicked slot has already been resolved to an item.
+    /// The interface has no separate function for this: `ContainerFrame.lua:596`
+    /// calls `UseContainerItem(bag, slot)`, and the C side decides whether that
+    /// is a use or a target choice. The reader is therefore the use path in
+    /// [`crate::interface::items`], where the clicked slot has already been
+    /// resolved to an item.
     pub fn wants_item(&self) -> bool {
         self.spell.is_some() && self.asking == Asking::Item
     }
 
-    /// `SpellStopTargeting()` — put the cursor away with nothing cast.
+    /// `SpellStopTargeting()`: put the cursor away without casting.
     ///
-    /// Escape, a right click, a click on empty ground, and the interface's own
-    /// verb all end here. It is deliberately not an error: the player changed
-    /// their mind, which is not a refused cast and raises no `SPELLCAST_FAILED`.
+    /// Escape, a right click, a click on empty ground and the interface's own
+    /// function all end here. It is not an error: the player cancelled, which
+    /// is not a refused cast and raises no `SPELLCAST_FAILED`.
     pub fn stop(&mut self) {
         self.spell = None;
         self.asking = Asking::Unit;
@@ -573,10 +564,10 @@ impl SpellTargeting {
         self.over_valid = false;
     }
 
-    /// Put the cursor up. `pub(super)` rather than private for the same reason
-    /// [`Self::stop`] is public: the *other* half of this mode lives in
-    /// [`super::target`], which ends it on a click and has to be able to start
-    /// one to check that it declines while it is up.
+    /// Put the cursor up. `pub(crate)` rather than private for the same reason
+    /// [`Self::stop`] is public: the other half of this mode is in
+    /// [`super::target`], which ends it on a click and must be able to start
+    /// one to test that it declines while the cursor is up.
     pub(crate) fn begin(&mut self, spell_id: u32, asking: Asking) {
         self.spell = Some(spell_id);
         self.asking = asking;
@@ -585,123 +576,120 @@ impl SpellTargeting {
     }
 }
 
-/// **What the waiting cursor is waiting for.**
+/// What the targeting cursor is waiting for.
 ///
-/// Three modes and one cursor: the click that ends it is the same gesture and
-/// only its answer differs — a unit, three floats, or an item's guid. See
-/// [`SpellTargeting`], whose whole state is this plus the spell id.
+/// There are three modes and one cursor. The click that ends each mode is the
+/// same gesture; only the answer differs: a unit, three floats, or an item's
+/// guid. See [`SpellTargeting`], whose state is this value plus the spell id.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Asking {
     #[default]
     Unit,
     Ground,
-    /// `TARGET_FLAG_ITEM` — answered by a bag or paperdoll click rather than by
-    /// a click in the world, which is why nothing in
-    /// [`super::target`] ends this one.
+    /// `TARGET_FLAG_ITEM`. Answered by a bag or paperdoll click rather than a
+    /// click in the world, so nothing in [`super::target`] ends this mode.
     Item,
 }
 
-/// **What the player pointed the waiting cast at** — a unit or a place.
+/// What the player pointed the waiting cast at: a unit, an item, a trade slot
+/// or a location.
 ///
-/// One enum rather than two parameters through [`cast_known_spell`], because
-/// they are the same event seen twice: the cursor asked a question and this is
-/// the answer, whichever kind of question it was. `None` at that call site still
-/// means "nobody has been asked yet", which is the distinction that decides
-/// between putting the cursor up and refusing.
+/// One enum rather than separate parameters through [`cast_known_spell`],
+/// because each variant is the answer to the cursor's question, whichever kind
+/// of question it was. `None` at that call site means that nobody has been
+/// asked yet, which decides between putting the cursor up and refusing.
 #[derive(Debug, Clone, Copy)]
 enum Pointed {
     Unit(Entity),
-    /// **An item's own guid**, from a bag or paperdoll click — see
-    /// [`SpellItemPicked`], which is the message that carries it.
+    /// An item's guid, from a bag or paperdoll click. See [`SpellItemPicked`],
+    /// the message that carries it.
     Item(u64),
-    /// **A square in the trade window**, which carries a slot number rather
-    /// than a guid — see
-    /// [`vale_protocol::play::spells::CastTarget::TradeSlot`].
+    /// A slot in the trade window, identified by slot number rather than by
+    /// guid. See [`vale_protocol::play::spells::CastTarget::TradeSlot`].
     TradeSlot(u8),
-    /// In **WoW axes**, which is the frame `CastTarget::Dest` goes out in — so
-    /// the conversion happens once, where the ray is walked, rather than beside
-    /// the socket.
+    /// In WoW axes, the frame `CastTarget::Dest` is sent in. The conversion
+    /// happens once, where the ray is walked, rather than next to the socket.
     Ground([f32; 3]),
 }
 
-/// **A unit was picked for the waiting cast** — the click, as a message.
-///
-/// The pick and the cast are two systems because they need two different halves
-/// of the world: deciding *what is under the pointer* wants the hover and the
-/// mouse, and casting at it wants the bar, the cooldowns, the session and the
-/// error frame — which is already the largest parameter list in this module.
-/// One message between them keeps [`run_bindings`] the single door onto a cast,
-/// which is the property [`cast_known_spell`]'s own doc is about.
-/// **An item was clicked for the waiting cast** — the other end of
+/// An item was clicked for the waiting cast: the other end of
 /// [`SpellTargeting::wants_item`].
 ///
-/// Written by [`crate::interface::items`]' use path rather than by the
-/// world pick, because 1.12's interface has no verb for this: the bag square's
-/// `OnClick` is a plain `UseContainerItem(bag, slot)` and the C side decides
-/// whether that is a use or an answer. By the time that path has a slot it has
-/// already resolved the item, so the guid is free.
+/// Written by the use path in [`crate::interface::items`] rather than by the
+/// world pick, because 1.12's interface has no separate function for this: the
+/// bag slot's `OnClick` calls `UseContainerItem(bag, slot)`, and the C side
+/// decides whether that is a use or a target choice. That path has already
+/// resolved the item by the time it has a slot, so the guid is available.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SpellItemPicked {
-    /// The item object's own guid, which is what `TARGET_FLAG_ITEM` carries.
+    /// The item object's guid, which is what `TARGET_FLAG_ITEM` carries.
     pub guid: u64,
 }
 
+/// A unit was picked for the waiting cast: the click, sent as a message.
+///
+/// Picking and casting are separate systems because they need different parts
+/// of the world. Finding what is under the pointer needs the hover state and
+/// the mouse; casting needs the bar, the cooldowns, the session and the error
+/// frame, which already make up the largest parameter list in this module. A
+/// message between them keeps [`run_bindings`] the only entry point for a
+/// cast, the property described in [`cast_known_spell`]'s doc.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SpellTargetPicked {
-    /// The unit clicked, as an entity — the same handle [`Selection`] holds, so
-    /// the cast path resolves it exactly as it resolves a selection.
+    /// The unit clicked, as an entity: the same handle [`Selection`] holds, so
+    /// the cast path resolves it the same way it resolves a selection.
     pub unit: Entity,
 }
 
-/// **…and the same click, landed on the floor** — where a placed cast goes.
+/// The same click, landed on the floor, for a cast placed at a location.
 ///
-/// Its own message rather than a variant of the one above for the reason that
-/// keeps [`run_bindings`] the single door onto a cast: the two are written by
-/// the same system but they are answers to two different questions, and the
-/// world pick that produces a unit cannot produce a point (the ray it runs is
-/// against pick boxes, not against the ground).
+/// A separate message rather than a variant of [`SpellTargetPicked`], for the
+/// same reason that keeps [`run_bindings`] the only entry point for a cast: one
+/// system writes both, but they answer different questions, and the world pick
+/// that produces a unit cannot produce a point (its ray tests pick boxes, not
+/// the ground).
 #[derive(Message, Debug, Clone, Copy)]
 pub struct SpellGroundPicked {
-    /// The point on the floor, in **WoW axes and yards** — already the frame the
-    /// wire wants. See [`Pointed::Ground`].
+    /// The point on the floor, in WoW axes and yards, which is the frame the
+    /// packet uses. See [`Pointed::Ground`].
     pub at: [f32; 3],
 }
 
-/// **Is a cast in progress that a fresh press must not disturb?**
+/// Whether a cast is in progress that a new press must not disturb.
 ///
-/// A wind-up, and only a wind-up. Named rather than written as
-/// `casting.started.is_some()` at the two call sites because the *reason* is not
-/// obvious from the field: it is `Spell::prepare`'s own gate,
+/// Only a wind-up counts. This is a named function rather than
+/// `casting.started.is_some()` at the two call sites because the field does not
+/// show the reason: it mirrors `Spell::prepare`'s gate,
 /// `IsNonMeleeSpellCasted(withDelayed = false, skipChanneled = true,
-/// skipAutorepeat = true)`, whose second and third arguments are why a channel
-/// and an auto-shot do not count.
+/// skipAutorepeat = true)`, whose second and third arguments exclude a channel
+/// and an auto-shot.
 fn in_progress(casting: &Casting) -> bool {
     casting.started.is_some()
 }
 
 /// How long an unanswered `CMSG_CAST_SPELL` holds the button.
 ///
-/// Every reply this can be waiting for is one packet's round trip — vmangos
-/// answers inside the same `Spell::prepare` that reads the request — so this is
-/// two orders of magnitude longer than the wait it is bounding, and it exists
-/// only for the paths that answer *nothing*. See [`Casting::asked_at`], and
-/// [`expire_the_ask`], which is the one reader.
+/// Every reply this waits for takes one round trip, because vmangos answers
+/// inside the same `Spell::prepare` that reads the request. Three seconds is
+/// two orders of magnitude longer than that; the deadline only matters for the
+/// paths that send no answer. See [`Casting::asked_at`] and
+/// [`expire_the_ask`], the only reader.
 const ASK_DEADLINE: Duration = Duration::from_secs(3);
 
-/// **Let go of an ask the server never answered.**
+/// Clear an ask the server never answered.
 ///
-/// Two of `HandleCastSpellOpcode`'s branches return with no reply at all — an
-/// unknown spell id, and a spell the character does not have *active*, which a
-/// superseded rank left on an action button is — so the pending record could be
-/// armed for ever by one press. It gated every later press, which is the
-/// "another action is in progress, stuck on the character" report; see
-/// [`Casting::pending`] for the character it was measured on.
+/// Two of `HandleCastSpellOpcode`'s branches return without a reply: an
+/// unknown spell id, and a spell the character does not have active, which
+/// includes a superseded rank left on an action button. One press could
+/// therefore set the pending record permanently, and it then blocked every
+/// later press: the "another action is in progress, stuck on the character"
+/// report. See [`Casting::pending`] for the character it was measured on.
 ///
-/// **The right fix is one directory over and is not this**: reading
-/// `SMSG_SUPERCEDED_SPELL` so the bar never holds a dead rank in the first
-/// place. This is the backstop for it and for every other silent drop, and it is
-/// worth having on its own terms — a client that can be taken out for a session
-/// by one unanswered packet is a client with no floor under it.
+/// The proper fix is in another module: reading `SMSG_SUPERCEDED_SPELL` so
+/// that the bar never holds an old rank. This function is the fallback for
+/// that case and for any other dropped reply, and is worth having on its own:
+/// without it, one unanswered packet disables casting for the rest of the
+/// session.
 fn expire_the_ask(mut casting: ResMut<Casting>) {
     let Some(since) = casting.asked_at else { return };
     if since.elapsed() < ASK_DEADLINE {
@@ -713,7 +701,7 @@ fn expire_the_ask(mut casting: ResMut<Casting>) {
     }
 }
 
-/// One spell's three timers, as the client's own `SpellHistory` node holds them.
+/// One spell's three timers, the same three the 1.12.1 client keeps per spell.
 #[derive(Clone, Copy, Debug)]
 struct Record {
     category: u32,
@@ -734,12 +722,12 @@ pub struct Cooldowns(HashMap<u32, Record>);
 
 impl Cooldowns {
     /// How long until `spell` can be cast, in seconds, and the full length of
-    /// whichever timer is the reason.
+    /// the timer that blocks it.
     ///
-    /// **Resolved against every record, not just this spell's**, which is the
-    /// whole mechanism of a global cooldown: one cast's GCD is a record on *that*
-    /// spell, and it gates this one because both name the same
-    /// `startRecoveryCategory`. The longest remaining wins.
+    /// The read checks every record, not just this spell's, because that is
+    /// how a global cooldown works: one cast's GCD is stored on that spell's
+    /// record, and it blocks this spell because both have the same
+    /// `startRecoveryCategory`. The longest remaining timer wins.
     pub fn remaining(&self, spell: &SpellInfo) -> Option<(f32, f32)> {
         let now = Instant::now();
         let left = |timer: Option<(Instant, Duration)>| {
@@ -777,7 +765,7 @@ impl Cooldowns {
         longest
     }
 
-    /// Is this spell ready to press?
+    /// Whether this spell is ready to press.
     pub fn ready(&self, spell: &SpellInfo) -> bool {
         self.remaining(spell).is_none()
     }
@@ -793,7 +781,8 @@ impl Cooldowns {
         })
     }
 
-    /// The global cooldown, started locally at send — see the module comment.
+    /// Start the global cooldown, locally, when the cast is sent. See the
+    /// module comment.
     fn start_gcd(&mut self, spell: &SpellInfo) {
         if spell.gcd_ms == 0 {
             return;
@@ -802,19 +791,22 @@ impl Cooldowns {
         self.entry(spell).gcd = gcd;
     }
 
-    /// The spell's own recovery, when our own `SMSG_SPELL_GO` returns.
+    /// Start the spell's own recovery, when this character's `SMSG_SPELL_GO`
+    /// arrives.
     ///
-    /// Parked instead of started for the handful of spells whose cooldown begins
-    /// when the effect breaks (`SPELL_ATTR_COOLDOWN_ON_EVENT`).
+    /// For the few spells whose cooldown begins when the effect ends
+    /// (`SPELL_ATTR_COOLDOWN_ON_EVENT`), the duration is parked instead of
+    /// started.
     ///
-    /// `pub(crate)` because the packet that anchors it is read one
-    /// directory up — see `world::incoming`'s `CastReleased` arm, which is the
-    /// only caller and which took it over from a system in this file.
-    /// `mods` is the character's talents, which shorten a good many of these —
-    /// see [`crate::world::spellmods`]. It is applied to the spell's own
-    /// recovery and not to the category's: `SMSG_SET_*_SPELL_MODIFIER`'s
-    /// `COOLDOWN` operation is about the row and the shared category is a
-    /// property of the group.
+    /// `pub(crate)` because the packet that triggers it is handled in another
+    /// module: `world::incoming`'s `CastReleased` arm is the only caller, and
+    /// it replaced a system in this file.
+    ///
+    /// `mods` holds the character's talents, many of which shorten these
+    /// timers; see [`crate::world::spellmods`]. They apply to the spell's own
+    /// recovery and not to the category's, because
+    /// `SMSG_SET_*_SPELL_MODIFIER`'s `COOLDOWN` operation applies to the spell
+    /// row, and the shared category belongs to the group.
     pub(crate) fn start_recovery(
         &mut self,
         spell: &SpellInfo,
@@ -848,22 +840,22 @@ impl Cooldowns {
         }
     }
 
-    /// The server's own statement, which overrides whatever was computed.
+    /// Apply the server's statement of a cooldown, which overrides any
+    /// computed value.
     ///
-    /// **The categories come with it when they can**, and that is not a
-    /// nicety. A record is created by whichever of the two paths reaches the
-    /// spell first, and [`Self::entry`] is an `or_insert` — so a record this
-    /// function made with `category: 0` was *permanently* categoryless, and
-    /// from then on that spell's own category cooldown gated nothing else in
-    /// its category. A school lockout names every spell of the school at once,
-    /// so one interrupt was enough to flatten the categories of a whole
-    /// school's worth of records for the rest of the session — which is the
-    /// other half of the "school cooldowns display inconsistently" report, and
-    /// the half that outlives the lockout.
+    /// The categories are filled in when they are known. A record is created
+    /// by whichever of the two paths reaches the spell first, and
+    /// [`Self::entry`] uses `or_insert`, so a record this function created with
+    /// `category: 0` used to stay without a category permanently. That spell's
+    /// category cooldown then blocked nothing else in its category. A school
+    /// lockout names every spell of the school at once, so one interrupt
+    /// removed the categories from a whole school's records for the rest of the
+    /// session. That was the second cause of the "school cooldowns display
+    /// inconsistently" report, and the one that lasted beyond the lockout.
     ///
-    /// `None` for a spell the catalogue does not carry, which keeps the
-    /// timer and loses only the grouping — the same degradation as before,
-    /// now the exception rather than the rule.
+    /// `spell` is `None` for a spell the catalogue does not carry. The timer is
+    /// still kept and only the grouping is lost, as before; that case is now
+    /// the exception.
     pub(crate) fn set(&mut self, spell_id: u32, ms: u32, spell: Option<&SpellInfo>) {
         let timer = Some((Instant::now(), Duration::from_millis(u64::from(ms))));
         let record = self.0.entry(spell_id).or_insert(Record {
@@ -874,9 +866,9 @@ impl Cooldowns {
             gcd: None,
             parked: None,
         });
-        // **Filled in even on a record that already existed**, because the one
-        // that was already there may be the categoryless one this function used
-        // to make. Self-healing rather than only correct going forward.
+        // Filled in on an existing record too, because that record may be one
+        // this function used to create without categories. This repairs old
+        // records as well as setting new ones correctly.
         if let Some(spell) = spell {
             record.category = spell.category;
             record.gcd_category = spell.gcd_category;
@@ -885,14 +877,13 @@ impl Cooldowns {
         record.parked = None;
     }
 
-    /// **`SMSG_CLEAR_COOLDOWN` — this spell's timers are over now.**
+    /// `SMSG_CLEAR_COOLDOWN`: this spell's timers have ended.
     ///
-    /// All four of them, and the parked one with them: the server is saying the
-    /// spell is ready, and leaving a category or GCD timer behind on the record
-    /// would keep the swirl turning on every *other* spell that shares it. The
-    /// record itself is kept rather than removed so the categories it carries
-    /// survive for the next cast — see [`Self::set`], where losing them is the
-    /// bug this is careful not to reintroduce.
+    /// All four are cleared, including the parked one. The server says the
+    /// spell is ready, and a category or GCD timer left on the record would
+    /// keep the cooldown animation running on every other spell that shares
+    /// it. The record is kept rather than removed so its categories survive for
+    /// the next cast; see [`Self::set`], where losing them caused a bug.
     pub(crate) fn clear(&mut self, spell_id: u32) {
         if let Some(record) = self.0.get_mut(&spell_id) {
             record.recovery = None;
@@ -912,20 +903,20 @@ impl Cooldowns {
     }
 }
 
-/// Everything this module announces, in one param.
+/// Every event this module raises, as one system parameter.
 ///
-/// Bundled rather than listed per system because a verb writes three or four of
-/// them and the signatures were the larger half of each function. Two systems
-/// holding this are sequenced by Bevy (a writer is a `ResMut` underneath), which
-/// is fine — they are chained anyway.
+/// Bundled rather than listed per system because a verb writes three or four
+/// of them, and the parameters made up most of each function signature. Bevy
+/// runs two systems that hold this one after the other (a writer is a `ResMut`
+/// underneath); they are chained anyway.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct ActionEvents<'w> {
     pub slot_changed: MessageWriter<'w, ActionbarSlotChanged>,
     pub page: MessageWriter<'w, ActionbarPageChanged>,
     pub bonus: MessageWriter<'w, ActionbarBonusChanged>,
     pub cooldown: MessageWriter<'w, ActionbarUpdateCooldown>,
-    /// **The spellbook's half of the same fact** — see [`Self::cooldown_moved`],
-    /// which is the only thing that writes either.
+    /// The spellbook's event for the same change. See [`Self::cooldown_moved`],
+    /// the only writer of either.
     pub spell_cooldown: MessageWriter<'w, SpellUpdateCooldown>,
     pub state: MessageWriter<'w, ActionbarUpdateState>,
     pub autorepeat_start: MessageWriter<'w, StartAutorepeatSpell>,
@@ -940,53 +931,51 @@ pub struct ActionEvents<'w> {
     pub channel_stop: MessageWriter<'w, SpellcastChannelStop>,
 }
 
-/// **The three NPC windows' answers, in one param.**
+/// Events that are always raised together.
 impl ActionEvents<'_> {
-    /// **A timer moved, and 1.12 says so under two names.**
+    /// A timer changed. 1.12 announces this under two event names.
     ///
-    /// `ACTIONBAR_UPDATE_COOLDOWN` is what an action button listens for and
-    /// `SPELL_UPDATE_COOLDOWN` is what a *spell* button listens for:
-    /// `SpellButton_OnLoad` registers it (`SpellBookFrame.lua:209`) and
-    /// `SpellButton_OnEvent` answers it with `SpellButton_UpdateButton()`, which
-    /// is the only thing in the file that re-reads a cooldown. So a client that
-    /// raised only the first has a spellbook whose swirls never move — which is
-    /// exactly what it had, with the book coming right the moment it was closed
-    /// and reopened or its page turned, because those go through
-    /// `SpellBookFrame_Update` and rebuild every button unconditionally.
+    /// Action buttons listen for `ACTIONBAR_UPDATE_COOLDOWN`, and spell buttons
+    /// listen for `SPELL_UPDATE_COOLDOWN`: `SpellButton_OnLoad` registers it
+    /// (`SpellBookFrame.lua:209`) and `SpellButton_OnEvent` answers it with
+    /// `SpellButton_UpdateButton()`, the only function in that file that
+    /// re-reads a cooldown. When this client raised only the first event, the
+    /// spellbook's cooldown animations never moved. The book showed the right
+    /// state after it was closed and reopened or its page turned, because those
+    /// call `SpellBookFrame_Update`, which rebuilds every button.
     ///
-    /// A method rather than two lines at each of the six sites, because the
-    /// failure mode is a *missing* line at one of them and nothing reports it —
-    /// `SPELL_UPDATE_COOLDOWN` has been in [`super::events::FIRED`] for as long
-    /// as it has existed, so `--audit --events` fires it and every count says
-    /// the name is answered.
+    /// This is one method rather than two lines at each of the six call sites,
+    /// because a missing line at one site produces no error.
+    /// `SPELL_UPDATE_COOLDOWN` has always been listed in
+    /// [`super::events::FIRED`], so `--audit --events` fires it and every count
+    /// reports the name as handled.
     pub(crate) fn cooldown_moved(&mut self) {
         self.cooldown.write(ActionbarUpdateCooldown);
         self.spell_cooldown.write(SpellUpdateCooldown);
     }
 
-    /// …and the same thing from outside this module. See
-    /// [`begin_item_cast`], which is the one caller.
+    /// The same call, for callers outside this module. See
+    /// [`begin_item_cast`], the only caller.
     pub(super) fn timer_moved(&mut self) {
         self.cooldown_moved();
     }
 }
 
-/// **A right-click that casts a spell starts the global cooldown**, exactly as
-/// pressing the spell would.
+/// Start the global cooldown for an item use that casts a spell, as pressing
+/// the spell would.
 ///
-/// The item verbs in [`super::items`] send `CMSG_USE_ITEM` and change nothing
-/// else in the session, so a potion's cooldown swirl did not start until the
-/// server's own `SMSG_SPELL_COOLDOWN` came back a round trip later. That is not
-/// a fault in the item path: it is the one local thing [`send_cast`] does that a
-/// second way of starting a cast has to do too, which is why it is one function
-/// here rather than a copy there.
+/// The item functions in [`super::items`] send `CMSG_USE_ITEM` and change
+/// nothing else in the session, so a potion's cooldown animation did not start
+/// until the server's `SMSG_SPELL_COOLDOWN` arrived a round trip later. The
+/// global cooldown is the one local step of [`send_cast`] that any other way of
+/// starting a cast must also take, so it is one function here rather than a
+/// copy in the item code.
 ///
-/// **The bar is no longer part of it.** It used to be — this started the cast
-/// bar and raised `SPELLCAST_START` for a bandage — and that half has moved to
-/// where every other cast's now is, [`PlayerEvent::CastStarted`]. The server
-/// sends `SMSG_SPELL_START` for an item's spell like any other non-triggered
-/// cast, so the bar arrives on its own and, unlike this, it arrives only if the
-/// server took the item.
+/// This no longer starts the cast bar. It used to start the bar and raise
+/// `SPELLCAST_START` for a bandage; that now happens where it does for every
+/// other cast, in [`PlayerEvent::CastStarted`]. The server sends
+/// `SMSG_SPELL_START` for an item's spell like any other non-triggered cast,
+/// so the bar appears on its own, and only if the server accepted the item.
 pub(crate) fn begin_item_cast(
     info: &SpellInfo,
     cooldowns: &mut Cooldowns,
@@ -996,11 +985,11 @@ pub(crate) fn begin_item_cast(
     events.timer_moved();
 }
 
-/// This module's chain, so that what feeds it can order itself against the whole
-/// of it rather than against whichever system it happens to read from.
+/// This module's system chain, so that systems feeding it can be ordered
+/// against the whole chain rather than against whichever system they read from.
 ///
-/// [`super::spellbook`] is the one thing that does today: the book has to be
-/// current before a `CastSpell` row is resolved against it.
+/// [`super::spellbook`] is the current user: the book must be up to date before
+/// a `CastSpell` row is resolved against it.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ActionSet;
 
@@ -1020,57 +1009,51 @@ impl Plugin for ActionPlugin {
                 Update,
                 (
                     // The form before the bar, so that `UPDATE_BONUS_ACTIONBAR`
-                    // and the slot news it is followed by arrive in that order —
-                    // `BonusActionBar_OnEvent` shows the frame and the buttons
-                    // under it then read their own slots.
+                    // arrives before the slot updates that follow it:
+                    // `BonusActionBar_OnEvent` shows the frame, and the buttons in
+                    // it then read their own slots.
                     follow_bonus_bar,
-                    // …and the *other* thing the character's own record says
-                    // about which bars are on screen, which needs no ordering
-                    // against anything: nothing reads it until the interface
-                    // asks, and the interface asks once. See
+                    // Copies which extra bars are on screen from the character's
+                    // record. It needs no ordering: nothing reads it until the
+                    // interface asks, and the interface asks once. See
                     // [`follow_bar_toggles`].
                     follow_bar_toggles,
-                    // …and the third thing about the character that decides
-                    // what a button looks like — see [`follow_usability`],
-                    // which is about the *fade* where the two above are about
-                    // which bar is on screen.
+                    // Tracks the character state that decides whether a button
+                    // is faded. See [`follow_usability`]; the two systems above
+                    // decide which bar is on screen.
                     follow_usability,
-                    // …and the fourth, which is the server's own statement
-                    // rather than anything about the character — see
-                    // [`follow_attack_state`], and note that every *press*-side
-                    // write of the same event is a verb further down this
-                    // chain.
+                    // Tracks the server's attack state. See
+                    // [`follow_attack_state`]; every press-side write of the same
+                    // event happens in a verb later in this chain.
                     follow_attack_state,
-                    // …and the fifth, which is neither the character nor the
-                    // server but *this client's own* half-finished press — see
+                    // Tracks this client's own unfinished press. See
                     // [`follow_cast_state`].
                     follow_cast_state,
                     rebuild_bar,
-                    // The events before the input, so a cooldown the server just
-                    // stated is in place before this frame's press is judged.
+                    // Events before input, so that a cooldown the server just
+                    // stated is in place before this frame's press is checked.
                     crate::world::incoming::drain_events,
-                    // …and after them, because every one of the four replies
-                    // that clears an ask arrives through the drain: expiring
-                    // first would race a reply that is already in the queue.
+                    // After the drain, because all four replies that clear an
+                    // ask arrive through it: expiring first could expire an ask
+                    // whose reply is already queued.
                     expire_the_ask,
-                    // **`cancel_cast` is gone from this list**, and that is the
-                    // point rather than a tidy-up: it was a system reading
-                    // `just_pressed(Escape)`, and Escape is `TOGGLEGAMEMENU` in
-                    // the game's own defaults — so the key did two things and
-                    // could not be rebound away from either. What cancels a
-                    // cast now is `SpellStopCasting()`, an arm of
+                    // `cancel_cast` was removed from this list. It was a system
+                    // that read `just_pressed(Escape)`, but Escape is bound to
+                    // `TOGGLEGAMEMENU` in the game's defaults, so the key did two
+                    // things and could not be rebound away from either. Casts
+                    // are now cancelled by `SpellStopCasting()`, an arm of
                     // [`run_bindings`] below.
                     run_bindings,
                 )
                     .chain()
-                    // **After the whole of the targeting chain**, because a cast
-                    // binds against the selection and a swing goes at it: judged
-                    // first, a press would use the previous frame's target. See
+                    // After the whole targeting chain, because a cast binds
+                    // against the selection and a swing goes at it. Run before
+                    // it, a press would use the previous frame's target. See
                     // `target::TargetSet`.
                     .after(super::target::TargetSet)
-                    // …and after the key table has turned this frame's keys into
-                    // binding names, since `run_bindings` reads those as messages
-                    // and a message written later in the frame is read next frame.
+                    // After the key table has turned this frame's keys into
+                    // binding names: `run_bindings` reads those as messages, and a
+                    // message written later in the frame is read the next frame.
                     .after(BindingSet)
                     .in_set(ActionSet)
                     .in_set(super::GameSet),
@@ -1079,15 +1062,16 @@ impl Plugin for ActionPlugin {
     }
 }
 
-/// **Drop the character's bar, cast and cooldowns when they leave the world.**
+/// Reset the character's bar, cast and cooldowns when the character leaves the
+/// world.
 ///
-/// All three are that character's and none of them is corrected by simply
-/// logging in as someone else: `rebuild_bar` re-resolves the slots only when the
-/// spellbook version *differs*, and a cooldown is an `Instant` against a clock
-/// that keeps running — so a mage's twelve buttons were still on screen behind
-/// the character-select list, and a spell that was on a two-minute cooldown when
-/// its owner logged out was still greyed out on the next character to hold that
-/// slot. See [`super::events::PlayerLeavingWorld`].
+/// All three belong to that character, and logging in as another character
+/// does not correct them: `rebuild_bar` re-resolves the slots only when the
+/// spellbook version differs, and a cooldown is an `Instant` on a clock that
+/// keeps running. Without this, a mage's twelve buttons stayed on screen
+/// behind the character-select list, and a spell on a two-minute cooldown at
+/// logout was still greyed out for the next character holding that slot. See
+/// [`super::events::PlayerLeavingWorld`].
 fn forget(
     mut leaving: MessageReader<super::events::PlayerLeavingWorld>,
     mut bar: ResMut<ActionBar>,
@@ -1102,51 +1086,51 @@ fn forget(
     *bar = ActionBar::default();
     *cooldowns = Cooldowns::default();
     *casting = Casting::default();
-    // …and the loop, whose `SMSG_CANCEL_AUTO_REPEAT` is not coming: the socket
-    // it would have arrived on is the one that just closed. A hunter who logs
-    // out shooting would otherwise log back in with the button flashing.
+    // Reset the auto-repeat loop too: its `SMSG_CANCEL_AUTO_REPEAT` will not
+    // arrive, because the socket it would come on has closed. Otherwise a
+    // hunter who logs out while shooting logs back in with the button flashing.
     *auto_repeat = AutoRepeat::default();
-    // …and the cursor with them, or the next character logs in holding a spell
-    // the previous one pressed.
+    // Clear the cursor too, or the next character logs in holding a spell the
+    // previous one pressed.
     targeting.stop();
 }
 
-/// **Which twelve of the 120 slots the bar is showing**, off the character's
-/// form.
+/// Which twelve of the 120 slots the bar shows, based on the character's form.
 ///
-/// The whole of `GetBonusBarOffset()`, and the reason it is a system rather than
-/// a read at the call site is `UPDATE_BONUS_ACTIONBAR`: the interface does not
-/// poll it. `BonusActionBarFrame` is **hidden at load** — its `OnLoad` asks once,
-/// before there is a character to ask about, and after that it moves only on the
-/// event — and `ActionButtonUp` routes the press through whichever of the two
-/// frames is shown. So a client that never raises this has a bonus bar that
-/// cannot appear and twelve buttons reading page one, which for a warrior or a
-/// druid is empty.
+/// This implements `GetBonusBarOffset()`. It is a system rather than a read at
+/// the call site because of `UPDATE_BONUS_ACTIONBAR`: the interface does not
+/// poll the offset. `BonusActionBarFrame` is hidden at load; its `OnLoad` asks
+/// once, before a character exists, and after that it changes only on the
+/// event. `ActionButtonUp` sends the press through whichever of the two frames
+/// is shown. A client that never raises the event has a bonus bar that cannot
+/// appear and twelve buttons reading page one, which is empty for a warrior or
+/// a druid.
 ///
-/// Written on a change only, including the change from "no character" back to
-/// zero: `forget` resets the bar and the next login must re-raise it.
+/// The event is raised on a change only, including the change from no
+/// character back to zero: `forget` resets the bar, and the next login must
+/// raise it again.
 fn follow_bonus_bar(
     assets: Res<GameAssets>,
     player: Query<&WorldEntity, With<LocalPlayer>>,
     mut bar: ResMut<ActionBar>,
     mut events: ActionEvents,
-    // The form as of the last look. Gating on it rather than on the *offset*
-    // keeps the table lookup — a mutex and an `Arc` clone — off every frame,
-    // and a form changes a few times a fight at most.
+    // The form at the last check. Comparing the form rather than the offset
+    // keeps the table lookup (a mutex and an `Arc` clone) out of most frames; a
+    // form changes a few times per fight at most.
     mut seen: Local<Option<u8>>,
-    // **And re-stated when the interface arrives.** This client loads FrameXML
-    // a second *after* login, so the first announcement of everything is made
-    // to an empty room — see `lua::host::load_bindings`, which raises
-    // `PLAYER_ENTERING_WORLD` when the load finishes for exactly this reason.
-    // Without re-announcing here, `BonusActionBarFrame` stays where its own
-    // `OnLoad` left it: shown, but at the un-slid `y = 0` under the main bar.
+    // Re-announced when the interface loads. This client loads FrameXML a
+    // second after login, so the first announcement of everything reaches no
+    // listeners. `lua::host::load_bindings` raises `PLAYER_ENTERING_WORLD` when
+    // the load finishes for this reason. Without re-announcing here,
+    // `BonusActionBarFrame` stays as its `OnLoad` left it: shown, but at the
+    // unslid `y = 0` under the main bar.
     mut entering: MessageReader<super::events::PlayerEnteringWorld>,
 ) {
     let entered = entering.read().count() > 0;
-    // **`None` while there is no character**, so logging back in as the same
-    // class re-raises the event. `forget` clears the bar and a plain `u8` here
-    // would compare equal to the form the last session ended in, leaving the
-    // bonus bar hidden for the whole of the new one.
+    // `None` while there is no character, so that logging back in as the same
+    // class raises the event again. `forget` clears the bar, and a plain `u8`
+    // here would compare equal to the form the last session ended in, leaving
+    // the bonus bar hidden for the whole new session.
     let Ok(me) = player.single() else {
         *seen = None;
         return;
@@ -1163,38 +1147,38 @@ fn follow_bonus_bar(
     if bar.bonus_bar == offset && !entered {
         return;
     }
-    // **And nothing is rebuilt with it.** A form changes which twelve of the
-    // 120 the interface *reads*, not what is in any of them, and the reading is
-    // `ActionButton_GetPagedID`'s — Lua's, not this side's. Forcing a rebuild
-    // here used to be right while the empty page was filled from the spellbook
-    // and is now 120 DBC lookups per stance dance for nothing.
+    // Nothing is rebuilt. A form changes which twelve of the 120 slots the
+    // interface reads, not their contents, and `ActionButton_GetPagedID` in Lua
+    // does that reading. A forced rebuild here was needed while the empty page
+    // was filled from the spellbook; now it would cost 120 DBC lookups per
+    // stance change for nothing.
     bar.bonus_bar = offset;
     events.bonus.write(ActionbarBonusChanged);
-    // …and the twelve buttons themselves, which read their own slot rather than
-    // being told it. `BonusActionBar_OnEvent` shows the frame; nothing in it
-    // refills the buttons.
+    // Also update the twelve buttons, which read their own slot rather than
+    // being told it. `BonusActionBar_OnEvent` shows the frame but does not
+    // refresh the buttons.
     events.slot_changed.write(ActionbarSlotChanged(ALL_SLOTS));
 }
 
-/// **Which of the four extra bars are on**, off the character's own record.
+/// Which of the four extra bars are on, copied from the character's record.
 ///
-/// A copy and nothing else — one byte out of `PLAYER_FIELD_BYTES` into
+/// This only copies one byte from `PLAYER_FIELD_BYTES` into
 /// [`ActionBar::toggles`], where `GetActionBarToggles()` can answer it. Every
-/// interesting decision about the four bars is in the game's own files:
-/// `UIParent.lua` asks this once per `PLAYER_ENTERING_WORLD`,
-/// `MultiActionBar_Update` spends the four answers on four frames, and
-/// `ActionButton_GetPagedID` works out that a `MultiBarBottomLeft` button is
-/// slot `id + 60` from the *name of its parent*.
+/// other decision about the four bars is in the game's own files:
+/// `UIParent.lua` asks once per `PLAYER_ENTERING_WORLD`,
+/// `MultiActionBar_Update` applies the four answers to four frames, and
+/// `ActionButton_GetPagedID` derives that a `MultiBarBottomLeft` button is slot
+/// `id + 60` from the name of its parent.
 ///
-/// So this client owes the four bars exactly two things — this byte and the
-/// packet that changes it ([`Binding::SetActionBarToggles`]) — and no layout at
-/// all.
+/// This client therefore provides exactly two things for the four bars: this
+/// byte and the packet that changes it ([`Binding::SetActionBarToggles`]). It
+/// provides no layout.
 ///
-/// **Unconditional rather than change-gated**, unlike [`follow_bonus_bar`]:
-/// there is no event to raise and therefore nothing to suppress, and a `u8`
-/// copied from a snapshot every frame costs less than the `Local` that would
-/// decide not to. `ActionBar::default()` is the answer with no character, which
-/// is four bars off — the same picture a fresh account gets.
+/// Unconditional rather than gated on a change, unlike [`follow_bonus_bar`]:
+/// there is no event to raise and so nothing to suppress, and copying a `u8`
+/// from a snapshot every frame costs less than the `Local` that would skip it.
+/// `ActionBar::default()` gives the value with no character: all four bars
+/// off, the same as a new account.
 fn follow_bar_toggles(
     player: Query<&WorldEntity, With<LocalPlayer>>,
     mut bar: ResMut<ActionBar>,
@@ -1205,42 +1189,38 @@ fn follow_bar_toggles(
     }
 }
 
-/// **Tell the bar when the *server* changed the attack state**, which nothing
-/// did.
+/// Tell the bar when the server changes the attack state.
 ///
-/// `ActionButton_UpdateState` is what draws the checked border, it reads
+/// `ActionButton_UpdateState` draws the checked border. It reads
 /// `IsCurrentAction or IsAutoRepeatAction`, and `ACTIONBAR_UPDATE_STATE` is the
-/// only event that re-runs it. Every write of that event in this file was
-/// **press-driven** — the eight of them are all inside a verb — so the border
-/// only ever redrew when the player clicked the button, and it then showed the
-/// state as of that instant.
+/// only event that re-runs it. All eight writes of that event in this file used
+/// to be inside a verb, so the border redrew only when the player clicked the
+/// button, and then showed the state at that moment.
 ///
-/// That is one bug wearing three faces, and all three were reported together:
+/// That one bug produced three symptoms, reported together:
 ///
 /// ```text
 /// right-click a mob to attack   SMSG_ATTACKSTART lands, nothing redraws
 ///                               -> the indicator does not come on
 /// click the Attack button       the press raises the event, so the border
-///                               finally draws the *old* truth and lights up —
+///                               draws the old state and lights up,
 ///                               while the click itself toggles the attack off,
 ///                               because attack_target correctly saw it was on
 /// the target dies or clears     SMSG_ATTACKSTOP lands, nothing redraws
 ///                               -> the indicator stays lit
 /// ```
 ///
-/// The toggle in [`attack_target`] was right the whole time; only the drawing
-/// was wrong.
+/// The toggle in [`attack_target`] was correct; only the drawing was wrong.
 ///
-/// **`live.attacking()` and not `WorldEntity::engaged()`**, which is the same
-/// fact through a narrower door: `engaged` is `attacking == target_guid()`, so
-/// swinging at something that is no longer selected reads as false there. This
-/// is the source `IsCurrentAction` itself answers from, so the button and the
-/// event cannot hold two opinions.
+/// This reads `live.attacking()`, not `WorldEntity::engaged()`. `engaged` is
+/// `attacking == target_guid()`, so swinging at a unit that is no longer
+/// selected reads as false there. `IsCurrentAction` answers from
+/// `live.attacking()`, so the button and the event cannot disagree.
 ///
-/// The **auto-repeat** half needs nothing here: its every end already goes
-/// through `AutoRepeat::stop`, which raises the state event beside
-/// `STOP_AUTOREPEAT_SPELL` — see [`AutoRepeat`], where the reason the server's
-/// `SMSG_CANCEL_AUTO_REPEAT` is the only statement on the wire is written down.
+/// The auto-repeat side needs nothing here: every end of the loop already goes
+/// through `AutoRepeat::stop`, which raises the state event together with
+/// `STOP_AUTOREPEAT_SPELL`. See [`AutoRepeat`] for why the server's
+/// `SMSG_CANCEL_AUTO_REPEAT` is the only notice on the wire.
 fn follow_attack_state(
     session: Res<Session>,
     mut was: Local<Option<u64>>,
@@ -1255,9 +1235,10 @@ fn follow_attack_state(
     if *was == now {
         return;
     }
-    // **Swinging at a *different* unit is not leaving combat**, so the pair is
-    // raised on the presence changing rather than on the value: a target swap
-    // mid-fight keeps the flash going, which is what the reference does.
+    // Swinging at a different unit is not leaving combat, so the pair of events
+    // is raised when an attack target appears or disappears, not when it
+    // changes. A target swap mid-fight keeps the flash going, as in the 1.12.1
+    // client.
     match (was.is_some(), now.is_some()) {
         (false, true) => {
             entered.write(super::events::PlayerEnterCombat);
@@ -1267,26 +1248,26 @@ fn follow_attack_state(
         }
         _ => {}
     }
-    // …and the border, on every change including the swap: `IsCurrentAction`
-    // is about the *slot*, and a client that swings at somebody else has the
-    // same answer — but it costs one message and removes a case to reason
-    // about.
+    // The border is redrawn on every change, including a swap.
+    // `IsCurrentAction` is about the slot and gives the same answer after a
+    // swap, but the extra message is cheap and removes a case to reason about.
     state.write(ActionbarUpdateState);
     *was = now;
 }
 
-/// **…and when the press that is still in the air changes** — the cast in
-/// flight, and the cursor waiting to be pointed.
+/// Tell the bar when the unfinished press changes: the cast in flight, and the
+/// cursor waiting for a target.
 ///
-/// [`crate::interface::api::is_current_action`] answers off both, and a border that
-/// is only *raised* by the press that started it never goes out: a cast ends at
-/// `SMSG_SPELL_GO`, at an interruption or at a refusal, and a cursor ends at a
-/// click, an Escape or a spell that could not be aimed — six endings, none of
-/// which is the button being pressed again. Watching the pair is one system
-/// against six, and it cannot be forgotten by the seventh.
+/// [`crate::interface::api::is_current_action`] answers from both. A border
+/// raised only by the press that started it never goes out: a cast ends at
+/// `SMSG_SPELL_GO`, an interruption or a refusal, and a cursor ends at a click,
+/// an Escape or a spell that could not be aimed. That is six endings, and none
+/// of them is the button being pressed again. One system watching the pair
+/// replaces six writes, and a seventh ending added later is covered without a
+/// change here.
 ///
-/// The same shape as [`follow_attack_state`] above and for the same reason: a
-/// `Local` holding what was last reported, and one message on a difference.
+/// Same structure as [`follow_attack_state`] and for the same reason: a
+/// `Local` holding the last reported value, and one message on a difference.
 fn follow_cast_state(
     casting: Res<Casting>,
     targeting: Res<SpellTargeting>,
@@ -1300,38 +1281,38 @@ fn follow_cast_state(
     if *was == Some(now) {
         return;
     }
-    // **Not on the first frame**, which is what the `Option` around the pair
-    // buys: a session opens with both empty, and raising the event for that
-    // would re-run every visible button's state on the frame the bar is built.
+    // Not on the first frame; the `Option` around the pair provides that. A
+    // session opens with both empty, and raising the event then would re-run
+    // every visible button's state on the frame the bar is built.
     if was.is_some() {
         state.write(ActionbarUpdateState);
     }
     *was = Some(now);
 }
 
-/// **Tell the bar when the *conditions* moved**, which is a different question
-/// from when the player's power moved.
+/// Tell the bar when the conditions for using a spell change, which is a
+/// separate question from when the player's power changes.
 ///
-/// `ACTIONBAR_UPDATE_USABLE` is the one event that re-runs
-/// `ActionButton_UpdateUsable`, and `super::vitals` raises it
-/// on the player's own power — which was the whole of what decided a fade until
-/// `SpellInfo::castable_now` arrived. Now three more things decide it and none
-/// of them is power:
+/// `ACTIONBAR_UPDATE_USABLE` is the only event that re-runs
+/// `ActionButton_UpdateUsable`, and `super::vitals` raises it when the
+/// player's power changes. Power was the only input to the fade until
+/// `SpellInfo::castable_now` was added. Three other inputs now affect it:
 ///
-/// * **the aura state** — a Seal landing is what makes Judgement pressable, and
-///   a block is what makes Revenge pressable;
-/// * **combo points** — every finisher on a rogue's bar;
-/// * **the form** — a warrior changing stance re-gates half their abilities.
+/// * the aura state: a Seal landing makes Judgement usable, and a block makes
+///   Revenge usable;
+/// * combo points: every finisher on a rogue's bar;
+/// * the form: a warrior changing stance changes which half of their abilities
+///   are usable.
 ///
-/// Without this the button stays as it was until something *else* raised the
-/// event, which in combat is the next power tick: the fade would be right most
-/// of the time and late the rest, which reads as "sometimes it works". That is
-/// the same shape as the report this round came from, so it is worth a system
-/// of six lines rather than a note.
+/// Without this system a button keeps its old state until something else
+/// raises the event, which in combat is the next power tick. The fade would be
+/// correct most of the time and late the rest, which players report as
+/// "sometimes it works". The report that led to this change had that pattern,
+/// so the fix is a six-line system.
 ///
-/// **A `Local` rather than change detection**, because the fields live on a
-/// `WorldEntity` the poll rewrites wholesale every tick — `Changed` there is
-/// every tick and says nothing.
+/// A `Local` rather than change detection, because these fields live on a
+/// `WorldEntity` that the poll rewrites every tick: `Changed` fires every tick
+/// and carries no information.
 fn follow_usability(
     player: Query<&WorldEntity, With<LocalPlayer>>,
     mut was: Local<Option<(u32, u8, u8)>>,
@@ -1344,9 +1325,9 @@ fn follow_usability(
     if *was == now {
         return;
     }
-    // **Not on the first sight of it.** The first value is recorded rather than
-    // raised on, so logging in does not cost a pass over every registered
-    // button before the interface is up.
+    // Not on the first value. It is recorded without raising the event, so
+    // logging in does not run every registered button before the interface is
+    // up.
     if was.is_some() && now.is_some() {
         usable.write(super::events::ActionbarUpdateUsable);
     }
@@ -1370,12 +1351,12 @@ fn rebuild_bar(
     // The cheap accessor, not `status()`: this runs every frame and the full
     // status clones a `Vec` of warnings and a map of unhandled opcodes.
     let version = active.live.spellbook_version();
-    // **And which parse of the DBCs the slots were resolved from.** The bar's
-    // names, icons and cast times come out of `Spell.dbc`, so a bar built
-    // before the tables were forgotten is stale in a way no packet states —
-    // see `GameAssets::tables_generation`. Without it an edited spell kept its
-    // old picture on the bar until the slot itself changed, which is what the
-    // server's version tracks.
+    // Also check which parse of the DBCs the slots were resolved from. The
+    // bar's names, icons and cast times come from `Spell.dbc`, so a bar built
+    // before the tables were dropped and re-read is stale, and no packet
+    // reports it; see `GameAssets::tables_generation`. Without this check an
+    // edited spell kept its old icon on the bar until the slot itself changed,
+    // which is what the server's version tracks.
     let parse = assets.tables_generation();
     if bar.built_from == Some(version) && bar.built_with == parse {
         return;
@@ -1396,14 +1377,13 @@ fn rebuild_bar(
     bar.known = known
         .iter()
         .filter_map(|id| catalog.info(*id))
-        // A passive is in the spellbook and cannot be cast — the server refuses
-        // one outright — and 4,929 of the game's spells are passive.
+        // A passive is in the spellbook but cannot be cast; the server refuses
+        // it. 4,929 of the game's spells are passive.
         //
-        // …and a `DO_NOT_DISPLAY` spell is in neither: the client's *castable*
-        // list makes the same sign-bit test on the record's `Attributes` byte
-        // that the spellbook add does. Without
-        // it the character's GM and world-buff spells are in this list, under
-        // `Interface\Icons\Temp`.
+        // A `DO_NOT_DISPLAY` spell is in neither list: the 1.12.1 client leaves
+        // it out of its castable list, as it does out of the spellbook. Without
+        // this filter the character's GM and world-buff spells appear in this
+        // list with the icon `Interface\Icons\Temp`.
         .filter(|info| !info.is_passive() && !info.hidden())
         .collect();
     bar.known.sort_by(|a, b| a.name.cmp(&b.name));
@@ -1423,73 +1403,70 @@ fn rebuild_bar(
         })
         .collect();
 
-    // **The fallback fill is gone, and this note is what stood here.** For six
-    // rounds the empty slots of the visible page were filled from the
-    // character's spellbook, because until a spell could be *dragged* onto the
-    // bar a fresh character's empty bar was a client that could do nothing at
-    // all and could not be tested against the server. That deviation was
-    // written down as one to delete rather than port, and this is the round
-    // that deletes it: [`super::cursor`] carries a spell or an item onto a
-    // button and `CMSG_SET_ACTION_BUTTON` remembers it.
+    // The empty slots of the visible page used to be filled from the
+    // character's spellbook (for six development rounds), because until a
+    // spell could be dragged onto the bar, a new character's empty bar could do
+    // nothing and could not be tested against the server. That deviation was
+    // recorded as one to delete, and it has been deleted: [`super::cursor`]
+    // carries a spell or an item onto a button and `CMSG_SET_ACTION_BUTTON`
+    // stores it.
     //
-    // What the bar shows now is `SMSG_ACTION_BUTTONS` and nothing else — the
-    // server's own `playercreateinfo_action` for a new character, and whatever
-    // the last session left for an old one — which is the real client exactly.
+    // The bar now shows `SMSG_ACTION_BUTTONS` and nothing else: the server's
+    // `playercreateinfo_action` for a new character, and whatever the last
+    // session left for an existing one. This matches the 1.12.1 client.
 
-    // One message for the whole bar rather than twelve — `ActionButton.lua`'s own
-    // `arg1 == 0` convention, see `events::ActionbarSlotChanged`.
+    // One message for the whole bar rather than twelve, using `ActionButton.lua`'s
+    // `arg1 == 0` convention; see `events::ActionbarSlotChanged`.
     events.slot_changed.write(ActionbarSlotChanged(ALL_SLOTS));
 }
 
 
-// **Where the cast bar used to end.** `finish_casts` was a system polling the
-// player entity's release counter and then reading `last_spell` to find out
-// which spell had landed — and it lost that read to any release arriving in the
-// same poll after ours, which wedged the character for the rest of the session.
-// It is `crate::world::incoming`'s `PlayerEvent::CastReleased` arm now, which is
-// per packet and carries its own id; the arm says what it cost.
+// The cast bar used to be ended here by `finish_casts`, a system that polled
+// the player entity's release counter and then read `last_spell` to find which
+// spell had landed. Another release arriving in the same poll replaced that
+// value, which left the character unable to cast for the rest of the session.
+// The cast now ends in `crate::world::incoming`'s `PlayerEvent::CastReleased`
+// arm, which runs per packet and carries its own id; that arm documents the
+// failure.
 
-/// **Escape**, which is deliberately not a binding.
+/// Cancel the wind-up, the pending ask or the channel: the C side of
+/// `SpellStopCasting()`.
 ///
-/// `Bindings.xml` declares no Escape binding but `TOGGLEGAMEMENU`; cancelling a
-/// cast and clearing a target are both the client's own. It cancels the cast
-/// *before* clearing the target — a wind-up is the more urgent of the two — and
-/// `target::select_on_click` checks `Casting::started` for the same reason rather
-/// than an ordering between them.
-/// **Cancel the wind-up, the ask or the channel** — `SpellStopCasting()`'s own
-/// half, and the whole of what Escape used to be a raw-key system for here.
+/// `Bindings.xml` binds Escape only to `TOGGLEGAMEMENU`, and that binding's
+/// body calls `SpellStopCasting()`. Cancelling a cast and clearing a target are
+/// both done by the client. The cast is cancelled before the target is
+/// cleared, because a wind-up is the more urgent of the two, and
+/// `target::select_on_click` checks `Casting::started` for the same reason
+/// rather than relying on system order.
 ///
-/// A free function rather than a system now: the *key* is `TOGGLEGAMEMENU`'s
-/// business and its body is what calls the verb, so this runs from
-/// [`run_bindings`]' arm like every other write. What was lost with the system
-/// is nothing — `just_pressed(Escape)` was this client's own reading of a key
-/// the game already declares a binding for, and having both meant the key did
-/// two things.
+/// This is a function rather than a system: [`run_bindings`] calls it from an
+/// arm, like every other write. It replaces a system that read
+/// `just_pressed(Escape)` directly; because the game already binds that key,
+/// the key did two things.
 fn stop_casting(
     active: &crate::world::session::ActiveSession,
     casting: &mut Casting,
     events: &mut ActionEvents,
 ) {
-    // A channel is cancellable too, and it ends through its own event — see
+    // A channel can be cancelled too, and it ends through its own event. See
     // `drain_events`' interrupt arm for why the ordinary stop would not show.
     let channelled = casting.channelling.is_some();
-    // **A cast that has been asked for and not yet answered is cancellable
-    // too**, and it has to be: since the bar waits for `SMSG_SPELL_START`,
-    // there is now a round trip in which Escape used to work and would
-    // otherwise do nothing at all — the packet would arrive, the bar would go
-    // up, and the keypress that meant to stop it is already spent. The cancel
-    // is ordered behind the cast on the same socket, so the server sees them in
-    // the order they were pressed.
+    // A cast that has been sent and not yet answered can also be cancelled.
+    // Because the bar waits for `SMSG_SPELL_START`, there is a round trip in
+    // which Escape would otherwise do nothing: the packet would arrive, the bar
+    // would go up, and the keypress meant to stop it would already be spent.
+    // The cancel follows the cast on the same socket, so the server receives
+    // them in the order they were pressed.
     let pending = casting.pending.take();
     if !channelled && casting.started.is_none() && pending.is_none() {
         return;
     }
     active.live.cancel_cast(pending.unwrap_or(casting.spell_id));
-    // **The events follow the bar and not the keypress.** `end` answers whether
-    // there was a wind-up; a channel has none and stops through its own event
-    // either way; and a cancelled *ask* has neither, so it raises nothing — a
-    // stop over a bar that never appeared is what `CastingBarFrame_OnEvent`
-    // would colour and fade.
+    // The events follow the bar, not the keypress. `end` returns whether there
+    // was a wind-up; a channel has none and stops through its own event either
+    // way; a cancelled ask has neither, so it raises nothing. A stop over a bar
+    // that never appeared would be coloured and faded by
+    // `CastingBarFrame_OnEvent`.
     let had_bar = casting.end();
     if channelled {
         events.channel_stop.write(SpellcastChannelStop);
@@ -1498,39 +1475,39 @@ fn stop_casting(
     }
 }
 
-/// **What the player asked for this frame**, from the two doors it can arrive
-/// through.
+/// What the player asked for this frame, from every source it can come from.
 ///
-/// One parameter rather than two, for the same reason [`ActionEvents`] is one:
-/// [`run_bindings`] is at Bevy's sixteen and the two are read in adjacent lines
-/// at the top of it. The verbs and the spell cursor's answer are genuinely one
-/// subject — both are "the player pointed at something" — and both are cleared
-/// together when there is nobody to act.
+/// One parameter rather than several, for the same reason [`ActionEvents`] is
+/// one: [`run_bindings`] is at Bevy's limit of sixteen, and these readers are
+/// read next to each other at its start. The bindings and the spell cursor's
+/// answers belong together, since each is the player pointing at something,
+/// and they are cleared together when there is no character to act.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Asked<'w, 's> {
     pressed: MessageReader<'w, 's, BindingPressed>,
-    /// **The second door onto a cast, and it is a click rather than a key** —
-    /// see [`SpellTargetPicked`]. Read here rather than acted on where it is
-    /// written, so that every cast in the client still goes through one place.
+    /// The second source of a cast: a click rather than a key. See
+    /// [`SpellTargetPicked`]. Read here rather than handled where it is written,
+    /// so that every cast in the client still goes through one function.
     picked: MessageReader<'w, 's, SpellTargetPicked>,
-    /// …and the third door, which is a bag square — see [`SpellItemPicked`].
+    /// The third source: a bag slot. See [`SpellItemPicked`].
     item_picked: MessageReader<'w, 's, SpellItemPicked>,
-    /// …and the fourth, which is the **trade window's enchant square** — see
-    /// [`crate::interface::trade::TradeSlotPicked`]. The same gesture as
-    /// the bag square, aimed at a slot number rather than at an item.
+    /// The fourth source: the trade window's enchant slot. See
+    /// [`crate::interface::trade::TradeSlotPicked`]. The same gesture as the
+    /// bag slot, aimed at a slot number rather than an item.
     trade_picked: MessageReader<'w, 's, crate::interface::trade::TradeSlotPicked>,
-    /// **…and the cursor put up by an *item*** rather than by a press — a
-    /// sharpening stone right-clicked in the bag. See
-    /// [`crate::interface::items::BeginItemTargeting`], which is written
-    /// where the stone's own place is remembered.
+    /// The cursor put up by an item rather than by a press, such as a
+    /// sharpening stone right-clicked in a bag. See
+    /// [`crate::interface::items::BeginItemTargeting`], which is written where
+    /// the stone's bag position is recorded.
     begin_item: MessageReader<'w, 's, crate::interface::items::BeginItemTargeting>,
-    /// …and the same door with a place behind it — see [`SpellGroundPicked`].
+    /// The click in the world with a location as the answer. See
+    /// [`SpellGroundPicked`].
     placed: MessageReader<'w, 's, SpellGroundPicked>,
 }
 
 impl Asked<'_, '_> {
-    /// Throw the frame away — a binding pressed on the login screen must not
-    /// fire on the first frame in the world.
+    /// Discard this frame's input, so that a binding pressed on the login
+    /// screen does not fire on the first frame in the world.
     fn clear(&mut self) {
         self.pressed.clear();
         self.picked.clear();
@@ -1538,11 +1515,12 @@ impl Asked<'_, '_> {
     }
 }
 
-/// Run whatever bindings fired this frame.
+/// Run the bindings that fired this frame.
 ///
-/// **This is the whole of the input path for an action**, and it names no key:
-/// the key table turned a press into a [`Binding`] and this turns a `Binding`
-/// into a verb, which is the same two steps `Bindings.xml` and the C API make.
+/// This is the entire input path for an action, and it names no key. The key
+/// table turned a key press into a [`Binding`], and this function turns a
+/// `Binding` into a verb: the same two steps `Bindings.xml` and the C API
+/// take.
 #[allow(clippy::too_many_arguments)]
 fn run_bindings(
     mut asked: Asked,
@@ -1550,34 +1528,34 @@ fn run_bindings(
     assets: Res<GameAssets>,
     bar: Res<ActionBar>,
     book: Res<super::spellbook::Spellbook>,
-    // **Read, never written** — the one question `UseAction`'s `checkCursor`
-    // asks, and the reason this module can answer half of a verb whose other
-    // half is [`super::cursor`]'s.
+    // Read, never written. It answers the one question `UseAction`'s
+    // `checkCursor` asks, which lets this module handle its half of a verb
+    // whose other half is in [`super::cursor`].
     cursor: Res<super::cursor::Cursor>,
     selection: Res<Selection>,
-    // **The caster's own `Transform` as well as its record**, because the range
-    // check below measures the drawn positions rather than the last snapshot —
-    // the local player is dead-reckoned ahead of the session thread and the
-    // difference at a run is a fifth of a yard a frame.
+    // The caster's `Transform` as well as its record, because the range check
+    // below measures drawn positions rather than the last snapshot. The local
+    // player is dead-reckoned ahead of the session thread, and the difference
+    // while running is a fifth of a yard per frame.
     player: Query<(Entity, &WorldEntity, &Transform, &Sheath), With<LocalPlayer>>,
     units: Query<(&WorldEntity, &Transform)>,
-    // **Every unit token, resolved the one way** — the party frames' clicks
-    // arrive as `SpellTargetUnit("party2")` and there is exactly one function
-    // in this client that knows what that names. See the arm below.
+    // Resolves every unit token. Party frame clicks arrive as
+    // `SpellTargetUnit("party2")`, and this is the only function in this
+    // client that knows what that token names. See the arm below.
     tokens: crate::interface::api::Units,
     mut press: PressState,
     mut errors: UiErrors,
     mut events: ActionEvents,
     mut sheathing: MessageWriter<SheathRequest>,
-    // **An item slot's own outlet** — see [`use_action`], where the one line
-    // that writes it says why the doing is `interface::items`' rather than this
-    // module's.
+    // Where an item slot's use is sent. See [`use_action`]; the line that
+    // writes it explains why `interface::items` performs the use and this
+    // module does not.
     mut items: MessageWriter<super::items::UseCarriedItem>,
-    // **The settings, the hour and the sky overhead**, bundled — see
-    // [`crate::interface::api::Surroundings`], whose own note is that this system was
-    // at Bevy's sixteen-parameter ceiling and the settings were already here.
-    // The settings are read for exactly one flag ([`self_cast`] below); the
-    // other two are the cast rule's, and reach it through `caster_conditions`.
+    // The settings, the time of day and the sky, bundled. See
+    // [`crate::interface::api::Surroundings`]: this system was at Bevy's
+    // sixteen-parameter limit, and the settings were already a parameter. The
+    // settings are read for one flag ([`self_cast`] below); the other two are
+    // inputs to the cast rule and reach it through `caster_conditions`.
     around: crate::interface::api::Surroundings,
 ) {
     let Some(active) = session.active.as_ref() else {
@@ -1586,37 +1564,39 @@ fn run_bindings(
         asked.clear();
         return;
     };
-    // **Off the param this system already holds**, rather than two more `Res`
-    // beside it — see [`crate::interface::api::Units::friendship`].
+    // Taken from a parameter this system already holds, rather than from two
+    // more `Res` parameters. See [`crate::interface::api::Units::friendship`].
     let friendship = tokens.friendship();
-    // …and the other half of what a press is judged against, off the same
-    // bundle the settings come from — see [`crate::interface::api::CastWorld`].
+    // The other inputs a press is checked against, from the same bundle as the
+    // settings. See [`crate::interface::api::CastWorld`].
     let world = around.cast_world();
     let Ok((entity, me, here, sheath)) = player.single() else {
         asked.clear();
         return;
     };
-    // **Who the spell cursor was pointed at**, from either of its two doors: the
-    // world pick (`target::select_on_click`, as a message) and a unit frame
-    // (`SpellTargetUnit`, as a binding, collected in the loop below). Gathered
-    // first and cast last, so that a key pressed in the same frame — a fresh
-    // intention — is judged before the answer to a question the client asked.
-    // **`autoSelfCast`, which is the standing form of the `SELFACTIONBUTTON`
-    // flag.** The binding turns it on for one press; the CVar turns it on for
-    // every press, and it is the *same input* — the client has a single branch
-    // for both and there is no second one. So it is or-ed in
-    // here rather than plumbed through [`cast_known_spell`] as a second bool:
-    // one of them being true is the whole condition.
+    // `autoSelfCast` is the persistent form of the `SELFACTIONBUTTON` flag. The
+    // binding sets it for one press; the CVar sets it for every press. The
+    // 1.12.1 client treats the two identically, so they are or-ed together here
+    // rather than passed through [`cast_known_spell`] as two bools: either one
+    // being true is the condition.
     //
-    // Read per frame rather than cached because a CVar can be written by any
-    // script between two presses, and the read is a hash lookup.
+    // Read every frame rather than cached, because any script can write a CVar
+    // between two presses, and the read is a hash lookup.
     let self_cast = around.cvars().flag(vale_assets::tables::spellbook::AUTO_SELF_CAST);
-    // **A stone asked its question first.** Read before the presses so a cursor
-    // put up by an item is standing by the time anything else in this frame
-    // looks at it, and drained either way so it cannot fire late.
+    // An item's targeting request is handled first. It is read before the
+    // presses so that a cursor put up by an item is in place before anything
+    // else this frame checks it, and drained either way so that it cannot fire
+    // late.
     if let Some(begun) = asked.begin_item.read().last() {
         press.targeting.begin(begun.0, Asking::Item);
     }
+    // The units, locations, items and trade slots the spell cursor was pointed
+    // at, from each source: the world pick (`target::select_on_click`, as a
+    // message), a bag or trade click (as a message), and a unit frame
+    // (`SpellTargetUnit`, as a binding, collected in the loop below). They are
+    // gathered first and cast last, so that a key pressed in the same frame,
+    // which is a new intention, is handled before the answer to a question the
+    // client asked.
     let mut pointed_at: Vec<Pointed> = asked
         .picked
         .read()
@@ -1639,12 +1619,12 @@ fn run_bindings(
                         &mut errors, &mut events,
                 &mut sheathing, &mut items,
             ),
-            // **The click's own half of `UseAction(slot, 1)`** — the *use*, and
-            // only when nothing is being carried. The other branch belongs to
-            // [`super::cursor`], which drops what is held into the slot; the two
-            // conditions are exclusive, so neither module has to know the other
-            // ran. See [`Binding::UseOrPlaceAction`], where the client's own
-            // four-way test is.
+            // The click's half of `UseAction(slot, 1)`: the use, which applies
+            // only when nothing is being carried. The other case belongs to
+            // [`super::cursor`], which drops the carried item into the slot. The
+            // two conditions are exclusive, so neither module needs to know the
+            // other ran. See [`Binding::UseOrPlaceAction`], which lists the four
+            // cases the 1.12.1 client distinguishes.
             Binding::UseOrPlaceAction(slot) => {
                 if cursor.held.is_none() {
                     use_action(
@@ -1659,11 +1639,11 @@ fn run_bindings(
                 attack_target(active, &selection, &units, me, entity, &mut sheathing);
                 events.state.write(ActionbarUpdateState);
             }
-            // **A row of the book, not a spell id** — see
+            // A row of the book, not a spell id; see
             // [`Binding::CastSpellbookRow`]. A row the book does not have is
-            // dropped silently rather than reported: the panel is what composed
-            // the index, so an out-of-range one is this client's arithmetic
-            // being wrong and not something to tell the player about.
+            // dropped without a message: the panel computed the index, so an
+            // out-of-range row is an error in this client's arithmetic and not
+            // something to report to the player.
             Binding::CastSpellbookRow(row) => {
                 if let Some(info) = book.book.spell(usize::from(*row)) {
                     cast_known_spell(
@@ -1674,12 +1654,12 @@ fn run_bindings(
                     );
                 }
             }
-            // **A recipe, which is a spell id rather than a row** — the panel
-            // resolved it against the list it drew. The cast is the ordinary
-            // pipeline: a potion self-targets through the aiming rule and an
-            // enchant asks for an item exactly as a bag-cast formula does. The
-            // count is not this arm's: the repeat counter reads the same
-            // message in [`super::tradeskill`].
+            // A recipe, which is a spell id rather than a row; the panel resolved
+            // it against the list it drew. The cast uses the ordinary path: a
+            // potion targets the caster through the aiming rule, and an enchant
+            // asks for an item the same way a formula cast from a bag does. The
+            // repeat count is not handled here; the repeat counter in
+            // [`super::tradeskill`] reads the same message.
             Binding::CastRecipe { spell, .. } => {
                 let tables = assets.display_tables().ok();
                 if let Some(info) = tables
@@ -1695,134 +1675,136 @@ fn run_bindings(
                     );
                 }
             }
-            // **The spell cursor, clicked through a unit frame rather than
-            // through the world.** `TargetFrame_OnClick` casts at `"target"` and
-            // a party frame at its own unit; the world's own click arrives as
-            // [`SpellTargetPicked`] above and both end in the same place.
+            // The spell cursor, clicked through a unit frame rather than in the
+            // world. `TargetFrame_OnClick` casts at `"target"` and a party frame
+            // at its own unit; a click in the world arrives as
+            // [`SpellTargetPicked`] above, and both end in the same place.
             //
-            // Only the two tokens this client can resolve without the `Units`
-            // parameter this system does not hold — which is `"player"` and
-            // `"target"`, and between them they are every call site in the
-            // directory that a client with no party can reach.
-            // **Any token, through the one resolver** — see
+            // Any token is resolved through one function; see
             // [`crate::interface::api::Units::resolve`].
             //
-            // This answered for `player` and `target` and nothing else, which
-            // is the whole of "positive click spells do not work on party
+            // This arm used to resolve only `"player"` and `"target"`, the two
+            // tokens available without the `Units` parameter; together they
+            // cover every call site in FrameXML that a client with no party can
+            // reach. That caused "positive click spells do not work on party
             // member frames": `PartyMemberFrame_OnClick` is
             // `if SpellIsTargeting() then SpellTargetUnit("party"..id)`, and a
-            // `party1` that resolved to nothing dropped the click on the floor
-            // — the cursor stayed up, no packet went out, and no error was
-            // said. The same two lines are in `UnitFrame.lua`,
-            // `PartyMemberPetFrame_OnClick` and `TargetFrame_OnClick`, so the
-            // gap was every unit frame in the game except two.
+            // `party1` that resolved to nothing discarded the click. The cursor
+            // stayed up, no packet was sent, and no error was shown. The same
+            // two lines are in `UnitFrame.lua`, `PartyMemberPetFrame_OnClick`
+            // and `TargetFrame_OnClick`, so every unit frame in the game except
+            // two was affected.
             //
-            // `Units::resolve` is the function that already knows `party3` is a
-            // guid in [`crate::interface::party::Party`] and that `pet`
-            // means charm-before-summon; reimplementing a subset here is what
-            // produced the subset.
+            // `Units::resolve` already knows that `party3` is a guid in
+            // [`crate::interface::party::Party`] and that `pet` resolves to the
+            // charmed unit before the summoned pet. A partial copy of it here is
+            // what caused the gap.
             Binding::SpellTargetUnit(token) => {
                 if let Some(unit) = tokens.resolve(*token) {
                     pointed_at.push(Pointed::Unit(unit));
                 }
             }
             Binding::SpellStopTargeting => press.targeting.stop(),
-            // **`SpellStopCasting()`** — Escape's own, and the *whole* of what
-            // this used to be a `just_pressed(Escape)` system for. The reading
-            // of "is there a cast" is made in the interface (see
-            // `ActionAnswers::spell_is_casting`), so by the time this arrives
-            // the answer has already been given; what is left is the doing.
+            // `SpellStopCasting()`, called from Escape's binding. It replaces
+            // the former `just_pressed(Escape)` system. The interface decides
+            // whether a cast is running (see `ActionAnswers::spell_is_casting`),
+            // so by the time this arrives that question is answered; only the
+            // cancel remains.
             Binding::SpellStopCasting => {
                 stop_casting(active, &mut press.casting, &mut events);
             }
             Binding::ToggleSheath => toggle_sheath(entity, sheath, me, &mut sheathing),
-            // **Nothing to store**: the page lives in the interface's own
-            // `CURRENT_ACTIONBAR_PAGE` and every button adds it to its own id
-            // before it asks this client anything, so the twelve slot numbers
-            // that arrive here are already absolute. What the C side owes is
-            // the news — see [`Binding::ChangeActionBarPage`].
+            // Nothing to store: the page is the interface's
+            // `CURRENT_ACTIONBAR_PAGE`, and every button adds it to its own id
+            // before asking this client anything, so the twelve slot numbers
+            // that arrive here are already absolute. The C side only raises the
+            // event; see [`Binding::ChangeActionBarPage`].
             Binding::ChangeActionBarPage => {
                 events.page.write(ActionbarPageChanged);
             }
-            // **…and the other half of the same subject, which is the exact
-            // opposite shape.** The page is the interface's and this client only
-            // announces it; the four extra bars are the *server's*, so what the
-            // C side owes here is a packet and no news at all — the options
-            // panel has already shown and hidden its own frames by the time this
-            // arrives. See [`Binding::SetActionBarToggles`] and
-            // [`ActionBar::toggles`], which is where the answer comes back.
+            // The extra bars work the opposite way. The page belongs to the
+            // interface and this client only announces it; the four extra bars
+            // belong to the server, so the C side sends a packet and raises no
+            // event. The options panel has already shown and hidden its frames
+            // by the time this arrives. See [`Binding::SetActionBarToggles`] and
+            // [`ActionBar::toggles`], where the answer comes back.
             Binding::SetActionBarToggles(mask) => {
                 active.live.set_actionbar_toggles(*mask);
             }
-            // Targeting verbs are `target.rs`'s — including
-            // `Binding::TargetToken`, the party frame's click — and the buff
-            // cancel is
-            // `auras.rs`'s — each reads the same messages. Only the module that
-            // holds the state a verb needs can resolve it; see
+            // Targeting verbs are handled in `target.rs` (including
+            // `Binding::TargetToken`, the party frame's click), and the buff
+            // cancel in `auras.rs`; each reads the same messages. Only the module
+            // that holds the state a verb needs can resolve it; see
             // [`Binding::CancelPlayerBuff`], whose handle indexes a list this
-            // one does not have.
+            // module does not have.
             Binding::TargetNearestEnemy
             | Binding::TargetPreviousEnemy
+            | Binding::TargetNearestFriend
+            | Binding::TargetPreviousFriend
+            | Binding::TargetLastEnemy
+            | Binding::AssistUnit(_)
             | Binding::TargetSelf
             | Binding::TargetToken(_)
             | Binding::CancelPlayerBuff(_)
-            // …and the four about leaving, which are `interface::logout`'s — plus
-            // the reset, which shares that file for the reason its own arm
-            // there gives.
+            // The four logout bindings belong to `interface::logout`, and so does
+            // the instance reset, for the reason given in its arm there.
             | Binding::ResetInstances
             | Binding::Logout
             | Binding::Quit
             | Binding::CancelLogout
             | Binding::ForceQuit
-            // …and the one that leaves nothing at all: `lua::host`'s, which
-            // rebuilds the interpreter under the world rather than touching it.
+            // `ReloadUI` belongs to `lua::host`, which rebuilds the interpreter
+            // without touching the world.
             | Binding::ReloadUI
-            // …and the five about dying, which are `interface::death`'s.
+            // The five death bindings belong to `interface::death`.
             | Binding::RepopMe
             | Binding::RetrieveCorpse
             | Binding::AcceptResurrect
             | Binding::DeclineResurrect
             | Binding::AcceptXPLoss
-            // …and the innkeeper's, which is `interface::binder`'s: it needs
-            // the guid that asked, and only that module is holding one. The pet
-            // trainer's Accept is `interface::untrainer`'s for the same reason.
+            // The innkeeper's confirmation belongs to `interface::binder`,
+            // because it needs the guid of the innkeeper who asked, and only that
+            // module holds it. The pet trainer's Accept belongs to
+            // `interface::untrainer` for the same reason.
             | Binding::ConfirmBinder
             | Binding::ConfirmPetUnlearn
-            // …and the summon's Accept and `/played`, which are
-            // `interface::summon`'s and `interface::played`'s.
+            // The summon's Accept and `/played` belong to `interface::summon` and
+            // `interface::played`.
             | Binding::ConfirmSummon
             | Binding::RequestTimePlayed
-            // …and the two about right-clicking an item, which are
-            // `interface::items`' — the item's own prototype is what decides whether
-            // the click uses it or wears it, and only that module holds one.
+            // The two options checkboxes belong to `interface::uioptions`.
+            | Binding::ShowHelm(_)
+            | Binding::ShowCloak(_)
+            // The two item right-click bindings belong to `interface::items`: the
+            // item's prototype decides whether the click uses or equips it, and
+            // only that module holds the prototype.
             | Binding::UseContainerItem { .. }
             | Binding::UseInventoryItem(_)
-            // …and the six about *carrying* one, which are `interface::cursor`'s for
-            // the same reason: what a left click means depends on whether the
-            // pointer is already holding something, and only that module knows.
+            // The six item-carrying bindings belong to `interface::cursor` for the
+            // same reason: a left click's meaning depends on whether the pointer
+            // already holds something, and only that module knows.
             | Binding::PickupContainerItem { .. }
             | Binding::PickupInventoryItem(_)
             | Binding::SplitContainerItem { .. }
             | Binding::PutItemInContainer(_)
             | Binding::AutoEquipCursorItem
             | Binding::DeleteCursorItem
-            // …and the four about *filling* the bar, which are the same
-            // module's for the same reason: `PickupAction` is a pick-up or a
-            // place depending on what is already carried, and only the cursor
-            // knows. This module owns what a slot *does*; it does not own what
-            // is in one.
+            // The four bar-filling bindings belong to the same module for the
+            // same reason: `PickupAction` picks up or places depending on what is
+            // already carried, and only the cursor knows. This module owns what a
+            // slot does, not what is in it.
             | Binding::PickupSpellbookRow(_)
             | Binding::PickupAction(_)
             | Binding::PlaceAction(_)
             | Binding::ClearCursor
-            // …and the character's own controls, which are
-            // `input::controls`': what a movement key means is a *held
-            // state* the mover reads every tick, and this module is about
-            // edges. `Jump` is an edge and still not this module's, for the
-            // same reason `UseContainerItem` is not: the thing that owns the
-            // socket owns the packet.
-            // …and the selection's own, which is `combat::target`'s: this
-            // module owns what a slot does, not who is selected.
+            // `ClearTarget` belongs to `combat::target`: this module owns what a
+            // slot does, not who is selected.
+            //
+            // The character controls belong to `input::controls`: a movement key
+            // is a held state that the mover reads every tick, and this module
+            // handles edges. `Jump` is an edge but is not handled here either,
+            // for the same reason `UseContainerItem` is not: the module that owns
+            // the socket sends the packet.
             | Binding::ClearTarget
             | Binding::Control(_, _)
             | Binding::Jump
@@ -1830,33 +1812,33 @@ fn run_bindings(
             | Binding::ToggleAutoRun
             | Binding::ToggleRun
             | Binding::FollowUnit(_)
-            // …and the one about the camera, which is `world::camera`'s, and
-            // the one about the window, which is the crate root's.
+            // `CameraZoom` belongs to `world::camera`, and the window binding to
+            // the crate root.
             | Binding::CameraZoom(_)
-            // …and the *pet's* bar, which is a different bar with a different
-            // packet — see [`super::pet`], which drains the same queue.
+            // The pet bar is a different bar with a different packet; see
+            // [`super::pet`], which drains the same queue.
             | Binding::CastPetAction(_)
             | Binding::TogglePetAutocast(_)
-            // …and the drag within it, which is `combat::cursor`'s dispatch and
-            // `combat::pet`'s work.
+            // Dragging within the pet bar is dispatched by `combat::cursor` and
+            // handled by `combat::pet`.
             | Binding::PickupPetAction(_)
-            // …and the *stance* bar, which is a third bar again — see
-            // [`super::shapeshift`], which drains the same queue.
+            // The stance bar is a third bar; see [`super::shapeshift`], which
+            // drains the same queue.
             | Binding::CastShapeshiftForm(_)
             | Binding::PetAttack
             | Binding::PetStopAttack
             | Binding::PetAbandon
-            // …and the pointer's own, which is `combat::cursor`'s — see
+            // The pointer query belongs to `combat::cursor`; see
             // [`super::cursor::Cursor::asked`].
             | Binding::AskCursor(_)
             | Binding::Screenshot => {}
         }
     }
 
-    // **…and the spell cursor's answer, last.** The spell is re-looked-up here
-    // rather than carried on the pick, because a press in the loop above may
-    // have replaced or cancelled what was waiting — and a stale id would cast a
-    // spell the player has already moved on from.
+    // The spell cursor's answers are handled last. The spell is looked up again
+    // here rather than carried on the pick, because a press in the loop above
+    // may have replaced or cancelled the waiting spell, and a stale id would
+    // cast a spell the player has already moved on from.
     for pointed in pointed_at.drain(..) {
         let Some(info) = press
             .targeting
@@ -1874,18 +1856,17 @@ fn run_bindings(
     }
 }
 
-/// `ToggleSheath()` — draw what is equipped, or put it away.
+/// `ToggleSheath()`: draw the equipped weapons, or put them away.
 ///
-/// **Which of melee and ranged it draws is the wardrobe's answer, not a
-/// toggle's**: a hunter with a bow and no melee weapon draws the bow. Stowed is
-/// always stowed, so the cycle is two-state and the *choice* only happens on the
-/// way out.
+/// The equipment decides whether melee or ranged is drawn: a hunter with a bow
+/// and no melee weapon draws the bow. Stowed is always stowed, so the cycle has
+/// two states, and the choice is made only when drawing.
 ///
-/// A request rather than a write — see [`SheathRequest`], and
-/// `world::entities::sheath` for why there is exactly one executor. This is also
-/// the one path in the client that is *supposed* to play a draw/stow animation
-/// and does not; that deviation is stated in `entities::sheath`'s own comment
-/// rather than here, because it belongs to the executor.
+/// This sends a request rather than writing the state; see [`SheathRequest`],
+/// and `world::entities::sheath` for why there is exactly one executor. This is
+/// also the one path in the client that should play a draw or stow animation
+/// and does not. That deviation is documented in `entities::sheath`, because
+/// it belongs to the executor.
 fn toggle_sheath(
     entity: Entity,
     sheath: &Sheath,
@@ -1894,8 +1875,8 @@ fn toggle_sheath(
 ) {
     use vale_assets::look::sheath as policy;
     let state = if sheath.state() == policy::UNARMED {
-        // Melee first: the client's own preference, and the only case where the
-        // ranged slot wins is a character with nothing else to draw.
+        // Melee first, as the 1.12.1 client prefers. Ranged is drawn only when
+        // the character has nothing else to draw.
         if me.weapons[0].is_empty() && me.weapons[1].is_empty() && !me.weapons[2].is_empty() {
             policy::RANGED
         } else {
@@ -1907,13 +1888,13 @@ fn toggle_sheath(
     sheathing.write(SheathRequest { entity, state });
 }
 
-/// `UseAction(slot, _, onSelf)` — the game's own verb, one-based.
+/// `UseAction(slot, _, onSelf)`: the game's verb, with a one-based slot.
 ///
-/// `on_self` is the game's `SELFACTIONBUTTON` flag **or its standing form, the
-/// `autoSelfCast` CVar** — see [`run_bindings`], which or-s the two together
-/// because `BindTarget`'s arm has one branch for both. It is passed straight to
-/// [`resolve_aim`], so holding Alt (or ticking the box) and pressing a heal with
-/// an enemy selected heals you, rather than being refused.
+/// `on_self` is the game's `SELFACTIONBUTTON` flag or its persistent form, the
+/// `autoSelfCast` CVar. [`run_bindings`] ors the two together because the
+/// 1.12.1 client treats them identically. It is passed to [`resolve_aim`], so
+/// holding Alt (or enabling the option) and pressing a heal with an enemy
+/// selected heals the caster instead of failing.
 #[allow(clippy::too_many_arguments)]
 fn use_action(
     slot: u8,
@@ -1924,14 +1905,14 @@ fn use_action(
     selection: &Selection,
     units: &Query<(&WorldEntity, &Transform)>,
     me: &WorldEntity,
-    // **The roster and the character's own reputation**, which are half of
-    // friend-or-foe and which the aiming rule cannot reach without — see
+    // The group roster and the character's reputation, which are half of the
+    // friend-or-foe decision and which the aiming rule needs; see
     // [`crate::interface::api::Friendship`]. Without them a spell aimed at a
-    // free-for-all player of your own faction binds them as a friend, which
-    // is the client refusing a cast the server would have allowed.
+    // free-for-all player of the same faction treats that player as a friend,
+    // and the client refuses a cast the server would have allowed.
     friendship: crate::interface::api::Friendship<'_>,
-    // …and the hour and the sky, which are the caster-state chain's own
-    // inputs — see [`crate::interface::api::CastWorld`].
+    // The time of day and the sky, which are inputs to the caster-state
+    // checks; see [`crate::interface::api::CastWorld`].
     world: crate::interface::api::CastWorld<'_>,
     here: &Transform,
     entity: Entity,
@@ -1948,31 +1929,31 @@ fn use_action(
         return;
     };
 
-    // **The auto-attack toggle, by the *kind* of slot rather than by the spell**
-    // — an item whose entry happens to be 6603 is not the Attack button. The
-    // same decision by spell id alone is in [`cast_known_spell`], which is where
-    // a slot holding no `SpellInfo` cannot reach.
+    // The auto-attack toggle is detected by the slot's kind as well as the id:
+    // an item whose entry happens to be 6603 is not the Attack button.
+    // [`cast_known_spell`] makes the same decision by spell id alone; a slot
+    // with no `SpellInfo` never reaches it.
     if action.is_auto_attack() {
         attack_target(active, selection, units, me, entity, sheathing);
         events.state.write(ActionbarUpdateState);
         return;
     }
-    // **An item is a use, not a cast** — and the whole of what this side owes it
-    // is the entry, because `SMSG_ACTION_BUTTONS` carries nothing else. Where
-    // that entry *is* is the inventory's question and the doing is the
-    // right-click's own body; see [`super::items::UseCarriedItem`], which is why
-    // this is one line rather than a second copy of the equip-or-use split.
+    // An item is used, not cast. This module only passes on the item entry,
+    // because `SMSG_ACTION_BUTTONS` carries nothing else. Finding the item is
+    // the inventory's job, and using it is the right-click path; see
+    // [`super::items::UseCarriedItem`]. That is why this is one line rather
+    // than a second copy of the equip-or-use decision.
     //
-    // Silent when the character is not carrying one, which is the reference's
-    // behaviour: `UseAction` finds nothing and returns, and the button is drawn
-    // without an icon in the first place.
+    // Nothing happens when the character is not carrying the item, as in the
+    // 1.12.1 client: `UseAction` finds nothing and returns, and the button has
+    // no icon in the first place.
     if action.kind == action_kind::ITEM {
         items.write(super::items::UseCarriedItem(action.action));
         return;
     }
     let Some(info) = action.spell.as_ref() else {
-        // A macro, or a spell `Spell.dbc` does not carry. Neither is implemented
-        // and neither should be sent blind.
+        // A macro, or a spell `Spell.dbc` does not carry. Neither is
+        // implemented, and neither should be sent without the checks.
         errors.key("SPELL_FAILED_SPELL_UNAVAILABLE");
         return;
     };
@@ -1982,23 +1963,23 @@ fn use_action(
     );
 }
 
-/// **Cast a spell this character knows**, from wherever it was reached.
+/// Cast a spell this character knows, from whichever path reached it.
 ///
-/// Split out of [`use_action`] when the spellbook panel arrived, because
-/// `CastSpell(id, bookType)` is a second door onto exactly this: the cooldown
-/// refusal, the aiming rule and the send are the same three steps, and the only
-/// thing that differs between a bar press and a spellbook click is how the
-/// [`SpellInfo`] was found. Two copies of the aiming call is two places for a
-/// self-buff to start shipping the selection — which is the failure
-/// [`resolve_aim`] exists to prevent and the one that reads as a server bug.
+/// Split out of [`use_action`] when the spellbook panel was added, because
+/// `CastSpell(id, bookType)` leads to the same three steps: the cooldown
+/// refusal, the aiming rule and the send. The only difference between a bar
+/// press and a spellbook click is how the [`SpellInfo`] was found. Two copies
+/// of the aiming call would be two places where a self-buff could start
+/// sending the selection, which is the failure [`resolve_aim`] exists to
+/// prevent and which looks like a server bug.
 ///
-/// ## The two the server answers with *silence*
+/// ## Two presses the server answers with no reply
 ///
-/// `SpellButton_OnClick` calls `CastSpell(id, bookType)` for **every** row it is
-/// pressed on — it has no passive test and no attack test of its own, so both
-/// belong here, on the C side, exactly as the real client has them. Getting that
-/// wrong is not a refusal a player can read, because
-/// `WorldSession::HandleCastSpellOpcode` **drops the packet without replying**:
+/// `SpellButton_OnClick` calls `CastSpell(id, bookType)` for every row pressed.
+/// It has no passive check and no attack check, so both belong here, on the C
+/// side, as in the 1.12.1 client. A mistake here produces no refusal the
+/// player can read, because `WorldSession::HandleCastSpellOpcode` drops the
+/// packet without replying:
 ///
 /// ```cpp
 /// if (!_player->HasActiveSpell(spellId) || spellInfo->IsPassiveSpell())
@@ -2009,28 +1990,28 @@ fn use_action(
 /// }
 /// ```
 ///
-/// So with this client's prediction on top (the cast is drawn at the press, see
-/// [`send_cast`]) the whole visible outcome of clicking a passive was **a cast
-/// animation followed by nothing at all**, with no error line and nothing in any
-/// log. 42 of this test character's 137 spells are passive.
+/// While this client drew the cast at the press (see [`send_cast`]), the only
+/// visible result of clicking a passive was a cast animation followed by
+/// nothing, with no error line and nothing in any log. 42 of this test
+/// character's 137 spells are passive.
 ///
-/// **And Attack is the same shape for a different reason.** Spell 6603 is not
-/// passive and *is* in the book, so it passes the branch above and the server
-/// tries to cast it — the client never sends it, because pressing Attack is a
-/// swing (`CMSG_ATTACKSWING`). [`use_action`] has always known that about the
-/// *bar*; the spellbook's General page carries the same pseudo-spell and had no
-/// such test, so clicking it there wound up, released and did nothing.
+/// Attack has the same result for a different reason. Spell 6603 is not
+/// passive and is in the book, so it passes the check above and the server
+/// tries to cast it. The 1.12.1 client never sends it, because pressing Attack
+/// is a swing (`CMSG_ATTACKSWING`). [`use_action`] has always handled this for
+/// the bar. The spellbook's General page carries the same pseudo-spell and had
+/// no such check, so clicking it there wound up, released and did nothing.
 ///
-/// ## …and the third door, which is a click
+/// ## The click from the targeting cursor
 ///
-/// `pointed` is what the player **pointed at** with the targeting cursor — a
-/// unit, or a patch of floor — and it stands in for the selection for this one
-/// press. It is `Some` only on the way back from [`SpellTargeting`], and it
-/// changes exactly two things: the candidate the aiming rule is offered, and
-/// what an unbindable answer means — the cursor has already been up once, so a
-/// second `WantsTarget` is the player pointing at something the spell cannot
-/// have and gets the client's own "Invalid target" rather than another round of
-/// asking.
+/// `pointed` is what the player pointed at with the targeting cursor (a unit,
+/// an item, a trade slot or a location), and it replaces the selection for
+/// this press. It is `Some` only when returning from [`SpellTargeting`], and it
+/// changes two things: the candidate offered to the aiming rule, and the
+/// meaning of an answer that cannot be bound. The cursor has already been
+/// shown once, so a second `WantsTarget` means the player pointed at something
+/// the spell cannot target, and the result is the client's "Invalid target"
+/// rather than another request.
 #[allow(clippy::too_many_arguments)]
 fn cast_known_spell(
     info: &SpellInfo,
@@ -2041,10 +2022,10 @@ fn cast_known_spell(
     selection: &Selection,
     units: &Query<(&WorldEntity, &Transform)>,
     me: &WorldEntity,
-    // …and the same pair [`use_action`] carries, for the same reason.
+    // The same pair [`use_action`] carries, for the same reason.
     friendship: crate::interface::api::Friendship<'_>,
-    // …and the hour and the sky, which are the caster-state chain's own
-    // inputs — see [`crate::interface::api::CastWorld`].
+    // The time of day and the sky, which are inputs to the caster-state
+    // checks; see [`crate::interface::api::CastWorld`].
     world: crate::interface::api::CastWorld<'_>,
     here: &Transform,
     entity: Entity,
@@ -2056,57 +2037,55 @@ fn cast_known_spell(
     events: &mut ActionEvents,
     sheathing: &mut MessageWriter<SheathRequest>,
 ) {
-    // **An auto-repeat pressed while it is already running is a *stop*, and
-    // that is the whole of what the button does the second time.** It goes
-    // before every check below — the cooldown, the aiming rule, the range —
-    // because none of them is a question about turning something off, and a
-    // hunter whose target has walked away would otherwise be told "out of
-    // range" instead of being allowed to stop shooting.
+    // Pressing an auto-repeat while it is running stops it; that is all the
+    // second press does. This check comes before every check below (cooldown,
+    // aiming rule, range) because none of them applies to turning something
+    // off, and a hunter whose target has moved away would otherwise get "out of
+    // range" instead of stopping.
     //
-    // **Nothing is cleared here**: `CMSG_CANCEL_AUTO_REPEAT_SPELL` is answered
-    // with `SMSG_CANCEL_AUTO_REPEAT`, and [`AutoRepeat::stop`] runs off *that*
-    // so the press and the four ends the client could not have predicted are
-    // one code path. See [`AutoRepeat`].
+    // Nothing is cleared here. The server answers
+    // `CMSG_CANCEL_AUTO_REPEAT_SPELL` with `SMSG_CANCEL_AUTO_REPEAT`, and
+    // [`AutoRepeat::stop`] runs on that, so the press and the four ends the
+    // client cannot predict share one code path. See [`AutoRepeat`].
     if info.is_auto_repeat_ranged() && auto_repeat.is(info.id) {
         active.live.cancel_auto_repeat();
         return;
     }
     match press_kind(info) {
-        // **Attack is a swing wherever it is pressed from** — see the doc
-        // comment above.
+        // Attack is a swing wherever it is pressed from; see the doc comment
+        // above.
         PressKind::Swing => {
             attack_target(active, selection, units, me, entity, sheathing);
             events.state.write(ActionbarUpdateState);
             return;
         }
-        // **Refused silently**, which is the reference's own behaviour rather
-        // than a shortcut: the real client draws a passive's button greyed and
-        // pressing it produces no message, no sound and no animation. There is
-        // no `GlobalStrings.lua` key for "that spell is passive" to print, and
-        // the server would not have sent one either — it drops the packet.
+        // Refused without a message, as in the 1.12.1 client: it draws a
+        // passive's button greyed, and pressing it produces no message, sound or
+        // animation. `GlobalStrings.lua` has no key for "that spell is passive",
+        // and the server would not send one either; it drops the packet.
         PressKind::Refused => return,
         PressKind::Cast => {}
     }
 
-    // **A press on top of a cast already running.** `Spell::prepare` opens with
+    // A press while a cast is already running. `Spell::prepare` starts with
     // `IsNonMeleeSpellCasted(false, true, true)` and answers
-    // `SPELL_FAILED_SPELL_IN_PROGRESS`, so the packet buys nothing.
+    // `SPELL_FAILED_SPELL_IN_PROGRESS`, so sending the packet achieves nothing.
     //
-    // **Repeating the spell that is already going out is dropped without a
-    // message**, and that half is a judgement rather than a reading: the server
-    // would answer with one, but "press the key again" is a player saying the
-    // same thing twice rather than asking for a second action, and a line of
-    // error text per keypress is not what the reference shows. A *different*
-    // spell gets the server's own words, because that is a genuinely refused
-    // action and the player is owed the reason.
+    // Repeating the spell that is already being cast is dropped without a
+    // message. This is a design choice, not observed behaviour: the server
+    // would answer with an error, but pressing the key again is the player
+    // repeating the same request, not asking for a second action, and the
+    // 1.12.1 client does not show an error line per keypress. A different spell
+    // gets the server's message, because that action really is refused and the
+    // player needs the reason.
     //
-    // **And "already running" now includes "already asked for"**, which is the
-    // half that closes the spam. Since a cast is no longer drawn until
-    // `SMSG_SPELL_START` arrives, the window between the packet leaving and the
-    // answer landing is one in which `in_progress` is false and every repeat
-    // press would put another `CMSG_CAST_SPELL` on the wire. The reference does
-    // send those and lets the server refuse each one; dropping the repeat here
-    // is the same outcome for the player, with one packet instead of ten.
+    // "Already running" includes "already sent and unanswered", which stops
+    // repeated sends. Because a cast is not drawn until `SMSG_SPELL_START`
+    // arrives, there is a window between sending and the answer in which
+    // `in_progress` is false, and every repeated press would send another
+    // `CMSG_CAST_SPELL`. The 1.12.1 client does send those and lets the server
+    // refuse each one; dropping the repeat here gives the player the same
+    // result with one packet instead of ten.
     if casting.pending == Some(info.id) {
         return;
     }
@@ -2118,7 +2097,7 @@ fn cast_known_spell(
     }
 
     // A press while the button is still recovering is refused locally, with the
-    // client's own message — which the server would otherwise send back as
+    // client's message. Otherwise the server would send
     // `SPELL_FAILED_NOT_READY` a round trip later.
     if !cooldowns.ready(info) {
         let key = vale_assets::tables::spellbook::failure_override("SPELL_FAILED_NOT_READY", 0)
@@ -2140,20 +2119,17 @@ fn cast_known_spell(
         unit_flags: unit.unit_flags,
         dead: unit.dead,
     };
-    // **What the aiming rule is offered**: the unit the player pointed at if
-    // there was one, and the selection otherwise. A click with the targeting
-    // cursor up does *not* change the selection (the reference does not either),
-    // so this is a substitution for the press rather than a write.
+    // The candidate offered to the aiming rule: the unit the player pointed at
+    // if there is one, otherwise the selection. A click with the targeting
+    // cursor up does not change the selection (it does not in the 1.12.1 client
+    // either), so this replaces the target for this press only and writes
+    // nothing.
     let selected = match pointed {
         Some(Pointed::Unit(unit)) => Some(unit),
-        // A *place* is not a candidate for the unit binder, and it must not
-        // suppress the selection either: the ground branch below runs before the
-        // selection is ever tried, so what this offers is only what the aiming
-        // rule would have seen on the original press.
-        // An item is not a candidate for the unit binder either, for the same
-        // reason a place is not: the item branch runs before the selection is
-        // ever tried, so what this offers is only what the aiming rule would
-        // have seen on the original press.
+        // A location, an item or a trade slot is not a candidate for the unit
+        // binder, and must not hide the selection either: the ground and item
+        // branches below run before the selection is tried, so this offers only
+        // what the aiming rule would have seen on the original press.
         Some(Pointed::Ground(_)) | Some(Pointed::Item(_)) | Some(Pointed::TradeSlot(_)) | None => {
             selection.entity
         }
@@ -2168,23 +2144,24 @@ fn cast_known_spell(
         dead: me.dead,
     });
 
-    // **`on_self` is the CVar or the binding** — see [`run_bindings`]. With
-    // neither, a friendly cast with an enemy selected is refused rather than
-    // redirected onto the caster, which is 1.12's own default (`autoSelfCast`
-    // registers as `"0"`).
-    // **The main hand, which the client picks rather than asking for.** See
-    // `CastAim::Item`: a spell carrying `SPELL_ATTR_HELD_ITEM_ONLY` binds the
-    // weapon itself and says "Your weapon hand is empty" when there is none.
+    // `on_self` is the CVar or the binding; see [`run_bindings`]. With neither,
+    // a friendly cast with an enemy selected is refused rather than redirected
+    // to the caster, which is 1.12's default (`autoSelfCast` registers as
+    // `"0"`).
+    //
+    // The client chooses the main-hand weapon itself rather than asking. See
+    // `CastAim::Item`: a spell with `SPELL_ATTR_HELD_ITEM_ONLY` targets the
+    // weapon and fails with "Your weapon hand is empty" when there is none.
     let aim = resolve_aim(info, selected, myself, on_self, me.main_hand_item);
     let target = match aim {
         CastAim::SelfImplicit => CastTarget::SelfImplicit,
         CastAim::Unit(guid) => CastTarget::Unit(guid),
-        // **Nothing bound, and the client asks rather than complains.** This is
-        // the whole of "a heal pressed with nothing selected": the reference
-        // puts up the targeting cursor and waits for a click, and printing "No
-        // target" instead was the report. See [`SpellTargeting`] — the cursor
-        // is put away and the answer becomes a refusal once the player has
-        // already been asked, which is what `aim_at` says.
+        // Nothing bound, so the client asks instead of failing. This handles a
+        // heal pressed with nothing selected: the 1.12.1 client shows the
+        // targeting cursor and waits for a click, and this client printing "No
+        // target" instead was the reported bug. See [`SpellTargeting`]. Once the
+        // player has already been asked, the cursor is put away and the answer
+        // becomes a refusal, as `aim_at` describes.
         CastAim::WantsTarget if pointed.is_none() => {
             targeting.begin(info.id, Asking::Unit);
             return;
@@ -2195,12 +2172,11 @@ fn cast_known_spell(
             events.cast_failed.write(SpellcastFailed);
             return;
         }
-        // **…and the same question about a place.** The answer is three floats
-        // and no guid — see [`CastTarget::Dest`], and note that a *unit* pointed
-        // at a placed spell is not an answer at all: `SpellTargetUnit` through a
-        // unit frame reaches here with `Pointed::Unit`, and the honest response
-        // is to keep asking rather than to send a cast the server would put at
-        // the caster's feet.
+        // The same question about a location. The answer is three floats and no
+        // guid; see [`CastTarget::Dest`]. A unit is not a valid answer for a
+        // placed spell: `SpellTargetUnit` through a unit frame arrives here as
+        // `Pointed::Unit`, and the correct response is to keep asking rather
+        // than send a cast the server would place at the caster's feet.
         CastAim::WantsGround => match pointed {
             Some(Pointed::Ground(at)) => CastTarget::Dest(at),
             _ => {
@@ -2208,22 +2184,19 @@ fn cast_known_spell(
                 return;
             }
         },
-        // **`TARGET_FLAG_ITEM` and the weapon's own guid**, with no cursor: the
-        // reference picks the main hand itself for every spell carrying the
-        // held-item bit, which is Rockbiter, Windfury, the poisons and the
-        // sharpening stones. It was this branch's absence that made all of
-        // them "Invalid target" — the word fell past `UNIT_FAMILY` into the
-        // local refusal.
+        // `TARGET_FLAG_ITEM` with the weapon's guid, and no cursor. The 1.12.1
+        // client chooses the main hand itself for every spell with the held-item
+        // bit: Rockbiter, Windfury, the poisons and the sharpening stones.
+        // Before this branch existed, all of them failed with "Invalid target",
+        // because the target word fell past `UNIT_FAMILY` into the local
+        // refusal.
         CastAim::Item(guid) => CastTarget::Item(guid),
-        // …and the residue: an enchanting formula, which 1.12 aims by clicking
-        // a bag slot. There is no item cursor here yet, so it takes the unit
-        // cursor's second-press behaviour — asked once, refused after — rather
-        // than pretending to send something.
-        // …and the residue, which is an enchanting formula, a poison or a
-        // sharpening stone: 1.12 aims those by clicking a bag square, and the
-        // answer comes back through [`SpellItemPicked`]. Same three-way shape
-        // as the unit cursor — ask once, and refuse the second time, which is
-        // the player pointing at something the spell cannot have.
+        // The remaining case: an enchanting formula, a poison or a sharpening
+        // stone, which 1.12 aims by clicking a bag slot (or the trade window's
+        // enchant slot). The answer comes back through [`SpellItemPicked`]. Same
+        // structure as the unit cursor: ask once, and refuse the second time,
+        // because that means the player pointed at something the spell cannot
+        // target.
         CastAim::WantsItem => match pointed {
             Some(Pointed::Item(guid)) => CastTarget::Item(guid),
             Some(Pointed::TradeSlot(slot)) => CastTarget::TradeSlot(slot),
@@ -2238,7 +2211,7 @@ fn cast_known_spell(
                 return;
             }
         },
-        // Refused before it reaches the socket, with the client's own message.
+        // Refused before it reaches the socket, with the client's message.
         CastAim::Refused(key) => {
             targeting.stop();
             errors.key(key);
@@ -2246,40 +2219,39 @@ fn cast_known_spell(
             return;
         }
     };
-    // Whatever the cursor was holding is spent: the press that got here is the
-    // one it was waiting for, or a fresh press that outranks it.
+    // The cursor's spell is used up: the press that reached this point is
+    // either the answer it was waiting for or a new press that replaces it.
     targeting.stop();
 
-    // **…and the conditions the aiming rule does not cover**: am I alive, can I
-    // pay for it, is that unit within reach. See
-    // [`vale_assets::tables::spellbook::check_cast`], which is the rule; what is here
-    // is only the measuring, and the one measurement worth reading twice is the
-    // distance — **surface to surface**, because that is what the server's own
-    // range check is written against.
+    // The conditions the aiming rule does not cover: whether the caster is
+    // alive, can pay the cost, and is within range of the unit. See
+    // [`vale_assets::tables::spellbook::check_cast`], which holds the rule; this
+    // code only measures. The distance is measured surface to surface, because
+    // the server's range check uses that measurement.
     let distance = match target {
         CastTarget::Unit(guid) if guid != me.guid => reach_between(units, me, here, guid),
-        // **A placed cast measures to the point, centre to point** — vmangos'
+        // A placed cast measures from the caster's centre to the point. vmangos'
         // `CheckRange` ends in a plain `IsWithinDist3d` against the destination
-        // with no reach subtracted at either end, which is a different
-        // measurement from the unit branch above and not a special case of it.
+        // with no reach subtracted at either end. This is a different
+        // measurement from the unit branch above, not a special case of it.
         CastTarget::Dest(at) => {
             Some(here.translation.distance(crate::render::axes::to_bevy(at)))
         }
         _ => None,
     };
-    // **…and whether whoever it bound is alive**, which is the one condition the
-    // aiming rule cannot answer: `unsatisfied` tests relations, and a corpse is
-    // still hostile. Read off the same two candidates the binder was handed, so
-    // the state judged here is the state it bound. A guid that is neither — which
-    // nothing can currently produce — asks nothing, which errs towards sending.
+    // Whether the bound unit is alive, the one condition the aiming rule cannot
+    // answer: `unsatisfied` tests relations, and a corpse is still hostile. Read
+    // from the same two candidates the binder was given, so the state checked
+    // here is the state it bound. A guid that matches neither (nothing can
+    // currently produce one) checks nothing, which favours sending.
     let target_dead = match target {
         CastTarget::Unit(guid) if guid == me.guid => Some(me.dead),
         CastTarget::Unit(guid) => selected.filter(|who| who.guid == guid).map(|who| who.dead),
         _ => None,
     };
-    // **The caster's half is one function for both doors** — see
-    // [`super::api::caster_conditions`], which is where the item door
-    // and this one were made to agree.
+    // The caster checks are one function for both paths; see
+    // [`super::api::caster_conditions`], where the item path and this one were
+    // made consistent.
     let conditions = super::api::caster_conditions(me, info, distance, target_dead, world);
     if let Some(key) = vale_assets::tables::spellbook::check_cast(info, &conditions) {
         let key = vale_assets::tables::spellbook::failure_override(key, info.power_type).unwrap_or(key);
@@ -2288,29 +2260,26 @@ fn cast_known_spell(
         return;
     }
 
-    // **A next-swing spell is queued, not cast** — the packet goes and the
-    // animation does not, because the swing that discharges it has not happened
-    // yet. See [`LiveSession::cast_on_next_swing`].
+    // A next-swing spell is queued, not cast: the packet is sent and no
+    // animation plays, because the swing that releases it has not happened yet.
+    // See [`LiveSession::cast_on_next_swing`].
     if info.on_next_swing() {
-        // **Pressing the armed ability again is dropped**, which is the same
-        // judgement the `in_progress` block above makes one screen up and the
-        // same reason: the player is saying the same thing twice rather than
-        // asking for a second action. It is also the one ordering this state
-        // cannot survive without — vmangos' `SetCurrentCastedSpell` interrupts
-        // the queued spell before it accepts the new one, so a second press
-        // sends `SPELL_FAILED_INTERRUPTED` *for the same spell id* and the
-        // clear below would put the border out on an ability that is still
-        // armed.
+        // Pressing the armed ability again is dropped, for the same reason as
+        // the `in_progress` check above: the player is repeating the request,
+        // not asking for a second action. This state also depends on it:
+        // vmangos' `SetCurrentCastedSpell` interrupts the queued spell before it
+        // accepts the new one, so a second press sends
+        // `SPELL_FAILED_INTERRUPTED` for the same spell id, and the clear would
+        // turn off the border of an ability that is still armed.
         if casting.next_swing == Some(info.id) {
             return;
         }
         active.live.cast(info.id, target);
-        // **Armed at the press, and this one really is the client's** — unlike
-        // the cast bar, which now waits for `SMSG_SPELL_START`. The client sets
-        // `CURRENT_MELEE_SPELL` inside the send, just before the packet goes,
-        // and there is no packet that would say so afterwards: the
-        // server's next word about it is the `SMSG_SPELL_GO` when the weapon
-        // lands, which is what empties it.
+        // Armed at the press. This state belongs to the client, unlike the cast
+        // bar, which waits for `SMSG_SPELL_START`. The 1.12.1 client marks the
+        // ability as queued when it sends the packet, and no packet reports it
+        // afterwards: the server's next message about it is the `SMSG_SPELL_GO`
+        // when the weapon lands, which clears it.
         casting.next_swing = Some(info.id);
         cooldowns.start_gcd(info);
         events.cooldown_moved();
@@ -2318,15 +2287,14 @@ fn cast_known_spell(
         return;
     }
 
-    // **A ranged ability comes out of the ranged slot, so the bow comes out
-    // with it.** The same explicit request the melee attack makes in
-    // [`attack_target`] and for the same reason: the per-animation reconcile
-    // would get there eventually off the shot's own `AnimationData` flags, but
-    // only *after* a shot has been drawn — and it never draws a ranged weapon
-    // at all, because `vale_assets::look::sheath::reconcile` has no branch that
-    // answers `RANGED`. Its ranged exemption is written against a state only a
-    // request can put the unit in, which until now nothing did: this client had
-    // the whole ranged half of that policy and no way to reach it.
+    // A ranged ability uses the ranged slot, so the bow is drawn with it. This
+    // is the same explicit request [`attack_target`] makes for melee, for the
+    // same reason. The per-animation reconcile would draw it eventually from the
+    // shot's `AnimationData` flags, but only after a shot had been drawn, and it
+    // never draws a ranged weapon, because `vale_assets::look::sheath::reconcile`
+    // has no case that returns `RANGED`. Its ranged exemption applies to a state
+    // only a request can set, and before this nothing made that request, so the
+    // ranged half of the policy was unreachable.
     if info.uses_ranged_slot() {
         sheathing.write(SheathRequest {
             entity,
@@ -2334,13 +2302,12 @@ fn cast_known_spell(
         });
     }
 
-    // **An auto-repeat's press fires nothing**, which is now what every press
-    // does and used to be this one's exception. `Spell::update`'s `PREPARING`
-    // arm refuses to `cast()` an auto-repeat when its timer runs out, so the
-    // first arrow leaves on the *ranged attack timer* — a clock this client does
-    // not own and cannot guess — and every one after it is a fresh triggered
-    // cast. What is local is only that the loop is *running*, which nothing on
-    // the wire ever says.
+    // An auto-repeat's press fires nothing. This is now true of every press;
+    // it used to be the exception. `Spell::update`'s `PREPARING` arm does not
+    // `cast()` an auto-repeat when its timer runs out, so the first arrow leaves
+    // on the ranged attack timer, which this client does not own and cannot
+    // predict, and every later arrow is a new triggered cast. The only local
+    // state is that the loop is running, which no packet reports.
     if info.is_auto_repeat_ranged() {
         active.live.cast(info.id, target);
         auto_repeat.begin(info.id, events);
@@ -2349,13 +2316,12 @@ fn cast_known_spell(
     send_cast(active, info, target, cooldowns, casting, events);
 }
 
-/// **How far apart two units are, less both their bulk** — vmangos'
-/// `GetCombatDistance`, which is the distance `Spell::CheckRange` is written
-/// against.
+/// The distance between two units minus both their combat reach: vmangos'
+/// `GetCombatDistance`, the distance `Spell::CheckRange` uses.
 ///
-/// `None` when either unit has no `Transform` this frame, which is a unit that
-/// has not been placed yet: a missing measurement must read as "do not refuse"
-/// rather than as zero or infinity.
+/// `None` when either unit has no `Transform` this frame, which means it has
+/// not been placed yet. A missing measurement must mean "do not refuse", not
+/// zero or infinity.
 fn reach_between(
     units: &Query<(&WorldEntity, &Transform)>,
     me: &WorldEntity,
@@ -2367,22 +2333,22 @@ fn reach_between(
     Some((centres - me.combat_reach - other.combat_reach).max(0.0))
 }
 
-/// **What pressing a spell this character knows actually does**, before a
-/// cooldown, an aiming rule or a socket is involved.
+/// What pressing a known spell does, before any cooldown, aiming rule or
+/// socket is involved.
 ///
-/// Three answers rather than two, because the two that are not a cast are
-/// nothing alike: one is a different *verb* and one is nothing at all. Named
-/// and tested rather than written as two `if`s inside [`cast_known_spell`],
-/// because it is the whole of what this round's first two reports were — and
-/// because both failures are silent at the server, so nothing downstream would
-/// ever have said which branch was taken.
+/// Three outcomes rather than two, because the two that are not casts are
+/// unrelated: one is a different verb, and the other does nothing. Named and
+/// tested rather than written as two `if`s in [`cast_known_spell`], because
+/// these two cases were the first two bug reports in this area, and because the
+/// server gives no reply for either, so nothing downstream would show which
+/// branch was taken.
 #[derive(Debug, PartialEq, Eq)]
 enum PressKind {
     /// The auto-attack pseudo-spell: `CMSG_ATTACKSWING`, not `CMSG_CAST_SPELL`.
     Swing,
     /// A passive. The server drops the packet without replying
     /// (`HandleCastSpellOpcode`'s `IsPassiveSpell()` branch), so a client that
-    /// sends one draws a cast with nothing at the end of it.
+    /// sends one shows a cast that never completes.
     Refused,
     Cast,
 }
@@ -2397,22 +2363,22 @@ fn press_kind(info: &SpellInfo) -> PressKind {
     }
 }
 
-/// **Ask for the cast, start the global cooldown, and draw nothing.**
+/// Send the cast request, start the global cooldown, and draw nothing.
 ///
-/// The three halves of a press in 5875, and the third is the one this client
-/// used to get wrong. The press path runs its local refusals, writes the spell
-/// and its targets into a pending record, starts the global cooldown from
-/// inside the send itself, and puts the packet on the wire. It starts no bar,
-/// plays no wind-up and moves no counter: `SPELLCAST_START` is raised in one
-/// place in the whole client and that place is `SMSG_SPELL_START`'s handler.
+/// These are the three parts of a press in build 5875; this client used to get
+/// the third wrong. The 1.12.1 client runs its local refusals, records the
+/// spell and its targets as pending, starts the global cooldown as the cast is
+/// sent, and sends the packet. It starts no bar, plays no wind-up and changes
+/// no counter: it raises `SPELLCAST_START` only on receiving
+/// `SMSG_SPELL_START`.
 ///
-/// **The global cooldown really is the client's**, which is the half that stays
-/// local — and both sides say so. The client's starter reads `Spell.dbc`'s own
-/// `StartRecoveryTime`, applies `SPELLMOD_GLOBAL_COOLDOWN` (21) and raises
-/// `SPELL_UPDATE_COOLDOWN`; vmangos' `Spell::prepare` writes
-/// `// add gcd server side (client side is handled by client itself)`. So the
-/// swirl starts under the finger while everything else waits, which is the
-/// reference's feel exactly.
+/// The global cooldown belongs to the client, and both sides confirm it. The
+/// 1.12.1 client takes its length from `Spell.dbc`'s `StartRecoveryTime`,
+/// applies `SPELLMOD_GLOBAL_COOLDOWN` (21) and raises `SPELL_UPDATE_COOLDOWN`;
+/// vmangos' `Spell::prepare` comments
+/// `// add gcd server side (client side is handled by client itself)`. The
+/// cooldown animation therefore starts at the press while everything else
+/// waits, as in the 1.12.1 client.
 fn send_cast(
     active: &ActiveSession,
     info: &SpellInfo,
@@ -2428,19 +2394,18 @@ fn send_cast(
     events.cooldown_moved();
 }
 
-/// `AttackTarget()` — swing at the selection, or acquire something to swing at.
+/// `AttackTarget()`: swing at the selection, or find a unit to swing at.
 ///
-/// **A swing with no target picks one.** That is the client's own behaviour
-/// and without it the attack key does nothing at all in exactly the situation a player presses it hardest — a fight
-/// that started behind them.
+/// A swing with no target picks one. The 1.12.1 client does this, and without
+/// it the attack key does nothing in the situation where a player most needs
+/// it: a fight that started behind them.
 ///
-/// **And starting an attack draws the weapon.** That is the client's, not the
-/// server's — vmangos' `HandleAttackSwingOpcode` never touches the sheath state
-/// — and it is why this client punched everything in the game while wearing a
-/// sword. The reconcile in `world::entities::sheath` would get there too, off
-/// the swing's own `AnimationData` flags, but only on the first swing the server
-/// reports: the explicit draw is what makes the weapon appear on the *press*,
-/// with no round trip.
+/// Starting an attack also draws the weapon. The client does this, not the
+/// server: vmangos' `HandleAttackSwingOpcode` never changes the sheath state.
+/// Without it this client fought unarmed while wearing a sword. The reconcile
+/// in `world::entities::sheath` would also draw it, from the swing's
+/// `AnimationData` flags, but only on the first swing the server reports; the
+/// explicit draw shows the weapon at the press, with no round trip.
 fn attack_target(
     active: &ActiveSession,
     selection: &Selection,
@@ -2457,11 +2422,10 @@ fn attack_target(
         });
     };
     if let Some(guid) = selection.guid {
-        // Already swinging at this unit: the press is a toggle off, which is
-        // what the real client's Attack button does. **The weapon stays out** —
-        // there is no stow branch in the client's policy at all, and a fighter
-        // who breaks off mid-fight standing there with empty hands would be the
-        // wrong half of this fix.
+        // Already swinging at this unit: the press turns the attack off, as the
+        // 1.12.1 client's Attack button does. The weapon stays drawn, because
+        // stopping an attack does not stow it; a fighter who stopped attacking
+        // mid-fight would otherwise stand with empty hands.
         if active.live.attacking() == Some(guid) {
             active.live.attack(None);
         } else {
@@ -2469,9 +2433,9 @@ fn attack_target(
         }
         return;
     }
-    // Nothing selected: whoever is attacking us, which is the case this exists
-    // for. The full nearest-enemy acquire belongs with Tab's scan and is not
-    // duplicated here.
+    // Nothing selected: swing at whatever is attacking this character, which
+    // is the case this exists for. The full nearest-enemy search belongs to
+    // Tab's scan and is not duplicated here.
     if let Some((attacker, _)) = units
         .iter()
         .find(|(unit, _)| !unit.is_self && unit.target == Some(me.guid))
@@ -2484,18 +2448,18 @@ fn attack_target(
 mod tests {
     use super::*;
 
-    /// **A cooldown moving says so under both of the game's names.**
+    /// A cooldown change is announced under both of the game's event names.
     ///
-    /// The bug this pins had every check reporting success:
+    /// The bug this test covers passed every other check:
     /// `SPELL_UPDATE_COOLDOWN` is in [`super::super::events::FIRED`], so
-    /// `vale framexml` counted it answered and `--audit --events` fired it at
-    /// the twelve spell buttons and watched their handlers run. Nothing in the
-    /// *game* ever wrote it, so the swirls in the spellbook only moved when the
-    /// panel was rebuilt for some other reason.
+    /// `vale framexml` counted it as handled, and `--audit --events` fired it at
+    /// the twelve spell buttons and saw their handlers run. Nothing in the game
+    /// wrote it, so the spellbook's cooldown animations moved only when the
+    /// panel was rebuilt for another reason.
     ///
-    /// Written through the one method both go out of, so the assertion is that
-    /// the pair cannot come apart rather than that six particular call sites
-    /// each have two lines.
+    /// The test calls the one method both events go through, so it asserts
+    /// that the pair cannot be separated, not that six call sites each have two
+    /// lines.
     #[test]
     fn a_cooldown_moving_raises_both_of_the_names_it_has() {
         fn moved(mut events: ActionEvents) {
@@ -2524,22 +2488,20 @@ mod tests {
         );
     }
 
-    /// **A refused press puts the volley back out**, and a refusal about
-    /// anything else leaves it alone.
+    /// A refused press turns the auto-repeat off, and a refusal for another
+    /// spell leaves it running.
     ///
-    /// This is the "Auto Shot lights up when nothing is being attacked" report.
-    /// The press arms the loop locally because nothing on the wire ever says it
-    /// started; the server then refuses the cast and — crucially — sends **no**
-    /// `SMSG_CANCEL_AUTO_REPEAT`, because `SpellCaster::InterruptSpell` only
-    /// sends one for a spell it actually installed and `Spell::prepare` never
-    /// installed this one. So `SMSG_CAST_FAILED` is the only statement that will
-    /// ever be made about it.
+    /// This covers the "Auto Shot lights up when nothing is being attacked"
+    /// report. The press starts the loop locally because no packet says it
+    /// started. The server then refuses the cast and sends no
+    /// `SMSG_CANCEL_AUTO_REPEAT`, because `SpellCaster::InterruptSpell` sends
+    /// one only for a spell it installed, and `Spell::prepare` never installed
+    /// this one. `SMSG_CAST_FAILED` is the only notice about it.
     ///
-    /// The second half of the assertion is the half that could have been got
-    /// wrong by clearing unconditionally: a running volley survives casting
-    /// other spells through it (that is what `SetCurrentCastedSpell`'s
-    /// `Category == 351` test is for), so a Frostbolt that runs out of mana
-    /// must not stop the arrows.
+    /// The second assertion catches an unconditional clear: a running loop
+    /// survives other casts (that is what `SetCurrentCastedSpell`'s
+    /// `Category == 351` test is for), so a Frostbolt that fails for lack of
+    /// mana must not stop the arrows.
     #[test]
     fn a_refused_press_puts_the_volley_back_out() {
         #[derive(Resource, Default)]
@@ -2576,21 +2538,19 @@ mod tests {
         );
     }
 
-    /// **The volley's two edges are announced once each**, and a repeat of
-    /// either says nothing.
+    /// Each of the loop's two edges is announced once, and a repeat of either
+    /// announces nothing.
     ///
-    /// Both matter and for different reasons. `START_AUTOREPEAT_SPELL` arms a
-    /// *flash clock* in `ActionButton_OnEvent`, so re-arming it on a press that
+    /// Both matter, for different reasons. `START_AUTOREPEAT_SPELL` starts a
+    /// flash clock in `ActionButton_OnEvent`, so restarting it on a press that
     /// changed nothing leaves the button lit or dark depending on how the two
-    /// clocks line up; and `STOP_AUTOREPEAT_SPELL` is answered by
-    /// `ActionButton_StopFlash()`, which for a bar with no auto-repeat on it at
-    /// all would stop the *melee* attack's flash — a different animation with a
-    /// different owner.
+    /// clocks line up. `STOP_AUTOREPEAT_SPELL` is answered by
+    /// `ActionButton_StopFlash()`, which on a bar with no auto-repeat would stop
+    /// the melee attack's flash, a different animation with a different owner.
     ///
-    /// The stop arriving from the wire rather than from the press is the shape
-    /// worth pinning: `SMSG_CANCEL_AUTO_REPEAT` is the only statement either
-    /// end of the loop makes, and the target dying is not something the client
-    /// could have predicted.
+    /// The test has the stop arrive from the server rather than from the
+    /// press: `SMSG_CANCEL_AUTO_REPEAT` is the only notice of either end of the
+    /// loop, and the client cannot predict the target dying.
     #[test]
     fn a_volley_announces_each_of_its_two_ends_once() {
         #[derive(Resource, Default)]
@@ -2624,8 +2584,8 @@ mod tests {
             .len();
         assert_eq!((starts, stops), (1, 1));
         assert!(world.resource::<AutoRepeat>().spell.is_none());
-        // …and the checked border is re-read on each *real* edge and no others:
-        // `ActionButton_UpdateState` asks `IsCurrentAction or IsAutoRepeatAction`
+        // The checked border is re-read on each real edge and on no other:
+        // `ActionButton_UpdateState` asks `IsCurrentAction or IsAutoRepeatAction`,
         // and nothing else re-runs it.
         assert_eq!(
             world
@@ -2635,12 +2595,11 @@ mod tests {
         );
     }
 
-    /// **`IsAutoRepeatAction` is asked of the slot's spell, not of its id.**
+    /// `IsAutoRepeatAction` checks the slot's kind as well as its id.
     ///
-    /// An item slot whose *entry* happens to equal the running spell's id is
-    /// not the auto-repeat button, and the whole point of asking per button is
-    /// that twelve of them answer for themselves — the two events carry
-    /// nothing.
+    /// An item slot whose entry equals the running spell's id is not the
+    /// auto-repeat button. Each of the twelve buttons answers for itself,
+    /// because the two events carry no slot.
     #[test]
     fn only_the_slot_holding_the_repeating_spell_answers() {
         let mut bar = ActionBar { slots: vec![None; BAR_SLOTS], ..ActionBar::default() };
@@ -2668,9 +2627,8 @@ mod tests {
         }
     }
 
-    /// **One cast's global cooldown gates every other button**, which is the
-    /// whole reason a cooldown read resolves against every record rather than
-    /// this spell's own.
+    /// One cast's global cooldown blocks every other button. This is why a
+    /// cooldown read checks every record rather than only this spell's.
     #[test]
     fn a_global_cooldown_spreads_across_the_bar() {
         let mut cooldowns = Cooldowns::default();
@@ -2685,17 +2643,17 @@ mod tests {
             "a spell sharing the GCD category is not ready either"
         );
 
-        // A spell off the global cooldown is unaffected — the shape that lets an
-        // instant ability be used inside one.
+        // A spell off the global cooldown is unaffected, which lets an instant
+        // ability be used during one.
         let mut off_gcd = spell(1766, 0, 0);
         off_gcd.gcd_category = 0;
         assert!(cooldowns.ready(&off_gcd));
     }
 
-    /// **A refused cast clears the global cooldown and nothing else.** It never
-    /// reached its `SMSG_SPELL_GO`, so there is no recovery to clear — and
-    /// leaving the GCD standing locks the whole bar for a second and a half on a
-    /// cast that never happened.
+    /// A refused cast clears the global cooldown and nothing else. It never
+    /// reached its `SMSG_SPELL_GO`, so it has no recovery to clear, and leaving
+    /// the GCD in place would lock the whole bar for 1.5 seconds after a cast
+    /// that never happened.
     #[test]
     fn a_refused_cast_gives_the_bar_back() {
         let mut cooldowns = Cooldowns::default();
@@ -2705,12 +2663,13 @@ mod tests {
         assert!(cooldowns.ready(&fireball));
     }
 
-    /// **An item's own cooldown is its spell's, and the server writes it.**
+    /// An item's cooldown is recorded under its spell, and the server writes
+    /// it.
     ///
-    /// `SMSG_SPELL_COOLDOWN` names the item's `ON_USE` spell and nothing about
-    /// the item, so the record the bag frame's swirl reads is the one
-    /// [`Cooldowns::set`] already files — which is why `GetContainerItemCooldown`
-    /// needed a read and not a second timer.
+    /// `SMSG_SPELL_COOLDOWN` names the item's `ON_USE` spell and not the item,
+    /// so the bag frame's cooldown animation reads the record
+    /// [`Cooldowns::set`] already stores. That is why
+    /// `GetContainerItemCooldown` needed only a read and not a second timer.
     #[test]
     fn an_items_cooldown_is_recorded_under_its_own_spell() {
         let mut cooldowns = Cooldowns::default();
@@ -2720,43 +2679,43 @@ mod tests {
         let (remaining, duration) = cooldowns.remaining(&potion).expect("on cooldown");
         assert!(remaining > 59.0, "{remaining}");
         assert!((duration - 60.0).abs() < 0.01, "{duration}");
-        // …and it is *that spell's* record, not a global one: a different
-        // item's spell is unaffected.
+        // It is that spell's record, not a global one: a different item's
+        // spell is unaffected.
         assert!(cooldowns.ready(&spell(439, 0, 0)));
     }
 
-    /// **A right-click that casts starts the global cooldown at the press, and
-    /// the bar only when the server says so** — see [`begin_item_cast`].
+    /// An item use that casts starts the global cooldown at the press, and the
+    /// bar only when the server confirms the cast. See [`begin_item_cast`].
     #[test]
     fn using_an_item_starts_the_global_cooldown_and_waits_for_the_bar() {
         let mut cooldowns = Cooldowns::default();
         let mut casting = Casting::default();
-        // First Aid's own: an eight-second cast with a global cooldown.
+        // A First Aid spell: an eight-second cast with a global cooldown.
         let mut bandage = spell(746, 1500, 0);
         bandage.cast_time_ms = 8000;
-        // The message writers are not needed for the two pieces of state, which
-        // is the half a test can see with no app: the bar's own record and the
-        // cooldown.
+        // The message writers are not needed to check the two pieces of state a
+        // test can see without an app: the bar's record and the cooldown.
         cooldowns.start_gcd(&bandage);
         assert!(!cooldowns.ready(&bandage), "the global cooldown runs at the press");
         assert!(casting.started.is_none(), "and nothing is on the bar yet");
 
-        // …and the bar arrives with `SMSG_SPELL_START`, at the length the
-        // *server* states rather than the file's.
+        // The bar appears with `SMSG_SPELL_START`, at the length the server
+        // states rather than the file's.
         casting.begin(746, "Linen Bandage".into(), 7000);
         assert_eq!(casting.spell_id, 746);
         assert!(casting.started.is_some(), "an eight-second cast has a bar");
         assert!(casting.progress().is_some_and(|p| p < 0.01));
         assert_eq!(casting.duration.as_millis(), 7000);
 
-        // …and an *instant* — a potion — puts no bar up at all, even though the
-        // packet arrives for one.
+        // An instant, such as a potion, puts up no bar, even though the packet
+        // arrives for it.
         casting.begin(2024, "Healing Potion".into(), 0);
         assert!(casting.started.is_none(), "an instant has no wind-up");
     }
 
     /// The spell's own recovery is a different timer from the GCD and outlives
-    /// it: a 30-second cooldown is still running when the bar is free again.
+    /// it: Fire Blast's 8-second cooldown is still running when the bar is free
+    /// again.
     #[test]
     fn a_spells_own_recovery_outlives_the_global_cooldown() {
         let mut cooldowns = Cooldowns::default();
@@ -2765,7 +2724,7 @@ mod tests {
         let (remaining, duration) = cooldowns.remaining(&fire_blast).expect("recovering");
         assert!(remaining > 7.0, "{remaining}");
         assert!((duration - 8.0).abs() < 0.01, "{duration}");
-        // …and it does not gate a different spell, only its own button.
+        // It does not block a different spell, only its own button.
         assert!(cooldowns.ready(&spell(133, 1500, 0)));
     }
 
@@ -2797,9 +2756,9 @@ mod tests {
         assert!(remaining > 4.0, "{remaining}");
     }
 
-    /// **Attack is spell 6603 and it is not a cast.** Sending it through
-    /// `CMSG_CAST_SPELL` is refused by the server's own "which he shouldn't
-    /// have" branch, so the distinction has to be made before the send.
+    /// Attack is spell 6603, and it is not a cast. The server refuses it
+    /// through `CMSG_CAST_SPELL` in its "which he shouldn't have" branch, so the
+    /// distinction must be made before sending.
     #[test]
     fn the_attack_pseudo_spell_is_recognised() {
         let attack = Slot {
@@ -2814,7 +2773,7 @@ mod tests {
             spell: None,
         };
         assert!(!fireball.is_auto_attack());
-        // An *item* whose entry happens to equal 6603 is not the attack toggle.
+        // An item whose entry happens to equal 6603 is not the attack toggle.
         let item = Slot {
             action: SPELL_ATTACK,
             kind: action_kind::ITEM,
@@ -2823,24 +2782,24 @@ mod tests {
         assert!(!item.is_auto_attack());
     }
 
-    /// **The two presses that are not a cast**, and the reason both had to be
-    /// decided here rather than left to the server.
+    /// The two presses that are not casts, and why both are decided here
+    /// rather than by the server.
     ///
-    /// `SpellButton_OnClick` calls `CastSpell(id, bookType)` on **every** row it
-    /// is pressed on — it has no passive test of its own and no attack test —
-    /// so the spellbook's General page hands this client spell 6603 and its 42
-    /// passives (on the test warrior; 4,929 in the game) along with everything
-    /// castable. `HandleCastSpellOpcode` then *drops the packet without
-    /// replying*, so with this client's cast drawn at the press the whole
-    /// visible outcome was a wind-up, a release and nothing at all.
+    /// `SpellButton_OnClick` calls `CastSpell(id, bookType)` on every row
+    /// pressed; it has no passive check and no attack check. The spellbook's
+    /// General page therefore passes this client spell 6603 and its 42 passives
+    /// (on the test warrior; 4,929 in the game) along with every castable
+    /// spell. `HandleCastSpellOpcode` drops the packet without replying, so
+    /// while this client drew the cast at the press, the only visible result
+    /// was a wind-up, a release and nothing else.
     #[test]
     fn attack_is_a_swing_and_a_passive_is_refused_before_the_socket() {
         let mut attack = spell(SPELL_ATTACK, 0, 0);
-        // Attack is **not** passive and **is** in the book, so nothing else here
-        // would have caught it — the id is the whole of the rule.
+        // Attack is not passive and is in the book, so nothing else here would
+        // catch it; the id is the entire rule.
         assert!(!attack.is_passive());
         assert_eq!(press_kind(&attack), PressKind::Swing);
-        // …and it stays a swing whatever else the row says.
+        // It stays a swing whatever else the row says.
         attack.cast_time_ms = 1500;
         assert_eq!(press_kind(&attack), PressKind::Swing);
 
@@ -2867,12 +2826,12 @@ mod tests {
         assert_eq!(casting.progress(), None);
     }
 
-    /// **Only a bar that was running raises a stop**, which is the symmetric
-    /// half of `send_cast`'s rule that an instant raises no start.
+    /// Only a bar that was running raises a stop. This mirrors `send_cast`'s
+    /// rule that an instant raises no start.
     ///
-    /// `CastingBarFrame_OnEvent`'s stop branch acts on whatever is *shown*, so
-    /// a stop for a cast that never had a bar colours and fades whatever else
-    /// is up there — which for a channel is the bar that has just appeared.
+    /// `CastingBarFrame_OnEvent`'s stop branch acts on whatever bar is shown,
+    /// so a stop for a cast that never had a bar colours and fades whatever
+    /// else is shown, which for a channel is the bar that has just appeared.
     #[test]
     fn a_stop_is_raised_only_for_a_bar_that_was_running() {
         let mut casting = Casting::default();
@@ -2887,15 +2846,15 @@ mod tests {
         assert!(!casting.end(), "and does not end twice");
     }
 
-    /// **A press asks and the server answers; nothing is on the bar in
-    /// between.**
+    /// A press sends a request and the server answers; nothing is on the bar
+    /// in between.
     ///
-    /// The state that replaced the local prediction, and the two things it has
-    /// to get right. The ask holds no bar — `progress` is `None` and
-    /// `in_progress` is false, because there is no wind-up, only a packet in
-    /// flight — and it is cleared by whichever answer arrives first. If it were
-    /// not cleared the button would be wedged for the rest of the session, and
-    /// if it held a bar a refused cast would show one, which is the whole bug.
+    /// This state replaced the local prediction and must get two things right.
+    /// The ask holds no bar (`progress` is `None` and `in_progress` is false,
+    /// because there is no wind-up, only a packet in flight), and whichever
+    /// answer arrives first clears it. If it were not cleared, the button would
+    /// be blocked for the rest of the session; if it held a bar, a refused cast
+    /// would show one, which was the original bug.
     #[test]
     fn an_unanswered_ask_holds_no_bar_and_is_cleared_by_the_answer() {
         let mut casting = Casting { pending: Some(133), ..Default::default() };
@@ -2907,33 +2866,33 @@ mod tests {
         assert_eq!(casting.pending, None);
         assert!(in_progress(&casting));
 
-        // …and an instant's answer is the same call with no bar in it.
+        // An instant's answer is the same call with no bar.
         let mut casting = Casting { pending: Some(1449), ..Default::default() };
         casting.begin(1449, "Arcane Explosion".into(), 0);
         assert_eq!(casting.pending, None);
         assert!(!in_progress(&casting), "an instant leaves nothing running");
     }
 
-    /// **A channel is not a wind-up**, and the difference is what decides
-    /// whether a fresh press is refused.
+    /// A channel is not a wind-up, and the difference decides whether a new
+    /// press is refused.
     ///
     /// `Spell::prepare`'s "another action is in progress" gate is
-    /// `IsNonMeleeSpellCasted(false, true, true)` — `skipChanneled` is `true`,
-    /// so a cast pressed during a channel is accepted by the server and simply
-    /// replaces it, where one pressed during a wind-up is refused.
+    /// `IsNonMeleeSpellCasted(false, true, true)`. `skipChanneled` is `true`,
+    /// so a cast pressed during a channel is accepted by the server and
+    /// replaces it, while one pressed during a wind-up is refused.
     #[test]
     fn a_channel_does_not_block_a_press_and_a_wind_up_does() {
         let mut casting = Casting::default();
         assert!(!in_progress(&casting));
 
-        // A channel: no `started`, so nothing is blocked…
+        // A channel: no `started`, so nothing is blocked.
         casting.channelling = Some(12051);
         casting.spell_id = 12051;
         assert!(!in_progress(&casting));
         assert_eq!(casting.progress(), None, "a channel has no wind-up to show");
 
-        // …and pressing something takes the channel down, exactly as the
-        // server's own acceptance of the cast does.
+        // Pressing something ends the channel, as the server's acceptance of
+        // the cast does.
         let mut fireball = spell(133, 1500, 0);
         fireball.cast_time_ms = 1500;
         casting.begin(133, "Fireball".into(), 1500);
@@ -2941,18 +2900,17 @@ mod tests {
         assert!(in_progress(&casting), "a wind-up blocks");
     }
 
-    /// **A pushback lengthens the bar and never starts one.**
+    /// A pushback lengthens the bar and never starts one.
     ///
     /// `SMSG_SPELL_DELAYED` is the only packet in the protocol that restates a
-    /// cast's length after it has begun — the server has already added the time
-    /// to its own `m_timer` — so a client that does not read it runs the bar
-    /// out and sits at full while the server is still casting. That is the
-    /// visible half of the "stuck casting a spell that was interrupted" report.
+    /// cast's length after it has begun; the server has already added the time
+    /// to its own `m_timer`. A client that ignores it runs the bar out and
+    /// leaves it full while the server is still casting, which is the visible
+    /// part of the "stuck casting a spell that was interrupted" report.
     ///
-    /// The two refusals are the ones that would move the wrong bar: a channel
-    /// is pushed back through `MSG_CHANNEL_UPDATE` instead (vmangos'
-    /// `DelayedChannel` *shortens* its timer), and nothing that has no wind-up
-    /// has a bar to lengthen.
+    /// The two refusals prevent moving the wrong bar: a channel is delayed
+    /// through `MSG_CHANNEL_UPDATE` instead (vmangos' `DelayedChannel` shortens
+    /// its timer), and a cast with no wind-up has no bar to lengthen.
     #[test]
     fn a_pushback_lengthens_the_bar_it_finds_and_conjures_none() {
         let mut casting = Casting::default();
@@ -2961,7 +2919,8 @@ mod tests {
         casting.begin(133, "Fireball".into(), 3500);
         assert_eq!(casting.duration, Duration::from_millis(3500));
 
-        // Two blows land while it runs: each says how much *it* added.
+        // Two hits land while it runs; each packet states how much that hit
+        // added.
         assert!(casting.delay(500));
         assert!(casting.delay(1000));
         assert_eq!(
@@ -2970,7 +2929,7 @@ mod tests {
             "a pushback is a difference, not a new length",
         );
 
-        // An instant has no bar, and a channel's is slid by its own event.
+        // An instant has no bar, and a channel's bar is moved by its own event.
         let mut instant = Casting::default();
         instant.begin(1449, "Arcane Explosion".into(), 0);
         assert!(!instant.delay(500));
@@ -2980,15 +2939,14 @@ mod tests {
         assert!(!channel.delay(500));
     }
 
-    /// **The spell cursor is spent by whatever ends it, and never twice.**
+    /// The spell cursor is cleared by whatever ends it, and only once.
     ///
-    /// The state machine behind the report: press a heal with nothing suitable
-    /// selected and the client asks instead of complaining, and the question is
-    /// answered by exactly one of four things — a click on a unit, a click on
-    /// empty ground, Escape, or a fresh press. `cast_known_spell` calls `stop`
-    /// on every path out of the aiming rule for that reason: a cursor that
-    /// survived its own answer would cast the *previous* spell at the next
-    /// thing clicked.
+    /// This is the state machine behind the report: press a heal with nothing
+    /// suitable selected and the client asks for a target instead of failing.
+    /// One of four things answers: a click on a unit, a click on empty ground,
+    /// Escape, or a new press. `cast_known_spell` calls `stop` on every path out
+    /// of the aiming rule for that reason: a cursor that survived its own
+    /// answer would cast the previous spell at the next thing clicked.
     #[test]
     fn the_spell_cursor_is_put_away_by_whatever_answers_it() {
         let mut targeting = SpellTargeting::default();
@@ -3000,27 +2958,26 @@ mod tests {
         assert_eq!(targeting.spell(), Some(2050));
         assert!(!targeting.wants_ground());
 
-        // `over_valid` is the cursor's own red-or-green and is re-decided every
-        // frame — a `stop` must not leave it standing, or the next question
-        // opens green over whatever the pointer happens to be on.
+        // `over_valid` is the cursor's red-or-green state and is recomputed
+        // every frame. `stop` must clear it, or the next question starts green
+        // over whatever the pointer is on.
         targeting.over_valid = true;
         targeting.stop();
         assert!(!targeting.is_targeting());
         assert!(!targeting.over_valid);
         assert_eq!(targeting.spell(), None);
 
-        // A second question replaces the first outright: two spells cannot be
-        // waiting at once, because there is one cursor.
+        // A second question replaces the first: two spells cannot wait at once,
+        // because there is one cursor.
         targeting.begin(2050, Asking::Unit);
         targeting.begin(1459, Asking::Unit);
         assert_eq!(targeting.spell(), Some(1459));
     }
 
-    /// **…and the placed half of the same cursor carries its own two fields
-    /// out.** A ground question that ended must leave neither the mode nor the
-    /// point behind it: the mode would make the next unit cast wait for a patch
-    /// of floor, and a stale point would place the next Blizzard where the last
-    /// one went.
+    /// The ground mode of the same cursor clears its own two fields. A ground
+    /// question that ended must leave neither the mode nor the point behind:
+    /// the mode would make the next unit cast wait for a location, and a stale
+    /// point would place the next Blizzard where the last one went.
     #[test]
     fn a_placed_question_takes_its_mode_and_its_point_away_with_it() {
         let mut targeting = SpellTargeting::default();
@@ -3035,8 +2992,8 @@ mod tests {
         assert_eq!(targeting.over_ground, None);
         assert!(!targeting.over_valid);
 
-        // …and a unit question after a placed one is a unit question: the mode
-        // is the *new* press's, not whatever was standing.
+        // A unit question after a ground question is a unit question: the mode
+        // comes from the new press, not from the previous state.
         targeting.begin(10, Asking::Ground);
         targeting.over_ground = Some([1.0, 2.0, 3.0]);
         targeting.begin(2050, Asking::Unit);
@@ -3044,11 +3001,11 @@ mod tests {
         assert_eq!(targeting.over_ground, None);
     }
 
-    /// **The third mode is exclusive with the other two**, which is the whole
-    /// of what [`Asking`] replaced two bools to guarantee: a cursor waiting for
-    /// an item must not read as waiting for a patch of floor, or
+    /// The item mode excludes the other two, which is what [`Asking`]
+    /// guarantees in place of the two bools it replaced. A cursor waiting for
+    /// an item must not read as waiting for a location, or
     /// `spell_ground_under_pointer` walks the terrain every frame for an answer
-    /// nobody wants, and the click that ends it lands in the wrong branch.
+    /// nobody uses, and the click that ends it goes to the wrong branch.
     #[test]
     fn an_item_question_is_not_a_ground_question() {
         let mut targeting = SpellTargeting::default();
@@ -3061,7 +3018,7 @@ mod tests {
         assert!(!targeting.wants_item());
         assert!(!targeting.is_targeting());
 
-        // …and the mode is the new press's, whichever way round they come.
+        // The mode comes from the new press, in either order.
         targeting.begin(2828, Asking::Item);
         targeting.begin(10, Asking::Ground);
         assert!(!targeting.wants_item());
@@ -3070,10 +3027,10 @@ mod tests {
         assert!(!targeting.wants_ground());
     }
 
-    /// **A next-swing spell is a queued swing, not a cast** — the whole of what
-    /// decides whether the art is drawn at the press. Heroic Strike is the
-    /// measured case: `Attributes 0x00050014`, which is
-    /// `ON_NEXT_SWING_NO_DAMAGE` and *not* `ON_NEXT_SWING`.
+    /// A next-swing spell is a queued swing, not a cast, which decides whether
+    /// the spell art is drawn at the press. Heroic Strike is the measured case:
+    /// `Attributes 0x00050014`, which is `ON_NEXT_SWING_NO_DAMAGE` and not
+    /// `ON_NEXT_SWING`.
     #[test]
     fn heroic_strike_is_a_queued_swing_rather_than_a_cast() {
         use vale_assets::tables::spellbook::spell_attributes;

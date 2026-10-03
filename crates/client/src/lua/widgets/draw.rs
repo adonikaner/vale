@@ -67,6 +67,14 @@
 //! draws between them, as it does in the 1.12.1 client. See
 //! [`super::backdrop`].
 //!
+//! ## Draw layers a frame has turned off
+//!
+//! `frame:DisableDrawLayer(layer)` turns off one of the frame's five draw
+//! layers, and the walk skips the frame's own regions on that layer. The flag
+//! belongs to the frame and is not inherited: a child frame's regions on the
+//! same layer still draw. The backdrop is not a region and draws regardless.
+//! See [`set_layer_enabled`].
+//!
 //! ## Alpha is inherited; colour is not
 //!
 //! `SetAlpha` on a container fades its contents, so the effective alpha is the
@@ -212,6 +220,10 @@ struct Context {
     /// The window of the innermost `<ScrollChild>` this is inside — see
     /// [`Item::clip`] and [`scroll_window`].
     clip: Option<Rect>,
+    /// The draw layers the frame above has turned off, one bit per index into
+    /// [`super::regions::LAYERS`]. Set from each frame's own flag rather than
+    /// inherited; see [`set_layer_enabled`].
+    hidden_layers: u8,
 }
 
 impl Default for Context {
@@ -223,6 +235,7 @@ impl Default for Context {
             level: 0,
             alpha: 1.0,
             clip: None,
+            hidden_layers: 0,
         }
     }
 }
@@ -285,7 +298,7 @@ fn walk(
         let Some(paint) = regions::paint(object) else {
             return;
         };
-        if !worth_drawing(&paint, alpha) {
+        if !worth_drawing(&paint, alpha) || inherited.hidden_layers & (1 << paint.layer) != 0 {
             return;
         }
         out.push(Item {
@@ -330,6 +343,7 @@ fn walk(
             .unwrap_or_else(|| inherited.level.saturating_add(1)),
         alpha,
         clip: inherited.clip,
+        hidden_layers: hidden_layers(object),
     };
 
     // The frame's backdrop. It is two items rather than one because the game
@@ -502,6 +516,42 @@ fn walk(
         };
         walk(lua, &child, context, out, sequence, depth + 1);
     }
+}
+
+/// Where a frame keeps the draw layers it has turned off, as a bitmask over
+/// [`super::regions::LAYERS`]. Absent on a frame that never called
+/// `DisableDrawLayer`, which is every frame in the shipped directory.
+const HIDDEN_LAYERS_KEY: &str = "__hiddenLayers";
+
+/// `frame:DisableDrawLayer(layer)` and `frame:EnableDrawLayer(layer)`.
+///
+/// The layer name is matched case-insensitively against
+/// [`super::regions::LAYERS`]; a name that is not one of the five changes
+/// nothing. The mask is written through [`widget::set_paint`], so a call that
+/// changes it bumps the paint generation and the next draw walk runs, and a
+/// call that repeats the current state does not.
+pub(in crate::lua) fn set_layer_enabled(
+    lua: &mlua::Lua,
+    frame: &mlua::Table,
+    layer: &str,
+    on: bool,
+) -> mlua::Result<()> {
+    let Some(index) = regions::LAYERS.iter().position(|name| name.eq_ignore_ascii_case(layer)) else {
+        return Ok(());
+    };
+    let mask = hidden_layers(frame);
+    let mask = if on { mask & !(1 << index) } else { mask | (1 << index) };
+    widget::set_paint(lua, frame, HIDDEN_LAYERS_KEY, i64::from(mask))
+}
+
+/// The draw layers `frame` has turned off; see [`set_layer_enabled`]. One raw
+/// read per frame visited by the walk.
+fn hidden_layers(frame: &mlua::Table) -> u8 {
+    frame
+        .raw_get::<Option<i64>>(HIDDEN_LAYERS_KEY)
+        .ok()
+        .flatten()
+        .map_or(0, |mask| mask as u8)
 }
 
 /// The child a `ScrollFrame` clips, and the window it is clipped to. Only that
@@ -1384,6 +1434,47 @@ mod tests {
         // brings them all back.
         lua.load("panel:Show()").exec().expect("shows");
         assert_eq!(collect(&lua).len(), 3);
+    }
+
+    /// `DisableDrawLayer` hides the frame's own regions on that layer, leaves
+    /// its other layers and its child frames' regions drawn, and bumps the
+    /// paint generation only when the mask changes.
+    #[test]
+    fn a_disabled_draw_layer_hides_only_that_frames_regions_on_it() {
+        let lua = lua();
+        interface(
+            &lua,
+            r#"
+            panel = CreateFrame("Frame", "Panel", UIParent);
+            panel:SetAllPoints(UIParent);
+            back = panel:CreateTexture("Back", "BACKGROUND"); back:SetAllPoints(panel); back:SetTexture("b");
+            art = panel:CreateTexture("Art", "ARTWORK"); art:SetAllPoints(panel); art:SetTexture("a");
+            inner = CreateFrame("Frame", "Inner", panel);
+            inner:SetAllPoints(panel);
+            innerBack = inner:CreateTexture("InnerBack", "BACKGROUND"); innerBack:SetAllPoints(inner); innerBack:SetTexture("i");
+            "#,
+        );
+        let drawn = |lua: &mlua::Lua| -> Vec<String> {
+            collect(lua)
+                .iter()
+                .filter_map(|i| i.paint().and_then(|p| p.texture.clone()))
+                .collect()
+        };
+        assert_eq!(drawn(&lua), ["b", "a", "i"]);
+
+        let before = widget::paint_generation(&lua);
+        lua.load("panel:DisableDrawLayer('background')").exec().expect("disables");
+        assert_eq!(drawn(&lua), ["a", "i"], "the child frame's BACKGROUND still draws");
+        let after = widget::paint_generation(&lua);
+        assert_ne!(before, after, "a change to the mask moves the paint generation");
+
+        lua.load("panel:DisableDrawLayer('BACKGROUND'); panel:DisableDrawLayer('NOSUCHLAYER')")
+            .exec()
+            .expect("repeats");
+        assert_eq!(widget::paint_generation(&lua), after, "a repeat changes nothing");
+
+        lua.load("panel:EnableDrawLayer('BACKGROUND')").exec().expect("enables");
+        assert_eq!(drawn(&lua), ["b", "a", "i"]);
     }
 
     /// The pile is sorted by strata, then level, then layer. A layer higher

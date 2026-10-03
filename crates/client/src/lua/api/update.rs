@@ -339,7 +339,20 @@ pub struct InterfaceClock {
     /// Whether the previous rendered frame was a tick. The paint walk runs on
     /// this frame rather than on the tick frame; see [`Self::walk_due`].
     walk: bool,
+    /// Rendered frames and seconds counted towards the next
+    /// [`Self::framerate`] sample.
+    window_frames: u32,
+    window_seconds: f64,
+    /// Frames a second over the last whole window of [`FRAMERATE_WINDOW`]
+    /// seconds; `GetFramerate()`. Zero until the first window closes.
+    framerate: f64,
 }
+
+/// How long `GetFramerate()`'s count runs before it is replaced, in seconds.
+/// A window rather than one frame's reciprocal, so a frame-rate display that
+/// reads it every tick does not change at 30 Hz. This window is this
+/// client's choice; the 1.12.1 client's averaging period is not known.
+pub(crate) const FRAMERATE_WINDOW: f64 = 1.0;
 
 impl InterfaceClock {
     /// Add one rendered frame's delta, and return whether this frame is a
@@ -358,6 +371,13 @@ impl InterfaceClock {
     /// them is sampled.
     pub(crate) fn advance(&mut self, delta: f64) -> bool {
         self.walk = self.due;
+        self.window_frames += 1;
+        self.window_seconds += delta.max(0.0);
+        if self.window_seconds >= FRAMERATE_WINDOW {
+            self.framerate = f64::from(self.window_frames) / self.window_seconds;
+            self.window_frames = 0;
+            self.window_seconds = 0.0;
+        }
         self.owed += delta.max(0.0);
         self.due = self.owed >= TICK_INTERVAL;
         if self.due {
@@ -365,6 +385,12 @@ impl InterfaceClock {
             self.owed = 0.0;
         }
         self.due
+    }
+
+    /// Rendered frames a second over the last closed window; see
+    /// [`FRAMERATE_WINDOW`]. Counts every rendered frame, not ticks.
+    pub fn framerate(&self) -> f64 {
+        self.framerate
     }
 
     /// Whether this frame is one of the interface's.
@@ -453,6 +479,7 @@ pub(in crate::lua) fn tick(
     if !clock.due() {
         return;
     }
+    host.set_framerate(clock.framerate());
     let live = world.live();
     // The time since the last tick, which is what `arg1` means: not the
     // rendered frame's delta, and not the interval. See

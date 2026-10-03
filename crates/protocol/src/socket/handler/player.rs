@@ -1730,6 +1730,24 @@ pub(super) fn gameobject_pagetext(ctx: &mut Incoming, pkt: &Packet) {
     }
 }
 
+/// `SMSG_GAMEOBJECT_CUSTOM_ANIM`: play `Custom0`..`Custom3` on a game object.
+/// An `anim` of 4 or more is read and dropped, as the 1.12.1 client drops it.
+pub(super) fn gameobject_custom_anim(ctx: &mut Incoming, pkt: &Packet) {
+    if let Some((guid, anim)) = read(ctx.stats, pkt, crate::play::object::parse_custom_anim(&pkt.body)) {
+        if let Some(anim) = anim {
+            ctx.world.apply_object_anim(guid, anim);
+        }
+    }
+}
+
+/// `SMSG_GAMEOBJECT_DESPAWN_ANIM`: play `Despawn` on a game object. The
+/// server removes the object afterwards with `SMSG_DESTROY_OBJECT`.
+pub(super) fn gameobject_despawn_anim(ctx: &mut Incoming, pkt: &Packet) {
+    if let Some(guid) = read(ctx.stats, pkt, crate::play::object::parse_despawn_anim(&pkt.body)) {
+        ctx.world.apply_object_anim(guid, crate::play::object::ObjectAnim::Despawn);
+    }
+}
+
 /// `SMSG_PAGE_TEXT_QUERY_RESPONSE`: one page of text and the id of the next
 /// page.
 ///

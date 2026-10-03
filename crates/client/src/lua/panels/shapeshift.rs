@@ -1,4 +1,4 @@
-//! **The four reads the stance bar is drawn from.**
+//! The three reads the stance bar is drawn from.
 //!
 //! ```text
 //! GetNumShapeshiftForms()       -> n              how many buttons
@@ -10,15 +10,16 @@
 //! other two, once per button, every time the character's auras move. The rules
 //! are all in [`crate::interface::shapeshift`]; this file is only the surface.
 //!
-//! **`GetNumShapeshiftForms` was a stub answering 0**, which is worth a sentence
-//! because it is the shape of failure this directory keeps producing: zero is a
-//! perfectly good answer — it means "this character has no forms" — so
-//! `ShapeshiftBar_Update` hid the frame, every probe reported the panel clean,
-//! and a warrior's three stances were missing with nothing anywhere saying so.
+//! `GetNumShapeshiftForms` must answer the real count. Zero is a valid answer
+//! meaning "this character has no forms", so a stub answering 0 makes
+//! `ShapeshiftBar_Update` hide the frame while every probe reports the panel
+//! clean. A stub did exactly that and hid a warrior's three stances with no
+//! error anywhere. Stubs answering a valid zero are a recurring failure in this
+//! directory.
 
 use super::super::api::Answers;
 
-/// The **scoped reads** this file registers, sorted — see
+/// The scoped reads this file registers, sorted; see
 /// [`super::super::api::READS`].
 pub const READS: [&str; 3] = [
     "GetNumShapeshiftForms",
@@ -26,34 +27,34 @@ pub const READS: [&str; 3] = [
     "GetShapeshiftFormInfo",
 ];
 
-/// **What the interface may ask about the stance bar.**
+/// What the interface may ask about the stance bar.
 pub trait ShapeshiftAnswers {
-    /// `GetNumShapeshiftForms()` — how many buttons the bar has.
+    /// `GetNumShapeshiftForms()`: how many buttons the bar has.
     fn shapeshift_form_count(&self) -> usize;
 
-    /// **`GetShapeshiftFormInfo(i)`** -> `(texture, name, isActive, isCastable)`.
+    /// `GetShapeshiftFormInfo(i)` -> `(texture, name, isActive, isCastable)`.
     ///
-    /// `None` for an index past the end, which answers four nils — the branch
-    /// `ShapeshiftBar_UpdateState` hides the button on.
+    /// `None` for an index past the end, which answers four nils; that is the
+    /// case in which `ShapeshiftBar_UpdateState` hides the button.
     fn shapeshift_form_info(&self, index: usize) -> Option<ShapeshiftInfo>;
 
     /// `GetShapeshiftFormCooldown(i)` -> `(start, duration, enable)`, in
     /// [`Answers::now`]'s base.
     ///
-    /// **`(0, 0, 1)` for an index past the end**, not three zeroes: the client
-    /// pushes `1.0` for the third of them on that path, and
-    /// `CooldownFrame_SetTimer` is called with the answer unconditionally.
+    /// `(0, 0, 1)` for an index past the end, not three zeroes: the 1.12.1
+    /// client answers `1` for `enable` there, and `CooldownFrame_SetTimer` is
+    /// called with the answer unconditionally.
     fn shapeshift_form_cooldown(&self, index: usize) -> (f64, f64, u32);
 }
 
 /// One button, as `GetShapeshiftFormInfo` answers for it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ShapeshiftInfo {
-    /// The icon path — **the active one while the form is on**, where the spell
+    /// The icon path: the active icon while the form is on, where the spell
     /// has one.
     pub texture: String,
     pub name: String,
-    /// Whether this is the form the character is in — see
+    /// Whether this is the form the character is in; see
     /// [`crate::interface::shapeshift::is_active`], where the two different
     /// questions behind it are.
     pub is_active: bool,
@@ -63,14 +64,14 @@ pub struct ShapeshiftInfo {
 }
 
 impl super::super::api::Live<'_, '_, '_> {
-    /// Whether a form that is *off* could be put on — the same test every other
+    /// Whether a form that is off could be put on: the same test every other
     /// button in the game is tinted from, asked about a spell that is on no
     /// action-bar slot. See [`crate::interface::api::spell_is_usable`].
     fn form_is_castable(&self, spell_id: u32) -> bool {
         self.tables
             .as_ref()
             .and_then(|tables| tables.spellbook()?.info(spell_id))
-            .is_some_and(|info| crate::interface::api::spell_is_usable(&info, self.units).0)
+            .is_some_and(|info| crate::interface::api::spell_is_usable(&info, self.units, self.inventory).0)
     }
 }
 
@@ -87,9 +88,9 @@ impl ShapeshiftAnswers for super::super::api::Live<'_, '_, '_> {
             .map_or(0, |me| me.shapeshift_form);
         let is_active =
             crate::interface::shapeshift::is_active(form, current, &self.auras.player);
-        // **The active icon while the form is on, the ordinary one otherwise**
-        // — the client falls back to the ordinary one for a form that
-        // states no active icon at all.
+        // The active icon while the form is on, the ordinary one otherwise.
+        // The 1.12.1 client also shows the ordinary icon for an active form
+        // that states no active icon.
         let texture = match is_active && !form.active_texture.is_empty() {
             true => form.active_texture.clone(),
             false => form.texture.clone(),
@@ -98,11 +99,10 @@ impl ShapeshiftAnswers for super::super::api::Live<'_, '_, '_> {
             texture,
             name: form.name.clone(),
             is_active,
-            // **A form already on is castable**, which is the reference's own
-            // shape rather than a simplification: it branches on
-            // `isActive` and pushes `1.0` without asking anything else, because
-            // the press is a *cancel* on that path and a cancel is always
-            // available. Only an inactive one is tested.
+            // A form already on is castable. The 1.12.1 client reports an
+            // active form as castable without further checks, because pressing
+            // it cancels the form and a cancel is always available. Only an
+            // inactive form is tested.
             is_castable: is_active || self.form_is_castable(form.spell_id),
         })
     }
@@ -113,7 +113,7 @@ impl ShapeshiftAnswers for super::super::api::Live<'_, '_, '_> {
             .form(index)
             .and_then(|form| self.tables.as_ref()?.spellbook()?.info(form.spell_id));
         let Some(info) = info else {
-            // …and `1` for the third, not `0` — see the trait.
+            // `1` for the third value, not `0`; see the trait.
             return (0.0, 0.0, 1);
         };
         // The same composition the spellbook's own rows take, so a stance's
@@ -138,17 +138,16 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         scope.create_function(move |_, ()| Ok(answers.shapeshift_form_count()))?,
     )?;
 
-    // **Four values, and the panel unpacks all four on one line.**
-    // `texture, name, isActive, isCastable = GetShapeshiftFormInfo(i)` — and
-    // note the order: the *texture* leads, which is the reverse of every other
-    // `Get*Info` in the directory and is what a reader transcribing from another
-    // one gets wrong.
+    // Four values, which the panel unpacks on one line:
+    // `texture, name, isActive, isCastable = GetShapeshiftFormInfo(i)`. The
+    // texture comes first, the reverse of every other `Get*Info` in the
+    // directory.
     globals.set(
         "GetShapeshiftFormInfo",
         scope.create_function(move |_, index: Option<usize>| {
             let Some(info) = answers.shapeshift_form_info(index.unwrap_or(0)) else {
-                // Four nils, which is what `ShapeshiftBar_UpdateState` hides the
-                // button on — an index past the end rather than an error.
+                // Four nils for an index past the end, rather than an error;
+                // `ShapeshiftBar_UpdateState` hides the button on them.
                 return Ok((None, None, mlua::Value::Nil, mlua::Value::Nil));
             };
             Ok((

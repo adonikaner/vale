@@ -2242,6 +2242,23 @@ impl Playback {
         if !world.mounted {
             self.note_flight(seen, last, world, state, now);
         }
+        // A game object's scripted one-shot (`SMSG_GAMEOBJECT_CUSTOM_ANIM`,
+        // `SMSG_GAMEOBJECT_DESPAWN_ANIM`): a fishing bobber's splash when a
+        // fish bites, a trap firing. Before the state edge below, so that a
+        // state change in the same poll replaces it.
+        if seen.object_anims != last.object_anims {
+            let id = world.object_anim.and_then(|anim| match anim {
+                vale_protocol::play::object::ObjectAnim::Custom(n) => {
+                    vale_assets::look::object::custom_anim(n)
+                }
+                vale_protocol::play::object::ObjectAnim::Despawn => {
+                    Some(vale_assets::look::object::DESPAWN_ANIM)
+                }
+            });
+            if let Some(id) = id {
+                self.fire(id, world, state, now);
+            }
+        }
         // A door opening or closing has the same form: two held poses with a
         // one-shot between them.
         if seen.object_state != last.object_state && last.object_state != u8::MAX {

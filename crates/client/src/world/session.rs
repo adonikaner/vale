@@ -1119,6 +1119,12 @@ pub struct WorldEntity {
     /// snapshot from the template's words; see
     /// [`vale_assets::look::object::hover_of`].
     pub object_hover: vale_assets::look::object::Hover,
+    /// The one-shot animations the server has asked this game object to play,
+    /// as a counter, and the last one; see
+    /// [`vale_protocol::state::objects::Entity::object_anims`]. Zero and
+    /// `None` for anything that is not a game object.
+    pub object_anims: u32,
+    pub object_anim: Option<vale_protocol::play::object::ObjectAnim>,
     /// In water deep enough to swim in: `MOVEFLAG_SWIMMING`, the server's
     /// answer rather than a guess from the liquid surface.
     pub swimming: bool,
@@ -2596,6 +2602,12 @@ fn poll_world(
                         .filter(|entry| *entry != 0)
                         .filter_map(|entry| world.items.get(&entry))
                         .filter(|info| info.display_id != 0)
+                        // The hide-helm and hide-cloak options. A toggle
+                        // changes this list, so the entity's model is rebuilt
+                        // without the piece, as any change of gear is.
+                        .filter(|info| {
+                            vale_assets::look::dress::worn_is_shown(info.inventory_type, e.player_flags())
+                        })
                         .map(|info| (info.display_id, info.inventory_type))
                         // The guild's emblem, as one more pair after the
                         // items. A guild tabard is painted with it; see
@@ -2756,6 +2768,8 @@ fn poll_world(
                     ))
                 })
                 .unwrap_or((0, 0)),
+            object_anims: e.object_anims,
+            object_anim: e.last_object_anim,
             object_hover: world
                 .gameobject_of(e)
                 .map(|info| {

@@ -169,10 +169,6 @@ const INSETS_KEY: &str = "__hitInsets";
 const DRAG_KEY: &str = "__dragButtons";
 const MOVABLE_KEY: &str = "__movable";
 const USER_PLACED_KEY: &str = "__userPlaced";
-/// `SetClampedToScreen`: recorded, and read by nothing yet, so a frame dragged
-/// past the edge is not pushed back. Addons set it on every movable window; in
-/// one installed set of four addons, five bodies failed while it was nil.
-const CLAMPED_KEY: &str = "__clamped";
 /// `SetResizable` and its two bounds. The flag gates [`StartSizing`]: the
 /// 1.12.1 client does not let a frame that was not marked resizable be sized.
 const RESIZABLE_KEY: &str = "__resizable";
@@ -1169,12 +1165,11 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     )?;
     methods.set("RegisterForDrag", register_drag)?;
 
-    // The movable, user-placed, clamped and resizable flags: Lua truthiness for
-    // the setters, the game's 1/nil for the getters, as elsewhere here.
+    // The movable, user-placed and resizable flags: Lua truthiness for the
+    // setters, the game's 1/nil for the getters, as elsewhere here.
     for (set_name, get_name, key) in [
         ("SetMovable", "IsMovable", MOVABLE_KEY),
         ("SetUserPlaced", "IsUserPlaced", USER_PLACED_KEY),
-        ("SetClampedToScreen", "IsClampedToScreen", CLAMPED_KEY),
         ("SetResizable", "IsResizable", RESIZABLE_KEY),
     ] {
         let set = lua.create_function(move |_lua, (this, on): (mlua::Table, Option<mlua::Value>)| {
@@ -1192,28 +1187,38 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
         methods.set(get_name, get)?;
     }
 
-    // `SetClampRectInsets`: how far past the screen edge a clamped frame
-    // may go. Recorded beside the flag it qualifies.
+    // `SetClampedToScreen(on)`: the flag `clampedToScreen="true"` sets from the
+    // markup, which the layout solve reads (see `layout::set_clamped`). A
+    // clamped frame dragged past an edge is drawn against the edge, and
+    // `StopMovingOrSizing` pins it there. Addons set it on every movable
+    // window; in one installed set of four addons, five bodies failed while
+    // the method was missing.
+    let set_clamped = lua.create_function(|lua, (this, on): (mlua::Table, Option<mlua::Value>)| {
+        let on = !matches!(on, None | Some(mlua::Value::Nil) | Some(mlua::Value::Boolean(false)));
+        layout::set_clamped(lua, &this, on)
+    })?;
+    methods.set("SetClampedToScreen", set_clamped)?;
+    let is_clamped = lua.create_function(|_lua, this: mlua::Table| {
+        Ok(super::super::api::one_or_nil(layout::is_clamped(&this)))
+    })?;
+    methods.set("IsClampedToScreen", is_clamped)?;
+
+    // `SetClampRectInsets`: how far past the screen edge a clamped frame may
+    // go. Recorded and not applied. The 1.12.1 client has no method of this
+    // name; it is registered because addons written for later clients call
+    // it beside `SetClampedToScreen`.
     let set_clamp_insets = lua.create_function(|_lua, (this, insets): (mlua::Table, mlua::Variadic<f64>)| {
         this.set("__clampInsets", insets.to_vec())
     })?;
     methods.set("SetClampRectInsets", set_clamp_insets)?;
-    // `DisableDrawLayer(layer)` / `EnableDrawLayer(layer)`: recorded on the
-    // frame as the set of layers turned off. The painter does not read it
-    // yet, so the regions still draw. pfUI turns `BACKGROUND` off on
-    // every frame it skins (34 calls).
+    // `DisableDrawLayer(layer)` / `EnableDrawLayer(layer)`: turn one of the
+    // frame's five draw layers off or on. The draw walk skips the frame's own
+    // regions on a layer that is off; see `draw::set_layer_enabled`. pfUI
+    // turns `BACKGROUND` off on every frame it skins (34 calls).
     for (name, on) in [("DisableDrawLayer", false), ("EnableDrawLayer", true)] {
         let set = lua.create_function(move |lua, (this, layer): (mlua::Table, Option<String>)| {
             let Some(layer) = layer else { return Ok(()) };
-            let table = match this.raw_get::<Option<mlua::Table>>("__disabledLayers")? {
-                Some(table) => table,
-                None => {
-                    let table = lua.create_table()?;
-                    this.set("__disabledLayers", table.clone())?;
-                    table
-                }
-            };
-            table.set(layer.to_ascii_uppercase(), if on { mlua::Value::Nil } else { mlua::Value::Boolean(true) })
+            super::super::widgets::draw::set_layer_enabled(lua, &this, &layer, on)
         })?;
         methods.set(name, set)?;
     }

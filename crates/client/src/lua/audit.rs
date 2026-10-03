@@ -937,6 +937,7 @@ impl super::panels::mail::MailAnswers for Login {
 
 impl super::panels::trade::TradeAnswers for Login {}
 impl super::panels::summon::SummonAnswers for Login {}
+impl super::panels::uioptions::OptionsAnswers for Login {}
 impl super::panels::inspect::InspectAnswers for Login {}
 /// The double is the guild master of the guild `seed` puts on the board.
 impl super::panels::guild::GuildAnswers for Login {
@@ -3125,6 +3126,11 @@ fn press_every_binding(host: &mut LuaHost) {
     for (name, commands) in ranked {
         println!("    {:>3}  {name:<28} {}", commands.len(), commands.join(" "));
     }
+    // A failure that blames no missing name has no name to rank by, so its
+    // message is printed in full, as the load report prints its own.
+    for (command, error) in broken.iter().filter(|(_, error)| blamed(error).is_none()) {
+        println!("         {command}: {error}");
+    }
 }
 
 /// The panels the game declares: the keys of `UIPanelWindows`, sorted.
@@ -4495,6 +4501,7 @@ impl super::panels::mail::MailAnswers for Ticking {
 
 impl super::panels::trade::TradeAnswers for Ticking {}
 impl super::panels::summon::SummonAnswers for Ticking {}
+impl super::panels::uioptions::OptionsAnswers for Ticking {}
 impl super::panels::inspect::InspectAnswers for Ticking {}
 impl super::panels::guild::GuildAnswers for Ticking {
     fn unit_guild(&self, token: &str) -> Option<(u32, u32)> {

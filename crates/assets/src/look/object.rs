@@ -1,47 +1,42 @@
-//! **What a game object is *for***, which decides whether a click on it does
-//! anything and which pointer goes over it.
+//! The purpose of a game object: whether a click on it does anything, and which
+//! pointer is drawn over it.
 //!
 //! The door in the Deadmines, the ore vein on the wall beside it, the mailbox in
-//! Sentinel Hill and the campfire nobody can touch are all the same kind of
-//! thing to this client: an entity whose `ObjectType` is `GameObject`, with a
-//! display id, an open/shut state, and a name that arrived by
-//! `CMSG_GAMEOBJECT_QUERY`. Nothing in that says which of them is worth
-//! pointing at.
+//! Sentinel Hill and a campfire nobody can touch are the same kind of entity to
+//! this client: `ObjectType` is `GameObject`, with a display id, an open/shut
+//! state, and a name that arrived by `CMSG_GAMEOBJECT_QUERY`. None of those
+//! fields says which of them a player can act on.
 //!
-//! What says it is the **template**: one type byte and twenty-four words of
-//! union, both of which come back in `SMSG_GAMEOBJECT_QUERY_RESPONSE` and
-//! neither of which the packet interprets. This module is the interpretation,
-//! and it lives in `assets` because every question it
-//! answers is decidable with no renderer running, and `vale objects` calls
-//! the same copy the renderer calls.
+//! The **template** says it: one type byte and a union of twenty-four words,
+//! both returned in `SMSG_GAMEOBJECT_QUERY_RESPONSE` and neither interpreted by
+//! the packet parser. This module interprets them. It lives in `assets` because
+//! every question it answers can be decided without a renderer, and
+//! `vale objects` calls the same code the renderer calls.
 //!
-//! ## The type table is the server's, and that is the right authority here
+//! ## The pointer is keyed on the server's type enum
 //!
-//! `GAMEOBJECT_TYPE_*` is the shared vocabulary between the two halves: the
-//! client learns a type only because the server sent one, and what a
-//! `CMSG_GAMEOBJ_USE` *does* is decided by `GameObject::Use`'s switch over
-//! exactly this enum. So keying the pointer on it is not a reconstruction of the
-//! client's own chain — it is a reading of the same table both ends already
-//! agree on. **The reference's own cursor chain was not matched**, and where
-//! the two could differ this errs towards
-//! *offering* the click: a hand over something inert costs a packet the server
-//! ignores, where a missing hand is a door the player cannot open.
+//! `GAMEOBJECT_TYPE_*` is shared by client and server: the client learns a type
+//! only because the server sent one, and the effect of `CMSG_GAMEOBJ_USE` is
+//! decided in vmangos `GameObject::Use` by a switch over this enum. Keying the
+//! pointer on the type therefore uses the table both ends agree on. This module
+//! does not reproduce the 1.12.1 client's pointer rules exactly. Where the two
+//! could differ it offers the click: a hand over something inert costs one
+//! packet the server ignores, while a missing hand leaves a door the player
+//! cannot open.
 //!
-//! ## Which word is the lock is per-type, and getting it wrong is silent
+//! ## The word that holds the lock depends on the type
 //!
 //! A door keeps its lock in `data[1]` and a chest keeps it in `data[0]`, because
-//! a door's first word is `startOpen`. A reader that took `data[0]` for both
-//! would give every door in the game the lock id 0 or 1 — "no lock" and
-//! "lock 1" — and every Deadmines door would draw as an ordinary openable one.
-//! That is the failure this module is shaped to avoid: [`Kind::lock_word`] is
-//! the single place the offset is chosen, and a type with no lock says so by
-//! answering `None` rather than by defaulting to zero.
+//! a door's first word is `startOpen`. Reading `data[0]` for both would give
+//! every door the lock id 0 or 1 ("no lock" or "lock 1"), and every Deadmines
+//! door would draw as an ordinary openable one, with no error reported.
+//! [`Kind::lock_word`] is the only place the offset is chosen, and a type with
+//! no lock returns `None` rather than defaulting to zero.
 //!
-//! ## A chest is not opened by the packet that opens a door
+//! ## A chest is opened by a spell cast, not by the use packet
 //!
-//! This is the finding of the round and it is not guessable from the opcode
-//! names. `CMSG_GAMEOBJ_USE` reaches `GameObject::Use`, whose whole
-//! `GAMEOBJECT_TYPE_CHEST` arm is
+//! The opcode names do not show this. `CMSG_GAMEOBJ_USE` reaches vmangos
+//! `GameObject::Use`, whose complete `GAMEOBJECT_TYPE_CHEST` case is
 //!
 //! ```text
 //! case GAMEOBJECT_TYPE_CHEST:                         // 3
@@ -53,61 +48,58 @@
 //! }
 //! ```
 //!
-//! — a script and a linked trap, and **no loot at all**. The only thing in
-//! vmangos that opens a chest's loot is `Spell::EffectOpenLock`, which ends in
+//! It runs a script and a linked trap and sends no loot. The only code in
+//! vmangos that sends a chest's loot is `Spell::EffectOpenLock`, which ends in
 //! `SendLoot(guid, LOOT_SKINNING, LockType(m_spellInfo->EffectMiscValue[effIdx]))`.
-//! So a chest, an ore vein and a herb are opened by **casting a spell at the
-//! object** — `CMSG_CAST_SPELL` with `TARGET_FLAG_GAMEOBJECT` — and which spell
-//! is decided by the lock. [`opener`] is that decision; [`Kind::opened_by_spell`]
-//! is which types take that route.
+//! A chest, an ore vein and a herb are therefore opened by casting a spell at
+//! the object (`CMSG_CAST_SPELL` with `TARGET_FLAG_GAMEOBJECT`), and the lock
+//! decides which spell. [`opener`] chooses the spell; [`Kind::opened_by_spell`]
+//! lists the types that are opened this way.
 //!
-//! **Measured, not reasoned about.** Sending `CMSG_GAMEOBJ_USE` at a herb node
-//! on a live server with 300 Herbalism produced nothing at all — no loot, no
-//! state change, no refusal — which is exactly what the arm above does.
+//! This was tested on a live server: `CMSG_GAMEOBJ_USE` sent at a herb node by a
+//! character with 300 Herbalism produced no loot, no state change and no
+//! refusal, which matches the case quoted above.
 //!
-//! **And an unlocked chest is not a special case.** Every character in the game
-//! is created knowing `Opening` (3365, and its two siblings 21651 and 22810),
-//! whose open-lock misc value is `LOCKTYPE_OPEN` — so the same rule that finds
-//! Mining for a vein finds `Opening` for a chest with nothing on it, and there
-//! is no fallback branch to get wrong. That is the world database's own
-//! `playercreateinfo_spell`, checked on the running server rather than assumed.
+//! An unlocked chest needs no special case. Every character is created knowing
+//! `Opening` (3365, and the related spells 21651 and 22810), whose open-lock misc
+//! value is `LOCKTYPE_OPEN`. The rule that finds Mining for a vein finds
+//! `Opening` for a chest with no lock, so there is no fallback branch. The
+//! source is the world database's `playercreateinfo_spell`, checked on the
+//! running server.
 //!
-//! ## A street sign is a game object that can only be *looked* at
+//! ## `GAMEOBJECT_TYPE_GENERIC`: signs that can be hovered but not used
 //!
-//! `GAMEOBJECT_TYPE_GENERIC` is the type the world database has 1,869 of, and
-//! it is not scenery: **1,197 of them are the signposts, the plaques and the
-//! markers whose whole purpose is that hovering one tells you where you are.**
-//! The Goldshire crossroads is six of them — one game object per arm, each
-//! named for where the arm points, all on display id 26.
+//! The world database has 1,869 objects of `GAMEOBJECT_TYPE_GENERIC`. 1,197 of
+//! them are signposts, plaques and markers: hovering one shows its name, which
+//! tells the player where they are. The Goldshire crossroads is six of them, one
+//! game object per arm, each named for where the arm points, all on display
+//! id 26.
 //!
-//! Two things make them their own case, and both are in the template:
+//! Two template fields set them apart:
 //!
 //! ```text
 //! 5 GAMEOBJECT_TYPE_GENERIC   data[0] floatingTooltip   data[1] highlight
 //!                             data[2] serverOnly        data[3] large
 //! ```
 //!
-//! * **`floatingTooltip` is the plate, and it *floats*** — it follows the
-//!   pointer instead of sitting in the screen's corner where a unit's plate
-//!   goes. That is the reported difference and it is the flag's own name.
-//! * **and nothing can be *done* to one.** `HandleGameObjectUseOpcode` refuses
-//!   the type outright — `if (obj->GetGoType() == GAMEOBJECT_TYPE_GENERIC)
-//!   return;` — before any of its other checks, so a click is a packet the
-//!   server drops on the floor.
+//! * `floatingTooltip` turns on the tooltip, and the tooltip follows the
+//!   pointer instead of sitting in the screen corner where a unit's tooltip
+//!   goes.
+//! * vmangos `HandleGameObjectUseOpcode` refuses the type before any other
+//!   check (`if (obj->GetGoType() == GAMEOBJECT_TYPE_GENERIC) return;`), so the
+//!   server drops a use packet for one.
 //!
-//! So **"can be clicked" and "can be hovered" are two questions**, and this
-//! module answers them separately: [`Kind::usable`] is the first and
-//! [`hover_of`] is the second. Conflating them is what left the signs inert —
-//! they were filtered out of the pick as scenery, which is what 468 of the
-//! 1,869 genuinely are.
+//! "Can be clicked" and "can be hovered" are therefore separate questions:
+//! [`Kind::usable`] answers the first and [`hover_of`] the second. When the two
+//! were one test, the signs were filtered out of the pick as scenery, which 468
+//! of the 1,869 generic objects are.
 //!
-//! ## What is deliberately *not* here
+//! ## Not decided here: whether this character may open this lock
 //!
-//! Whether **this** character may open **this** lock. That needs the skill the
-//! character has, the key in their bag and the quest in their log, and the
-//! server checks all three anyway — a refusal comes back as `ERR_USE_LOCKED_*`
-//! off the message table. The pointer says what the thing is; the server says
-//! whether you may.
+//! That depends on the character's skill, the keys in their bags and the quests
+//! in their log, and the server checks all three; a refusal arrives as one of
+//! the `ERR_USE_LOCKED_*` messages. The pointer shows what the object is; the
+//! server decides whether the character may use it.
 
 use crate::tables::lock::{action_applies, lock_type, KeyKind, Locks};
 
@@ -115,9 +107,9 @@ use super::cursor::Cursor;
 
 /// `GAMEOBJECT_TYPE`, the values `GameObjectInfo::type` takes.
 ///
-/// Only the ones this client has an opinion about are named; everything else is
-/// [`Kind::Other`] and draws nothing. The numbering is the server's own enum and
-/// is unchanged from 1.12 through to modern builds for every row here.
+/// Only the types this client treats specially are named; every other value is
+/// [`Kind::Other`] and draws nothing. The numbering is the server's enum, and
+/// every value named here is the same from 1.12 to modern builds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Kind {
     /// 0 — a door. `data[0]` startOpen, `data[1]` lockId.
@@ -126,32 +118,32 @@ pub enum Kind {
     Button,
     /// 2 — a game object that hands out quests. `data[0]` lockId.
     QuestGiver,
-    /// 3 — a chest, **and every ore vein and herb in the game**: the difference
-    /// is the lock. `data[0]` lockId, `data[1]` lootId.
+    /// 3 — a chest, and also every ore vein and herb node; the lock tells them
+    /// apart. `data[0]` lockId, `data[1]` lootId.
     Chest,
-    /// 5 — the signposts, the plaques and the markers. **Never usable** and
-    /// often hoverable; see the module note and [`hover_of`]. `data[0]`
-    /// floatingTooltip, `data[1]` highlight.
+    /// 5 — signposts, plaques and markers. Never usable, often hoverable; see
+    /// the module documentation and [`hover_of`]. `data[0]` floatingTooltip,
+    /// `data[1]` highlight.
     ///
-    /// **The default**, because it is the one type that does nothing at all: a
-    /// caller with no answer yet must not be holding a door or a chest.
+    /// This is the default because it is the one type that does nothing: a
+    /// caller that has no template yet must not be treated as holding a door
+    /// or a chest.
     #[default]
     Generic,
     /// 6 — a trap. Not clickable; named so that its absence from
-    /// [`Kind::usable`] is on purpose rather than an oversight.
+    /// [`Kind::usable`] is visibly intended.
     Trap,
-    /// 12 — an area-damage volume. Not clickable, and named for the same
-    /// reason [`Kind::Trap`] is: it carries a lock and it is not a thing a
-    /// player touches.
+    /// 12 — an area-damage volume. Not clickable. Named for the same reason as
+    /// [`Kind::Trap`]: it carries a lock, and a player does not use it.
     AreaDamage,
-    /// 13 — a camera. Same.
+    /// 13 — a camera. Not clickable, for the same reason as [`Kind::Trap`].
     Camera,
     /// 7 — a chair. Clicking one sits the character in it.
     Chair,
     /// 9 — a sign, a plaque, a tombstone: `SMSG_GAMEOBJECT_PAGETEXT`.
     Text,
-    /// 10 — the catch-all "do something" object: a brazier to light, a lever
-    /// with a quest behind it, a book on a stand. `data[0]` lockId.
+    /// 10 — the general-purpose interactive object: a brazier to light, a
+    /// lever tied to a quest, a book on a stand. `data[0]` lockId.
     Goober,
     /// 19 — a mailbox.
     Mailbox,
@@ -169,13 +161,13 @@ pub enum Kind {
     FishingHole,
     /// 26 — a dropped battleground flag.
     FlagDrop,
-    /// Everything else: the invisible zone markers, the spell focuses, the
-    /// scenery, the transports.
+    /// Every other type: invisible zone markers, spell focuses, scenery,
+    /// transports.
     Other(u32),
 }
 
 impl Kind {
-    /// The type byte, read.
+    /// The [`Kind`] for a template's type byte.
     pub fn of(object_type: u32) -> Kind {
         match object_type {
             0 => Kind::Door,
@@ -201,29 +193,27 @@ impl Kind {
         }
     }
 
-    /// **Which two words of the template's union hold a page**, as
-    /// `(pageId, pageMaterial)`, or `None` for a type that can carry none.
+    /// The indices of the two template words that hold a page, as
+    /// `(pageId, pageMaterial)`, or `None` for a type that cannot carry one.
     ///
-    /// Two types can, and they keep the pair at different offsets — the same
-    /// shape, and the same hazard, as [`Self::lock_word`]. `GameObjectDefines.h`
-    /// spells both unions out:
+    /// Two types can, and they keep the pair at different offsets, as with
+    /// [`Self::lock_word`]. vmangos `GameObjectDefines.h` lists both unions:
     ///
     /// ```text
     /// 9  TEXT     data[0] pageID  data[1] language  data[2] pageMaterial  data[3] allowMounted
     /// 10 GOOBER   … data[7] pageId  data[8] language  data[9] pageMaterial …
     /// ```
     ///
-    /// A `pageId` of zero is the ordinary case for a goober — a brazier, a
-    /// lever — and means there is nothing to read, which is the caller's test
-    /// rather than this function's.
+    /// A `pageId` of zero is the usual case for a goober (a brazier, a lever)
+    /// and means there is nothing to read. The caller tests for zero; this
+    /// function does not.
     ///
-    /// **The two are reached differently and that is the server's doing.** A
-    /// goober with a page is announced: `GameObject::Use` sends
-    /// `SMSG_GAMEOBJECT_PAGETEXT` with the guid and nothing else
-    /// (`GameObject.cpp:1551`), leaving the client to find the page id here. A
-    /// `TEXT` object has no `Use` case at all, so nothing is sent and the client
-    /// opens it off this template by itself. Both end at the same query; see
-    /// [`vale_protocol::play::pagetext`].
+    /// The server handles the two types differently. For a goober with a page,
+    /// `GameObject::Use` sends `SMSG_GAMEOBJECT_PAGETEXT` carrying only the guid
+    /// (`GameObject.cpp:1551`), and the client finds the page id here. A `TEXT`
+    /// object has no case in `Use`, so the server sends nothing and the client
+    /// opens the page from this template itself. Both paths end at the same
+    /// query; see [`vale_protocol::play::pagetext`].
     pub fn page_words(self) -> Option<(usize, usize)> {
         match self {
             Kind::Text => Some((0, 2)),
@@ -232,26 +222,26 @@ impl Kind {
         }
     }
 
-    /// **Which word of the template's union holds this type's lock id**, or
-    /// `None` for a type that has no lock at all.
+    /// The index of the template word that holds this type's lock id, or
+    /// `None` for a type with no lock.
     ///
-    /// See the module note: this is the single place the offset is chosen, and
-    /// the door-against-chest difference is why it exists as a function rather
-    /// than as `data[0]` at the call site.
+    /// This is the only place the offset is chosen. It is a function rather
+    /// than `data[0]` at the call site because a door and a chest keep the lock
+    /// in different words; see the module documentation.
     pub fn lock_word(self) -> Option<usize> {
         Some(match self {
             // A door's and a button's first word is `startOpen`.
             Kind::Door | Kind::Button => 1,
             Kind::QuestGiver | Kind::Chest | Kind::Goober | Kind::FlagStand | Kind::FlagDrop => 0,
-            // …and the three the world's own data almost never shows, taken from
-            // the client's table rather than inferred: a trap's first word is
-            // its lock, and so are an area-damage volume's and a camera's.
+            // Traps, area-damage volumes and cameras rarely appear in the world
+            // data. In the 1.12.1 client the first word of each is its lock.
             // None of the three is [`Self::usable`], so nothing in this client
-            // asks — they are here because the table answered and a `None`
-            // would have been a wrong answer rather than a missing one.
+            // asks; they are listed because `None` would be a wrong answer for
+            // them, not a missing one.
             Kind::Trap | Kind::AreaDamage | Kind::Camera => 0,
             // `radius`, `lootId`, `minSuccessOpens`, `maxSuccessOpens`, then the
-            // lock — the one type whose lock is not in the first two words.
+            // lock. This is the only type whose lock is not in the first two
+            // words.
             Kind::FishingHole => 4,
             Kind::Generic
             | Kind::Chair
@@ -265,27 +255,27 @@ impl Kind {
         })
     }
 
-    /// **Is this opened by casting at it rather than by `CMSG_GAMEOBJ_USE`?**
+    /// Whether this type is opened by casting a spell at it rather than by
+    /// `CMSG_GAMEOBJ_USE`.
     ///
-    /// The two types whose whole purpose is loot — see the module note, where
-    /// the server arm that does nothing is quoted. Everything else, doors and
-    /// levers and chairs and mailboxes included, goes out as the use packet;
-    /// a **door**'s lock is checked by the server on that path
-    /// (`GameObject::PlayerCanUse` walks its `LOCK_KEY_ITEM` slots), so a
-    /// locked door is not a reason to cast at one.
+    /// True for the two types that exist to hold loot; the module documentation
+    /// quotes the server case that sends none on the use path. Every other type,
+    /// including doors, levers, chairs and mailboxes, is sent the use packet. The
+    /// server checks a door's lock on that path (`GameObject::PlayerCanUse`
+    /// walks its `LOCK_KEY_ITEM` slots), so a locked door is not cast at.
     pub fn opened_by_spell(self) -> bool {
         matches!(self, Kind::Chest | Kind::FishingHole)
     }
 
-    /// **Is a click on this worth sending?**
+    /// Whether a click on this type is sent to the server.
     ///
-    /// `false` is the pointer staying an arrow and the button doing nothing —
-    /// which is what the great majority of game objects in the world deserve:
-    /// the 1,869 invisible zone markers, the 2,332 spell focuses, the 2,297
-    /// scenery pieces and every transport are all things a player walks past.
+    /// `false` means the pointer stays an arrow and a click does nothing. That
+    /// is the answer for most game objects in the world: the 1,869 invisible
+    /// zone markers, the 2,332 spell focuses, the 2,297 scenery pieces and every
+    /// transport are not used by a player.
     ///
-    /// A trap is deliberately absent, and so is every `Other`: see the module
-    /// note on which direction the error goes.
+    /// Traps and every `Other` are intentionally excluded; the module
+    /// documentation explains which way this module errs when unsure.
     pub fn usable(self) -> bool {
         matches!(
             self,
@@ -308,48 +298,50 @@ impl Kind {
     }
 }
 
-/// `GAMEOBJECT_FLAGS` — the bits of the game object's own field that decide
+/// `GAMEOBJECT_FLAGS`: the bits of the game object's update field that decide
 /// whether a click on it does anything.
 ///
-/// The template says what a thing *is*; this word says what it is doing right
-/// now, and the server changes it during a session. A door that is mid-swing,
-/// a chest somebody else is standing over and an event object that is not
-/// running yet are all perfectly ordinary templates with a bit set here.
+/// The template describes what an object is; this field describes its current
+/// state, and the server changes it during a session. A door that is
+/// mid-swing, a chest another player is looting and an event object whose
+/// event is not running all have ordinary templates and a bit set here.
 ///
-/// Named rather than written as literals because two of the three are read
-/// together and the third is read against a *different* word — see
+/// The bits are named constants because two of the three tested bits are read
+/// together and the third is read against a different field; see
 /// [`interactable`].
 pub mod go_flags {
-    /// The thing is animating. `GameObjectDefines.h`: "disables interaction
+    /// The object is animating. `GameObjectDefines.h`: "disables interaction
     /// while animated".
     pub const IN_USE: u32 = 0x0000_0001;
-    /// **"Locked" goes on the plate.** The server's own comment on the bit says
-    /// exactly that, and the reference's tooltip is where it happens.
+    /// The tooltip shows "Locked". The server's comment on the bit says so, and
+    /// the 1.12.1 client shows the line in the object's tooltip.
     pub const LOCKED: u32 = 0x0000_0002;
-    /// **Ask before letting this character touch it** — the answer is
-    /// [`go_dyn_flags::ACTIVATE`] in the private half of the update block.
+    /// The server decides per character whether this object may be used; the
+    /// answer is [`go_dyn_flags::ACTIVATE`] in the private part of the update
+    /// block.
     pub const INTERACT_COND: u32 = 0x0000_0004;
-    /// Nobody may touch it at all.
+    /// No character may use the object.
     pub const NO_INTERACT: u32 = 0x0000_0010;
 }
 
-/// `GAMEOBJECT_DYN_FLAGS` — the server's per-player answer to
+/// `GAMEOBJECT_DYN_FLAGS`: the server's per-player answer to
 /// [`go_flags::INTERACT_COND`].
 pub mod go_dyn_flags {
-    /// **This character may act on it.** Tested only when `INTERACT_COND` is
+    /// This character may use the object. Tested only when `INTERACT_COND` is
     /// set.
     pub const ACTIVATE: u32 = 0x0000_0001;
 }
 
-/// `GAMEOBJECT_STATE`'s second used value — a destroyed thing.
+/// The `GAMEOBJECT_STATE` value for a destroyed object.
 ///
-/// Its own constant because it is the one state that makes a click *refuse*
-/// rather than merely do something different: the client answers
-/// `ERR_USE_DESTROYED` for it.
+/// It has its own constant because it is the one state for which a click is
+/// refused rather than handled differently: the client shows
+/// `ERR_USE_DESTROYED`.
 pub const STATE_DESTROYED: u8 = 2;
 
-/// **Is a click on this worth sending right now?** — [`Kind::usable`] plus the
-/// three tests the reference makes on the object's own live flags.
+/// Whether a click on this object is sent to the server now: [`Kind::usable`]
+/// plus the three tests the 1.12.1 client applies to the object's update-field
+/// flags.
 ///
 /// ```text
 /// IN_USE | NO_INTERACT set                     -> no
@@ -357,19 +349,16 @@ pub const STATE_DESTROYED: u8 = 2;
 /// otherwise                                    -> the type decides
 /// ```
 ///
-/// **The type alone is not enough and that is the whole reason this exists.**
-/// A chest that is somebody else's kill, a door that is already swinging and
-/// every event object standing inert between events are all `Kind::Chest` and
-/// `Kind::Door` with perfectly ordinary templates; what separates them from the
-/// ones a player may touch is this word and nothing else. Judging usability off
-/// the type put a hand on the pointer over all of them and sent a packet the
-/// server drops.
+/// The type alone does not decide usability. A chest from another player's
+/// kill, a door that is already swinging and an event object between events
+/// are `Kind::Chest` and `Kind::Door` with ordinary templates; only the flags
+/// separate them from objects the player may use. Deciding by type alone drew
+/// the interact hand over all of them and sent packets the server drops.
 ///
-/// **What is deliberately not here** is the reference's fourth test, the
-/// creator unit's reaction to the player: a world game object has
-/// no creator, so it decides nothing for anything a player meets outside a
-/// battleground, and reading it would mean resolving a guid this crate has no
-/// access to.
+/// The 1.12.1 client also tests the creator unit's reaction to the player.
+/// That test is left out: a world game object has no creator, so it decides
+/// nothing for objects a player meets outside a battleground, and applying it
+/// would require resolving a guid, which this crate cannot do.
 pub fn interactable(kind: Kind, flags: u32, dyn_flags: u32) -> bool {
     if !kind.usable() {
         return false;
@@ -383,17 +372,17 @@ pub fn interactable(kind: Kind, flags: u32, dyn_flags: u32) -> bool {
     true
 }
 
-/// **What the plate says it takes to open this**, or `None` for nothing at all.
+/// The requirement the tooltip shows for opening an object, or `None` when it
+/// shows none.
 ///
-/// This is `Lock.dbc` column **0**, gated by that column's `Action` against the
-/// thing's current state — and it is narrow on purpose. See
-/// [`Locks::first_slot`], where the reference's own two instructions are
-/// quoted, and [`action_applies`], where the gate is.
+/// This is `Lock.dbc` column 0, shown only when that column's `Action` applies
+/// to the object's current state. Only column 0 is used; see
+/// [`Locks::first_slot`] for the column rule and [`action_applies`] for the
+/// state test.
 ///
-/// `None` is the overwhelmingly common answer, and three different things
-/// produce it: a type with no lock word at all, a lock id of 0, and — the case
-/// this was written for — a lock whose only key is in a column the reference
-/// never looks at.
+/// `None` is by far the most common answer. Three cases produce it: a type with
+/// no lock word, a lock id of 0, and a lock whose only key is in a column other
+/// than 0, which the 1.12.1 client does not show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Requirement {
     /// `LOCK_KEY_SKILL`: a `LockType.dbc` row and the rank wanted, which is 0
@@ -405,11 +394,11 @@ pub enum Requirement {
 
 /// [`Requirement`] for one object.
 ///
-/// `state` is `GAMEOBJECT_STATE` and `locked` is [`go_flags::LOCKED`]; both are
-/// live fields rather than template words, because the gate is about what the
-/// thing is doing now. A strongbox that has already been picked stops saying
-/// "Requires Pick Lock" the moment the flag clears, which is the action column
-/// doing its job.
+/// `state` is `GAMEOBJECT_STATE` and `locked` is [`go_flags::LOCKED`]. Both come
+/// from update fields rather than the template, because the action test is
+/// about the object's current state. A strongbox that has been picked stops
+/// showing "Requires Pick Lock" as soon as the flag clears, because the action
+/// column no longer applies.
 pub fn requirement_of(locks: &Locks, lock_id: u32, state: u8, locked: bool) -> Option<Requirement> {
     let key = locks.first_slot(lock_id)?;
     if !action_applies(key.action, state, locked) {
@@ -421,28 +410,29 @@ pub fn requirement_of(locks: &Locks, lock_id: u32, state: u8, locked: bool) -> O
     })
 }
 
-/// **The five colours the reference grades a requirement with**, as linear
+/// The five colours the 1.12.1 client uses for a lock requirement, as linear
 /// `[r, g, b]` in 0..1.
 ///
-/// The client grades `(need, have)` into one of five colours, each quoted
-/// beside it as ARGB. It is the gathering-difficulty ramp — the same one a
-/// mining node's name is drawn in — and it is what makes "Requires Mining" a
-/// statement about *you* rather than about the vein.
+/// The client grades `(need, have)` into one of five colours; each constant
+/// gives its ARGB value. This is the gathering-difficulty ramp, the same one a
+/// mining node's name is drawn in, so the colour of "Requires Mining" shows the
+/// character's skill against the node's requirement.
 pub mod difficulty {
     /// `0xff808080`, `have >= need + 100`.
     pub const TRIVIAL: [f32; 3] = [0.5, 0.5, 0.5];
-    /// `0xff40c040`, `have >= need + 50`. **Not** the interface's
+    /// `0xff40c040`, `have >= need + 50`. This is not the interface's
     /// `GREEN_FONT_COLOR`, which is `0/1/0`.
     pub const EASY: [f32; 3] = [0.25, 0.75, 0.25];
     /// `0xffffff00`, `have >= need + 25`.
     pub const MEDIUM: [f32; 3] = [1.0, 1.0, 0.0];
     /// `0xffff8040`, `have >= need`.
     pub const HARD: [f32; 3] = [1.0, 0.5, 0.25];
-    /// `0xffff2020`, `have < need` — the same red `RED_FONT_COLOR_CODE` is.
+    /// `0xffff2020`, `have < need`; the same red as `RED_FONT_COLOR_CODE`.
     pub const IMPOSSIBLE: [f32; 3] = [1.0, 32.0 / 255.0, 32.0 / 255.0];
 }
 
-/// [`difficulty`], chosen — in the client's own order.
+/// The [`difficulty`] colour for `have` against `need`, testing the bands from
+/// `TRIVIAL` down to `IMPOSSIBLE` as the 1.12.1 client does.
 pub fn difficulty_colour(have: u32, need: u32) -> [f32; 3] {
     if have >= need.saturating_add(100) {
         difficulty::TRIVIAL
@@ -457,49 +447,47 @@ pub fn difficulty_colour(have: u32, need: u32) -> [f32; 3] {
     }
 }
 
-/// **The best way this character has into one lock**, and whether it is enough.
+/// The best way this character has to open one lock, and whether it is enough.
 ///
-/// The answer to the client's lock check, which is the one function both
-/// halves of this subject hang off: the plate's colour and whether the click
-/// goes at all.
+/// The result of the lock check. It decides both the tooltip line's colour and
+/// whether the click is sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LockWay {
     /// The open-lock spell the character knows for one of the lock's skill
     /// slots, or `None` when the way in was a key.
     pub spell: Option<u32>,
-    /// …or the item entry they are carrying.
+    /// The key's item entry the character is carrying, or `None` when the way
+    /// in was a spell.
     pub item: Option<u32>,
     /// Their value in the skill line that spell belongs to, and the rank the
     /// slot wants. Both zero for an item way in.
     pub have: u32,
     pub need: u32,
-    /// **Is this way in actually good enough?** `have >= need`, or an item
-    /// held. `false` is a vein a miner is thirty points short of, and it is
-    /// what the plate draws in red.
+    /// Whether this way in succeeds: `have >= need`, or the item is held.
+    /// `false` is, for example, a vein a miner is thirty points short of; the
+    /// tooltip draws that requirement in red.
     pub enough: bool,
 }
 
-/// [`LockWay`] for one lock — the reference's `CanOpen`, slot by slot.
+/// [`LockWay`] for one lock, checked slot by slot.
 ///
-/// `None` means the lock names **no applicable way in at all**: an unlocked
-/// thing (id 0), a lock the table does not carry, or one whose every slot is
-/// ruled out by [`action_applies`] for the state this thing is in. That is the
-/// reference's `false` return and it is *not* a refusal — `Opening` still
-/// applies to an unlocked chest through the ordinary path (see [`opener`]).
+/// `None` means the lock has no applicable way in: an unlocked object (id 0), a
+/// lock id missing from the table, or a lock whose every slot is ruled out by
+/// [`action_applies`] for the object's current state. `None` is not a refusal:
+/// `Opening` still applies to an unlocked chest through the ordinary path (see
+/// [`opener`]).
 ///
-/// The two closures are the half that is in no file. `by_skill` answers, for a
-/// `LockType.dbc` row, the spell this character knows that opens it and their
-/// value in that spell's skill line; `by_item` answers whether they are
-/// carrying an entry. `level` is `GAMEOBJECT_LEVEL`, which is the rank a slot
-/// wanting **0** falls back to five times over — vmangos writes
-/// that field for transports and for nothing else, so in practice it is zero
-/// and a rank-0 slot is met by anybody.
+/// The two closures supply the character data that no file holds. `by_skill`
+/// returns, for a `LockType.dbc` row, the spell this character knows that opens
+/// it and the character's value in that spell's skill line; `by_item` returns
+/// whether the character carries an item entry. `level` is `GAMEOBJECT_LEVEL`;
+/// a slot whose rank is 0 requires five times that level instead. vmangos
+/// writes that field only for transports, so in practice it is zero and any
+/// character meets a rank-0 slot.
 ///
-/// **The first satisfiable slot wins, and a slot that matches but falls short
-/// is still remembered** — that is the reference's own shape, where the out
-/// params are written on every matching slot and the walk stops only on a
-/// success. It is what lets the plate say "Requires Mining" in red rather than
-/// saying nothing.
+/// The first slot the character satisfies is returned. If none succeeds, the
+/// first slot that matched but fell short is returned, so the tooltip can show
+/// "Requires Mining" in red instead of showing nothing.
 pub fn can_open(
     locks: &Locks,
     lock_id: u32,
@@ -548,17 +536,18 @@ pub fn can_open(
     best
 }
 
-/// **What hovering one is worth**, out of the template — which is a different
-/// question from whether it can be clicked.
+/// What hovering a game object shows, read from the template. This is separate
+/// from whether the object can be clicked.
 ///
-/// See the module note. Both flags are `GAMEOBJECT_TYPE_GENERIC`'s own; every
-/// other type answers them from what it *is*, because a thing you can open is a
-/// thing worth lighting up and its plate goes where a unit's goes.
+/// See the module documentation. Both flags are template fields of
+/// `GAMEOBJECT_TYPE_GENERIC` only; for every other type they follow from the
+/// type: an object that can be used is highlighted, and its tooltip is placed
+/// where a unit's goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Hover {
-    /// **The plate follows the pointer** instead of sitting in the corner of
-    /// the screen. `floatingTooltip`, and it is the whole of what makes a
-    /// street sign feel different from a chest.
+    /// The tooltip follows the pointer instead of sitting in the corner of the
+    /// screen. From `floatingTooltip`; this is the visible difference between a
+    /// street sign and a chest.
     pub floating: bool,
     /// The model lights up under the pointer.
     pub highlight: bool,
@@ -566,16 +555,16 @@ pub struct Hover {
 
 /// [`Hover`] for one template.
 ///
-/// `data` is the raw 24-word union out of `SMSG_GAMEOBJECT_QUERY_RESPONSE`; a
-/// short slice reads as zeroes, which is the "not resolved yet" answer and is
-/// the right one — a game object with no template is not worth pointing at.
+/// `data` is the raw 24-word union from `SMSG_GAMEOBJECT_QUERY_RESPONSE`. Words
+/// missing from a short slice read as zero, which gives the answer for an
+/// object whose template has not arrived: it is not picked.
 ///
-/// **A generic with `highlight` and no `floatingTooltip` reads as nothing here,
-/// and that is a deviation.** 189 rows are shaped that way, and taking them at
-/// face value would mean a model that glows under the pointer, says nothing and
-/// does nothing — and, worse, that wins the depth test over a *unit* standing
-/// behind it, which is the exact fault the sign filter was added for. Erring
-/// towards not-picked costs a glow; erring the other way costs the mob.
+/// A generic object with `highlight` set and `floatingTooltip` clear gets no
+/// hover here, which deviates from the template. 189 rows have that shape.
+/// Honouring the flag would give a model that glows under the pointer, shows
+/// nothing and does nothing, and that wins the depth test over a unit standing
+/// behind it, which is the fault the sign filter was added to prevent. Not
+/// picking such an object loses a glow; picking it hides the unit.
 pub fn hover_of(kind: Kind, data: &[u32]) -> Hover {
     let word = |n: usize| data.get(n).copied().unwrap_or(0) != 0;
     match kind {
@@ -583,12 +572,12 @@ pub fn hover_of(kind: Kind, data: &[u32]) -> Hover {
             let floating = word(0);
             Hover {
                 floating,
-                // Only alongside the plate — see this function's own note.
+                // Highlight only with the tooltip; see this function's doc.
                 highlight: floating && word(1),
             }
         }
-        // Everything a click does something to is worth lighting, and its plate
-        // is a unit's: anchored where `GameTooltip_SetDefaultAnchor` puts one.
+        // A usable object is highlighted, and its tooltip is anchored like a
+        // unit's, where `GameTooltip_SetDefaultAnchor` puts it.
         kind if kind.usable() => Hover {
             floating: false,
             highlight: true,
@@ -597,28 +586,25 @@ pub fn hover_of(kind: Kind, data: &[u32]) -> Hover {
     }
 }
 
-/// **Is this worth putting in the pick at all?**
+/// Whether the pointer ray tests this game object at all.
 ///
-/// The union of the two questions, and the one thing that decides whether the
-/// ray even considers a game object: something a click acts on, or something a
-/// hover says. Everything else — the spell focuses that are the anvils and
-/// forges, the transports, the traps, the 468 inert generics — stays out, and
-/// staying out matters because a game object that wins the depth test **clears
-/// the unit hover behind it**.
+/// True when the object is usable or its hover shows a floating tooltip.
+/// Everything else (the spell focuses that are anvils and forges, transports,
+/// traps, the 468 inert generic objects) is excluded, because a game object
+/// that wins the depth test clears the hover of any unit behind it.
 pub fn worth_pointing_at(kind: Kind, data: &[u32]) -> bool {
     kind.usable() || hover_of(kind, data).floating
 }
 
-/// **What the pointer shows over one game object**, or `None` for the arrow.
+/// The pointer drawn over one game object, or `None` for the arrow.
 ///
-/// The lock is asked *first* and the type second, which is the order the whole
-/// feature is about: an ore vein and a strongbox are both `Chest`, and the only
-/// thing that separates them is that one's lock says Mining. A type-first rule
-/// would draw a hand over every vein in the game.
+/// The lock is tested before the type. An ore vein and a strongbox are both
+/// `Chest`, and only the vein's lock names Mining; testing the type first would
+/// draw a hand over every vein.
 ///
-/// `lock_id` is [`Kind::lock_word`]'s word out of the template — zero for a type
-/// with no lock and for an unlocked one, which [`Locks::skill_lock`] answers
-/// `None` to.
+/// `lock_id` is the template word chosen by [`Kind::lock_word`]. It is zero for
+/// a type with no lock and for an unlocked object, and [`Locks::skill_lock`]
+/// returns `None` for zero.
 pub fn over_object(kind: Kind, locks: &Locks, lock_id: u32) -> Option<Cursor> {
     if !kind.usable() {
         return None;
@@ -629,55 +615,52 @@ pub fn over_object(kind: Kind, locks: &Locks, lock_id: u32) -> Option<Cursor> {
             lock_type::MINING => return Some(Cursor::Mine),
             lock_type::PICK_LOCK => return Some(Cursor::PickLock),
             // `Open`, `Treasure`, `Disarm Trap`, `Close` and the eleven unused
-            // rows fall through to the type below: "the Opening spell will do
-            // it" is not a thing a pointer has a picture for, and every quest
-            // goober in the game is keyed on exactly that.
+            // rows fall through to the type below. No pointer image means
+            // "opened by the Opening spell", and every quest goober uses such
+            // a lock.
             _ => {}
         }
     }
     Some(match kind {
-        // **A sign never reaches here** — `usable()` is false for `Generic` and
-        // this function returns early on that. Named so the absence is on
-        // purpose: the reference draws the ordinary arrow over a signpost, and
-        // a hand over something no click can act on would be a pointer that
-        // lies.
+        // A sign (`Generic`) never reaches this match: `usable()` is false for
+        // it and the function has already returned. The 1.12.1 client shows
+        // the ordinary arrow over a signpost, and a hand would advertise a
+        // click that does nothing.
         Kind::Mailbox => Cursor::Mail,
-        // A quest goober is *not* a speech bubble: 1.12's bubble is a unit's,
-        // and the reference draws the plain hand over the ball-and-chain you
-        // click to start a quest. The bubble is kept for the one type whose
-        // whole purpose is a conversation.
+        // A quest goober does not get the speech bubble: in 1.12 the bubble is
+        // for units, and the 1.12.1 client shows the plain hand over the
+        // ball-and-chain clicked to start a quest. The bubble is used only for
+        // the quest-giver type.
         Kind::QuestGiver => Cursor::Speak,
         Kind::AuctionHouse => Cursor::Buy,
-        // Everything else that can be clicked is the hand, which is the
-        // reference's own default over a game object.
+        // Every other usable type gets the hand, the 1.12.1 client's default
+        // pointer over a game object.
         _ => Cursor::Interact,
     })
 }
 
-/// **Which spell this character would cast at this lock**, or `None` for a lock
-/// they have no way into.
+/// The spell this character would cast at this lock, or `None` when the
+/// character has no way to open it.
 ///
-/// The rule is one join and it is the same one the *server* checks on the way
-/// back: `Spell::CanOpenLock` walks the lock's eight slots and, for each
-/// `LOCK_KEY_SKILL`, compares `m_spellInfo->EffectMiscValue[effIdx]` against
-/// the slot's `LockType`. So the spell to send is one the character knows whose
+/// The rule is the one the server checks when the cast arrives: vmangos
+/// `Spell::CanOpenLock` walks the lock's eight slots and, for each
+/// `LOCK_KEY_SKILL`, compares `m_spellInfo->EffectMiscValue[effIdx]` with the
+/// slot's `LockType`. The spell to send is one the character knows whose
 /// open-lock misc value is a `LockType` this lock names.
 ///
-/// **A lock id of zero is `LOCKTYPE_OPEN`, not "no answer".** `CanOpenLock`
-/// returns `SPELL_CAST_OK` outright for lock 0 whatever the spell is, and every
-/// character is created knowing `Opening` — so treating an unlocked chest as if
-/// its lock said `Open` gives the right spell through the ordinary path instead
-/// of a special case.
+/// A lock id of zero is treated as `LOCKTYPE_OPEN`. `CanOpenLock` returns
+/// `SPELL_CAST_OK` for lock 0 whatever the spell, and every character is
+/// created knowing `Opening`, so treating an unlocked chest as if its lock
+/// named `Open` gives the right spell without a special case.
 ///
-/// **The rank is not chosen and does not matter** — see
+/// The rank is not chosen and does not matter; see
 /// [`crate::tables::spellbook::Spells::open_lock_spells`].
 ///
-/// **The character's own skill is deliberately not checked here.** A vein a
-/// miner is thirty points short of still gets the cast, and the server answers
-/// with the game's own `ERR_USE_LOCKED_WITH_SPELL_S`. Judging it locally would
-/// need `PLAYER_SKILL_INFO_1_1` and would err in the one direction that cannot
-/// be recovered from: a refusal this client invented has no sentence attached
-/// to it, so the click would do nothing and say nothing.
+/// The character's skill value is not checked here. A miner thirty points
+/// short of a vein still sends the cast, and the server replies with
+/// `ERR_USE_LOCKED_WITH_SPELL_S`. Checking locally would need
+/// `PLAYER_SKILL_INFO_1_1`, and a refusal made by this client has no message
+/// text, so the click would do nothing and show nothing.
 pub fn opener(
     kind: Kind,
     locks: &Locks,
@@ -697,23 +680,37 @@ pub fn opener(
             crate::tables::lock::KeyKind::Item(_) => None,
         })
         .collect();
-    // **`Open` last, always** — as the answer for a lock that names no skill,
-    // and as the fallback for one whose skills nothing opens.
+    // `Open` is always appended last: it is the answer for a lock that names
+    // no skill, and the fallback for a lock whose skills no spell opens.
     //
-    // That second case is real and it is four lock types: `Treasure (DND)`,
+    // The fallback applies to four lock types: `Treasure (DND)`,
     // `Calcified Elven Gems (DND)`, `Gahz'ridian (DND)` and `Fishing` have no
-    // open-lock spell in the whole of `Spell.dbc` (see `vale objects`, which
-    // counts them). Sending `Opening` at one of those is refused by the server
-    // with `Spell::CanOpenLock`'s own `ERR_USE_LOCKED_WITH_SPELL_S` — which is a
-    // sentence the player can read, where returning `None` here would make the
-    // click do nothing and say nothing. Same direction as every other choice in
-    // this module.
+    // open-lock spell anywhere in `Spell.dbc` (`vale objects` counts them).
+    // The server refuses `Opening` cast at one of those with
+    // `Spell::CanOpenLock`'s `ERR_USE_LOCKED_WITH_SPELL_S`, which the player
+    // can read; returning `None` here would make the click do nothing and
+    // show nothing. This module errs the same way everywhere.
     wanted.push(lock_type::OPEN);
     wanted
         .into_iter()
         .flat_map(|lock_type| spells.open_lock_spells(lock_type).iter().copied())
         .find(|spell| knows(*spell))
 }
+
+/// The `AnimationData.dbc` id a game object plays for
+/// `SMSG_GAMEOBJECT_CUSTOM_ANIM` with `anim` 0..3: `Custom0`..`Custom3`, ids
+/// 153..156. The fishing bobber (`World\Goober\G_FishingBobber.m2`) carries
+/// `Custom0` and plays it when a fish bites. `None` for an `anim` of 4 or more,
+/// which the 1.12.1 client ignores.
+pub fn custom_anim(anim: u8) -> Option<u16> {
+    (anim < 4).then(|| CUSTOM0_ANIM + u16::from(anim))
+}
+
+/// `Custom0` in `AnimationData.dbc`; see [`custom_anim`].
+pub const CUSTOM0_ANIM: u16 = 153;
+
+/// `Despawn` in `AnimationData.dbc`: what `SMSG_GAMEOBJECT_DESPAWN_ANIM` plays.
+pub const DESPAWN_ANIM: u16 = 157;
 
 #[cfg(test)]
 mod tests {
@@ -729,8 +726,8 @@ mod tests {
         built
     }
 
-    /// **The whole point of the module in one assertion**: an ore vein and a
-    /// strongbox are the same type and must not draw the same pointer.
+    /// An ore vein and a strongbox have the same type and must draw different
+    /// pointers; the lock separates them.
     #[test]
     fn the_lock_separates_a_vein_from_a_chest() {
         let table = locks(&[
@@ -769,10 +766,9 @@ mod tests {
         );
     }
 
-    /// **A door's lock is `data[1]` and a chest's is `data[0]`**, which is the
-    /// silent-failure this module's shape exists to stop. The template here is
-    /// the Deadmines' Factory Door as the world database actually has it:
-    /// `startOpen` 0, `lockId` 85.
+    /// A door's lock is `data[1]` and a chest's is `data[0]`; reading the wrong
+    /// word fails without an error. The door template is the Deadmines'
+    /// Factory Door as the world database has it: `startOpen` 0, `lockId` 85.
     #[test]
     fn a_doors_lock_is_the_second_word_and_a_chests_is_the_first() {
         let door = [0u32, 85, 0, 0];
@@ -781,18 +777,18 @@ mod tests {
         assert_eq!(door[Kind::Door.lock_word().unwrap()], 85);
         assert_eq!(Kind::Chest.lock_word(), Some(0));
         assert_eq!(chest[Kind::Chest.lock_word().unwrap()], 29);
-        // …and a type with no lock says so rather than answering zero, so a
-        // caller cannot accidentally look up lock 0 and get a plausible "no".
+        // A type with no lock returns `None` rather than zero, so a caller
+        // cannot look up lock 0 by mistake and get a plausible "no lock".
         assert_eq!(Kind::Mailbox.lock_word(), None);
         assert_eq!(Kind::Other(5).lock_word(), None);
     }
 
-    /// **A street sign is hovered and never clicked**, which is the pair of
-    /// answers this module had to grow a second question for.
+    /// A street sign is hovered but never clicked, which is why usability and
+    /// hover are separate questions.
     ///
-    /// The template is the Goldshire crossroads' own, as the world database has
-    /// it: type 5, `floatingTooltip` 1, `highlight` 1 — one game object per arm
-    /// of the signpost, each named for where the arm points.
+    /// The template is the Goldshire crossroads sign as the world database has
+    /// it: type 5, `floatingTooltip` 1, `highlight` 1. There is one game object
+    /// per arm of the signpost, each named for where the arm points.
     #[test]
     fn a_sign_is_worth_pointing_at_and_cannot_be_used() {
         let sign = [1u32, 1, 0, 0];
@@ -803,20 +799,21 @@ mod tests {
             Hover { floating: true, highlight: true },
             "its plate follows the pointer, and it lights up"
         );
-        // …and the 468 inert ones stay out of the pick entirely, which is what
-        // stops them clearing the unit hover behind them.
+        // The 468 inert generic objects are excluded from the pick, so they
+        // cannot clear the hover of a unit behind them.
         let scenery = [0u32, 0, 0, 0];
         assert!(!worth_pointing_at(Kind::Generic, &scenery));
         assert_eq!(hover_of(Kind::Generic, &scenery), Hover::default());
-        // …and so does the highlight-without-a-plate shape — see `hover_of`,
-        // where the deviation is stated.
+        // A template with `highlight` set and no tooltip is excluded too; see
+        // `hover_of`, which documents the deviation.
         let glow_only = [0u32, 1, 0, 0];
         assert!(!worth_pointing_at(Kind::Generic, &glow_only));
         assert!(!hover_of(Kind::Generic, &glow_only).highlight);
     }
 
-    /// **Everything a click acts on lights up and anchors like a unit**, which
-    /// is the other half of [`hover_of`] and needs no template at all.
+    /// A usable object is highlighted and its tooltip is anchored like a
+    /// unit's. This is the non-generic branch of [`hover_of`] and needs no
+    /// template.
     #[test]
     fn a_usable_object_lights_up_and_its_plate_does_not_float() {
         for kind in [Kind::Door, Kind::Chest, Kind::Mailbox, Kind::Chair] {
@@ -832,8 +829,8 @@ mod tests {
         }
     }
 
-    /// The scenery draws nothing, which is most of the game objects in the
-    /// world — see [`Kind::usable`].
+    /// Scenery, which is most of the game objects in the world, draws no
+    /// pointer; see [`Kind::usable`].
     #[test]
     fn the_scenery_is_not_clickable() {
         let table = Locks::default();
@@ -845,8 +842,8 @@ mod tests {
         assert!(Kind::Chest.usable());
     }
 
-    /// **A chest is a cast and a door is a use**, which is the routing the whole
-    /// round turned on — and the *lock* decides which spell, not the type.
+    /// A chest is opened by a spell cast and a door by the use packet. The
+    /// lock, not the type, decides which spell.
     #[test]
     fn a_chest_takes_a_spell_and_a_door_takes_the_use_packet() {
         assert!(Kind::Chest.opened_by_spell());
@@ -856,19 +853,19 @@ mod tests {
         }
     }
 
-    /// **Which spell**, out of the lock and the character's own book.
+    /// The spell is chosen from the lock and the spells the character knows.
     ///
-    /// The last two assertions are the pair that matters: an unlocked chest gets
-    /// `Opening` through the ordinary path rather than through a special case,
-    /// and a lock the character has no skill for still gets *something* sent, so
-    /// the server can refuse it in words.
+    /// The `Opening` assertions cover two cases: an unlocked chest gets
+    /// `Opening` through the ordinary path rather than a special case, and a
+    /// lock the character has no skill for still sends a cast, so the server
+    /// replies with a refusal message.
     #[test]
     fn the_lock_and_the_book_between_them_choose_the_spell() {
         use crate::tables::spellbook::Spells;
 
         // A three-row `Spell.dbc`: Herb Gathering, Mining and Opening, each an
-        // `SPELL_EFFECT_OPEN_LOCK_ITEM` (33) with its own misc value — which is
-        // exactly what the shipped file has for 2366, 2575 and 3365.
+        // `SPELL_EFFECT_OPEN_LOCK_ITEM` (33) with its own misc value, as the
+        // shipped file has for 2366, 2575 and 3365.
         let spells = Spells::parse(
             &spell_dbc(&[
                 (2366, 33, lock_type::HERBALISM),
@@ -938,11 +935,11 @@ mod tests {
         out
     }
 
-    /// **The three live flags, each on its own**, which is what separates a
-    /// chest this character may open from one that is somebody else's.
+    /// Each of the three tested update-field flags on its own. They separate a
+    /// chest this character may open from one that belongs to someone else.
     ///
-    /// Every one of these is a `Kind::Chest` with an ordinary template, so a
-    /// judgement made off the type alone put the interact hand over all four.
+    /// Every case is a `Kind::Chest` with an ordinary template, so a decision
+    /// made from the type alone drew the interact hand over all four.
     #[test]
     fn the_objects_own_flags_decide_whether_a_click_is_worth_sending() {
         assert!(interactable(Kind::Chest, 0, 0), "the plain case");
@@ -962,15 +959,15 @@ mod tests {
             interactable(Kind::Chest, go_flags::INTERACT_COND, go_dyn_flags::ACTIVATE),
             "…and it has"
         );
-        // `LOCKED` is emphatically **not** one of them: a locked door is still
-        // clicked, and the server answers in words.
+        // `LOCKED` is not one of the tested flags: a locked door is still
+        // clicked, and the server replies with a message.
         assert!(interactable(Kind::Door, go_flags::LOCKED, 0));
-        // …and the type still decides first, whatever the flags say.
+        // The type is tested first, whatever the flags say.
         assert!(!interactable(Kind::Generic, 0, go_dyn_flags::ACTIVATE));
     }
 
-    /// **The Food Crate**, which is the report this round is about: a lock
-    /// whose only key is in column 1 must produce no requirement line.
+    /// The Food Crate case: a lock whose only key is in column 1 produces no
+    /// requirement line.
     #[test]
     fn a_key_outside_column_zero_is_not_a_requirement() {
         let mut built = Locks::default();
@@ -987,7 +984,7 @@ mod tests {
             None,
             "the reference reads column 0 and the crate has none, so it says nothing"
         );
-        // …and the same key in column 0 does produce one.
+        // The same key in column 0 does produce one.
         let mut built = Locks::default();
         built = built.with_lock(
             43,
@@ -1001,13 +998,13 @@ mod tests {
             requirement_of(&built, 43, 1, false),
             Some(Requirement::Skill { lock_type: 13, rank: 0 })
         );
-        // …and the action gate still applies to it: action 0 wants a thing that
-        // is shut and not locked, so a locked one says nothing.
+        // The action test still applies: action 0 requires an object that is
+        // shut and not locked, so a locked one shows nothing.
         assert_eq!(requirement_of(&built, 43, 1, true), None);
     }
 
-    /// **The ramp, band by band**, because the whole of what the line says
-    /// about *you* is its colour.
+    /// Each band of the difficulty ramp. The colour is how the requirement line
+    /// shows the character's skill against the lock's rank.
     #[test]
     fn the_requirement_is_coloured_by_the_rank_against_your_own() {
         assert_eq!(difficulty_colour(225, 125), difficulty::TRIVIAL);
@@ -1015,17 +1012,15 @@ mod tests {
         assert_eq!(difficulty_colour(150, 125), difficulty::MEDIUM);
         assert_eq!(difficulty_colour(125, 125), difficulty::HARD);
         assert_eq!(difficulty_colour(124, 125), difficulty::IMPOSSIBLE);
-        // **A rank of zero is `HARD`, not `TRIVIAL`**, which reads backwards
-        // and is what the arithmetic says: the first band wants `have >= need
-        // + 100`, so a lock wanting nothing from a character with no skill in
-        // that line at all comes out orange. It is the ordinary colour of
-        // "Requires Open" in the reference, and a ramp written to feel right
-        // instead would have got it wrong.
+        // A rank of zero with no skill is `HARD`, not `TRIVIAL`. The first band
+        // requires `have >= need + 100`, so a lock that requires nothing, held
+        // against a character with no skill in that line, comes out orange.
+        // That is the usual colour of "Requires Open" in the 1.12.1 client.
         assert_eq!(difficulty_colour(0, 0), difficulty::HARD);
     }
 
-    /// **The way in, and whether it is good enough** — the two answers that
-    /// between them decide the plate's colour and whether the click goes.
+    /// The way in and whether it is enough. Together they decide the tooltip
+    /// line's colour and whether the click is sent.
     #[test]
     fn the_best_way_in_is_found_and_graded() {
         let mut built = Locks::default();
@@ -1037,23 +1032,23 @@ mod tests {
                 action: 0,
             }],
         );
-        // A miner thirty points short: the way in is found, and it is not
-        // enough — which is what draws the line in red instead of hiding it.
+        // A miner thirty points short: the way in is found and is not enough,
+        // so the line is drawn in red instead of being hidden.
         let short = can_open(&built, 41, 1, false, 0, |_| Some((2575, 95)), |_| false)
             .expect("the slot matched");
         assert_eq!(short.spell, Some(2575));
         assert_eq!((short.have, short.need), (95, 125));
         assert!(!short.enough);
-        // …and one who is not.
+        // A miner with enough skill.
         let ample = can_open(&built, 41, 1, false, 0, |_| Some((2575, 150)), |_| false)
             .expect("the slot matched");
         assert!(ample.enough);
         // A character with no mining spell at all finds nothing.
         assert_eq!(can_open(&built, 41, 1, false, 0, |_| None, |_| false), None);
-        // …and the action gate still rules the slot out for a locked thing.
+        // The action test rules the slot out for a locked object.
         assert_eq!(can_open(&built, 41, 1, true, 0, |_| Some((2575, 150)), |_| false), None);
 
-        // A key in the bags is flatly enough, with nothing to grade.
+        // A key in the bags is always enough and has no grade.
         let mut keyed = Locks::default();
         keyed = keyed.with_lock(
             36,
@@ -1065,9 +1060,9 @@ mod tests {
         assert_eq!(can_open(&keyed, 36, 1, false, 0, |_| None, |_| false), None);
     }
 
-    /// **A rank of zero falls back to the object's level, five times over** —
-    /// and it is nearly always zero because vmangos writes
-    /// `GAMEOBJECT_LEVEL` for transports alone.
+    /// A slot with rank 0 requires five times the object's level. The level is
+    /// nearly always zero because vmangos writes `GAMEOBJECT_LEVEL` only for
+    /// transports.
     #[test]
     fn a_slot_wanting_no_rank_falls_back_to_five_times_the_level() {
         let mut built = Locks::default();
@@ -1087,8 +1082,8 @@ mod tests {
         assert!(!way.enough);
     }
 
-    /// The four types with a pointer of their own, so a later edit to the
-    /// fall-through cannot quietly take one back to the hand.
+    /// The four types with their own pointer, so that a change to the default
+    /// branch cannot silently turn one of them back into the hand.
     #[test]
     fn the_named_types_keep_their_own_pointers() {
         let table = Locks::default();

@@ -125,6 +125,7 @@ pub trait Answers:
     + super::panels::pagetext::PageTextAnswers
     + super::panels::trade::TradeAnswers
     + super::panels::summon::SummonAnswers
+    + super::panels::uioptions::OptionsAnswers
     + super::panels::inspect::InspectAnswers
     + super::panels::guild::GuildAnswers
     + super::panels::glue::GlueAnswers
@@ -159,6 +160,7 @@ impl<T> Answers for T where
     + super::panels::pagetext::PageTextAnswers
     + super::panels::trade::TradeAnswers
     + super::panels::summon::SummonAnswers
+    + super::panels::uioptions::OptionsAnswers
     + super::panels::inspect::InspectAnswers
     + super::panels::guild::GuildAnswers
     + super::panels::glue::GlueAnswers
@@ -385,6 +387,12 @@ pub trait UnitAnswers {
     /// `UnitCanAttack(a, b)`: the reaction and the target's own flags. See
     /// [`crate::interface::api::Units::can_attack`].
     fn unit_can_attack(&self, a: &str, b: &str) -> bool;
+    /// `UnitCanAssist(a, b)`; see [`crate::interface::api::Units::can_assist`].
+    /// The default, for the stand-ins with no faction table, is "friendly".
+    fn unit_can_assist(&self, a: &str, b: &str) -> bool {
+        use vale_assets::tables::faction::Reaction;
+        self.unit_rank(a, b).map(Reaction::from) == Some(Reaction::Friendly)
+    }
     /// `UnitPlayerControlled`: whether a player controls this unit.
     fn unit_player_controlled(&self, token: &str) -> bool;
 }
@@ -1552,6 +1560,16 @@ impl UnitAnswers for Live<'_, '_, '_> {
         }
     }
 
+    fn unit_can_assist(&self, a: &str, b: &str) -> bool {
+        let Some(tables) = self.tables.as_ref() else {
+            return false;
+        };
+        match (Self::id(a), Self::id(b)) {
+            (Some(a), Some(b)) => self.units.can_assist(tables, a, b),
+            _ => false,
+        }
+    }
+
     fn unit_player_controlled(&self, token: &str) -> bool {
         Self::id(token).is_some_and(|id| self.units.player_controlled(id))
     }
@@ -2135,20 +2153,15 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     pair!("UnitCanAttack", |a, b| one_or_nil(
         answers.unit_can_attack(a, b)
     ));
-    // `UnitCanAssist` and `UnitCanCooperate` answer "friendly". This is a
-    // stated deviation, not an alias. In the 1.12.1 client both are narrower:
-    // cooperate means the two may party, trade and duel, which requires the
-    // other unit to be a player of a faction group that can group with ours,
-    // and assist means one may heal the other. Every caller in the interface
-    // asks about a player target (`UnitPopup`'s trade and invite entries,
-    // `FriendsFrame`'s add-friend), and for a player the friendly answer and
-    // the real one agree: a hostile-faction player is neither friendly nor
-    // cooperative. The answer differs for a friendly creature, which is yes
-    // here and no in the 1.12.1 client; no 1.12.1 interface code asks about
-    // one.
-    pair!("UnitCanAssist", |a, b| one_or_nil(
-        answers.unit_rank(a, b).map(Reaction::from) == Some(Reaction::Friendly)
-    ));
+    // `UnitCanAssist` follows the 1.12.1 client's rule, which for a player
+    // asking about a friendly creature is the creature's PvP flag; see
+    // `Factions::can_assist`. `UnitCanCooperate` answers "friendly", a stated
+    // deviation: in the 1.12.1 client it means the two may party, trade and
+    // duel, which requires the other unit to be a player of a faction group
+    // that can group with ours. Every caller in the interface asks about a
+    // player target (`UnitPopup`'s trade and invite entries, `FriendsFrame`'s
+    // add-friend), and for a player the two answers agree.
+    pair!("UnitCanAssist", |a, b| one_or_nil(answers.unit_can_assist(a, b)));
     pair!("UnitCanCooperate", |a, b| one_or_nil(
         answers.unit_rank(a, b).map(Reaction::from) == Some(Reaction::Friendly)
     ));
@@ -2333,6 +2346,9 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     super::panels::pagetext::install(lua, scope, answers)?;
     // The summon popup's three reads. See [`super::panels::summon`].
     super::panels::summon::install(lua, scope, answers)?;
+    // The options panel's two reads that are not CVars. See
+    // [`super::panels::uioptions`].
+    super::panels::uioptions::install(lua, scope, answers)?;
     // The inspect window's four reads. See [`super::panels::inspect`].
     super::panels::inspect::install(lua, scope, answers)?;
     // `GetGuildInfo`, which reads a unit's guild fields. See
@@ -3493,6 +3509,7 @@ pub(crate) mod tests {
     /// branches in one pass.
     impl crate::lua::panels::trade::TradeAnswers for Stub {}
     impl crate::lua::panels::summon::SummonAnswers for Stub {}
+    impl crate::lua::panels::uioptions::OptionsAnswers for Stub {}
     impl crate::lua::panels::inspect::InspectAnswers for Stub {}
     impl crate::lua::panels::guild::GuildAnswers for Stub {}
     impl crate::lua::panels::bank::BankAnswers for Stub {}
@@ -4663,6 +4680,7 @@ pub(crate) mod tests {
             .chain(crate::lua::panels::pagetext::READS.iter())
             .chain(crate::lua::panels::trade::READS.iter())
             .chain(crate::lua::panels::summon::READS.iter())
+            .chain(crate::lua::panels::uioptions::READS.iter())
             .chain(crate::lua::panels::inspect::READS.iter())
             .chain(crate::lua::panels::guild::READS.iter())
             .chain(crate::lua::panels::loot::READS.iter())
@@ -4892,6 +4910,7 @@ impl ActionAnswers for Live<'_, '_, '_> {
         api::is_usable_action(
             self.bar,
             self.units,
+            self.inventory,
             slot,
             api::action_item(self.bar, slot).map(|entry| self.inventory.carried.count_of(entry)),
         )

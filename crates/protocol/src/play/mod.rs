@@ -26,8 +26,8 @@
 //!                logout, one file per kind of query
 //! loot.rs        the loot window of a corpse
 //! lootroll.rs    the group-loot roll that decides who gets an item
-//! object.rs      the one packet that uses a game object: a door, a chest, an
-//!                ore vein
+//! object.rs      using a game object (a door, a chest, an ore vein), and the
+//!                two packets that play a one-shot animation on one
 //! pagetext.rs    the page chain read from a sign, a plaque, a tombstone or a
 //!                book on a stand
 //! quest.rs       the quest log, and a quest giver's pages

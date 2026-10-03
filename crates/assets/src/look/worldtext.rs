@@ -1,26 +1,26 @@
-//! **The numbers and words that float off a unit you hit** — how long they live,
-//! how far they rise, how big they are and what colour.
+//! Floating combat text: the numbers and words that rise off a unit the player
+//! hits. This module holds how long each lives, how far it rises, how big it is
+//! and what colour it takes.
 //!
 //! Like [`super::unitname`], this is a subject `Interface\FrameXML\` says
-//! nothing about: the C side calls these **world text strings**
-//! (`WORLDTEXTSTRING`), so every number below is the client's own. The same object
-//! draws the floating unit *name* — see [`super::unitname`], which is the
-//! other half of it.
+//! nothing about: the 1.12.1 client draws this text itself, and every number
+//! below describes its behaviour. The same subsystem draws the floating unit
+//! name; see [`super::unitname`].
 //!
-//! **It is not `Blizzard_CombatText`, and an earlier version of this note said
-//! there was no such thing in 1.12 — wrong.**
-//! `Interface\AddOns\Blizzard_CombatText\` *is* in the archives: a
+//! ## Relation to `Blizzard_CombatText`
+//!
+//! `Interface\AddOns\Blizzard_CombatText\` is in the archives: a
 //! `LoadOnDemand` addon of twenty `<FontString>`s anchored 384 units above
 //! `UIParent`'s bottom, with `CombatText_OnLoad`, `_OnEvent` and `_OnUpdate`.
-//! That is the **scrolling strip beside the player frame** and a different
-//! feature from the numbers over the target's head. This module is the second
-//! of the two; nothing here loads the first, which is why the interface
-//! options' combat-text checkbox reports it missing.
+//! That addon is the scrolling strip beside the player frame, a different
+//! feature from the numbers over the target's head. This module covers the
+//! numbers over the target. Nothing here loads the addon, which is why the
+//! interface options' combat-text checkbox reports it missing.
 //!
-//! ## Six kinds, one style table
+//! ## The six kinds and their styles
 //!
-//! World text is added as `(kind, position, text, colour)`. Its style comes
-//! from a **record per kind**:
+//! World text is added as `(kind, position, text, colour)`. Each kind has its
+//! own style:
 //!
 //! ```text
 //! rise          how far it floats, in yards      (a float)
@@ -35,134 +35,121 @@
 //! | kind | | rise | in | out | life | height | colour |
 //! |---|---|---|---|---|---|---|---|
 //! | 0 | damage | 2.0 | 150 | 760 | 1500 | .0183 flat | white |
-//! | 1 | absorb | 2.0 | 150 | **90** | 1500 | .0183 flat | white |
-//! | 2 | **crit** | 0 | 150 | 1000 | 1500 | 0 → **.0275** | white |
+//! | 1 | absorb | 2.0 | 150 | 90 | 1500 | .0183 flat | white |
+//! | 2 | crit | 0 | 150 | 1000 | 1500 | 0 → .0275 | white |
 //! | 3 | miss | 2.0 | 150 | 1000 | 1500 | .0183 flat | white |
 //! | 4 | experience | 0 | 500 | 2000 | 4500 | .0183 flat | `8094008b` |
 //! | 5 | honour | 0 | 500 | 2000 | 4500 | .0183 flat | `ffe0ca0a` |
 //!
-//! **The crit is the whole reason the table has two heights, and its curve is a
-//! *punch*.** It does not rise at all; it grows, and the growth is the
-//! three-segment table in [`PUNCH`] — which this module once eased linearly
-//! from nothing and called a stated approximation. That approximation was the
-//! whole of what "crits fade in, get large, then fade out" was, and reading the
-//! table settles it:
+//! ## The critical's size curve
+//!
+//! The critical is the only kind whose two heights differ. It does not rise; it
+//! grows along the three-segment curve in [`PUNCH`]:
 //!
 //! ```text
-//! t 0.00 -> 0.10   scale 0.1 -> 2.0    snap up to DOUBLE size in 150 ms
-//! t 0.10 -> 0.20   scale 2.0 -> 1.0    settle back over the next 150 ms
-//! t 0.20 -> 1.00   scale 1.0           and hold there
+//! t 0.00 -> 0.10   scale 0.1 -> 2.0    up to double size in 150 ms
+//! t 0.10 -> 0.20   scale 2.0 -> 1.0    back over the next 150 ms
+//! t 0.20 -> 1.00   scale 1.0           and held there
 //! ```
 //!
-//! Twelve floats, `[lo, hi, from, to]` four at a time, interpolated and
-//! multiplied by [`Style::height`]'s **second** value — so the first is unused
-//! for a critical and the peak is twice `0.0275`. See [`punch`].
+//! Each segment is `[lo, hi, from, to]`. The interpolated scale multiplies
+//! [`Style::height`]'s second value, so the first value is unused for a
+//! critical and the peak is twice `0.0275`. See [`punch`].
 //!
-//! **And the timing was already right in the table**: a critical holds full
-//! alpha until 1000 ms where an ordinary number starts fading at 760, and then
-//! has 500 ms to fade where the ordinary has 740. Longer on screen, quicker
-//! away.
+//! A critical also holds full alpha until 1000 ms where an ordinary number
+//! starts fading at 760, and then has 500 ms to fade where the ordinary number
+//! has 740. It stays on screen longer and leaves faster.
 //!
-//! The font is `DAMAGE_TEXT_FONT`, which like `NAMEPLATE_FONT` is a **Lua global
-//! holding a path** rather than a font object — `Fonts.xml` line 6,
+//! The font is `DAMAGE_TEXT_FONT`, which like `NAMEPLATE_FONT` is a Lua global
+//! holding a path rather than a font object: `Fonts.xml` line 6,
 //! `Fonts\FRIZQT__.TTF`.
 //!
-//! ## Who sees one, and it is a shorter list than it looks
+//! ## Which blows draw a number
 //!
-//! The damage producer refuses outright unless the *source* of the blow is you
-//! or your pet: the combat-log category is 0 for the player, 1 for the
-//! pet and something else for everybody, and the third case returns without
-//! drawing. **There are no numbers over your own head in 1.12** and none over a
-//! fight you are watching. Three CVars gate the rest, all defaulting to `"1"`:
-//! `CombatDamage` ("Toggles all damage numbers over a creature") over
-//! everything, and `PetMeleeDamage` / `PetSpellDamage` over the pet's two.
+//! The 1.12.1 client draws a damage number only when the source of the blow is
+//! the player or the player's pet. It draws no numbers over the player's own
+//! head and none over a fight between other units. Three CVars gate the rest,
+//! all defaulting to `"1"`: `CombatDamage` ("Toggles all damage numbers over a
+//! creature") over everything, and `PetMeleeDamage` / `PetSpellDamage` over the
+//! pet's two.
 //!
-//! ## …and the colour is who-and-how, not what school
+//! ## Colour by source and attack type
 //!
-//! The producer overrides the kind's white with one of two, on a two-way test
-//! that this project would otherwise have guessed at: whether the blow carried a
-//! **spell** (a flag on the spell record) and whether the source was
-//! the player or the pet.
+//! The colour depends on who dealt the blow and whether it was a spell, not on
+//! the spell's school. The kind's white is replaced by one of two colours:
 //!
 //! | | the player | the pet |
 //! |---|---|---|
 //! | melee | the kind's own white | orange `ffff8400` |
 //! | a spell | yellow `ffffde00` | yellow `ffffde00`, gated on `PetSpellDamage` |
 //!
+//! A spell flagged `NORMAL_RANGED_ATTACK` (Auto Shot, Shoot) counts as melee
+//! here. [`player_number`] applies the player's column.
+//!
 //! ## The eleven words
 //!
-//! A blow that did not land draws a word instead of a number, and the word is a
-//! `GlobalStrings.lua` **key** rather than a sentence — the client has a table
-//! of eleven global names and the kind each is drawn as. All of them are
-//! kind 3 except `ABSORB`, which is kind 1 and therefore starts fading after
-//! 90 ms rather than 1000. See [`MISS_WORDS`].
+//! A blow that did not land draws a word instead of a number. The word is a
+//! `GlobalStrings.lua` key rather than a sentence; the 1.12.1 client has eleven
+//! such keys, each drawn as a fixed kind. All of them are kind 3 except
+//! `ABSORB`, which is kind 1 and therefore starts fading after 90 ms rather
+//! than 1000. See [`MISS_WORDS`].
 //!
-//! ## What is deliberately not here
+//! ## What is not implemented
 //!
-//! * **experience and honour** (kinds 4 and 5), because nothing in this client
-//!   parses `SMSG_LOG_XPGAIN` or the honour packets. The styles are in the table
-//!   above so that the round which does has nothing left to dig.
-//! * **spell damage**, for the same reason one layer down:
-//!   `SMSG_SPELLNONMELEEDAMAGELOG` and `SMSG_PERIODICAURALOG` are unparsed, so
-//!   the yellow column of the table above is unreachable and every number this
-//!   client draws is a melee one.
-//! * **the PvP rank badge**, which the same subsystem draws off the same font
-//!   and hangs over a player's plate: fifteen `Interface\PvPRankBadges\PvPRank%02d`
-//!   files, loaded by the world-text init.
-//! * **`Blizzard_CombatText` itself**, the addon above — the scrolling strip,
-//!   which is a `LoadOnDemand` the interface asks for by name and which this
-//!   client does not load.
+//! * Honour (kind 5): nothing in this client parses the honour packets.
+//!   Experience (kind 4) is drawn from `SMSG_LOG_XPGAIN`.
+//! * The PvP rank badge, which the same subsystem draws with the same font
+//!   over a player's plate: fifteen `Interface\PvPRankBadges\PvPRank%02d`
+//!   files.
+//! * `Blizzard_CombatText` itself, the scrolling strip described above. It is a
+//!   `LoadOnDemand` addon the interface asks for by name, and this client does
+//!   not load it.
 
 /// The font, out of `Fonts.xml`'s `DAMAGE_TEXT_FONT`.
 pub const FONT: &str = r"Fonts\FRIZQT__.TTF";
 
-/// How far **below** the source's `PlayerName` attachment the reference starts
+/// How far below the source's `PlayerName` attachment the 1.12.1 client starts
 /// its world text, in yards.
 ///
-/// **Not what this client uses** — see [`ORIGIN`], which says why, and note that
-/// this constant is kept rather than deleted because it is the measured one.
+/// This client does not use it; [`ORIGIN`] says why. The constant is kept
+/// because it is the 1.12.1 client's value.
 pub const ANCHOR_DROP: f32 = 0.333_333_34;
 
 /// Where a number starts, as a fraction of the unit's own height.
 ///
-/// **A stated deviation from [`ANCHOR_DROP`], and the reason is that two of this
-/// client's approximations compound.** The reference anchors world text a third
-/// of a yard under the `PlayerName` attachment — comfortably clear of the name,
-/// which sits *at* that attachment. This client's `EntityModel::name_anchor`
-/// falls back to the **helm** point for any model that does not carry
-/// attachment 18, and the helm is lower than `PlayerName`; so applying the
-/// reference's third of a yard to it put the numbers at head height, on top of
-/// the name and rising through it. That is what "the combat text appears in the
-/// same spot as the name" was.
+/// A deviation from [`ANCHOR_DROP`], made because two of this client's
+/// approximations compound. The 1.12.1 client anchors world text a third of a
+/// yard under the `PlayerName` attachment, clear of the name, which sits at
+/// that attachment. This client's `EntityModel::name_anchor` falls back to the
+/// helm point for any model that does not carry attachment 18, and the helm is
+/// lower than `PlayerName`. Applying the third of a yard to the helm put the
+/// numbers at head height, on top of the name and rising through it.
 ///
-/// Mid-body instead, which is where a blow lands and which the reference's own
-/// screenshots show numbers rising *from* — past the head and away. It goes back
-/// to `ANCHOR_DROP` the day something measures how high attachment 18 really
-/// sits across the bestiary, which is `vale unitname`'s job and is on the
-/// list.
+/// Mid-body is where a blow lands, and screenshots of the 1.12.1 client show
+/// numbers rising from there, past the head and away. This goes back to
+/// `ANCHOR_DROP` once something measures how high attachment 18 sits across
+/// the bestiary, which is `vale unitname`'s job and is on the list.
 pub const ORIGIN: f32 = 0.55;
 
-/// **The `GlobalStrings.lua` key an experience line is built from** — and it is
-/// a key rather than the word, which is the whole reason this constant exists.
+/// The `GlobalStrings.lua` key an experience line is built from. It is a key
+/// rather than the word, so a localised build draws its own word.
 ///
-/// The producer looks `XP` up in the interface's globals, formats it into
-/// `"%s: %d"` with the amount, and adds the result to the *local player's*
-/// text host as kind 4. So the line reads `XP: 50`, and a localised build
-/// reads whatever its own `XP` says.
+/// The 1.12.1 client looks `XP` up in the interface's globals, formats it into
+/// `"%s: %d"` with the amount, and draws the result over the local player as
+/// kind 4. The line reads `XP: 50`, and a localised build reads whatever its
+/// own `XP` says.
 ///
-/// The caller takes the amount out of a pending slot on the player and zeroes
-/// it — so the number is stashed when the packet lands and drawn once, rather
-/// than being drawn per packet.
+/// The 1.12.1 client stores the amount when the packet lands, draws it once
+/// and clears it, rather than drawing once per packet.
 pub const EXPERIENCE_KEY: &str = "XP";
 
-/// …and the format, which is the one thing about it that is a literal.
-///
-/// `"%s: %d"`.
+/// The experience line's format, `"%s: %d"`.
 pub fn experience_line(word: &str, amount: u32) -> String {
     format!("{word}: {amount}")
 }
 
-/// An `ARGB` dword as the client stores it — [`super::selection`]'s type.
+/// An `ARGB` colour packed into a `u32`; [`super::selection`] uses the same
+/// type.
 type Argb = u32;
 
 /// Which style a piece of world text takes. The index into [`STYLES`].
@@ -170,16 +157,17 @@ type Argb = u32;
 pub enum Kind {
     /// A number for a blow that landed.
     Damage = 0,
-    /// …and the one word that is not kind 3: `ABSORB`.
+    /// The one word that is not kind 3: `ABSORB`.
     Absorb = 1,
-    /// A number for a blow that crit — the one kind that grows instead of
+    /// A number for a critical blow, the one kind that grows instead of
     /// rising.
     Crit = 2,
     /// A word: the other ten of [`MISS_WORDS`].
     Miss = 3,
-    /// Experience. Styled here, raised by nothing yet.
+    /// Experience, drawn from `SMSG_LOG_XPGAIN`.
     Experience = 4,
-    /// Honour, and the two death-knight counters beside it. Likewise.
+    /// Honour, and the two death-knight counters beside it. Styled here, not
+    /// drawn.
     Honour = 5,
 }
 
@@ -190,44 +178,40 @@ pub struct Style {
     pub rise: f32,
     /// Milliseconds from nothing to full alpha.
     pub fade_in_ms: u32,
-    /// …and the moment the fade back out begins.
+    /// The moment the fade back out begins.
     pub fade_out_ms: u32,
-    /// …and when it is gone.
+    /// When it is gone.
     pub life_ms: u32,
     /// Font height as a fraction of the interface's height, at birth and at
     /// death. Equal for every kind but [`Kind::Crit`].
     ///
-    /// **Whether it is a fraction of the screen at all is the open reading
-    /// here.** The subsystem rasterises this font at `0.018333` —
-    /// about the size the table then asks for — where it rasterises the *name's*
-    /// at `0.99`, which is only worth doing for something that will be scaled
-    /// down a lot and variably. That asymmetry is the argument for the numbers
-    /// being screen-sized and the name being world-sized, and it is an argument
-    /// rather than a measurement. See [`SIZE_GAIN`], which is what the picture
-    /// wanted on top of it.
+    /// That this is a fraction of the screen, and not a world height, is an
+    /// inference and not a measurement. The 1.12.1 client sizes the damage
+    /// font and the name's font very differently, which suits numbers drawn
+    /// at a screen size and a name drawn at a world size and scaled down by
+    /// varying amounts. See [`SIZE_GAIN`], the enlargement applied on top.
     pub height: (f32, f32),
-    /// The colour, unless the producer overrides it.
+    /// The colour, unless the caller overrides it.
     pub colour: Argb,
 }
 
-/// **How much bigger this client draws world text than the table says.**
+/// How much larger this client draws world text than the style table says.
 ///
-/// The heights below are the reference's own, and they come out small: `0.0183`
-/// of a 768-unit interface is fourteen units, which is about what
-/// `GameFontNormal` draws a sentence at. Beside a unit's *name* — which is a
-/// world height and grows as you close on it — a damage number at a fixed
-/// fourteen units reads as an afterthought, and the report was simply that it
-/// should be bigger.
+/// The heights below are the 1.12.1 client's, and they come out small:
+/// `0.0183` of a 768-unit interface is fourteen units, about the size
+/// `GameFontNormal` draws a sentence at. Beside a unit's name, which is a
+/// world height and grows as the camera approaches, a damage number at a fixed
+/// fourteen units was reported as too small.
 ///
-/// **So this is a look rather than a measurement, and it is a separate constant
-/// for that reason**: the table keeps the numbers the client states and this
-/// says by how much the picture departs from them. It goes away if the world
-/// text turns out to be projected like the name is — which is the open question
-/// under [`Style::height`], and which one screenshot of the reference at two
+/// This is a visual choice, not a measurement, and it is a separate constant
+/// for that reason: the table keeps the 1.12.1 client's numbers and this
+/// states how far the picture departs from them. It goes away if world text
+/// turns out to be projected like the name, which is the open question under
+/// [`Style::height`] and which one screenshot of the 1.12.1 client at two
 /// distances would settle.
 pub const SIZE_GAIN: f32 = 1.6;
 
-/// The six rows, in the client's order.
+/// The six rows, indexed by [`Kind`].
 pub const STYLES: [Style; 6] = [
     // 0 — damage
     Style { rise: 2.0, fade_in_ms: 150, fade_out_ms: 760, life_ms: 1500, height: (0.018_333_3, 0.018_333_3), colour: 0xffff_ffff },
@@ -248,12 +232,11 @@ pub fn style(kind: Kind) -> Style {
     STYLES[kind as usize]
 }
 
-/// **The critical's own size curve**, as the client stores it: three segments of
-/// `[lo, hi, from, to]`, in fractions of the entry's life.
+/// The critical's size curve: three segments of `[lo, hi, from, to]`, in
+/// fractions of the entry's life.
 ///
-/// It overshoots to **double** and settles, which is the "umph" — and is a very
-/// different shape from a ramp, which is what this module drew before it went
-/// and read the table.
+/// It overshoots to double size and settles back, which is a different shape
+/// from a linear ramp.
 pub const PUNCH: [[f32; 4]; 3] = [
     [0.0, 0.1, 0.1, 2.0],
     [0.1, 0.2, 2.0, 1.0],
@@ -263,9 +246,8 @@ pub const PUNCH: [[f32; 4]; 3] = [
 /// Where [`PUNCH`] stands at `t`, as a multiplier of [`Style::height`]'s second
 /// value.
 ///
-/// **1.0 outside every segment**, which is the reference's own fall-through
-/// when the search runs off the end. The three segments cover
-/// `[0, 1]`, so that only happens past the entry's life.
+/// 1.0 outside every segment, as in the 1.12.1 client. The three segments
+/// cover `[0, 1]`, so that only happens past the entry's life.
 pub fn punch(t: f32) -> f32 {
     for [lo, hi, from, to] in PUNCH {
         if t >= lo && t <= hi {
@@ -277,24 +259,43 @@ pub fn punch(t: f32) -> f32 {
     1.0
 }
 
-/// The producer's two colour overrides, and their table is in the module
-/// comment. Neither is reachable from a melee blow the *player* threw, which is
-/// the only kind this client raises today.
+/// The two colour overrides; their table is in the module comment.
+/// [`player_number`] applies the player's column. The pet's column is not
+/// reachable: this client records numbers only for blows the player dealt.
 pub mod palette {
     use super::Argb;
     /// A spell of the player's or the pet's.
     pub const SPELL: Argb = 0xffff_de00;
-    /// …and the pet's melee.
+    /// The pet's melee.
     pub const PET_MELEE: Argb = 0xffff_8400;
 }
 
-/// The eleven words a blow that did not land draws, as
-/// `GlobalStrings.lua` **keys**, with the client's kind beside each.
+/// `SPELL_ATTR_EX3_NORMAL_RANGED_ATTACK` in `AttributesEx3` (`Spell.dbc` field
+/// 9; vmangos' `SpellDefines.h`): the spell is a ranged weapon's ordinary
+/// attack, Auto Shot (75) or a wand's Shoot (5019).
+const EX3_NORMAL_RANGED_ATTACK: u32 = 0x0000_8000;
+
+/// The colour of a number for a blow the player dealt.
 ///
-/// **Keys and not sentences**, on `interface::strings`' own rule: the client
+/// `spell_attributes_ex3` is the spell's `AttributesEx3`, or `None` for a
+/// weapon swing. A swing, and a spell flagged as a normal ranged attack, keep
+/// the kind's own colour (white for an ordinary hit); any other spell is
+/// [`palette::SPELL`] yellow. A word (a miss, a resist) is not coloured by this
+/// rule and keeps its kind's colour.
+pub fn player_number(kind: Kind, spell_attributes_ex3: Option<u32>) -> Argb {
+    match spell_attributes_ex3 {
+        Some(ex3) if ex3 & EX3_NORMAL_RANGED_ATTACK == 0 => palette::SPELL,
+        _ => style(kind).colour,
+    }
+}
+
+/// The eleven words a blow that did not land draws, as `GlobalStrings.lua`
+/// keys, each with the kind the 1.12.1 client draws it as.
+///
+/// They are keys and not sentences, on `interface::strings`' rule: the client
 /// looks each one up in the interface's globals, and a key the file does not
-/// carry draws nothing. Index 0 is the client's `NONE` and is never reached —
-/// it is here so the table can be indexed the way the client indexes it.
+/// carry draws nothing. Index 0, `NONE`, is never drawn; it is kept so that
+/// every other entry sits at its 1.12.1 index.
 pub const MISS_WORDS: [(&str, Kind); 12] = [
     ("NONE", Kind::Damage),
     ("MISS", Kind::Miss),
@@ -310,14 +311,11 @@ pub const MISS_WORDS: [(&str, Kind); 12] = [
     ("REFLECT", Kind::Miss),
 ];
 
-/// **Where a new piece of text starts relative to the anchor, so that several
-/// landing together do not draw on top of each other.**
+/// Where a new piece of text starts relative to the anchor, so that several
+/// landing together do not draw on top of each other.
 ///
-/// **A cross, and it has been two other shapes first.** A horizontal fan read as
-/// text exploding out of a point in all directions; a single column read as a
-/// stack that still collided. What the reference does is a **five-slot grid** —
-/// three across, one above and one below — and only past those does anything
-/// have to spread further:
+/// The cells form a cross of five: three across, one above and one below.
+/// Only past those does the spread grow:
 ///
 /// ```text
 ///            3
@@ -326,21 +324,21 @@ pub const MISS_WORDS: [(&str, Kind); 12] = [
 /// ```
 ///
 /// Past five it fills the four corners, which completes a three-by-three; past
-/// nine it starts the same nine again one ring further out. Nine at once is not
-/// a thing an ordinary fight produces — a number lives a second and a half, so
-/// it takes six landing a second to reach the corners.
+/// nine it starts the same nine again one ring further out. An ordinary fight
+/// does not produce nine at once: a number lives a second and a half, so it
+/// takes six landing a second to reach the corners. A horizontal fan was tried
+/// first and read as text exploding out of a point; a single column still
+/// collided.
 ///
-/// **This is a stated rule of this client's, not the reference's**, and it is
-/// the one thing in this module that is. The reference does spread them and the
-/// mechanism is a three-float offset on each entry, turned into a screen
-/// position, but **what sets that offset is not known**: it starts at zero
-/// when the text is added. So the shape is taken from the pictures, in its
-/// own function, to be replaced by the real rule once it is known.
+/// This is this client's rule and the only one in this module that is not the
+/// 1.12.1 client's. The 1.12.1 client also spreads simultaneous numbers, but
+/// the rule it uses is not known, so this shape is taken from screenshots and
+/// kept in its own function to be replaced once the rule is known.
 ///
-/// Returned in **multiples of the text's own size**, so a caller scales by what
-/// it measured rather than by a constant this module would have to guess.
+/// Returned in multiples of the text's own size, so a caller scales by what it
+/// measured rather than by a constant this module would have to guess.
 pub fn slot_offset(slot: u32) -> (f32, f32) {
-    /// The middle, then the four sides, then the four corners — a
+    /// The middle, then the four sides, then the four corners: a
     /// three-by-three filled from the centre out.
     const CELLS: [(f32, f32); 9] = [
         (0.0, 0.0),
@@ -358,29 +356,25 @@ pub fn slot_offset(slot: u32) -> (f32, f32) {
     (x * ring as f32, y * ring as f32)
 }
 
-/// How far a piece of world text has risen, in yards:
-/// `age / life × rise`, linear and unclamped in the reference because nothing
-/// calls it past the life.
+/// How far a piece of world text has risen, in yards: `age / life × rise`.
+/// Linear and unclamped, because it is never asked past the life.
 pub fn rise(kind: Kind, age_ms: u32) -> f32 {
     let style = style(kind);
     (age_ms as f32 / style.life_ms as f32) * style.rise
 }
 
-/// …and how tall it is, as a fraction of the interface's height:
-/// `from + (to - from) × t`, floored at `0.001`.
+/// How tall a piece of world text is, as a fraction of the interface's height,
+/// multiplied by [`SIZE_GAIN`] and floored at `0.001`.
 ///
-/// **The crit's real curve is three keyframed segments** ([`PUNCH`]) and this
-/// is a straight line between the same two ends — the one stated approximation
-/// in this module. It matters for a critical and for nothing else: every other
-/// kind has `from == to`, where the two agree exactly.
+/// A critical follows [`punch`] over its second height. Every other kind eases
+/// linearly, `from + (to - from) × t`; all five have `from == to`, so their
+/// height is constant.
 pub fn height(kind: Kind, age_ms: u32) -> f32 {
     let style = style(kind);
     let t = (age_ms as f32 / style.life_ms as f32).clamp(0.0, 1.0);
-    // **Two different paths, and the branch is on the kind** — the client
-    // compares it against 2 before anything else. A critical takes [`punch`]
-    // over the *second* height and never touches the first; everything else
-    // eases between the two, which for the five kinds whose pair is equal is a
-    // constant.
+    // The kind selects the curve. A critical takes [`punch`] over the second
+    // height and never uses the first; every other kind eases between the
+    // two, which for the five kinds whose pair is equal is a constant.
     let scaled = match kind {
         Kind::Crit => punch(t) * style.height.1,
         _ => style.height.0 + (style.height.1 - style.height.0) * t,
@@ -388,15 +382,15 @@ pub fn height(kind: Kind, age_ms: u32) -> f32 {
     (scaled * SIZE_GAIN).max(0.001)
 }
 
-/// …and how opaque, from 0 to 1: up over
+/// How opaque a piece of world text is, from 0 to 1: up over
 /// [`Style::fade_in_ms`], flat, then down from [`Style::fade_out_ms`] to the
 /// end.
 ///
-/// **`Kind::Absorb`'s two cross over**, and that is the table's own doing rather
-/// than a misread: its fade-out begins at 90 ms and its fade-in ends at 150, so
-/// an absorb is drawn dimmer than everything else for its whole life. The order
-/// below is the reference's — the fade-in is tested first — so the crossover
-/// resolves the way it does in the client.
+/// `Kind::Absorb`'s two times cross over, and that is what the style table
+/// says: its fade-out begins at 90 ms and its fade-in ends at 150, so an
+/// absorb is drawn dimmer than everything else for its whole life. The fade-in
+/// is tested first, so an absorb still ramps up over its first 150 ms, as in
+/// the 1.12.1 client.
 pub fn alpha(kind: Kind, age_ms: u32) -> f32 {
     let style = style(kind);
     if age_ms >= style.life_ms {
@@ -419,10 +413,19 @@ pub fn alpha(kind: Kind, age_ms: u32) -> f32 {
 mod tests {
     use super::*;
 
-    /// **Five slots first — three across, one above, one below** — which is what
-    /// the reference does and is the third shape this has had. A fan read as
-    /// text exploding out of a point; a single column read as a stack that still
-    /// collided; this is a grid filled from the middle out.
+    /// A swing and a ranged weapon's ordinary attack keep the kind's colour;
+    /// any other spell of the player's is yellow, a critical included.
+    #[test]
+    fn a_players_spell_number_is_yellow_and_a_swing_is_not() {
+        let white = style(Kind::Damage).colour;
+        assert_eq!(player_number(Kind::Damage, None), white);
+        assert_eq!(player_number(Kind::Damage, Some(0)), palette::SPELL);
+        assert_eq!(player_number(Kind::Crit, Some(0x0001_0000)), palette::SPELL);
+        assert_eq!(player_number(Kind::Damage, Some(EX3_NORMAL_RANGED_ATTACK)), white);
+    }
+
+    /// The first five slots are the cross: three across, one above, one below.
+    /// After that come the corners, then the same nine one ring out.
     #[test]
     fn a_burst_fills_the_five_slot_cross_before_anything_else() {
         assert_eq!(slot_offset(0), (0.0, 0.0), "the first is the middle");
@@ -430,16 +433,16 @@ mod tests {
         assert_eq!(slot_offset(2), (1.0, 0.0));
         assert_eq!(slot_offset(3), (0.0, 1.0));
         assert_eq!(slot_offset(4), (0.0, -1.0));
-        // …then the corners, which completes a three-by-three.
+        // Then the corners, which completes a three-by-three.
         assert_eq!(slot_offset(5), (-1.0, 1.0));
         assert_eq!(slot_offset(8), (1.0, -1.0));
-        // …and past that the same nine one ring out, rather than a tenth cell
-        // nobody has a use for. The middle repeats, which is harmless: by the
-        // time a tenth number is in flight the first has released its slot.
+        // Past that, the same nine one ring out rather than a tenth cell. The
+        // middle repeats, which is harmless: by the time a tenth number is in
+        // flight the first has released its slot.
         assert_eq!(slot_offset(9), (0.0, 0.0));
         assert_eq!(slot_offset(10), (-2.0, 0.0), "the ring, one cell further out");
         assert_eq!(slot_offset(12), (0.0, 2.0));
-        // No two of the nine share a cell, which is the whole point.
+        // No two of the nine share a cell.
         let mut seen = std::collections::HashSet::new();
         for slot in 0..9 {
             let (x, y) = slot_offset(slot);
@@ -448,48 +451,45 @@ mod tests {
         assert_eq!(seen.len(), 9);
     }
 
-    /// **A crit does not rise and does grow**; everything else rises and does
-    /// not. That pair is the whole visible difference between the two kinds a
-    /// melee swing produces, and it is one column of the table apart.
+    /// A critical does not rise and does grow; every other kind rises and does
+    /// not grow. That is the visible difference between the two kinds a melee
+    /// swing produces, and it is one column of the table.
     #[test]
     fn a_critical_grows_where_an_ordinary_blow_rises() {
         assert_eq!(rise(Kind::Damage, 1500), 2.0);
         assert_eq!(rise(Kind::Crit, 1500), 0.0);
-        // …and an ordinary number is the same size all the way through.
+        // An ordinary number is the same size all the way through.
         assert_eq!(height(Kind::Damage, 0), height(Kind::Damage, 1500));
     }
 
-    /// **The punch, which is the shape and not a ramp.** A critical snaps to
-    /// double size inside 150 ms, settles back over the next 150, and holds at
-    /// half again an ordinary number for the rest of its life. Easing it
-    /// linearly instead — which this module did until it read the table — is a
-    /// number that fades in, swells slowly and fades out, and that is what the
-    /// report was.
+    /// A critical reaches double size within 150 ms, settles back over the
+    /// next 150, and holds at one and a half times an ordinary number for the
+    /// rest of its life. A linear ease between the two heights would instead
+    /// swell slowly, which was the reported fault.
     #[test]
     fn a_critical_snaps_to_double_and_settles_rather_than_swelling() {
         let settled = height(Kind::Crit, 1500);
         let peak = height(Kind::Crit, 150);
         // 150 ms of a 1500 ms life is t = 0.1, the top of the first segment.
         assert!((peak / settled - 2.0).abs() < 1e-4, "peak {peak} settled {settled}");
-        // **It gets there fast rather than creeping**: halfway through the
-        // first segment — a twentieth of its whole life — it is already bigger
-        // than an ordinary number, and it has 150 ms to reach twice that.
+        // Halfway through the first segment, a twentieth of its whole life, it
+        // is already larger than an ordinary number, and it has 150 ms to
+        // reach twice that.
         assert!(height(Kind::Crit, 75) > height(Kind::Damage, 75));
-        // …and it does start small, which is what makes the snap read as one.
+        // It starts smaller than an ordinary number.
         assert!(height(Kind::Crit, 0) < height(Kind::Damage, 0));
-        // …back to its settled size by the end of the second segment, and level
-        // from there.
+        // It is back to its settled size by the end of the second segment, and
+        // level from there.
         assert!((height(Kind::Crit, 300) - settled).abs() < 1e-6);
         assert!((height(Kind::Crit, 900) - settled).abs() < 1e-6);
-        // …and settled is half again an ordinary number, which is the ratio the
-        // style table states and which must survive [`SIZE_GAIN`].
+        // Settled is one and a half times an ordinary number, the ratio the
+        // style table states, which must survive [`SIZE_GAIN`].
         assert!((settled / height(Kind::Damage, 750) - 1.5).abs() < 1e-3);
     }
 
-    /// **A critical stays up longer and then goes quicker**, which is the other
-    /// half of the report and was already right in the table: full alpha until
-    /// 1000 ms against an ordinary number's 760, then 500 ms to fade against
-    /// 740.
+    /// A critical holds full alpha longer and then fades faster: full alpha
+    /// until 1000 ms against an ordinary number's 760, then 500 ms to fade
+    /// against 740.
     #[test]
     fn a_critical_holds_longer_and_fades_faster() {
         assert!(alpha(Kind::Crit, 900) > alpha(Kind::Damage, 900));
@@ -517,21 +517,20 @@ mod tests {
         assert_eq!(alpha(Kind::Damage, 9000), 0.0);
     }
 
-    /// **An absorb's fade-out starts before its fade-in ends**, which is what
-    /// the table says and reads like a typo until you check it twice. The
-    /// reference tests the fade-in first, so the early frames still ramp up.
+    /// An absorb's fade-out starts before its fade-in ends, as the style table
+    /// states. The fade-in is tested first, so the early frames still ramp up.
     #[test]
     fn an_absorb_fades_out_before_it_has_faded_in() {
         let style = style(Kind::Absorb);
         assert!(style.fade_out_ms < style.fade_in_ms, "the table's own oddity");
         assert!((alpha(Kind::Absorb, 75) - 0.5).abs() < 1e-6, "still ramping up at 75 ms");
-        // …and past the fade-in it is already on the way down.
+        // Past the fade-in it is already fading out.
         assert!(alpha(Kind::Absorb, 200) < 1.0);
         assert!(alpha(Kind::Absorb, 200) > alpha(Kind::Absorb, 1000));
     }
 
-    /// The words are `GlobalStrings.lua` keys and `ABSORB` is the odd one out —
-    /// the only entry in the table that is not kind 3.
+    /// The words are `GlobalStrings.lua` keys, and `ABSORB` is the only entry
+    /// in the table that is not kind 3.
     #[test]
     fn every_word_is_a_miss_except_the_absorb() {
         for (index, (key, kind)) in MISS_WORDS.iter().enumerate().skip(1) {
@@ -539,8 +538,7 @@ mod tests {
             assert_eq!(*kind, wanted, "{index} {key}");
         }
         assert_eq!(MISS_WORDS[10], ("ABSORB", Kind::Absorb));
-        // Two entries share `IMMUNE`, which is the client's own doing: 7 and 8
-        // are the same pointer.
+        // Entries 7 and 8 are both `IMMUNE` in the 1.12.1 client.
         assert_eq!(MISS_WORDS[7].0, MISS_WORDS[8].0);
     }
 }

@@ -422,3 +422,25 @@ fn a_guild_tabard_paints_the_emblem_in_place_of_its_own_textures() {
     assert_eq!(item_layers_with_emblem(&table, 0, &worn(20_621), preview, |_| true).len(), 6);
     assert_eq!(item_layers_with_emblem(&table, 0, &[], emblem, |_| true).len(), 0);
 }
+
+/// Sunder Armor names any weapon (`EquippedItemClass` 2, masks 0): a sword in
+/// the main hand meets it, an empty hand or a broken sword does not, and a
+/// weapon in an armour slot does not count. An armour condition such as Shield
+/// Bash's (class 4, subclass mask `1 << 6`) is met by a shield in the off hand.
+#[test]
+fn the_equipped_item_condition_reads_the_slots_its_class_names() {
+    let sword = Worn { slot: 15, class: 2, subclass: 7, inventory_type: 13, broken: false };
+    assert!(meets_equipped_requirement(-1, 0, 0, &[]));
+    assert!(meets_equipped_requirement(2, 0, 0, &[sword]));
+    assert!(!meets_equipped_requirement(2, 0, 0, &[]));
+    assert!(!meets_equipped_requirement(2, 0, 0, &[Worn { broken: true, ..sword }]));
+    assert!(!meets_equipped_requirement(2, 0, 0, &[Worn { slot: 4, ..sword }]));
+    // A dagger-only condition (subclass 15) refuses the sword.
+    assert!(!meets_equipped_requirement(2, 1 << 15, 0, &[sword]));
+
+    let shield = Worn { slot: 16, class: 4, subclass: 6, inventory_type: 14, broken: false };
+    assert!(meets_equipped_requirement(4, 1 << 6, 0, &[sword, shield]));
+    assert!(!meets_equipped_requirement(4, 1 << 6, 0, &[sword]));
+    // An inventory-type mask is tested beside the subclass mask.
+    assert!(!meets_equipped_requirement(4, 1 << 6, 1 << 13, &[shield]));
+}

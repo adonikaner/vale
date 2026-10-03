@@ -253,6 +253,8 @@ fn moving(speed: f32) -> WorldEntity {
         object_lock: 0,
         object_page: (0, 0),
         object_hover: Default::default(),
+        object_anims: 0,
+        object_anim: None,
         swimming: false,
         pitch: 0.0,
         swings_thrown: 0,
@@ -1166,6 +1168,20 @@ fn a_game_object_stands_open_or_shut_rather_than_standing() {
     play.oneshot = None;
     note(&mut play, &object(1), anim::CLOSED, 3.0);
     assert_eq!(play.oneshot.as_ref().map(|s| s.wanted), Some(anim::CLOSE));
+
+    // A custom animation from the server is a one-shot on the object's own
+    // model: the bobber's `Custom0` (153) when a fish bites.
+    let bobber_anims = [anim::STAND, vale_assets::look::object::CUSTOM0_ANIM];
+    let mut bobber = playing(&bobber_anims);
+    let mut float = object(1);
+    note(&mut bobber, &float, anim::STAND, 0.0);
+    float.object_anims = 1;
+    float.object_anim = Some(vale_protocol::play::object::ObjectAnim::Custom(0));
+    note(&mut bobber, &float, anim::STAND, 1.0);
+    assert_eq!(
+        bobber.oneshot.as_ref().map(|s| s.wanted),
+        Some(vale_assets::look::object::CUSTOM0_ANIM)
+    );
 
     // A plain prop model, such as a banner or a brazier, has none of the four
     // and falls back to its own idle rather than to nothing.

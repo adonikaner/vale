@@ -32,6 +32,7 @@
 //!                stand; the one window no NPC owns
 //! duel.rs        the four script functions a duel uses, all of them writes
 //! summon.rs      the summon popup's three reads
+//! uioptions.rs   the options panel's ShowingHelm and ShowingCloak
 //! inspect.rs     the inspect window's reads: who may be inspected, and the
 //!                honor tab
 //! loot.rs        the loot window of a corpse
@@ -83,6 +84,7 @@ pub mod mail;
 pub mod pagetext;
 pub mod duel;
 pub mod summon;
+pub mod uioptions;
 pub mod guild;
 pub mod inspect;
 pub mod lootroll;

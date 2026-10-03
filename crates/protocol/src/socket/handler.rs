@@ -233,6 +233,10 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         }
         Opcode::SMSG_PLAY_SPELL_VISUAL => world::play_spell_visual(ctx, pkt, false),
         Opcode::SMSG_PLAY_SPELL_IMPACT => world::play_spell_visual(ctx, pkt, true),
+        // A game object's one-shot animations: a fishing bobber's bite, a
+        // trap firing, a despawn. See [`crate::play::object`].
+        Opcode::SMSG_GAMEOBJECT_CUSTOM_ANIM => player::gameobject_custom_anim(ctx, pkt),
+        Opcode::SMSG_GAMEOBJECT_DESPAWN_ANIM => player::gameobject_despawn_anim(ctx, pkt),
         // ---- casts, object removal, time, weather, bind point, duels, -----
         // ---- summons, played time and fishing -----------------------------
         Opcode::SMSG_SPELL_START => world::cast(ctx, pkt, true),

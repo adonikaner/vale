@@ -395,11 +395,6 @@ fn stand_on_plinth(
 ///
 /// [`Handshake`]: crate::world::session::Handshake
 fn plinth_for(row: &vale_protocol::socket::world::CharListEntry) -> Plinth {
-    /// `INVTYPE_HEAD` and `INVTYPE_CLOAK` — see
-    /// [`vale_assets::tables::item::Slot::from_inventory_type`], which is the one
-    /// place these numbers otherwise appear.
-    const INVTYPE_HEAD: u8 = 1;
-    const INVTYPE_CLOAK: u8 = 16;
     /// `EQUIPMENT_SLOT_MAINHAND` / `_OFFHAND` / `_RANGED`. These are indices
     /// into the packet's twenty slots, not inventory types. The ranged slot is
     /// named only to be excluded: the 1.12.1 client draws nothing from it on
@@ -439,11 +434,9 @@ fn plinth_for(row: &vale_protocol::socket::world::CharListEntry) -> Plinth {
             .filter(|(slot, _)| !matches!(*slot, SLOT_MAINHAND | SLOT_OFFHAND | SLOT_RANGED))
             .map(|(_, pair)| pair)
             .filter(|(display_id, _)| *display_id != 0)
-            .filter(|(_, kind)| match *kind {
-                INVTYPE_HEAD => !row.hides_helm(),
-                INVTYPE_CLOAK => !row.hides_cloak(),
-                _ => true,
-            })
+            // The hide-helm and hide-cloak options; the rule is shared with a
+            // character in the world, whose `PLAYER_FLAGS` carry the same bits.
+            .filter(|(_, kind)| vale_assets::look::dress::worn_is_shown(u32::from(*kind), row.flags))
             .map(|(display_id, kind)| (*display_id, u32::from(*kind)))
             // The guild's emblem, as one more pair after the items, as a
             // character in the world carries it. A guild tabard is painted

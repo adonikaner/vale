@@ -371,6 +371,13 @@ pub struct Entity {
     /// running.
     pub spell_impacts: u32,
     pub last_spell_impact: u32,
+    /// How many one-shot animations the server has asked this game object to
+    /// play (`SMSG_GAMEOBJECT_CUSTOM_ANIM`, `SMSG_GAMEOBJECT_DESPAWN_ANIM`),
+    /// and the last one. A counter for the reason the emote and kit counters
+    /// are: the renderer plays a one-shot on each, and two of the same in a
+    /// row are two plays.
+    pub object_anims: u32,
+    pub last_object_anim: Option<crate::play::object::ObjectAnim>,
     /// How many casts this unit has begun and how many it has released, with
     /// the cast bar's length in milliseconds beside the first.
     ///
@@ -562,6 +569,8 @@ impl Entity {
             last_spell_visual: 0,
             spell_impacts: 0,
             last_spell_impact: 0,
+            object_anims: 0,
+            last_object_anim: None,
             casts_begun: 0,
             casts_released: 0,
             recent_spells: [0; RECENT_SPELLS],
@@ -4295,6 +4304,18 @@ impl ObjectManager {
             unit.spell_visuals = unit.spell_visuals.wrapping_add(1);
             unit.last_spell_visual = kit;
         }
+    }
+
+    /// A one-shot animation on a game object: `SMSG_GAMEOBJECT_CUSTOM_ANIM` or
+    /// `SMSG_GAMEOBJECT_DESPAWN_ANIM`; see [`crate::play::object`]. A guid this
+    /// client does not hold is ignored, as [`Self::apply_spell_visual`] ignores
+    /// one: there is no model to play it on.
+    pub fn apply_object_anim(&mut self, guid: u64, anim: crate::play::object::ObjectAnim) {
+        let Some(object) = self.entities.get_mut(&guid) else {
+            return;
+        };
+        object.object_anims = object.object_anims.wrapping_add(1);
+        object.last_object_anim = Some(anim);
     }
 
     /// A cast this unit was making ended without landing: refused,

@@ -648,9 +648,18 @@ fn solve(lua: &mlua::Lua, object: &mlua::Table, depth: u32) -> Option<Rect> {
 /// Like `<Size>`'s attribute form and `<EditBox>`'s `password`, an attribute
 /// the loader does not handle is ignored rather than rejected, and the only
 /// symptom is on the screen.
+///
+/// `frame:SetClampedToScreen(on)` writes the same flag, so a frame an addon
+/// clamps from script is kept inside the screen by the same rule, including
+/// while it is being dragged.
 pub(in crate::lua) fn set_clamped(lua: &mlua::Lua, frame: &mlua::Table, clamped: bool) -> mlua::Result<()> {
     frame.raw_set(CLAMPED_KEY, clamped)?;
     invalidate(lua)
+}
+
+/// Whether [`set_clamped`] marked the frame; `frame:IsClampedToScreen()`.
+pub(in crate::lua) fn is_clamped(frame: &mlua::Table) -> bool {
+    frame.raw_get::<Option<bool>>(CLAMPED_KEY).ok().flatten().unwrap_or(false)
 }
 
 /// Push a solved rectangle back inside the screen, if its object asked to be.
@@ -1689,5 +1698,41 @@ mod clamp_tests {
         let out = clamp(&lua, &object, Rect { left: 10.0, bottom: 10.0, width: 2000.0, height: 900.0 });
         assert_eq!(out.left, 0.0);
         assert_eq!(out.bottom, 0.0);
+    }
+
+    /// `SetClampedToScreen` from script sets the flag the markup sets, so the
+    /// solved rectangle is kept inside the screen, and `IsClampedToScreen`
+    /// reads it back as 1 or nil.
+    #[test]
+    fn set_clamped_to_screen_from_script_clamps_the_solve() {
+        let lua = mlua::Lua::new();
+        crate::lua::widgets::frames::install(&lua).expect("the object model installs");
+        set_screen(&lua, 1024.0, 768.0).unwrap();
+        lua.load(
+            r#"
+            UIParent = CreateFrame("Frame", "UIParent");
+            UIParent:SetAllPoints();
+            box = CreateFrame("Frame", "Box", UIParent);
+            box:SetWidth(200); box:SetHeight(100);
+            box:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 900, 40);
+            "#,
+        )
+        .exec()
+        .expect("the frame loads");
+        let box_rect = |lua: &mlua::Lua| {
+            let frame: mlua::Table = lua.globals().get("box").unwrap();
+            rect(lua, &frame).expect("anchored")
+        };
+        let loose = box_rect(&lua);
+        assert_eq!((loose.left, loose.top()), (900.0, 808.0), "off the top and the right");
+        assert!(lua.load("return box:IsClampedToScreen()").eval::<Option<i64>>().unwrap().is_none());
+
+        lua.load("box:SetClampedToScreen(1)").exec().unwrap();
+        let held = box_rect(&lua);
+        assert_eq!((held.left, held.top()), (1024.0 - 200.0, 768.0));
+        assert_eq!(lua.load("return box:IsClampedToScreen()").eval::<Option<i64>>().unwrap(), Some(1));
+
+        lua.load("box:SetClampedToScreen(nil)").exec().unwrap();
+        assert_eq!(box_rect(&lua).left, 900.0);
     }
 }

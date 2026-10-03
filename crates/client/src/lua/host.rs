@@ -1070,6 +1070,12 @@ impl LuaHost {
         std::mem::take(&mut *self.queue.borrow_mut())
     }
 
+    /// Store the rendered frame rate `GetFramerate()` answers; see
+    /// [`super::api::stubs::set_framerate`].
+    pub fn set_framerate(&self, framerate: f64) {
+        super::api::stubs::set_framerate(&self.lua, framerate);
+    }
+
     /// Every visible frame's `OnUpdate`, with the elapsed seconds in `arg1`, in
     /// its own scope. [`LuaHost::fire_tick`] runs this and the model ticks in
     /// one scope.

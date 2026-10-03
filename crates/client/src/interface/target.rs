@@ -251,9 +251,28 @@ const TARGET_RANGE: f32 = 41.0;
 /// wrap is not noticeable.
 const TAB_HISTORY_SECS: f32 = 5.0;
 
-/// Guids Tab has recently handed out, with when.
+/// Guids Tab has recently handed out, with when, and which pool they came
+/// from.
+///
+/// One history serves the enemy and the friendly pair. A press of the other
+/// pair empties it, as the 1.12.1 client rebuilds its candidate list when the
+/// kind asked for changes, so a friendly press does not skip units an enemy
+/// cycle handed out.
 #[derive(Resource, Default)]
-struct TabHistory(Vec<(u64, f32)>);
+struct TabHistory {
+    picks: Vec<(u64, f32)>,
+    friendly: bool,
+}
+
+/// The last unit the character selected that it could attack, for
+/// `TargetLastEnemy()`.
+///
+/// The 1.12.1 client records the new selection whenever it is a unit the
+/// character can attack, so after a hostile target is replaced by a friend or
+/// cleared, `TARGETLASTHOSTILE` selects it again. A unit whose health has
+/// not arrived is not recorded. Written by [`remember_enemy`].
+#[derive(Resource, Default)]
+struct LastEnemy(Option<u64>);
 
 /// How many swings this unit had thrown when [`acquire_attacker`] last looked.
 ///
@@ -282,6 +301,7 @@ impl Plugin for TargetPlugin {
         app.init_resource::<Selection>()
             .init_resource::<Hovered>()
             .init_resource::<TabHistory>()
+            .init_resource::<LastEnemy>()
             .add_message::<UnitClicked>()
             .add_systems(
                 Update,
@@ -314,6 +334,7 @@ impl Plugin for TargetPlugin {
                     // Last, so a selection that died this frame is dropped before
                     // anything is sent at it.
                     drop_stale_selection,
+                    remember_enemy,
                     // After every writer: one `PLAYER_TARGET_CHANGED` per frame
                     // in which the selection ended up different, whichever of
                     // the four systems above changed it. It is written from a
@@ -354,13 +375,15 @@ fn forget(
     mut selection: ResMut<Selection>,
     mut hovered: ResMut<Hovered>,
     mut history: ResMut<TabHistory>,
+    mut last_enemy: ResMut<LastEnemy>,
 ) {
     if leaving.read().next().is_none() {
         return;
     }
     selection.clear();
     *hovered = Hovered::default();
-    history.0.clear();
+    history.picks.clear();
+    last_enemy.0 = None;
 }
 
 /// Raises `PLAYER_TARGET_CHANGED` once when the selected guid changes.
@@ -1219,17 +1242,77 @@ fn tab_target(
     reputation: Res<super::reputation::PlayerStanding>,
     mut selection: ResMut<Selection>,
     mut history: ResMut<TabHistory>,
+    last_enemy: Res<LastEnemy>,
+    // `assistAttack`, read by `AssistUnit`.
+    cvars: Res<crate::settings::cvars::CVars>,
+    mut errors: super::messages::UiErrors,
+    mut sheathing: MessageWriter<crate::world::entities::SheathRequest>,
 ) {
     // Read the stream; do not `clear()` it. `action::run_bindings` reads the
     // same stream and takes the action-bar bindings. A targeting system that
     // drained the queue would consume every button press in the same frame.
     // Each reader has its own cursor, which is why these are messages; see
     // `super::events`.
-    let mut wanted: Option<bool> = None;
+    // `(reverse, friendly)` of the last nearest-unit press this frame.
+    let mut wanted: Option<(bool, bool)> = None;
     for BindingPressed(binding) in pressed.read() {
         match binding {
-            Binding::TargetNearestEnemy => wanted = Some(false),
-            Binding::TargetPreviousEnemy => wanted = Some(true),
+            Binding::TargetNearestEnemy => wanted = Some((false, false)),
+            Binding::TargetPreviousEnemy => wanted = Some((true, false)),
+            Binding::TargetNearestFriend => wanted = Some((false, true)),
+            Binding::TargetPreviousFriend => wanted = Some((true, true)),
+            // `TargetLastEnemy()`: select the recorded unit again if it is
+            // still in the world. Nothing recorded, or gone, does nothing.
+            Binding::TargetLastEnemy => {
+                if let Some(guid) = last_enemy.0.filter(|guid| selection.guid != Some(*guid)) {
+                    if let Some((entity, _, _)) = units.iter().find(|(_, unit, _)| unit.guid == guid) {
+                        selection.set(guid, entity);
+                        tell_server(&session, Some(guid));
+                    }
+                }
+            }
+            // `AssistUnit(unit)`: select what the unit has selected. A token
+            // that names no unit in view says `ERR_GENERIC_NO_TARGET`; a unit
+            // with nothing selected changes nothing. With `assistAttack` on,
+            // the attack starts on the new selection when it can be attacked.
+            Binding::AssistUnit(token) => {
+                let Ok((me, _)) = player.single() else { continue };
+                let guid = match token {
+                    super::api::UnitId::Player => Some(me.guid),
+                    super::api::UnitId::Target => selection.guid,
+                    super::api::UnitId::Party(index) => party.member(*index).map(|member| member.guid),
+                    _ => None,
+                };
+                let Some((_, assisted, _)) =
+                    guid.and_then(|guid| units.iter().find(|(_, unit, _)| unit.guid == guid))
+                else {
+                    errors.key("ERR_GENERIC_NO_TARGET");
+                    continue;
+                };
+                let Some(chosen) = assisted.target.filter(|guid| *guid != 0) else {
+                    continue;
+                };
+                let Some((entity, unit, _)) = units.iter().find(|(_, unit, _)| unit.guid == chosen) else {
+                    continue;
+                };
+                if selection.guid != Some(chosen) {
+                    selection.set(chosen, entity);
+                    tell_server(&session, Some(chosen));
+                }
+                let attacks = cvars.flag(ASSIST_ATTACK)
+                    && assets.display_tables().is_ok_and(|tables| {
+                        crate::interface::api::can_attack_between(&tables, &party, &reputation, me, unit)
+                    });
+                if let (true, Some(active)) = (attacks, session.active.as_ref()) {
+                    if let Some((mine, _, _)) = units.iter().find(|(_, unit, _)| unit.guid == me.guid) {
+                        active.live.attack(Some(chosen));
+                        sheathing.write(crate::world::entities::SheathRequest {
+                            entity: mine,
+                            state: vale_assets::look::sheath::MELEE,
+                        });
+                    }
+                }
+            }
             // The game's `TARGETSELF` binding targets the pet if the player is
             // already selected; this client has no pet. See
             // `bindings::Binding`.
@@ -1276,7 +1359,7 @@ fn tab_target(
             _ => {}
         }
     }
-    let Some(reverse) = wanted else { return };
+    let Some((reverse, friendly)) = wanted else { return };
     let (Ok((camera, camera_transform)), Ok((me, standing))) = (camera.single(), player.single())
     else {
         return;
@@ -1286,7 +1369,11 @@ fn tab_target(
     };
 
     let now = time.elapsed_secs();
-    history.0.retain(|(_, at)| now - at < TAB_HISTORY_SECS);
+    if history.friendly != friendly {
+        history.picks.clear();
+        history.friendly = friendly;
+    }
+    history.picks.retain(|(_, at)| now - at < TAB_HISTORY_SECS);
     // From the character, not from the camera; see [`TARGET_RANGE`]. This was
     // once `camera_transform.translation()`, which subtracted the rig's
     // distance from the reach and made it change with the zoom wheel.
@@ -1296,7 +1383,7 @@ fn tab_target(
     // still in the world. It undoes a press that went one target too far.
     if reverse {
         if let Some((guid, entity)) = history
-            .0
+            .picks
             .iter()
             .rev()
             .filter(|(guid, _)| Some(*guid) != selection.guid)
@@ -1318,7 +1405,15 @@ fn tab_target(
         if unit.is_self || !is_unit(unit) || unit.dead {
             continue;
         }
-        if !crate::interface::api::can_attack_between(&tables, &party, &reputation, me, unit) {
+        // The pool: the units the character may attack, or for the friendly
+        // pair the ones it may assist. The 1.12.1 client's friendly test is
+        // `UnitCanAssist` and health above zero, which `unit.dead` covers.
+        let eligible = if friendly {
+            crate::interface::api::can_assist_between(&tables, &party, &reputation, me, unit)
+        } else {
+            crate::interface::api::can_attack_between(&tables, &party, &reputation, me, unit)
+        };
+        if !eligible {
             continue;
         }
         let distance = standing.distance(transform.translation);
@@ -1327,7 +1422,7 @@ fn tab_target(
         }
         // Skip what this cycle has already handed out; exhausting the pool
         // clears the history, which is the wrap.
-        if history.0.iter().any(|(guid, _)| *guid == unit.guid) {
+        if history.picks.iter().any(|(guid, _)| *guid == unit.guid) {
             continue;
         }
         let Some(score) = screen_score(camera, camera_transform, transform, distance) else {
@@ -1336,7 +1431,7 @@ fn tab_target(
         // A unit already fighting us scores better than a peaceful one, but
         // only by a bonus, so Tab can still move off it. A hard combat lock
         // would prevent that.
-        let score = score - if unit.target == me.target && unit.in_combat { 0.5 } else { 0.0 };
+        let score = score - if !friendly && unit.target == me.target && unit.in_combat { 0.5 } else { 0.0 };
         if best.is_none_or(|(lowest, ..)| score < lowest) {
             best = Some((score, entity, unit.guid));
         }
@@ -1345,15 +1440,15 @@ fn tab_target(
     match best {
         Some((_, entity, guid)) => {
             if let Some(previous) = selection.guid {
-                history.0.push((previous, now));
+                history.picks.push((previous, now));
             }
-            history.0.push((guid, now));
+            history.picks.push((guid, now));
             selection.set(guid, entity);
             tell_server(&session, Some(guid));
         }
         // Nothing left to hand out: clear the history so the next press starts
         // the cycle again rather than doing nothing forever.
-        None => history.0.clear(),
+        None => history.picks.clear(),
     }
 }
 
@@ -1589,6 +1684,44 @@ fn attack_on_right_click(
         entity: me_entity,
         state: vale_assets::look::sheath::MELEE,
     });
+}
+
+/// `assistAttack`: whether `AssistUnit` also starts the attack. Registered
+/// `"0"`.
+const ASSIST_ATTACK: &str = "assistAttack";
+
+/// Record the selection as [`LastEnemy`] when it changes to a unit the
+/// character can attack.
+#[allow(clippy::too_many_arguments)]
+fn remember_enemy(
+    selection: Res<Selection>,
+    assets: Res<crate::assets::GameAssets>,
+    player: Query<&WorldEntity, With<LocalPlayer>>,
+    units: Query<&WorldEntity>,
+    party: Res<super::party::Party>,
+    reputation: Res<super::reputation::PlayerStanding>,
+    mut last: ResMut<LastEnemy>,
+    mut seen: Local<Option<u64>>,
+) {
+    if *seen == selection.guid {
+        return;
+    }
+    *seen = selection.guid;
+    let (Some(guid), Ok(me)) = (selection.guid, player.single()) else {
+        return;
+    };
+    let Some(unit) = units.iter().find(|unit| unit.guid == guid) else {
+        return;
+    };
+    if unit.health_value.is_none() {
+        return;
+    }
+    let Ok(tables) = assets.display_tables() else {
+        return;
+    };
+    if crate::interface::api::can_attack_between(&tables, &party, &reputation, me, unit) {
+        last.0 = Some(guid);
+    }
 }
 
 /// Is this thing selectable at all? Units and players are; game objects,

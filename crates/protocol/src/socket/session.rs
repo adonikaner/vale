@@ -1090,6 +1090,11 @@ pub enum Command {
     SummonResponse { summoner: u64 },
     /// `/played`: `CMSG_PLAYED_TIME`, with no body.
     RequestPlayedTime,
+    /// Flip `PLAYER_FLAGS_HIDE_HELM` (`helm`) or `PLAYER_FLAGS_HIDE_CLOAK`:
+    /// `CMSG_TOGGLE_HELM` or `CMSG_TOGGLE_CLOAK`, with no body. The server
+    /// toggles the bit (vmangos' `HandleShowingHelmOpcode`), so the caller
+    /// sends one only when the current flag differs from the one wanted.
+    ToggleWorn { helm: bool },
     /// Inspect a player: `CMSG_INSPECT`. See [`crate::play::inspect`].
     Inspect { guid: u64 },
     /// Ask for an inspected player's honor: `MSG_INSPECT_HONOR_STATS`.
@@ -1943,6 +1948,11 @@ impl LiveSession {
         self.send(Command::RequestPlayedTime);
     }
 
+    /// Flip the hide-helm or hide-cloak flag; see [`Command::ToggleWorn`].
+    pub fn toggle_worn(&self, helm: bool) {
+        self.send(Command::ToggleWorn { helm });
+    }
+
     /// Inspect a player; see [`Command::Inspect`].
     pub fn inspect(&self, guid: u64) {
         self.send(Command::Inspect { guid });
@@ -2775,6 +2785,11 @@ impl SessionLoop {
                 }
                 Ok(Command::RequestPlayedTime) => {
                     if self.session.request_played_time().is_err() {
+                        return Flow::Stop;
+                    }
+                }
+                Ok(Command::ToggleWorn { helm }) => {
+                    if self.session.toggle_worn(helm).is_err() {
                         return Flow::Stop;
                     }
                 }
