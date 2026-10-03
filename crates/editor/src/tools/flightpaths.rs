@@ -30,6 +30,28 @@
 //! Escape                    disarm, then drop the point, the path, the node
 //! ```
 //!
+//! ## Drawing a path point by point
+//!
+//! With [`Flightpaths::draw_by_hand`] on, Connect does not seed the path.
+//! It starts a [`Draft`] at the selected node instead, and the points are
+//! placed one at a time:
+//!
+//! ```text
+//! click the ground          place the next point above the click, at the
+//!                           draft height
+//! Ctrl + drag               place the next point above the press, at the
+//!                           height the drag sets (the upright plane a selected
+//!                           point's Ctrl + drag moves in)
+//! Backspace                 remove the last point placed
+//! click another node        make the path, and the path back when ticked
+//! Escape                    discard the draft
+//! ```
+//!
+//! The draft height starts at the clearance above the start node and is kept
+//! from one point to the next, so a path drawn at one altitude needs no Ctrl.
+//! Nothing is written to the tables until the far node is clicked, and the
+//! finished path is one undo entry.
+//!
 //! A press does not move anything until the pointer has travelled
 //! [`DRAG_PIXELS`], so a click that selects does not also nudge. A dragged
 //! node carries the first point of every path leaving it and the last point of
@@ -88,6 +110,45 @@ pub enum Armed {
     NewNode,
     /// Make a path from this node to the next node clicked.
     Connect { from: u32 },
+    /// Draw a path from this node point by point; see [`Draft`].
+    Draw { from: u32 },
+}
+
+/// A path being drawn point by point from a node, before it is a row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Draft {
+    pub from: u32,
+    /// The points placed so far, in order, after the start node, in the
+    /// world's axes.
+    pub points: Vec<Vec3>,
+    /// The height, in world yards, the next point is placed at.
+    pub height: f32,
+    /// A Ctrl + drag in progress.
+    pub lift: Option<Lift>,
+}
+
+/// A Ctrl + drag that sets the next point's height. The point stands above
+/// the place the press landed, and is placed when the button comes up.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Lift {
+    /// Where the point stands across the ground, in the world's axes.
+    pub at: Vec2,
+    /// The offset from the pointer's hit on the upright plane to the point's
+    /// height, measured on the first frame of the drag so the point does not
+    /// jump.
+    pub grab: Option<f32>,
+}
+
+impl Draft {
+    /// Where the next point would go for a pointer over `surface`: above the
+    /// lift's place while one is held, else above the pointer.
+    pub fn next(&self, surface: Option<Vec3>) -> Option<Vec3> {
+        let across = match self.lift {
+            Some(lift) => lift.at,
+            None => surface?.truncate(),
+        };
+        Some(across.extend(self.height))
+    }
 }
 
 /// A held left button on a node or a point.
@@ -130,6 +191,11 @@ pub struct Flightpaths {
     /// Make the path back as well when connecting two nodes. On by default:
     /// 270 of the 275 shipped flights have one.
     pub with_return: bool,
+    /// Connect draws the path point by point instead of seeding it. Off by
+    /// default.
+    pub draw_by_hand: bool,
+    /// The path being drawn, while [`Armed::Draw`] is armed.
+    pub draft: Option<Draft>,
     /// Move the ends of a node's paths with the node. On by default.
     pub carry_ends: bool,
     /// Yards above the ground a new point is put at.
@@ -163,6 +229,8 @@ impl Default for Flightpaths {
             drag: None,
             armed: Armed::Nothing,
             with_return: true,
+            draw_by_hand: false,
+            draft: None,
             carry_ends: true,
             clearance: DEFAULT_CLEARANCE,
             transports: false,
@@ -263,6 +331,33 @@ impl Flightpaths {
     pub fn stale(&mut self) {
         self.built = None;
     }
+
+    /// Arm Connect from a node: [`Armed::Draw`] with an empty draft when
+    /// [`Self::draw_by_hand`] is on, else [`Armed::Connect`]. The path and
+    /// point selections are dropped while drawing, so their handles do not
+    /// take the clicks that place points.
+    pub fn arm_connect(&mut self, from: u32) {
+        if !self.draw_by_hand {
+            self.armed = Armed::Connect { from };
+            return;
+        }
+        let Some(node) = self.node(from) else { return };
+        self.draft = Some(Draft {
+            from,
+            points: Vec::new(),
+            height: node.at[2] + self.clearance,
+            lift: None,
+        });
+        self.armed = Armed::Draw { from };
+        self.path = None;
+        self.point = None;
+    }
+
+    /// Disarm, discarding a draft.
+    pub fn disarm(&mut self) {
+        self.armed = Armed::Nothing;
+        self.draft = None;
+    }
 }
 
 /// Yards above the ground a new point is put at, by default. The shipped
@@ -304,7 +399,7 @@ impl Plugin for FlightpathToolPlugin {
                     .chain()
                     .after(crate::pick::aim),
             )
-            .add_systems(Update, (draw, fly).after(keys));
+            .add_systems(Update, (draw, draw_draft, fly).after(keys));
     }
 }
 
@@ -564,6 +659,7 @@ fn aim(
 fn press(
     mut flights: ResMut<Flightpaths>,
     buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
     viewport: Res<crate::ui::Viewport>,
@@ -579,6 +675,14 @@ fn press(
         return;
     }
     let Some(session) = session.as_mut() else { return };
+    if let Armed::Draw { from } = flights.armed {
+        let lifting = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+        let line = draw_press(session, &mut flights, from, cursor.surface, lifting);
+        if let Some(line) = line {
+            session.status = line;
+        }
+        return;
+    }
     let pointer = windows
         .single()
         .ok()
@@ -638,7 +742,16 @@ fn drag(
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     mut session: Option<ResMut<EditSession>>,
 ) {
-    if !active(&tool, &state) || !buttons.pressed(MouseButton::Left) {
+    if !active(&tool, &state) {
+        flights.drag = None;
+        return;
+    }
+    if flights.draft.as_ref().is_some_and(|draft| draft.lift.is_some()) {
+        let session = session.as_deref_mut();
+        lift(&mut flights, &buttons, &windows, &camera, session);
+        return;
+    }
+    if !buttons.pressed(MouseButton::Left) {
         flights.drag = None;
         return;
     }
@@ -697,6 +810,111 @@ fn handle_position(flights: &Flightpaths, handle: Handle) -> Option<Vec3> {
         Handle::Point(id) => flights.point(id).map(|(_, point)| Vec3::from(point.at)),
         Handle::Path(_) => None,
     }
+}
+
+/// A press while a path is being drawn. A press on another node finishes the
+/// path; any other press places the next point, or with `lifting` (Ctrl held)
+/// starts a [`Lift`] that places it on release. Answers the status line, or
+/// `None` when nothing happened.
+fn draw_press(
+    session: &mut EditSession,
+    flights: &mut Flightpaths,
+    from: u32,
+    surface: Option<Vec3>,
+    lifting: bool,
+) -> Option<String> {
+    if let Some(Handle::Node(to)) = flights.hovered {
+        if to == from {
+            return Some("click another node to end the path".to_string());
+        }
+        return Some(finish_draft(session, flights, to));
+    }
+    let surface = surface?;
+    let draft = flights.draft.as_mut()?;
+    if lifting {
+        draft.lift = Some(Lift {
+            at: surface.truncate(),
+            grab: None,
+        });
+        return None;
+    }
+    let at = surface.truncate().extend(draft.height);
+    draft.points.push(at);
+    Some(placed_line(session, draft, at))
+}
+
+/// The status line for a point just placed: its number and its height above
+/// the ground.
+fn placed_line(session: &EditSession, draft: &Draft, at: Vec3) -> String {
+    let n = draft.points.len();
+    match super::doodads::ground_height(session, at.x, at.y) {
+        Some(ground) => format!("point {n} placed at {:.0} yd, {:.0} yd above the ground", at.z, at.z - ground),
+        None => format!("point {n} placed at {:.0} yd", at.z),
+    }
+}
+
+/// Hold a [`Lift`]: while the button is down the draft height follows the
+/// pointer on the upright plane through the point; when it comes up the point
+/// is placed.
+fn lift(
+    flights: &mut Flightpaths,
+    buttons: &ButtonInput<MouseButton>,
+    windows: &Query<&Window>,
+    camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
+    session: Option<&mut EditSession>,
+) {
+    let Some(draft) = flights.draft.as_mut() else { return };
+    let Some(mut held) = draft.lift else { return };
+    if !buttons.pressed(MouseButton::Left) {
+        let at = held.at.extend(draft.height);
+        draft.lift = None;
+        draft.points.push(at);
+        if let Some(session) = session {
+            let line = placed_line(session, draft, at);
+            session.status = line;
+        }
+        return;
+    }
+    let Some((origin, direction)) = crate::pick::ray(windows, camera) else {
+        return;
+    };
+    let point = held.at.extend(draft.height);
+    let Some(hit) = meets_upright_plane(origin, direction, point) else {
+        return;
+    };
+    match held.grab {
+        Some(grab) => draft.height = hit.z + grab,
+        None => {
+            held.grab = Some(point.z - hit.z);
+            draft.lift = Some(held);
+        }
+    }
+}
+
+/// The points of a drawn path: the start node, the points placed, the far
+/// node.
+pub fn drawn_points(from: Vec3, placed: &[Vec3], to: Vec3) -> Vec<[f32; 3]> {
+    std::iter::once(from)
+        .chain(placed.iter().copied())
+        .chain(std::iter::once(to))
+        .map(|at| at.to_array())
+        .collect()
+}
+
+/// Make the drafted path to node `to`, and the path back when asked, as one
+/// undo entry, and disarm. Answers the status line.
+fn finish_draft(session: &mut EditSession, flights: &mut Flightpaths, to: u32) -> String {
+    let Some(draft) = flights.draft.clone() else {
+        flights.disarm();
+        return "nothing is being drawn".to_string();
+    };
+    let (Some(a), Some(b)) = (flights.node(draft.from).cloned(), flights.node(to).cloned()) else {
+        return "both nodes must be on this map".to_string();
+    };
+    let points = drawn_points(Vec3::from(a.at), &draft.points, Vec3::from(b.at));
+    let with_return = flights.with_return;
+    flights.disarm();
+    make_path(session, flights, &a, &b, &points, with_return, "Draw flight path")
 }
 
 /// Where the ray meets the upright plane through `at` that faces the camera
@@ -917,6 +1135,21 @@ pub fn connect(
     let points = seed(Vec3::from(a.at), Vec3::from(b.at), clearance, |x, y| {
         super::doodads::ground_height(session, x, y)
     });
+    make_path(session, flights, &a, &b, &points, with_return, "Connect flight nodes")
+}
+
+/// Make a path from node `a` to node `b` through `points`, and the path back
+/// when asked, as one undo entry under `label`. Answers the status line.
+fn make_path(
+    session: &mut EditSession,
+    flights: &mut Flightpaths,
+    a: &Node,
+    b: &Node,
+    points: &[[f32; 3]],
+    with_return: bool,
+    label: &str,
+) -> String {
+    let (from, to) = (a.id, b.id);
     let specs: Vec<PointSpec> = points
         .iter()
         .map(|&at| PointSpec::flying(a.map, at))
@@ -940,14 +1173,14 @@ pub fn connect(
                 done.cells.extend(more.cells);
             }
             Err(e) => {
-                record(session, "Connect flight nodes", done);
+                record(session, label, done);
                 flights.stale();
                 flights.path = there;
                 return format!("path {} made; the path back was not: {e}", there.unwrap_or(0));
             }
         }
     }
-    record(session, "Connect flight nodes", done);
+    record(session, label, done);
     flights.stale();
     flights.path = there;
     flights.point = None;
@@ -997,9 +1230,20 @@ fn keys(
     if !active(&tool, &state) || wants.wants_keyboard_input() {
         return;
     }
+    if let Some(draft) = flights.draft.as_mut() {
+        if keys.just_pressed(KeyCode::Backspace) && draft.lift.is_none() {
+            let line = match draft.points.pop() {
+                Some(_) => format!("{} point(s) placed", draft.points.len()),
+                None => "no point to remove".to_string(),
+            };
+            if let Some(session) = session.as_mut() {
+                session.status = line;
+            }
+        }
+    }
     if keys.just_pressed(KeyCode::Escape) {
         if flights.armed != Armed::Nothing {
-            flights.armed = Armed::Nothing;
+            flights.disarm();
         } else if flights.point.is_some() {
             flights.point = None;
         } else if flights.path.is_some() {
@@ -1153,7 +1397,59 @@ fn draw(
         Armed::NewNode => {
             handles.sphere(bevy(pointer), marker_radius(pointer, eye), side_colour(NEW_NODE_MOUNTS));
         }
-        Armed::Nothing => {}
+        Armed::Draw { .. } | Armed::Nothing => {}
+    }
+}
+
+/// Draw the draft: its legs so far, the next point with its drop to the
+/// ground, and the leg the next click makes. The next point is red when it is
+/// below the ground under it.
+fn draw_draft(
+    mut handles: Gizmos<super::gizmo::EditorHandles>,
+    flights: Res<Flightpaths>,
+    tool: Res<Tool>,
+    state: Res<crate::playtest::Playtest>,
+    cursor: Res<crate::pick::Cursor>,
+    session: Option<Res<EditSession>>,
+    camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
+) {
+    if !active(&tool, &state) {
+        return;
+    }
+    let (Some(draft), Some(eye)) = (flights.draft.as_ref(), eye(&camera)) else {
+        return;
+    };
+    let Some(start) = flights.node(draft.from).map(|node| Vec3::from(node.at)) else {
+        return;
+    };
+    let bevy = |p: Vec3| axes::to_bevy(p.to_array());
+    let drawn = Color::srgb(0.5, 1.0, 0.5);
+    let mut last = start;
+    for &at in &draft.points {
+        handles.line(bevy(last), bevy(at), drawn);
+        handles.sphere(bevy(at), marker_radius(at, eye) * 0.6, drawn);
+        last = at;
+    }
+    // A hovered far node is where the next click ends the path.
+    if let Some(end) = match flights.hovered {
+        Some(Handle::Node(id)) if id != draft.from => flights.node(id).map(|node| Vec3::from(node.at)),
+        _ => None,
+    } {
+        handles.line(bevy(last), bevy(end), Color::WHITE);
+        return;
+    }
+    let Some(next) = draft.next(cursor.surface) else { return };
+    let ground = session
+        .as_ref()
+        .and_then(|session| super::doodads::ground_height(session, next.x, next.y));
+    let colour = match ground {
+        Some(ground) if next.z < ground => Color::srgb(1.0, 0.3, 0.25),
+        _ => Color::srgb(1.0, 0.85, 0.5),
+    };
+    handles.line(bevy(last), bevy(next), colour.with_alpha(0.7));
+    handles.sphere(bevy(next), marker_radius(next, eye) * 0.6, colour);
+    if let Some(ground) = ground {
+        handles.line(bevy(next), bevy(next.truncate().extend(ground)), Color::WHITE.with_alpha(0.6));
     }
 }
 
@@ -1391,6 +1687,79 @@ mod tests {
         assert!((hit.z - 30.0).abs() < 1e-2, "{hit:?}");
         // Looking straight down there is no upright plane to meet.
         assert!(meets_upright_plane(origin, Vec3::new(0.0, 0.0, -1.0), at).is_none());
+    }
+
+    /// A drawn path runs from the start node through the placed points, in
+    /// the order they were placed, to the far node.
+    #[test]
+    fn a_drawn_path_is_its_two_nodes_and_the_points_between() {
+        let from = Vec3::new(0.0, 0.0, 10.0);
+        let to = Vec3::new(300.0, 0.0, 20.0);
+        let placed = [Vec3::new(100.0, 5.0, 80.0), Vec3::new(200.0, -5.0, 120.0)];
+        let points = drawn_points(from, &placed, to);
+        assert_eq!(points.len(), 4);
+        assert_eq!(points[0], from.to_array());
+        assert_eq!(points[1], placed[0].to_array());
+        assert_eq!(points[2], placed[1].to_array());
+        assert_eq!(points[3], to.to_array());
+        // No points placed is a straight path between the nodes.
+        assert_eq!(drawn_points(from, &[], to).len(), 2);
+    }
+
+    /// Connect with drawing on starts a draft at the clearance above the start
+    /// node and drops the path and point selections; with drawing off it arms
+    /// the seeded Connect. Disarming discards the draft.
+    #[test]
+    fn connect_arms_a_draft_when_drawing_by_hand() {
+        let mut flights = Flightpaths::default();
+        flights.nodes.push(Node {
+            id: 5,
+            record: 0,
+            map: 0,
+            at: [10.0, 20.0, 30.0],
+            name: "Here".to_string(),
+            mounts: NEW_NODE_MOUNTS,
+        });
+        flights.path = Some(7);
+        flights.point = Some(101);
+
+        flights.arm_connect(5);
+        assert_eq!(flights.armed, Armed::Connect { from: 5 });
+        assert!(flights.draft.is_none());
+
+        flights.draw_by_hand = true;
+        flights.clearance = 40.0;
+        flights.arm_connect(5);
+        assert_eq!(flights.armed, Armed::Draw { from: 5 });
+        let draft = flights.draft.as_ref().unwrap();
+        assert_eq!(draft.height, 70.0);
+        assert!(draft.points.is_empty());
+        assert_eq!((flights.path, flights.point), (None, None));
+
+        flights.disarm();
+        assert_eq!(flights.armed, Armed::Nothing);
+        assert!(flights.draft.is_none());
+    }
+
+    /// The next point stands above the pointer at the draft height, and above
+    /// the press while a lift is held, wherever the pointer has gone.
+    #[test]
+    fn the_next_point_follows_the_pointer_or_the_lift() {
+        let mut draft = Draft {
+            from: 1,
+            points: Vec::new(),
+            height: 50.0,
+            lift: None,
+        };
+        let pointer = Vec3::new(3.0, 4.0, 1.0);
+        assert_eq!(draft.next(Some(pointer)), Some(Vec3::new(3.0, 4.0, 50.0)));
+        assert_eq!(draft.next(None), None);
+        draft.lift = Some(Lift {
+            at: Vec2::new(9.0, 9.0),
+            grab: None,
+        });
+        assert_eq!(draft.next(Some(pointer)), Some(Vec3::new(9.0, 9.0, 50.0)));
+        assert_eq!(draft.next(None), Some(Vec3::new(9.0, 9.0, 50.0)));
     }
 
     #[test]

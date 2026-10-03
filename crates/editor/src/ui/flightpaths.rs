@@ -161,7 +161,7 @@ fn controls(ui: &mut egui::Ui, flights: &mut Flightpaths) {
                 false => Armed::NewNode,
             };
         }
-        let connecting = matches!(flights.armed, Armed::Connect { .. });
+        let connecting = matches!(flights.armed, Armed::Connect { .. } | Armed::Draw { .. });
         let connect = ui.add_enabled(
             flights.node.is_some() || connecting,
             egui::Button::selectable(connecting, "Connect"),
@@ -169,15 +169,17 @@ fn controls(ui: &mut egui::Ui, flights: &mut Flightpaths) {
         if connect
             .on_hover_text(
                 "Armed, a click on another node makes a path from the selected node \
-                 to it, with points every 120 yards at the clearance above the ground.",
+                 to it, with points every 120 yards at the clearance above the ground. \
+                 With Draw points by hand ticked, the points are placed one click at a \
+                 time first.",
             )
             .on_disabled_hover_text("Select the node the path starts from first.")
             .clicked()
         {
-            flights.armed = match (connecting, flights.node) {
-                (false, Some(from)) => Armed::Connect { from },
-                _ => Armed::Nothing,
-            };
+            match (connecting, flights.node) {
+                (false, Some(from)) => flights.arm_connect(from),
+                _ => flights.disarm(),
+            }
         }
         let adding = flights.armed == Armed::AddPoints;
         let add = ui.add_enabled(
@@ -208,6 +210,31 @@ fn controls(ui: &mut egui::Ui, flights: &mut Flightpaths) {
         )
         .on_hover_text("How far above the ground a new point is put.");
     });
+    ui.checkbox(&mut flights.draw_by_hand, "Draw points by hand")
+        .on_hover_text(
+            "Connect places no points of its own. Each click on the ground places the \
+             next point at the draft height; Ctrl + drag from a spot places it at the \
+             height the drag sets; a click on the far node makes the path.",
+        );
+    let drawing_from = flights.draft.as_ref().map(|draft| flights.name(draft.from));
+    if let (Some(draft), Some(from)) = (flights.draft.as_mut(), drawing_from) {
+        theme::row(ui, "draft height", |ui| {
+            ui.add(egui::DragValue::new(&mut draft.height).speed(1.0).suffix(" yd"))
+                .on_hover_text(
+                    "The height the next point is placed at. Ctrl + drag in the world \
+                     sets it too, and it is kept from one point to the next.",
+                );
+        });
+        theme::note(
+            ui,
+            format!(
+                "Drawing from {from}: {} point(s). Click the ground to place the next \
+                 point; Ctrl + drag to place it higher or lower; Backspace removes the \
+                 last; click another node to finish; Escape discards the drawing.",
+                draft.points.len()
+            ),
+        );
+    }
     ui.checkbox(&mut flights.with_return, "Make the path back")
         .on_hover_text(
             "Connect makes the reverse path as well: the same points in the other \
