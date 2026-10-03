@@ -141,6 +141,9 @@ pub mod fields {
         pub const SOUND: usize = 2;
         pub const MIN_DELAY_MINUTES: usize = 4;
     }
+    pub mod ambience {
+        pub const SOUND: usize = 1; // [1,2] day/night
+    }
     pub mod creature {
         pub const EXERTION: usize = 1;
         pub const WOUND: usize = 3;
@@ -661,8 +664,8 @@ impl SoundBank {
                         id,
                         Ambience {
                             sounds: [
-                                dbc.u32_at(r, 1).unwrap_or(0),
-                                dbc.u32_at(r, 2).unwrap_or(0),
+                                dbc.u32_at(r, fields::ambience::SOUND).unwrap_or(0),
+                                dbc.u32_at(r, fields::ambience::SOUND + 1).unwrap_or(0),
                             ],
                         },
                     );

@@ -265,7 +265,8 @@ struct GlueJoint;
 /// tree's walk and paint. This switch controls whether the 3D scene behind
 /// those widgets is built at all, which has a different cost.
 ///
-/// Turning it off tears down whatever is up, on the next frame.
+/// Turning it off tears down whatever is up, on the next frame, and silences
+/// the login theme, which `sound::music` plays only while this is on.
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct GlueScenes(pub bool);
 

@@ -286,6 +286,12 @@ pub struct Args {
     /// buttons from a command line. See `tools::images`.
     pub export_images: bool,
     pub import_images: bool,
+    /// `--vertices <radius>[,<rise>]`: with `--tool terrain`, select the
+    /// vertices within that many yards of the camera's target, as a press of
+    /// Select vertices would, and with a second number move them up by that
+    /// many yards. A selection is a drag, which a scripted run cannot make.
+    /// See `tools::terrain`.
+    pub vertices: Option<(f32, Option<f32>)>,
     /// `--view <distance>[,<pitch°>[,<yaw°>]]`: where the camera stands.
     ///
     /// `--at` sets where the editor looks and this sets the distance and angle,
@@ -811,6 +817,7 @@ impl Default for Args {
             guides_menu: false,
             export_images: false,
             import_images: false,
+            vertices: None,
             view: None,
             reach: None,
             size: None,
@@ -941,6 +948,13 @@ impl Args {
                 "--guides-menu" => parsed.guides_menu = true,
                 "--export-images" => parsed.export_images = true,
                 "--import-images" => parsed.import_images = true,
+                "--vertices" => {
+                    parsed.vertices = args.next().and_then(|text| {
+                        let mut numbers = text.split(',').map(|part| part.trim().parse::<f32>());
+                        let radius = numbers.next()?.ok()?;
+                        Some((radius, numbers.next().and_then(Result::ok)))
+                    });
+                }
                 "--view" => {
                     parsed.view = args.next().as_deref().and_then(parse_view);
                 }

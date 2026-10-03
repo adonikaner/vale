@@ -20,6 +20,11 @@
 //! [`Claim::Lua`], not [`Claim::Glue`]. The constant is the fallback for a
 //! screen the interface has not told us about.
 //!
+//! The theme is the login screen's, so it is played only while the login
+//! screen may show its scene: [`crate::render::glue::GlueScenes`], which is on
+//! in the client. A host that draws the world with no login screen behind it
+//! turns that off, and this channel is then silent outside the world.
+//!
 //! ## …and a claim belongs to the interface that made it
 //!
 //! `PlayMusic` outranks everything until `StopMusic`, and **nothing calls
@@ -179,6 +184,7 @@ fn run_music(
     game: Res<crate::assets::GameAssets>,
     cvars: Res<crate::settings::cvars::CVars>,
     alive: Query<(), With<AudioPlayer>>,
+    glue: Option<Res<crate::render::glue::GlueScenes>>,
 ) {
     let now = time.elapsed_secs();
     // A voice that finished has despawned itself (`PlaybackMode::Despawn`);
@@ -230,6 +236,13 @@ fn run_music(
     }
 
     // --- claim 2: the glue screens ---
+    // With no login screen to belong to, the theme is not played and the
+    // channel is quiet until the world is entered.
+    let glue = glue.is_none_or(|scenes| scenes.0);
+    if !in_world && !glue {
+        hand_over(&mut state, &mut voices, HANDOVER_SECS);
+        return;
+    }
     if !in_world {
         if !matches!(state.playing, Some((_, Claim::Glue, _))) {
             hand_over(&mut state, &mut voices, HANDOVER_SECS);

@@ -253,8 +253,11 @@ impl Plugin for PlaytestPlugin {
             // client's own loaders run in the same schedule as
             // [`arrange`] with nothing ordering the two, so leaving the first
             // frame to `arrange` loads a login screen and then tears it down:
-            // a second of work and a visible flicker.
+            // a second of work and a visible flicker. The login scene is off
+            // from the first frame for the same reason, and with it the login
+            // theme, which would otherwise start and then fade.
             .insert_resource(InterfaceAwake(false))
+            .insert_resource(GlueScenes(false))
             .init_resource::<Playtest>()
             .init_resource::<ShellOpen>()
             .init_resource::<Login>()

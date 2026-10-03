@@ -302,6 +302,12 @@ pub struct Browser {
     /// The panel cannot play it directly because it draws inside one system and
     /// the mixer is a separate `SystemParam`.
     pub audition: Vec<u32>,
+    /// What a play or stop button beside a sound has asked for, carried out by
+    /// [`listen`] on the next frame. See [`Heard`].
+    pub listen: Option<Listen>,
+    /// The sound [`listen`] is playing, until it ends or is stopped, so the
+    /// button that started it can be drawn as a stop button.
+    pub hearing: Option<Heard>,
     /// Whether `--row` has been applied. It names a row of a table that is not
     /// yet open on the frame the flag is read, so it is applied when the table
     /// has been opened rather than at startup.
@@ -801,6 +807,24 @@ pub fn describe(
                 sub,
             )
         }
+        // An ambience row has no name, so it is called by its sounds' names:
+        // the day one, and the night one under it when it differs.
+        "SoundAmbience" => {
+            use vale_assets::tables::sound::fields::{ambience, entry};
+            let name = |sound: u32| {
+                session
+                    .table("SoundEntries")
+                    .and_then(|sounds| sounds.string_at(sounds.row_of(sound)?, entry::NAME))
+                    .filter(|name| !name.is_empty())
+            };
+            let (day, night) = (num(ambience::SOUND), num(ambience::SOUND + 1));
+            let title = name(day).unwrap_or_default();
+            let sub = match night != day {
+                true => name(night).map(|name| format!("night: {name}")),
+                false => None,
+            };
+            (title, sub.unwrap_or_default())
+        }
         "SpellCastTimes" => (
             format!("{} ms", table.i32_at(record, 1).unwrap_or(0)),
             String::new(),
@@ -1232,6 +1256,9 @@ pub fn chain_for(table: &str) -> &'static [&'static str] {
         "SkillLineAbility" | "SkillRaceClassInfo" => &["SkillLine", "Spell"],
         // `Map`, which an area's label names, and the five tables its sound
         // and liquid columns refer to, so each reference is drawn as a name.
+        //
+        // `SoundEntries` as well, which the music, intro and ambience rows
+        // name, so a sound's play button says which sound it plays.
         "AreaTable" => &[
             "Map",
             "ZoneMusic",
@@ -1239,6 +1266,7 @@ pub fn chain_for(table: &str) -> &'static [&'static str] {
             "SoundAmbience",
             "SoundProviderPreferences",
             "LiquidType",
+            "SoundEntries",
         ],
         _ => &[],
     }
@@ -2515,6 +2543,96 @@ fn audition(
     }
 }
 
+/// One sound a panel can play and then stop: a row of `SoundEntries`,
+/// `ZoneMusic`, `ZoneIntroMusicTable` or `SoundAmbience`, and for a row with
+/// a day and a night sound, which of the two.
+///
+/// A kit's sound is short and [`Browser::audition`] plays it to its end. A
+/// zone's music is a track of minutes and its ambience is a loop, so these
+/// are played one at a time and can be stopped: a second play replaces the
+/// first, and the button that started one stops it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Heard {
+    pub table: &'static str,
+    pub id: u32,
+    pub night: bool,
+}
+
+/// A request to [`listen`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Listen {
+    /// Play the `SoundEntries` row `entry` on `channel`, as `heard`. The
+    /// ambience channel loops, as the game loops it; the other two play once.
+    Play {
+        heard: Heard,
+        entry: u32,
+        channel: vale_client::sound::mixer::Channel,
+    },
+    Stop,
+}
+
+/// How long a stopped sound takes to fade, which is short enough to be a stop
+/// and long enough not to click.
+const STOP_SECS: f32 = 0.25;
+
+/// Play or stop what a panel asked for in [`Browser::listen`], through the
+/// client's mixer and at its channel volumes.
+///
+/// The sound stops by itself when the browser's tools are left or a
+/// playtest begins, since a looping ambience has no other end.
+fn listen(
+    browser: Option<ResMut<Browser>>,
+    tool: Res<super::Tool>,
+    playtest: Res<crate::playtest::Playtest>,
+    assets: Res<GameAssets>,
+    mut voices: vale_client::sound::mixer::Voices,
+    alive: Query<(), With<bevy::audio::AudioPlayer>>,
+    // The voice and the volume it plays at, which a fade starts from.
+    mut playing: Local<Option<(Entity, f32)>>,
+) {
+    use vale_client::sound::mixer::{Channel, Place};
+    let Some(mut browser) = browser else { return };
+    if let Some((entity, _)) = *playing {
+        if alive.get(entity).is_err() {
+            *playing = None;
+            browser.hearing = None;
+        }
+    }
+    let away = tool.table().is_none() || !playtest.editing();
+    let ask = match away {
+        true => {
+            browser.listen = None;
+            playing.is_some().then_some(Listen::Stop)
+        }
+        false => browser.listen.take(),
+    };
+    let Some(ask) = ask else { return };
+    if let Some((entity, volume)) = playing.take() {
+        voices.fade_out(entity, volume, STOP_SECS);
+    }
+    browser.hearing = None;
+    let Listen::Play {
+        heard,
+        entry,
+        channel,
+    } = ask
+    else {
+        return;
+    };
+    let bank = assets.sounds();
+    let Some((path, volume)) = voices.pick(&bank, entry) else {
+        return;
+    };
+    let settings = match channel {
+        Channel::Ambience => bevy::audio::PlaybackSettings::LOOP,
+        _ => bevy::audio::PlaybackSettings::DESPAWN,
+    };
+    if let Some(entity) = voices.play_file(&path, volume, channel, Place::Flat, settings) {
+        *playing = Some((entity, volume * voices.gain(channel)));
+        browser.hearing = Some(heard);
+    }
+}
+
 /// Open the tables the chosen subject needs, one table per frame.
 ///
 /// This follows the same pattern as [`super::open_tiles`]. `Spell.dbc` is
@@ -2772,7 +2890,7 @@ impl Plugin for TableToolPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Browser>()
             .init_resource::<crate::ui::storyboard::Storyboard>()
-            .add_systems(Update, (open_tables, audition));
+            .add_systems(Update, (open_tables, audition, listen));
     }
 }
 
