@@ -85,6 +85,10 @@ pub struct Tiles {
     pub building: Option<String>,
     pub building_for: String,
     pub building_path: String,
+    /// A picture chosen for import and waiting on the map window's dialog,
+    /// and the folder the last file dialog was left in.
+    pub pending: Option<super::images::Pending>,
+    pub image_dir: Option<std::path::PathBuf>,
     /// Whether a minimap run is going, and the switch that stops it between
     /// tiles. See [`start_minimaps`].
     pub drawing: bool,
@@ -117,6 +121,8 @@ impl Default for Tiles {
             building: None,
             building_for: String::new(),
             building_path: String::new(),
+            pending: None,
+            image_dir: None,
             drawing: false,
             stop: Default::default(),
             derive: None,
@@ -723,6 +729,23 @@ fn save_wdt(session: &EditSession, wdt: &wdt::WdtFile) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Read a picture for import and hold it for the map window's dialog. A
+/// height map with no range of its own starts at the selected tiles' lowest
+/// and highest ground.
+fn choose_import(session: &EditSession, tiles: &mut Tiles, chosen: &[(u32, u32)], path: &std::path::Path) {
+    match super::images::read(path) {
+        Ok(mut pending) => {
+            if !pending.range_in_file {
+                if let Some(range) = super::images::open_range(session, chosen) {
+                    (pending.low, pending.high) = vale_edit::ops::image::widened(range);
+                }
+            }
+            tiles.pending = Some(pending);
+        }
+        Err(why) => tiles.said = why,
+    }
+}
+
 /// Make the map the building typed in [`Tiles::building_path`], or terrain
 /// again, in the project's copy of its WDT.
 ///
@@ -903,16 +926,49 @@ pub fn run_asked(
         session.status = tiles.said.clone();
         return;
     }
-    // The pictures. An export changes nothing; an import rewrites the open
-    // tiles it has pictures for. See `super::images`.
-    if asked == Asked::ExportImages {
-        tiles.said = super::images::export(&session, &chosen);
+    // The pictures, through the system's own file dialogs. An export changes
+    // nothing; an import rewrites the open tiles. See `super::images`.
+    if let Asked::ExportHeights | Asked::ExportBlends = asked {
+        use super::images::{self, Kind};
+        let kind = match asked {
+            Asked::ExportHeights => Kind::Heights,
+            _ => Kind::Blends,
+        };
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("PNG picture", &["png"])
+            .set_file_name(images::suggested_name(&session.map, &chosen, kind));
+        if let Some(dir) = &tiles.image_dir {
+            dialog = dialog.set_directory(dir);
+        }
+        let Some(path) = dialog.save_file() else {
+            return;
+        };
+        tiles.image_dir = path.parent().map(std::path::Path::to_path_buf);
+        tiles.said = match images::export(&session, &assets, &chosen, kind, &path) {
+            Ok(said) | Err(said) => said,
+        };
         session.status = tiles.said.clone();
         return;
     }
-    if asked == Asked::ImportImages {
+    if asked == Asked::ChooseImport {
+        let mut dialog = rfd::FileDialog::new().add_filter("PNG picture", &["png"]);
+        if let Some(dir) = &tiles.image_dir {
+            dialog = dialog.set_directory(dir);
+        }
+        let Some(path) = dialog.pick_file() else {
+            return;
+        };
+        tiles.image_dir = path.parent().map(std::path::Path::to_path_buf);
+        choose_import(&session, &mut tiles, &chosen, &path);
+        return;
+    }
+    if asked == Asked::Import {
+        let Some(pending) = tiles.pending.take() else {
+            return;
+        };
         view.edited_stale = true;
-        tiles.said = super::images::import(&mut session, &chosen, tiles.objects_follow);
+        tiles.said =
+            super::images::import(&mut session, &pending, &chosen, tiles.objects_follow);
         session.status = tiles.said.clone();
         return;
     }
@@ -927,8 +983,10 @@ pub fn run_asked(
         | Asked::MakeBuilding
         | Asked::MakeTerrain
         | Asked::ServerFiles
-        | Asked::ExportImages
-        | Asked::ImportImages => unreachable!("answered above"),
+        | Asked::ExportHeights
+        | Asked::ExportBlends
+        | Asked::ChooseImport
+        | Asked::Import => unreachable!("answered above"),
         Asked::Copy => {
             let taken: Vec<(u32, u32)> = chosen
                 .iter()
@@ -1294,11 +1352,13 @@ pub fn restream(
 fn images_on_the_command_line(
     args: Res<crate::Args>,
     session: Option<ResMut<EditSession>>,
+    assets: Res<GameAssets>,
     focus: Res<vale_client::render::focus::WorldFocus>,
-    tiles: Res<Tiles>,
+    mut tiles: ResMut<Tiles>,
+    mut view: ResMut<crate::ui::mapview::MapView>,
     mut done: Local<bool>,
 ) {
-    if *done || !(args.export_images || args.import_images) {
+    if *done || (args.export_heights.is_none() && args.import_image.is_none()) {
         return;
     }
     let Some(mut session) = session else { return };
@@ -1307,12 +1367,22 @@ fn images_on_the_command_line(
         return;
     }
     *done = true;
-    let said = match args.import_images {
-        true => super::images::import(&mut session, &[at], tiles.objects_follow),
-        false => super::images::export(&session, &[at]),
-    };
-    info!("images: {said}");
-    session.status = said;
+    if let Some(path) = &args.export_heights {
+        let said = match super::images::export(&session, &assets, &[at], super::images::Kind::Heights, path) {
+            Ok(said) | Err(said) => said,
+        };
+        info!("images: {said}");
+        session.status = said;
+    }
+    // The import's dialog, open on the camera's tile, for a picture of it.
+    if let Some(path) = &args.import_image {
+        view.open = true;
+        view.selection = [at].into_iter().collect();
+        choose_import(&session, &mut tiles, &[at], path);
+        if args.import_confirm {
+            tiles.asked = Some(crate::ui::mapview::Asked::Import);
+        }
+    }
 }
 
 /// `--minimaps`: draw the minimaps of the tile under the camera and the

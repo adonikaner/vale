@@ -280,12 +280,15 @@ pub struct Args {
     pub guides: Option<String>,
     /// `--guides-menu`: open the view bar's Guides menu, for a picture of it.
     pub guides_menu: bool,
-    /// `--export-images` / `--import-images`: write the height and blend maps
-    /// of the tile under the camera into the project's images folder, or read
-    /// them back, once that tile is open. The map window's Export and Import
-    /// buttons from a command line. See `tools::images`.
-    pub export_images: bool,
-    pub import_images: bool,
+    /// `--export-heights <file>`: write the height map of the tile under the
+    /// camera to that PNG once the tile is open. `--import-image <file>`:
+    /// open the map window's import dialog for that PNG on the camera's
+    /// tile, which a scripted run cannot reach through the file dialog. See
+    /// `tools::images`.
+    pub export_heights: Option<std::path::PathBuf>,
+    pub import_image: Option<std::path::PathBuf>,
+    /// `--import-confirm`: with `--import-image`, press the dialog's Import.
+    pub import_confirm: bool,
     /// `--vertices <radius>[,<rise>]`: with `--tool terrain`, select the
     /// vertices within that many yards of the camera's target, as a press of
     /// Select vertices would, and with a second number move them up by that
@@ -822,8 +825,9 @@ impl Default for Args {
             overlay: None,
             guides: None,
             guides_menu: false,
-            export_images: false,
-            import_images: false,
+            export_heights: None,
+            import_image: None,
+            import_confirm: false,
             vertices: None,
             tilt: None,
             minimaps: false,
@@ -955,8 +959,9 @@ impl Args {
                     parsed.guides = args.next();
                 }
                 "--guides-menu" => parsed.guides_menu = true,
-                "--export-images" => parsed.export_images = true,
-                "--import-images" => parsed.import_images = true,
+                "--export-heights" => parsed.export_heights = args.next().map(Into::into),
+                "--import-image" => parsed.import_image = args.next().map(Into::into),
+                "--import-confirm" => parsed.import_confirm = true,
                 "--minimaps" => parsed.minimaps = true,
                 "--tilt" => {
                     parsed.tilt = args.next().and_then(|text| {

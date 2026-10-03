@@ -1,268 +1,382 @@
-//! A tile's heights and texture blends as picture files, written out and read
-//! back in.
+//! Ground as picture files: a height map or a blend map of the selected
+//! tiles written to a PNG, and any PNG read back onto them.
 //!
-//! What the pictures are and how a pixel becomes a height is
-//! `vale_edit::ops::image`. This file is the half that touches the disk: the
-//! folder, the file names, the PNG encoding, and the edit an import becomes.
+//! What a pixel means is `vale_edit::ops::image`. This file is the half that
+//! touches the disk and the session.
 //!
-//! ## The files
+//! ## Export
 //!
-//! ```text
-//! Edit\<project>\images\
-//!   Azeroth_32_48.height.png   257 x 257, 16-bit greyscale
-//!   Azeroth_32_48.height.txt   the heights black and white stand for
-//!   Azeroth_32_48.blend.png    1024 x 1024, 8-bit RGB
-//! ```
+//! The map window's Export heights… and Export blends… ask where to save, and
+//! write one picture of the whole selection: the block of tiles from its
+//! north-west tile to its south-east one, tiles in the block that are not
+//! selected or do not exist left black. A height map is 16-bit grey and
+//! carries the heights black and white stand for in a text chunk
+//! ([`RANGE_KEY`]), so the file is all there is.
 //!
-//! The folder is beside the project's `project\` folder and not inside it:
-//! these are not files the game reads, and a publish must not pack them.
+//! ## Import
 //!
-//! The range is a text file beside the picture, `low high` in yards, because
-//! a paint program or a terrain generator writes the picture back without any
-//! text it carried. An import with no range file is refused, since a height
-//! map with no range is a shape with no size. Editing the two numbers before
-//! an import rescales the whole tile.
+//! Import… asks for any PNG: 16-bit or 8-bit grey, grey saved as colour, or
+//! colour. [`read`] decodes it into a [`Pending`] import, which the map window
+//! shows before anything changes: what the picture is used as, the tiles it
+//! lands on, and for a height map the two heights black and white stand for.
+//! Those come from the file when it carries them and otherwise from the
+//! selected tiles' own lowest and highest vertex, since a picture drawn in a
+//! paint program says only where is higher. A picture of another size than
+//! the block is scaled to fit it.
 //!
-//! ## An import is one undo entry
-//!
-//! Every tile imported in one press is one entry. With the switch on, what
-//! stands on a tile is carried by as much as the ground under it moved, as a
-//! height stroke carries it (`super::terrain::carry`). A tile is imported from
-//! whichever of its two pictures is in the folder, so a height map can be
-//! brought in alone.
-//!
-//! Both operations act on tiles the session has open, which are the ones near
-//! the camera. The map window counts them on the buttons.
+//! An import is one undo entry. With Objects follow the ground on, what
+//! stands on a tile is carried by as much as the ground under it moved
+//! (`super::terrain::carry`). Only open tiles are written, which are the ones
+//! near the camera; the window says how many of the selection that is.
 
 use crate::session::EditSession;
 use std::path::{Path, PathBuf};
+use vale_client::assets::GameAssets;
+use vale_edit::adt::AdtFile;
 use vale_edit::ops::image::{self, HeightMap, BLEND_SIDE, HEIGHT_SIDE};
 
-/// The folder the pictures are written to and read from.
-pub fn folder(session: &EditSession) -> PathBuf {
-    session.project.root.join("images")
+/// The PNG text keyword a height map's range is written under, as
+/// `low high` in yards.
+pub const RANGE_KEY: &str = "Height range";
+
+/// What a picture is imported as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Heights,
+    Blends,
 }
 
-/// The three files of one tile, without the folder: the height map, its
-/// range, and the blend map.
-pub fn names(map: &str, at: (u32, u32)) -> [String; 3] {
-    let stem = format!("{map}_{}_{}", at.0, at.1);
-    [
-        format!("{stem}.height.png"),
-        format!("{stem}.height.txt"),
-        format!("{stem}.blend.png"),
-    ]
+/// The block a selection covers: its north-west tile, and how many tiles
+/// across and down. `None` for no tiles.
+pub fn block(tiles: &[(u32, u32)]) -> Option<((u32, u32), (u32, u32))> {
+    let x0 = tiles.iter().map(|at| at.0).min()?;
+    let y0 = tiles.iter().map(|at| at.1).min()?;
+    let x1 = tiles.iter().map(|at| at.0).max()?;
+    let y1 = tiles.iter().map(|at| at.1).max()?;
+    Some(((x0, y0), (x1 - x0 + 1, y1 - y0 + 1)))
+}
+
+/// The pixels a block's picture is, across and down.
+pub fn size_of(kind: Kind, (wide, tall): (u32, u32)) -> (usize, usize) {
+    match kind {
+        Kind::Heights => (wide as usize * (HEIGHT_SIDE - 1) + 1, tall as usize * (HEIGHT_SIDE - 1) + 1),
+        Kind::Blends => (wide as usize * BLEND_SIDE, tall as usize * BLEND_SIDE),
+    }
+}
+
+/// The block's tiles in words: `32, 48`, or `32, 48 to 33, 49`.
+pub fn block_words(((x, y), (wide, tall)): ((u32, u32), (u32, u32))) -> String {
+    match (wide, tall) {
+        (1, 1) => format!("{x}, {y}"),
+        _ => format!("{x}, {y} to {}, {}", x + wide - 1, y + tall - 1),
+    }
+}
+
+/// The file name an export suggests.
+pub fn suggested_name(map: &str, tiles: &[(u32, u32)], kind: Kind) -> String {
+    let what = match kind {
+        Kind::Heights => "heights",
+        Kind::Blends => "blends",
+    };
+    match block(tiles) {
+        Some(((x, y), (1, 1))) => format!("{map} {x}_{y} {what}.png"),
+        Some(((x, y), (wide, tall))) => {
+            format!("{map} {x}_{y} to {}_{} {what}.png", x + wide - 1, y + tall - 1)
+        }
+        None => format!("{map} {what}.png"),
+    }
 }
 
 fn said(path: &Path, error: impl std::fmt::Display) -> String {
     format!("{}: {error}", path.display())
 }
 
-/// Encode one picture. `sixteen` writes one 16-bit grey channel from
-/// big-endian pairs; otherwise three 8-bit channels.
-fn write_png(path: &Path, side: usize, sixteen: bool, bytes: &[u8]) -> Result<(), String> {
+/// A tile as the session has it: open and edited, or read from the project
+/// or the archives.
+fn tile_of(session: &EditSession, assets: &GameAssets, at: (u32, u32)) -> Option<AdtFile> {
+    match session.tiles.get(&at) {
+        Some(tile) => Some(tile.clone()),
+        None => AdtFile::parse(&session.tile_bytes(assets, at)?).ok(),
+    }
+}
+
+/// The lowest and highest vertex over the open tiles of `tiles`, which is
+/// the range a picture with none of its own is imported over.
+pub fn open_range(session: &EditSession, tiles: &[(u32, u32)]) -> Option<(f32, f32)> {
+    tiles
+        .iter()
+        .filter_map(|at| image::height_range(session.tiles.get(at)?))
+        .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
+}
+
+/// Write the selection's picture to `path`. Returns the status line.
+pub fn export(
+    session: &EditSession,
+    assets: &GameAssets,
+    tiles: &[(u32, u32)],
+    kind: Kind,
+    path: &Path,
+) -> Result<String, String> {
+    let Some((origin, span)) = block(tiles) else {
+        return Err("nothing is selected".into());
+    };
+    let found: Vec<((u32, u32), AdtFile)> = tiles
+        .iter()
+        .filter_map(|&at| Some((at, tile_of(session, assets, at)?)))
+        .collect();
+    if found.is_empty() {
+        return Err("none of the selected tiles exists".into());
+    }
+    let (width, height) = size_of(kind, span);
+    let offset = |at: (u32, u32), side: usize| {
+        (
+            (at.0 - origin.0) as usize * side,
+            (at.1 - origin.1) as usize * side,
+        )
+    };
+    match kind {
+        Kind::Heights => {
+            let range = found
+                .iter()
+                .filter_map(|(_, tile)| image::height_range(tile))
+                .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
+                .ok_or("the selected tiles are missing chunks")?;
+            let (low, high) = image::widened(range);
+            let mut pixels = vec![0u16; width * height];
+            for (at, tile) in &found {
+                let Some(map) = image::export_heights_over(tile, low, high) else {
+                    continue;
+                };
+                let at = offset(*at, HEIGHT_SIDE - 1);
+                image::place(&mut pixels, width, 1, HEIGHT_SIDE, at, &map.pixels);
+            }
+            let bytes: Vec<u8> = pixels.iter().flat_map(|pixel| pixel.to_be_bytes()).collect();
+            write_png(path, (width, height), Kind::Heights, &bytes, Some((low, high)))?;
+            Ok(format!(
+                "wrote the heights of {} to {}: black {low:.1} yd, white {high:.1} yd",
+                block_words((origin, span)),
+                path.display()
+            ))
+        }
+        Kind::Blends => {
+            let mut rgb = vec![0u8; width * height * 3];
+            for (at, tile) in &found {
+                let at = offset(*at, BLEND_SIDE);
+                image::place(&mut rgb, width, 3, BLEND_SIDE, at, &image::export_blend(tile));
+            }
+            write_png(path, (width, height), Kind::Blends, &rgb, None)?;
+            Ok(format!(
+                "wrote the blends of {} to {}",
+                block_words((origin, span)),
+                path.display()
+            ))
+        }
+    }
+}
+
+/// Encode a picture: 16-bit grey from big-endian pairs for heights, with
+/// the range as a text chunk, or 8-bit RGB for blends.
+fn write_png(
+    path: &Path,
+    (width, height): (usize, usize),
+    kind: Kind,
+    bytes: &[u8],
+    range: Option<(f32, f32)>,
+) -> Result<(), String> {
     let file = std::fs::File::create(path).map_err(|e| said(path, e))?;
-    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), side as u32, side as u32);
-    match sixteen {
-        true => {
+    let mut encoder =
+        png::Encoder::new(std::io::BufWriter::new(file), width as u32, height as u32);
+    match kind {
+        Kind::Heights => {
             encoder.set_color(png::ColorType::Grayscale);
             encoder.set_depth(png::BitDepth::Sixteen);
         }
-        false => {
+        Kind::Blends => {
             encoder.set_color(png::ColorType::Rgb);
             encoder.set_depth(png::BitDepth::Eight);
         }
+    }
+    if let Some((low, high)) = range {
+        encoder
+            .add_text_chunk(RANGE_KEY.to_string(), format!("{low} {high}"))
+            .map_err(|e| said(path, e))?;
     }
     let mut writer = encoder.write_header().map_err(|e| said(path, e))?;
     writer.write_image_data(bytes).map_err(|e| said(path, e))
 }
 
-/// Decode one picture into its size, colour type, depth and bytes.
-fn read_png(path: &Path) -> Result<(usize, usize, png::ColorType, png::BitDepth, Vec<u8>), String> {
+/// A picture chosen for import and not written yet: what the map window's
+/// dialog shows, and what [`import`] writes.
+#[derive(Debug, Clone)]
+pub struct Pending {
+    pub path: PathBuf,
+    /// Pixels across and down.
+    pub size: (usize, usize),
+    /// What the picture looks like it is, and what it is to be used as.
+    pub found: Kind,
+    pub kind: Kind,
+    /// The heights black and white stand for, and whether the file said so.
+    pub low: f32,
+    pub high: f32,
+    pub range_in_file: bool,
+    /// Grey, 0 to 1 a pixel.
+    grey: Vec<f32>,
+    /// Red, green and blue, 0 to 255 a channel.
+    rgb: Vec<f32>,
+}
+
+impl Pending {
+    /// The file's name, for the dialog's heading.
+    pub fn name(&self) -> String {
+        self.path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+}
+
+/// Decode any PNG for import: grey or colour, 8 or 16 bits, with or without
+/// alpha, which is dropped. A colour picture whose three channels agree is
+/// grey saved as colour and is taken as a height map.
+pub fn read(path: &Path) -> Result<Pending, String> {
     let file = std::fs::File::open(path).map_err(|e| said(path, e))?;
-    let mut reader = png::Decoder::new(std::io::BufReader::new(file))
-        .read_info()
-        .map_err(|e| said(path, e))?;
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decoder.set_transformations(png::Transformations::EXPAND);
+    let mut reader = decoder.read_info().map_err(|e| said(path, e))?;
+    let range = reader
+        .info()
+        .uncompressed_latin1_text
+        .iter()
+        .find(|chunk| chunk.keyword == RANGE_KEY)
+        .and_then(|chunk| {
+            let mut numbers = chunk.text.split_whitespace().map(str::parse::<f32>);
+            match (numbers.next(), numbers.next()) {
+                (Some(Ok(low)), Some(Ok(high))) if high > low => Some((low, high)),
+                _ => None,
+            }
+        });
     let size = reader
         .output_buffer_size()
         .ok_or_else(|| said(path, "too large to read"))?;
     let mut bytes = vec![0u8; size];
     let frame = reader.next_frame(&mut bytes).map_err(|e| said(path, e))?;
     bytes.truncate(frame.buffer_size());
-    Ok((
-        frame.width as usize,
-        frame.height as usize,
-        frame.color_type,
-        frame.bit_depth,
-        bytes,
-    ))
-}
-
-/// Write a height map and its range file.
-pub fn write_heights(dir: &Path, names: &[String; 3], map: &HeightMap) -> Result<(), String> {
-    let bytes: Vec<u8> = map.pixels.iter().flat_map(|pixel| pixel.to_be_bytes()).collect();
-    write_png(&dir.join(&names[0]), HEIGHT_SIDE, true, &bytes)?;
-    let range = dir.join(&names[1]);
-    std::fs::write(&range, format!("{} {}\n", map.low, map.high)).map_err(|e| said(&range, e))
-}
-
-/// Read a height map and its range file. A picture that is not 257 pixels
-/// square is refused, and so is one with no range beside it. An 8-bit
-/// greyscale picture is accepted and widened, since some programs save one
-/// whatever they were given; it has 256 levels where the file had 65,536.
-pub fn read_heights(dir: &Path, names: &[String; 3]) -> Result<HeightMap, String> {
-    let picture = dir.join(&names[0]);
-    let (width, height, colour, depth, bytes) = read_png(&picture)?;
-    if width != HEIGHT_SIDE || height != HEIGHT_SIDE {
-        return Err(said(
-            &picture,
-            format!("{width} x {height}, and a height map is {HEIGHT_SIDE} x {HEIGHT_SIDE}"),
-        ));
-    }
-    let pixels: Vec<u16> = match (colour, depth) {
-        (png::ColorType::Grayscale, png::BitDepth::Sixteen) => bytes
+    let (width, height) = (frame.width as usize, frame.height as usize);
+    let channels = match frame.color_type {
+        png::ColorType::Grayscale => 1,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        png::ColorType::Indexed => return Err(said(path, "a palette picture that did not expand")),
+    };
+    // Every sample as 0 to 1.
+    let samples: Vec<f32> = match frame.bit_depth {
+        png::BitDepth::Sixteen => bytes
             .chunks_exact(2)
-            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .map(|pair| f32::from(u16::from_be_bytes([pair[0], pair[1]])) / 65535.0)
             .collect(),
-        (png::ColorType::Grayscale, png::BitDepth::Eight) => {
-            bytes.iter().map(|&grey| u16::from(grey) * 257).collect()
-        }
-        other => {
-            return Err(said(
-                &picture,
-                format!("{other:?}, and a height map is 16-bit greyscale"),
-            ))
-        }
+        _ => bytes.iter().map(|&byte| f32::from(byte) / 255.0).collect(),
     };
-    let range = dir.join(&names[1]);
-    let text = std::fs::read_to_string(&range)
-        .map_err(|_| said(&range, "missing: it holds the two heights black and white stand for"))?;
-    let mut numbers = text.split_whitespace().map(str::parse::<f32>);
-    let (Some(Ok(low)), Some(Ok(high))) = (numbers.next(), numbers.next()) else {
-        return Err(said(&range, "not two numbers"));
+    let pixels = samples.chunks_exact(channels);
+    let (grey, rgb): (Vec<f32>, Vec<[f32; 3]>) = match channels {
+        1 | 2 => pixels.map(|p| (p[0], [p[0] * 255.0; 3])).unzip(),
+        _ => pixels
+            .map(|p| ((p[0] + p[1] + p[2]) / 3.0, [p[0] * 255.0, p[1] * 255.0, p[2] * 255.0]))
+            .unzip(),
     };
-    if !(high > low) {
-        return Err(said(&range, "the second height must be above the first"));
-    }
-    Ok(HeightMap { low, high, pixels })
+    let coloured = channels >= 3
+        && rgb
+            .iter()
+            .any(|[r, g, b]| (r - g).abs() > 1.0 || (g - b).abs() > 1.0);
+    let found = match coloured {
+        true => Kind::Blends,
+        false => Kind::Heights,
+    };
+    let (low, high) = range.unwrap_or((0.0, 100.0));
+    Ok(Pending {
+        path: path.to_path_buf(),
+        size: (width, height),
+        found,
+        kind: found,
+        low,
+        high,
+        range_in_file: range.is_some(),
+        grey,
+        rgb: rgb.into_iter().flatten().collect(),
+    })
 }
 
-/// Write a blend map.
-pub fn write_blend(dir: &Path, names: &[String; 3], rgb: &[u8]) -> Result<(), String> {
-    write_png(&dir.join(&names[2]), BLEND_SIDE, false, rgb)
-}
-
-/// Read a blend map as RGB. A picture saved with an alpha channel has it
-/// dropped.
-pub fn read_blend(dir: &Path, names: &[String; 3]) -> Result<Vec<u8>, String> {
-    let picture = dir.join(&names[2]);
-    let (width, height, colour, depth, bytes) = read_png(&picture)?;
-    if width != BLEND_SIDE || height != BLEND_SIDE {
-        return Err(said(
-            &picture,
-            format!("{width} x {height}, and a blend map is {BLEND_SIDE} x {BLEND_SIDE}"),
-        ));
+/// Write a pending picture onto the open tiles of `tiles`, as one undo
+/// entry. Returns the status line.
+pub fn import(
+    session: &mut EditSession,
+    pending: &Pending,
+    tiles: &[(u32, u32)],
+    objects_follow: bool,
+) -> String {
+    let Some((origin, span)) = block(tiles) else {
+        return "nothing is selected".into();
+    };
+    if pending.kind == Kind::Heights && pending.high <= pending.low {
+        return "white must be higher than black".into();
     }
-    match (colour, depth) {
-        (png::ColorType::Rgb, png::BitDepth::Eight) => Ok(bytes),
-        (png::ColorType::Rgba, png::BitDepth::Eight) => Ok(bytes
-            .chunks_exact(4)
-            .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
-            .collect()),
-        other => Err(said(&picture, format!("{other:?}, and a blend map is 8-bit RGB"))),
-    }
-}
-
-/// Write both pictures of every open tile in `tiles`. Returns the status
-/// line.
-pub fn export(session: &EditSession, tiles: &[(u32, u32)]) -> String {
-    let dir = folder(session);
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        return said(&dir, e);
-    }
-    let mut written = 0usize;
-    for &at in tiles {
-        let Some(tile) = session.tiles.get(&at) else {
-            continue;
-        };
-        let names = names(&session.map, at);
-        let Some(map) = image::export_heights(tile) else {
-            return format!("tile {}, {} is missing chunks and was not exported", at.0, at.1);
-        };
-        if let Err(e) = write_heights(&dir, &names, &map) {
-            return e;
-        }
-        if let Err(e) = write_blend(&dir, &names, &image::export_blend(tile)) {
-            return e;
-        }
-        written += 1;
-    }
-    match written {
-        0 => "none of the selection is open: fly to a tile to open it".to_string(),
-        1 => format!("exported 1 tile's height and blend maps to {}", dir.display()),
-        n => format!("exported {n} tiles' height and blend maps to {}", dir.display()),
-    }
-}
-
-/// Read whichever pictures the folder holds for each open tile in `tiles`
-/// and write them onto the tile, as one undo entry. Returns the status line.
-///
-/// A picture that cannot be read stops the import at that tile and the line
-/// says why; the tiles before it stay imported, in the entry.
-pub fn import(session: &mut EditSession, tiles: &[(u32, u32)], objects_follow: bool) -> String {
-    let dir = folder(session);
-    let (mut tiles_changed, mut chunks) = (0usize, 0usize);
-    let mut found = 0usize;
-    let mut stopped: Option<String> = None;
+    let (width, height) = size_of(pending.kind, span);
+    // The picture fitted to the block, then cut into tiles.
+    let fitted = match pending.kind {
+        Kind::Heights => image::resample(&pending.grey, 1, pending.size, (width, height)),
+        Kind::Blends => image::resample(&pending.rgb, 3, pending.size, (width, height)),
+    };
+    let label = match pending.kind {
+        Kind::Heights => "Import height map",
+        Kind::Blends => "Import blend map",
+    };
+    let (mut changed, mut chunks, mut open) = (0usize, 0usize, 0usize);
     let mut standing = Vec::new();
-    session.history.begin("Import images");
+    let mut touched = Vec::new();
+    session.history.begin(label);
     for &at in tiles {
         if !session.tiles.contains_key(&at) {
             continue;
         }
-        let names = names(&session.map, at);
-        let heights = match dir.join(&names[0]).exists() {
-            true => match read_heights(&dir, &names) {
-                Ok(map) => Some(map),
-                Err(e) => {
-                    stopped = Some(e);
-                    break;
-                }
-            },
-            false => None,
-        };
-        let blend = match dir.join(&names[2]).exists() {
-            true => match read_blend(&dir, &names) {
-                Ok(rgb) => Some(rgb),
-                Err(e) => {
-                    stopped = Some(e);
-                    break;
-                }
-            },
-            false => None,
-        };
-        if heights.is_none() && blend.is_none() {
-            continue;
-        }
-        found += 1;
+        open += 1;
         let key = session.key(at);
         let Some(tile) = session.tiles.get_mut(&at) else {
             continue;
         };
-        let mut edits = Vec::new();
-        if let Some(map) = &heights {
-            if objects_follow {
-                standing.push((at, vale_edit::ops::follow::standing(tile)));
+        let edits = match pending.kind {
+            Kind::Heights => {
+                let at_pixel = (
+                    (at.0 - origin.0) as usize * (HEIGHT_SIDE - 1),
+                    (at.1 - origin.1) as usize * (HEIGHT_SIDE - 1),
+                );
+                let square = image::window(&fitted, width, 1, HEIGHT_SIDE, at_pixel);
+                let map = HeightMap {
+                    low: pending.low,
+                    high: pending.high,
+                    pixels: square
+                        .iter()
+                        .map(|v| (v.clamp(0.0, 1.0) * 65535.0).round() as u16)
+                        .collect(),
+                };
+                if objects_follow {
+                    standing.push((at, vale_edit::ops::follow::standing(tile)));
+                }
+                image::import_heights(tile, &map)
             }
-            edits.extend(image::import_heights(tile, map));
-        }
-        if let Some(rgb) = &blend {
-            edits.extend(image::import_blend(tile, rgb));
-        }
+            Kind::Blends => {
+                let at_pixel = (
+                    (at.0 - origin.0) as usize * BLEND_SIDE,
+                    (at.1 - origin.1) as usize * BLEND_SIDE,
+                );
+                let square = image::window(&fitted, width, 3, BLEND_SIDE, at_pixel);
+                let rgb: Vec<u8> = square.iter().map(|v| v.round().clamp(0.0, 255.0) as u8).collect();
+                image::import_blend(tile, &rgb)
+            }
+        };
         if edits.is_empty() {
             continue;
         }
-        tiles_changed += 1;
+        changed += 1;
         chunks += edits
             .iter()
             .filter(|edit| {
@@ -273,36 +387,34 @@ pub fn import(session: &mut EditSession, tiles: &[(u32, u32)], objects_follow: b
             })
             .count();
         session.history.record(&key, edits);
+        touched.push(at);
     }
     let carried = super::terrain::carry(session, standing);
     session.history.end();
     // The whole tile is read again: an import can move every vertex and
     // every blend of it, which is more than the live paths patch.
-    for &at in tiles {
-        if session.tiles.contains_key(&at) && tiles_changed > 0 {
-            session.publish(at);
-            session.stale.insert(at);
-            session.unsaved.insert(at);
-        }
+    for at in touched {
+        session.publish(at);
+        session.stale.insert(at);
+        session.unsaved.insert(at);
     }
-    if let Some(why) = stopped {
-        return format!("import stopped: {why}");
+    let mut line = match (open, changed) {
+        (0, _) => "none of the selection is open: fly to it first".to_string(),
+        (_, 0) => "the picture says what the tiles already hold: nothing changed".to_string(),
+        (_, n) => format!(
+            "imported {} onto {n} tile{}: {chunks} chunk change{}",
+            pending.name(),
+            if n == 1 { "" } else { "s" },
+            if chunks == 1 { "" } else { "s" }
+        ),
+    };
+    if carried > 0 {
+        line.push_str(&format!(", {carried} objects followed the ground"));
     }
-    match (found, tiles_changed) {
-        (0, _) => format!("no picture of the selection is in {}", dir.display()),
-        (_, 0) => "the pictures say what the tiles already hold: nothing changed".to_string(),
-        (_, n) => {
-            let mut line = format!(
-                "imported {n} tile{}: {chunks} chunk change{}",
-                if n == 1 { "" } else { "s" },
-                if chunks == 1 { "" } else { "s" }
-            );
-            if carried > 0 {
-                line.push_str(&format!(", {carried} objects followed the ground"));
-            }
-            line
-        }
+    if open > 0 && open < tiles.len() {
+        line.push_str(&format!("; {} selected tiles were not open", tiles.len() - open));
     }
+    line
 }
 
 #[cfg(test)]
@@ -316,40 +428,50 @@ mod tests {
         dir
     }
 
-    /// A height map written and read back is the same sixteen bits and the
-    /// same range, and one with no range file is refused.
+    /// A height map carries its range inside the file and reads back as the
+    /// same sixteen bits.
     #[test]
-    fn a_height_map_file_reads_back_as_it_was_written() {
+    fn a_height_map_carries_its_range_and_reads_back() {
         let dir = scratch("height");
-        let names = names("Azeroth", (32, 48));
-        assert_eq!(names[0], "Azeroth_32_48.height.png");
-        let map = HeightMap {
-            low: 18.25,
-            high: 170.5,
-            pixels: (0..HEIGHT_SIDE * HEIGHT_SIDE).map(|i| (i * 7 % 65536) as u16).collect(),
-        };
-        write_heights(&dir, &names, &map).unwrap();
-        assert_eq!(read_heights(&dir, &names).unwrap(), map);
-
-        std::fs::remove_file(dir.join(&names[1])).unwrap();
-        let refused = read_heights(&dir, &names).unwrap_err();
-        assert!(refused.contains("missing"), "{refused}");
+        let path = dir.join("Azeroth 32_48 heights.png");
+        let pixels: Vec<u16> = (0..HEIGHT_SIDE * HEIGHT_SIDE).map(|i| (i * 7 % 65536) as u16).collect();
+        let bytes: Vec<u8> = pixels.iter().flat_map(|p| p.to_be_bytes()).collect();
+        write_png(&path, (HEIGHT_SIDE, HEIGHT_SIDE), Kind::Heights, &bytes, Some((18.25, 170.5))).unwrap();
+        let read = read(&path).unwrap();
+        assert_eq!((read.found, read.range_in_file), (Kind::Heights, true));
+        assert_eq!((read.low, read.high), (18.25, 170.5));
+        let back: Vec<u16> = read.grey.iter().map(|v| (v * 65535.0).round() as u16).collect();
+        assert_eq!(back, pixels);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A blend map written and read back is the same bytes, and a picture of
-    /// another size is refused with both sizes named.
+    /// A picture from elsewhere: grey saved as colour is a height map with no
+    /// range of its own, and a coloured one is a blend map.
     #[test]
-    fn a_blend_map_file_reads_back_as_it_was_written() {
-        let dir = scratch("blend");
-        let names = names("Azeroth", (32, 48));
-        let rgb: Vec<u8> = (0..BLEND_SIDE * BLEND_SIDE * 3).map(|i| (i % 251) as u8).collect();
-        write_blend(&dir, &names, &rgb).unwrap();
-        assert_eq!(read_blend(&dir, &names).unwrap(), rgb);
+    fn a_picture_from_elsewhere_is_told_apart_by_its_colours() {
+        let dir = scratch("elsewhere");
+        let grey = dir.join("grey.png");
+        let rgb: Vec<u8> = (0..64 * 64).flat_map(|i| [(i % 256) as u8; 3]).collect();
+        write_png(&grey, (64, 64), Kind::Blends, &rgb, None).unwrap();
+        let read_grey = read(&grey).unwrap();
+        assert_eq!((read_grey.found, read_grey.range_in_file), (Kind::Heights, false));
+        assert_eq!(read_grey.size, (64, 64));
 
-        write_png(&dir.join(&names[2]), 64, false, &vec![0u8; 64 * 64 * 3]).unwrap();
-        let refused = read_blend(&dir, &names).unwrap_err();
-        assert!(refused.contains("64 x 64") && refused.contains("1024 x 1024"), "{refused}");
+        let colour = dir.join("colour.png");
+        let rgb: Vec<u8> = (0..64 * 64).flat_map(|i| [(i % 256) as u8, 0, 255]).collect();
+        write_png(&colour, (64, 64), Kind::Blends, &rgb, None).unwrap();
+        assert_eq!(read(&colour).unwrap().found, Kind::Blends);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A block's size and name follow the selection's corners.
+    #[test]
+    fn a_selection_is_a_block_from_its_corners() {
+        let tiles = [(33, 49), (32, 48), (32, 49)];
+        assert_eq!(block(&tiles), Some(((32, 48), (2, 2))));
+        assert_eq!(size_of(Kind::Heights, (2, 2)), (513, 513));
+        assert_eq!(size_of(Kind::Blends, (2, 1)), (2048, 1024));
+        assert_eq!(block_words(((32, 48), (2, 2))), "32, 48 to 33, 49");
+        assert_eq!(suggested_name("Azeroth", &[(32, 48)], Kind::Heights), "Azeroth 32_48 heights.png");
     }
 }

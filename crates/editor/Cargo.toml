@@ -49,6 +49,9 @@ png = "0.18"
 # A new tile's minimap picture is named by its MD5, as the shipped ones are, in
 # the index `src/tools/tiles.rs` writes. The version already in the tree.
 md-5 = "0.10"
+# The system's own open and save dialogs, for choosing a picture to import or
+# where to write one. See `src/tools/images.rs`.
+rfd = "0.15"
 
 # **The process's working set, for `--tour`.** One call into `psapi`, behind
 # `cfg(windows)`; the instrument reports "unavailable" elsewhere. The version

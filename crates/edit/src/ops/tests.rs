@@ -1451,6 +1451,31 @@ fn a_tilted_flatten_makes_a_ramp_through_its_pivot() {
     }
 }
 
+/// Two tiles' height maps placed side by side share their edge column, cut
+/// back out as they went in, and a picture scaled to another size keeps its
+/// corners and mixes between them.
+#[test]
+fn a_block_of_pictures_is_cut_and_scaled_as_one() {
+    use crate::ops::image::{place, resample, window};
+    let side = 3;
+    let west: Vec<u16> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
+    let east: Vec<u16> = vec![3, 20, 30, 6, 50, 60, 9, 80, 90];
+    let width = 2 * (side - 1) + 1;
+    let mut block = vec![0u16; width * side];
+    place(&mut block, width, 1, side, (0, 0), &west);
+    place(&mut block, width, 1, side, (side - 1, 0), &east);
+    assert_eq!(block, vec![1, 2, 3, 20, 30, 4, 5, 6, 50, 60, 7, 8, 9, 80, 90]);
+    assert_eq!(window(&block, width, 1, side, (0, 0)), west);
+    assert_eq!(window(&block, width, 1, side, (side - 1, 0)), east);
+
+    let two = [0.0, 10.0, 20.0, 30.0];
+    assert_eq!(resample(&two, 1, (2, 2), (2, 2)), two.to_vec());
+    let three = resample(&two, 1, (2, 2), (3, 3));
+    assert_eq!(three, vec![0.0, 5.0, 10.0, 10.0, 15.0, 20.0, 20.0, 25.0, 30.0]);
+    let colour = resample(&[0.0, 0.0, 0.0, 255.0, 255.0, 255.0], 3, (2, 1), (3, 1));
+    assert_eq!(&colour[3..6], &[127.5, 127.5, 127.5]);
+}
+
 /// A selection is marked by position, moves as one, levels to one height,
 /// and a brush told to protect it leaves it where it is.
 #[test]

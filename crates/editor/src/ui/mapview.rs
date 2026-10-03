@@ -205,11 +205,15 @@ pub enum Asked {
     /// Regenerate the server's files for the selection: `maps`, `vmaps`,
     /// `mmaps`.
     ServerFiles,
-    /// Write the selection's height and blend maps as pictures. See
+    /// Ask where to save the selection's height map, and write it. See
     /// `crate::tools::images`.
-    ExportImages,
-    /// Read them back onto the selection.
-    ImportImages,
+    ExportHeights,
+    /// …or its blend map.
+    ExportBlends,
+    /// Ask for a picture to import, and show what importing it would do.
+    ChooseImport,
+    /// Import the picture chosen, as the dialog was left.
+    Import,
     /// Make the map one building, the WMO in `Tiles::building_path`.
     MakeBuilding,
     /// …or terrain again.
@@ -798,22 +802,32 @@ fn foot_panel(
             .iter()
             .filter(|&&at| tool::is_open(session, at))
             .count();
-        label(ui, "Pictures");
+        label(ui, "Shadows");
         if ui
-            .add_enabled(
-                open > 0,
-                egui::Button::new(format!("Rebake shadows ({open})")),
-            )
+            .add_enabled(open > 0, egui::Button::new(format!("Rebake ({open})")))
             .on_hover_text(format!(
-                "Recomputes MCSH from what stands on each open selected tile. About {}s \
-                 a tile, on a background thread; the editor stays usable.",
+                "Recompute the baked shadow of each open selected tile from what stands on \
+                 it. About {} s a tile, in the background.",
                 tool::REBAKE_SECONDS
             ))
-            .on_disabled_hover_text("None of the selection is open: fly to a tile to open it.")
+            .on_disabled_hover_text("None of the selection is open: fly to it first.")
             .clicked()
         {
             asked = Some(Asked::Rebake);
         }
+        ui.checkbox(&mut tiles.cast_from_ground, "also from the ground")
+            .on_hover_text(
+                "Also cast shadow from the terrain onto itself. Off by default: \
+                 measured against two shipped tiles, hull-cast shadow matches \
+                 their MCSH at 1.2-1.4x the base rate and terrain-cast shadow at \
+                 0.4-0.9x, which is chance or worse, so the shipped bakes do not \
+                 appear to include it.",
+            );
+    });
+
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        label(ui, "Minimaps");
         // Minimaps are drawn in the background for any tile that exists,
         // open or not, so these count the tiles there are.
         let selected = view
@@ -838,7 +852,7 @@ fn foot_panel(
                 }
             };
             if ui
-                .add_enabled(selected > 0, egui::Button::new(format!("Minimaps ({selected})")))
+                .add_enabled(selected > 0, egui::Button::new(format!("Selected ({selected})")))
                 .on_hover_text(format!(
                     "Draw the selected tiles' minimap pictures into the project, in the \
                      background: {}.",
@@ -861,72 +875,43 @@ fn foot_panel(
                 asked = Some(Asked::MinimapsAll);
             }
         }
-        ui.checkbox(&mut tiles.cast_from_ground, "shadow from the ground too")
-            .on_hover_text(
-                "Also cast shadow from the terrain onto itself. Off by default: \
-                 measured against two shipped tiles, hull-cast shadow matches \
-                 their MCSH at 1.2-1.4x the base rate and terrain-cast shadow at \
-                 0.4-0.9x, which is chance or worse, so the shipped bakes do not \
-                 appear to include it.",
-            );
-        if open == 0 {
-            theme::note(ui, "none open: fly to it first");
-        }
     });
 
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        // The height map and the blend map of each open selected tile, as
-        // PNG files in the project's images folder. Both act on open tiles,
-        // for the reason the picture buttons above do.
+        // The selection's ground as picture files. An export reads closed
+        // tiles too; an import writes the open ones.
         let open = view
             .selection
             .iter()
             .filter(|&&at| tool::is_open(session, at))
             .count();
-        let dir = crate::tools::images::folder(session);
         label(ui, "Images");
-        if ui
-            .add_enabled(open > 0, egui::Button::new(format!("Export ({open})")))
-            .on_hover_text(format!(
-                "Write each open selected tile's heights as a 257 x 257 16-bit greyscale \
-                 PNG, with a text file holding the two heights black and white stand \
-                 for, and its texture blends as a 1024 x 1024 RGB PNG: red, green and \
-                 blue are the second, third and fourth texture of each chunk. Into {}.",
-                dir.display()
-            ))
-            .on_disabled_hover_text("None of the selection is open: fly to a tile to open it.")
-            .clicked()
-        {
-            asked = Some(Asked::ExportImages);
+        for (text, kind, about) in [
+            ("Export heights…", Asked::ExportHeights, "Save the selection's heights as a 16-bit grey PNG."),
+            ("Export blends…", Asked::ExportBlends, "Save how the selection's textures blend as an RGB PNG: red, green and blue are each chunk's second, third and fourth texture."),
+        ] {
+            if ui
+                .add_enabled(exist > 0, egui::Button::new(text))
+                .on_hover_text(about)
+                .on_disabled_hover_text("Select tiles that exist.")
+                .clicked()
+            {
+                asked = Some(kind);
+            }
         }
         if ui
-            .add_enabled(open > 0, egui::Button::new(format!("Import ({open})")))
-            .on_hover_text(format!(
-                "Read the pictures in {} back onto each open selected tile, as one undo \
-                 entry. A tile takes whichever of its two pictures is there. Only what a \
-                 picture changes is written. A blend map changes how a chunk's textures \
-                 blend and not which textures they are.",
-                dir.display()
-            ))
-            .on_disabled_hover_text("None of the selection is open: fly to a tile to open it.")
+            .add_enabled(open > 0, egui::Button::new("Import…"))
+            .on_hover_text("Choose a PNG to put on the selection: a height map or a blend map, any size.")
+            .on_disabled_hover_text("None of the selection is open: fly to it first.")
             .clicked()
         {
-            asked = Some(Asked::ImportImages);
-        }
-        ui.checkbox(&mut tiles.objects_follow, "objects follow the ground")
-            .on_hover_text(
-                "When an imported height map moves the ground, move every doodad and \
-                 building over it by as much, in the same undo entry.",
-            );
-        if ui
-            .small_button("copy folder")
-            .on_hover_text(format!("Put {} on the clipboard.", dir.display()))
-            .clicked()
-        {
-            ui.ctx().copy_text(dir.display().to_string());
+            asked = Some(Asked::ChooseImport);
         }
     });
+    if let Some(choice) = import_dialog(ui.ctx(), view, session, tiles) {
+        asked = Some(choice);
+    }
 
     ui.add_space(4.0);
     ui.horizontal(|ui| {
@@ -951,6 +936,118 @@ fn foot_panel(
     if !tiles.said.is_empty() {
         ui.add_space(2.0);
         theme::note(ui, tiles.said.clone());
+    }
+    asked
+}
+
+/// The import's confirmation: the picture, what it is used as, where it
+/// lands, and for a height map the heights black and white stand for. Answers
+/// `Import` when it is pressed; Cancel drops the picture.
+fn import_dialog(
+    ctx: &egui::Context,
+    view: &MapView,
+    session: &EditSession,
+    tiles: &mut crate::tools::tiles::Tiles,
+) -> Option<Asked> {
+    use crate::tools::images::{self, Kind};
+    let pending = tiles.pending.as_mut()?;
+    let mut asked = None;
+    let mut close = false;
+    let selected: Vec<(u32, u32)> = view.selection.iter().copied().collect();
+    let open = selected
+        .iter()
+        .filter(|&&at| crate::tools::tiles::is_open(session, at))
+        .count();
+    let response = egui::Modal::new(egui::Id::new("map-import")).show(ctx, |ui| {
+        ui.set_width(420.0);
+        ui.label(egui::RichText::new(format!("Import {}", pending.name())).strong().size(14.0));
+        theme::note(ui, format!("{} x {} pixels", pending.size.0, pending.size.1));
+        ui.add_space(4.0);
+
+        theme::row(ui, "use as", |ui| {
+            theme::segmented(
+                ui,
+                &mut pending.kind,
+                &[("Heights", Kind::Heights), ("Blends", Kind::Blends)],
+                |a, b| a == b,
+            );
+        });
+        if pending.kind != pending.found {
+            theme::note(
+                ui,
+                match pending.found {
+                    Kind::Heights => "the picture is grey, which is usually a height map",
+                    Kind::Blends => "the picture has colour, which is usually a blend map",
+                },
+            );
+        }
+
+        match images::block(&selected) {
+            Some(block) => {
+                theme::row(ui, "onto", |ui| {
+                    ui.label(images::block_words(block));
+                });
+                let fits = images::size_of(pending.kind, block.1);
+                if fits != pending.size {
+                    theme::note(ui, format!("scaled to {} x {} to fit", fits.0, fits.1));
+                }
+                if open < selected.len() {
+                    theme::note(
+                        ui,
+                        format!("{open} of the {} selected tiles are open; the rest are left", selected.len()),
+                    );
+                }
+            }
+            None => theme::note(ui, "select tiles on the map"),
+        }
+
+        match pending.kind {
+            Kind::Heights => {
+                ui.add_space(4.0);
+                for (label, value) in [("black", &mut pending.low), ("white", &mut pending.high)] {
+                    theme::row(ui, label, |ui| {
+                        ui.add(
+                            egui::DragValue::new(value)
+                                .speed(0.25)
+                                .fixed_decimals(1)
+                                .suffix(" yd"),
+                        );
+                    });
+                }
+                theme::note(
+                    ui,
+                    match pending.range_in_file {
+                        true => "from the file",
+                        false => "the selected tiles' lowest and highest ground now",
+                    },
+                );
+                ui.checkbox(&mut tiles.objects_follow, "Objects follow the ground");
+            }
+            Kind::Blends => {
+                theme::note(ui, "changes how each chunk's textures blend; adds no texture");
+            }
+        }
+
+        ui.add_space(6.0);
+        let ready = open > 0 && (pending.kind == Kind::Blends || pending.high > pending.low);
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(ready, egui::Button::new("Import"))
+                .on_disabled_hover_text(match open {
+                    0 => "None of the selection is open.",
+                    _ => "White must be higher than black.",
+                })
+                .clicked()
+            {
+                asked = Some(Asked::Import);
+            }
+            if ui.button("Cancel").clicked() {
+                close = true;
+            }
+        });
+    });
+    if close || response.should_close() {
+        tiles.pending = None;
     }
     asked
 }

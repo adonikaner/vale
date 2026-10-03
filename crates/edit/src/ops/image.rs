@@ -24,10 +24,19 @@
 //! chunk that has it, which keeps the chunks welded.
 //!
 //! A pixel is a fraction of a height range, 0 for [`HeightMap::low`] and
-//! 65535 for [`HeightMap::high`]. The range is not in the pixels, so it
-//! travels beside them. An export uses the tile's own lowest and highest
-//! vertex, which spends all sixteen bits on the tile: over a 200-yard range
-//! one step is a ninth of an inch.
+//! 65535 for [`HeightMap::high`]. The range is not in the pixels, so it is
+//! the caller's to keep or to ask for. An export uses the lowest and highest
+//! vertex of what it covers, which spends all sixteen bits on it: over a
+//! 200-yard range one step is a ninth of an inch.
+//!
+//! ## A block of tiles is one picture
+//!
+//! Tiles side by side share their edge vertices, so a block of `w` x `h`
+//! tiles is `w * 256 + 1` by `h * 256 + 1` pixels, tile `(i, j)` of the block
+//! starting at pixel `(i * 256, j * 256)`; a blend picture is `w * 1024` by
+//! `h * 1024`. [`window`] cuts one tile's picture out of a block and
+//! [`place`] puts one in, and [`resample`] fits a picture of any other size
+//! to the block first, so a picture drawn elsewhere can be imported.
 //!
 //! An import writes only the vertices whose pixel differs from the pixel
 //! their present height exports to. A map exported and read straight back
@@ -139,20 +148,34 @@ fn all_heights(tile: &AdtFile) -> Option<Vec<Vec<f32>>> {
         .collect()
 }
 
-/// The tile's heights as a picture, over the range of its own lowest and
-/// highest vertex. `None` for a tile without all 256 chunks.
-pub fn export_heights(tile: &AdtFile) -> Option<HeightMap> {
+/// The tile's lowest and highest vertex. `None` for a tile without all 256
+/// chunks.
+pub fn height_range(tile: &AdtFile) -> Option<(f32, f32)> {
     let all = all_heights(tile)?;
     let (mut low, mut high) = (f32::MAX, f32::MIN);
     for height in all.iter().flatten() {
         low = low.min(*height);
         high = high.max(*height);
     }
-    // A flat tile has no range to divide by. A yard is given, so its one
-    // height is pixel 0 and reads back as itself.
-    if high - low < 1.0 {
-        high = low + 1.0;
-    }
+    Some((low, high))
+}
+
+/// A range to export over: a flat stretch has none to divide by, so it is
+/// given a yard, and its one height is pixel 0 and reads back as itself.
+pub fn widened((low, high): (f32, f32)) -> (f32, f32) {
+    (low, high.max(low + 1.0))
+}
+
+/// The tile's heights as a picture, over the range of its own lowest and
+/// highest vertex. `None` for a tile without all 256 chunks.
+pub fn export_heights(tile: &AdtFile) -> Option<HeightMap> {
+    let (low, high) = widened(height_range(tile)?);
+    export_heights_over(tile, low, high)
+}
+
+/// …over a range the caller chose, as a block of tiles shares one.
+pub fn export_heights_over(tile: &AdtFile, low: f32, high: f32) -> Option<HeightMap> {
+    let all = all_heights(tile)?;
     let mut map = HeightMap {
         low,
         high,
@@ -219,6 +242,69 @@ pub fn import_heights(tile: &mut AdtFile, map: &HeightMap) -> Vec<Edit> {
     }
     reshade(tile, &mut edits);
     edits
+}
+
+/// One tile's square of `side` pixels, `channels` values each, cut out of a
+/// block `width` pixels wide at pixel `(x, y)`.
+pub fn window<T: Copy>(block: &[T], width: usize, channels: usize, side: usize, (x, y): (usize, usize)) -> Vec<T> {
+    let mut out = Vec::with_capacity(side * side * channels);
+    for row in 0..side {
+        let from = ((y + row) * width + x) * channels;
+        out.extend_from_slice(&block[from..from + side * channels]);
+    }
+    out
+}
+
+/// …and one tile's square put into a block.
+pub fn place<T: Copy>(
+    block: &mut [T],
+    width: usize,
+    channels: usize,
+    side: usize,
+    (x, y): (usize, usize),
+    square: &[T],
+) {
+    for row in 0..side {
+        let to = ((y + row) * width + x) * channels;
+        let from = row * side * channels;
+        block[to..to + side * channels].copy_from_slice(&square[from..from + side * channels]);
+    }
+}
+
+/// A picture of `from` pixels scaled to `to`, `channels` values a pixel,
+/// mixing the four nearest pixels. The corners stay on the corners, so a
+/// picture's edge lands on the block's edge. The same size is a copy.
+pub fn resample(
+    pixels: &[f32],
+    channels: usize,
+    from: (usize, usize),
+    to: (usize, usize),
+) -> Vec<f32> {
+    if from == to {
+        return pixels.to_vec();
+    }
+    let along = |at: usize, of: usize, into: usize| -> (usize, usize, f32) {
+        if of <= 1 || into <= 1 {
+            return (0, 0, 0.0);
+        }
+        let x = at as f32 * (of - 1) as f32 / (into - 1) as f32;
+        let low = (x.floor() as usize).min(of - 1);
+        (low, (low + 1).min(of - 1), x - low as f32)
+    };
+    let mut out = vec![0.0; to.0 * to.1 * channels];
+    for row in 0..to.1 {
+        let (y0, y1, fy) = along(row, from.1, to.1);
+        for column in 0..to.0 {
+            let (x0, x1, fx) = along(column, from.0, to.0);
+            for channel in 0..channels {
+                let at = |x: usize, y: usize| pixels[(y * from.0 + x) * channels + channel];
+                let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * fx;
+                let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * fx;
+                out[(row * to.0 + column) * channels + channel] = top + (bottom - top) * fy;
+            }
+        }
+    }
+    out
 }
 
 /// The tile's texture blends as one RGB picture, [`BLEND_SIDE`] squared,
