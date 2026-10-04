@@ -330,6 +330,8 @@ pub struct EditSession {
     pub applied_behaviour: Option<u64>,
     /// …and for what creatures sell and teach. See `crate::server::services`.
     pub applied_services: Option<u64>,
+    /// …and of [`crate::server::places`].
+    pub applied_places: Option<u64>,
     /// How many times this session has written the world database, applying
     /// or putting back any subject, or pointed at a different database. Every
     /// cache of what the database holds is keyed on it; see
@@ -429,6 +431,7 @@ impl EditSession {
             applied_loot: None,
             applied_behaviour: None,
             applied_services: None,
+            applied_places: None,
             database_writes: 0,
             one_gesture: None,
             shipped: None,
@@ -595,6 +598,11 @@ impl EditSession {
         self.revision.clear();
         self.claimed = claimed_tiles(assets, &self.project, &self.map);
         self.claims_for = self.map.clone();
+        // The maps are `Map.dbc`'s, which the project may change: a map the
+        // old project made is not one this project has. Read again through
+        // the new overlay, the list kept the old project's maps, and a new map
+        // given the same id was listed twice.
+        self.maps = map_directories(assets);
         // The server's half is a project's too. Its edits live in the
         // project folder, so a switch reads the new folder's and forgets the
         // old one's exactly as it does for the tiles and the tables — without
@@ -617,6 +625,7 @@ impl EditSession {
         self.applied_loot = None;
         self.applied_behaviour = None;
         self.applied_services = None;
+        self.applied_places = None;
         // Every path the overlay answers now comes out of a different folder.
         self.republished_all = true;
         self.tables_republished = true;
@@ -2160,6 +2169,7 @@ fn open(
         applied_loot: None,
         applied_behaviour: None,
         applied_services: None,
+        applied_places: None,
         database_writes: 0,
         one_gesture: None,
         shipped: Some(shipped),

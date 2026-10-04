@@ -159,6 +159,7 @@ pub fn publish(
     // screen.
     session.save_all();
     session.save_all_tables();
+    super::datadir::repair_project_wdts(session);
     super::creatures::save(session);
     super::gameobjects::save(session);
     super::items::save(session);
@@ -166,6 +167,7 @@ pub fn publish(
     super::loot::save(session);
     super::services::save(session);
     super::behaviour::save(session);
+    super::places::save(session);
 
     let mut head = Head {
         name: name.to_string(),
@@ -325,6 +327,7 @@ pub fn publish(
             let request = Request {
                 client_root,
                 tiles: dirty.iter().map(|d| (d.tile, d.reach)).collect(),
+                carried: dirty.iter().filter(|d| d.hash.is_some()).map(|d| d.tile).collect(),
                 heights_as_int: datadir::heights_as_int(&real_data_dir, first_map),
                 dll_dirs,
             };

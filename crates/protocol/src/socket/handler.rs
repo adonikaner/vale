@@ -557,6 +557,7 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         // refused, so without this arm a full dungeon looks the same as a
         // client that never sent `CMSG_AREATRIGGER`.
         Opcode::SMSG_TRANSFER_ABORTED => player::transfer_aborted(ctx, pkt),
+        Opcode::SMSG_AREA_TRIGGER_MESSAGE => player::area_trigger_message(ctx, pkt),
         // A transfer about to happen, sent one packet before `SMSG_NEW_WORLD`
         // so the loading screen is shown before the old world is torn down.
         // It is not answered; it is handled only to show the loading screen.

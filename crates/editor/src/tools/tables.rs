@@ -1280,6 +1280,12 @@ pub const TAXI_TABS: [(&str, &str); 3] = [
     ("Points", "TaxiPathNode"),
 ];
 
+/// The trigger tool's one table. It keeps the viewport, so no tab is drawn.
+pub const TRIGGER_TABS: [(&str, &str); 1] = [("Triggers", "AreaTrigger")];
+
+/// …and the graveyard tool's.
+pub const SAFE_LOC_TABS: [(&str, &str); 1] = [("Graveyards", "WorldSafeLocs")];
+
 /// The spell workspace's tabs: the spell chain in the order a cast reads it,
 /// then the three skill tables. The workspace draws them [`TAB_ROW`] to a
 /// row, so the chain is the first row and the skill tables the second.

@@ -819,6 +819,12 @@ pub enum PlayerEvent {
     /// On this queue for the same reason as the logout states below: it is an
     /// edge. Two refusals at two portals are two events with identical fields.
     TransferAborted { reason: u8 },
+    /// The server refused a teleport trigger with a line of text:
+    /// `SMSG_AREA_TRIGGER_MESSAGE`. See
+    /// [`crate::play::areatrigger::parse_area_trigger_message`]. An edge for
+    /// the same reason as [`Self::TransferAborted`]: walking into the same
+    /// trigger twice is two refusals with the same text.
+    AreaTriggerMessage { text: String },
     /// The server is about to transfer the player to another map:
     /// `SMSG_TRANSFER_PENDING`, whose purpose is to show the loading screen just
     /// before the old world is unloaded.

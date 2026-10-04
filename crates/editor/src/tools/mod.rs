@@ -75,6 +75,15 @@
 //!                pointer and flown to. A client table whose row is also a
 //!                position, so, like flightpaths.rs, it is a DBC tool that
 //!                keeps the viewport
+//! triggers.rs    AreaTrigger.dbc's spheres and boxes on the map, picked,
+//!                dragged, made and removed, and the server rows that say what
+//!                each does: a teleport, an inn, a quest objective
+//! graveyards.rs  WorldSafeLocs.dbc's places on the map, where a released
+//!                spirit appears, and the server rows that link each to the
+//!                zones it serves and give its facing
+//! maps.rs        a new map: its Map.dbc row, a WDT with no tiles in the
+//!                project, and its map_template row. Not a pointer tool: the
+//!                map window drives it
 //! tiles.rs       the tile itself: making ground where there was none, and the
 //!                shadow bake and minimap picture that no other edit keeps in
 //!                step. Not a pointer tool: the map window drives it
@@ -132,6 +141,7 @@ pub mod flightpaths;
 pub mod gameobjects;
 pub mod gizmo;
 pub mod grade;
+pub mod graveyards;
 pub mod guides;
 pub mod group;
 pub mod holes;
@@ -139,6 +149,7 @@ pub mod images;
 pub mod items;
 pub mod lights;
 pub mod loot;
+pub mod maps;
 pub mod measure;
 pub mod place;
 pub mod quests;
@@ -151,6 +162,7 @@ pub mod tables;
 pub mod terrain;
 pub mod textures;
 pub mod tiles;
+pub mod triggers;
 pub mod water;
 pub mod waypoints;
 pub mod wmos;
@@ -282,6 +294,20 @@ pub enum Tool {
     /// one says where it is. The server reads its copy from `area_template`
     /// at startup, so it is not available during a playtest.
     Zones,
+    /// `AreaTrigger.dbc`: the spheres and boxes the client reports standing
+    /// in, and what the server does when it is told — see [`triggers`].
+    ///
+    /// A client table whose rows are places, as `Light` is, so it keeps the
+    /// viewport and puts its form in the inspector. The server half is three
+    /// tables of vmangos' database, which the form reads when a connection is
+    /// set and leaves out when none is.
+    Triggers,
+    /// `WorldSafeLocs.dbc`: where a released spirit appears, and which zones
+    /// each place serves — see [`graveyards`].
+    ///
+    /// On `Tool::Triggers`' terms: the places are a client table picked in the
+    /// viewport, and the links to zones are rows of vmangos' database.
+    Graveyards,
     /// Any DBC table, by name — see [`tables`].
     ///
     /// The workspace's list is the files of `DBFilesClient\`. Choosing one
@@ -318,7 +344,7 @@ pub enum Surface {
 /// [`Tool::at`] enforces the list: an exhaustive `match` that does not compile
 /// until a new variant has an index, plus a test that this list is exactly
 /// those indices in order.
-pub const ALL: [Tool; 23] = [
+pub const ALL: [Tool; 25] = [
     Tool::Select,
     Tool::Terrain,
     Tool::Grade,
@@ -342,6 +368,8 @@ pub const ALL: [Tool; 23] = [
     Tool::ItemSets,
     Tool::Tables,
     Tool::Zones,
+    Tool::Triggers,
+    Tool::Graveyards,
 ];
 
 impl Tool {
@@ -377,6 +405,8 @@ impl Tool {
             Tool::ItemSets => 20,
             Tool::Tables => 21,
             Tool::Zones => 22,
+            Tool::Triggers => 23,
+            Tool::Graveyards => 24,
         }
     }
 
@@ -395,6 +425,8 @@ impl Tool {
             Tool::Flightpaths => Some("TaxiNodes"),
             Tool::ItemSets => Some("ItemSet"),
             Tool::Zones => Some(tables::area::TABLE),
+            Tool::Triggers => Some(vale_edit::dbc::places::TRIGGERS),
+            Tool::Graveyards => Some(vale_edit::dbc::places::SAFE_LOCS),
             // No one table: the workspace starts on the list of them.
             Tool::Tables => Some(tables::ANY),
             _ => None,
@@ -476,9 +508,12 @@ impl Tool {
             // row and a game object's are each a place in the world, so each
             // is picked with the pointer and puts its form where every other
             // selection's numbers go.
-            Tool::Lights | Tool::Flightpaths | Tool::Creatures | Tool::GameObjects => {
-                Surface::Inspector
-            }
+            Tool::Lights
+            | Tool::Flightpaths
+            | Tool::Triggers
+            | Tool::Graveyards
+            | Tool::Creatures
+            | Tool::GameObjects => Surface::Inspector,
             _ => Surface::World,
         }
     }
@@ -508,6 +543,8 @@ impl Tool {
             Tool::Flightpaths => &tables::TAXI_TABS,
             Tool::ItemSets => &tables::SET_TABS,
             Tool::Zones => &tables::ZONE_TABS,
+            Tool::Triggers => &tables::TRIGGER_TABS,
+            Tool::Graveyards => &tables::SAFE_LOC_TABS,
             _ => &[],
         }
     }
@@ -589,6 +626,8 @@ impl Tool {
             // sub-areas are. Two subjects with one name would be two answers
             // to `--tool areas`.
             Tool::Zones => "Zones",
+            Tool::Triggers => "Triggers",
+            Tool::Graveyards => "Graveyards",
         }
     }
 }
@@ -662,6 +701,7 @@ impl Plugin for ToolPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Tool>()
             .add_systems(Update, (open_tiles, close_tiles, modes).chain())
+            .add_systems(Update, maps::follow_map_table)
             .add_systems(Update, release_held);
         app.add_plugins((
             terrain::TerrainToolPlugin,
@@ -680,7 +720,7 @@ impl Plugin for ToolPlugin {
             tables::TableToolPlugin,
             tiles::TilePlugin,
         ));
-        // A second call, because `add_plugins` takes at most sixteen. The
+        // A second call, because `add_plugins` takes at most fifteen. The
         // first tuple is full; further tool plugins go in this one.
         app.add_plugins((
             creatures::CreatureToolPlugin,
@@ -695,6 +735,9 @@ impl Plugin for ToolPlugin {
             group::GroupPlugin,
             measure::MeasureToolPlugin,
             flightpaths::FlightpathToolPlugin,
+            // The two place tools as one entry, which keeps the tuple within
+            // what `add_plugins` accepts.
+            (triggers::TriggerToolPlugin, graveyards::GraveyardToolPlugin),
             chunks::ChunkToolPlugin,
             guides::GuidesPlugin,
         ));
@@ -1050,6 +1093,8 @@ fn modes(
         | Tool::Quests
         | Tool::Tables
         | Tool::Zones
+        | Tool::Triggers
+        | Tool::Graveyards
         | Tool::Flightpaths => {}
         Tool::Terrain => {
             // Unshifted digits cover the two long rows; shifted digits cover

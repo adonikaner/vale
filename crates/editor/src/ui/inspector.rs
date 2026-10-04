@@ -200,6 +200,30 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
                 server_panel,
             },
         ),
+        // Area triggers and safe places are client tables whose rows are
+        // places, picked in the viewport like a flight node, with server rows
+        // beside them.
+        Tool::Triggers => super::triggers::draw(
+            ui,
+            super::triggers::Subject {
+                session,
+                triggers: &mut editing.triggers,
+                assets,
+                now,
+                server_panel,
+                behaviour: &mut editing.behaviour,
+            },
+        ),
+        Tool::Graveyards => super::graveyards::draw(
+            ui,
+            super::graveyards::Subject {
+                session,
+                graveyards: &mut editing.graveyards,
+                assets,
+                now,
+                server_panel,
+            },
+        ),
         // The server's creatures are picked in the viewport like a light, so
         // their form is drawn here for the same reason. It shows two rows: the
         // spawn that was clicked and the template behind it. See

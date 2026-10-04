@@ -803,6 +803,9 @@ pub struct Args {
     /// `--taxi-node <id>`: the flight path tool, open on one node, with the
     /// camera over it.
     pub taxi_node: Option<u32>,
+    /// `--trigger <id>`: the area trigger tool, open on one trigger of the
+    /// open map, with the camera over it.
+    pub trigger: Option<u32>,
     /// `--taxi-path <id>`: the flight path tool, open on one path, with the
     /// camera over its middle.
     pub taxi_path: Option<u32>,
@@ -855,6 +858,7 @@ impl Default for Args {
             set: None,
             enclose: None,
             taxi_node: None,
+            trigger: None,
             taxi_path: None,
             taxi_connect: None,
             taxi_node_add: None,
@@ -1074,6 +1078,10 @@ impl Args {
                 "--stitch" => {
                     parsed.stitch = true;
                     parsed.tool = Some(tools::Tool::Chunks);
+                }
+                "--trigger" => {
+                    parsed.trigger = args.next().as_deref().and_then(|v| v.trim().parse().ok());
+                    parsed.tool = Some(tools::Tool::Triggers);
                 }
                 "--taxi-node" => {
                     parsed.taxi_node = args.next().as_deref().and_then(|v| v.trim().parse().ok());
@@ -1437,6 +1445,8 @@ mod tests {
         let parse = |list: &[&str]| Args::parse(list.iter().map(|s| s.to_string()));
         let args = parse(&["--taxi-node", "2"]);
         assert_eq!((args.taxi_node, args.tool), (Some(2), Some(tools::Tool::Flightpaths)));
+        let args = parse(&["--trigger", "78"]);
+        assert_eq!((args.trigger, args.tool), (Some(78), Some(tools::Tool::Triggers)));
         assert_eq!(parse(&["--taxi-path", "41"]).taxi_path, Some(41));
         assert_eq!(parse(&["--taxi-connect", "2, 5"]).taxi_connect, Some((2, 5)));
         assert_eq!(parse(&["--taxi-connect", "2"]).taxi_connect, None);

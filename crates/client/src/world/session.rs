@@ -2210,7 +2210,7 @@ fn enter_world_blocking(
     let terrain = Arc::new(
         vale_assets::MapTerrain::open_with(
             &gamedata_dir,
-            overlay,
+            overlay.clone(),
             // Its tiles are read on a thread of its own: the session thread
             // and the main thread both ask, and a tile read on either was a
             // stall on both. See `vale_assets::world::terrain`.
@@ -2241,8 +2241,10 @@ fn enter_world_blocking(
     // `vale_protocol::play::areatrigger` for why this is the client's job
     // rather than the server's. Failing to open them is not fatal: the session
     // then behaves as every session did before this existed, and walking into a
-    // portal does nothing.
-    let triggers = match vale_assets::tables::areatrigger::AreaTriggers::open(&gamedata_dir) {
+    // portal does nothing. Read through the host's overlay, as the terrain is:
+    // read from the archives alone, a trigger the host added was never tested,
+    // so walking into it sent nothing.
+    let triggers = match vale_assets::tables::areatrigger::AreaTriggers::open_with(&gamedata_dir, overlay) {
         Ok(table) => Some(Box::new(Portals(table)) as vale_protocol::play::areatrigger::TriggerTable),
         Err(e) => {
             warn!("no area triggers ({e}); instance portals will do nothing");

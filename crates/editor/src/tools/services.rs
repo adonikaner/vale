@@ -572,7 +572,7 @@ impl Services {
 }
 
 /// A created row's claim: every column it is written with.
-fn creation(changes: &[Assignment]) -> RowEdit {
+pub(crate) fn creation(changes: &[Assignment]) -> RowEdit {
     let mut row = RowEdit {
         life: Life::Insert,
         ..RowEdit::default()
@@ -584,7 +584,13 @@ fn creation(changes: &[Assignment]) -> RowEdit {
 }
 
 /// One column written under a gesture; see [`Services::set_column`].
-fn write_column(
+///
+/// A row the project creates is written into its creation even when the
+/// database also holds a row under that key, which it does after the creation
+/// has been applied. Clearing a column of a creation because it matches the
+/// database's left the creation without that column once the database's row
+/// was put back, and the plan then refused the whole row.
+pub(crate) fn write_column(
     session: &mut EditSession,
     table: &'static str,
     key: &Key,
@@ -593,7 +599,8 @@ fn write_column(
     value: String,
     gesture: Gesture<'_>,
 ) {
-    match held {
+    let creating = session.server_edits.row(table, key).is_some_and(|row| row.life == Life::Insert);
+    match held.filter(|_| !creating) {
         Some(held) => {
             let had = held.iter().find(|change| change.column == column).map(|change| &change.value);
             let value = match had == Some(&value) {

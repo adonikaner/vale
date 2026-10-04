@@ -63,6 +63,10 @@
 //! flightpaths.rs the flight path tool's panel: the selected node and its
 //!               paths, the selected path and its points, and what a click on
 //!               the ground is armed to make
+//! triggers.rs   the area trigger tool's panel: the selected trigger's shape
+//!               and place, and its teleport, inn and quest rows
+//! graveyards.rs the graveyard tool's panel: the selected safe place, its
+//!               facing, and the zones it serves
 //! bands.rs      the one table no reference reaches: a light's eighteen
 //!               colours and six numbers over the day, each drawn as the day
 //!               it produces rather than as sixteen pairs of numbers
@@ -159,6 +163,7 @@ pub mod data;
 pub mod displays;
 pub mod flightpaths;
 pub mod gameobjects;
+pub mod graveyards;
 pub mod hovercard;
 pub mod icons;
 pub mod inspector;
@@ -180,6 +185,7 @@ pub mod sync;
 pub mod theme;
 pub mod thumbnails;
 pub mod topbar;
+pub mod triggers;
 pub mod viewbar;
 pub mod waypoints;
 
@@ -370,6 +376,12 @@ pub struct Editing<'w> {
     /// The flight path subject: the nodes and paths on the map and what is
     /// selected. See [`crate::tools::flightpaths`].
     pub(crate) flightpaths: ResMut<'w, crate::tools::flightpaths::Flightpaths>,
+    /// The area trigger subject: the triggers on the map, what is selected,
+    /// and the server rows read for them. See [`crate::tools::triggers`].
+    pub(crate) triggers: ResMut<'w, crate::tools::triggers::Triggers>,
+    /// …and the safe place subject's, which has the same shape. See
+    /// [`crate::tools::graveyards`].
+    pub(crate) graveyards: ResMut<'w, crate::tools::graveyards::Graveyards>,
     /// The world half of the creature subject: the map's spawns, which is
     /// selected, and the two rows behind it. See [`crate::tools::creatures`].
     pub(crate) creatures: ResMut<'w, crate::tools::creatures::Creatures>,
@@ -1365,7 +1377,8 @@ fn draw(
         );
         viewport.floating.extend(service_windows);
     }
-    if *tool == Tool::Creatures {
+    // The script window also opens from a trigger's script id.
+    if matches!(*tool, Tool::Creatures | Tool::Triggers) {
         let behaviour_windows = behaviour::windows(
             &ctx,
             behaviour::Subject {

@@ -1,4 +1,4 @@
-//! The order the seven row subjects stand in the database, which every Apply
+//! The order the eight row subjects stand in the database, which every Apply
 //! and every Put back keeps.
 //!
 //! ## Why the subjects are applied and put back as a stack
@@ -35,6 +35,9 @@
 //!                           entry, an item's and a spell, moves nothing
 //! behaviour                 keyed by a creature's entry and by ids of its own,
 //!                           moves nothing
+//! places                    triggers, graveyards and maps: keyed by trigger,
+//!                           safe place, zone and map ids, names a quest, moves
+//!                           nothing
 //! ```
 //!
 //! To change what subject S has in the database — apply it or put it back —
@@ -51,10 +54,10 @@
 
 use super::queue::{Finish, Work};
 use super::settings::ServerSettings;
-use super::{behaviour, creatures, gameobjects, items, loot, quests, services};
+use super::{behaviour, creatures, gameobjects, items, loot, places, quests, services};
 use crate::session::EditSession;
 
-/// One of the seven row subjects.
+/// One of the eight row subjects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Subject {
     Creatures,
@@ -69,6 +72,10 @@ pub enum Subject {
     /// of their own, so a creature renumber moves an event's `creature_id`;
     /// nothing moves under it.
     Behaviour,
+    /// What area triggers do, which safe place serves which zone, and a new
+    /// map's server row. Last, because a quest objective trigger names a quest
+    /// and nothing names any of its rows.
+    Places,
 }
 
 /// One write of one subject, ready to run on a worker: its label, and the run,
@@ -102,7 +109,7 @@ pub enum Wanted {
 impl Subject {
     /// The order the subjects are applied in. The module comment gives the
     /// reason for it.
-    pub const ORDER: [Subject; 7] = [
+    pub const ORDER: [Subject; 8] = [
         Subject::Creatures,
         Subject::GameObjects,
         Subject::Items,
@@ -110,6 +117,7 @@ impl Subject {
         Subject::Loot,
         Subject::Services,
         Subject::Behaviour,
+        Subject::Places,
     ];
 
     fn index(self) -> usize {
@@ -126,6 +134,7 @@ impl Subject {
             Subject::Loot => "loot",
             Subject::Services => "vendors and trainers",
             Subject::Behaviour => "behaviour",
+            Subject::Places => "triggers, graveyards and maps",
         }
     }
 
@@ -140,6 +149,7 @@ impl Subject {
             Subject::Loot => loot::REVERT_VPATH,
             Subject::Services => services::REVERT_VPATH,
             Subject::Behaviour => behaviour::REVERT_VPATH,
+            Subject::Places => places::REVERT_VPATH,
         }
     }
 
@@ -154,6 +164,7 @@ impl Subject {
             Subject::Loot => vale_mangos::loot::table_named(table).is_some(),
             Subject::Services => services::owns(table),
             Subject::Behaviour => behaviour::owns(table),
+            Subject::Places => places::owns(table),
         }
     }
 
@@ -194,6 +205,10 @@ impl Subject {
                 let plan = behaviour::plan(session);
                 (plan.is_empty(), plan.signature(), session.applied_behaviour)
             }
+            Subject::Places => {
+                let plan = places::plan(session);
+                (plan.is_empty(), plan.signature(), session.applied_places)
+            }
         };
         (!empty, applied == Some(signature))
     }
@@ -207,6 +222,7 @@ impl Subject {
             Subject::Loot => loot::apply_step(session, server),
             Subject::Services => services::apply_step(session, server),
             Subject::Behaviour => behaviour::apply_step(session, server),
+            Subject::Places => places::apply_step(session, server),
         }
     }
 
@@ -219,6 +235,7 @@ impl Subject {
             Subject::Loot => loot::revert_step(session, server),
             Subject::Services => services::revert_step(session, server),
             Subject::Behaviour => behaviour::revert_step(session, server),
+            Subject::Places => places::revert_step(session, server),
         }
     }
 }
@@ -239,7 +256,7 @@ pub struct Stands {
 ///
 /// Returns `(put back, apply)`: the first list newest first, the second in
 /// order. Both are empty when there is nothing to do.
-pub fn order(wanted: Wanted, stands: &[Stands; 7]) -> (Vec<Subject>, Vec<Subject>) {
+pub fn order(wanted: Wanted, stands: &[Stands; 8]) -> (Vec<Subject>, Vec<Subject>) {
     let from = match wanted {
         Wanted::Apply(subject) | Wanted::PutBack(subject) => subject.index(),
         Wanted::Save => {
@@ -376,7 +393,7 @@ mod tests {
     /// loot revert file is read from the database the item move leaves.
     #[test]
     fn applying_one_subject_takes_the_later_ones_off_and_back_on() {
-        let stands = [NONE, NONE, CHANGED, NONE, APPLIED, NONE, NONE];
+        let stands = [NONE, NONE, CHANGED, NONE, APPLIED, NONE, NONE, NONE];
         let (put_back, apply) = order(Wanted::Apply(Subject::Items), &stands);
         assert_eq!(put_back, vec![Subject::Loot, Subject::Items]);
         assert_eq!(apply, vec![Subject::Items, Subject::Loot]);
@@ -386,7 +403,7 @@ mod tests {
     /// the vendor and trainer lists first and applies them again after.
     #[test]
     fn applying_items_takes_the_vendor_lists_off_and_back_on() {
-        let stands = [NONE, NONE, CHANGED, NONE, NONE, APPLIED, NONE];
+        let stands = [NONE, NONE, CHANGED, NONE, NONE, APPLIED, NONE, NONE];
         let (put_back, apply) = order(Wanted::Apply(Subject::Items), &stands);
         assert_eq!(put_back, vec![Subject::Services, Subject::Items]);
         assert_eq!(apply, vec![Subject::Items, Subject::Services]);
@@ -396,7 +413,7 @@ mod tests {
     /// moving a row loot created out from under loot's own undo.
     #[test]
     fn putting_one_back_takes_the_later_ones_off_first() {
-        let stands = [APPLIED, NONE, APPLIED, NONE, APPLIED, NONE, NONE];
+        let stands = [APPLIED, NONE, APPLIED, NONE, APPLIED, NONE, NONE, NONE];
         let (put_back, apply) = order(Wanted::PutBack(Subject::Items), &stands);
         assert_eq!(put_back, vec![Subject::Loot, Subject::Items]);
         assert_eq!(apply, vec![Subject::Loot]);
@@ -406,7 +423,7 @@ mod tests {
     /// by a later one's undo.
     #[test]
     fn an_earlier_subject_is_left_alone() {
-        let stands = [APPLIED, APPLIED, CLAIMED, NONE, NONE, NONE, NONE];
+        let stands = [APPLIED, APPLIED, CLAIMED, NONE, NONE, NONE, NONE, NONE];
         let (put_back, apply) = order(Wanted::Apply(Subject::Items), &stands);
         assert!(put_back.is_empty());
         assert_eq!(apply, vec![Subject::Items]);
@@ -417,7 +434,7 @@ mod tests {
     /// is what Apply on save means.
     #[test]
     fn a_save_starts_at_the_first_subject_that_changed() {
-        let stands = [APPLIED, NONE, APPLIED, CHANGED, CLAIMED, NONE, NONE];
+        let stands = [APPLIED, NONE, APPLIED, CHANGED, CLAIMED, NONE, NONE, NONE];
         let (put_back, apply) = order(Wanted::Save, &stands);
         assert_eq!(put_back, vec![Subject::Quests]);
         assert_eq!(apply, vec![Subject::Quests, Subject::Loot]);
@@ -426,7 +443,7 @@ mod tests {
     /// A save does nothing when the database holds every plan already.
     #[test]
     fn a_save_with_nothing_owed_does_nothing() {
-        let stands = [APPLIED, NONE, APPLIED, NONE, APPLIED, NONE, NONE];
+        let stands = [APPLIED, NONE, APPLIED, NONE, APPLIED, NONE, NONE, NONE];
         assert_eq!(order(Wanted::Save, &stands), (Vec::new(), Vec::new()));
     }
 
@@ -435,7 +452,7 @@ mod tests {
     #[test]
     fn a_save_takes_back_a_subject_the_project_no_longer_claims() {
         let gone = Stands { applied: true, claims: false, current: false };
-        let stands = [NONE, NONE, APPLIED, gone, APPLIED, NONE, NONE];
+        let stands = [NONE, NONE, APPLIED, gone, APPLIED, NONE, NONE, NONE];
         let (put_back, apply) = order(Wanted::Save, &stands);
         assert_eq!(put_back, vec![Subject::Loot, Subject::Quests]);
         assert_eq!(apply, vec![Subject::Loot]);
@@ -446,7 +463,7 @@ mod tests {
     #[test]
     fn applying_nothing_is_a_put_back() {
         let gone = Stands { applied: true, claims: false, current: false };
-        let stands = [gone, NONE, NONE, NONE, NONE, NONE, NONE];
+        let stands = [gone, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
         let (put_back, apply) = order(Wanted::Apply(Subject::Creatures), &stands);
         assert_eq!(put_back, vec![Subject::Creatures]);
         assert!(apply.is_empty());

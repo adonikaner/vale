@@ -1,19 +1,19 @@
-//! **The volumes the client reports standing in** — `AreaTrigger.dbc`.
+//! `AreaTrigger.dbc`: the volumes the client reports standing in.
 //!
-//! An instance portal is not a game object, not a spell and not anything the
-//! server pushes: it is a **sphere or a box in this shipped table**, and the
-//! whole of entering a dungeon is that the *client* notices it is inside one and
-//! says so. `CMSG_AREATRIGGER` carries a single `u32` — the row id — and the
-//! server decides what that means (a teleport, a tavern's rest state, a quest's
-//! "area explored", a battleground's flag capture). So a client that never sends
-//! it walks through the swirl at the Deadmines and nothing at all happens, with
-//! no packet to be missing and nothing on the wire to look at.
+//! An instance portal is not a game object, a spell or anything the server
+//! sends: it is a sphere or a box in this shipped table. Entering a dungeon
+//! starts when the client notices it is inside one and says so.
+//! `CMSG_AREATRIGGER` carries a single `u32`, the row id, and the server
+//! decides what that means (a teleport, a tavern's rest state, a quest's "area
+//! explored", a battleground's flag capture). A client that never sends it
+//! walks through the portal at the Deadmines and nothing happens, with no
+//! packet missing on the wire.
 //!
-//! Everything below is the client's own rule, because nothing else states it: the server
-//! only ever *validates* what it is told (`WorldSession::HandleAreaTriggerOpcode`
-//! re-runs the same containment test with a 5-yard tolerance and drops the
-//! packet if it fails), and the file carries the volumes without saying how they
-//! are polled.
+//! The rules below are the 1.12.1 client's, and no other source states them:
+//! the server only validates what it is told
+//! (`WorldSession::HandleAreaTriggerOpcode` re-runs the same containment test
+//! with a 5-yard tolerance and drops the packet if it fails), and the file
+//! carries the volumes without saying how they are polled.
 //!
 //! ## The layout
 //!
@@ -23,76 +23,67 @@
 //!   [ 1] mapId
 //!   [ 2..4] x, y, z          the centre, in the server's own axes
 //!   [ 5] radius              > 0 makes it a sphere; the box fields are then 0
-//!   [ 6..8] boxLength, boxWidth, boxHeight    **full** lengths, not half
+//!   [ 6..8] boxLength, boxWidth, boxHeight    full lengths, not half
 //!   [ 9] boxYaw              radians, about +Z
 //! ```
 //!
-//! Verified against the file rather than against a reference: 352 of the 432
-//! rows are spheres (radius 1.0 to 150.0) and the other 80 are boxes, none of
-//! which has a zero extent — so the `radius > 0` discriminator partitions the
-//! table cleanly and a reader that got the two blocks the wrong way round would
-//! collapse every trigger in the game to a point.
+//! Measured over the shipped file: 352 of the 432 rows are spheres (radius 1.0
+//! to 150.0) and the other 80 are boxes, none with a zero extent. The
+//! `radius > 0` test therefore partitions the table cleanly, and a reader that
+//! got the two the wrong way round would reduce every trigger to a point.
 //!
-//! ## The rule — and the part that is not a geometry test
+//! ## When the client tests the triggers
 //!
-//! The check is a **self-rescheduling 100 ms timer** registered under the
-//! client's own name for it, `"AreaTriggerCheck"`.
-//! Not a per-frame test, which matters here rather than being a detail: this
-//! client draws at two to three times 1.12's rate, and a portal fired off the
-//! frame would send the packet from a different position than the reference
-//! would.
+//! The test runs on a 100 ms timer, not every frame. This client draws at two
+//! to three times 1.12's rate, and a test on the frame would send the packet
+//! from a different position than 1.12 does.
 //!
-//! Three things about it are rules rather than plumbing, and only the first is
-//! the obvious one:
+//! Three rules decide which trigger is sent:
 //!
-//! * **The table is sorted by map, and only the current map's block is walked.**
-//!   The client takes a map id, scans for the first row whose map matches, and
-//!   stops at the first row past it — keeping the half-open range. The shipped file really is sorted (checked: 133 rows
-//!   on map 0, 121 on map 1, then the instances in ascending id order), so this
-//!   is an authored invariant rather than a happy accident, but [`AreaTriggers`]
-//!   groups explicitly rather than leaning on it — a partition that silently
-//!   depends on sort order answers "no triggers on this map" if it is ever
-//!   wrong, which is the failure that looks like nothing being broken.
+//! * Only the current map's block of rows is tested. The client finds the
+//!   first row whose map matches and stops at the first row past it, so a row
+//!   of that map outside the block is never tested. The shipped file is sorted
+//!   (133 rows on map 0, 121 on map 1, then the instances in ascending id
+//!   order). [`AreaTriggers`] groups by map explicitly rather than relying on
+//!   the order, since a grouping that depended on it would answer "no triggers
+//!   on this map" when the order was wrong.
 //!
-//! * **An occupancy latch, and it is the whole of the send-once behaviour.**
-//!   The client holds the row the player last fired, and the tick's *first* act
-//!   is to re-test that row alone: still inside means return without scanning at
-//!   all, so nothing is re-sent. Only leaving it clears the latch and lets any
-//!   trigger fire again. Without this a portal would send ten packets a second
-//!   for as long as you stood in it — and the Deadmines' 7-yard sphere takes a
-//!   couple of seconds to walk across.
+//! * The client remembers the trigger it last sent, and each tick first tests
+//!   that row alone: while the player is still inside it, nothing else is
+//!   tested and nothing is sent. Leaving it clears the latch and lets any
+//!   trigger fire again. Without the latch a portal would send ten packets a
+//!   second for as long as the player stood in it; the Deadmines' 7-yard sphere
+//!   takes a couple of seconds to walk across.
 //!
-//! * **The first row containing the point wins and the scan stops there.** Not
-//!   the nearest, not all of them: the loop breaks on the first `true`.
+//! * The first row containing the point is sent, not the nearest, and no
+//!   later row is tested.
 //!
-//! And a map change clears the latch, rebinds the range and
-//! restarts the timer — so the trigger you arrived on top of, having just been
-//! teleported by it, is not the one you are held out of.
+//! A map change clears the latch, takes the new map's block and restarts the
+//! timer, so the trigger a teleport lands the player in is not held out by the
+//! latch.
 //!
 //! ## The two volumes
 //!
-//! Both are one test, which opens by refusing a row on another map. A sphere
-//! is `dist² <= radius²` in **three** dimensions (closed — inside if
-//! not less-than). A box is the point taken into the box's own frame — the
-//! client builds `translate(centre) · rotateZ(boxYaw)`, inverts it and transforms
-//! the point — and then compared against half of each
-//! declared length, **strictly**: it fails on `<= -half` and on `>= +half`.
-//! vmangos' `IsPointInAreaTriggerZone` is
-//! the same test with the rotation written as `2π - boxYaw` (identical) and the
-//! bound as `fabs(d) > half` (closed rather than open, which differs only for a
-//! point exactly on a face).
+//! Both tests first refuse a row on another map. A sphere contains the point
+//! when `dist² <= radius²` in three dimensions, closed. A box contains it when
+//! the point, taken into the box's own frame (relative to the centre and
+//! turned by `-boxYaw` about up), lies strictly inside half of each declared
+//! length: it fails on `<= -half` and on `>= +half`. vmangos'
+//! `IsPointInAreaTriggerZone` is the same test with the rotation written as
+//! `2π - boxYaw` (identical) and the bound as `fabs(d) > half` (closed rather
+//! than open, which differs only for a point exactly on a face).
 //!
-//! **One thing at the hit site is deliberately not modelled**, because it was
-//! not identified rather than because it was judged unnecessary: before the
-//! packet goes out, the client makes a per-unit call with the value 238. 238
-//! is neither an `AnimationData` id (that table stops at 207), an `Emotes` id,
-//! nor a `SoundEntries` id that makes any sense here, so what the client does
-//! there is unknown.
+//! One step is not modelled because it is not identified: before the packet
+//! goes out the client does something per unit with the value 238. 238 is not
+//! an `AnimationData` id (that table stops at 207), an `Emotes` id, or a
+//! `SoundEntries` id that fits here.
 
 use crate::tables::dbc::Dbc;
 use std::collections::HashMap;
 
-mod fields {
+/// The field indices.
+pub mod fields {
+    pub const ID: usize = 0;
     pub const MAP: usize = 1;
     pub const X: usize = 2;
     pub const Y: usize = 3;
@@ -102,6 +93,8 @@ mod fields {
     pub const BOX_WIDTH: usize = 7;
     pub const BOX_HEIGHT: usize = 8;
     pub const BOX_YAW: usize = 9;
+    /// How many fields a record has.
+    pub const COUNT: usize = 10;
 }
 
 /// One row: a volume on one map, and the id to report from inside it.
@@ -116,22 +109,22 @@ pub struct AreaTrigger {
     /// A sphere's radius. Zero (or less) means this row is a box instead; see
     /// the module note for why the discriminator is trustworthy.
     pub radius: f32,
-    /// **Full** lengths along the box's own x, y and z, halved at the test.
+    /// Full lengths along the box's own x, y and z, halved at the test.
     pub extent: [f32; 3],
     /// The box's yaw about +Z, in radians.
     pub yaw: f32,
 }
 
 impl AreaTrigger {
-    /// Whether this row is a sphere. The client compares the radius against
-    /// zero and takes the box branch when it is not greater.
+    /// Whether this row is a sphere: a radius above zero. A row whose radius
+    /// is zero or less is a box.
     pub fn is_sphere(&self) -> bool {
         self.radius > 0.0
     }
 
     /// Whether `point` is inside this volume, on `map`.
     ///
-    /// The client's test verbatim, including the map refusal it opens with: a trigger's
+    /// The client's rule, including the map refusal it starts with: a trigger's
     /// coordinates mean nothing without its map, and tile coordinates repeat
     /// across continents, so testing the raw position would put the character
     /// inside Blackrock Depths while standing in a field in Elwynn.
@@ -150,14 +143,13 @@ impl AreaTrigger {
             let dist2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
             return dist2 <= self.radius * self.radius;
         }
-        // The point taken into the box's own frame. The client inverts
-        // `translate(centre) · rotateZ(yaw)` and transforms; the inverse of that
-        // rotation is a rotation by `-yaw`, which is these two lines.
+        // The point taken into the box's own frame: relative to the centre,
+        // turned by `-yaw`, which is these two lines.
         let (sin, cos) = self.yaw.sin_cos();
         let local = [d[0] * cos + d[1] * sin, d[1] * cos - d[0] * sin, d[2]];
         let half = [self.extent[0] / 2.0, self.extent[1] / 2.0, self.extent[2] / 2.0];
-        // Strict on both sides, which is the client's own comparison — see the
-        // module note for where vmangos differs and by how much.
+        // Strict on both sides, as the client compares; see the module note
+        // for where vmangos differs and by how much.
         (0..3).all(|i| local[i] > -half[i] && local[i] < half[i])
     }
 }
@@ -165,12 +157,12 @@ impl AreaTrigger {
 /// The whole table, grouped by map.
 #[derive(Debug, Clone, Default)]
 pub struct AreaTriggers {
-    /// Every row, in the file's own order — which is the order the client's scan
-    /// runs in, and therefore the order that decides which of two overlapping
-    /// triggers wins.
+    /// Every row, in the file's order, which is the order the client tests
+    /// them in and so decides which of two overlapping triggers is sent.
     rows: Vec<AreaTrigger>,
-    /// Map id -> indices into `rows`, ascending. The client's own partition is a
-    /// range over a sorted table; this is the same set without the assumption.
+    /// Map id -> indices into `rows`, ascending. The client tests one
+    /// contiguous block per map; this is the same set without assuming the
+    /// file is sorted.
     by_map: HashMap<u32, Vec<usize>>,
 }
 
@@ -213,7 +205,19 @@ impl AreaTriggers {
     /// archive chain open at the point they need this — the session starts
     /// before the renderer's assets exist.
     pub fn open(gamedata_dir: &str) -> Result<AreaTriggers, crate::AssetError> {
+        AreaTriggers::open_with(gamedata_dir, None)
+    }
+
+    /// …with a host's overlay consulted before the archives, as
+    /// `MapTerrain::open_with` does. A host that holds an edited copy of the
+    /// table in its overlay gets that copy, so a trigger it added is one the
+    /// session tests.
+    pub fn open_with(
+        gamedata_dir: &str,
+        overlay: Option<crate::archive::Overlay>,
+    ) -> Result<AreaTriggers, crate::AssetError> {
         let mut assets = crate::Assets::open(gamedata_dir)?;
+        assets.set_overlay(overlay);
         let raw = assets.read(&crate::tables::dbc::dbc_path("AreaTrigger"))?;
         AreaTriggers::load(&raw)
     }
@@ -233,17 +237,17 @@ impl AreaTriggers {
             .map(|&i| &self.rows[i])
     }
 
-    /// **The first trigger on `map` containing `point`**, in table order — which
-    /// is the client's own answer, not the nearest one. The client's loop
-    /// breaks on its first hit.
+    /// The first trigger on `map` containing `point`, in table order. This is
+    /// the trigger the client sends, not the nearest one: no row after the
+    /// first that contains the point is tested.
     pub fn containing(&self, map: u32, point: [f32; 3]) -> Option<u32> {
         self.on_map(map)
             .find(|row| row.contains(map, point))
             .map(|row| row.id)
     }
 
-    /// Whether one specific trigger still holds `point` — the latch's own
-    /// question, asked before any scan happens. See the module note.
+    /// Whether one specific trigger still holds `point`: the latch's test,
+    /// made before any other row is tested. See the module note.
     pub fn holds(&self, id: u32, map: u32, point: [f32; 3]) -> bool {
         self.rows
             .iter()
@@ -320,17 +324,17 @@ mod tests {
             extent: [10.0, 10.0, 10.0],
             yaw: 0.0,
         };
-        // 4 yards out is inside a 10-yard box and outside a 10-yard *half*
-        // extent's twin — which is the misreading that makes every box trigger
-        // in the game twice its authored size.
+        // 4.9 yards out is inside a 10-yard box. Reading the extent as a half
+        // length would make every box trigger twice its authored size.
         assert!(trigger.contains(0, [4.9, 0.0, 0.0]));
         assert!(!trigger.contains(0, [5.1, 0.0, 0.0]));
     }
 
     #[test]
     fn the_first_row_in_table_order_wins() {
-        // Two concentric triggers. The client's scan stops at its first hit, so
-        // the answer is the earlier row rather than the tighter fit.
+        // Two concentric triggers. The client stops at the first row that
+        // contains the point, so the answer is the earlier row rather than the
+        // tighter fit.
         let rows = vec![
             AreaTrigger {
                 id: 10,

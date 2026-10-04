@@ -95,8 +95,8 @@ use bevy_egui::egui;
 
 use super::theme;
 use crate::server::{
-    behaviour, creatures, dbcs, gameobjects, items, loot, queue::ServerQueue, quests, rows,
-    services, settings::ServerSettings, stack,
+    behaviour, creatures, dbcs, gameobjects, items, loot, places, queue::ServerQueue, quests,
+    rows, services, settings::ServerSettings, stack,
 };
 use crate::session::EditSession;
 use vale_client::assets::GameAssets;
@@ -269,13 +269,17 @@ pub enum Half {
     /// A creature's events, scripts and spell lists, reached from a selected
     /// creature's Events and Spells windows.
     Behaviour,
+    /// What area triggers do, which safe place serves which zone, and a new
+    /// map's server row, reached from the Triggers and Graveyards tools and
+    /// the top bar's New map.
+    Places,
 }
 
 /// The number of subjects. [`Standings`] holds one answer for each.
-pub const HALVES: usize = 8;
+pub const HALVES: usize = 9;
 
 impl Half {
-    pub const ALL: [Half; 8] = [
+    pub const ALL: [Half; 9] = [
         Half::Tables,
         Half::Creatures,
         Half::GameObjects,
@@ -284,6 +288,7 @@ impl Half {
         Half::Loot,
         Half::Services,
         Half::Behaviour,
+        Half::Places,
     ];
 
     /// The subject's name, in the rail's wording.
@@ -297,6 +302,7 @@ impl Half {
             Half::Loot => "Loot",
             Half::Services => "Vendors and trainers",
             Half::Behaviour => "Behaviour",
+            Half::Places => "Triggers, graveyards and maps",
         }
     }
 
@@ -304,7 +310,7 @@ impl Half {
     /// the table names are what the database shows.
     pub fn tables(self) -> &'static str {
         match self {
-            Half::Tables => "spell_template, taxi_nodes, skill_line_ability, area_template",
+            Half::Tables => "spell_template, taxi_nodes, skill_line_ability, area_template, areatrigger_template",
             Half::Creatures => "creature_template, creature, creature_movement",
             Half::GameObjects => "gameobject_template, gameobject",
             Half::Items => "item_template",
@@ -312,6 +318,7 @@ impl Half {
             Half::Loot => "the nine *_loot_template tables",
             Half::Services => "npc_vendor, npc_vendor_template, npc_trainer, npc_trainer_template",
             Half::Behaviour => "creature_ai_events, creature_spells, broadcast_text, and the eleven *_scripts tables",
+            Half::Places => "areatrigger_template (label, script, condition, cooldown), areatrigger_teleport, areatrigger_tavern, areatrigger_involvedrelation, areatrigger_bg_entrance, game_graveyard_zone, world_safe_locs_facing, map_template",
         }
     }
 
@@ -326,6 +333,7 @@ impl Half {
             Half::Loot => loot::SQL_VPATH,
             Half::Services => services::SQL_VPATH,
             Half::Behaviour => behaviour::SQL_VPATH,
+            Half::Places => places::SQL_VPATH,
         }
     }
 
@@ -341,6 +349,7 @@ impl Half {
             Half::Loot => loot::REVERT_VPATH,
             Half::Services => services::REVERT_VPATH,
             Half::Behaviour => behaviour::REVERT_VPATH,
+            Half::Places => places::REVERT_VPATH,
         }
     }
 
@@ -410,6 +419,16 @@ impl Half {
                  their own names; the other six and broadcast_text are read at start, so a \
                  change to one of those needs a restart."
             }
+            Half::Places => {
+                "Live on `.reload map_template`, `.reload areatrigger_teleport`, \
+                 `.reload areatrigger_tavern`, `.reload areatrigger_involvedrelation` and \
+                 `.reload game_graveyard_zone`, which an apply sends when it is made with the \
+                 panels open over a playtest \u{2014} removals included. Applied at any other \
+                 time, it is live after a restart. areatrigger_template, \
+                 areatrigger_bg_entrance and world_safe_locs_facing have no reload, and a new \
+                 map needs a restart before the server opens its grids. A trigger's volume \
+                 and a safe place are client tables, applied by Client tables above."
+            }
         }
     }
 
@@ -419,7 +438,7 @@ impl Half {
     /// last subject in the stack, which has nothing below it.
     pub fn order_note(self) -> &'static str {
         match self.subject() {
-            None | Some(stack::Subject::Behaviour) => "",
+            None | Some(stack::Subject::Places) => "",
             Some(_) => {
                 " Applied subjects below this one are put back first and applied again \
                  after, because this one's statements can move their rows."
@@ -439,6 +458,7 @@ impl Half {
             Half::Loot => Some(stack::Subject::Loot),
             Half::Services => Some(stack::Subject::Services),
             Half::Behaviour => Some(stack::Subject::Behaviour),
+            Half::Places => Some(stack::Subject::Places),
         }
     }
 
@@ -664,6 +684,23 @@ pub fn standing(half: Half, session: &EditSession, assets: &GameAssets) -> Stand
                 unsaved: false,
             }
         }
+        Half::Places => {
+            let plan = places::plan(session);
+            let on_server = places::OnTheServer::read_with(session, &plan);
+            Standing {
+                changed: plan.rows.len(),
+                outstanding: plan
+                    .rows
+                    .iter()
+                    .filter(|row| !on_server.covers(row.table, &row.key))
+                    .count(),
+                applied: on_server.rows(),
+                current: on_server.current(),
+                refused: plan.refused.clone(),
+                trouble: None,
+                unsaved: false,
+            }
+        }
         Half::Services => {
             let plan = services::plan(session);
             let on_server = services::OnTheServer::read_with(session, &plan);
@@ -752,6 +789,10 @@ pub fn save(half: Half, work: &mut Work<'_>) {
         Half::Behaviour => {
             creatures::save(work.session);
             behaviour::save(work.session);
+        }
+        Half::Places => {
+            creatures::save(work.session);
+            places::save(work.session);
         }
     }
 }
@@ -1197,6 +1238,7 @@ mod tests {
             .chain(vale_mangos::quest::TABLES.iter())
             .chain(vale_mangos::loot::TABLES.iter())
             .chain(services::TABLES.iter())
+            .chain(places::TABLES.iter())
             .chain(vale_mangos::scripts::TABLES.iter())
             .chain([vale_mangos::eventai::TABLE, vale_mangos::creaturespells::TABLE, vale_mangos::broadcast::TABLE].iter())
             .copied()

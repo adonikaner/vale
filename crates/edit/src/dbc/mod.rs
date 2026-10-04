@@ -12,6 +12,9 @@
 //! taxi.rs     flight paths: adding and removing a node, a path or a point of
 //!             a path across the three taxi tables, keeping each path's points
 //!             numbered without a gap
+//! places.rs   triggers, safe places and maps: adding and removing a row of
+//!             AreaTrigger, WorldSafeLocs and Map, a trigger kept inside its
+//!             map's block of rows
 //! diff.rs     what one table changes against another, row by row, by id
 //! ```
 //!
@@ -72,6 +75,7 @@ pub mod cell;
 pub mod chain;
 pub mod diff;
 pub mod file;
+pub mod places;
 pub mod row;
 pub mod taxi;
 

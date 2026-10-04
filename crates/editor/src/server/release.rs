@@ -126,6 +126,11 @@ pub fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<Entry>,
                     push(&mut out, row.table, row.key.clone(), row.statements());
                 }
             }
+            Subject::Places => {
+                for row in super::places::plan(session).ordered() {
+                    push(&mut out, row.table, row.key.clone(), row.statements());
+                }
+            }
             Subject::Behaviour => {
                 let plan = behaviour::plan(session);
                 for row in &plan.rows {
@@ -142,9 +147,8 @@ pub fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<Entry>,
             }
         }
     }
-    // The client-table rows (spells, flight nodes and skill line abilities),
-    // whose revert file holds
-    // one statement per entry.
+    // The client-table rows (spells, flight nodes, skill line abilities, areas
+    // and area triggers), whose revert file holds one statement per entry.
     let undo = rows::Undo::open_at(project)?;
     for row in rows::plan(session, assets)?.rows {
         let put_back: Vec<String> = undo
@@ -158,6 +162,7 @@ pub fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<Entry>,
                 vale_mangos::taxi::TABLE => "flight nodes",
                 vale_mangos::skills::TABLE => "skill line abilities",
                 vale_mangos::area::TABLE => "areas",
+                vale_mangos::trigger::TEMPLATE => "area triggers",
                 _ => "spells",
             }
             .to_string(),
@@ -267,6 +272,7 @@ pub fn migrate(session: &mut EditSession, assets: &GameAssets) -> String {
     super::loot::save(session);
     super::services::save(session);
     super::behaviour::save(session);
+    super::places::save(session);
     let Some(into) = session.project.path_for(migration::MIGRATIONS_DIR) else {
         return format!("{} leaves the project", migration::MIGRATIONS_DIR);
     };

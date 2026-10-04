@@ -348,6 +348,21 @@ pub(super) fn transfer_aborted(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_event(PlayerEvent::TransferAborted { reason });
 }
 
+/// `SMSG_AREA_TRIGGER_MESSAGE`: a teleport trigger refused the character, with
+/// the row's text. The other refusal a portal can produce besides
+/// `SMSG_TRANSFER_ABORTED`; see
+/// [`crate::play::areatrigger::parse_area_trigger_message`].
+pub(super) fn area_trigger_message(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(text) = read(
+        ctx.stats,
+        pkt,
+        crate::play::areatrigger::parse_area_trigger_message(&pkt.body),
+    ) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::AreaTriggerMessage { text });
+}
+
 /// `SMSG_TRANSFER_PENDING`: the character is about to change map.
 ///
 /// This packet exists so the client can show the loading screen. Nothing is

@@ -2,8 +2,9 @@
 //! and how to take them back, for the client tables whose rows the server
 //! reads from its own SQL tables. [`MAPPED`] lists them: `Spell.dbc` becomes
 //! `spell_template`, `TaxiNodes.dbc` becomes `taxi_nodes`,
-//! `SkillLineAbility.dbc` becomes `skill_line_ability`, and `AreaTable.dbc`
-//! becomes `area_template`.
+//! `SkillLineAbility.dbc` becomes `skill_line_ability`, `AreaTable.dbc`
+//! becomes `area_template`, and `AreaTrigger.dbc` becomes
+//! `areatrigger_template`.
 //!
 //! ## The file is rewritten whole on every save
 //!
@@ -54,9 +55,11 @@
 //! is a `skill_line_ability` row at build 5875 with no lower build behind
 //! it, since the loader reads that build alone, so its undo is a `DELETE`
 //! only for a row this project added. An area is an `area_template` row
-//! keyed by its entry alone, with no build, on the same terms. See [`Undo`],
-//! and `vale_mangos::spell::undo`, `vale_mangos::taxi::undo`,
-//! `vale_mangos::skills::undo` and `vale_mangos::area::undo`, which hold the
+//! keyed by its entry alone, with no build, on the same terms. An area trigger
+//! is an `areatrigger_template` dev row at build 5875, on the flight node's
+//! terms. See [`Undo`], and `vale_mangos::spell::undo`,
+//! `vale_mangos::taxi::undo`, `vale_mangos::skills::undo`,
+//! `vale_mangos::area::undo` and `vale_mangos::trigger::undo`, which hold the
 //! rule.
 //!
 //! There is no permanent apply. The durable output is the SQL file in the
@@ -83,6 +86,7 @@ use vale_mangos::area;
 use vale_mangos::skills;
 use vale_mangos::spell::{self, Assignment};
 use vale_mangos::taxi;
+use vale_mangos::trigger;
 use bevy::prelude::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -99,16 +103,17 @@ pub const REVERT_VPATH: &str = "sql\\revert.sql";
 ///
 /// Every other DBC the server reads, it reads as a file in `DataDir\5875\dbc\`, and
 /// a publish copies it there; see `super::release::copy_server_dbcs`.
-pub const MAPPED: [(&str, &str); 4] = [
+pub const MAPPED: [(&str, &str); 5] = [
     ("Spell", spell::TABLE),
     ("TaxiNodes", taxi::TABLE),
     ("SkillLineAbility", skills::TABLE),
     ("AreaTable", area::TABLE),
+    ("AreaTrigger", trigger::TEMPLATE),
 ];
 
 /// Whether the server has a `.reload` for a mapped table. `spell_template` has
-/// one; `taxi_nodes`, `skill_line_ability` and `area_template` are read once
-/// at startup and have none.
+/// one; `taxi_nodes`, `skill_line_ability`, `area_template` and
+/// `areatrigger_template` are read once at startup and have none.
 pub fn reloadable(table: &str) -> bool {
     table == spell::TABLE
 }
@@ -131,6 +136,11 @@ pub fn refusal(dbc: &str, id: u32) -> String {
             area::EXPLORE_BITS,
             area::MAX_NAME,
             area::MAX_TINYINT
+        ),
+        "AreaTrigger" => format!(
+            "area trigger {id} cannot go to the server: trigger ids stop at {}, since \
+             areatrigger_template.id is a smallint",
+            trigger::MAX_ID
         ),
         _ => format!(
             "spell {id} cannot go to the server: ids above {} do not fit \
@@ -466,6 +476,37 @@ pub fn plan(session: &EditSession, assets: &GameAssets) -> Result<Plan, String> 
                     });
                 }
             }
+            "AreaTrigger" => {
+                use vale_edit::dbc::places;
+                let before: HashMap<u32, places::Trigger> = places::triggers(&shipped)
+                    .into_iter()
+                    .map(|trigger| (trigger.id, trigger))
+                    .collect();
+                for entry in changed_entries(&shipped, &edited) {
+                    let Some(volume) = edited
+                        .row_of(entry)
+                        .and_then(|record| places::trigger_at(&edited, record))
+                    else {
+                        continue;
+                    };
+                    let was = before.get(&entry);
+                    let changes = trigger::changes(was, &volume);
+                    if changes.is_empty() {
+                        continue;
+                    }
+                    if !trigger::fits(entry) {
+                        out.refused.push((table, entry));
+                        continue;
+                    }
+                    any = true;
+                    out.rows.push(Row {
+                        table: server_table,
+                        key: trigger::key(entry),
+                        statements: trigger::statements(was, &volume),
+                        changes,
+                    });
+                }
+            }
             "SkillLineAbility" => {
                 for entry in changed_entries(&shipped, &edited) {
                     let changes = skills::changes(&shipped, &edited, entry);
@@ -653,6 +694,10 @@ pub fn apply_at(
             area::TABLE => {
                 let now = db.row(&area::dev_row_query(entry))?;
                 area::undo(entry, &row.changes, now.as_ref())
+            }
+            trigger::TEMPLATE => {
+                let now = db.row(&trigger::dev_row_query(entry))?;
+                trigger::undo(entry, &row.changes, now.as_ref())
             }
             _ => {
                 let now = db.row(&spell::dev_row_query(entry))?;

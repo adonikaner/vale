@@ -319,6 +319,10 @@ pub struct Request {
     pub client_root: PathBuf,
     /// The tiles, each with the [`Reach`] of its change.
     pub tiles: Vec<(Tile, Reach)>,
+    /// The ones the archive the tools read carries, which must come out as a
+    /// `.map`. A requested tile not listed is one the project has reverted,
+    /// whose server file is removed when the extractor writes none.
+    pub carried: Vec<Tile>,
     /// `mapextractor -f`: store heights as `int16` where the range allows,
     /// which halves the file. [`heights_as_int`] reads it from an existing
     /// `.map`, so a regenerated tile is stored the same way as its
@@ -532,6 +536,17 @@ pub fn regenerate(
                     copy_replacing(&produced, &target)?;
                     out.maps.push(name);
                 }
+                // The archive carries the tile and the extractor wrote nothing:
+                // it did not read the map. A run that went on would remove the
+                // server's file and build no vmaps or navmesh for it.
+                false if request.carried.contains(tile) => {
+                    return Err(format!(
+                        "the map extractor wrote no {name} for map {map} tile {},{}: it did not \
+                         read the map's WDT or the tile from the archive. A map's WDT needs \
+                         MVER, MPHD, MAIN and MWMO, in that order, for the extractor to read it",
+                        tile.x, tile.y
+                    ));
+                }
                 // The archives no longer contain the tile: the project
                 // created it and has since reverted it. The server's file
                 // for it is removed.
@@ -590,11 +605,31 @@ pub fn regenerate(
                 out.models.push(name);
             }
         }
-        if !produced_tiles.iter().any(|name| name.starts_with(&prefix)) && !out.vmaps.iter().any(|n| *n == vmtree_file(*map)) {
-            return Err(format!(
-                "the assembler wrote no vmaps for map {map} into {}",
-                vmaps.display()
-            ));
+        let assembled = produced_tiles.iter().any(|name| name.starts_with(&prefix))
+            || out.vmaps.iter().any(|n| *n == vmtree_file(*map));
+        if !assembled {
+            // The extractor records every building and model it finds in
+            // `Buildings\dir_bin`. Empty, the map has none, and has no vmaps:
+            // the server and the navmesh generator both carry on without them.
+            // The server's old files for the map would describe models that
+            // are gone, so they are removed.
+            let spawns = std::fs::metadata(buildings.join("dir_bin")).map_or(0, |meta| meta.len());
+            if spawns != 0 {
+                return Err(format!(
+                    "the assembler wrote no vmaps for map {map} into {}, though the extractor \
+                     found buildings or models on it",
+                    vmaps.display()
+                ));
+            }
+            out.log.push(format!("map {map} has no buildings or models, so it has no vmaps"));
+            for entry in std::fs::read_dir(data_dir.join("vmaps")).map_err(|e| e.to_string())?.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name == vmtree_file(*map) || (name.starts_with(&format!("{prefix}_")) && name.ends_with(".vmtile")) {
+                    std::fs::remove_file(entry.path()).map_err(|e| format!("{name}: {e}"))?;
+                    out.vmaps.push(format!("{name} removed"));
+                }
+            }
+            continue;
         }
         // A tile of this map that the server had and this run did not
         // produce no longer has any buildings. Its old file would name spawns

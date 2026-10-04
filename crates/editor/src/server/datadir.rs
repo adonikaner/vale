@@ -588,8 +588,11 @@ impl Run {
             false => Archive::Staged,
         };
         // The archive is built from the project folder, so the edits on
-        // screen are written there first.
+        // screen are written there first: the tiles, and the tables, since
+        // the extractors find a new map only in the archive's `Map.dbc`.
         session.save_all();
+        session.save_all_tables();
+        repair_project_wdts(session);
         let which = match chosen {
             Some(tiles) => Which::Named {
                 map: session.map.clone(),
@@ -669,6 +672,7 @@ impl Run {
         let request = client_root.map(|client_root| Request {
             client_root,
             tiles: dirty.iter().map(|d| (d.tile, d.reach)).collect(),
+            carried: dirty.iter().filter(|d| d.hash.is_some()).map(|d| d.tile).collect(),
             heights_as_int: datadir::heights_as_int(&self.data_dir, dirty[0].tile.map),
             dll_dirs: self.dll_dirs,
         });
@@ -788,6 +792,29 @@ pub fn regenerate(
         }),
     );
     format!("{label} \u{2014} the bar says which step is running")
+}
+
+/// Give every map WDT the project carries the zero-length `MWMO` a terrain map
+/// ships with, when it lacks one, and write it back. A new map's WDT was
+/// written without it before, and vmangos' extractors skip such a map.
+pub(super) fn repair_project_wdts(session: &mut EditSession) {
+    let maps: Vec<String> = session.maps.iter().map(|(_, name)| name.clone()).collect();
+    for map in maps {
+        let path = vale_edit::wdt::wdt_path(&map);
+        let Some(bytes) = session.project.read(&path) else {
+            continue;
+        };
+        let Ok(mut wdt) = vale_edit::wdt::WdtFile::parse(&bytes) else {
+            continue;
+        };
+        if !wdt.repair_terrain_shape() {
+            continue;
+        }
+        match session.project.write(&path, &wdt.write()) {
+            Ok(_) => info!("server tiles: {path} given the empty MWMO the server's extractors need"),
+            Err(e) => warn!("server tiles: {path}: {e}"),
+        }
+    }
 }
 
 /// `--regenerate`: the Server panel's *Regenerate changed tiles*, from a

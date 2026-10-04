@@ -16,8 +16,8 @@
 //!                        a field of an MCNK chunk
 //!               World    what has a place on the ground and is not the ground:
 //!                        MDDF, MODF, the spheres of Light.dbc, the taxi nodes
-//!                        and paths, and Sweep, whose place is every tile of the
-//!                        map at once
+//!                        and paths, the area triggers, the graveyards, and
+//!                        Sweep, whose place is every tile of the map at once
 //!               Spawns   rows of vmangos' database that stand in the world:
 //!                        creature and gameobject spawns, picked and moved in
 //!                        the viewport
@@ -30,9 +30,10 @@
 //!               rather than started with
 //! ```
 //!
-//! Lights and Taxi edit client tables, but a light's sphere and a taxi node
-//! are picked and dragged in the viewport, so both answer
-//! [`crate::tools::Surface::Inspector`] and are tiles.
+//! Lights, Taxi, Triggers and Graveyards edit client tables, but a light's
+//! sphere, a taxi node, a trigger and a safe place are picked and dragged in
+//! the viewport, so all four answer [`crate::tools::Surface::Inspector`] and
+//! are tiles.
 //!
 //! ## Why the rail is a grid
 //!
@@ -152,6 +153,16 @@ const GROUPS: [(&str, &[Subject]); 3] = [
                 "The taxi network: TaxiNodes, TaxiPath and TaxiPathNode. Nodes and \
                  the paths between them are drawn on the map; drag a node or a \
                  point, add points, connect two nodes, make a node.",
+            ),
+            s(
+                "Triggers",
+                Tool::Triggers,
+                "AreaTrigger.dbc: the spheres and boxes the client reports standing in,                  and what the server does then: a teleport, an inn, a quest objective.                  Drag a trigger, make one, change its shape.",
+            ),
+            s(
+                "Graveyards",
+                Tool::Graveyards,
+                "WorldSafeLocs.dbc: where a released spirit appears. Drag a place, make                  one, and link it to the zones it serves, which are rows in vmangos'                  database.",
             ),
             s(
                 "Sweep",

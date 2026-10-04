@@ -366,10 +366,10 @@ pub const DEFAULT_CLEARANCE: f32 = 40.0;
 
 /// How wide a handle is to the pointer, in logical pixels. The light tool's
 /// width, for the same reason: a point cannot be clicked, a disc can.
-const HANDLE_PIXELS: f32 = 12.0;
+pub(super) const HANDLE_PIXELS: f32 = 12.0;
 
 /// How far the pointer travels before a press on a handle becomes a drag.
-const DRAG_PIXELS: f32 = 4.0;
+pub(super) const DRAG_PIXELS: f32 = 4.0;
 
 /// How far from the camera a node marker is drawn and picked, in yards. A
 /// little past the block the editor streams.
@@ -488,9 +488,9 @@ fn rebuild(
 }
 
 /// The pointer's ray and the numbers that turn a distance off it into pixels.
-struct Aim {
-    origin: Vec3,
-    direction: Vec3,
+pub(super) struct Aim {
+    pub(super) origin: Vec3,
+    pub(super) direction: Vec3,
     /// The projection's `[1][1]`, `1 / tan(fov / 2)`.
     focal: f32,
     /// The window's height in logical pixels.
@@ -500,12 +500,12 @@ struct Aim {
 impl Aim {
     /// How many pixels a distance of `off` yards from the ray is, at `along`
     /// yards down it.
-    fn pixels(&self, off: f32, along: f32) -> f32 {
+    pub(super) fn pixels(&self, off: f32, along: f32) -> f32 {
         off / along * self.focal * self.height * 0.5
     }
 
     /// How far a point is from the ray in pixels, or `None` behind the eye.
-    fn to_point(&self, at: Vec3) -> Option<f32> {
+    pub(super) fn to_point(&self, at: Vec3) -> Option<f32> {
         let to = at - self.origin;
         let along = to.dot(self.direction);
         if along <= 0.0 {
@@ -541,7 +541,7 @@ fn ray_to_segment(origin: Vec3, direction: Vec3, a: Vec3, b: Vec3) -> Option<(f3
     Some((t, (origin + direction * t - on_segment).length()))
 }
 
-fn aim_of(
+pub(super) fn aim_of(
     windows: &Query<&Window>,
     camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) -> Option<Aim> {
@@ -558,7 +558,7 @@ fn aim_of(
 }
 
 /// The eye, in the world's axes.
-fn eye(camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>) -> Option<Vec3> {
+pub(super) fn eye(camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>) -> Option<Vec3> {
     let (_, at) = camera.single().ok()?;
     Some(Vec3::from(axes::to_wow(at.translation())))
 }
@@ -919,7 +919,7 @@ fn finish_draft(session: &mut EditSession, flights: &mut Flightpaths, to: u32) -
 
 /// Where the ray meets the upright plane through `at` that faces the camera
 /// across the ground: the plane a vertical drag moves in.
-fn meets_upright_plane(origin: Vec3, direction: Vec3, at: Vec3) -> Option<Vec3> {
+pub(super) fn meets_upright_plane(origin: Vec3, direction: Vec3, at: Vec3) -> Option<Vec3> {
     let normal = Vec3::new(direction.x, direction.y, 0.0).normalize_or_zero();
     let facing = direction.dot(normal);
     if normal == Vec3::ZERO || facing.abs() < 1e-4 {
@@ -1262,7 +1262,7 @@ fn keys(
 
 /// How wide a marker is drawn, in yards, at a distance: about the handle's
 /// width on screen, clamped.
-fn marker_radius(at: Vec3, eye: Vec3) -> f32 {
+pub(super) fn marker_radius(at: Vec3, eye: Vec3) -> f32 {
     ((at - eye).length() * 0.02).clamp(0.6, 22.0)
 }
 

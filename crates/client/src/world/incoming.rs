@@ -155,6 +155,7 @@ pub struct CapabilityAnswers<'w> {
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct TransferAnswers<'w> {
     pub aborted: MessageWriter<'w, super::areatrigger::TransferAborted>,
+    pub trigger_text: MessageWriter<'w, super::areatrigger::AreaTriggerMessage>,
     pub pending: MessageWriter<'w, crate::glue::loading::TransferPending>,
     pub discovered: MessageWriter<'w, crate::interface::worldmap::Discovered>,
     pub poi: MessageWriter<'w, crate::interface::worldmap::PoiAnswer>,
@@ -868,6 +869,12 @@ pub(crate) fn drain_events(
                 transfer
                     .aborted
                     .write(super::areatrigger::TransferAborted(reason));
+            }
+            // A teleport's refusal text, forwarded to the same module.
+            PlayerEvent::AreaTriggerMessage { text } => {
+                transfer
+                    .trigger_text
+                    .write(super::areatrigger::AreaTriggerMessage(text));
             }
             // The packet that says a transfer is happening. It is forwarded because it
             // arrives on the last frame before the current world is unloaded. See

@@ -1,42 +1,46 @@
-//! **The client half of an instance portal — which is only the refusal.**
+//! The client half of an area trigger: what the server says back.
 //!
-//! Everything else about walking into a dungeon happens without this directory:
-//! the volumes are `vale_assets::tables::areatrigger`, the 100 ms check and the
-//! packet are `vale_protocol::play::areatrigger`'s and they run on the session
-//! thread, and the *success* case is a `SMSG_NEW_WORLD` that moves the character
-//! and the map under it through machinery that has existed for rounds. So the
-//! only thing left for the game layer is the one outcome that has to be *said*.
+//! Everything else about walking into a dungeon happens outside this module.
+//! The volumes are `vale_assets::tables::areatrigger`, the 100 ms test and the
+//! packet are `vale_protocol::play::areatrigger`'s and run on the session
+//! thread, and a teleport that goes ahead is a `SMSG_NEW_WORLD`, which moves
+//! the character and the map through the ordinary transfer path. What is left
+//! for the game layer is the server's answers that have to be shown.
 //!
-//! It earns a module rather than an arm in [`crate::interface::action`] on the same terms
-//! [`crate::interface::timers`] does: what arrives is news about the character's
-//! environment that no button of ours started, and `drain_events` is only the
-//! one reader of the queue it came in on.
+//! It is a module rather than an arm in [`crate::interface::action`] on
+//! [`crate::interface::timers`]' terms: what arrives is news no button of ours
+//! started, and `drain_events` is only the reader of the queue it came on.
 //!
-//! ## Why the refusal matters more than it looks
+//! ## Why the refusal has to be shown
 //!
-//! A dungeon this account has zoned into five times in the last hour answers
-//! `SMSG_TRANSFER_ABORTED` and does nothing else. Without this, that is
-//! **byte-for-byte the same experience as the bug the rest of this subject
-//! fixes**: you walk into the swirl, nothing happens, and there is no unhandled
-//! opcode and no missing reply to find. It is the difference between "portals
-//! are broken" and "you have entered too many instances recently".
+//! A dungeon this account has entered five times in the last hour answers
+//! `SMSG_TRANSFER_ABORTED` and nothing else. Without a message, that looks
+//! the same as a portal that was never reported: the character walks into it
+//! and nothing happens. With it, the player reads "you have entered too many
+//! instances recently".
 //!
-//! ## …and it goes to the chat frame, not `UIErrorsFrame`
+//! ## A teleport's own refusal goes to `UIErrorsFrame`
 //!
-//! That is the reference's own routing rather than a preference.
-//! `SMSG_TRANSFER_ABORTED`'s handler picks one of four `GlobalStrings.lua`
-//! keys and passes it to the client's chat-message output with message class
-//! **10** — its ordinary system output — where the red text at the
-//! top of the screen is a different route entirely. So this uses
-//! [`crate::interface::chat::system_note`], which puts a line in `ChatFrame1` through the
-//! game's own `CHAT_MSG_SYSTEM` arm.
+//! A teleport the character is too low for, or fails the condition of,
+//! answers `SMSG_AREA_TRIGGER_MESSAGE` with the row's text. The 1.12.1 client
+//! raises that text as `UI_INFO_MESSAGE`, the yellow line in `UIErrorsFrame`,
+//! and shows nothing for an empty text. The text is the server's, not a
+//! `GlobalStrings.lua` key, so this module writes [`UiInfoMessage`] itself
+//! rather than through [`crate::interface::messages::UiErrors`], which takes
+//! keys only.
 //!
-//! **One thing is named rather than resolved**: class 10 is taken to be system
-//! output from what it is used for; which `CHAT_MSG_*` name it maps to is not
-//! confirmed.
+//! ## The refusal goes to the chat frame
+//!
+//! The 1.12.1 client shows a transfer refusal as a system line in the chat
+//! frame, not in `UIErrorsFrame`: it passes one of four `GlobalStrings.lua`
+//! keys to its chat output with message class 10, its ordinary system output.
+//! This module uses [`crate::interface::chat::system_note`], which adds a line
+//! to `ChatFrame1` through the game's own `CHAT_MSG_SYSTEM` arm. Which
+//! `CHAT_MSG_*` name class 10 maps to is taken from what it is used for and is
+//! not confirmed.
 
 use crate::interface::chat::system_note;
-use crate::interface::events::ChatMessageReceived;
+use crate::interface::events::{ChatMessageReceived, UiInfoMessage};
 use crate::interface::messages::UiStrings;
 use vale_protocol::play::areatrigger::TransferAbort;
 use bevy::prelude::*;
@@ -47,12 +51,17 @@ use bevy::prelude::*;
 #[derive(Message, Debug, Clone, Copy)]
 pub struct TransferAborted(pub u8);
 
+/// `SMSG_AREA_TRIGGER_MESSAGE`'s text, forwarded the same way.
+#[derive(Message, Debug, Clone)]
+pub struct AreaTriggerMessage(pub String);
+
 pub struct AreaTriggerPlugin;
 
 impl Plugin for AreaTriggerPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<TransferAborted>()
-            .add_systems(Update, announce.in_set(crate::interface::GameSet));
+            .add_message::<AreaTriggerMessage>()
+            .add_systems(Update, (announce, show_refusal_text).in_set(crate::interface::GameSet));
     }
 }
 
@@ -63,17 +72,60 @@ fn announce(
     mut chat: MessageWriter<ChatMessageReceived>,
 ) {
     for TransferAborted(reason) in aborts.read().copied() {
-        // `None` here is the client's own silence — reason 4, and anything
-        // outside 1..=5 — rather than an unhandled case. See `TransferAbort`.
+        // `None` is a reason the 1.12.1 client shows nothing for (4, and
+        // anything outside 1..=5), not an unhandled case. See `TransferAbort`.
         let Some(abort) = TransferAbort::from_code(reason) else {
             continue;
         };
-        // …and a key the shipped file does not carry draws nothing, which is
-        // the rule every other message in this client keeps.
+        // …and a key the shipped file does not carry shows nothing, the rule
+        // every other message in this client keeps.
         let Some(text) = strings.get().and_then(|s| s.get(abort.message_key())) else {
             continue;
         };
         let text = text.to_string();
         system_note(&mut chat, text);
+    }
+}
+
+/// Show a teleport's refusal text as a `UI_INFO_MESSAGE`. An empty text shows
+/// nothing.
+fn show_refusal_text(mut texts: MessageReader<AreaTriggerMessage>, mut info: MessageWriter<UiInfoMessage>) {
+    for AreaTriggerMessage(text) in texts.read() {
+        if text.is_empty() {
+            continue;
+        }
+        info.write(UiInfoMessage(text.clone()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app() -> App {
+        let mut app = App::new();
+        app.add_message::<AreaTriggerMessage>()
+            .add_message::<UiInfoMessage>()
+            .add_systems(Update, show_refusal_text);
+        app
+    }
+
+    fn shown(app: &mut App) -> Vec<String> {
+        app.world_mut()
+            .resource_mut::<Messages<UiInfoMessage>>()
+            .drain()
+            .map(|UiInfoMessage(text)| text)
+            .collect()
+    }
+
+    /// The text reaches `UI_INFO_MESSAGE` unchanged, and an empty one is not
+    /// shown.
+    #[test]
+    fn a_refusal_text_is_a_yellow_line_and_an_empty_one_is_nothing() {
+        let mut app = app();
+        app.world_mut().write_message(AreaTriggerMessage("You must be level 50 to enter.".to_string()));
+        app.world_mut().write_message(AreaTriggerMessage(String::new()));
+        app.update();
+        assert_eq!(shown(&mut app), vec!["You must be level 50 to enter.".to_string()]);
     }
 }

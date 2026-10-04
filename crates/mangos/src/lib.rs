@@ -9,6 +9,15 @@
 //! skills.rs    `skill_line_ability`, the server's copy of
 //!              `SkillLineAbility.dbc`: an edited ability written as a row at
 //!              build 5875, the only build the loader reads
+//! trigger.rs   `areatrigger_template`, the server's copy of `AreaTrigger.dbc`
+//!              written as a row at build 5875 on `taxi_nodes`' terms, and the
+//!              three tables that say what a trigger does: a teleport, an inn,
+//!              a quest's exploration objective. The three are live on reloads
+//! graveyard.rs `game_graveyard_zone`, which safe place serves which zone and
+//!              for which side, live on a reload, and `world_safe_locs_facing`,
+//!              read at startup
+//! map.rs       `map_template`, the server's maps: a new map's row, written at
+//!              patch 0, since the server does not read `Map.dbc`
 //! area.rs      `area_template`, the server's copy of `AreaTable.dbc`: an
 //!              edited or new area written as a row keyed by its entry alone,
 //!              nine columns of the file's 25, read at startup
@@ -108,9 +117,11 @@ pub mod creaturespells;
 pub mod datadir;
 pub mod eventai;
 pub mod gameobject;
+pub mod graveyard;
 pub mod item;
 pub mod lists;
 pub mod loot;
+pub mod map;
 pub mod migration;
 pub mod navmesh;
 pub mod path;
@@ -123,4 +134,5 @@ pub mod spell;
 pub mod sql;
 pub mod taxi;
 pub mod trainer;
+pub mod trigger;
 pub mod vendor;

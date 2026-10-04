@@ -300,15 +300,14 @@ impl WdtFile {
         }
     }
 
-    /// **A map with no tiles at all**, for making one from nothing.
+    /// A map with no tiles at all, for making one from nothing.
     ///
-    /// `MVER` 18, a zeroed 32-byte `MPHD`, and an empty `MAIN` — which is the
-    /// three chunks every 1.12 terrain map opens with and nothing else. There is
-    /// deliberately no `MWMO`: a terrain map ships one with zero length, and
-    /// this is a map with no terrain *yet*, so the honest thing is to write what
-    /// is known and let [`set_tile`] make it a terrain map.
-    ///
-    /// [`set_tile`]: WdtFile::set_tile
+    /// `MVER` 18, a zeroed 32-byte `MPHD`, an empty `MAIN` and a zero-length
+    /// `MWMO`: the shape every 1.12 terrain map ships in. The `MWMO` is
+    /// required, not decoration. vmangos' map and vmap extractors read a WDT
+    /// as `MVER`, `MPHD`, `MAIN` and `MWMO` in that order and skip a map whose
+    /// WDT lacks the last (`WDT_file::prepareLoadedData`), so a new map
+    /// written without it got no server files at all.
     pub fn blank() -> WdtFile {
         WdtFile {
             chunks: vec![
@@ -324,8 +323,33 @@ impl WdtFile {
                     magic: *b"MAIN",
                     data: vec![0u8; MAIN_LEN],
                 },
+                Chunk {
+                    magic: *b"MWMO",
+                    data: Vec::new(),
+                },
             ],
         }
+    }
+
+    /// Give a terrain map the zero-length `MWMO` after `MAIN` that it ships
+    /// with, when it has none; see [`WdtFile::blank`] for why the server's
+    /// tools need it. Returns whether the file changed. A map that is one
+    /// building already has its `MWMO`.
+    pub fn repair_terrain_shape(&mut self) -> bool {
+        if self.chunks.iter().any(|chunk| &chunk.magic == b"MWMO") {
+            return false;
+        }
+        let Some(main) = self.chunks.iter().position(|chunk| &chunk.magic == b"MAIN") else {
+            return false;
+        };
+        self.chunks.insert(
+            main + 1,
+            Chunk {
+                magic: *b"MWMO",
+                data: Vec::new(),
+            },
+        );
+        true
     }
 }
 
@@ -347,6 +371,24 @@ pub fn wdt_path(map: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A new map carries the four chunks a shipped terrain map does, in the
+    /// order vmangos' extractors read them, and an older file without `MWMO`
+    /// is given one after `MAIN`.
+    #[test]
+    fn a_terrain_map_carries_an_empty_mwmo_after_main() {
+        let order = |wdt: &WdtFile| wdt.chunks.iter().map(|chunk| chunk.magic).collect::<Vec<_>>();
+        let blank = WdtFile::blank();
+        assert_eq!(order(&blank), vec![*b"MVER", *b"MPHD", *b"MAIN", *b"MWMO"]);
+        assert!(blank.chunks[3].data.is_empty());
+
+        let mut old = WdtFile::blank();
+        old.chunks.pop();
+        assert!(old.repair_terrain_shape());
+        assert_eq!(order(&old), order(&blank));
+        assert!(!old.repair_terrain_shape(), "a second repair changes nothing");
+        assert_eq!(WdtFile::parse(&old.write()).unwrap(), old);
+    }
 
     /// A map made one building reads back as one through the reader the
     /// renderer uses, and made terrain again it is the terrain shape.

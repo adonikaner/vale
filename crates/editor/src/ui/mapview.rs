@@ -6,7 +6,7 @@
 //! and that could not create a tile. `crate::pick::Cursor`'s `ground` is
 //! `None` "off the map, over a hole, or over a tile that is not open", so over
 //! a tile that does not exist there is no pointer position, the panel had no
-//! tile to name, and **Create** could never run.
+//! tile to name, and Create could never run.
 //!
 //! It also required the user to fly to where no tile exists, in a viewport
 //! that draws nothing there: no landmark, no ground, and no way to tell 33,48
@@ -20,7 +20,7 @@
 //! ## All tile operations are in this window
 //!
 //! Creating ground, deleting it, copying it, and the three files derived from
-//! a tile are all here. They were first a **Tiles** row on the rail with its
+//! a tile are all here. They were first a Tiles row on the rail with its
 //! own panel, which was wrong for two reasons: the rail lists what the pointer
 //! edits, and none of these operations uses the pointer; and the split left
 //! the map choosing the tiles while a panel elsewhere acted on them. After a
@@ -28,6 +28,15 @@
 //! is. The rail lost the row and the top bar gained a button, because which
 //! tiles this map has is a fact about the session, and the top bar holds
 //! session facts.
+//!
+//! ## Making a new map
+//!
+//! New map… opens a form for a map that does not exist yet: its folder,
+//! name, kind and loading screen. Making it writes a `Map.dbc` row, a WDT with
+//! no tiles and the server's `map_template` row, and opens the map, so the
+//! next step is Create on an empty grid. The form is here because the first
+//! thing a new map needs is tiles, and this window is where they are made.
+//! See [`crate::tools::maps`].
 //!
 //! ## Every operation works on the selection
 //!
@@ -41,9 +50,9 @@
 //! Azeroth claims about 700 of the 4,096 slots, in a region twenty tiles wide.
 //! Drawn as the whole grid, that region was a small patch in the middle of a
 //! window of cells that looked like background, and nothing on screen
-//! identified the rows. The **fit** zoom, which the window opens on, frames
+//! identified the rows. The fit zoom, which the window opens on, frames
 //! the claimed tiles with one empty ring around them, at whatever cell size
-//! fills the window. **far**, **mid** and **near** show the whole grid at
+//! fills the window. far, mid and near show the whole grid at
 //! three sizes, for making ground where the map has none. Rulers along the top
 //! and left name the columns and rows at every zoom, and at every zoom except
 //! the smallest each cell has its edge drawn.
@@ -104,11 +113,11 @@ pub struct MapView {
     pub selection: HashSet<(u32, u32)>,
     /// Where a box-drag began, while one is in progress.
     drag_from: Option<(u32, u32)>,
-    /// The tiles the last **Copy** took, in the coordinates they were taken
+    /// The tiles the last Copy took, in the coordinates they were taken
     /// from.
     ///
     /// A set rather than one tile, so a region can be moved as a region. What
-    /// **Paste** does with it depends on how many tiles it holds:
+    /// Paste does with it depends on how many tiles it holds:
     ///
     /// * one tile fills every selected slot, which lays the same ground over,
     ///   for example, a nine-tile square;
@@ -214,6 +223,9 @@ pub enum Asked {
     ChooseImport,
     /// Import the picture chosen, as the dialog was left.
     Import,
+    /// Make the map the form in `Tiles::new_map` describes. See
+    /// `crate::tools::maps`.
+    NewMap,
     /// Make the map one building, the WMO in `Tiles::building_path`.
     MakeBuilding,
     /// …or terrain again.
@@ -372,7 +384,7 @@ fn contents(
 
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        // **Create** is enabled by empty slots in the selection and **Delete**
+        // Create is enabled by empty slots in the selection and Delete
         // by existing tiles, so each button is enabled only when it has
         // something to act on, and neither silently does nothing.
         let (exist, absent) = view.split(session);
@@ -433,8 +445,21 @@ fn contents(
             {
                 view.selection.clear();
             }
+            if ui
+                .button("New map\u{2026}")
+                .on_hover_text(
+                    "A map that does not exist yet: a Map.dbc row, a WDT with no tiles and \
+                     the server's map_template row. It opens empty, for Create.",
+                )
+                .clicked()
+            {
+                tiles.new_map = Some(crate::tools::maps::Form::default());
+            }
         });
     });
+    if let Some(choice) = new_map_dialog(ui.ctx(), session, tiles) {
+        asked = Some(choice);
+    }
 
     ui.add_space(4.0);
     theme::note(
@@ -936,6 +961,91 @@ fn foot_panel(
     if !tiles.said.is_empty() {
         ui.add_space(2.0);
         theme::note(ui, tiles.said.clone());
+    }
+    asked
+}
+
+/// The New map form. Answers `NewMap` when Make is pressed with nothing
+/// wrong; Cancel drops the form.
+fn new_map_dialog(ctx: &egui::Context, session: &EditSession, tiles: &mut crate::tools::tiles::Tiles) -> Option<Asked> {
+    use vale_assets::tables::map::INSTANCE_TYPES;
+    let form = tiles.new_map.as_mut()?;
+    let mut asked = None;
+    let mut close = false;
+    let response = egui::Modal::new(egui::Id::new("map-new")).show(ctx, |ui| {
+        ui.set_width(420.0);
+        ui.label(egui::RichText::new("New map").strong().size(14.0));
+        ui.add_space(4.0);
+        theme::row(ui, "folder", |ui| {
+            ui.text_edit_singleline(&mut form.directory).on_hover_text(
+                "World\\Maps\\<folder>\\, and the start of every tile's file name. Letters, \
+                 digits and underscores, starting with a letter.",
+            );
+        });
+        theme::row(ui, "name", |ui| {
+            ui.text_edit_singleline(&mut form.name)
+                .on_hover_text("The name the loading screen and the server show.");
+        });
+        theme::row(ui, "kind", |ui| {
+            egui::ComboBox::from_id_salt("map-new-kind")
+                .selected_text(
+                    INSTANCE_TYPES
+                        .iter()
+                        .find(|(value, _)| *value == form.instance_type)
+                        .map_or("?", |(_, name)| *name),
+                )
+                .show_ui(ui, |ui| {
+                    for (value, name) in INSTANCE_TYPES {
+                        ui.selectable_value(&mut form.instance_type, value, name);
+                    }
+                });
+        });
+        if form.instance_type != 0 {
+            theme::row(ui, "players", |ui| {
+                ui.add(egui::DragValue::new(&mut form.max_players).range(0..=40))
+                    .on_hover_text("How many characters one instance holds.");
+            });
+        }
+        let mut own_screen = form.loading_screen.is_some();
+        theme::row(ui, "loading screen", |ui| {
+            ui.checkbox(&mut own_screen, "its own")
+                .on_hover_text("Off, the map takes the open map's loading screen.");
+            if own_screen {
+                let screen = form.loading_screen.get_or_insert(0);
+                ui.add(egui::DragValue::new(screen).speed(0.2))
+                    .on_hover_text("A LoadingScreens row.");
+            }
+        });
+        if !own_screen {
+            form.loading_screen = None;
+        }
+        ui.checkbox(&mut form.zone, "Make a zone on it")
+            .on_hover_text(
+                "An AreaTable zone named after the map, which the map's row names as its \
+                 area. Paint it onto the ground with the Areas tool.",
+            );
+        ui.checkbox(&mut form.open_it, "Open it");
+        let problem = form.problem(&session.maps);
+        if let Some(why) = &problem {
+            ui.label(egui::RichText::new(why).size(theme::SMALL).color(theme::WARN));
+        }
+        theme::note(
+            ui,
+            "The server needs the map's tiles extracted (Server files) and a restart \
+             before a character can stand on it.",
+        );
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if ui.add_enabled(problem.is_none(), egui::Button::new("Make")).clicked() {
+                asked = Some(Asked::NewMap);
+            }
+            if ui.button("Cancel").clicked() {
+                close = true;
+            }
+        });
+    });
+    if close || response.should_close() {
+        tiles.new_map = None;
     }
     asked
 }

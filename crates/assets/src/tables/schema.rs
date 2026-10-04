@@ -229,6 +229,11 @@ pub fn for_table(name: &str) -> Option<&'static Schema> {
 ///
 /// `AreaTable` stands alone too: an area refers to its `Map`, to the zone
 /// that encloses it in the same table, and to the sound and music tables.
+///
+/// The place group: `Map`, the maps themselves; `AreaTrigger`, the volumes a
+/// character reports standing in; and `WorldSafeLocs`, the places a spirit
+/// appears. The last two refer to `Map`, and `Map` refers to `AreaTable` and
+/// `LoadingScreens`.
 pub const ALL: &[&Schema] = &[
     &SPELL,
     &SPELL_VISUAL,
@@ -260,6 +265,9 @@ pub const ALL: &[&Schema] = &[
     &SKILL_RACE_CLASS_INFO,
     &ITEM_SET,
     &AREA_TABLE,
+    &MAP,
+    &AREA_TRIGGER,
+    &WORLD_SAFE_LOCS,
 ];
 
 /// Every file in 1.12.1's `DBFilesClient\`, by bare name: 158 of them, four
@@ -774,8 +782,8 @@ pub const SPELL_VISUAL_KIT: Schema = Schema {
     ],
 };
 
-/// The values the four procedural slots take. Each was traced into the
-/// client's jump table; see `tables::spell`.
+/// The values the four procedural slots take, each as the 1.12.1 client acts
+/// on it; see `tables::spell`.
 const CHAR_PROCS: &[(u32, &str)] = &[
     (0, "Chain effect"),
     (1, "Model colour"),
@@ -867,8 +875,8 @@ const SPELL_VISUAL_KIT_COLUMNS: [Column; 35] = [
         "CharParamZero 1",
         Kind::Float,
         "For the falling-impact procedural this is an index, held as a float, \
-         into the client's own seven-model table — which is in no \
-         file.",
+         into a list of seven models the client holds, which no file \
+         carries.",
     ),
     c(20, "CharParamZero 2", Kind::Float),
     c(21, "CharParamZero 3", Kind::Float),
@@ -2363,9 +2371,210 @@ const AREA_TABLE_COLUMNS: [Column; 25] = [
     ),
 ];
 
+/// `Map.dbc`: 44 rows of 42 fields. The indices are those of
+/// [`super::map::fields`]. The counts in each column's note are measured over
+/// the shipped file.
+pub const MAP: Schema = Schema {
+    table: "Map",
+    columns: &MAP_COLUMNS,
+    sections: &[
+        Section {
+            name: "Map",
+            fields: &[0, 1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 2, 3, 19, 38],
+        },
+        Section {
+            name: "Players",
+            fields: &[13, 14, 15],
+        },
+        Section {
+            name: "Descriptions",
+            fields: &[
+                20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
+            ],
+        },
+        Section {
+            name: "Other",
+            fields: &[16, 17, 18, 39, 40, 41],
+        },
+    ],
+};
+
+/// What field 2 of `Map.dbc` holds; see [`super::map::INSTANCE_TYPES`].
+pub const MAP_INSTANCE_TYPES: [(u32, &str); 4] = super::map::INSTANCE_TYPES;
+
+const MAP_COLUMNS: [Column; 42] = [
+    c(0, "Id", Kind::Id),
+    ca(
+        1,
+        "Directory",
+        Kind::Text,
+        "The folder under World\\Maps\\ that holds the map's WDT, and the prefix of \
+         every tile's file name. Changing it on a shipped map points the map at \
+         files that do not exist.",
+    ),
+    ca(
+        2,
+        "InstanceType",
+        Kind::Enum(&MAP_INSTANCE_TYPES),
+        "11 shipped rows are world maps, 22 dungeons, 8 raids and 3 battlegrounds.",
+    ),
+    ca(3, "PvP", Kind::Bool, "1 on 4 of the 44 shipped rows."),
+    c(4, "Name", Kind::Text),
+    c(5, "Name koKR", Kind::Locale(LOCALES[1])),
+    c(6, "Name frFR", Kind::Locale(LOCALES[2])),
+    c(7, "Name deDE", Kind::Locale(LOCALES[3])),
+    c(8, "Name enCN", Kind::Locale(LOCALES[4])),
+    c(9, "Name enTW", Kind::Locale(LOCALES[5])),
+    c(10, "Name esES", Kind::Locale(LOCALES[6])),
+    c(11, "Name esMX", Kind::Locale(LOCALES[7])),
+    c(12, "NameFlags", Kind::LocaleFlags),
+    ca(13, "MinLevel", Kind::Int, "Set on 4 shipped rows, 0 on the rest."),
+    ca(14, "MaxLevel", Kind::Int, "Set on 4 shipped rows, 0 on the rest."),
+    ca(15, "MaxPlayers", Kind::Int, "Set on 4 shipped rows, 0 on the rest."),
+    ca(
+        16,
+        "Field16",
+        Kind::Signed,
+        "-1 on 41 of the 44 shipped rows and 0 on the other three. No reader is known.",
+    ),
+    ca(
+        17,
+        "Field17",
+        Kind::Float,
+        "0 on 42 shipped rows; 0.74 on Alterac Valley and -5409 on one other. No reader is known.",
+    ),
+    ca(
+        18,
+        "Field18",
+        Kind::Float,
+        "0 on 42 shipped rows; 0.34 on Alterac Valley and -2884 on one other. No reader is known.",
+    ),
+    ca(
+        19,
+        "Area",
+        Kind::Reference("AreaTable"),
+        "The area the map belongs to. 0 on 20 shipped rows. vmangos keeps its own \
+         copy as map_template.linked_zone.",
+    ),
+    c(20, "Description 0", Kind::Text),
+    c(21, "Description 0 koKR", Kind::Locale(LOCALES[1])),
+    c(22, "Description 0 frFR", Kind::Locale(LOCALES[2])),
+    c(23, "Description 0 deDE", Kind::Locale(LOCALES[3])),
+    c(24, "Description 0 enCN", Kind::Locale(LOCALES[4])),
+    c(25, "Description 0 enTW", Kind::Locale(LOCALES[5])),
+    c(26, "Description 0 esES", Kind::Locale(LOCALES[6])),
+    c(27, "Description 0 esMX", Kind::Locale(LOCALES[7])),
+    c(28, "Description 0 Flags", Kind::LocaleFlags),
+    c(29, "Description 1", Kind::Text),
+    c(30, "Description 1 koKR", Kind::Locale(LOCALES[1])),
+    c(31, "Description 1 frFR", Kind::Locale(LOCALES[2])),
+    c(32, "Description 1 deDE", Kind::Locale(LOCALES[3])),
+    c(33, "Description 1 enCN", Kind::Locale(LOCALES[4])),
+    c(34, "Description 1 enTW", Kind::Locale(LOCALES[5])),
+    c(35, "Description 1 esES", Kind::Locale(LOCALES[6])),
+    c(36, "Description 1 esMX", Kind::Locale(LOCALES[7])),
+    c(37, "Description 1 Flags", Kind::LocaleFlags),
+    ca(
+        38,
+        "LoadingScreen",
+        Kind::Reference("LoadingScreens"),
+        "The picture shown while the map loads; vale loading traces the join.",
+    ),
+    ca(39, "Field39", Kind::Int, "0 on 42 shipped rows and 10 on two. No reader is known."),
+    ca(40, "Field40", Kind::Int, "1 on 43 shipped rows and 0 on Alterac Valley. No reader is known."),
+    ca(41, "Field41", Kind::Float, "1.0 on 43 shipped rows and 1.25 on one. No reader is known."),
+];
+
+/// `AreaTrigger.dbc`: 432 rows of 10 fields. The indices are those of
+/// [`super::areatrigger::fields`].
+pub const AREA_TRIGGER: Schema = Schema {
+    table: "AreaTrigger",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        c(1, "Map", Kind::Reference("Map")),
+        ca(2, "X", Kind::Float, "North, in yards: the volume's centre."),
+        ca(3, "Y", Kind::Float, "West, in yards."),
+        ca(4, "Z", Kind::Float, "Up, in yards."),
+        ca(
+            5,
+            "Radius",
+            Kind::Float,
+            "Above 0, the volume is a sphere of this radius and the box fields are 0. \
+             352 of the 432 shipped rows are spheres.",
+        ),
+        ca(6, "BoxLength", Kind::Float, "The box's whole length along its own x, not half."),
+        ca(7, "BoxWidth", Kind::Float, "The box's whole width along its own y."),
+        ca(8, "BoxHeight", Kind::Float, "The box's whole height."),
+        ca(9, "BoxYaw", Kind::Float, "Radians about up, turning the box's own x from north."),
+    ],
+    sections: &[Section {
+        name: "Volume",
+        fields: &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    }],
+};
+
+/// `WorldSafeLocs.dbc`: 122 rows of 14 fields. The indices are those of
+/// [`super::safeloc::fields`].
+pub const WORLD_SAFE_LOCS: Schema = Schema {
+    table: "WorldSafeLocs",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        c(1, "Map", Kind::Reference("Map")),
+        ca(2, "X", Kind::Float, "North, in yards: where the spirit appears."),
+        ca(3, "Y", Kind::Float, "West, in yards."),
+        ca(4, "Z", Kind::Float, "Up, in yards."),
+        c(5, "Name", Kind::Text),
+        c(6, "Name koKR", Kind::Locale(LOCALES[1])),
+        c(7, "Name frFR", Kind::Locale(LOCALES[2])),
+        c(8, "Name deDE", Kind::Locale(LOCALES[3])),
+        c(9, "Name enCN", Kind::Locale(LOCALES[4])),
+        c(10, "Name enTW", Kind::Locale(LOCALES[5])),
+        c(11, "Name esES", Kind::Locale(LOCALES[6])),
+        c(12, "Name esMX", Kind::Locale(LOCALES[7])),
+        c(13, "NameFlags", Kind::LocaleFlags),
+    ],
+    sections: &[
+        Section {
+            name: "Place",
+            fields: &[0, 1, 2, 3, 4],
+        },
+        Section {
+            name: "Name",
+            fields: &[5, 6, 7, 8, 9, 10, 11, 12, 13],
+        },
+    ],
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The three place schemas are the width their files are, put each field in
+    /// exactly one section, and name the fields their modules read.
+    #[test]
+    fn the_place_schemas_agree_with_the_modules_that_read_them() {
+        use super::super::{areatrigger::fields as at, map::fields as mf, safeloc::fields as sf};
+        for (schema, count) in [(&MAP, mf::COUNT), (&AREA_TRIGGER, at::COUNT), (&WORLD_SAFE_LOCS, sf::COUNT)] {
+            assert_eq!(schema.columns.len(), count, "{}", schema.table);
+            for (n, column) in schema.columns.iter().enumerate() {
+                assert_eq!(column.field, n, "{}.{}", schema.table, column.name);
+            }
+            let mut drawn: Vec<usize> = schema
+                .sections
+                .iter()
+                .flat_map(|section| section.fields.iter().copied())
+                .collect();
+            drawn.sort_unstable();
+            assert_eq!(drawn, (0..count).collect::<Vec<_>>(), "{}", schema.table);
+        }
+        assert_eq!(MAP.columns[mf::DIRECTORY].name, "Directory");
+        assert_eq!(MAP.columns[mf::AREA].kind, Kind::Reference("AreaTable"));
+        assert_eq!(MAP.columns[mf::LOADING_SCREEN].kind, Kind::Reference("LoadingScreens"));
+        assert_eq!(AREA_TRIGGER.columns[at::RADIUS].name, "Radius");
+        assert_eq!(AREA_TRIGGER.columns[at::BOX_YAW].name, "BoxYaw");
+        assert_eq!(WORLD_SAFE_LOCS.columns[sf::NAME].kind, Kind::Text);
+        assert!(for_table("worldsafelocs").is_some());
+    }
 
     /// The area schema is the width the file is and names the fields
     /// `tables::area` reads, so a form and the reader cannot drift apart.
@@ -2734,7 +2943,7 @@ mod tests {
         const UNDESCRIBED: [&str; 10] = [
             "Faction",
             "LiquidType",
-            "Map",
+            "LoadingScreens",
             "SkillCostsData",
             "SkillLineCategory",
             "SkillTiers",

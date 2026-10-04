@@ -52,6 +52,9 @@
 //! channels.rs   the six chat channels everybody is in, and which of them where
 //! wmoarea.rs    where the character is when that is inside a building
 //! areatrigger.rs the 432 volumes a character is reported standing in
+//! safeloc.rs    WorldSafeLocs: the places a dead character's spirit appears
+//! map.rs        Map: the maps by id, the folder each one's files are in, and
+//!               what a new one's folder may be called
 //! taxi.rs       the flight map, which is all arithmetic
 //! worldmap.rs   which parchment the world map shows, plus <continent>.zmp
 //! areapoi.rs    the flags drawn on that parchment, gated on exploration
@@ -87,6 +90,7 @@ pub mod itemsound;
 pub mod light;
 pub mod loading;
 pub mod lock;
+pub mod map;
 pub mod minimap;
 pub mod questmark;
 pub mod questsort;
@@ -96,6 +100,7 @@ pub mod pagetext;
 pub mod repair;
 pub mod shiptransport;
 pub mod resistances;
+pub mod safeloc;
 pub mod skills;
 pub mod sound;
 pub mod schema;
