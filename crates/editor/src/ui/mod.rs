@@ -957,6 +957,7 @@ fn draw(
         &minimaps,
         &mut editing.tiles,
         camera_tile,
+        &assets.loading_screens(),
     );
     if asked.is_some() {
         editing.tiles.asked = asked;

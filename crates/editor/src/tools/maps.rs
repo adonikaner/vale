@@ -39,6 +39,8 @@ pub struct Form {
     pub max_players: u32,
     /// A `LoadingScreens` row, or `None` for the open map's.
     pub loading_screen: Option<u32>,
+    /// Whether the form is showing the loading screen pictures to choose from.
+    pub choosing_screen: bool,
     /// Make a zone on the new map, named after it.
     pub zone: bool,
     /// Open the new map once it is made.
@@ -53,6 +55,7 @@ impl Default for Form {
             instance_type: 0,
             max_players: 0,
             loading_screen: None,
+            choosing_screen: false,
             zone: true,
             open_it: true,
         }

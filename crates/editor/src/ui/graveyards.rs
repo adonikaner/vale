@@ -71,7 +71,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
                 .button("Server\u{2026}")
                 .on_hover_text(
                     "Opens the Server panel. Client tables copies WorldSafeLocs.dbc into \
-                     DataDir\\5875\\dbc; Triggers, graveyards and maps writes the links and \
+                     DataDir\\5875\\dbc; Graveyards writes the links and \
                      facings.",
                 )
                 .clicked()

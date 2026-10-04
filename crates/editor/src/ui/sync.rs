@@ -269,17 +269,19 @@ pub enum Half {
     /// A creature's events, scripts and spell lists, reached from a selected
     /// creature's Events and Spells windows.
     Behaviour,
-    /// What area triggers do, which safe place serves which zone, and a new
-    /// map's server row, reached from the Triggers and Graveyards tools and
-    /// the top bar's New map.
-    Places,
+    /// A new map's `map_template` row, made by the map window's New map.
+    Maps,
+    /// What area triggers do, from the Triggers tool.
+    Triggers,
+    /// Which safe place serves which zone, from the Graveyards tool.
+    Graveyards,
 }
 
 /// The number of subjects. [`Standings`] holds one answer for each.
-pub const HALVES: usize = 9;
+pub const HALVES: usize = 11;
 
 impl Half {
-    pub const ALL: [Half; 9] = [
+    pub const ALL: [Half; 11] = [
         Half::Tables,
         Half::Creatures,
         Half::GameObjects,
@@ -288,7 +290,9 @@ impl Half {
         Half::Loot,
         Half::Services,
         Half::Behaviour,
-        Half::Places,
+        Half::Maps,
+        Half::Triggers,
+        Half::Graveyards,
     ];
 
     /// The subject's name, in the rail's wording.
@@ -302,7 +306,9 @@ impl Half {
             Half::Loot => "Loot",
             Half::Services => "Vendors and trainers",
             Half::Behaviour => "Behaviour",
-            Half::Places => "Triggers, graveyards and maps",
+            Half::Maps => "Maps",
+            Half::Triggers => "Area triggers",
+            Half::Graveyards => "Graveyards",
         }
     }
 
@@ -318,7 +324,9 @@ impl Half {
             Half::Loot => "the nine *_loot_template tables",
             Half::Services => "npc_vendor, npc_vendor_template, npc_trainer, npc_trainer_template",
             Half::Behaviour => "creature_ai_events, creature_spells, broadcast_text, and the eleven *_scripts tables",
-            Half::Places => "areatrigger_template (label, script, condition, cooldown), areatrigger_teleport, areatrigger_tavern, areatrigger_involvedrelation, areatrigger_bg_entrance, game_graveyard_zone, world_safe_locs_facing, map_template",
+            Half::Maps => "map_template",
+            Half::Triggers => "areatrigger_template (label, script, condition, cooldown), areatrigger_teleport, areatrigger_tavern, areatrigger_involvedrelation, areatrigger_bg_entrance",
+            Half::Graveyards => "game_graveyard_zone, world_safe_locs_facing",
         }
     }
 
@@ -333,7 +341,7 @@ impl Half {
             Half::Loot => loot::SQL_VPATH,
             Half::Services => services::SQL_VPATH,
             Half::Behaviour => behaviour::SQL_VPATH,
-            Half::Places => places::SQL_VPATH,
+            Half::Maps | Half::Triggers | Half::Graveyards => self.group().map_or("", places::Group::sql_vpath),
         }
     }
 
@@ -349,7 +357,7 @@ impl Half {
             Half::Loot => loot::REVERT_VPATH,
             Half::Services => services::REVERT_VPATH,
             Half::Behaviour => behaviour::REVERT_VPATH,
-            Half::Places => places::REVERT_VPATH,
+            Half::Maps | Half::Triggers | Half::Graveyards => self.group().map_or("", places::Group::revert_vpath),
         }
     }
 
@@ -419,15 +427,26 @@ impl Half {
                  their own names; the other six and broadcast_text are read at start, so a \
                  change to one of those needs a restart."
             }
-            Half::Places => {
-                "Live on `.reload map_template`, `.reload areatrigger_teleport`, \
-                 `.reload areatrigger_tavern`, `.reload areatrigger_involvedrelation` and \
-                 `.reload game_graveyard_zone`, which an apply sends when it is made with the \
-                 panels open over a playtest \u{2014} removals included. Applied at any other \
-                 time, it is live after a restart. areatrigger_template, \
-                 areatrigger_bg_entrance and world_safe_locs_facing have no reload, and a new \
-                 map needs a restart before the server opens its grids. A trigger's volume \
-                 and a safe place are client tables, applied by Client tables above."
+            Half::Maps => {
+                "Read on `.reload map_template`, which an apply sends when it is made with the \
+                 panels open over a playtest, but the server opens a map's grids at startup, \
+                 so a new map needs a restart before anything can stand on it. The map's \
+                 Map.dbc row is a client table, applied by Client tables above, and its \
+                 terrain reaches the server through Server files on the map window."
+            }
+            Half::Triggers => {
+                "Live on `.reload areatrigger_teleport`, `.reload areatrigger_tavern` and \
+                 `.reload areatrigger_involvedrelation`, which an apply sends when it is made \
+                 with the panels open over a playtest \u{2014} removals included. Applied at any \
+                 other time, it is live after a restart. The template's columns and \
+                 areatrigger_bg_entrance have no reload and need a restart. A trigger's \
+                 volume is a client table, applied by Client tables above."
+            }
+            Half::Graveyards => {
+                "Live on `.reload game_graveyard_zone`, which an apply sends when it is made \
+                 with the panels open over a playtest \u{2014} removals included. \
+                 world_safe_locs_facing has no reload and needs a restart. A safe place is a \
+                 client table, applied by Client tables above."
             }
         }
     }
@@ -438,7 +457,7 @@ impl Half {
     /// last subject in the stack, which has nothing below it.
     pub fn order_note(self) -> &'static str {
         match self.subject() {
-            None | Some(stack::Subject::Places) => "",
+            None | Some(stack::Subject::Graveyards) => "",
             Some(_) => {
                 " Applied subjects below this one are put back first and applied again \
                  after, because this one's statements can move their rows."
@@ -458,8 +477,15 @@ impl Half {
             Half::Loot => Some(stack::Subject::Loot),
             Half::Services => Some(stack::Subject::Services),
             Half::Behaviour => Some(stack::Subject::Behaviour),
-            Half::Places => Some(stack::Subject::Places),
+            Half::Maps => Some(stack::Subject::Maps),
+            Half::Triggers => Some(stack::Subject::Triggers),
+            Half::Graveyards => Some(stack::Subject::Graveyards),
         }
+    }
+
+    /// The `places` group behind the three blocks that module writes.
+    pub fn group(self) -> Option<places::Group> {
+        self.subject().and_then(stack::Subject::group)
     }
 
     /// Whether this subject's claim is a store of rows, which Discard can give
@@ -684,9 +710,10 @@ pub fn standing(half: Half, session: &EditSession, assets: &GameAssets) -> Stand
                 unsaved: false,
             }
         }
-        Half::Places => {
-            let plan = places::plan(session);
-            let on_server = places::OnTheServer::read_with(session, &plan);
+        Half::Maps | Half::Triggers | Half::Graveyards => {
+            let group = half.group().unwrap_or(places::Group::Maps);
+            let plan = places::plan(session, group);
+            let on_server = places::OnTheServer::read_with(session, &plan, group);
             Standing {
                 changed: plan.rows.len(),
                 outstanding: plan
@@ -790,9 +817,11 @@ pub fn save(half: Half, work: &mut Work<'_>) {
             creatures::save(work.session);
             behaviour::save(work.session);
         }
-        Half::Places => {
+        Half::Maps | Half::Triggers | Half::Graveyards => {
             creatures::save(work.session);
-            places::save(work.session);
+            if let Some(group) = half.group() {
+                places::save_group(work.session, group);
+            }
         }
     }
 }

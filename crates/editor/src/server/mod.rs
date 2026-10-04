@@ -31,11 +31,11 @@
 //!                eleven *_scripts tables as whole scripts under an id, since a
 //!                script row has no key; live on a reload of the events, the
 //!                lists and five of the script tables
-//! places.rs      what area triggers do (their template's script columns,
-//!                teleports, inns, quest objectives, battleground entrances),
-//!                which safe place serves which zone, and a new map's
-//!                map_template row; live on five reloads, the rest after a
-//!                restart
+//! places.rs      three row subjects over one set of row rules: maps (a new
+//!                map's map_template row), area triggers (their template's
+//!                script columns, teleports, inns, quest objectives,
+//!                battleground entrances) and graveyards (which safe place
+//!                serves which zone, and its facing)
 //! fresh.rs       keeping what was read from the database no longer than it
 //!                is true: one counter every apply and put back moves, a cache
 //!                that empties when it does, and the test that every read checks
@@ -46,7 +46,7 @@
 //!                before is put back, then each row is read, its undo kept and
 //!                its statements run, so the database always holds what it
 //!                held before plus what the project says now
-//! stack.rs       the order the eight row subjects stand in the database: to
+//! stack.rs       the order the ten row subjects stand in the database: to
 //!                apply or put back one, every applied subject after it is put
 //!                back first and applied again after, so each revert file runs
 //!                against the database it was read from

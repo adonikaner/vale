@@ -330,8 +330,9 @@ pub struct EditSession {
     pub applied_behaviour: Option<u64>,
     /// …and for what creatures sell and teach. See `crate::server::services`.
     pub applied_services: Option<u64>,
-    /// …and of [`crate::server::places`].
-    pub applied_places: Option<u64>,
+    /// …and of the three subjects of [`crate::server::places`], by
+    /// `places::Group::index`: maps, area triggers, graveyards.
+    pub applied_places: [Option<u64>; 3],
     /// How many times this session has written the world database, applying
     /// or putting back any subject, or pointed at a different database. Every
     /// cache of what the database holds is keyed on it; see
@@ -431,7 +432,7 @@ impl EditSession {
             applied_loot: None,
             applied_behaviour: None,
             applied_services: None,
-            applied_places: None,
+            applied_places: [None; 3],
             database_writes: 0,
             one_gesture: None,
             shipped: None,
@@ -625,7 +626,7 @@ impl EditSession {
         self.applied_loot = None;
         self.applied_behaviour = None;
         self.applied_services = None;
-        self.applied_places = None;
+        self.applied_places = [None; 3];
         // Every path the overlay answers now comes out of a different folder.
         self.republished_all = true;
         self.tables_republished = true;
@@ -2169,7 +2170,7 @@ fn open(
         applied_loot: None,
         applied_behaviour: None,
         applied_services: None,
-        applied_places: None,
+        applied_places: [None; 3],
         database_writes: 0,
         one_gesture: None,
         shipped: Some(shipped),

@@ -77,7 +77,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
                 .button("Server\u{2026}")
                 .on_hover_text(
                     "Opens the Server panel. Client tables writes each changed trigger as an \
-                     areatrigger_template row; Triggers, graveyards and maps writes what \
+                     areatrigger_template row; Area triggers writes what \
                      the triggers do.",
                 )
                 .clicked()
@@ -394,7 +394,7 @@ fn server_half(
     // What Apply would skip for this trigger, with the reason, since a skipped
     // row is otherwise only a line on the Server panel.
     let mine = [format!("id={id};"), format!("id={id} ")];
-    let refused: Vec<String> = crate::server::places::plan(session)
+    let refused: Vec<String> = crate::server::places::plan(session, crate::server::places::Group::Triggers)
         .refused
         .into_iter()
         .filter(|line| mine.iter().any(|key| line.contains(key.as_str())))

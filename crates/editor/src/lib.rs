@@ -170,6 +170,15 @@ pub fn run() {
     if args.show_map {
         app.insert_resource(ui::mapview::MapView::opened());
     }
+    if args.new_map {
+        app.insert_resource(tools::tiles::Tiles {
+            new_map: Some(tools::maps::Form {
+                choosing_screen: true,
+                ..tools::maps::Form::default()
+            }),
+            ..tools::tiles::Tiles::default()
+        });
+    }
     if args.navmesh {
         app.insert_resource(navmesh::Navmesh::shown());
     }
@@ -434,6 +443,9 @@ pub struct Args {
     /// it is the one part of the chrome `--shot` cannot photograph, and its
     /// layout goes unchecked. See [`shot`].
     pub show_map: bool,
+    /// `--new-map`: the map window with its New map form open on the loading
+    /// screen pictures, for the same reason as `--tiles`.
+    pub new_map: bool,
     /// `--navmesh`: start with the server's navmesh drawn over the ground,
     /// which is otherwise the view bar's NAV button. See [`navmesh`].
     pub navmesh: bool,
@@ -922,6 +934,7 @@ impl Default for Args {
             projects: false,
             doom: None,
             show_map: false,
+            new_map: false,
             navmesh: false,
             shot: None,
             after: None,
@@ -1051,6 +1064,10 @@ impl Args {
                     parsed.projects = true;
                 }
                 "--tiles" => parsed.show_map = true,
+                "--new-map" => {
+                    parsed.show_map = true;
+                    parsed.new_map = true;
+                }
                 "--navmesh" => parsed.navmesh = true,
                 "--enclose" => {
                     parsed.enclose = args.next().as_deref().and_then(parse_rect);

@@ -126,9 +126,11 @@ pub fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<Entry>,
                     push(&mut out, row.table, row.key.clone(), row.statements());
                 }
             }
-            Subject::Places => {
-                for row in super::places::plan(session).ordered() {
-                    push(&mut out, row.table, row.key.clone(), row.statements());
+            Subject::Maps | Subject::Triggers | Subject::Graveyards => {
+                if let Some(group) = subject.group() {
+                    for row in super::places::plan(session, group).ordered() {
+                        push(&mut out, row.table, row.key.clone(), row.statements());
+                    }
                 }
             }
             Subject::Behaviour => {

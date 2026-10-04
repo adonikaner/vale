@@ -1,5 +1,10 @@
-//! What a project changes about area triggers, graveyards and maps on the
+//! What a project changes about maps, area triggers and graveyards on the
 //! server, as SQL, applied when a person asks.
+//!
+//! Three row subjects share this module, one per [`Group`]: each has its own
+//! block on the Server panel, its own SQL and revert files, its own reloads and
+//! its own place in `super::stack`'s order. They share the row rules, which are
+//! the same for all eight tables.
 //!
 //! ## Eight tables, written as keyed rows
 //!
@@ -41,9 +46,11 @@
 //! new map needs a restart before anything can stand on it.
 //!
 //! ```text
-//! sql\places.sql          what this project does to the six tables
-//! sql\places-revert.sql   what puts those rows back
-//! server\rows.txt         the store both are written from, shared
+//! sql\maps.sql, sql\triggers.sql, sql\graveyards.sql
+//!                         what this project does to each group's tables
+//! sql\maps-revert.sql, sql\triggers-revert.sql, sql\graveyards-revert.sql
+//!                         what puts those rows back
+//! server\rows.txt         the store all of them are written from, shared
 //! ```
 
 use crate::session::EditSession;
@@ -54,14 +61,98 @@ use bevy::prelude::*;
 
 pub use super::creatures::Undo;
 
-/// What this project does to the eight tables, as SQL.
-pub const SQL_VPATH: &str = "sql\\places.sql";
+/// One of the three subjects: maps, area triggers or graveyards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Group {
+    /// A new map's `map_template` row.
+    Maps,
+    /// What area triggers do: the template's server columns, teleports, inns,
+    /// quest objectives and battleground entrances.
+    Triggers,
+    /// Which safe place serves which zone, and which way a spirit faces there.
+    Graveyards,
+}
 
-/// What puts it back.
-pub const REVERT_VPATH: &str = "sql\\places-revert.sql";
+impl Group {
+    /// The three, in `super::stack`'s order. Maps first, since a teleport's
+    /// target map is checked against `map_template`.
+    pub const ALL: [Group; 3] = [Group::Maps, Group::Triggers, Group::Graveyards];
 
-/// The eight tables, in the order a plan writes them. A map's row goes first,
-/// since a teleport's target map is checked against it.
+    /// Where [`EditSession::applied_places`] keeps this group's signature.
+    pub fn index(self) -> usize {
+        match self {
+            Group::Maps => 0,
+            Group::Triggers => 1,
+            Group::Graveyards => 2,
+        }
+    }
+
+    /// The group a table belongs to, or `None` for a table of no group.
+    pub fn of(table: &str) -> Option<Group> {
+        match table_named(table)? {
+            map::TEMPLATE => Some(Group::Maps),
+            graveyard::ZONE | graveyard::FACING => Some(Group::Graveyards),
+            _ => Some(Group::Triggers),
+        }
+    }
+
+    /// Its tables, in the order a plan writes them.
+    pub fn tables(self) -> &'static [&'static str] {
+        match self {
+            Group::Maps => &TABLES[..1],
+            Group::Triggers => &TABLES[1..6],
+            Group::Graveyards => &TABLES[6..],
+        }
+    }
+
+    /// The reload commands that make an apply live, in the order they are sent.
+    pub fn reloads(self) -> &'static [&'static str] {
+        match self {
+            Group::Maps => &[map::TEMPLATE],
+            Group::Triggers => &trigger::RELOADS,
+            Group::Graveyards => &[graveyard::ZONE],
+        }
+    }
+
+    /// What this project does to the group's tables, as SQL.
+    pub fn sql_vpath(self) -> &'static str {
+        match self {
+            Group::Maps => "sql\\maps.sql",
+            Group::Triggers => "sql\\triggers.sql",
+            Group::Graveyards => "sql\\graveyards.sql",
+        }
+    }
+
+    /// What puts it back.
+    pub fn revert_vpath(self) -> &'static str {
+        match self {
+            Group::Maps => "sql\\maps-revert.sql",
+            Group::Triggers => "sql\\triggers-revert.sql",
+            Group::Graveyards => "sql\\graveyards-revert.sql",
+        }
+    }
+
+    /// What its rows are called in a status line.
+    pub fn noun(self) -> &'static str {
+        match self {
+            Group::Maps => "map",
+            Group::Triggers => "area trigger",
+            Group::Graveyards => "graveyard",
+        }
+    }
+
+    /// …and the subject, plural, for a file's header and an error.
+    pub fn subject(self) -> &'static str {
+        match self {
+            Group::Maps => "maps",
+            Group::Triggers => "area triggers",
+            Group::Graveyards => "graveyards",
+        }
+    }
+}
+
+/// The eight tables, by group: the map's, the five triggers' and the two
+/// graveyards'. [`Group::tables`] slices this list.
 pub const TABLES: [&str; 8] = [
     map::TEMPLATE,
     trigger::TEMPLATE,
@@ -71,17 +162,6 @@ pub const TABLES: [&str; 8] = [
     trigger::BG_ENTRANCE,
     graveyard::ZONE,
     graveyard::FACING,
-];
-
-/// The reload commands that re-read five of them, in the order they are sent.
-/// `areatrigger_template`, `areatrigger_bg_entrance` and
-/// `world_safe_locs_facing` have none.
-pub const RELOADS: [&str; 5] = [
-    map::TEMPLATE,
-    trigger::TELEPORT,
-    trigger::TAVERN,
-    trigger::QUEST,
-    graveyard::ZONE,
 ];
 
 /// The static name of one of the eight tables, or `None`.
@@ -175,17 +255,17 @@ impl Plan {
     }
 }
 
-/// What the project's store comes to, as statements.
-pub fn plan(session: &EditSession) -> Plan {
-    plan_from(&session.server_edits)
+/// What the project's store comes to for one group, as statements.
+pub fn plan(session: &EditSession, group: Group) -> Plan {
+    plan_from(&session.server_edits, group)
 }
 
 /// The same over the store alone, so it can be checked with no session.
-pub fn plan_from(edits: &row::Edits) -> Plan {
+pub fn plan_from(edits: &row::Edits, group: Group) -> Plan {
     let mut out = Plan::default();
     for (table, key, row) in edits.rows() {
         // Another subject's row, skipped as every writer skips the others'.
-        let Some(table) = table_named(table) else {
+        let Some(table) = table_named(table).filter(|table| Group::of(table) == Some(group)) else {
             continue;
         };
         // A template row is the client table's to make and remove; this
@@ -273,31 +353,31 @@ fn faults_of(table: &str, key: &Key, changes: &[Assignment]) -> Vec<String> {
     out
 }
 
-/// Write `sql\places.sql`, or remove it when the project changes nothing.
-pub fn write_sql(session: &mut EditSession) -> Result<usize, String> {
-    let plan = plan(session);
+/// Write the group's SQL file, or remove it when the project changes nothing
+/// in the group.
+pub fn write_sql(session: &mut EditSession, group: Group) -> Result<usize, String> {
+    let plan = plan(session, group);
+    let vpath = group.sql_vpath();
     for refused in &plan.refused {
         warn!("{}: {refused}", super::creatures::EDITS_VPATH);
     }
     if plan.is_empty() {
-        remove(&session.project, SQL_VPATH);
+        remove(&session.project, vpath);
         return Ok(0);
     }
     let count = plan.rows.len();
+    let reloads: String = group.reloads().iter().map(|table| format!("--   .reload {table}\n")).collect();
     let mut body = format!(
-        "-- {} — what this project changes about area triggers, graveyards and maps.\n\
+        "-- {} — what this project changes about {}.\n\
          -- Rewritten on every save from the project's own edits, so it is the\n\
          -- whole of what the project does rather than an increment of it.\n\
          --\n\
          -- Nothing applies this by itself. Apply it from the editor's Server panel,\n\
          -- or run it by hand and then reload:\n\
-         --   .reload map_template\n\
-         --   .reload areatrigger_teleport\n\
-         --   .reload areatrigger_tavern\n\
-         --   .reload areatrigger_involvedrelation\n\
-         --   .reload game_graveyard_zone\n\
-         -- world_safe_locs_facing has no reload, and a new map needs a restart.\n\n",
-        session.project.name
+         {reloads}\
+         -- A table with no reload is read at server start.\n\n",
+        session.project.name,
+        group.subject()
     );
     for row in plan.ordered() {
         body.push_str(&format!("-- {}\n", row.names()));
@@ -309,22 +389,29 @@ pub fn write_sql(session: &mut EditSession) -> Result<usize, String> {
     }
     session
         .project
-        .write(SQL_VPATH, body.as_bytes())
-        .map_err(|e| format!("{SQL_VPATH}: {e}"))?;
+        .write(vpath, body.as_bytes())
+        .map_err(|e| format!("{vpath}: {e}"))?;
     Ok(count)
 }
 
-/// The places half of a save: the SQL the store comes to. The store itself is
-/// written by [`super::creatures::save`], on the same save.
+/// The three groups' half of a save: the SQL the store comes to. The store
+/// itself is written by [`super::creatures::save`], on the same save.
 pub fn save(session: &mut EditSession) {
-    match write_sql(session) {
+    for group in Group::ALL {
+        save_group(session, group);
+    }
+}
+
+/// …one group of it.
+pub fn save_group(session: &mut EditSession, group: Group) {
+    match write_sql(session, group) {
         Ok(0) => {}
         Ok(rows) => {
-            session.status = format!("{rows} trigger, graveyard and map change(s) written to {SQL_VPATH}")
+            session.status = format!("{rows} {} change(s) written to {}", group.noun(), group.sql_vpath())
         }
         Err(e) => {
-            warn!("places: {e}");
-            session.status = format!("saved, but {SQL_VPATH} did not: {e}");
+            warn!("{}: {e}", group.subject());
+            session.status = format!("saved, but {} did not: {e}", group.sql_vpath());
         }
     }
 }
@@ -332,6 +419,7 @@ pub fn save(session: &mut EditSession) {
 /// What an apply did.
 #[derive(Debug, Default)]
 pub struct Applied {
+    pub group: Option<Group>,
     pub rows: usize,
     pub affected: u64,
     pub newly_undoable: usize,
@@ -343,16 +431,18 @@ pub struct Applied {
 impl Applied {
     pub fn line(&self) -> String {
         format!(
-            "{} trigger, graveyard and map row(s) applied, {} affected — reloading {}",
+            "{} {} row(s) applied, {} affected — reloading {}",
             self.rows,
+            self.group.map_or("", Group::noun),
             self.affected,
-            RELOADS.join(", ")
+            self.group.map_or(String::new(), |group| group.reloads().join(", "))
         )
     }
 }
 
 /// An Apply, with everything it needs to run off the main thread.
 pub struct ApplyJob {
+    group: Group,
     plan: Plan,
     project: vale_edit::project::Project,
     at: vale_mangos::conn::Where,
@@ -360,6 +450,7 @@ pub struct ApplyJob {
 
 /// What running one answered.
 pub struct ApplyDone {
+    group: Group,
     signature: u64,
     pub result: Result<Applied, String>,
 }
@@ -370,23 +461,25 @@ impl ApplyDone {
         match &self.result {
             Ok(done) if done.rows == 0 && done.taken_back == 0 => "nothing to apply".to_string(),
             Ok(done) => done.line(),
-            Err(e) => format!("triggers, graveyards and maps: {e}"),
+            Err(e) => format!("{}: {e}", self.group.subject()),
         }
     }
 }
 
 /// The main thread's first half of an Apply. `None` when the project claims no
-/// row of the six tables and has applied none.
+/// row of the group's tables and has applied none.
 pub fn prepare_apply(
     session: &EditSession,
     server: &super::settings::ServerSettings,
+    group: Group,
 ) -> Result<Option<ApplyJob>, String> {
-    let plan = plan(session);
-    if plan.is_empty() && !super::reconcile::has_applied(session, REVERT_VPATH) {
+    let plan = plan(session, group);
+    if plan.is_empty() && !super::reconcile::has_applied(session, group.revert_vpath()) {
         return Ok(None);
     }
     let (at, _source) = server.resolve().ok_or_else(vale_mangos::conn::Where::absent)?;
     Ok(Some(ApplyJob {
+        group,
         plan,
         project: session.project.clone(),
         at,
@@ -411,28 +504,33 @@ impl ApplyJob {
             let done = super::reconcile::apply(
                 &self.project,
                 &mut db,
-                REVERT_VPATH,
-                "the server's triggers, graveyards and maps",
+                self.group.revert_vpath(),
+                &format!("the server's {}", self.group.subject()),
                 &steps,
                 |db, index| undo_of_a_row(db, rows[index]),
             )?;
             Ok(Applied {
+                group: Some(self.group),
                 rows: self.plan.rows.len(),
                 affected: done.affected,
                 newly_undoable: done.undoable,
                 taken_back: done.taken_back,
             })
         })();
-        ApplyDone { signature, result }
+        ApplyDone {
+            group: self.group,
+            signature,
+            result,
+        }
     }
 }
 
-/// The main thread's second half: every read is stale, and the five reloads
-/// are asked for.
+/// The main thread's second half: every read is stale, and the group's
+/// reloads are asked for.
 pub fn finish_apply(session: &mut EditSession, reloads: &mut super::reload::Reloads, done: &ApplyDone) {
     session.wrote_the_database();
-    session.applied_places = done.result.as_ref().ok().map(|_| done.signature);
-    for table in RELOADS {
+    session.applied_places[done.group.index()] = done.result.as_ref().ok().map(|_| done.signature);
+    for table in done.group.reloads() {
         reloads.when_there_is_a_session(table);
     }
 }
@@ -442,11 +540,12 @@ pub fn finish_apply(session: &mut EditSession, reloads: &mut super::reload::Relo
 pub fn apply_step(
     session: &EditSession,
     server: &super::settings::ServerSettings,
+    group: Group,
 ) -> Result<Option<super::stack::Step>, String> {
-    let Some(job) = prepare_apply(session, server)? else {
+    let Some(job) = prepare_apply(session, server, group)? else {
         return Ok(None);
     };
-    Ok(Some(super::stack::Step::new("applying triggers, graveyards and maps", move || {
+    Ok(Some(super::stack::Step::new(format!("applying {}", group.subject()), move || {
         let done = job.run();
         let ok = done.result.is_ok();
         let finish: super::queue::Finish = Box::new(move |session: &mut EditSession, reloads: &mut super::reload::Reloads| {
@@ -491,6 +590,7 @@ fn undo_of_a_row(db: &mut Db, row: &Row) -> Result<Option<Vec<String>>, String> 
 
 /// A Put back, with everything it needs to run off the main thread.
 pub struct RevertJob {
+    group: Group,
     project: vale_edit::project::Project,
     at: vale_mangos::conn::Where,
 }
@@ -500,12 +600,14 @@ pub struct RevertJob {
 pub fn prepare_revert(
     session: &EditSession,
     server: &super::settings::ServerSettings,
+    group: Group,
 ) -> Result<Option<RevertJob>, String> {
-    if !super::reconcile::has_applied(session, REVERT_VPATH) {
+    if !super::reconcile::has_applied(session, group.revert_vpath()) {
         return Ok(None);
     }
     let (at, _source) = server.resolve().ok_or_else(vale_mangos::conn::Where::absent)?;
     Ok(Some(RevertJob {
+        group,
         project: session.project.clone(),
         at,
     }))
@@ -515,16 +617,16 @@ impl RevertJob {
     /// The worker's half: run the revert file, and forget it.
     pub fn run(self) -> Result<usize, String> {
         let mut db = Db::open(&self.at)?;
-        super::reconcile::put_back(&self.project, &mut db, REVERT_VPATH)
+        super::reconcile::put_back(&self.project, &mut db, self.group.revert_vpath())
     }
 }
 
-/// The main thread's second half: the five reloads, since the revert file does
-/// not say which tables it touches.
-pub fn finish_revert(session: &mut EditSession, reloads: &mut super::reload::Reloads) {
-    session.applied_places = None;
+/// The main thread's second half: the group's reloads, since the revert file
+/// does not say which tables it touches.
+pub fn finish_revert(session: &mut EditSession, reloads: &mut super::reload::Reloads, group: Group) {
+    session.applied_places[group.index()] = None;
     session.wrote_the_database();
-    for table in RELOADS {
+    for table in group.reloads() {
         reloads.when_there_is_a_session(table);
     }
 }
@@ -533,20 +635,21 @@ pub fn finish_revert(session: &mut EditSession, reloads: &mut super::reload::Rel
 pub fn revert_step(
     session: &EditSession,
     server: &super::settings::ServerSettings,
+    group: Group,
 ) -> Result<Option<super::stack::Step>, String> {
-    let Some(job) = prepare_revert(session, server)? else {
+    let Some(job) = prepare_revert(session, server, group)? else {
         return Ok(None);
     };
-    Ok(Some(super::stack::Step::new("putting back triggers, graveyards and maps", move || {
+    Ok(Some(super::stack::Step::new(format!("putting back {}", group.subject()), move || {
         let done = job.run();
         let ok = done.is_ok();
         let finish: super::queue::Finish = Box::new(move |session: &mut EditSession, reloads: &mut super::reload::Reloads| {
             session.status = match done {
                 Ok(rows) => {
-                    finish_revert(session, reloads);
-                    format!("{rows} trigger, graveyard and map row(s) put back")
+                    finish_revert(session, reloads, group);
+                    format!("{rows} {} row(s) put back", group.noun())
                 }
-                Err(e) => format!("triggers, graveyards and maps: {e}"),
+                Err(e) => format!("{}: {e}", group.subject()),
             };
         });
         (ok, finish)
@@ -561,10 +664,10 @@ pub struct OnTheServer {
 }
 
 impl OnTheServer {
-    pub fn read_with(session: &EditSession, plan: &Plan) -> OnTheServer {
+    pub fn read_with(session: &EditSession, plan: &Plan, group: Group) -> OnTheServer {
         OnTheServer {
-            undo: Undo::open_at(&session.project, REVERT_VPATH).unwrap_or(Undo { entries: Vec::new() }),
-            current: session.applied_places.is_some_and(|had| had == plan.signature()),
+            undo: Undo::open_at(&session.project, group.revert_vpath()).unwrap_or(Undo { entries: Vec::new() }),
+            current: session.applied_places[group.index()].is_some_and(|had| had == plan.signature()),
         }
     }
 
@@ -606,10 +709,10 @@ mod tests {
         edits.set_row_line(table, key, Some(&row.to_line()));
     }
 
-    /// A new map, a teleport into it and a graveyard link are written in
-    /// [`TABLES`]' order: the map's row first.
+    /// A new map, a teleport into it and a graveyard link each go to their
+    /// own group's plan.
     #[test]
-    fn a_map_its_entrance_and_its_graveyard_are_written_in_order() {
+    fn a_map_its_entrance_and_its_graveyard_are_three_subjects() {
         let mut edits = Edits::default();
         let link = graveyard::Link::new(900, 5000);
         created(graveyard::ZONE, &link.key(), link.assignments(), &mut edits);
@@ -617,13 +720,17 @@ mod tests {
         created(trigger::TELEPORT, &teleport.key(), teleport.assignments(), &mut edits);
         let template = map::Template::new(534, 1, "The Islands");
         created(map::TEMPLATE, &template.key(), template.assignments(), &mut edits);
-        let plan = plan_from(&edits);
-        assert!(plan.refused.is_empty(), "{:?}", plan.refused);
-        let sql = plan.statements();
-        assert_eq!(sql.len(), 6);
-        assert!(sql[1].starts_with("INSERT INTO `map_template`"), "{}", sql[1]);
-        assert!(sql[3].starts_with("INSERT INTO `areatrigger_teleport`"), "{}", sql[3]);
-        assert!(sql[5].starts_with("INSERT INTO `game_graveyard_zone`"), "{}", sql[5]);
+        for (group, table) in [
+            (Group::Maps, "map_template"),
+            (Group::Triggers, "areatrigger_teleport"),
+            (Group::Graveyards, "game_graveyard_zone"),
+        ] {
+            let plan = plan_from(&edits, group);
+            assert!(plan.refused.is_empty(), "{:?}", plan.refused);
+            let sql = plan.statements();
+            assert_eq!(sql.len(), 2, "{group:?}");
+            assert!(sql[1].starts_with(&format!("INSERT INTO `{table}`")), "{}", sql[1]);
+        }
     }
 
     /// A created teleport with no target, and a link for a faction the loader
@@ -635,17 +742,23 @@ mod tests {
         created(trigger::TELEPORT, &teleport.key(), teleport.assignments(), &mut edits);
         let link = graveyard::Link { faction: 5, ..graveyard::Link::new(900, 5000) };
         created(graveyard::ZONE, &link.key(), link.assignments(), &mut edits);
-        let plan = plan_from(&edits);
-        assert!(plan.rows.is_empty());
-        assert_eq!(plan.refused.len(), 2, "{:?}", plan.refused);
+        for group in [Group::Triggers, Group::Graveyards] {
+            let plan = plan_from(&edits, group);
+            assert!(plan.rows.is_empty());
+            assert_eq!(plan.refused.len(), 1, "{:?}", plan.refused);
+        }
     }
 
     #[test]
-    fn the_subject_owns_the_eight_tables_and_no_other() {
+    fn the_subjects_own_the_eight_tables_and_no_other() {
         for table in TABLES {
             assert!(owns(table));
             assert!(!columns_of(table).is_empty(), "{table}");
+            let group = Group::of(table).unwrap();
+            assert!(group.tables().contains(&table), "{table} is not in {group:?}'s slice");
         }
+        let count: usize = Group::ALL.iter().map(|group| group.tables().len()).sum();
+        assert_eq!(count, TABLES.len());
         assert!(!owns(vale_mangos::creature::TEMPLATE));
     }
 
@@ -656,7 +769,7 @@ mod tests {
         let mut edits = Edits::default();
         let key = trigger::key(78);
         edits.set(trigger::TEMPLATE, &key, "cooldown", Some("30".to_string()));
-        let plan = plan_from(&edits);
+        let plan = plan_from(&edits, Group::Triggers);
         assert_eq!(plan.rows.len(), 1);
         let statements = plan.rows[0].statements();
         assert_eq!(statements.len(), 2);
@@ -667,7 +780,7 @@ mod tests {
         let mut edits = Edits::default();
         let template = trigger::Template { id: 9000, ..trigger::Template::default() };
         created(trigger::TEMPLATE, &trigger::key(9000), template.assignments(), &mut edits);
-        let plan = plan_from(&edits);
+        let plan = plan_from(&edits, Group::Triggers);
         assert!(plan.rows.is_empty());
         assert_eq!(plan.refused.len(), 1);
     }

@@ -299,6 +299,7 @@ pub fn draw(
     minimaps: &vale_assets::tables::minimap::MinimapTiles,
     tiles: &mut crate::tools::tiles::Tiles,
     camera_tile: (u32, u32),
+    screens: &vale_assets::tables::loading::LoadingScreens,
 ) -> (Option<egui::Rect>, Option<Asked>) {
     if !view.open {
         view.was_open = false;
@@ -337,13 +338,14 @@ pub fn draw(
                 .inner_margin(egui::Margin::same(8)),
         )
         .show(ctx, |ui| {
-            asked = contents(ui, view, session, thumbnails, minimaps, tiles, camera_tile);
+            asked = contents(ui, view, session, thumbnails, minimaps, tiles, camera_tile, screens);
         });
     view.open = open;
 
     (response.map(|r| r.response.rect), asked)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn contents(
     ui: &mut egui::Ui,
     view: &mut MapView,
@@ -352,6 +354,7 @@ fn contents(
     minimaps: &vale_assets::tables::minimap::MinimapTiles,
     tiles: &mut crate::tools::tiles::Tiles,
     camera_tile: (u32, u32),
+    screens: &vale_assets::tables::loading::LoadingScreens,
 ) -> Option<Asked> {
     let mut asked = None;
 
@@ -457,7 +460,7 @@ fn contents(
             }
         });
     });
-    if let Some(choice) = new_map_dialog(ui.ctx(), session, tiles) {
+    if let Some(choice) = new_map_dialog(ui.ctx(), session, tiles, thumbnails, screens) {
         asked = Some(choice);
     }
 
@@ -967,7 +970,13 @@ fn foot_panel(
 
 /// The New map form. Answers `NewMap` when Make is pressed with nothing
 /// wrong; Cancel drops the form.
-fn new_map_dialog(ctx: &egui::Context, session: &EditSession, tiles: &mut crate::tools::tiles::Tiles) -> Option<Asked> {
+fn new_map_dialog(
+    ctx: &egui::Context,
+    session: &EditSession,
+    tiles: &mut crate::tools::tiles::Tiles,
+    thumbnails: &mut Thumbnails,
+    screens: &vale_assets::tables::loading::LoadingScreens,
+) -> Option<Asked> {
     use vale_assets::tables::map::INSTANCE_TYPES;
     let form = tiles.new_map.as_mut()?;
     let mut asked = None;
@@ -1006,18 +1015,34 @@ fn new_map_dialog(ctx: &egui::Context, session: &EditSession, tiles: &mut crate:
                     .on_hover_text("How many characters one instance holds.");
             });
         }
-        let mut own_screen = form.loading_screen.is_some();
+        let open_screen = screens.screen_of(session.map_id);
+        let screen_name = |id: Option<u32>| match id.and_then(|id| screens.screen(id)) {
+            Some((name, _)) => name.to_string(),
+            None => id.map_or_else(|| "none".to_string(), |id| format!("row {id}")),
+        };
         theme::row(ui, "loading screen", |ui| {
-            ui.checkbox(&mut own_screen, "its own")
-                .on_hover_text("Off, the map takes the open map's loading screen.");
-            if own_screen {
-                let screen = form.loading_screen.get_or_insert(0);
-                ui.add(egui::DragValue::new(screen).speed(0.2))
-                    .on_hover_text("A LoadingScreens row.");
+            let chosen = match form.loading_screen {
+                None => format!("the open map's ({})", screen_name(open_screen)),
+                Some(id) => screen_name(Some(id)),
+            };
+            ui.label(egui::RichText::new(chosen).color(theme::INK));
+            let label = match form.choosing_screen {
+                true => "Close",
+                false => "Choose\u{2026}",
+            };
+            if ui
+                .button(label)
+                .on_hover_text("The picture shown while the map loads: a LoadingScreens row.")
+                .clicked()
+            {
+                form.choosing_screen = !form.choosing_screen;
             }
         });
-        if !own_screen {
-            form.loading_screen = None;
+        if form.choosing_screen {
+            if let Some(choice) = screen_picker(ui, thumbnails, screens, form.loading_screen, open_screen) {
+                form.loading_screen = choice;
+                form.choosing_screen = false;
+            }
         }
         ui.checkbox(&mut form.zone, "Make a zone on it")
             .on_hover_text(
@@ -1048,6 +1073,75 @@ fn new_map_dialog(ctx: &egui::Context, session: &EditSession, tiles: &mut crate:
         tiles.new_map = None;
     }
     asked
+}
+
+/// The loading screens as pictures to choose from, the open map's first.
+/// Answers the choice when one is clicked: `Some(None)` for the open map's,
+/// `Some(Some(id))` for a row.
+fn screen_picker(
+    ui: &mut egui::Ui,
+    thumbnails: &mut Thumbnails,
+    screens: &vale_assets::tables::loading::LoadingScreens,
+    chosen: Option<u32>,
+    open_screen: Option<u32>,
+) -> Option<Option<u32>> {
+    // The pictures are 4:3, drawn at the thumbnail cache's icon size across.
+    const CELL: egui::Vec2 = egui::vec2(128.0, 96.0);
+    /// Three across, which fits the form's 420 points.
+    const COLUMNS: usize = 3;
+    let mut rows: Vec<(u32, &str, &str)> = screens.screens().collect();
+    rows.sort_by_key(|(id, _, _)| *id);
+    let mut picked = None;
+    egui::ScrollArea::vertical()
+        .id_salt("map-new-screens")
+        .max_height(300.0)
+        .show(ui, |ui| {
+            // A grid of a fixed width: wrapped rows in a modal that sizes to
+            // its contents never wrap, and the form grew across the window.
+            egui::Grid::new("map-new-screen-grid").num_columns(COLUMNS).spacing([6.0, 6.0]).show(ui, |ui| {
+                let open = open_screen.and_then(|id| screens.screen(id)).map(|(_, path)| path);
+                let entries = std::iter::once((None, "the open map's", open))
+                    .chain(rows.iter().map(|(id, name, path)| (Some(*id), *name, Some(*path))));
+                for (n, (id, name, path)) in entries.enumerate() {
+                    if n > 0 && n % COLUMNS == 0 {
+                        ui.end_row();
+                    }
+                    ui.vertical(|ui| {
+                        ui.set_width(CELL.x);
+                        let (rect, response) = ui.allocate_exact_size(CELL, egui::Sense::click());
+                        ui.painter().rect_filled(rect, 3.0, theme::SUNK);
+                        if let Some(path) = path {
+                            thumbnails.want_at(path, super::thumbnails::ICON_SIDE);
+                            if let Some(texture) = thumbnails.get_at(path, super::thumbnails::ICON_SIDE) {
+                                ui.painter().image(
+                                    texture,
+                                    rect.shrink(2.0),
+                                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                    egui::Color32::WHITE,
+                                );
+                            }
+                        }
+                        let selected = id == chosen;
+                        if selected || response.hovered() {
+                            let colour = match selected {
+                                true => theme::INK,
+                                false => theme::INK_FAINT,
+                            };
+                            ui.painter().rect_stroke(rect, 3.0, egui::Stroke::new(2.0, colour), egui::StrokeKind::Inside);
+                        }
+                        let caption = match id {
+                            Some(id) => format!("{id} {name}"),
+                            None => name.to_string(),
+                        };
+                        ui.label(egui::RichText::new(caption).size(theme::SMALL).color(theme::INK));
+                        if response.on_hover_text(path.unwrap_or("")).clicked() {
+                            picked = Some(id);
+                        }
+                    });
+                }
+            });
+        });
+    picked
 }
 
 /// The import's confirmation: the picture, what it is used as, where it
