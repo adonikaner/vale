@@ -445,6 +445,9 @@ pub(super) fn shown(edits: &Edits, table: &str, key: &Key, held: Option<&[Assign
     let mut put = |column: &str, literal: &str| {
         row.insert(column.to_string(), Some(crate::ui::rowform::unquote(literal)));
     };
+    // A row the project creates is shown as its creation even when the
+    // database also holds it, which it does once the creation is applied.
+    let held = held.filter(|_| !claim.is_some_and(|claim| claim.life == Life::Insert));
     let life = match (held, claim) {
         (Some(held), claim) => {
             for change in held {
@@ -503,6 +506,17 @@ pub fn missing(edits: &Edits, table: &str, key: &Key) -> Vec<&'static str> {
         .collect()
 }
 
+/// Whether the database's row under a key is the database's own rather than a
+/// creation of this project's that has been applied. Only the first is kept
+/// or removed with a claim of its own; the second is the project's to take
+/// back.
+fn the_databases_own(session: &EditSession, table: &str, key: &Key, held: bool) -> bool {
+    held && session
+        .server_edits
+        .row(table, key)
+        .is_none_or(|claim| claim.life != Life::Insert)
+}
+
 /// Create a row, or keep one the database holds that was marked for removal.
 pub(super) fn create_row(
     session: &mut EditSession,
@@ -512,7 +526,7 @@ pub(super) fn create_row(
     columns: &[Assignment],
     gesture: Gesture<'_>,
 ) {
-    match held {
+    match the_databases_own(session, table, key, held) {
         true => session.set_server_row(table, key, None, Some(gesture)),
         false => {
             let row = super::services::creation(columns);
@@ -522,9 +536,10 @@ pub(super) fn create_row(
 }
 
 /// Remove a row: a `Delete` claim for one the database holds, and the claim
-/// taken back for one the project creates.
+/// taken back for one the project creates, applied or not. A taken-back
+/// creation that was applied is put back by the next apply.
 pub(super) fn remove_row(session: &mut EditSession, table: &str, key: &Key, held: bool, gesture: Gesture<'_>) {
-    match held {
+    match the_databases_own(session, table, key, held) {
         true => {
             let row = RowEdit {
                 life: Life::Delete,

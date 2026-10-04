@@ -165,15 +165,17 @@ impl Graveyards {
     }
 
     /// The place's links as the project leaves them: the database's, then the
-    /// ones the project creates.
+    /// ones the project creates. A creation the database holds because it was
+    /// applied is listed once, as a creation.
     pub fn links_of(&self, edits: &Edits, id: u32) -> Vec<ShownLink> {
         let Some(held) = self.held.as_ref() else {
             return Vec::new();
         };
+        let created = |link: &Link| edits.row(graveyard::ZONE, &link.key()).is_some_and(|row| row.life == Life::Insert);
         let mut out: Vec<ShownLink> = held
             .links
             .iter()
-            .filter(|link| link.safe_loc == id)
+            .filter(|link| link.safe_loc == id && !created(link))
             .filter_map(|link| {
                 let (row, life) = shown(edits, graveyard::ZONE, &link.key(), Some(&link.assignments()))?;
                 Some(ShownLink { link: Link::from_row(&row)?, in_database: Some(link.clone()), life })
@@ -738,6 +740,20 @@ mod tests {
         edits.set_row_line(graveyard::ZONE, &Link::new(4, 12).key(), Some(&removal.to_line()));
         let shown = graveyards.links_of(&edits, 4);
         assert_eq!(shown[0].life, Life::Delete);
+    }
+
+    /// A link the project created and applied is in the database's reading
+    /// and still the project's creation: it is listed once, as the creation.
+    #[test]
+    fn an_applied_link_is_listed_once() {
+        let made = Link::new(4, 85);
+        let graveyards = held(vec![made.clone()]);
+        let mut edits = Edits::default();
+        let row = super::super::services::creation(&made.assignments());
+        edits.set_row_line(graveyard::ZONE, &made.key(), Some(&row.to_line()));
+        let shown = graveyards.links_of(&edits, 4);
+        assert_eq!(shown.len(), 1);
+        assert_eq!((shown[0].in_database.is_none(), shown[0].life), (true, Life::Insert));
     }
 
     #[test]
