@@ -9,7 +9,7 @@
 //! windows follow the selection, as the loot window does; the shell writes
 //! [`crate::tools::services::About`] from the selection each frame.
 //!
-//! ## A row is drawn as the server reads it
+//! ## What a row shows
 //!
 //! A vendor row is its item, its place in the list, its stock (a limit and
 //! the seconds between restocks, both or neither), its two restock flags and
@@ -29,7 +29,7 @@
 //! trains, from `trainer_type`, `trainer_class`, `trainer_race` and
 //! `trainer_spell` (`vale_mangos::trainer::who_words`).
 //!
-//! ## Nothing here reaches the database
+//! ## Edits go to the project, not the database
 //!
 //! An edit goes into the project's store and onto the undo stack; a save
 //! writes `sql\services.sql`; Apply is on the bar's Server… with the other
@@ -56,14 +56,19 @@ const NAME: f32 = 210.0;
 /// How wide a small number is drawn: a slot, a count, a level, a condition.
 const NUMBER: f32 = 52.0;
 
-/// …a skill line's name and id, which holds `Leatherworking (165)`.
+/// How wide a skill line's name and id is drawn. It holds
+/// `Leatherworking (165)`.
 const SKILL: f32 = 150.0;
 
-/// …a duration, which holds `1h 30m`.
+/// How wide a duration is drawn. It holds `1h 30m`.
 const TIME: f32 = 70.0;
 
-/// …a price, which holds `12g 50s 3c`.
+/// How wide a price is drawn. It holds `12g 50s 3c`.
 const MONEY: f32 = 90.0;
+
+/// How wide the line saying what a condition tests is drawn. A longer line is
+/// cut to this width, and the whole line is on hover.
+const CONDITION: f32 = 130.0;
 
 /// How tall a cell is.
 const CELL: f32 = 18.0;
@@ -167,9 +172,11 @@ fn open_spell_tables(subject: &mut Subject<'_>) -> bool {
 
 /// One window.
 fn window(ctx: &egui::Context, subject: &mut Subject<'_>, about: &About, kind: Kind) -> Option<egui::Rect> {
-    let (word, id, pos) = match kind {
-        Kind::Vendor => ("vendor", "vendor-window", [320.0, 140.0]),
-        Kind::Trainer => ("trainer", "trainer-window", [340.0, 160.0]),
+    // A vendor row is wider than a trainer row by the width of its condition
+    // cell.
+    let (word, id, pos, width) = match kind {
+        Kind::Vendor => ("vendor", "vendor-window", [320.0, 140.0], 900.0),
+        Kind::Trainer => ("trainer", "trainer-window", [340.0, 160.0], 700.0),
     };
     let mut keep_open = true;
     let shown = egui::Window::new(format!("{} \u{2014} {word}", about.label))
@@ -179,7 +186,7 @@ fn window(ctx: &egui::Context, subject: &mut Subject<'_>, about: &About, kind: K
         .open(&mut keep_open)
         // Wide enough for every cell of a row, and tall enough for the head,
         // the tabs and about eight rows. A longer list scrolls.
-        .default_size([700.0, 460.0])
+        .default_size([width, 460.0])
         .default_pos(pos)
         .resizable(true)
         .frame(
@@ -365,8 +372,9 @@ fn body(ui: &mut egui::Ui, subject: &mut Subject<'_>, about: &About, kind: Kind,
         theme::waiting(ui, format!("reading {} {}\u{2026}", list.table, list.entry));
         return;
     }
-    // The foot in a bottom panel, so the scroll gets exactly what is left:
-    // see the loot window's `body`, which has the same layout.
+    // The add button sits in a bottom panel, so the scroll area gets exactly
+    // the height that is left. The loot window's `body` uses the same layout
+    // and says why.
     egui::Panel::bottom(match kind {
         Kind::Vendor => "vendor-foot",
         Kind::Trainer => "trainer-foot",
@@ -639,7 +647,8 @@ fn vendor_row(
                 write(subject, "itemflags", flags.to_string());
             }
         }
-        condition_cell(ui, ware.condition, |value| write(subject, "condition_id", value));
+        let column = format!("{} {} condition_id", list.table, key.text());
+        condition_cell(ui, &column, ware.condition, |value| write(subject, "condition_id", value));
         remove_or_keep(ui, subject, list.table, &key, shown.life, shown.in_database.is_some());
     });
 }
@@ -1009,11 +1018,12 @@ fn parse_money(text: &str) -> Option<f64> {
 }
 
 // ---------------------------------------------------------------------------
-// The cells both kinds of row share
+// The cells vendor rows and trainer rows share
 // ---------------------------------------------------------------------------
 
-/// A `condition_id`, as its number.
-fn condition_cell(ui: &mut egui::Ui, condition: u32, mut write: impl FnMut(String)) {
+/// A `condition_id`: its number, then what it tests and the buttons that
+/// choose or make one. `column` is what the condition window calls it.
+fn condition_cell(ui: &mut egui::Ui, column: &str, condition: u32, mut write: impl FnMut(String)) {
     let mut value = condition as i64;
     let changed = ui
         .add_sized(
@@ -1022,11 +1032,10 @@ fn condition_cell(ui: &mut egui::Ui, condition: u32, mut write: impl FnMut(Strin
         )
         .on_hover_text("condition_id: a row of `conditions` the player must meet to see it, or 0.")
         .changed();
-    if changed && value != condition as i64 {
+    let typed = (changed && value != condition as i64).then_some(value as u32);
+    let answered = super::conditions::cell(ui, egui::Id::new(("service-condition", column)), column, condition, Some(CONDITION));
+    if let Some(value) = typed.or(answered) {
         write(value.to_string());
-    }
-    if condition != 0 {
-        super::conditions::open_button(ui, condition);
     }
 }
 

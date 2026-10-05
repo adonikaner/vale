@@ -1,10 +1,18 @@
-//! The condition window: one row of `conditions` at a time, its type, its four
-//! values named and resolved by what the type says each is, its two flags, and
-//! the conditions it combines or is combined into.
+//! The condition window, and the cell every form draws a condition column
+//! with.
 //!
-//! Any form opens it on an entry with [`open_button`], which posts the entry
-//! for this window to take on the next frame (`crate::tools::conditions`), so
-//! the forms carry none of its state. The window is drawn whatever the tool.
+//! The window shows one row of `conditions` at a time: its type, its four
+//! values named and resolved by what the type says each is, its two flags, and
+//! the conditions it combines or is combined into. Its list page searches
+//! every row. The window is drawn whatever the tool.
+//!
+//! A form draws a column that names a condition (`condition_id`,
+//! `required_condition`, `RequiredCondition`, a script step's condition
+//! parameters) with its number and then [`cell`]: what the condition tests,
+//! as a link that opens it, and buttons that choose an existing condition or
+//! make one. The window writes a made or chosen entry back into the column
+//! that opened it. The messages between the two are in
+//! `crate::tools::conditions`; the forms carry none of the window's state.
 
 use bevy_egui::egui;
 
@@ -18,22 +26,106 @@ fn row<R>(ui: &mut egui::Ui, name: &str, contents: impl FnOnce(&mut egui::Ui) ->
 use super::theme;
 use super::thumbnails::Thumbnails;
 use crate::session::EditSession;
-use crate::tools::conditions::{self, Conditions, Shown};
-use crate::tools::quests::{ColumnTarget, PickFor, Picker, Quests};
+use crate::tools::conditions::{self, Asker, Board, Conditions, Request, Shown, Told};
+use crate::tools::quests::{ColumnTarget, Holder, PickFor, Picker, Quests};
 use vale_client::assets::GameAssets;
 use vale_mangos::condition::{self as rows, Condition, Means};
 use vale_mangos::row::Life;
 use vale_mangos::schema::Value;
 
-/// The small button a form draws beside a column that names a condition: it
-/// opens the condition, or the page that makes one when the column is 0.
-pub fn open_button(ui: &mut egui::Ui, entry: u32) {
-    let (label, tip) = match entry {
-        0 => ("New\u{2026}", "Open the condition window on a new condition. Its entry goes into this column by hand."),
-        _ => ("Open", "Open this condition in the condition window."),
-    };
-    if ui.small_button(label).on_hover_text(tip).clicked() {
-        conditions::ask_to_open(ui.ctx(), entry);
+/// How much of a form row the buttons after the line take, in points.
+const BUTTONS: f32 = 110.0;
+
+/// What a form draws after the number of a column that names a condition:
+/// what the condition tests, as a link that opens it in the condition window,
+/// then `choose…`, which opens the window's list, and for an empty column
+/// `+ new`, which opens the page that makes one. Answers the entry the
+/// window made or chose for the column, which the caller writes as it writes
+/// a typed number.
+///
+/// `reply` identifies the column: the same on every frame, and different for
+/// every column a form draws. `column` is what the window calls it
+/// (`npc_vendor 54 2488 condition_id`). `width` fixes the line's width, for a
+/// row of fixed cells; `None` lets it take what the row has left.
+pub fn cell(ui: &mut egui::Ui, reply: egui::Id, column: &str, entry: u32, width: Option<f32>) -> Option<u32> {
+    let answered = conditions::take_answer(ui.ctx(), reply).filter(|answered| *answered != entry);
+    if entry != 0 {
+        conditions::ask_about(ui.ctx(), entry);
+    }
+    let asker = Some(Asker { reply, column: column.to_string(), holds: entry });
+    let (text, colour, hover) = line(&conditions::board(ui.ctx()), entry);
+    let room = width.unwrap_or_else(|| (ui.available_width() - BUTTONS).max(80.0));
+    let height = ui.spacing().interact_size.y;
+    let opened = ui
+        .allocate_ui_with_layout(egui::vec2(room, height), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.set_max_width(room);
+            if width.is_some() {
+                ui.set_min_width(room);
+            }
+            match entry {
+                0 => {
+                    ui.add(egui::Label::new(egui::RichText::new(text).small().color(colour)).truncate())
+                        .on_hover_text(hover);
+                    false
+                }
+                _ => reference::link(ui, &text, colour, &hover),
+            }
+        })
+        .inner;
+    if opened {
+        conditions::ask(ui.ctx(), Request { entry, list: false, asker: asker.clone() });
+    }
+    if ui
+        .small_button("choose\u{2026}")
+        .on_hover_text("Search the conditions in the condition window, and use one in this column.")
+        .clicked()
+    {
+        conditions::ask(ui.ctx(), Request { entry, list: true, asker: asker.clone() });
+    }
+    if entry == 0
+        && ui
+            .small_button("+ new")
+            .on_hover_text("Make a condition in the condition window. Its entry is written into this column.")
+            .clicked()
+    {
+        conditions::ask(ui.ctx(), Request { entry: 0, list: false, asker });
+    }
+    answered
+}
+
+/// The line a cell draws for `entry`: its text, its colour and its hover.
+fn line(board: &Board, entry: u32) -> (String, egui::Color32, String) {
+    let open = "Click to open it in the condition window.";
+    if entry == 0 {
+        return ("none".to_string(), theme::INK_FAINT, "0: no condition.".to_string());
+    }
+    if let Some(trouble) = &board.trouble {
+        return (
+            format!("condition {entry}"),
+            theme::ACCENT,
+            format!("The conditions could not be read: {trouble}\n{open}"),
+        );
+    }
+    match board.told.get(&entry) {
+        Some(Told::Tests { line, faults }) if faults.is_empty() => {
+            (line.clone(), theme::ACCENT, format!("Condition {entry}: {line}\n{open}"))
+        }
+        Some(Told::Tests { line, faults }) => (
+            line.clone(),
+            theme::WARN,
+            format!("Condition {entry}: {line}\nThe server would skip it: {}\n{open}", faults.join("; ")),
+        ),
+        Some(Told::Missing) => (
+            format!("no condition {entry}"),
+            theme::BAD,
+            format!("Neither the conditions table nor this project holds condition {entry}.\n{open}"),
+        ),
+        Some(Told::Removed) => (
+            format!("condition {entry}, removed"),
+            theme::BAD,
+            format!("This project removes condition {entry}, and this column still names it.\n{open}"),
+        ),
+        None => (format!("condition {entry}"), theme::INK_DIM, format!("Reading the conditions.\n{open}")),
     }
 }
 
@@ -47,7 +139,7 @@ pub struct Subject<'a> {
     pub now: f64,
 }
 
-/// The frame the window is drawn in, the other server windows' own.
+/// The frame the window is drawn in, the same as the other server windows'.
 fn frame() -> egui::Frame {
     egui::Frame::default()
         .fill(theme::SHELL)
@@ -56,18 +148,21 @@ fn frame() -> egui::Frame {
         .inner_margin(egui::Margin::same(8))
 }
 
-/// Take a form's request, and draw the window when it is open.
+/// Take a form's request, tell the forms what the conditions they show test,
+/// and draw the window when it is open.
 pub fn window(ctx: &egui::Context, mut subject: Subject<'_>) -> Option<egui::Rect> {
-    if let Some(entry) = ctx.data_mut(|data| data.remove_temp::<u32>(conditions::request_id())) {
-        subject.conditions.show((entry != 0).then_some(entry));
+    if let Some(request) = ctx.data_mut(|data| data.remove_temp::<Request>(conditions::request_id())) {
+        subject.conditions.take(request);
     }
+    tell(ctx, &mut subject);
     if !subject.conditions.open {
         return None;
     }
     let mut keep_open = true;
-    let title = match subject.conditions.showing {
-        Some(entry) => format!("Condition {entry}"),
-        None => "New condition".to_string(),
+    let title = match (subject.conditions.listing, subject.conditions.showing) {
+        (true, _) => "Conditions".to_string(),
+        (false, Some(entry)) => format!("Condition {entry}"),
+        (false, None) => "New condition".to_string(),
     };
     let shown = egui::Window::new(title)
         .id(egui::Id::new("condition-window"))
@@ -87,6 +182,32 @@ pub fn window(ctx: &egui::Context, mut subject: Subject<'_>) -> Option<egui::Rec
     shown.map(|response| response.response.rect)
 }
 
+/// Answer the forms: what each entry they showed since the last draw tests.
+/// Keeps the table read while any form shows one.
+fn tell(ctx: &egui::Context, subject: &mut Subject<'_>) {
+    let asked = conditions::take_asked(ctx);
+    subject.conditions.wanted = !asked.is_empty();
+    let mut board = Board {
+        trouble: subject.conditions.trouble.clone(),
+        read: subject.conditions.read(),
+        told: Default::default(),
+    };
+    if board.read {
+        for entry in asked {
+            let told = match subject.conditions.shown(&subject.session.server_edits, entry) {
+                None => Told::Missing,
+                Some(shown) if shown.life == Life::Delete => Told::Removed,
+                Some(shown) => Told::Tests {
+                    line: sentence(subject, &shown.condition),
+                    faults: subject.conditions.row_faults(&subject.session.server_edits, &shown.condition),
+                },
+            };
+            board.told.insert(entry, told);
+        }
+    }
+    conditions::post_board(ctx, board);
+}
+
 fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     ui.horizontal(|ui| {
         if ui
@@ -103,7 +224,11 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         if ui.button("New\u{2026}").on_hover_text("Make a new condition.").clicked() {
             subject.conditions.show(None);
         }
+        if ui.button("List").on_hover_text("Search every condition by entry, value or type.").clicked() {
+            subject.conditions.list();
+        }
     });
+    asker_line(ui, subject);
     ui.separator();
     if let Some(trouble) = &subject.conditions.trouble {
         theme::note(ui, format!("The conditions could not be read: {trouble}"));
@@ -111,6 +236,10 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     }
     if !subject.conditions.read() {
         theme::note(ui, "reading conditions\u{2026}");
+        return;
+    }
+    if subject.conditions.listing {
+        list_page(ui, subject);
         return;
     }
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match subject.conditions.showing {
@@ -122,6 +251,96 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     });
 }
 
+/// The column the window answers into, when a form opened it, and the button
+/// that stops answering it.
+fn asker_line(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
+    let Some(asker) = subject.conditions.asker.clone() else {
+        return;
+    };
+    ui.horizontal(|ui| {
+        let holds = match asker.holds {
+            0 => "no condition".to_string(),
+            entry => format!("condition {entry}"),
+        };
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(format!("For {}, which holds {holds}", asker.column))
+                    .small()
+                    .color(theme::INK_DIM),
+            )
+            .truncate(),
+        );
+        if ui
+            .small_button("\u{d7}")
+            .on_hover_text("Stop answering this column: Use and Make no longer write into it.")
+            .clicked()
+        {
+            subject.conditions.asker = None;
+        }
+    });
+}
+
+/// Write `entry` into the column that opened the window, and say so.
+fn use_for_column(ctx: &egui::Context, subject: &mut Subject<'_>, entry: u32) {
+    if let Some(column) = subject.conditions.asker.as_ref().map(|asker| asker.column.clone()) {
+        conditions::answer(ctx, subject.conditions, entry);
+        subject.session.status = format!("{column} set to condition {entry}");
+    }
+}
+
+/// Whether the window answers a column that holds something other than
+/// `entry`, so Use is offered.
+fn offers_use(subject: &Subject<'_>, entry: u32) -> bool {
+    subject.conditions.asker.as_ref().is_some_and(|asker| asker.holds != entry)
+}
+
+/// Every condition the search matches, one line each.
+fn list_page(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut subject.conditions.search)
+                .hint_text("entry, value or type")
+                .desired_width(160.0),
+        )
+        .on_hover_text("A number matches a condition's entry or any of its four values; text matches part of a type's name.");
+        let name = match subject.conditions.search_type.and_then(rows::type_of) {
+            Some(known) => format!("{} {}", known.id, known.name),
+            None => "every type".to_string(),
+        };
+        egui::ComboBox::from_id_salt("condition-list-type").selected_text(name).height(360.0).show_ui(ui, |ui| {
+            ui.selectable_value(&mut subject.conditions.search_type, None, "every type");
+            for known in rows::TYPES.iter().filter(|known| known.id != 0) {
+                ui.selectable_value(&mut subject.conditions.search_type, Some(known.id), format!("{:>3} {}", known.id, known.name));
+            }
+        });
+    });
+    let found = subject.conditions.matching(
+        &subject.session.server_edits,
+        &subject.conditions.search,
+        subject.conditions.search_type,
+    );
+    meaning(ui, format!("{} conditions", found.len()));
+    let height = ui.spacing().interact_size.y;
+    egui::ScrollArea::vertical().auto_shrink([false, false]).show_rows(ui, height, found.len(), |ui, range| {
+        for condition in &found[range] {
+            let entry = condition.entry;
+            ui.horizontal(|ui| {
+                ui.set_min_height(height);
+                if ui.link(entry.to_string()).on_hover_text("Open this condition.").clicked() {
+                    subject.conditions.show(Some(entry));
+                }
+                if offers_use(subject, entry)
+                    && ui.small_button("use").on_hover_text("Write this condition into the column the window was opened from.").clicked()
+                {
+                    use_for_column(ui.ctx(), subject, entry);
+                }
+                let said = sentence(subject, condition);
+                ui.add(egui::Label::new(egui::RichText::new(said).color(theme::INK)).truncate());
+            });
+        }
+    });
+}
+
 /// Choose a type and make a condition of it.
 fn new_page(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     theme::note(
@@ -129,22 +348,25 @@ fn new_page(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         "A new condition takes the next entry above every other, which is also above any \
          condition an AND or an OR names, as the server requires.",
     );
+    if subject.conditions.asker.as_ref().is_some_and(|asker| asker.holds == 0) {
+        theme::note(ui, "Make writes the new condition's entry into the column the window was opened from.");
+    }
     row(ui, "type", |ui| type_choice(ui, &mut subject.conditions.new_type, "new-condition-type"));
     if let Some(kind) = rows::type_of(subject.conditions.new_type) {
         meaning(ui, kind.about);
     }
     if ui.button("Make").clicked() {
         let kind = subject.conditions.new_type;
-        match subject.conditions.create(subject.session, kind, [0; 4], 0, subject.now) {
-            Some((entry, true)) => {
-                subject.session.status = format!("condition {entry} made");
-                subject.conditions.show(Some(entry));
+        let made = subject.conditions.create(subject.session, kind, [0; 4], 0, subject.now);
+        if let Some((entry, new)) = made {
+            subject.session.status = match new {
+                true => format!("condition {entry} made"),
+                false => format!("condition {entry} already tests that"),
+            };
+            if subject.conditions.asker.as_ref().is_some_and(|asker| asker.holds == 0) {
+                use_for_column(ui.ctx(), subject, entry);
             }
-            Some((entry, false)) => {
-                subject.session.status = format!("condition {entry} already tests that");
-                subject.conditions.show(Some(entry));
-            }
-            None => {}
+            subject.conditions.show(Some(entry));
         }
     }
 }
@@ -220,15 +442,27 @@ fn condition_page(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: Shown) {
     }
     ui.add_space(6.0);
     ui.horizontal(|ui| {
+        if shown.life != Life::Delete
+            && offers_use(subject, condition.entry)
+            && ui
+                .button("Use")
+                .on_hover_text("Write this condition into the column the window was opened from.")
+                .clicked()
+        {
+            use_for_column(ui.ctx(), subject, condition.entry);
+        }
         if ui
             .button("Combine with AND\u{2026}")
-            .on_hover_text("Make an AND over this condition and a new one, entered above both.")
+            .on_hover_text(
+                "Make an AND over this condition and a new one, entered above both. When the \
+                 column the window was opened from holds this condition, it is set to the AND.",
+            )
             .clicked()
         {
-            combine(subject, condition.entry, -1);
+            combine(ui.ctx(), subject, condition.entry, -1);
         }
         if ui.button("Combine with OR\u{2026}").on_hover_text("The same, with OR.").clicked() {
-            combine(subject, condition.entry, -2);
+            combine(ui.ctx(), subject, condition.entry, -2);
         }
         let label = match shown.life {
             Life::Delete => "Keep",
@@ -257,16 +491,24 @@ fn condition_page(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: Shown) {
 }
 
 /// Make an AND or an OR over `entry` and a new empty condition, and open the
-/// new one, since it is the one to fill in.
-fn combine(subject: &mut Subject<'_>, entry: u32, kind: i32) {
+/// new one, since it is the one to fill in. The column the window was opened
+/// from is set to the AND or the OR when it held `entry`.
+fn combine(ctx: &egui::Context, subject: &mut Subject<'_>, entry: u32, kind: i32) {
     let now = subject.now;
     let Some((child, _)) = subject.conditions.create(subject.session, 8, [0; 4], 0, now) else {
         return;
     };
     if let Some((parent, _)) = subject.conditions.create(subject.session, kind, [entry as i32, child as i32, 0, 0], 0, now) {
-        subject.session.status = format!(
-            "condition {parent} combines {entry} with the new condition {child}; name {parent} where {entry} was named"
-        );
+        let asker = subject.conditions.asker.clone().filter(|asker| asker.holds == entry);
+        subject.session.status = match asker {
+            Some(asker) => {
+                conditions::answer(ctx, subject.conditions, parent);
+                format!("condition {parent} combines {entry} with the new condition {child}; {} set to {parent}", asker.column)
+            }
+            None => format!(
+                "condition {parent} combines {entry} with the new condition {child}; name {parent} where {entry} was named"
+            ),
+        };
     }
     subject.conditions.show(Some(child));
 }
@@ -339,7 +581,7 @@ fn value_cell(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &Shown, n: us
     }
 }
 
-/// The table a value of this kind names, for its name and its picker.
+/// The table a value with this [`Means`] names, for its name and its picker.
 fn table_of(means: Means) -> Option<&'static str> {
     match means {
         Means::Spell => Some("Spell"),
@@ -355,8 +597,29 @@ fn table_of(means: Means) -> Option<&'static str> {
     }
 }
 
+/// What a value names, by name: a quest's title, an item's, creature's or
+/// game object's name, a DBC row's name. `None` while the name is
+/// being read, or when the value names nothing.
+fn name_of(subject: &mut Subject<'_>, means: Means, value: i32) -> Option<String> {
+    let id = u32::try_from(value).ok().filter(|id| *id != 0)?;
+    let edits = &subject.session.server_edits;
+    match means {
+        Means::Quest => subject.quests.title_of(id, edits),
+        Means::Item => subject.quests.item(id, edits).map(|item| item.name),
+        Means::Creature => subject.quests.holder(Holder::Creature, id, edits),
+        Means::GameObject => subject.quests.holder(Holder::Object, id, edits),
+        _ => {
+            let table = table_of(means)?;
+            match super::quests::open_for_names(subject.session, subject.assets, table) {
+                true => super::quests::name_in(subject.session, table, id),
+                false => None,
+            }
+        }
+    }
+}
+
 /// The condition in one line: its type and what each value is.
-fn sentence(subject: &Subject<'_>, condition: &Condition) -> String {
+fn sentence(subject: &mut Subject<'_>, condition: &Condition) -> String {
     let Some(known) = rows::type_of(condition.kind) else {
         return format!("type {}", condition.kind);
     };
@@ -371,7 +634,7 @@ fn sentence(subject: &Subject<'_>, condition: &Condition) -> String {
             Means::Compare => rows::COMPARES.get(value as usize).copied().unwrap_or("?").to_string(),
             Means::Rank => rows::RANKS.get(value as usize).copied().unwrap_or("?").to_string(),
             Means::Condition => value.to_string(),
-            _ => match table_of(slot.means).and_then(|table| super::quests::name_in(subject.session, table, value as u32)) {
+            means => match name_of(subject, means, value) {
                 Some(name) => format!("{name} ({value})"),
                 None => value.to_string(),
             },

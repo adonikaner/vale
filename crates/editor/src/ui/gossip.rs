@@ -227,12 +227,15 @@ fn text_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, text: &Shown<MenuText
         None => theme::note(ui, format!("npc_text {id} is not in the table, so the server skips this text.")),
     }
     let mut condition = text.row.condition_id;
-    row(ui, "condition", |ui| {
-        if ui.add(egui::DragValue::new(&mut condition).speed(1.0)).changed() {
-            subject.gossip.set_text(subject.session, text, "condition_id", condition.to_string(), now);
-        }
-        super::conditions::open_button(ui, condition);
+    let column = format!("{} {} condition_id", gossip::MENU, text.row.key().text());
+    let written = row(ui, "condition", |ui| {
+        let typed = ui.add(egui::DragValue::new(&mut condition).speed(1.0)).changed();
+        let answered = super::conditions::cell(ui, egui::Id::new(("gossip-text-condition", &column)), &column, text.row.condition_id, None);
+        answered.or(typed.then_some(condition))
     });
+    if let Some(condition) = written.filter(|condition| *condition != text.row.condition_id) {
+        subject.gossip.set_text(subject.session, text, "condition_id", condition.to_string(), now);
+    }
     let mut script = text.row.script_id;
     row(ui, "script", |ui| {
         if ui
@@ -458,12 +461,15 @@ fn option_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: 
         row(ui, "box text", |ui| broadcast_line(ui, subject, o.box_broadcast_text, &format!("gossip-box-line-{menu}-{}", o.id)));
     }
     let mut condition = o.condition_id;
-    row(ui, "condition", |ui| {
-        if ui.add(egui::DragValue::new(&mut condition).speed(1.0)).changed() {
-            set(subject, "condition_id", condition.to_string());
-        }
-        super::conditions::open_button(ui, condition);
+    let column = format!("{} {} condition_id", gossip::OPTION, key.text());
+    let written = row(ui, "condition", |ui| {
+        let typed = ui.add(egui::DragValue::new(&mut condition).speed(1.0)).changed();
+        let answered = super::conditions::cell(ui, egui::Id::new(("gossip-option-condition", &column)), &column, o.condition_id, None);
+        answered.or(typed.then_some(condition))
     });
+    if let Some(condition) = written.filter(|condition| *condition != o.condition_id) {
+        set(subject, "condition_id", condition.to_string());
+    }
     for fault in o.check() {
         ui.label(egui::RichText::new(fault).size(theme::SMALL).color(theme::WARN));
     }

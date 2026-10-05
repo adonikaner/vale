@@ -22,7 +22,7 @@
 //! areatrigger_scripts         an AreaTrigger.dbc id
 //! ```
 //!
-//! ## A script is written whole
+//! ## Why a script is written as a whole
 //!
 //! None of the tables has a primary key. A row is identified by nothing but
 //! its content, and four of its columns are floats, so no `WHERE` clause this
@@ -30,7 +30,8 @@
 //! the unit of edit, as a waypoint path is (see [`crate::path`]): every row
 //! under an `id` is deleted and the rows the project holds are inserted, in
 //! `(delay, priority)` order. The undo is the rows that were there, restored
-//! the same way. [`Scripts`] is the store, on [`crate::path::Paths`]' shape.
+//! the same way. [`Scripts`] is the store; it has the same shape as
+//! [`crate::path::Paths`].
 //!
 //! ## What a row is
 //!
@@ -50,7 +51,7 @@
 //! (`ScriptMgr.cpp:1631`); [`waits`] says which tables take one. An event
 //! that waits starts a `generic_scripts` script, whose rows do.
 //!
-//! ## Live on a reload
+//! ## Which tables a `.reload` re-reads
 //!
 //! `.reload creature_ai_events` re-reads `creature_ai_scripts` first and says
 //! so; `gossip_scripts`, `generic_scripts`, `event_scripts`,
@@ -373,7 +374,7 @@ pub const COMMANDS: [Command; 94] = [
     c(29, "Modify threat", "Creature", [n("targets", "eModifyThreatTargets, or a ScriptTarget"), None, None, None], NONE, true, true),
     c(30, "Send taxi path", "Player", [p("taxi_path_id", Kind::Ref("TaxiPath"), ""), None, None, None], NONE, false, false),
     c(31, "Terminate script", "Any", [p("creature_entry", Kind::Ref("creature_template"), "0 for no search"), n("search_distance", ""), n("options", "eTerminateScriptOptions: 0 if found, 1 if not found"), None], NONE, false, false),
-    c(32, "Terminate on condition", "Any", [n("condition_id", "a row of conditions"), p("failed_quest_id", Kind::Ref("quest_template"), "failed when the script ends here"), n("flags", "1 terminate when the condition is false"), None], NONE, false, false),
+    c(32, "Terminate on condition", "Any", [p("condition_id", Kind::Ref(crate::condition::TABLE), "a row of conditions"), p("failed_quest_id", Kind::Ref("quest_template"), "failed when the script ends here"), n("flags", "1 terminate when the condition is false"), None], NONE, false, false),
     c(33, "Enter evade mode", "Creature", NONE, NONE, false, false),
     c(34, "Set home position", "Creature", [n("options", "eSetHomePositionOptions: 0 the coordinates, 1 the current position, 2 the default position, 3 the target's position"), None, None, None], NONE, true, true),
     c(35, "Turn to", "Unit", [n("options", "eTurnToFacingOptions: 0 the target, 1 the o given"), None, None, None], NONE, true, true),
@@ -402,15 +403,15 @@ pub const COMMANDS: [Command; 94] = [
     c(58, "Remove spell cooldown", "Unit", [p("spell_id", Kind::Ref("Spell"), "0 for all"), None, None, None], NONE, false, false),
     c(59, "Set react state", "Creature", [p("react_state", Kind::Choice(&REACT_STATES), ""), None, None, None], NONE, false, false),
     c(60, "Start waypoints", "Creature", [n("waypoints_source", "0 creature_movement, 1 creature_movement_template, 2 creature_movement_special"), n("start_point", ""), n("initial_delay", "milliseconds"), yes("repeat", "")], [n("overwrite_guid", "read the path of this spawn instead"), p("overwrite_entry", Kind::Ref("creature_template"), "read the template path of this creature instead"), None, None], false, false),
-    c(61, "Start map event", "Map", [n("event_id", ""), n("time_limit", "milliseconds"), None, None], [n("success_condition", ""), p("success_script", Kind::Ref(GENERIC), ""), n("failure_condition", ""), p("failure_script", Kind::Ref(GENERIC), "")], false, false),
+    c(61, "Start map event", "Map", [n("event_id", ""), n("time_limit", "milliseconds"), None, None], [p("success_condition", Kind::Ref(crate::condition::TABLE), "the event succeeds when it holds"), p("success_script", Kind::Ref(GENERIC), ""), p("failure_condition", Kind::Ref(crate::condition::TABLE), "the event fails when it holds"), p("failure_script", Kind::Ref(GENERIC), "")], false, false),
     c(62, "End map event", "Map", [n("event_id", ""), yes("success", ""), None, None], NONE, false, false),
-    c(63, "Add map event target", "Map", [n("event_id", ""), None, None, None], [n("success_condition", ""), p("success_script", Kind::Ref(GENERIC), ""), n("failure_condition", ""), p("failure_script", Kind::Ref(GENERIC), "")], false, true),
-    c(64, "Remove map event target", "Map", [n("event_id", ""), n("condition_id", ""), n("options", "eRemoveMapEventTargetOptions"), None], NONE, false, true),
+    c(63, "Add map event target", "Map", [n("event_id", ""), None, None, None], [p("success_condition", Kind::Ref(crate::condition::TABLE), "the event succeeds when it holds"), p("success_script", Kind::Ref(GENERIC), ""), p("failure_condition", Kind::Ref(crate::condition::TABLE), "the event fails when it holds"), p("failure_script", Kind::Ref(GENERIC), "")], false, true),
+    c(64, "Remove map event target", "Map", [n("event_id", ""), p("condition_id", Kind::Ref(crate::condition::TABLE), "with options 1 or 2, the targets that meet it are removed"), n("options", "eRemoveMapEventTargetOptions"), None], NONE, false, true),
     c(65, "Set map event data", "Map", [n("event_id", ""), n("index", ""), n("data", ""), n("options", "eSetMapScriptDataOptions: 0 set, 1 increment, 2 decrement")], NONE, false, false),
     c(66, "Send map event", "Map", [n("event_id", ""), n("data", ""), n("options", "eSendMapEventOptions"), None], NONE, false, false),
     c(67, "Set default movement", "Creature", [n("movement_type", "0 idle, 1 random, 2 waypoint"), yes("always_replace", ""), n("param1", "wander distance for random"), None], NONE, false, false),
     c(68, "Start script for all", "WorldObject", [p("generic_script_id", Kind::Ref(GENERIC), ""), n("options", "eStartScriptForAllOptions: 0 game objects, 1 creatures, 2 players, 3 units, 4 world objects"), n("object_entry", "or 0 for any"), n("search_radius", "")], NONE, false, false),
-    c(69, "Edit map event", "Map", [n("event_id", ""), None, None, None], [n("success_condition", ""), p("success_script", Kind::Ref(GENERIC), ""), n("failure_condition", ""), p("failure_script", Kind::Ref(GENERIC), "")], false, false),
+    c(69, "Edit map event", "Map", [n("event_id", ""), None, None, None], [p("success_condition", Kind::Ref(crate::condition::TABLE), "the event succeeds when it holds"), p("success_script", Kind::Ref(GENERIC), ""), p("failure_condition", Kind::Ref(crate::condition::TABLE), "the event fails when it holds"), p("failure_script", Kind::Ref(GENERIC), "")], false, false),
     c(70, "Fail quest", "Player", [p("quest_id", Kind::Ref("quest_template"), ""), None, None, None], NONE, false, false),
     c(71, "Respawn creature", "Creature", [yes("even_if_alive", ""), None, None, None], NONE, false, false),
     c(72, "Assist unit", "Creature", NONE, NONE, false, true),
@@ -454,7 +455,8 @@ pub fn command(value: u32) -> Option<&'static Command> {
 }
 
 /// The twenty columns `LoadScripts` selects, plus `priority` (in its `ORDER
-/// BY`) and `comments` (never read by the server, kept for the person).
+/// BY`) and `comments` (never read by the server; a note for whoever edits
+/// the table).
 pub const COLUMNS: [Column; 22] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "which script the row belongs to" },
     Column { name: "delay", kind: Kind::Seconds, group: Group::Identity, about: "seconds after the script starts; 0 in creature_ai_scripts" },
@@ -937,7 +939,7 @@ pub struct Script {
 }
 
 impl Script {
-    /// A script with no rows, which written is a script removed.
+    /// A script with no rows. Writing it removes the script.
     pub fn empty(table: &'static str, id: u32) -> Script {
         Script { table, id, rows: Vec::new() }
     }
@@ -1100,7 +1102,7 @@ fn settle(mut rows: Vec<ScriptRow>) -> Vec<ScriptRow> {
     rows
 }
 
-/// The statements a script comes to: every row under the id deleted, then
+/// The SQL statements that write a script: every row under the id deleted, then
 /// one `INSERT` per row in the server's order. A script with no rows is the
 /// `DELETE` alone.
 pub fn statements(script: &Script) -> Vec<String> {
@@ -1136,7 +1138,8 @@ pub fn rows_query(table: &str, id: u32) -> String {
     )
 }
 
-/// What puts a script back as it stood: the same `DELETE`, then the rows read.
+/// The statements that restore a script to the rows read: the same `DELETE`,
+/// then one `INSERT` per row.
 pub fn undo_from_rows(table: &str, id: u32, rows: &[Row]) -> Vec<String> {
     let mut out = vec![format!(
         "DELETE FROM {} WHERE `id` = {id};",
@@ -1179,7 +1182,7 @@ pub fn search_query(table: &str, term: &str, limit: usize) -> String {
     )
 }
 
-/// The `broadcast_text` entries a row says, when it is a Talk row. See
+/// The `broadcast_text` entries a Talk row names; empty for any other row. See
 /// [`crate::broadcast`], which reads them.
 pub fn texts_of(row: &ScriptRow) -> Vec<u32> {
     match row.command {
@@ -1195,18 +1198,18 @@ pub fn max_id_query(table: &str) -> String {
 
 /// Every script a project has edited.
 ///
-/// [`crate::path::Paths`] for scripts: keyed by table and id, so a script
-/// edited twice is one entry and the last reading wins. A script that is
-/// present with no rows is the edit that removes it; a script not present is
-/// one the project says nothing about.
+/// The script counterpart of [`crate::path::Paths`]: keyed by table and id,
+/// so a script edited twice is one entry and the last reading wins. A script
+/// that is present with no rows is the edit that removes it; a script not
+/// present is one the project says nothing about.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Scripts {
     scripts: std::collections::BTreeMap<(&'static str, u32), Vec<ScriptRow>>,
 }
 
 impl Scripts {
-    /// Set what this project says a script is, in the server's order. No
-    /// rows is a script removed.
+    /// Set what this project says a script is, in the server's order. A
+    /// script with no rows records its removal.
     pub fn set(&mut self, script: &Script) {
         self.scripts.insert((script.table, script.id), script.sorted());
     }
@@ -1277,8 +1280,8 @@ impl Scripts {
     }
 
     /// The store read from a file [`Scripts::to_text`] wrote. A damaged line
-    /// is skipped and the rest are read, on [`crate::row::Edits::from_text`]'s
-    /// rule. A `row` line for a script with no `script` line declares the
+    /// is skipped and the rest are read, as [`crate::row::Edits::from_text`]
+    /// does. A `row` line for a script with no `script` line declares the
     /// script as well.
     pub fn from_text(text: &str) -> Scripts {
         let mut out = Scripts::default();

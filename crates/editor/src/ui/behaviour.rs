@@ -40,7 +40,7 @@
 //! names it; the window says how many do, and Copy into a new list gives
 //! this creature a list of its own.
 //!
-//! ## Nothing here reaches the database
+//! ## Where an edit is kept until Apply
 //!
 //! An event, a list or a text edit goes into the project's row store and onto
 //! the undo stack; a script edit replaces the project's copy of the whole
@@ -63,6 +63,7 @@ use crate::tools::behaviour::{
 use crate::tools::quests::{ColumnTarget, Holder, PickFor, Picker, Quests};
 use vale_client::assets::GameAssets;
 use vale_mangos::broadcast;
+use vale_mangos::condition;
 use vale_mangos::creaturespells::{self, List, SLOTS};
 use vale_mangos::eventai::{self, Event};
 use vale_mangos::row::{Key, Life};
@@ -704,8 +705,10 @@ fn trigger_fields(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &ShownEve
     let written = page_row(ui, "condition_id", "a row of conditions, or 0", edited("condition_id"), |ui| {
         let showing = event.get("condition_id");
         let written = number_cell(ui, Kind::Unsigned, &showing);
-        super::conditions::open_button(ui, showing.trim().parse().unwrap_or(0));
-        written
+        let column = format!("{} {} condition_id", eventai::TABLE, key.text());
+        let entry = showing.trim().parse().unwrap_or(0);
+        let answered = super::conditions::cell(ui, id.with("condition"), &column, entry, None);
+        answered.map(|entry| entry.to_string()).or(written)
     });
     if let Some(written) = written {
         set(subject, "condition_id", written);
@@ -824,7 +827,7 @@ fn script_buttons(
     out
 }
 
-/// The value cell of one parameter, by its kind: a number, a menu, a mask,
+/// The value cell of one parameter, by its [`Kind`]: a number, a menu, a mask,
 /// or a reference with its name and picker after it.
 #[allow(clippy::too_many_arguments)]
 fn value_cell(
@@ -1480,8 +1483,10 @@ fn step_fields(ui: &mut egui::Ui, subject: &mut Subject<'_>, script: &Script, at
     if let Some(written) = page_row(ui, "condition_id", "a row of conditions the step is skipped without, or 0", false, |ui| {
         let showing = row.get("condition_id");
         let written = number(ui, Kind::Unsigned, &showing);
-        super::conditions::open_button(ui, showing.trim().parse().unwrap_or(0));
-        written
+        let column = format!("{} {} step {} condition_id", script.table, script.id, at + 1);
+        let entry = showing.trim().parse().unwrap_or(0);
+        let answered = super::conditions::cell(ui, id.with("condition"), &column, entry, None);
+        answered.map(|entry| entry.to_string()).or(written)
     }) {
         write(subject, "condition_id", &written);
     }
@@ -1509,8 +1514,8 @@ fn step_fields(ui: &mut egui::Ui, subject: &mut Subject<'_>, script: &Script, at
 
 /// The value cell of one script data column: as [`value_cell`], with the
 /// picker answering through [`PickFor::ScriptCell`] since a script is not in
-/// the row store, a script id offering the script buttons, and a text id
-/// offering the text buttons.
+/// the row store, a script id offering the script buttons, a text id
+/// offering the text buttons, and a condition the condition cell.
 #[allow(clippy::too_many_arguments)]
 fn script_value_cell(
     ui: &mut egui::Ui,
@@ -1533,6 +1538,13 @@ fn script_value_cell(
             let script_id: u32 = showing.trim().parse().unwrap_or(0);
             let table = scripts::table_named(table).unwrap_or(scripts::GENERIC);
             script_buttons(ui, subject, table, script_id, None, cell).or(written)
+        }
+        Kind::Ref(condition::TABLE) => {
+            let written = number_cell(ui, Kind::Unsigned, showing);
+            let named = format!("{} {} step {} {column}", script.table, script.id, at + 1);
+            let entry = showing.trim().parse().unwrap_or(0);
+            let answered = super::conditions::cell(ui, id.with("condition"), &named, entry, None);
+            answered.map(|entry| entry.to_string()).or(written)
         }
         Kind::Ref(dbc) => {
             let written = number_cell(ui, Kind::Unsigned, showing);
@@ -1939,7 +1951,8 @@ fn script_chooser(ui: &mut egui::Ui, subject: &mut Subject<'_>, table: &'static 
     }
 }
 
-/// Write a chosen id where a chooser was opened for.
+/// Write a chosen id into the column or script cell the chooser was opened
+/// for.
 fn answer_with(subject: &mut Subject<'_>, answer: &ScriptAnswer, id: u32) {
     match answer {
         ScriptAnswer::Column(target) => target.write(subject.session, id.to_string(), subject.now),

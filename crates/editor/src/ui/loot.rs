@@ -5,15 +5,15 @@
 //! ## One window for every holder
 //!
 //! A loot row is the same nine columns whichever of the nine tables it is in,
-//! so there is one window and three buttons that open it: *Loot* on a
-//! selected creature, on a selected game object, and on the open item. What
+//! so there is one window. Three Loot buttons open it: one on a selected
+//! creature, one on a selected game object, and one on the open item. What
 //! differs is which sets the holder's columns name, and that is a row of tabs:
 //! a creature's `loot_id`, `pickpocket_loot_id` and `skinning_loot_id`; an
 //! object's `lootId`; an item's own entry and its `disenchant_id`. The window
 //! follows the selection, as the quest window does — see
 //! [`crate::tools::loot::Window`], which the shell rebuilds each frame.
 //!
-//! ## A row is drawn as the server reads it
+//! ## How a row's columns are drawn
 //!
 //! The columns are drawn as what they mean rather than as the two signed
 //! numbers the table holds: a chance and a `quest` checkbox for
@@ -29,8 +29,8 @@
 //! ## Edits go to the project, not the database
 //!
 //! An edit goes into the project's store and onto the undo stack; a save
-//! writes `sql\loot.sql`; *Apply* is on the bar's *Server…* with the other
-//! subjects' — see [`super::sync`] and [`crate::server::loot`].
+//! writes `sql\loot.sql`; the Apply button is in the bar's Server… menu with
+//! the other subjects'. See [`super::sync`] and [`crate::server::loot`].
 
 use super::theme;
 use super::thumbnails::Thumbnails;
@@ -57,6 +57,10 @@ const CHANCE: f32 = 90.0;
 
 /// How wide a count or condition cell is. Both hold small integers.
 const NUMBER: f32 = 44.0;
+
+/// How wide the line saying what a condition tests is. Longer lines are cut,
+/// and the whole line is on hover.
+const CONDITION: f32 = 130.0;
 
 /// How wide the group drop-down is: room for `Group 12`.
 const GROUP: f32 = 76.0;
@@ -124,7 +128,7 @@ pub fn window(ctx: &egui::Context, mut subject: Subject<'_>) -> Option<egui::Rec
         // Wide enough for every cell of a row at the widths above, and tall
         // enough for the head, the tabs and about eight rows of 33 points.
         // A longer set scrolls; dragging the corner shows more of it.
-        .default_size([680.0, 460.0])
+        .default_size([900.0, 460.0])
         .default_pos([300.0, 120.0])
         .resizable(true)
         .frame(
@@ -350,8 +354,8 @@ fn percent(value: f32) -> String {
 /// Draws a group's heading, and one line under it that says what the group
 /// does.
 ///
-/// Group 0 is not a group: every row in it rolls its own chance and any number
-/// of them can drop. A numbered group drops at most one row per roll — see
+/// The rows in group 0 are not grouped: each rolls its own chance, and any
+/// number of them can drop. A numbered group drops at most one row per roll — see
 /// [`crate::tools::loot::Odds`], which is the server's own arithmetic.
 fn group_heading(ui: &mut egui::Ui, group: u32, odds: crate::tools::loot::Odds) {
     let (title, meaning) = match group {
@@ -600,7 +604,8 @@ fn row(
         if let Some(group) = chosen.filter(|group| *group != shown.entry.group) {
             subject.loot.regroup(subject.session, set, shown, group, now);
         }
-        // The condition, as its number.
+        // The condition: its number, then what it tests and the buttons that
+        // choose or make one.
         let mut condition = shown.entry.condition as i64;
         let conditioned = ui
             .add_sized(
@@ -608,13 +613,19 @@ fn row(
                 egui::DragValue::new(&mut condition).range(0..=i64::from(u32::MAX)).prefix("c"),
             )
             .on_hover_text("condition_id: a row of `conditions` the player must meet, or 0.");
-        if conditioned.changed() && condition != shown.entry.condition as i64 {
+        let typed = (conditioned.changed() && condition != shown.entry.condition as i64).then_some(condition as u32);
+        let key = shown.entry.key().text();
+        let answered = super::conditions::cell(
+            ui,
+            egui::Id::new(("loot-condition", set.table, &key)),
+            &format!("{} {key} condition_id", set.table),
+            shown.entry.condition,
+            Some(CONDITION),
+        );
+        if let Some(condition) = typed.or(answered) {
             subject
                 .loot
                 .set_column(subject.session, set, shown, "condition_id", condition.to_string(), now);
-        }
-        if shown.entry.condition != 0 {
-            super::conditions::open_button(ui, shown.entry.condition);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let (label, about) = match shown.life {

@@ -49,7 +49,7 @@
 //! them. The `…` beside each opens [`picker`], one dialog over all of them,
 //! with a switch for the columns whose sign picks the table.
 //!
-//! ## The creature and game-object tools' window is here
+//! ## The quest window of the creature and game-object tools
 //!
 //! [`holder_window`] lists the quests one creature or game object gives and
 //! takes, adds and removes them, and opens any of them in the workspace. It
@@ -119,8 +119,8 @@ pub struct Shell<'a> {
     /// row is written under.
     pub patch: u32,
     /// A tool to switch to, which the list's "back to Creatures" asks for.
-    /// Answered rather than written, because the shell holds the tool while it
-    /// draws this.
+    /// The shell switches after this returns; this does not write the tool
+    /// itself, because the shell holds the tool while it draws this.
     pub switch_to: &'a mut Option<Tool>,
 }
 
@@ -764,8 +764,8 @@ fn head(ui: &mut egui::Ui, open: &Open) {
     }
 }
 
-/// The order the sections are drawn in, which is a reader's and not the
-/// table's: what it is, what it says, what it asks, what it gives, who may take
+/// The order the sections are drawn in, which follows what a reader looks for
+/// and not the table's column order: what it is, what it says, what it asks, what it gives, who may take
 /// it, where it sits among the others, and the rest.
 const SECTIONS: [Group; 8] = [
     Group::Identity,
@@ -980,13 +980,17 @@ fn cell(
             }
             written
         }
+        kind if column.name == "RequiredCondition" => {
+            let written = number_cell(ui, kind, showing);
+            let named = format!("{} {} {}", quest::TEMPLATE, open.known.entry, column.name);
+            let entry = showing.trim().parse().unwrap_or(0);
+            let answered = super::conditions::cell(ui, id.with("condition"), &named, entry, None);
+            answered.map(|entry| entry.to_string()).or(written)
+        }
         kind => {
             let written = number_cell(ui, kind, showing);
             if let Some(means) = number_means(kind, showing) {
                 meaning(ui, means);
-            }
-            if column.name == "RequiredCondition" {
-                super::conditions::open_button(ui, showing.trim().parse().unwrap_or(0));
             }
             written
         }
@@ -2446,7 +2450,7 @@ const QUESTGIVER: u32 = 0x2;
 /// The flag is checked here because the server does not check it.
 /// `LoadCreatureQuestRelations` has the test for `UNIT_NPC_FLAG_QUESTGIVER`
 /// commented out (`ObjectMgr.cpp:8966`), so a relation on a creature without
-/// the flag loads without a word — and the 1.12 client, which decides what a
+/// the flag loads with no error logged — and the 1.12 client, which decides what a
 /// right-click on a unit does from its npc flags, never asks that creature for
 /// its quests. The window offers to set it.
 ///

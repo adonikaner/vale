@@ -1,36 +1,143 @@
 //! The condition window's state: the `conditions` table, read whole, with the
 //! project's edits over it, and what an edit to a condition is.
 //!
-//! A condition is opened by its entry from any form whose column names one:
-//! the form posts the entry with [`ask_to_open`] and the window takes it on
-//! the next frame, so a form needs nothing of this module's state. The window
-//! shows one condition at a time, with a trail back through the conditions an
-//! AND, an OR or a NOT led it to.
+//! ## How a form reaches the window
 //!
-//! The table is read whole when the window first opens, a few thousand rows,
-//! and kept until an apply moves the database
-//! (`EditSession::database_writes`). An edit is a row of the project's store
-//! on `crate::tools::services`' terms. What the table refuses is
-//! `vale_mangos::condition`: a combining condition must name lower entries
-//! than itself, and two rows may not test the same thing.
+//! A form column that names a condition is drawn by `ui::conditions::cell`,
+//! and the form holds none of this module's state. Three messages pass
+//! through egui's frame memory instead:
+//!
+//! ```text
+//! Request    form -> window   open an entry, the new page or the list, and
+//!                             which column to answer (`Asker`)
+//! answer     window -> form   an entry made or chosen for that column, which
+//!                             the form writes as it writes a typed number
+//! Board      window -> forms  what each entry a form showed tests, for the
+//!                             line beside its number
+//! ```
+//!
+//! The window shows one condition at a time, with a trail back through the
+//! conditions an AND, an OR or a NOT led it to.
+//!
+//! ## When the table is read
+//!
+//! The table is read whole, a few thousand rows, when the window opens or a
+//! form shows a column that holds a condition, and kept until an apply moves
+//! the database (`EditSession::database_writes`). An edit is a row of the
+//! project's store, written as `crate::tools::services` writes one. The rules
+//! the table enforces are in `vale_mangos::condition`: a combining condition
+//! must name lower entries than itself, and two rows may not test the same
+//! thing.
 
 use crate::session::{EditSession, Gesture};
 use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::future, Task};
-use std::collections::HashMap;
+use bevy_egui::egui;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use vale_mangos::condition::{self, Condition};
 use vale_mangos::row::{Edits, Life};
 
-/// Where a form posts the entry it wants the window to open, in egui's frame
-/// memory; see [`ask_to_open`].
-pub fn request_id() -> bevy_egui::egui::Id {
-    bevy_egui::egui::Id::new("vale-open-condition")
+/// Where a form posts its [`Request`], in egui's frame memory.
+pub fn request_id() -> egui::Id {
+    egui::Id::new("vale-open-condition")
 }
 
-/// Ask the condition window to open `entry`, or a new condition for 0. Any
-/// form can call this with the `egui::Context` it draws on.
-pub fn ask_to_open(ctx: &bevy_egui::egui::Context, entry: u32) {
-    ctx.data_mut(|data| data.insert_temp(request_id(), entry));
+/// What a form asks of the window.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Request {
+    /// The condition to show, or 0 for the page that makes one.
+    pub entry: u32,
+    /// Show the list of every condition instead.
+    pub list: bool,
+    /// The column a made or chosen condition is written into, or `None`.
+    pub asker: Option<Asker>,
+}
+
+/// The form column the window answers into.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Asker {
+    /// Where the answer is posted; the form's cell reads it back from there.
+    pub reply: egui::Id,
+    /// The table and column, as the window names it.
+    pub column: String,
+    /// The entry the column holds.
+    pub holds: u32,
+}
+
+/// Ask the condition window for something. Any form can call this with the
+/// `egui::Context` it draws on; the window takes it on its next draw.
+pub fn ask(ctx: &egui::Context, request: Request) {
+    ctx.data_mut(|data| data.insert_temp(request_id(), request));
+}
+
+/// Post `entry` to the column that asked, and remember that the column holds
+/// it now. Nothing when no column asked.
+pub fn answer(ctx: &egui::Context, conditions: &mut Conditions, entry: u32) {
+    if let Some(asker) = conditions.asker.as_mut() {
+        ctx.data_mut(|data| data.insert_temp(asker.reply, entry));
+        asker.holds = entry;
+    }
+}
+
+/// Take the entry the window answered into the column whose reply id is
+/// `reply`, once.
+pub fn take_answer(ctx: &egui::Context, reply: egui::Id) -> Option<u32> {
+    ctx.data_mut(|data| data.remove_temp::<u32>(reply))
+}
+
+/// Where the forms list the entries they showed since the window last drew.
+fn asked_id() -> egui::Id {
+    egui::Id::new("vale-conditions-asked")
+}
+
+/// Where the window posts the [`Board`].
+fn board_id() -> egui::Id {
+    egui::Id::new("vale-conditions-board")
+}
+
+/// Note that a form shows `entry`, so the window says what it tests on its
+/// next draw.
+pub fn ask_about(ctx: &egui::Context, entry: u32) {
+    ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<HashSet<u32>>(asked_id()).insert(entry);
+    });
+}
+
+/// The entries the forms showed since the last call, taken.
+pub fn take_asked(ctx: &egui::Context) -> HashSet<u32> {
+    ctx.data_mut(|data| data.remove_temp::<HashSet<u32>>(asked_id())).unwrap_or_default()
+}
+
+/// What one entry tests, as a form shows it beside the number.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Told {
+    /// The condition in one line, and why the server would skip it.
+    Tests { line: String, faults: Vec<String> },
+    /// Neither the table nor the project holds the entry.
+    Missing,
+    /// The project removes it.
+    Removed,
+}
+
+/// What the window last told the forms.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Board {
+    /// Why the table could not be read, when it could not.
+    pub trouble: Option<String>,
+    /// Whether the table has been read.
+    pub read: bool,
+    pub told: HashMap<u32, Told>,
+}
+
+/// Post the board for the forms to read.
+pub fn post_board(ctx: &egui::Context, board: Board) {
+    ctx.data_mut(|data| data.insert_temp(board_id(), Arc::new(board)));
+}
+
+/// The board the window last posted, or an empty one.
+pub fn board(ctx: &egui::Context) -> Arc<Board> {
+    ctx.data(|data| data.get_temp::<Arc<Board>>(board_id())).unwrap_or_default()
 }
 
 /// One condition as the window draws it.
@@ -55,6 +162,17 @@ pub struct Conditions {
     pub typed: u32,
     /// The type a new condition is made with.
     pub new_type: i32,
+    /// The list of every condition is shown instead of one condition.
+    pub listing: bool,
+    /// The list's search: an entry, a value, or part of a type's name.
+    pub search: String,
+    /// The list's type, or `None` for every type.
+    pub search_type: Option<i32>,
+    /// The form column a made or chosen condition is written into.
+    pub asker: Option<Asker>,
+    /// A form showed a condition on the last frame, so the table is read
+    /// whether or not the window is open.
+    pub wanted: bool,
     held: Option<HashMap<u32, Condition>>,
     loaded_for: Option<u64>,
     reading: Option<Task<Result<Vec<Condition>, String>>>,
@@ -69,7 +187,23 @@ impl Conditions {
             self.trail.push(now);
         }
         self.showing = entry;
+        self.listing = false;
         self.open = true;
+    }
+
+    /// Show the list of every condition.
+    pub fn list(&mut self) {
+        self.listing = true;
+        self.open = true;
+    }
+
+    /// Take a form's request.
+    pub fn take(&mut self, request: Request) {
+        self.asker = request.asker;
+        match request.list {
+            true => self.list(),
+            false => self.show((request.entry != 0).then_some(request.entry)),
+        }
     }
 
     /// Go back to the condition shown before.
@@ -190,6 +324,39 @@ impl Conditions {
         }
         out
     }
+
+    /// Whether `entry` is a condition the project leaves in place.
+    pub fn exists(&self, edits: &Edits, entry: u32) -> bool {
+        self.shown(edits, entry).is_some_and(|shown| shown.life != Life::Delete)
+    }
+
+    /// [`Self::faults`] without the search for a repeated test, which reads
+    /// every row: the row's own faults and a child that does not exist. For
+    /// the line a form draws beside a column, every frame.
+    pub fn row_faults(&self, edits: &Edits, shown: &Condition) -> Vec<String> {
+        let mut out = shown.check();
+        out.extend(condition::check_tree(shown, |entry| self.exists(edits, entry)));
+        out
+    }
+
+    /// The conditions the list shows, in entry order. `search` is a number,
+    /// which matches an entry or any of the four values, or text, which
+    /// matches part of a type's name; empty matches every row. `kind`
+    /// narrows to one type.
+    pub fn matching(&self, edits: &Edits, search: &str, kind: Option<i32>) -> Vec<Condition> {
+        let search = search.trim();
+        let number: Option<i64> = search.parse().ok();
+        let words = search.to_ascii_lowercase();
+        self.all(edits)
+            .into_iter()
+            .filter(|row| kind.is_none_or(|kind| row.kind == kind))
+            .filter(|row| match (search.is_empty(), number) {
+                (true, _) => true,
+                (false, Some(n)) => i64::from(row.entry) == n || row.values.iter().any(|value| i64::from(*value) == n),
+                (false, None) => condition::type_of(row.kind).is_some_and(|known| known.name.to_ascii_lowercase().contains(&words)),
+            })
+            .collect()
+    }
 }
 
 pub struct ConditionToolPlugin;
@@ -210,8 +377,8 @@ fn on_the_command_line(args: Res<crate::Args>, mut conditions: ResMut<Conditions
     }
 }
 
-/// Read the table while the window is open, and forget it when an apply has
-/// moved the database.
+/// Read the table while the window is open or a form shows a condition, and
+/// forget it when an apply has moved the database.
 fn read_the_rows(
     mut conditions: ResMut<Conditions>,
     session: Option<Res<EditSession>>,
@@ -240,7 +407,7 @@ fn read_the_rows(
         conditions.held = None;
         conditions.trouble = None;
     }
-    if !conditions.open || conditions.held.is_some() || conditions.trouble.is_some() {
+    if !(conditions.open || conditions.wanted) || conditions.held.is_some() || conditions.trouble.is_some() {
         return;
     }
     let Some((at, _source)) = settings.resolve() else {
@@ -278,11 +445,65 @@ mod tests {
         assert_eq!(conditions.next_entry(&session.server_edits), Some(42));
         let shown = conditions.shown(&session.server_edits, 41).unwrap();
         assert_eq!((shown.life, shown.condition.values[0]), (Life::Insert, 101));
-        // An AND over both is made above them, and names them as users see.
+        // An AND over both takes the next entry above them, and `users` lists
+        // it as a user of each child.
         let (and, _) = conditions.create(&mut session, -1, [40, 41, 0, 0], 0, 2.0).unwrap();
         assert_eq!(and, 42);
         assert_eq!(conditions.users(&session.server_edits, 41), vec![42]);
         assert!(conditions.faults(&session.server_edits, &conditions.shown(&session.server_edits, 42).unwrap().condition).is_empty());
         let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// The list matches an entry or a value by number, and a type by part of
+    /// its name; a type narrows it.
+    #[test]
+    fn the_list_matches_entries_values_and_type_names() {
+        let conditions = read(vec![
+            Condition { entry: 5, kind: 8, values: [783, 0, 0, 0], flags: 0 },
+            Condition { entry: 6, kind: 2, values: [2589, 5, 0, 0], flags: 0 },
+            Condition { entry: 783, kind: -1, values: [5, 6, 0, 0], flags: 0 },
+        ]);
+        let edits = Edits::default();
+        let entries = |search: &str, kind: Option<i32>| -> Vec<u32> {
+            conditions.matching(&edits, search, kind).iter().map(|row| row.entry).collect()
+        };
+        assert_eq!(entries("", None), vec![5, 6, 783]);
+        assert_eq!(entries(" 783 ", None), vec![5, 783]);
+        assert_eq!(entries("5", None), vec![5, 6, 783]);
+        assert_eq!(entries("QUEST", None), vec![5]);
+        assert_eq!(entries("", Some(2)), vec![6]);
+        assert_eq!(entries("5", Some(-1)), vec![783]);
+    }
+
+    /// The window answers the column that opened it, once, and a request
+    /// from no column stops the answering.
+    #[test]
+    fn a_made_or_chosen_condition_is_answered_to_the_column_that_asked() {
+        let ctx = egui::Context::default();
+        let reply = egui::Id::new("test-column");
+        let mut conditions = Conditions::default();
+        let asker = Asker { reply, column: "npc_vendor 1 2 condition_id".to_string(), holds: 0 };
+        conditions.take(Request { entry: 0, list: true, asker: Some(asker) });
+        assert!(conditions.open && conditions.listing);
+        answer(&ctx, &mut conditions, 41);
+        assert_eq!(take_answer(&ctx, reply), Some(41));
+        assert_eq!(take_answer(&ctx, reply), None);
+        assert_eq!(conditions.asker.as_ref().map(|asker| asker.holds), Some(41));
+
+        conditions.take(Request { entry: 41, ..Request::default() });
+        assert_eq!((conditions.showing, conditions.listing), (Some(41), false));
+        answer(&ctx, &mut conditions, 42);
+        assert_eq!(take_answer(&ctx, reply), None);
+    }
+
+    /// The entries the forms show are collected until the window takes them.
+    #[test]
+    fn the_entries_forms_show_are_taken_once() {
+        let ctx = egui::Context::default();
+        ask_about(&ctx, 80);
+        ask_about(&ctx, 80);
+        ask_about(&ctx, 1);
+        assert_eq!(take_asked(&ctx), HashSet::from([1, 80]));
+        assert!(take_asked(&ctx).is_empty());
     }
 }

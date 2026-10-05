@@ -6,8 +6,8 @@
 //! The volume writes through `crate::tools::tables::set_fields` under a gesture
 //! key, so a value dragged through forty steps is one undo entry. The server
 //! half writes rows of the project's store through `crate::tools::triggers`,
-//! and is drawn only once the three tables have been read. See
-//! `crate::tools::triggers` for the pointer.
+//! and is drawn only once the three tables have been read. What the pointer
+//! does in the world is described in `crate::tools::triggers`.
 
 use bevy_egui::egui;
 
@@ -437,8 +437,8 @@ fn server_half(
 }
 
 /// The template row's five server columns: the label, the script and what
-/// gates it. Always shown, since a trigger whose other rows are empty is
-/// explained here or nowhere.
+/// gates it. Always shown, since for a trigger with no other rows these
+/// columns are the only record of what the server does with it.
 fn template(
     ui: &mut egui::Ui,
     session: &mut EditSession,
@@ -549,15 +549,16 @@ fn template(
     });
 
     let mut condition = template.condition_id;
+    let column = format!("areatrigger_template {id} condition_id");
     theme::row(ui, "condition", |ui| {
-        if ui
+        let typed = ui
             .add(egui::DragValue::new(&mut condition).speed(1.0))
             .on_hover_text("areatrigger_template.condition_id: a row of `conditions` the character must meet for the script to run, or 0.")
-            .changed()
-        {
+            .changed();
+        let answered = super::conditions::cell(ui, egui::Id::new(("trigger-condition", id)), &column, template.condition_id, None);
+        if let Some(condition) = answered.or(typed.then_some(condition)).filter(|condition| *condition != template.condition_id) {
             triggers::set_template(session, triggers, id, "condition_id", condition.to_string(), now);
         }
-        super::conditions::open_button(ui, condition);
     });
     let mut cooldown = template.cooldown;
     theme::row(ui, "cooldown", |ui| {
@@ -744,15 +745,16 @@ fn teleport(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trigger
         }
     });
     let mut condition = teleport.required_condition;
+    let column = format!("areatrigger_teleport {id} required_condition");
     theme::row(ui, "condition", |ui| {
-        if ui
+        let typed = ui
             .add(egui::DragValue::new(&mut condition).speed(1.0))
             .on_hover_text("required_condition: a row of `conditions` the character must meet to be sent, or 0.")
-            .changed()
-        {
+            .changed();
+        let answered = super::conditions::cell(ui, egui::Id::new(("teleport-condition", id)), &column, teleport.required_condition, None);
+        if let Some(condition) = answered.or(typed.then_some(condition)).filter(|condition| *condition != teleport.required_condition) {
             triggers::set_teleport(session, triggers, id, "required_condition", condition.to_string(), now);
         }
-        super::conditions::open_button(ui, condition);
     });
     let mut message = teleport.message.clone();
     theme::row(ui, "message", |ui| {
