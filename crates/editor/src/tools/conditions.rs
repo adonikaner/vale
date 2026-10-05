@@ -19,6 +19,18 @@
 //! The window shows one condition at a time, with a trail back through the
 //! conditions an AND, an OR or a NOT led it to.
 //!
+//! ## Editing a condition as a tree
+//!
+//! The window's Tests view edits a [`Draft`]: the condition read as a
+//! `vale_mangos::condition::Node` tree, changed in memory, and written only
+//! by [`Conditions::save`]. Save never changes a row that exists. It names
+//! the rows that already test each part of the tree and creates the rest
+//! (`vale_mangos::condition::build`), as one undo entry, and the column the
+//! window answers is set to the result. A row of `conditions` is commonly
+//! named by many loot rows, quests and other conditions, and writing a new
+//! row keeps an edit made for one column from changing the others. The Rows
+//! view still edits one row where it is.
+//!
 //! ## When the table is read
 //!
 //! The table is read whole, a few thousand rows, when the window opens or a
@@ -35,7 +47,7 @@ use bevy::tasks::{block_on, futures_lite::future, Task};
 use bevy_egui::egui;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use vale_mangos::condition::{self, Condition};
+use vale_mangos::condition::{self, Condition, Node};
 use vale_mangos::row::{Edits, Life};
 
 /// Where a form posts its [`Request`], in egui's frame memory.
@@ -150,6 +162,39 @@ pub struct Shown {
     pub life: Life,
 }
 
+/// A condition being edited as a tree. See the module doc.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Draft {
+    /// The entry the tree was read from, or 0 for a new condition.
+    pub from: u32,
+    pub tree: Node,
+    /// The tree as read, which Revert goes back to.
+    pub read: Node,
+    /// The tests whose values are unfolded, by path.
+    pub open: HashSet<Vec<usize>>,
+}
+
+impl Draft {
+    /// The condition `from` read as a tree whose root is always a group, so
+    /// that a test can be added beside a condition that is one test. A group
+    /// of one member is written as that member, so the rows do not change.
+    pub fn read(from: u32, lookup: impl Fn(u32) -> Option<Condition>) -> Draft {
+        let tree = match from {
+            0 => Node::empty(),
+            entry => match condition::tree(entry, lookup) {
+                group @ Node::Group { .. } => group,
+                one => Node::Group { any: false, flags: 0, members: vec![one] },
+            },
+        };
+        Draft { from, read: tree.clone(), tree, open: HashSet::new() }
+    }
+
+    /// Whether the tree differs from what was read.
+    pub fn changed(&self) -> bool {
+        self.tree != self.read
+    }
+}
+
 /// The window's state.
 #[derive(Resource, Default)]
 pub struct Conditions {
@@ -160,8 +205,6 @@ pub struct Conditions {
     pub trail: Vec<u32>,
     /// The entry typed into the Open field.
     pub typed: u32,
-    /// The type a new condition is made with.
-    pub new_type: i32,
     /// The list of every condition is shown instead of one condition.
     pub listing: bool,
     /// The list's search: an entry, a value, or part of a type's name.
@@ -173,6 +216,11 @@ pub struct Conditions {
     /// A form showed a condition on the last frame, so the table is read
     /// whether or not the window is open.
     pub wanted: bool,
+    /// The condition being edited as a tree, in the Tests view.
+    pub draft: Option<Draft>,
+    /// The Rows view, which edits the shown row's columns, is shown instead
+    /// of the Tests view.
+    pub rows_view: bool,
     held: Option<HashMap<u32, Condition>>,
     loaded_for: Option<u64>,
     reading: Option<Task<Result<Vec<Condition>, String>>>,
@@ -328,6 +376,47 @@ impl Conditions {
     /// Whether `entry` is a condition the project leaves in place.
     pub fn exists(&self, edits: &Edits, entry: u32) -> bool {
         self.shown(edits, entry).is_some_and(|shown| shown.life != Life::Delete)
+    }
+
+    /// The row an entry names as the project leaves it, or `None` for one
+    /// neither holds or the project removes.
+    pub fn row(&self, edits: &Edits, entry: u32) -> Option<Condition> {
+        self.shown(edits, entry).filter(|shown| shown.life != Life::Delete).map(|shown| shown.condition)
+    }
+
+    /// Make sure the draft is the one read from `from` (0 for a new
+    /// condition). A draft read from another entry is dropped, changes and
+    /// all.
+    pub fn draft_for(&mut self, edits: &Edits, from: u32) {
+        if self.draft.as_ref().is_some_and(|draft| draft.from == from) || !self.read() {
+            return;
+        }
+        let draft = Draft::read(from, |entry| self.row(edits, entry));
+        self.draft = Some(draft);
+    }
+
+    /// What Save would write: the entry the draft is, and the rows it would
+    /// create. An error says why the draft cannot be written.
+    pub fn plan(&self, edits: &Edits) -> Result<condition::Built, String> {
+        let draft = self.draft.as_ref().ok_or("there is no condition to save")?;
+        let next = self.next_entry(edits).ok_or("the conditions are not read yet")?;
+        condition::build(&draft.tree, &self.all(edits), next)
+    }
+
+    /// Write the draft: create the rows [`Self::plan`] names, as one undo
+    /// entry, and drop the draft. Answers the entry the draft is.
+    pub fn save(&mut self, session: &mut EditSession, now: f64) -> Result<u32, String> {
+        let built = self.plan(&session.server_edits)?;
+        let label = format!("{} {}", condition::TABLE, built.root);
+        session.as_one("Edit condition", &label, |session| {
+            for row in &built.created {
+                let made = super::services::creation(&row.assignments());
+                let gesture = Gesture { label: "Edit condition", subject: &label, now };
+                session.set_server_row(condition::TABLE, &row.key(), Some(&made), Some(gesture));
+            }
+        });
+        self.draft = None;
+        Ok(built.root)
     }
 
     /// [`Self::faults`] without the search for a repeated test, which reads

@@ -41,7 +41,7 @@
 //! The form shows each by name (item `2589` as Linen Cloth) so that the row
 //! can be checked by reading it. [`Quests::item`] and [`Quests::holder`]
 //! answer from a cache and note a miss; [`fetch_the_names`] turns the misses
-//! into one query per kind, on each frame that has any. An id the database
+//! into one query per table, on each frame that has any. An id the database
 //! does not hold is cached as absent, so it is asked for once.
 //!
 //! ## The creature and game-object tools reach this through two fields
@@ -50,8 +50,8 @@
 //! tool's window is showing, and [`Quests::of_holder`] narrows the workspace's
 //! list to one holder's quests. Both are set by the Quests button on a
 //! selection — see [`crate::ui::creatures`] and [`crate::ui::gameobjects`] —
-//! and neither is a dependency of this tool on those: they name a kind of
-//! holder and a template entry, which is all a relation holds.
+//! and neither is a dependency of this tool on those: they name a
+//! [`Holder`] and a template entry, which is all a relation holds.
 
 use super::Tool;
 use crate::server::fresh::{claimed, Fresh};
@@ -102,8 +102,8 @@ impl Known {
         quest::template_key(self.entry, self.patch)
     }
 
-    /// The second line of a list row: its level, where it is filed, what kind
-    /// of quest it is, and whether it auto-completes, is disabled or is
+    /// The second line of a list row: its level, where it is filed, its quest
+    /// type (`Type`), and whether it auto-completes, is disabled or is
     /// repeatable.
     pub fn sub(&self) -> String {
         let mut parts = vec![format!("level {}", self.level)];
@@ -495,6 +495,11 @@ pub enum PickFor {
     /// Written through `crate::tools::tables::set_field`, as the form's own
     /// number box writes it.
     TableField { table: String, record: usize, field: usize, column: &'static str },
+    /// One value of one test of the condition being edited in the condition
+    /// window: the test's path in the tree, the value's index and its label.
+    /// Answered into [`Quests::condition_pick`], because the tree is a draft
+    /// of `crate::tools::conditions` and is written only when it is saved.
+    ConditionValue { path: Vec<usize>, slot: usize, label: &'static str },
 }
 
 /// The reference picker's state — see [`crate::ui::quests`], which draws it.
@@ -609,7 +614,7 @@ pub struct Quests {
     /// egui would see two widgets with one id.
     pub picker_pass: Option<u64>,
     /// The creature or game object whose quests its tool's window is showing,
-    /// as the kind of holder, its template entry and its name. `None` when the
+    /// as the [`Holder`], its template entry and its name. `None` when the
     /// window is closed.
     pub window_for: Option<(Holder, u32, String)>,
     /// An item a form names that was clicked, to be opened in the item
@@ -641,6 +646,10 @@ pub struct Quests {
     /// taken by the script window on the frame after. See
     /// [`PickFor::ScriptCell`].
     pub script_pick: Option<(&'static str, u32, usize, &'static str, u32)>,
+    /// A value chosen for a test of the condition window's draft, as the
+    /// test's path, the value's index and the id chosen: taken by the
+    /// condition window on the frame after. See [`PickFor::ConditionValue`].
+    pub condition_pick: Option<(Vec<usize>, usize, u32)>,
     /// Whether the headings have been named — see [`Self::name_the_zones`].
     zones_named: bool,
     /// Whether the scripted flags have been acted on — see
@@ -1607,7 +1616,8 @@ fn rebuild_created(mut quests: ResMut<Quests>, session: Option<Res<EditSession>>
     quests.forget_matches();
 }
 
-/// Turn the names that were asked for and not known into one query a kind.
+/// Turn the names that were asked for and not known into one query per
+/// table: item, creature, game object, and each [`Target::List`] table.
 ///
 /// Both name caches are emptied when `EditSession::database_writes` moves, so
 /// a name is never drawn from a row an apply or a put back has changed; see
@@ -1757,9 +1767,9 @@ fn fetch_the_names(
     })));
 }
 
-/// …and the same for a [`Target::List`] table: an id under which the project
-/// creates rows and the database holds none is listed first, when the box is
-/// empty or names it.
+/// [`fold_the_projects_rows`] for a [`Target::List`] table: an id under which
+/// the project creates rows and the database holds none is listed first, when
+/// the box is empty or names it.
 fn fold_the_projects_lists(hits: &mut Vec<Hit>, table: &'static str, query: &str, edits: &Edits) {
     let by_id: Option<u32> = query.parse().ok();
     let mut created: Vec<Hit> = Vec::new();
@@ -2307,7 +2317,7 @@ mod tests {
         assert!(shown.zone.is_empty());
     }
 
-    /// The second line says what kind of quest it is, and says nothing for the
+    /// The second line names the quest's type, and says nothing for the
     /// ordinary values.
     #[test]
     fn the_second_line_names_what_is_unusual() {
@@ -2322,7 +2332,8 @@ mod tests {
         );
     }
 
-    /// The four tables are the two holders by the two roles, each way.
+    /// The four tables are the two holders by the two roles, and
+    /// [`table_of`] and [`relation_of_table`] are inverses.
     #[test]
     fn a_relation_names_its_own_table() {
         for table in quest::RELATIONS {
@@ -2430,12 +2441,12 @@ mod tests {
         );
     }
 
-    /// The case that was reported: a creature was created at entry 2000000,
-    /// applied, put back and discarded, and a new creature made at the same
-    /// entry was drawn under the first one's name in the form, because the
-    /// name the database answered while the first was applied was kept for
-    /// the session. The cache is emptied when the database is written, and
-    /// the project's own row names its creature before the database does.
+    /// A creature created at entry 2000000, applied, put back and discarded,
+    /// left its name in the cache: a new creature made at the same entry was
+    /// drawn under the first one's name in the form, because the name the
+    /// database answered while the first was applied was kept for the
+    /// session. The cache is emptied when the database is written, and the
+    /// project's own row names its creature before the database does.
     #[test]
     fn a_name_follows_the_database_and_the_projects_own_row() {
         let mut quests = Quests::default();
@@ -2459,7 +2470,7 @@ mod tests {
         edits.set_row_line(vale_mangos::creature::TEMPLATE, &key, Some(&created.to_line()));
         assert_eq!(quests.holder(Holder::Creature, 2_000_000, &edits).as_deref(), Some("Hobart Stefa"));
         assert!(quests.holder_known(Holder::Creature, 2_000_000, &edits));
-        // …and the project's rename is shown over a name the database holds.
+        // The project's rename is shown over a name the database holds.
         quests.holders.insert((Holder::Creature, 68), Some("Stormwind City Guard".into()));
         let mut renamed = Edits::default();
         renamed.set(vale_mangos::creature::TEMPLATE, &vale_mangos::creature::template_key(68, 0), "name", Some("'Gate Guard'".into()));

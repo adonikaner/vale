@@ -111,7 +111,7 @@ fn frame() -> egui::Frame {
 }
 
 /// The frame of one card: an event, a step or a search hit.
-fn card(stroke: egui::Color32) -> egui::Frame {
+pub(super) fn card(stroke: egui::Color32) -> egui::Frame {
     egui::Frame::default()
         .fill(theme::PANEL)
         .stroke(egui::Stroke::new(1.0, stroke))
@@ -130,7 +130,7 @@ fn life_colour(life: Life) -> egui::Color32 {
 }
 
 /// A short word at the start of a line of a card: `WHEN`, `THEN`, `ONE OF`.
-fn badge(ui: &mut egui::Ui, text: &str, colour: egui::Color32) {
+pub(super) fn badge(ui: &mut egui::Ui, text: &str, colour: egui::Color32) {
     egui::Frame::default()
         .fill(theme::SUNK)
         .corner_radius(egui::CornerRadius::same(3))
@@ -143,7 +143,7 @@ fn badge(ui: &mut egui::Ui, text: &str, colour: egui::Color32) {
 
 /// The fold button at the end of a card's first line. Answers whether it was
 /// clicked.
-fn fold_button(ui: &mut egui::Ui, open: bool) -> bool {
+pub(super) fn fold_button(ui: &mut egui::Ui, open: bool) -> bool {
     let text = match open {
         true => "hide details",
         false => "details",
@@ -154,7 +154,7 @@ fn fold_button(ui: &mut egui::Ui, open: bool) -> bool {
 /// A card's first line: `left` wraps in the room `right` leaves, and
 /// `right` is laid out from the right edge first, so a long sentence wraps
 /// beside the buttons rather than under them.
-fn header<L, R>(ui: &mut egui::Ui, left: impl FnOnce(&mut egui::Ui) -> L, right: impl FnOnce(&mut egui::Ui) -> R) -> (L, R) {
+pub(super) fn header<L, R>(ui: &mut egui::Ui, left: impl FnOnce(&mut egui::Ui) -> L, right: impl FnOnce(&mut egui::Ui) -> R) -> (L, R) {
     egui::Sides::new().shrink_left().wrap().show(ui, left, right)
 }
 

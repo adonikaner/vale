@@ -2208,6 +2208,7 @@ pub(super) fn picker(
             PickFor::TrainerSpell { table, entry } => format!("Choose a spell for {table} {entry}"),
             PickFor::ScriptCell { column, .. } => format!("Choose {column}"),
             PickFor::TableField { column, .. } => format!("Choose {column}"),
+            PickFor::ConditionValue { label, .. } => format!("Choose the {label}"),
         };
         ui.label(egui::RichText::new(heading).strong().size(14.0));
 
@@ -2294,6 +2295,7 @@ pub(super) fn picker(
                     | PickFor::ServerColumn(_)
                     | PickFor::ScriptCell { .. }
                     | PickFor::TableField { .. }
+                    | PickFor::ConditionValue { .. }
             ) && ui
                     .button("Set to none")
                     .on_hover_text("Write 0, which for every reference here means none.")
@@ -2369,6 +2371,10 @@ pub(super) fn picker(
         {
             let value = picked.map(|hit| hit.id).unwrap_or(0);
             quests.script_pick = Some((table, *id, *row, column, value));
+            close = true;
+        }
+        (PickFor::ConditionValue { path, slot, .. }, picked, cleared) if picked.is_some() || cleared => {
+            quests.condition_pick = Some((path.clone(), *slot, picked.map(|hit| hit.id).unwrap_or(0)));
             close = true;
         }
         (PickFor::TableField { table, record, field, column }, picked, cleared)
