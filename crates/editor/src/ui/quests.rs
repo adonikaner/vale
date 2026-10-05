@@ -422,9 +422,25 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>) {
     );
     ui.add_space(4.0);
 
+    // Bring the open quest into view when it was opened from somewhere other
+    // than this list, as the spell list does. See `theme::list_area`.
+    let mut reveal = None;
+    if work.quests.open != work.quests.revealed {
+        match work.quests.open {
+            Some(entry) => {
+                let found = matches
+                    .iter()
+                    .position(|&index| work.quests.at(index).is_some_and(|known| known.entry == entry));
+                if found.is_some() {
+                    reveal = found;
+                    work.quests.revealed = Some(entry);
+                }
+            }
+            None => work.quests.revealed = None,
+        }
+    }
     let mut asked: Option<(Known, RowAct)> = None;
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
+    theme::list_area(ui, reveal, theme::LIST_ROW)
         .show_rows(ui, theme::LIST_ROW, matches.len(), |ui, range| {
             for at in range {
                 let Some(known) = work.quests.shown(matches[at], &work.session.server_edits) else {
@@ -433,6 +449,7 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>) {
                 let chosen = work.quests.open == Some(known.entry);
                 let response = row(ui, &known, chosen);
                 if response.clicked() {
+                    work.quests.revealed = Some(known.entry);
                     asked = Some((known.clone(), RowAct::Open));
                 }
                 response.context_menu(|ui| {
@@ -967,6 +984,9 @@ fn cell(
             let written = number_cell(ui, kind, showing);
             if let Some(means) = number_means(kind, showing) {
                 meaning(ui, means);
+            }
+            if column.name == "RequiredCondition" {
+                super::conditions::open_button(ui, showing.trim().parse().unwrap_or(0));
             }
             written
         }

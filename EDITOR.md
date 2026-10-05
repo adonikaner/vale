@@ -68,9 +68,9 @@ rows. The inspector also has "Undo" and "Redo" buttons.
 ## The screen
 
 - Top bar: the "Project" menu ("Projects…", "Publish…"), Save, "Server…",
-  the "Map" menu ("Open map", "Edit WDT/ADT…", "Go to…", "Bookmarks"), the
-  workspace switch ("World", "Spells", "Items", "Quests", "Tables"), and
-  "Playtest" with the login button.
+  the "Map" menu ("New map…", "Open map", "Edit Map…", "Go to…",
+  "Bookmarks"), the workspace switch ("World", "Spells", "Items", "Quests",
+  "Tables"), and "Playtest" with the login button.
 - Rail, on the left: the tools, grouped under "Terrain" (Terrain, Grade,
   Shading, Textures, Holes, Water, Areas, Chunks), "World" (Doodads, WMO,
   Lights, Taxi, Sweep) and "Spawns" (Creatures, Objects). "Select" and
@@ -98,10 +98,13 @@ Ctrl with + or - changes the size of the whole interface.
 The wheel goes to the current tool instead of the camera while Ctrl, Shift or
 Alt is held. Movement keys do nothing while a text field has focus.
 
+"Bookmarks" → "Add bookmark…" in the "Map" menu names the current view and
+keeps it.
+
 "Go to…" in the "Map" menu moves the camera:
 
-- "Bookmarks": name the current view and keep it. Click a bookmark to return
-  to it, on any map. The "Map" menu lists them under "Bookmarks" too.
+- "Bookmarks": click a bookmark to return to it, on any map. The "Map"
+  menu lists them under "Bookmarks" too.
 - "Position": x and y.
 - "Tile": tile x and y, 0 to 63.
 - "Zone": a zone of the map.
@@ -305,7 +308,7 @@ area, slope and water. Escape clears the points.
 
 ## Map window
 
-"Edit WDT/ADT…" in the "Map" menu opens the map window, which shows each
+"Edit Map…" in the "Map" menu opens the map window, which shows each
 tile's minimap picture.
 
 - Click selects a tile, dragging selects a box, Ctrl+click adds a tile.

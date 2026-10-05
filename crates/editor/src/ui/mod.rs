@@ -47,6 +47,10 @@
 //! services.rs   the Vendor and Trainer windows of a selected creature: its
 //!               own list and its template's, each row drawn as the server
 //!               reads it, with the reasons it would skip one
+//! gossip.rs     the gossip window: a creature's menu, what it says and the
+//!               options it offers, each leading to the next menu
+//! conditions.rs the condition window: one row of `conditions`, its values
+//!               named by its type, opened from any form that names one
 //! rowform.rs    the widgets all of those forms are built from: how a column
 //!               of each kind is drawn, and what typing into one produces. The
 //!               form itself stays with its subject
@@ -158,11 +162,13 @@
 
 pub mod bands;
 pub mod behaviour;
+pub mod conditions;
 pub mod creatures;
 pub mod data;
 pub mod displays;
 pub mod flightpaths;
 pub mod gameobjects;
+pub mod gossip;
 pub mod graveyards;
 pub mod hovercard;
 pub mod icons;
@@ -410,6 +416,11 @@ pub struct Editing<'w> {
     /// The Vendor and Trainer windows' state: the creature they are about,
     /// and what its lists hold. See [`crate::tools::services`].
     pub(crate) services: ResMut<'w, crate::tools::services::Services>,
+    /// The gossip window's state: the creature it is about and the menus it
+    /// has read. See [`crate::tools::gossip`].
+    pub(crate) gossip: ResMut<'w, crate::tools::gossip::Gossip>,
+    /// The condition window's state. See [`crate::tools::conditions`].
+    pub(crate) conditions: ResMut<'w, crate::tools::conditions::Conditions>,
     /// The time of day the world is showing. Read-only here: the view bar
     /// sets the hour, and the panels read it so a band's day strip can mark
     /// the viewport's current hour on itself.
@@ -590,6 +601,7 @@ fn draw(
                     step: &playing.step,
                 },
                 &mut editing.mapview.open,
+                &mut editing.tiles.new_map,
                 &mut topbar::Subjects {
                     tool: &mut tool,
                     rail: &mut viewing.rail,
@@ -957,6 +969,7 @@ fn draw(
         &minimaps,
         &mut editing.tiles,
         camera_tile,
+        [focus.position.x, focus.position.y],
         &assets.loading_screens(),
     );
     if asked.is_some() {
@@ -1008,6 +1021,7 @@ fn draw(
                 loot: &mut editing.loot,
                 behaviour: &mut editing.behaviour,
                 services: &mut editing.services,
+                gossip: &mut editing.gossip,
                 server: &playing.server,
                 server_panel: &mut popovers.server,
                 assets: &assets,
@@ -1363,6 +1377,62 @@ fn draw(
             }),
         _ => None,
     };
+    // The gossip window follows the selected creature on the same terms, and
+    // stays open on a menu opened by number under any tool. The texts it
+    // shows are read by the behaviour tool, which holds `broadcast_text`.
+    editing.gossip.about = match *tool {
+        Tool::Creatures => editing.services.about.as_ref().map(|services| {
+            let template = editing
+                .creatures
+                .template
+                .as_ref()
+                .filter(|held| held.entry == services.entry);
+            let gossip_menu_id = {
+                use vale_mangos::creature::RowValue;
+                session
+                    .server_edits
+                    .get(vale_mangos::creature::TEMPLATE, &services.template_key, "gossip_menu_id")
+                    .and_then(|value| value.trim().parse::<i64>().ok())
+                    .or_else(|| template.and_then(|held| held.row.integer("gossip_menu_id")))
+                    .map_or(0, |value| value.max(0) as u32)
+            };
+            crate::tools::gossip::About {
+                entry: services.entry,
+                label: services.label.clone(),
+                template_key: services.template_key.clone(),
+                gossip_menu_id,
+                npc_flags: services.npc_flags,
+            }
+        }),
+        _ => None,
+    };
+    editing.behaviour.other_texts = match editing.gossip.open {
+        true => editing.gossip.broadcast_texts(&session.server_edits),
+        false => Vec::new(),
+    };
+    editing.behaviour.numbering_texts = editing.gossip.open;
+    let gossip_window = gossip::window(
+        &ctx,
+        gossip::Subject {
+            session,
+            gossip: &mut editing.gossip,
+            behaviour: &mut editing.behaviour,
+            now: time.elapsed_secs_f64(),
+        },
+    );
+    viewport.floating.extend(gossip_window);
+    let condition_window = conditions::window(
+        &ctx,
+        conditions::Subject {
+            session,
+            conditions: &mut editing.conditions,
+            quests: &mut editing.quests,
+            assets: &assets,
+            thumbnails: &mut editing.thumbnails,
+            now: time.elapsed_secs_f64(),
+        },
+    );
+    viewport.floating.extend(condition_window);
     if *tool == Tool::Creatures {
         let service_windows = services::windows(
             &ctx,

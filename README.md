@@ -1,15 +1,13 @@
 # Vale
 
 Vale is a from-scratch game client and world editor for the 1.12.1 (build 5875)
-protocol, written in Rust. It connects to a
-[vmangos](https://github.com/vmangos/core) server. The server does all gameplay
-simulation: combat resolution, quests, pathing, spell effects and spawns. Vale
-implements the client half: the network protocol, parsers for the game's data
-files, a renderer, and a runtime for the game's own interface code.
+protocol, written in Rust. The server does all gameplay simulation: combat
+resolution, quests, pathing, spell effects and spawns. Vale implements the
+client half: the network protocol, parsers for the game's data files, a
+renderer, and a runtime for the game's own interface code.
 
 The repository contains source code only. It contains no game data. To run it
-you need a copy of the 1.12.1 client data that you supply, and a server that you
-run yourself. See [Legal](#legal).
+you need a copy of the 1.12.1 client data that you supply. See [Legal](#legal).
 
 The workspace builds three programs:
 
@@ -23,10 +21,10 @@ The workspace builds three programs:
 
 ### Client
 
-- **Network.** SRP6 logon against realmd, the encrypted world session, and a
-  single packet dispatch into an object manager. Movement packets are shaped
-  to pass the server's movement validation, and other units are dead-reckoned
-  the way the server extrapolates them.
+- **Network.** SRP6 logon, the encrypted world session, and a single packet
+  dispatch into an object manager. Movement packets are shaped to pass the
+  server's movement validation, and other units are dead-reckoned the way the
+  server extrapolates them.
 - **World.** Terrain streamed around the character, with texture layers, baked
   shadows and per-map, per-hour lighting, fog, sky, stars, sun and moons.
   Water outside and inside buildings, with an underwater view. Placed models
@@ -121,17 +119,9 @@ Requirements:
 
 - [Rust](https://rustup.rs/)
 - the 1.12.1 client data
-- a [vmangos](https://github.com/vmangos/core) server (realmd and mangosd)
 
-The repository root works as a client install folder:
-
-1. Put the client data archives in `Data/`, or set `VALE_GAMEDATA` to another
-   location.
-2. Name the server in `realmlist.wtf`, in the repository root or in `WTF/`:
-
-   ```
-   set realmlist 127.0.0.1
-   ```
+The repository root works as a client install folder: put the client data
+archives in `Data/`, or set `VALE_GAMEDATA` to another location.
 
 ### Editor server settings
 
@@ -198,7 +188,7 @@ crates/protocol/   the network client: logon, world session, object manager,
 crates/assets/     the data file parsers: archives, terrain, models, buildings,
                    textures, data tables, the interface markup, and the game
                    rules they encode
-crates/config/     the install folder: realmlist.wtf, WTF/Config.wtf, Data/
+crates/config/     the install folder: WTF/Config.wtf, Data/
 crates/api/        the interface API the client implements, as data
 crates/cli/        `vale`, the command-line tool
 crates/client/     `vale-client`, the Bevy renderer: render/ world/ game/ lua/
@@ -233,15 +223,14 @@ be made to contain:
 - any proprietary source code, or any part of the client binary
 - any account, realm or server data
 
-To run Vale you must supply your own copy of client data and your own
-server. The data is read at run time from a directory you choose; nothing is
-copied into this repository or redistributed by it.
+To run Vale you must supply your own copy of client data. The data is read at
+run time from a directory you choose; nothing is copied into this repository or
+redistributed by it.
 
-Vale connects only to a server that its operator runs. It has no code path to
-any official or retail service, and it does not circumvent any technical
-protection measure, digital rights management or subscription check. It
-implements the 1.12.1 logon handshake (SRP6) as the open-source vmangos server
-implements it, in order to authenticate against that server.
+Vale has no code path to any official or retail service, and it does not
+circumvent any technical protection measure, digital rights management or
+subscription check. It implements the 1.12.1 logon handshake (SRP6) as the
+open-source vmangos server implements it.
 
 The project exists for interoperability research, file-format documentation
 and preservation of an old network protocol and file format family. You are

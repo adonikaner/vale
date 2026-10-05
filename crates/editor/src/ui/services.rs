@@ -1025,6 +1025,9 @@ fn condition_cell(ui: &mut egui::Ui, condition: u32, mut write: impl FnMut(Strin
     if changed && value != condition as i64 {
         write(value.to_string());
     }
+    if condition != 0 {
+        super::conditions::open_button(ui, condition);
+    }
 }
 
 /// The button at the end of a row: remove it, or take the removal mark off.

@@ -18,6 +18,10 @@
 //!              read at startup
 //! map.rs       `map_template`, the server's maps: a new map's row, written at
 //!              patch 0, since the server does not read `Map.dbc`
+//! condition.rs `conditions`: the server's reusable yes-or-no tests, their
+//!              63 types and what each value means, live on a reload
+//! gossip.rs    what a creature says and offers when spoken to: `gossip_menu`,
+//!              `gossip_menu_option` and `npc_text`, live on reloads
 //! area.rs      `area_template`, the server's copy of `AreaTable.dbc`: an
 //!              edited or new area written as a row keyed by its entry alone,
 //!              nine columns of the file's 25, read at startup
@@ -111,12 +115,14 @@
 
 pub mod area;
 pub mod broadcast;
+pub mod condition;
 pub mod conn;
 pub mod creature;
 pub mod creaturespells;
 pub mod datadir;
 pub mod eventai;
 pub mod gameobject;
+pub mod gossip;
 pub mod graveyard;
 pub mod item;
 pub mod lists;

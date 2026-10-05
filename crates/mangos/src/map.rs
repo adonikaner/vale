@@ -8,7 +8,7 @@
 //!
 //! ```text
 //! entry, patch          the key; a new map's row is written at patch 0
-//! parent                for a dungeon, the map it stands in, or 0
+//! parent                for a dungeon reached through another, that dungeon, or 0
 //! map_type              0 world, 1 dungeon, 2 raid, 3 battleground
 //! linked_zone           an AreaTable id, the same value as Map.dbc field 19
 //! player_limit          how many characters an instance holds
@@ -22,8 +22,20 @@
 //! ## What the loader skips
 //!
 //! A dungeon whose `parent` names no map, or names a continent; a ghost
-//! entrance whose point is outside its map's grid, or whose map has no row.
-//! [`Template::check`] makes the checks the row alone can show.
+//! entrance whose point is outside its map's grid, whose map has no row, or
+//! whose map is not a continent. [`Template::check`] makes the checks the row
+//! alone can show.
+//!
+//! ## What the two columns do
+//!
+//! The ghost entrance is where a dead character's corpse is shown to be when
+//! the corpse lies in the dungeon (`MSG_CORPSE_QUERY` answers the entrance
+//! instead), which graveyard on that continent a death inside sends the
+//! character to (the one nearest the entrance), and which teleport trigger
+//! leads out (the one on the dungeon's map whose target is on the entrance's
+//! map). All but five shipped dungeons and raids have one. `parent` lets a
+//! ghost enter this dungeon when its corpse lies in the parent, for a dungeon
+//! reached through another; no shipped row sets it.
 
 use crate::row::{Assignment, Key};
 use crate::schema::{Column, Group, Kind, Value};
@@ -50,7 +62,7 @@ pub const MAP_TYPES: [Value; 4] = [
 pub const COLUMNS: [Column; 12] = [
     Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the Map.dbc id" },
     Column { name: "patch", kind: Kind::Key, group: Group::Identity, about: "the content patch the row belongs to" },
-    Column { name: "parent", kind: Kind::Ref("Map"), group: Group::Place, about: "for a dungeon, the map it stands in, or 0" },
+    Column { name: "parent", kind: Kind::Ref("Map"), group: Group::Place, about: "for a dungeon reached through another, that dungeon, or 0" },
     Column { name: "map_type", kind: Kind::Choice(&MAP_TYPES), group: Group::Identity, about: "what kind of place the map is" },
     Column { name: "linked_zone", kind: Kind::Ref("AreaTable"), group: Group::Place, about: "the area the map belongs to, as Map.dbc field 19 holds it" },
     Column { name: "player_limit", kind: Kind::Unsigned, group: Group::Requirements, about: "how many characters one instance holds" },
@@ -79,6 +91,14 @@ pub fn column(table: &str, name: &str) -> Option<&'static Column> {
 pub fn key(entry: u32, patch: u32) -> Key {
     Key::two(("entry", u64::from(entry)), ("patch", u64::from(patch)))
 }
+
+/// The two continents, the only maps a ghost entrance may be on and the two a
+/// dungeon's parent may not be.
+pub const CONTINENTS: [u32; 2] = [0, 1];
+
+/// How far from a map's centre a point may be on either axis, in yards: half
+/// of 64 grids of 533⅓ yards, less half a yard.
+pub const GRID_REACH: f32 = 64.0 * 533.333_3 / 2.0 - 0.5;
 
 /// One row, as a new map's is written.
 #[derive(Debug, Clone, PartialEq)]
@@ -143,6 +163,14 @@ impl Template {
         if matches!(self.map_type, 1 | 2) && self.parent == 1 {
             out.push("a dungeon's parent must not be a continent".to_string());
         }
+        if self.ghost_map >= 0 {
+            if !CONTINENTS.contains(&(self.ghost_map as u32)) {
+                out.push(format!("the ghost entrance is on map {}, which is not a continent", self.ghost_map));
+            }
+            if !self.ghost_at.iter().all(|c| c.is_finite() && c.abs() <= GRID_REACH) {
+                out.push("the ghost entrance is outside its map's grid".to_string());
+            }
+        }
         out
     }
 }
@@ -154,6 +182,7 @@ pub fn check_created(table: &str, row: &crate::schema::Row) -> Vec<String> {
         return Vec::new();
     }
     let int = |column: &str| row.text(column).and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+    let float = |column: &str| row.text(column).and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
     let template = Template {
         entry: int("entry") as u32,
         parent: int("parent") as u32,
@@ -162,7 +191,7 @@ pub fn check_created(table: &str, row: &crate::schema::Row) -> Vec<String> {
         player_limit: int("player_limit") as u32,
         reset_delay: int("reset_delay") as u32,
         ghost_map: int("ghost_entrance_map") as i32,
-        ghost_at: [0.0, 0.0],
+        ghost_at: [float("ghost_entrance_x"), float("ghost_entrance_y")],
         name: String::new(),
     };
     template.check()
@@ -190,6 +219,10 @@ mod tests {
         assert_eq!(template.key().where_clause(), "`entry` = 534 AND `patch` = 0");
         assert!(template.check().is_empty());
         assert_eq!(Template { map_type: 7, ..template.clone() }.check().len(), 1);
-        assert_eq!(Template { parent: 1, ..template }.check().len(), 1);
+        assert_eq!(Template { parent: 1, ..template.clone() }.check().len(), 1);
+        let entrance = Template { ghost_map: 0, ghost_at: [-11207.8, 1681.15], ..template.clone() };
+        assert!(entrance.check().is_empty());
+        assert_eq!(Template { ghost_map: 30, ..entrance.clone() }.check().len(), 1);
+        assert_eq!(Template { ghost_at: [20000.0, 0.0], ..entrance }.check().len(), 1);
     }
 }

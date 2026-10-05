@@ -8,10 +8,11 @@
 //!                         Create claims tiles in it
 //! AreaTable.dbc           a zone on the new map, named after it, which the
 //!                         map row and the server row name as its area
-//! map_template            the server's row, at patch 0 (`vale_mangos::map`)
+//! map_template            the server's row, at patch 0 (`vale_mangos::map`),
+//!                         with a dungeon's parent and ghost entrance
 //! ```
 //!
-//! The client table rows are undo entries, as every table edit is; the server
+//! The DBC rows are undo entries, as every table edit is; the server
 //! row is a row of the project's store, on `crate::tools::services`' terms.
 //! The WDT is a file written at once, since nothing reads it until a tile is
 //! made, and an undo of the map row leaves it in the project unused.
@@ -41,6 +42,12 @@ pub struct Form {
     pub loading_screen: Option<u32>,
     /// Whether the form is showing the loading screen pictures to choose from.
     pub choosing_screen: bool,
+    /// For a dungeon or raid reached through another, that dungeon; 0 for
+    /// none. `map_template.parent`.
+    pub parent: u32,
+    /// For a dungeon or raid, where a dead character's ghost walks in from: a
+    /// continent and a point on it, north and west in yards. `None` for none.
+    pub ghost: Option<(u32, [f32; 2])>,
     /// Make a zone on the new map, named after it.
     pub zone: bool,
     /// Open the new map once it is made.
@@ -56,6 +63,8 @@ impl Default for Form {
             max_players: 0,
             loading_screen: None,
             choosing_screen: false,
+            parent: 0,
+            ghost: None,
             zone: true,
             open_it: true,
         }
@@ -75,7 +84,29 @@ impl Form {
         if map_table::next_id(maps.iter().map(|(id, _)| *id)).is_none() {
             return Some(format!("map ids stop at {}", map_table::MAX_NEW_ID));
         }
-        None
+        self.template(0, 0).check().into_iter().next()
+    }
+
+    /// Whether the map is a dungeon or a raid, which alone have a parent and a
+    /// ghost entrance.
+    pub fn is_instance(&self) -> bool {
+        matches!(self.instance_type, 1 | 2)
+    }
+
+    /// The `map_template` row the form makes for map `id`, with `zone` as its
+    /// area.
+    pub fn template(&self, id: u32, zone: u32) -> Template {
+        let mut template = Template::new(id, self.instance_type, &self.name);
+        template.linked_zone = zone;
+        template.player_limit = self.max_players;
+        if self.is_instance() {
+            template.parent = self.parent;
+            if let Some((map, at)) = self.ghost {
+                template.ghost_map = map as i32;
+                template.ghost_at = at;
+            }
+        }
+        template
     }
 }
 
@@ -141,9 +172,7 @@ pub fn make(
         .write(&vale_edit::wdt::wdt_path(&form.directory), &wdt.write())
         .map_err(|e| format!("map {id} made, but its WDT was not written: {e}"))?;
 
-    let mut template = Template::new(id, form.instance_type, &form.name);
-    template.linked_zone = zone;
-    template.player_limit = form.max_players;
+    let template = form.template(id, zone);
     let key = template.key();
     let label = format!("{} {}", vale_mangos::map::TEMPLATE, key.text());
     let row = super::services::creation(&template.assignments());
@@ -213,6 +242,27 @@ mod tests {
         form.directory = "Somewhere".to_string();
         assert_eq!(form.problem(&maps()), None);
         form.name = "  ".to_string();
+        assert!(form.problem(&maps()).is_some());
+    }
+
+    /// A dungeon's row carries the form's parent and ghost entrance; a world
+    /// map's does not, and a ghost entrance off the grid stops the form.
+    #[test]
+    fn a_dungeon_takes_its_parent_and_ghost_entrance() {
+        let mut form = Form {
+            directory: "Somewhere".to_string(),
+            name: "Somewhere".to_string(),
+            parent: 33,
+            ghost: Some((0, [-11207.8, 1681.15])),
+            ..Form::default()
+        };
+        let world = form.template(534, 0);
+        assert_eq!((world.parent, world.ghost_map), (0, -1));
+        form.instance_type = 1;
+        let dungeon = form.template(534, 0);
+        assert_eq!((dungeon.parent, dungeon.ghost_map, dungeon.ghost_at), (33, 0, [-11207.8, 1681.15]));
+        assert_eq!(form.problem(&maps()), None);
+        form.ghost = Some((0, [40000.0, 0.0]));
         assert!(form.problem(&maps()).is_some());
     }
 }

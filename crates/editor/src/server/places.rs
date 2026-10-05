@@ -1,14 +1,18 @@
-//! What a project changes about maps, area triggers and graveyards on the
-//! server, as SQL, applied when a person asks.
+//! What a project changes about conditions, gossip, maps, area triggers and
+//! graveyards on the server, as SQL, applied when a person asks.
 //!
-//! Three row subjects share this module, one per [`Group`]: each has its own
+//! Five row subjects share this module, one per [`Group`]: each has its own
 //! block on the Server panel, its own SQL and revert files, its own reloads and
 //! its own place in `super::stack`'s order. They share the row rules, which are
-//! the same for all eight tables.
+//! the same for all twelve tables.
 //!
-//! ## Eight tables, written as keyed rows
+//! ## Twelve tables, written as keyed rows
 //!
 //! ```text
+//! conditions                    the server's reusable yes-or-no tests
+//! npc_text                      what a gossip text says: up to eight lines
+//! gossip_menu                   one text of a gossip menu
+//! gossip_menu_option            one option of a gossip menu
 //! map_template                  a new map's server row
 //! areatrigger_template          a trigger's label, script, condition and
 //!                               cooldown: the five columns the client's file
@@ -46,24 +50,27 @@
 //! new map needs a restart before anything can stand on it.
 //!
 //! ```text
-//! sql\maps.sql, sql\triggers.sql, sql\graveyards.sql
-//!                         what this project does to each group's tables
-//! sql\maps-revert.sql, sql\triggers-revert.sql, sql\graveyards-revert.sql
-//!                         what puts those rows back
+//! sql\<group>.sql         what this project does to each group's tables:
+//!                         conditions, gossip, maps, triggers, graveyards
+//! sql\<group>-revert.sql  what puts those rows back
 //! server\rows.txt         the store all of them are written from, shared
 //! ```
 
 use crate::session::EditSession;
 use vale_mangos::conn::Db;
 use vale_mangos::row::{self, Assignment, Key, Life};
-use vale_mangos::{graveyard, map, trigger};
+use vale_mangos::{condition, gossip, graveyard, map, trigger};
 use bevy::prelude::*;
 
 pub use super::creatures::Undo;
 
-/// One of the three subjects: maps, area triggers or graveyards.
+/// One of the five subjects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Group {
+    /// The `conditions` table.
+    Conditions,
+    /// Gossip menus, their options and the `npc_text` rows they show.
+    Gossip,
     /// A new map's `map_template` row.
     Maps,
     /// What area triggers do: the template's server columns, teleports, inns,
@@ -74,40 +81,44 @@ pub enum Group {
 }
 
 impl Group {
-    /// The three, in `super::stack`'s order. Maps first, since a teleport's
-    /// target map is checked against `map_template`.
-    pub const ALL: [Group; 3] = [Group::Maps, Group::Triggers, Group::Graveyards];
+    /// The five, in `super::stack`'s order. Conditions first, since every other
+    /// group names them; maps before triggers, since a teleport's target map is
+    /// checked against `map_template`.
+    pub const ALL: [Group; 5] = [Group::Conditions, Group::Gossip, Group::Maps, Group::Triggers, Group::Graveyards];
 
     /// Where [`EditSession::applied_places`] keeps this group's signature.
     pub fn index(self) -> usize {
         match self {
-            Group::Maps => 0,
-            Group::Triggers => 1,
-            Group::Graveyards => 2,
+            Group::Conditions => 0,
+            Group::Gossip => 1,
+            Group::Maps => 2,
+            Group::Triggers => 3,
+            Group::Graveyards => 4,
         }
     }
 
     /// The group a table belongs to, or `None` for a table of no group.
     pub fn of(table: &str) -> Option<Group> {
-        match table_named(table)? {
-            map::TEMPLATE => Some(Group::Maps),
-            graveyard::ZONE | graveyard::FACING => Some(Group::Graveyards),
-            _ => Some(Group::Triggers),
-        }
+        let table = table_named(table)?;
+        Group::ALL.into_iter().find(|group| group.tables().contains(&table))
     }
 
     /// Its tables, in the order a plan writes them.
     pub fn tables(self) -> &'static [&'static str] {
         match self {
-            Group::Maps => &TABLES[..1],
-            Group::Triggers => &TABLES[1..6],
-            Group::Graveyards => &TABLES[6..],
+            Group::Conditions => &condition::TABLES,
+            Group::Gossip => &gossip::TABLES,
+            Group::Maps => &map::TABLES,
+            Group::Triggers => &trigger::TABLES,
+            Group::Graveyards => &graveyard::TABLES,
         }
     }
 
     /// The reload commands that make an apply live, in the order they are sent.
     pub fn reloads(self) -> &'static [&'static str] {
         match self {
+            Group::Conditions => &condition::TABLES,
+            Group::Gossip => &gossip::TABLES,
             Group::Maps => &[map::TEMPLATE],
             Group::Triggers => &trigger::RELOADS,
             Group::Graveyards => &[graveyard::ZONE],
@@ -117,6 +128,8 @@ impl Group {
     /// What this project does to the group's tables, as SQL.
     pub fn sql_vpath(self) -> &'static str {
         match self {
+            Group::Conditions => "sql\\conditions.sql",
+            Group::Gossip => "sql\\gossip.sql",
             Group::Maps => "sql\\maps.sql",
             Group::Triggers => "sql\\triggers.sql",
             Group::Graveyards => "sql\\graveyards.sql",
@@ -126,6 +139,8 @@ impl Group {
     /// What puts it back.
     pub fn revert_vpath(self) -> &'static str {
         match self {
+            Group::Conditions => "sql\\conditions-revert.sql",
+            Group::Gossip => "sql\\gossip-revert.sql",
             Group::Maps => "sql\\maps-revert.sql",
             Group::Triggers => "sql\\triggers-revert.sql",
             Group::Graveyards => "sql\\graveyards-revert.sql",
@@ -135,6 +150,8 @@ impl Group {
     /// What its rows are called in a status line.
     pub fn noun(self) -> &'static str {
         match self {
+            Group::Conditions => "condition",
+            Group::Gossip => "gossip",
             Group::Maps => "map",
             Group::Triggers => "area trigger",
             Group::Graveyards => "graveyard",
@@ -144,6 +161,8 @@ impl Group {
     /// …and the subject, plural, for a file's header and an error.
     pub fn subject(self) -> &'static str {
         match self {
+            Group::Conditions => "conditions",
+            Group::Gossip => "gossip menus",
             Group::Maps => "maps",
             Group::Triggers => "area triggers",
             Group::Graveyards => "graveyards",
@@ -151,9 +170,12 @@ impl Group {
     }
 }
 
-/// The eight tables, by group: the map's, the five triggers' and the two
-/// graveyards'. [`Group::tables`] slices this list.
-pub const TABLES: [&str; 8] = [
+/// The twelve tables, by group. [`Group::tables`] names each group's.
+pub const TABLES: [&str; 12] = [
+    condition::TABLE,
+    gossip::NPC_TEXT,
+    gossip::MENU,
+    gossip::OPTION,
     map::TEMPLATE,
     trigger::TEMPLATE,
     trigger::TELEPORT,
@@ -164,7 +186,7 @@ pub const TABLES: [&str; 8] = [
     graveyard::FACING,
 ];
 
-/// The static name of one of the eight tables, or `None`.
+/// The static name of one of the twelve tables, or `None`.
 pub fn table_named(name: &str) -> Option<&'static str> {
     TABLES.into_iter().find(|table| *table == name)
 }
@@ -174,17 +196,19 @@ pub fn owns(table: &str) -> bool {
     table_named(table).is_some()
 }
 
-/// Every column of one of the eight tables.
+/// Every column of one of the twelve tables.
 pub fn columns_of(table: &str) -> &'static [vale_mangos::schema::Column] {
-    match (trigger::table_named(table), graveyard::table_named(table), map::table_named(table)) {
-        (Some(_), _, _) => trigger::columns_of(table),
-        (_, Some(_), _) => graveyard::columns_of(table),
-        (_, _, Some(_)) => map::columns_of(table),
-        _ => &[],
+    match Group::of(table) {
+        Some(Group::Conditions) => condition::columns_of(table),
+        Some(Group::Gossip) => gossip::columns_of(table),
+        Some(Group::Maps) => map::columns_of(table),
+        Some(Group::Triggers) => trigger::columns_of(table),
+        Some(Group::Graveyards) => graveyard::columns_of(table),
+        None => &[],
     }
 }
 
-/// One column of one of the eight tables.
+/// One column of one of the twelve tables.
 pub fn column(table: &str, name: &str) -> Option<&'static vale_mangos::schema::Column> {
     columns_of(table).iter().find(|column| column.name == name)
 }
@@ -210,7 +234,7 @@ impl Row {
     }
 }
 
-/// Everything a project changes about the eight tables.
+/// Everything a project changes about one group's tables.
 #[derive(Debug, Default)]
 pub struct Plan {
     pub rows: Vec<Row>,
@@ -350,6 +374,8 @@ fn faults_of(table: &str, key: &Key, changes: &[Assignment]) -> Vec<String> {
     let mut out = trigger::check_created(table, &row);
     out.extend(graveyard::check_created(table, &row));
     out.extend(map::check_created(table, &row));
+    out.extend(condition::check_created(table, &row));
+    out.extend(gossip::check_created(table, &row));
     out
 }
 
@@ -750,7 +776,7 @@ mod tests {
     }
 
     #[test]
-    fn the_subjects_own_the_eight_tables_and_no_other() {
+    fn the_subjects_own_the_twelve_tables_and_no_other() {
         for table in TABLES {
             assert!(owns(table));
             assert!(!columns_of(table).is_empty(), "{table}");

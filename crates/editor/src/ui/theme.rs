@@ -341,6 +341,22 @@ pub fn row<R>(ui: &mut Ui, label: &str, contents: impl FnOnce(&mut Ui) -> R) -> 
     .inner
 }
 
+/// [`row`], with `about` shown when the label is hovered, for a setting whose
+/// name alone does not say what it is for.
+pub fn row_about<R>(ui: &mut Ui, label: &str, about: &str, contents: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [LABEL_WIDTH, ui.spacing().interact_size.y],
+            egui::Label::new(RichText::new(label).color(INK_DIM))
+                .selectable(false)
+                .sense(egui::Sense::hover()),
+        )
+        .on_hover_text(about);
+        contents(ui)
+    })
+    .inner
+}
+
 /// A run of mutually exclusive choices as one control.
 ///
 /// It replaces a row of loose toggle buttons. Those did not look like one
@@ -491,6 +507,28 @@ pub fn star_button(ui: &Ui, id: egui::Id, rect: egui::Rect, on: bool, hint: &str
 /// fill would look like three separate tools. See [`list_row`].
 pub const LIST_ROW: f32 = 38.0;
 pub const LIST_PICTURE: f32 = 26.0;
+
+/// A workspace list's scroll area, scrolled so row `at` is in the middle when
+/// `at` is given.
+///
+/// The lists are `show_rows` lists of up to 22,360 rows, and a row opened from
+/// anywhere but the list itself (a followed reference, Back, a new or copied
+/// row) would otherwise be open with the list left wherever it was. Each list
+/// keeps which row it last brought into view and passes `at` only when the
+/// open row is another, so a list scrolled by hand stays where it was put.
+///
+/// `row_height` is the height given to `show_rows`, which adds the item
+/// spacing to it, so the offset does the same. The area fills the rest of the
+/// panel, so the room it centres in is the height still available.
+pub fn list_area(ui: &Ui, at: Option<usize>, row_height: f32) -> egui::ScrollArea {
+    let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+    let Some(at) = at else {
+        return area;
+    };
+    let step = row_height + ui.spacing().item_spacing.y;
+    let room = ui.available_height();
+    area.vertical_scroll_offset((at as f32 * step - (room - step) / 2.0).max(0.0))
+}
 
 /// What one row of such a list says.
 pub struct ListRow<'a> {

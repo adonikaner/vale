@@ -106,6 +106,59 @@ pub struct Lights {
     pub fly_to: Option<Vec3>,
     /// What the left button is moving, if anything — see [`Drag`].
     pub drag: Option<Drag>,
+    /// Whether a click on the ground makes a light there. See [`new_light`].
+    pub armed: bool,
+}
+
+/// The radii a new light is made with, in yards: full strength within the
+/// first, faded out by the second.
+pub const NEW_RADII: (f32, f32) = (50.0, 120.0);
+
+impl Lights {
+    /// The map's default light, if the open map has one.
+    pub fn default_light(&self) -> Option<&Mark> {
+        self.marks.iter().find(|mark| mark.everywhere)
+    }
+
+    /// The light a new one copies its weather from: the chosen light, else the
+    /// map's default light, else any light on the map.
+    pub fn template(&self) -> Option<&Mark> {
+        self.selected
+            .and_then(|id| self.marks.iter().find(|mark| mark.id == id))
+            .or_else(|| self.default_light())
+            .or_else(|| self.marks.first())
+    }
+}
+
+/// Make a light on `map`, at `centre` or as the map's default light with
+/// `None`, lit like [`Lights::template`] (or, on a map with no light, like
+/// light 1, Eastern Kingdoms' default). Select it and open its row. Answers
+/// the status line.
+pub fn new_light(
+    session: &mut EditSession,
+    lights: &mut Lights,
+    browser: &mut super::tables::Browser,
+    map: u32,
+    centre: Option<Vec3>,
+) -> String {
+    let (template, like) = match lights.template() {
+        Some(mark) => (Some(mark.record), mark.id),
+        None => (session.table("Light").and_then(|table| table.row_of(1)), 1),
+    };
+    let Some(record) = super::tables::add_light(session, map, centre.map(|at| at.to_array()), NEW_RADII, template) else {
+        return "Light.dbc is not open".to_string();
+    };
+    let Some(id) = session.table("Light").and_then(|table| table.u32_at(record, 0)) else {
+        return "the new light has no id".to_string();
+    };
+    lights.selected = Some(id);
+    lights.armed = false;
+    browser.look_at("Light");
+    browser.follow(session, "Light", id);
+    match centre {
+        Some(_) => format!("light {id} made on map {map}, lit like light {like}"),
+        None => format!("light {id} made: map {map}'s default light"),
+    }
 }
 
 /// **What a held left button is moving.**
@@ -180,7 +233,7 @@ impl Plugin for LightToolPlugin {
             Update,
             // **After the pick, like every tool here**: reading the pointer
             // before this frame's ray is built aims at where the pointer was.
-            (collect, aim, press, drag).chain().after(crate::pick::aim),
+            (collect, aim, press, drag, disarm).chain().after(crate::pick::aim),
         )
         // …and the drawing after the picking, so the ring that lights up under
         // the pointer does so on the frame the pointer reached it.
@@ -395,14 +448,32 @@ fn aim(
         .map(|(_, what)| (mark.id, what));
 }
 
+/// Escape disarms New light.
+fn disarm(
+    mut lights: ResMut<Lights>,
+    keys: Res<ButtonInput<KeyCode>>,
+    wants: Res<bevy_egui::input::EguiWantsInput>,
+    tool: Res<Tool>,
+) {
+    if *tool != Tool::Lights || wants.wants_keyboard_input() {
+        return;
+    }
+    if lights.armed && keys.just_pressed(KeyCode::Escape) {
+        lights.armed = false;
+    }
+}
+
 /// **Choose the light under the pointer, and open its row.**
 fn press(
     mut lights: ResMut<Lights>,
     buttons: Res<ButtonInput<MouseButton>>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
-    session: Option<Res<EditSession>>,
+    mut session: Option<ResMut<EditSession>>,
     mut browser: Option<ResMut<super::tables::Browser>>,
+    cursor: Res<crate::pick::Cursor>,
+    focus: Res<WorldFocus>,
+    over: (Res<crate::ui::Viewport>, Res<bevy_egui::input::EguiWantsInput>, Query<&Window>),
 ) {
     if !state.editing() || *tool != Tool::Lights {
         return;
@@ -410,9 +481,22 @@ fn press(
     if !buttons.just_pressed(MouseButton::Left) {
         return;
     }
+    // Armed, a click on the ground makes a light there.
+    if lights.armed {
+        let (viewport, wants, windows) = over;
+        if !crate::ui::over_the_world(&viewport, &wants, &windows) {
+            return;
+        }
+        if let (Some(at), Some(session), Some(browser)) = (cursor.surface, session.as_mut(), browser.as_mut()) {
+            let line = new_light(session, &mut lights, browser, focus.map_id, Some(at));
+            session.status = line;
+        }
+        return;
+    }
     let Some((id, what)) = lights.hovered else {
         return;
     };
+    let session = session.as_deref();
     let already = lights.selected == Some(id);
     lights.selected = Some(id);
     // **The press that selects is also the press that starts a move.** One

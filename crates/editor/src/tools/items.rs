@@ -436,6 +436,10 @@ pub struct Items {
     all_generation: u64,
     /// The open item, by entry.
     pub open: Option<u32>,
+    /// The item the list last brought into view, or was clicked on. The list
+    /// scrolls to the open item when it is another. See
+    /// `crate::ui::theme::list_area`.
+    pub revealed: Option<u32>,
     /// The open item's whole row, read on demand.
     pub row: Option<ItemRow>,
     row_task: Option<Task<Result<ItemRow, String>>>,
@@ -511,6 +515,7 @@ impl Default for Items {
             haystacks_for: None,
             all_generation: 0,
             open: None,
+            revealed: None,
             row: None,
             row_task: None,
             row_at: None,

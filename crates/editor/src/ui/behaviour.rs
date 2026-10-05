@@ -702,7 +702,10 @@ fn trigger_fields(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &ShownEve
         set(subject, "event_inverse_phase_mask", written);
     }
     let written = page_row(ui, "condition_id", "a row of conditions, or 0", edited("condition_id"), |ui| {
-        number_cell(ui, Kind::Unsigned, &event.get("condition_id"))
+        let showing = event.get("condition_id");
+        let written = number_cell(ui, Kind::Unsigned, &showing);
+        super::conditions::open_button(ui, showing.trim().parse().unwrap_or(0));
+        written
     });
     if let Some(written) = written {
         set(subject, "condition_id", written);
@@ -1474,7 +1477,12 @@ fn step_fields(ui: &mut egui::Ui, subject: &mut Subject<'_>, script: &Script, at
             }
         }
     }
-    if let Some(written) = page_row(ui, "condition_id", "a row of conditions the step is skipped without, or 0", false, |ui| number(ui, Kind::Unsigned, &row.get("condition_id"))) {
+    if let Some(written) = page_row(ui, "condition_id", "a row of conditions the step is skipped without, or 0", false, |ui| {
+        let showing = row.get("condition_id");
+        let written = number(ui, Kind::Unsigned, &showing);
+        super::conditions::open_button(ui, showing.trim().parse().unwrap_or(0));
+        written
+    }) {
         write(subject, "condition_id", &written);
     }
     if let Some(written) = page_row(ui, "delay", "seconds after the script starts; the wait line above sets it relative to the step before", false, |ui| {

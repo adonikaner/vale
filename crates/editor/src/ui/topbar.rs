@@ -20,10 +20,13 @@
 //! ```text
 //! Project: <name>   Projects…        the project dialog
 //!                   Publish…         the publish popover
-//! Map: <name> (id)  Open map     >   every map, by id
-//!                   Edit WDT/ADT…    the tile map window
+//! Map: <name> (id)  New map…         the new map form
+//!                   Open map     >   every map, by id
+//!                   Edit Map…        the tile map window
 //!                   Go to…           the go-to popover
-//!                   Bookmarks    >   each kept view, which a click returns to
+//!                   Bookmarks    >   Add bookmark…, the add-bookmark popover,
+//!                                    then each kept view, which a click
+//!                                    returns to
 //! ```
 //!
 //! Each menu's button states what a person reads the bar for without opening
@@ -34,8 +37,8 @@
 //!
 //! A menu entry is a command. A form is still a popover: an egui menu closes
 //! when anything inside it is clicked, which suits a list of commands and does
-//! not suit text fields, so `Publish…` and `Go to…` open the same windows the
-//! buttons opened, placed under the menu. See [`super::popover`].
+//! not suit text fields, so `Publish…`, `Go to…` and `Add bookmark…` open
+//! windows placed under the menu. See [`super::popover`].
 //!
 //! Three controls stay buttons. Save's label says what is unsaved, which is
 //! read without a click. Server… opens one panel with two tabs, so a menu of
@@ -109,6 +112,8 @@ pub fn draw(
     assets: &GameAssets,
     playing: &mut Session,
     map_open: &mut bool,
+    // The New map form, which New map… opens. See [`crate::tools::maps`].
+    new_map: &mut Option<crate::tools::maps::Form>,
     subjects: &mut Subjects<'_>,
     // The kept views the Map menu lists. See [`crate::bookmarks`].
     bookmarks: &crate::bookmarks::Bookmarks,
@@ -147,7 +152,7 @@ pub fn draw(
             popovers.server.toggle(&at_server);
         }
         separator(ui);
-        map(ui, session, camera, popovers, bookmarks, map_open, in_world);
+        map(ui, session, camera, popovers, bookmarks, map_open, new_map, in_world);
         separator(ui);
         // The workspace control: World, then Spells, Items and Quests. World
         // returns to the last rail tool; the other three replace the viewport.
@@ -532,18 +537,20 @@ impl Projects {
     }
 }
 
-/// The Map menu: which map is open, and the four things done to the map as a
+/// The Map menu: which map is open, and the five things done to the map as a
 /// whole.
 ///
 /// The button shows the map's name with its `Map.dbc` id. The entries are the
-/// map list, the tile map window, the go-to popover, and the bookmarks, each
-/// of which a click returns the camera to.
+/// new map form, the map list, the tile map window, the go-to popover, and the
+/// bookmarks: Add bookmark… first, then each kept view, which a click returns
+/// the camera to.
 ///
-/// Every entry is disabled while a playtest is running. Opening a map re-reads
-/// every open tile and moves the editor's camera, and the character is
-/// standing on the map being left. The other three act on the editor's free
-/// camera or on the map's tiles, and a playtest replaces the camera with the
-/// session's and reads those tiles.
+/// Every entry is disabled while a playtest is running. Making or opening a
+/// map re-reads every open tile and moves the editor's camera, and the
+/// character is standing on the map being left. The others act on the
+/// editor's free camera or on the map's tiles, and a playtest replaces the
+/// camera with the session's and reads those tiles.
+#[allow(clippy::too_many_arguments)]
 fn map(
     ui: &mut egui::Ui,
     session: &mut EditSession,
@@ -551,6 +558,7 @@ fn map(
     popovers: &mut Popovers,
     bookmarks: &crate::bookmarks::Bookmarks,
     map_open: &mut bool,
+    new_map: &mut Option<crate::tools::maps::Form>,
     playing: bool,
 ) {
     const HELD: &str = "Not while a playtest is running: the session has the camera and the \
@@ -558,8 +566,23 @@ fn map(
     let mut open_map: Option<(String, u32)> = None;
     let mut jump: Option<crate::bookmarks::Bookmark> = None;
     let mut ask_go = false;
+    let mut ask_bookmark = false;
     let menu = ui
         .menu_button(format!("Map: {} ({})", session.map, session.map_id), |ui| {
+            // The form is a modal of its own, drawn whether or not the map
+            // window is open. See [`super::mapview`].
+            if ui
+                .add_enabled(!playing, egui::Button::new("New map\u{2026}"))
+                .on_hover_text(
+                    "A map that does not exist yet: a Map.dbc row, a WDT with no tiles and \
+                     the server's map_template row. It opens empty, for Create.",
+                )
+                .on_disabled_hover_text(HELD)
+                .clicked()
+            {
+                *new_map = Some(crate::tools::maps::Form::default());
+                ui.close();
+            }
             ui.add_enabled_ui(!playing, |ui| {
                 ui.menu_button("Open map", |ui| {
                     egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
@@ -579,7 +602,7 @@ fn map(
             // the one thing in the editor not chosen with the pointer, so it
             // is here and not on the rail. See [`super::mapview`].
             if ui
-                .add_enabled(!playing, egui::Button::new("Edit WDT/ADT…"))
+                .add_enabled(!playing, egui::Button::new("Edit Map…"))
                 .on_hover_text(
                     "The map from above: which tiles exist, and making, deleting, \
                      copying and pasting them.",
@@ -592,7 +615,7 @@ fn map(
             }
             if ui
                 .add_enabled(!playing, egui::Button::new("Go to…"))
-                .on_hover_text("Move the camera: a position, a tile, or a zone. Keeps bookmarks.")
+                .on_hover_text("Move the camera: a bookmark, a position, a tile, or a zone.")
                 .on_disabled_hover_text(HELD)
                 .clicked()
             {
@@ -601,12 +624,18 @@ fn map(
             }
             ui.add_enabled_ui(!playing, |ui| {
                 ui.menu_button("Bookmarks", |ui| {
-                    if bookmarks.list.is_empty() {
-                        ui.label(
-                            egui::RichText::new("none yet: Go to… keeps one")
-                                .size(theme::SMALL)
-                                .color(theme::INK_FAINT),
-                        );
+                    // Naming a view is a text field, so it is a popover like
+                    // Go to…; see the module comment.
+                    if ui
+                        .button("Add bookmark\u{2026}")
+                        .on_hover_text("Name the current view and keep it.")
+                        .clicked()
+                    {
+                        ask_bookmark = true;
+                        ui.close();
+                    }
+                    if !bookmarks.list.is_empty() {
+                        ui.separator();
                     }
                     for mark in &bookmarks.list {
                         let label = match mark.map != session.map {
@@ -629,8 +658,12 @@ fn map(
              WorldMapArea and the server all key on the id.",
         );
     popovers.go_to.track(&menu);
+    popovers.bookmark.track(&menu);
     if ask_go {
         popovers.go_to.show();
+    }
+    if ask_bookmark {
+        popovers.bookmark.show();
     }
     if let Some((name, id)) = open_map {
         session.switch_map(name, id, camera);

@@ -590,6 +590,10 @@ pub struct Quests {
     pub of_holder: Option<(Holder, u32)>,
     /// The open quest, by entry.
     pub open: Option<u32>,
+    /// The quest the list last brought into view, or was clicked on. The list
+    /// scrolls to the open quest when it is another. See
+    /// `crate::ui::theme::list_area`.
+    pub revealed: Option<u32>,
     /// The open quest's whole row, read when the open quest changes.
     pub row: Option<QuestRow>,
     row_task: Option<Task<Result<Option<QuestRow>, String>>>,

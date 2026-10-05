@@ -557,6 +557,7 @@ fn template(
         {
             triggers::set_template(session, triggers, id, "condition_id", condition.to_string(), now);
         }
+        super::conditions::open_button(ui, condition);
     });
     let mut cooldown = template.cooldown;
     theme::row(ui, "cooldown", |ui| {
@@ -741,6 +742,17 @@ fn teleport(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trigger
         {
             triggers::set_teleport(session, triggers, id, "required_level", level.to_string(), now);
         }
+    });
+    let mut condition = teleport.required_condition;
+    theme::row(ui, "condition", |ui| {
+        if ui
+            .add(egui::DragValue::new(&mut condition).speed(1.0))
+            .on_hover_text("required_condition: a row of `conditions` the character must meet to be sent, or 0.")
+            .changed()
+        {
+            triggers::set_teleport(session, triggers, id, "required_condition", condition.to_string(), now);
+        }
+        super::conditions::open_button(ui, condition);
     });
     let mut message = teleport.message.clone();
     theme::row(ui, "message", |ui| {

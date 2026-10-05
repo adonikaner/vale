@@ -577,6 +577,10 @@ pub struct Args {
     /// `--spawn`.
     pub vendor_window: bool,
     pub trainer_window: bool,
+    /// `--gossip`: open the gossip window on `--spawn`'s creature.
+    pub gossip_window: bool,
+    /// `--condition <id>`: open the condition window on one condition.
+    pub condition: Option<u32>,
     /// `--vendor-add <item>` and `--trainer-add <spell>`: add a row to the
     /// list the window shows, which a scripted run cannot do otherwise. A
     /// spell that is not a teaching spell is replaced by the one that teaches
@@ -891,6 +895,8 @@ impl Default for Args {
             apply_loot: false,
             revert_loot: false,
             vendor_window: false,
+            gossip_window: false,
+            condition: None,
             trainer_window: false,
             vendor_add: None,
             trainer_add: None,
@@ -1166,6 +1172,8 @@ impl Args {
                 "--apply-loot" => parsed.apply_loot = true,
                 "--revert-loot" => parsed.revert_loot = true,
                 "--vendor" => parsed.vendor_window = true,
+                "--gossip" => parsed.gossip_window = true,
+                "--condition" => parsed.condition = args.next().as_deref().and_then(|v| v.trim().parse().ok()),
                 "--trainer" => parsed.trainer_window = true,
                 "--vendor-add" => {
                     parsed.vendor_add = args.next().as_deref().and_then(|v| v.trim().parse().ok());

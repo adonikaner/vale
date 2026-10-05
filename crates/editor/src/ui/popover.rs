@@ -1,6 +1,6 @@
-//! The windows the top bar's buttons and menu entries open: go-to, playtest
-//! login, the project dialog, the server panel and the publish popover. Each
-//! holds text fields.
+//! The windows the top bar's buttons and menu entries open: go-to, add
+//! bookmark, playtest login, the project dialog, the server panel and the
+//! publish popover. Each holds text fields.
 //!
 //! ## Why the popovers are windows and not menus
 //!
@@ -35,6 +35,8 @@ use crate::playtest::Login;
 #[derive(Resource, Default)]
 pub struct Popovers {
     pub go_to: Popover,
+    /// Naming the current view and keeping it. See [`crate::bookmarks`].
+    pub bookmark: Popover,
     pub login: Popover,
     /// Which project is open, and making another one.
     pub project: Popover,
@@ -131,6 +133,7 @@ impl Popovers {
             &mut self.project,
             &mut self.server,
             &mut self.publish,
+            &mut self.bookmark,
         ]
         .into_iter()
         .enumerate()
@@ -175,7 +178,7 @@ pub fn draw(
     step: &crate::server::datadir::Step,
 ) -> Vec<egui::Rect> {
     let mut rects = Vec::new();
-    let mut seen: Vec<(bool, egui::Rect)> = vec![(false, egui::Rect::NOTHING); 5];
+    let mut seen: Vec<(bool, egui::Rect)> = vec![(false, egui::Rect::NOTHING); 6];
 
     if popovers.go_to.open {
         if let Some(response) = window(ctx, "go-to", popovers.go_to.under, |ui| {
@@ -190,6 +193,14 @@ pub fn draw(
             );
         }) {
             seen[0] = (true, response);
+            rects.push(response);
+        }
+    }
+    if popovers.bookmark.open {
+        if let Some(response) = window(ctx, "add-bookmark", popovers.bookmark.under, |ui| {
+            keep_this_view(ui, camera, go_to, bookmarks, session, &mut popovers.bookmark.open);
+        }) {
+            seen[5] = (true, response);
             rects.push(response);
         }
     }
@@ -587,7 +598,7 @@ fn this_project(
         ui,
         "maps, vmaps and mmaps under the server's DataDir, built by the four map tools set \
          under Setup. One tile at a time is the map window's Server files button, on Edit \
-         WDT/ADT.",
+         Map.",
     );
 
     // What a publish hands over as rows.
@@ -1287,6 +1298,43 @@ pub(super) fn go_to_bookmark(
     }
 }
 
+/// The add-bookmark popover: name the current view and keep it.
+///
+/// A bookmark is the whole view: the map, the focus with its height, and the
+/// orbit. See `crate::bookmarks`.
+fn keep_this_view(
+    ui: &mut egui::Ui,
+    camera: &EditorCamera,
+    go_to: &mut super::topbar::GoTo,
+    bookmarks: &mut crate::bookmarks::Bookmarks,
+    session: &crate::session::EditSession,
+    open: &mut bool,
+) {
+    ui.set_min_width(250.0);
+    theme::heading(ui, "Add bookmark");
+    ui.horizontal(|ui| {
+        let field = ui.add(
+            egui::TextEdit::singleline(&mut go_to.bookmark)
+                .desired_width(160.0)
+                .hint_text("name this view"),
+        );
+        let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let name = go_to.bookmark.trim().to_string();
+        if (entered || ui.small_button("Keep").clicked()) && !name.is_empty() {
+            bookmarks.add(crate::bookmarks::Bookmark {
+                name,
+                map: session.map.clone(),
+                target: camera.target.to_array(),
+                yaw: camera.yaw,
+                pitch: camera.pitch,
+                distance: camera.distance,
+            });
+            go_to.bookmark.clear();
+            *open = false;
+        }
+    });
+}
+
 /// The go-to popover: send the camera to a bookmark, a position, a tile, or a
 /// zone.
 ///
@@ -1311,31 +1359,11 @@ fn go_somewhere(
     let tile = vale_assets::tile_for_position(here.x, here.y);
 
     // Bookmarks come first because a place somebody named is the place they
-    // most often want. A bookmark is the whole view: the map, the focus with
-    // its height, and the orbit. See `crate::bookmarks`.
+    // most often want. They are kept from the Map menu's Bookmarks, Add
+    // bookmark…; see [`keep_this_view`].
     theme::heading(ui, "Bookmarks");
-    ui.horizontal(|ui| {
-        let field = ui.add(
-            egui::TextEdit::singleline(&mut go_to.bookmark)
-                .desired_width(140.0)
-                .hint_text("name this view"),
-        );
-        let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let name = go_to.bookmark.trim().to_string();
-        if (entered || ui.small_button("Keep").clicked()) && !name.is_empty() {
-            bookmarks.add(crate::bookmarks::Bookmark {
-                name,
-                map: session.map.clone(),
-                target: camera.target.to_array(),
-                yaw: camera.yaw,
-                pitch: camera.pitch,
-                distance: camera.distance,
-            });
-            go_to.bookmark.clear();
-        }
-    });
     if bookmarks.list.is_empty() {
-        theme::note(ui, "none yet: name the view and press Keep");
+        theme::note(ui, "none yet: Bookmarks \u{2192} Add bookmark\u{2026} keeps one");
     }
     let mut jump: Option<crate::bookmarks::Bookmark> = None;
     let mut forget: Option<String> = None;

@@ -238,6 +238,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
                 loot: &mut editing.loot,
                 behaviour: &mut editing.behaviour,
                 services: &mut editing.services,
+                gossip: &mut editing.gossip,
                 server,
                 server_panel,
                 assets,

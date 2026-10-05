@@ -248,6 +248,10 @@ pub struct Browser {
     backrefs: HashMap<String, Backrefs>,
     /// The open row, as a record index.
     pub open: Option<usize>,
+    /// The table and row the list last brought into view, or was clicked on.
+    /// The list scrolls to the open row when it is another. See
+    /// `crate::ui::theme::list_area`.
+    pub revealed: Option<(String, usize)>,
     /// Which view of the open row is drawn; see `crate::ui::data::View`.
     pub view: crate::ui::data::View,
     /// The table and record each follow started from, so the browser can go
@@ -1712,6 +1716,42 @@ pub fn add_zone(session: &mut EditSession, map: u32) -> Option<usize> {
     at
 }
 
+/// A new `Light` row on `map`, as one undo entry. At `centre`, in the world's
+/// axes, it is a sphere with the two falloff radii in yards; with `None` it is
+/// the map's default light, whose falloff is zero and whose position is not
+/// read. Its five `LightParams` ids are copied from the `Light` row at
+/// `template`, so it is lit and fogged like that light until its own are
+/// chosen. Returns the new row's record.
+pub fn add_light(
+    session: &mut EditSession,
+    map: u32,
+    centre: Option<[f32; 3]>,
+    radii: (f32, f32),
+    template: Option<usize>,
+) -> Option<usize> {
+    use vale_assets::tables::light::{light_field as lf, YARDS_PER_UNIT};
+    let lights = session.table("Light")?;
+    let params: Vec<(usize, u32)> = (lf::PARAMS_CLEAR..lf::PARAMS_CLEAR + 5)
+        .filter_map(|field| Some((field, lights.u32_at(template?, field)?)))
+        .collect();
+    let mut numbers = vec![(lf::MAP, map)];
+    if let Some(centre) = centre {
+        let placement = vale_assets::world::adt::placement_from_world(centre);
+        numbers.extend([
+            (lf::INTERNAL_X, (placement[0] / YARDS_PER_UNIT).to_bits()),
+            (lf::INTERNAL_Y, (placement[1] / YARDS_PER_UNIT).to_bits()),
+            (lf::INTERNAL_Z, (placement[2] / YARDS_PER_UNIT).to_bits()),
+            (lf::FALLOFF_START, (radii.0 / YARDS_PER_UNIT).to_bits()),
+            (lf::FALLOFF_END, (radii.1 / YARDS_PER_UNIT).to_bits()),
+        ]);
+    }
+    numbers.extend(params);
+    session.history.begin("Add light");
+    let at = push_row(session, "Light", &numbers, &[]);
+    session.history.end();
+    at
+}
+
 /// A new sub-area of the zone `of` is, or is in, as one undo entry. It takes
 /// the zone's map and [`area::FROM_ZONE`]'s columns, the next explore bit, and
 /// a name to be replaced. Asked of a sub-area, it makes a sibling: the table
@@ -2686,6 +2726,15 @@ pub fn open_tables(
         false => wanted.to_string(),
     };
     let followed_in = std::mem::take(&mut browser.followed_in);
+    // The back stack belongs to the workspace it was made in. Carried into
+    // another, `< back` opened the last workspace's tables under this one's
+    // tool: Zones showing SkillLineAbility, with no tab to leave by, since
+    // Zones has one table and draws no tabs. A follow from outside pushes the
+    // table the browser last showed, which is no more a way back, so it is
+    // cleared too.
+    if pointed.as_deref() != Some(wanted) {
+        browser.back.clear();
+    }
     if pointed.as_deref() != Some(wanted) && followed_in {
         *pointed = Some(wanted.to_string());
     }
@@ -3128,6 +3177,40 @@ mod tests {
         undo(&mut session);
         assert_eq!(session.tables["Spell"].record_count(), 3);
         assert_eq!(teachers_of(&mut browser, &session, 143), vec![(1, false)]);
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// A new light copies its five weather rows from the template light,
+    /// stands where it was put in the table's own units, and is one undo
+    /// entry. A default light writes no position.
+    #[test]
+    fn a_new_light_copies_its_weather_and_is_placed_in_the_tables_units() {
+        use vale_assets::tables::light::light_field as lf;
+        let (mut session, install) = session("lights");
+        let mut lights = empty(12);
+        add(&mut lights, 1, &[(lf::MAP, 0), (lf::PARAMS_CLEAR, 11), (lf::PARAMS_CLEAR + 4, 15)], &[]);
+        session.tables.insert("Light".to_string(), lights);
+
+        let at = add_light(&mut session, 0, Some([100.0, 200.0, 30.0]), (50.0, 120.0), Some(0)).expect("a light");
+        let table = &session.tables["Light"];
+        assert_eq!(table.u32_at(at, 0), Some(2));
+        assert_eq!(table.u32_at(at, lf::PARAMS_CLEAR), Some(11));
+        assert_eq!(table.u32_at(at, lf::PARAMS_CLEAR + 4), Some(15));
+        let float = |field| table.u32_at(at, field).map(f32::from_bits);
+        let placement = vale_assets::world::adt::placement_from_world([100.0, 200.0, 30.0]);
+        assert_eq!(float(lf::INTERNAL_Y), Some(30.0 * 36.0));
+        assert_eq!(float(lf::INTERNAL_X), Some(placement[0] * 36.0));
+        assert_eq!(float(lf::FALLOFF_END), Some(120.0 * 36.0));
+
+        let default = add_light(&mut session, 1, None, (50.0, 120.0), Some(0)).expect("a light");
+        let table = &session.tables["Light"];
+        assert_eq!(table.u32_at(default, lf::MAP), Some(1));
+        assert_eq!(table.u32_at(default, lf::FALLOFF_END), Some(0));
+        assert_eq!(table.u32_at(default, lf::PARAMS_CLEAR), Some(11));
+
+        undo(&mut session);
+        undo(&mut session);
+        assert_eq!(session.tables["Light"].record_count(), 1);
         let _ = std::fs::remove_dir_all(&install);
     }
 

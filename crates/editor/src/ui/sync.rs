@@ -269,6 +269,10 @@ pub enum Half {
     /// A creature's events, scripts and spell lists, reached from a selected
     /// creature's Events and Spells windows.
     Behaviour,
+    /// The `conditions` table, from the condition window.
+    Conditions,
+    /// Gossip menus, options and texts, from the gossip window.
+    Gossip,
     /// A new map's `map_template` row, made by the map window's New map.
     Maps,
     /// What area triggers do, from the Triggers tool.
@@ -278,10 +282,10 @@ pub enum Half {
 }
 
 /// The number of subjects. [`Standings`] holds one answer for each.
-pub const HALVES: usize = 11;
+pub const HALVES: usize = 13;
 
 impl Half {
-    pub const ALL: [Half; 11] = [
+    pub const ALL: [Half; 13] = [
         Half::Tables,
         Half::Creatures,
         Half::GameObjects,
@@ -290,6 +294,8 @@ impl Half {
         Half::Loot,
         Half::Services,
         Half::Behaviour,
+        Half::Conditions,
+        Half::Gossip,
         Half::Maps,
         Half::Triggers,
         Half::Graveyards,
@@ -306,6 +312,8 @@ impl Half {
             Half::Loot => "Loot",
             Half::Services => "Vendors and trainers",
             Half::Behaviour => "Behaviour",
+            Half::Conditions => "Conditions",
+            Half::Gossip => "Gossip",
             Half::Maps => "Maps",
             Half::Triggers => "Area triggers",
             Half::Graveyards => "Graveyards",
@@ -324,6 +332,8 @@ impl Half {
             Half::Loot => "the nine *_loot_template tables",
             Half::Services => "npc_vendor, npc_vendor_template, npc_trainer, npc_trainer_template",
             Half::Behaviour => "creature_ai_events, creature_spells, broadcast_text, and the eleven *_scripts tables",
+            Half::Conditions => "conditions",
+            Half::Gossip => "npc_text, gossip_menu, gossip_menu_option",
             Half::Maps => "map_template",
             Half::Triggers => "areatrigger_template (label, script, condition, cooldown), areatrigger_teleport, areatrigger_tavern, areatrigger_involvedrelation, areatrigger_bg_entrance",
             Half::Graveyards => "game_graveyard_zone, world_safe_locs_facing",
@@ -341,7 +351,7 @@ impl Half {
             Half::Loot => loot::SQL_VPATH,
             Half::Services => services::SQL_VPATH,
             Half::Behaviour => behaviour::SQL_VPATH,
-            Half::Maps | Half::Triggers | Half::Graveyards => self.group().map_or("", places::Group::sql_vpath),
+            Half::Conditions | Half::Gossip | Half::Maps | Half::Triggers | Half::Graveyards => self.group().map_or("", places::Group::sql_vpath),
         }
     }
 
@@ -357,7 +367,7 @@ impl Half {
             Half::Loot => loot::REVERT_VPATH,
             Half::Services => services::REVERT_VPATH,
             Half::Behaviour => behaviour::REVERT_VPATH,
-            Half::Maps | Half::Triggers | Half::Graveyards => self.group().map_or("", places::Group::revert_vpath),
+            Half::Conditions | Half::Gossip | Half::Maps | Half::Triggers | Half::Graveyards => self.group().map_or("", places::Group::revert_vpath),
         }
     }
 
@@ -427,6 +437,17 @@ impl Half {
                  their own names; the other six and broadcast_text are read at start, so a \
                  change to one of those needs a restart."
             }
+            Half::Conditions => {
+                "Live on `.reload conditions`, which an apply sends when it is made with the \
+                 panels open over a playtest. Applied at any other time, it is live after a \
+                 restart."
+            }
+            Half::Gossip => {
+                "Live on `.reload npc_text`, `.reload gossip_menu` and \
+                 `.reload gossip_menu_option`, which an apply sends when it is made with the \
+                 panels open over a playtest \u{2014} removals included. A text a menu shows is \
+                 broadcast_text, applied by Behaviour above."
+            }
             Half::Maps => {
                 "Read on `.reload map_template`, which an apply sends when it is made with the \
                  panels open over a playtest, but the server opens a map's grids at startup, \
@@ -477,6 +498,8 @@ impl Half {
             Half::Loot => Some(stack::Subject::Loot),
             Half::Services => Some(stack::Subject::Services),
             Half::Behaviour => Some(stack::Subject::Behaviour),
+            Half::Conditions => Some(stack::Subject::Conditions),
+            Half::Gossip => Some(stack::Subject::Gossip),
             Half::Maps => Some(stack::Subject::Maps),
             Half::Triggers => Some(stack::Subject::Triggers),
             Half::Graveyards => Some(stack::Subject::Graveyards),
@@ -710,7 +733,7 @@ pub fn standing(half: Half, session: &EditSession, assets: &GameAssets) -> Stand
                 unsaved: false,
             }
         }
-        Half::Maps | Half::Triggers | Half::Graveyards => {
+        Half::Conditions | Half::Gossip | Half::Maps | Half::Triggers | Half::Graveyards => {
             let group = half.group().unwrap_or(places::Group::Maps);
             let plan = places::plan(session, group);
             let on_server = places::OnTheServer::read_with(session, &plan, group);
@@ -817,7 +840,7 @@ pub fn save(half: Half, work: &mut Work<'_>) {
             creatures::save(work.session);
             behaviour::save(work.session);
         }
-        Half::Maps | Half::Triggers | Half::Graveyards => {
+        Half::Conditions | Half::Gossip | Half::Maps | Half::Triggers | Half::Graveyards => {
             creatures::save(work.session);
             if let Some(group) = half.group() {
                 places::save_group(work.session, group);

@@ -613,6 +613,9 @@ fn row(
                 .loot
                 .set_column(subject.session, set, shown, "condition_id", condition.to_string(), now);
         }
+        if shown.entry.condition != 0 {
+            super::conditions::open_button(ui, shown.entry.condition);
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let (label, about) = match shown.life {
                 Life::Delete => ("keep", "Take the removal mark off this row."),

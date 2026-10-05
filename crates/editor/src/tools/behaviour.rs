@@ -268,6 +268,13 @@ pub struct Behaviour {
     /// Whether the scripted flags have been acted on; see
     /// `crate::server::behaviour::on_the_command_line`, which waits on this.
     pub scripted_done: bool,
+    /// The texts another window shows, which this tool reads with its own:
+    /// the gossip window's lines and option labels. Written by that window
+    /// each frame.
+    pub other_texts: Vec<u32>,
+    /// Whether another window makes new texts, so the table's highest entry
+    /// is read to number them.
+    pub numbering_texts: bool,
 }
 
 impl Behaviour {
@@ -719,7 +726,8 @@ impl Behaviour {
             .flatten()
             .chain(session.server_scripts.iter().flat_map(|script| script.rows).collect::<Vec<_>>().iter())
             .flat_map(scripts::texts_of)
-            .filter(|id| !self.texts.contains_key(id))
+            .chain(self.other_texts.iter().copied())
+            .filter(|id| *id != 0 && !self.texts.contains_key(id))
             .collect();
         ids.sort_unstable();
         ids.dedup();
@@ -739,6 +747,9 @@ impl Behaviour {
         }
         if self.script_open {
             wanted.extend([scripts::GENERIC, broadcast::TABLE]);
+        }
+        if self.numbering_texts {
+            wanted.push(broadcast::TABLE);
         }
         wanted.into_iter().find(|table| !self.max_ids.contains_key(table))
     }

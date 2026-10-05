@@ -685,9 +685,24 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     );
     ui.add_space(4.0);
 
+    // Bring the open row into view when it was opened from somewhere other
+    // than this list. `matches` is in table order, so it is searched rather
+    // than walked. A row the query hides is not marked as shown, so clearing
+    // the query brings it into view.
+    let open = work.browser.open.map(|record| (table_name.clone(), record));
+    let mut reveal = None;
+    if open != work.browser.revealed {
+        match open.as_ref().map(|(_, record)| matches.binary_search(record)) {
+            Some(Ok(at)) => {
+                reveal = Some(at);
+                work.browser.revealed = open;
+            }
+            Some(Err(_)) => {}
+            None => work.browser.revealed = None,
+        }
+    }
     let mut run: Option<(usize, Command)> = None;
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
+    theme::list_area(ui, reveal, ROW_HEIGHT)
         .show_rows(ui, ROW_HEIGHT, matches.len(), |ui, range| {
             for at in range {
                 let record = matches[at];
@@ -697,6 +712,7 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 let response = row_pictured(ui, work, &label, picture, chosen);
                 if response.clicked() {
                     work.browser.open = Some(record);
+                    work.browser.revealed = Some((table_name.clone(), record));
                     work.browser.forget_buffers();
                 }
                 response.context_menu(|ui| {
@@ -1691,6 +1707,7 @@ pub fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
         return;
     }
     browse_button(ui, &mut work);
+    new_light_buttons(ui, &mut work);
     ui.add_space(6.0);
 
     // Draw whatever table the browser has open, which is not always `Light`.
@@ -1806,6 +1823,46 @@ pub fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
             ui.add_space(12.0);
         });
     modals(ui, &mut work, None);
+}
+
+/// Make a light: one placed by a click on the ground, or the map's default
+/// light when the map has none. Either copies its weather from the chosen
+/// light or the map's default; see `crate::tools::lights::new_light`.
+fn new_light_buttons(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
+    let Some(lights) = work.lights.as_deref_mut() else {
+        return;
+    };
+    ui.horizontal(|ui| {
+        if ui
+            .selectable_label(lights.armed, "New light")
+            .on_hover_text(
+                "Armed, a click on the ground makes a light there, 50 yards at full \
+                 strength and faded out by 120, lit like the chosen light or the map's \
+                 default. Escape or a second press disarms.",
+            )
+            .clicked()
+        {
+            lights.armed = !lights.armed;
+        }
+        if lights.default_light().is_none() {
+            let map = work.session.map_id;
+            if ui
+                .button("New default light")
+                .on_hover_text(
+                    "This map has no default light, which is the one that lights every \
+                     place no other light covers. Makes one, lit like the chosen light or \
+                     Eastern Kingdoms' default.",
+                )
+                .clicked()
+            {
+                let line = crate::tools::lights::new_light(work.session, lights, work.browser, map, None);
+                work.session.status = line;
+            }
+        }
+    });
+    if lights.armed {
+        theme::note(ui, "Click the ground where the light should stand. Escape cancels.");
+    }
 }
 
 /// A button that opens the list of all lights as a dialog, for finding a light
@@ -2366,8 +2423,8 @@ fn field_in(
                 // has one. Everything that reads a mask reads it bit by bit,
                 // so the bits are the value and the number is only their
                 // encoding (see `vale_assets::tables::spellbits`). Without the
-                // list, setting "castable while dead" required knowing
-                // 0x00800000.
+                // list, setting "castable while dead" required knowing that
+                // it is bit 23.
                 if !bits.is_empty()
                     && ui
                         .add(

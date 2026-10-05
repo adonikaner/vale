@@ -308,9 +308,25 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     );
     ui.add_space(4.0);
 
+    // Bring the open item into view when it was opened from somewhere other
+    // than this list, as the spell list does. See `theme::list_area`.
+    let mut reveal = None;
+    if work.items.open != work.items.revealed {
+        match work.items.open {
+            Some(entry) => {
+                let found = matches
+                    .iter()
+                    .position(|&index| work.items.at(index).is_some_and(|known| known.entry == entry));
+                if found.is_some() {
+                    reveal = found;
+                    work.items.revealed = Some(entry);
+                }
+            }
+            None => work.items.revealed = None,
+        }
+    }
     let mut asked: Option<(Known, RowAct)> = None;
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
+    theme::list_area(ui, reveal, ROW_HEIGHT)
         .show_rows(ui, ROW_HEIGHT, matches.len(), |ui, range| {
             for at in range {
                 let index = matches[at];
@@ -320,6 +336,7 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 let chosen = work.items.open == Some(known.entry);
                 let response = row(ui, work, &known, chosen);
                 if response.clicked() {
+                    work.items.revealed = Some(known.entry);
                     asked = Some((known.clone(), RowAct::Open));
                 }
                 response.context_menu(|ui| {

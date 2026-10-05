@@ -63,6 +63,13 @@
 //!                opened from a selected creature and a third from either.
 //!                Events and lists are rows of the store; a script is
 //!                replaced whole, since its rows have no key
+//! gossip.rs      what a creature says when spoken to: `gossip_menu`, the
+//!                `gossip_menu_option` choices under it and the `npc_text`
+//!                each menu row shows, read for the menus one creature leads
+//!                to, and what an edit to each is
+//! conditions.rs  the `conditions` table, read whole, and what an edit to a
+//!                condition is. Any form whose column names a condition opens
+//!                the window on it
 //! waypoints.rs   the path a creature walks: `creature_movement`, drawn over
 //!                the ground, its points picked, dragged, added and removed. A
 //!                mode of the creature tool rather than an entry on the rail,
@@ -72,7 +79,7 @@
 //!                added and removed. Client tables whose rows are places, so
 //!                the tool keeps the viewport, as lights.rs does
 //! lights.rs      Light.dbc's spheres, drawn on the map, picked with the
-//!                pointer and flown to. A client table whose row is also a
+//!                pointer, flown to and made. A client table whose row is also a
 //!                position, so, like flightpaths.rs, it is a DBC tool that
 //!                keeps the viewport
 //! triggers.rs    AreaTrigger.dbc's spheres and boxes on the map, picked,
@@ -82,7 +89,8 @@
 //!                spirit appears, and the server rows that link each to the
 //!                zones it serves and give its facing
 //! maps.rs        a new map: its Map.dbc row, a WDT with no tiles in the
-//!                project, and its map_template row. Not a pointer tool: the
+//!                project, and its map_template row with a dungeon's parent
+//!                and ghost entrance. Not a pointer tool: the
 //!                map window drives it
 //! tiles.rs       the tile itself: making ground where there was none, and the
 //!                shadow bake and minimap picture that no other edit keeps in
@@ -134,12 +142,14 @@
 pub mod areas;
 pub mod behaviour;
 pub mod chunks;
+pub mod conditions;
 pub mod creatures;
 pub mod displays;
 pub mod doodads;
 pub mod flightpaths;
 pub mod gameobjects;
 pub mod gizmo;
+pub mod gossip;
 pub mod grade;
 pub mod graveyards;
 pub mod guides;
@@ -729,7 +739,14 @@ impl Plugin for ToolPlugin {
             items::ItemToolPlugin,
             quests::QuestToolPlugin,
             loot::LootToolPlugin,
-            behaviour::BehaviourToolPlugin,
+            // Behaviour, conditions and gossip as one entry, which keeps the
+            // tuple within what `add_plugins` accepts: three windows over the
+            // server's rows that open from any form.
+            (
+                behaviour::BehaviourToolPlugin,
+                conditions::ConditionToolPlugin,
+                gossip::GossipToolPlugin,
+            ),
             services::ServicesToolPlugin,
             spawn::SpawnKeysPlugin,
             group::GroupPlugin,

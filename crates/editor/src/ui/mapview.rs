@@ -31,12 +31,12 @@
 //!
 //! ## Making a new map
 //!
-//! New map… opens a form for a map that does not exist yet: its folder,
-//! name, kind and loading screen. Making it writes a `Map.dbc` row, a WDT with
-//! no tiles and the server's `map_template` row, and opens the map, so the
-//! next step is Create on an empty grid. The form is here because the first
-//! thing a new map needs is tiles, and this window is where they are made.
-//! See [`crate::tools::maps`].
+//! New map… in the top bar's Map menu opens a form for a map that does not
+//! exist yet: its folder, name, type and loading screen. Making it writes a
+//! `Map.dbc` row, a WDT with no tiles and the server's `map_template` row, and
+//! opens the map, so the next step is Create on an empty grid. The form is
+//! drawn here, as a modal, whether or not this window is open. See
+//! [`crate::tools::maps`].
 //!
 //! ## Every operation works on the selection
 //!
@@ -299,11 +299,15 @@ pub fn draw(
     minimaps: &vale_assets::tables::minimap::MinimapTiles,
     tiles: &mut crate::tools::tiles::Tiles,
     camera_tile: (u32, u32),
+    camera_at: [f32; 2],
     screens: &vale_assets::tables::loading::LoadingScreens,
 ) -> (Option<egui::Rect>, Option<Asked>) {
+    // The New map form is opened from the top bar's Map menu and is a modal of
+    // its own, so it is drawn whether or not this window is open.
+    let made = new_map_dialog(ctx, session, tiles, thumbnails, screens, camera_at);
     if !view.open {
         view.was_open = false;
-        return (None, None);
+        return (None, made);
     }
     if !view.was_open {
         view.was_open = true;
@@ -338,14 +342,13 @@ pub fn draw(
                 .inner_margin(egui::Margin::same(8)),
         )
         .show(ctx, |ui| {
-            asked = contents(ui, view, session, thumbnails, minimaps, tiles, camera_tile, screens);
+            asked = contents(ui, view, session, thumbnails, minimaps, tiles, camera_tile);
         });
     view.open = open;
 
-    (response.map(|r| r.response.rect), asked)
+    (response.map(|r| r.response.rect), asked.or(made))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn contents(
     ui: &mut egui::Ui,
     view: &mut MapView,
@@ -354,7 +357,6 @@ fn contents(
     minimaps: &vale_assets::tables::minimap::MinimapTiles,
     tiles: &mut crate::tools::tiles::Tiles,
     camera_tile: (u32, u32),
-    screens: &vale_assets::tables::loading::LoadingScreens,
 ) -> Option<Asked> {
     let mut asked = None;
 
@@ -448,21 +450,8 @@ fn contents(
             {
                 view.selection.clear();
             }
-            if ui
-                .button("New map\u{2026}")
-                .on_hover_text(
-                    "A map that does not exist yet: a Map.dbc row, a WDT with no tiles and \
-                     the server's map_template row. It opens empty, for Create.",
-                )
-                .clicked()
-            {
-                tiles.new_map = Some(crate::tools::maps::Form::default());
-            }
         });
     });
-    if let Some(choice) = new_map_dialog(ui.ctx(), session, tiles, thumbnails, screens) {
-        asked = Some(choice);
-    }
 
     ui.add_space(4.0);
     theme::note(
@@ -976,6 +965,7 @@ fn new_map_dialog(
     tiles: &mut crate::tools::tiles::Tiles,
     thumbnails: &mut Thumbnails,
     screens: &vale_assets::tables::loading::LoadingScreens,
+    camera_at: [f32; 2],
 ) -> Option<Asked> {
     use vale_assets::tables::map::INSTANCE_TYPES;
     let form = tiles.new_map.as_mut()?;
@@ -985,18 +975,27 @@ fn new_map_dialog(
         ui.set_width(420.0);
         ui.label(egui::RichText::new("New map").strong().size(14.0));
         ui.add_space(4.0);
-        theme::row(ui, "folder", |ui| {
-            ui.text_edit_singleline(&mut form.directory).on_hover_text(
-                "World\\Maps\\<folder>\\, and the start of every tile's file name. Letters, \
-                 digits and underscores, starting with a letter.",
-            );
+        const FOLDER: &str = "The map's folder, World\\Maps\\<folder>\\, which is also the start \
+                              of every tile's file name. Letters, digits and underscores, \
+                              starting with a letter. It cannot be changed afterwards without \
+                              renaming every tile.";
+        const NAME: &str = "The map's name, as the loading screen, the map menu and the server \
+                            show it. It can be changed later in Map.dbc.";
+        const TYPE: &str = "The map's instance type. A world map is open ground everyone \
+                            shares. A dungeon or raid is an instance: each group gets its own \
+                            copy, entered through a portal, and it takes a player limit, a ghost \
+                            entrance and a parent. A battleground is an instance the \
+                            battleground queue sends players to.";
+        const PLAYERS: &str = "How many characters one copy of the instance holds: 5 for a \
+                               dungeon, 10, 20 or 40 for a raid. 0 for no limit.";
+        theme::row_about(ui, "folder", FOLDER, |ui| {
+            ui.text_edit_singleline(&mut form.directory).on_hover_text(FOLDER);
         });
-        theme::row(ui, "name", |ui| {
-            ui.text_edit_singleline(&mut form.name)
-                .on_hover_text("The name the loading screen and the server show.");
+        theme::row_about(ui, "name", NAME, |ui| {
+            ui.text_edit_singleline(&mut form.name).on_hover_text(NAME);
         });
-        theme::row(ui, "kind", |ui| {
-            egui::ComboBox::from_id_salt("map-new-kind")
+        theme::row_about(ui, "type", TYPE, |ui| {
+            egui::ComboBox::from_id_salt("map-new-type")
                 .selected_text(
                     INSTANCE_TYPES
                         .iter()
@@ -1007,12 +1006,14 @@ fn new_map_dialog(
                     for (value, name) in INSTANCE_TYPES {
                         ui.selectable_value(&mut form.instance_type, value, name);
                     }
-                });
+                })
+                .response
+                .on_hover_text(TYPE);
         });
         if form.instance_type != 0 {
-            theme::row(ui, "players", |ui| {
+            theme::row_about(ui, "players", PLAYERS, |ui| {
                 ui.add(egui::DragValue::new(&mut form.max_players).range(0..=40))
-                    .on_hover_text("How many characters one instance holds.");
+                    .on_hover_text(PLAYERS);
             });
         }
         let open_screen = screens.screen_of(session.map_id);
@@ -1020,7 +1021,9 @@ fn new_map_dialog(
             Some((name, _)) => name.to_string(),
             None => id.map_or_else(|| "none".to_string(), |id| format!("row {id}")),
         };
-        theme::row(ui, "loading screen", |ui| {
+        const SCREEN: &str = "The picture shown while a character is loading into the map: a \
+                              LoadingScreens row. Left alone, the new map uses the open map's.";
+        theme::row_about(ui, "loading screen", SCREEN, |ui| {
             let chosen = match form.loading_screen {
                 None => format!("the open map's ({})", screen_name(open_screen)),
                 Some(id) => screen_name(Some(id)),
@@ -1030,11 +1033,7 @@ fn new_map_dialog(
                 true => "Close",
                 false => "Choose\u{2026}",
             };
-            if ui
-                .button(label)
-                .on_hover_text("The picture shown while the map loads: a LoadingScreens row.")
-                .clicked()
-            {
+            if ui.button(label).on_hover_text(SCREEN).clicked() {
                 form.choosing_screen = !form.choosing_screen;
             }
         });
@@ -1044,12 +1043,16 @@ fn new_map_dialog(
                 form.choosing_screen = false;
             }
         }
+        if form.is_instance() {
+            instance_rows(ui, session, form, camera_at);
+        }
         ui.checkbox(&mut form.zone, "Make a zone on it")
             .on_hover_text(
                 "An AreaTable zone named after the map, which the map's row names as its \
                  area. Paint it onto the ground with the Areas tool.",
             );
-        ui.checkbox(&mut form.open_it, "Open it");
+        ui.checkbox(&mut form.open_it, "Open it")
+            .on_hover_text("Switch the editor to the new map once it is made, saving what is open.");
         let problem = form.problem(&session.maps);
         if let Some(why) = &problem {
             ui.label(egui::RichText::new(why).size(theme::SMALL).color(theme::WARN));
@@ -1073,6 +1076,93 @@ fn new_map_dialog(
         tiles.new_map = None;
     }
     asked
+}
+
+/// A dungeon's or raid's parent and ghost entrance on the New map form.
+/// `camera_at` is where the camera stands on the open map, north and west.
+fn instance_rows(ui: &mut egui::Ui, session: &EditSession, form: &mut crate::tools::maps::Form, camera_at: [f32; 2]) {
+    use vale_mangos::map::CONTINENTS;
+    let name_of = |id: u32| {
+        session
+            .maps
+            .iter()
+            .find(|(map, _)| *map == id)
+            .map_or_else(|| format!("map {id}"), |(_, dir)| format!("{dir} ({id})"))
+    };
+    const GHOST: &str = "Where this dungeon's entrance is out in the world: a point on a \
+                         continent, usually in front of the portal.\n\n\
+                         A character who dies inside cannot release back into the dungeon. \
+                         Their ghost is sent to the graveyard nearest this point, the corpse \
+                         arrow points here, and walking into the portal brings them back to \
+                         life inside. Without it a ghost has nowhere to run back to.\n\n\
+                         Only a continent can hold it. Set the camera over the portal and \
+                         press Camera's place, or type the point below.";
+    const PARENT: &str = "Only for a dungeon whose way in is inside another dungeon, rather \
+                          than out in the world: name that outer dungeon here.\n\n\
+                          A character whose corpse lies in the outer dungeon may then walk \
+                          their ghost into this one. Leave it at none for a dungeon entered \
+                          from a continent, which is nearly all of them.";
+    theme::row_about(ui, "ghost entrance", GHOST, |ui| {
+        let chosen = match form.ghost {
+            None => "none".to_string(),
+            Some((map, _)) => name_of(map),
+        };
+        egui::ComboBox::from_id_salt("map-new-ghost")
+            .selected_text(chosen)
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(form.ghost.is_none(), "none").clicked() {
+                    form.ghost = None;
+                }
+                for map in CONTINENTS {
+                    let at = form.ghost.map_or([0.0, 0.0], |(_, at)| at);
+                    if ui.selectable_label(form.ghost.map(|(m, _)| m) == Some(map), name_of(map)).clicked() {
+                        form.ghost = Some((map, at));
+                    }
+                }
+            })
+            .response
+            .on_hover_text(GHOST);
+        let here = CONTINENTS.contains(&session.map_id);
+        if ui
+            .add_enabled(here, egui::Button::new("Camera's place"))
+            .on_hover_text(
+                "Use the point the camera is over on the open map. Open the continent and \
+                 fly to the portal first.",
+            )
+            .on_disabled_hover_text("The open map is not a continent.")
+            .clicked()
+        {
+            form.ghost = Some((session.map_id, camera_at));
+        }
+    });
+    if let Some((_, at)) = form.ghost.as_mut() {
+        theme::row(ui, "", |ui| {
+            const AXES: &str = "The ghost entrance on its continent, in yards: north and \
+                                west, as .gps and the status line give them.";
+            ui.label("north").on_hover_text(AXES);
+            ui.add(egui::DragValue::new(&mut at[0]).speed(1.0).max_decimals(1))
+                .on_hover_text(AXES);
+            ui.label("west").on_hover_text(AXES);
+            ui.add(egui::DragValue::new(&mut at[1]).speed(1.0).max_decimals(1))
+                .on_hover_text(AXES);
+        });
+    }
+    theme::row_about(ui, "parent", PARENT, |ui| {
+        let chosen = match form.parent {
+            0 => "none".to_string(),
+            id => name_of(id),
+        };
+        egui::ComboBox::from_id_salt("map-new-parent")
+            .selected_text(chosen)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut form.parent, 0, "none");
+                for (id, dir) in session.maps.iter().filter(|(id, _)| !CONTINENTS.contains(id)) {
+                    ui.selectable_value(&mut form.parent, *id, format!("{dir} ({id})"));
+                }
+            })
+            .response
+            .on_hover_text(PARENT);
+    });
 }
 
 /// The loading screens as pictures to choose from, the open map's first.

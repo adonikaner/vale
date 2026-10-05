@@ -485,12 +485,9 @@ pub(super) fn shown(edits: &Edits, table: &str, key: &Key, held: Option<&[Assign
     Some((row, life))
 }
 
-/// The columns of one of the trigger tables or the graveyard tables.
+/// The columns of one of the tables `crate::server::places` writes.
 fn columns_of(table: &str) -> &'static [vale_mangos::schema::Column] {
-    match trigger::table_named(table) {
-        Some(_) => trigger::columns_of(table),
-        None => vale_mangos::graveyard::columns_of(table),
-    }
+    crate::server::places::columns_of(table)
 }
 
 /// The columns a row the project creates does not carry, which the plan

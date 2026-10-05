@@ -108,6 +108,9 @@ pub struct Subject<'a> {
     /// The Vendor and Trainer windows' state, for their two buttons. See
     /// `super::services::windows`.
     pub services: &'a mut crate::tools::services::Services,
+    /// The gossip window's state, for the Gossip button. See
+    /// `super::gossip::window`.
+    pub gossip: &'a mut crate::tools::gossip::Gossip,
     /// Where this machine's server is. The panel's sentences read it, and it
     /// decides whether there is anything to say.
     pub server: &'a crate::server::settings::ServerSettings,
@@ -1289,6 +1292,21 @@ fn windows(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
             .clicked()
         {
             subject.behaviour.spells_open = !subject.behaviour.spells_open;
+        }
+        // Gossip is a window over the world that follows the selection, like
+        // the ones beside it. See `super::gossip`.
+        if ui
+            .selectable_label(subject.gossip.open, "Gossip")
+            .on_hover_text(
+                "What it says when spoken to and the options it offers: the gossip_menu \
+                 its template's gossip_menu_id names, with its texts, options and the \
+                 menus they lead to. Offers to make a menu when it has none.",
+            )
+            .clicked()
+        {
+            subject.gossip.open = !subject.gossip.open;
+            subject.gossip.menu = None;
+            subject.gossip.trail.clear();
         }
         // Vendor and Trainer are two windows over the world that follow the
         // selection, like the four beside them. See `super::services`.
