@@ -1,49 +1,45 @@
-//! **The game's interface as meshes** — the same draw list the egui painter
-//! reads, built into batched 2d geometry on the present camera instead of
-//! being re-emitted through egui every frame.
+//! The game's interface drawn as meshes: the draw list the egui painter reads,
+//! built into batched 2d geometry on the present camera instead of being
+//! re-emitted through egui every frame.
 //!
 //! ```text
 //! material.rs  one Material2d: a texture, vertex colours, and the game's own
-//!              blend modes — the thing egui structurally could not give us
+//!              blend modes, which egui does not have
 //! textures.rs  the art as bevy Images, through the same decode and the same
-//!              byte-space alpha door the egui painter uses
-//! fonts.rs     the four typefaces rasterised glyph-by-glyph into atlas pages
-//! text.rs      where each glyph goes — wrap, rows, justify — pure and tested
+//!              byte-space alpha compensation the egui painter uses
+//! fonts.rs     the four typefaces rasterised glyph by glyph into atlas pages
+//! text.rs      where each glyph goes (wrap, rows, justify); pure and tested
 //! build.rs     every Item kind as vertices: the kind handlers, the batcher,
 //!              the clipper
-//! floats.rs    the floating combat text, off the same floater state the egui
-//!              twin reads, in its own z band under the interface
+//! floats.rs    the floating combat text, from the floater state the egui
+//!              painter reads, in its own z band under the interface
 //! loading.rs   the loading screen's three quads, over everything the game
 //!              draws
 //! ```
 //!
-//! ## Why
+//! ## Why the interface is not drawn through egui
 //!
-//! The 2026-09-02 frame-wall round measured the egui paint pipeline at
-//! ~1.2 ms a frame of serial main-thread work — the walk's shapes re-emitted
-//! and re-tessellated every frame for a picture that changes at 30 Hz. This
-//! module rebuilds meshes **only when the walk ran** (plus the minimap, which
-//! moves with the player), so the per-frame cost between ticks is nothing at
-//! all.
+//! On 2026-09-02 the egui paint pipeline measured ~1.2 ms a frame of serial
+//! main-thread work, because the walk's shapes were re-emitted and
+//! re-tessellated every frame for a picture that changes at 30 Hz. This module
+//! rebuilds meshes only when the walk ran, plus the minimap when the player
+//! moved, so a frame between ticks costs nothing.
 //!
-//! ## Where it draws
+//! ## Where the batches draw
 //!
-//! On the present camera's 2d phase: every batch is a `Mesh2d` in
-//! `Transparent2d`, z-keyed by draw-list order, over the present quad (an
-//! opaque draw at z 0) and under egui's own pass — so the F4 window, the HUD
-//! and the floating combat text keep painting over the interface exactly as
-//! they do today.
+//! On the present camera's 2d phase. Every batch is a `Mesh2d` in
+//! `Transparent2d`, keyed by z in draw-list order, over the present quad (an
+//! opaque draw at z 0) and under egui's own pass, so the F4 window, the HUD
+//! and the floating combat text paint over the interface.
 //!
-//! ## The switch
+//! ## Choosing the painter
 //!
-//! **This painter is the default** as of the soak that closed the parity
-//! round — the world, the panels, the glue screens, combat text and a live
-//! fight, each checked against the egui painter's own picture.
-//! `VALE_UI_PAINTER=egui` selects the old painter, kept for one round as
-//! the side-by-side and the escape hatch; its deletion — and with it
-//! bevy_egui's retreat behind the `diagnostics` feature — is the next step.
-//! The walk, the widgets, the events and the mouse are untouched either way:
-//! the painter is a leaf.
+//! This painter is the default. It was checked against the egui painter's
+//! picture on the world, the panels, the glue screens, combat text and a live
+//! fight. `VALE_UI_PAINTER=egui` selects the egui painter, kept for one round
+//! for side-by-side comparison. Deleting it, and moving bevy_egui behind the
+//! `diagnostics` feature, is the next step. The walk, the widgets, the events
+//! and the mouse are the same under either painter.
 
 pub mod build;
 pub mod floats;
@@ -62,10 +58,10 @@ use std::collections::{HashMap, HashSet};
 
 use material::{Blend, InterfaceMaterial};
 
-/// Whether the mesh painter is on — one read, cached, checked by both this
-/// plugin and the egui painters' emission skips so the sides cannot disagree.
+/// Whether the mesh painter is on. Read once and cached; this plugin and the
+/// egui painters' emission checks both call it, so they cannot disagree.
 ///
-/// On unless `VALE_UI_PAINTER=egui` asks for the old painter back.
+/// On unless `VALE_UI_PAINTER=egui`.
 pub fn active() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
@@ -73,23 +69,21 @@ pub fn active() -> bool {
     })
 }
 
-/// One batch's standing entity.
+/// One batch's entity, kept across rebuilds.
 ///
-/// **Rewritten in place, never respawned.** A freshly spawned `Mesh2d` misses
-/// the frame's specialization pass (this system runs late in `PostUpdate`, by
-/// design, after the walk), so a despawn-and-respawn rebuild blinked the whole
-/// interface for one frame per tick — which on screen is a 30 Hz flicker. The
-/// mesh **asset** is replaced under the same handle instead, and the entity,
-/// its pipeline and its bind groups all stand.
+/// A rebuild rewrites the slot's mesh asset under the same handle and does not
+/// respawn the entity, so the entity, its pipeline and its bind groups are
+/// kept. A despawn-and-respawn rebuild blinked the whole interface for one
+/// frame per tick (a 30 Hz flicker), because a newly spawned `Mesh2d` was not
+/// specialized until the next frame.
 struct Slot {
     entity: Entity,
     mesh: Handle<Mesh>,
     image: AssetId<Image>,
     blend: Blend,
     z: f32,
-    /// A hash of the geometry last written, so a rebuild that reproduced the
-    /// same batch skips the re-upload — on an active frame most batches are
-    /// bystanders to whatever moved.
+    /// A hash of the geometry last written. A rebuild that produces the same
+    /// batch skips the upload; on an active frame most batches are unchanged.
     print: u64,
 }
 
@@ -98,44 +92,44 @@ struct Slot {
 struct MeshState {
     fixed: Vec<Slot>,
     minimap: Vec<Slot>,
-    /// The `<Model>` frames — their own group because a flat model's triangles
-    /// are a function of the wall clock and of nothing in the item list. See
+    /// The `<Model>` frames. A separate group because a flat model's triangles
+    /// depend on the wall clock and on nothing in the item list. See
     /// `build::model_batches`.
     models: Vec<Slot>,
-    /// The icon on the pointer — one quad, its own group because it moves at
-    /// frame rate. See `build::carried_batch`.
+    /// The icon on the pointer: one quad, in a separate group because it moves
+    /// at frame rate. See `build::carried_batch`.
     carried: Vec<Slot>,
     last_carried: Option<(String, Vec2)>,
     /// One material instance per `(texture, blend)`, kept across rebuilds so
-    /// bind groups survive and prepare does not churn.
+    /// bind groups are kept and prepare does not recreate them.
     materials: HashMap<(AssetId<Image>, Blend), Handle<InterfaceMaterial>>,
-    /// Which portrait each token resolved to at the last build — the arrival
-    /// of a picture changes no item, so it is watched here.
+    /// Which portrait each token resolved to at the last build. A portrait
+    /// arriving changes no item, so it is tracked here.
     portraits: Vec<(String, Option<AssetId<Image>>)>,
-    /// The list the standing meshes were built from. The walk produces a fresh
-    /// list every tick whether or not anything moved, so `Drawn`'s change flag
-    /// alone would rebuild thirty times a second at idle; the deep compare is
-    /// tens of microseconds against a rebuild that is milliseconds, and at
-    /// idle it is the whole of what this system does.
+    /// The item list the current meshes were built from. The walk produces a
+    /// new list every tick whether or not anything changed, so `Drawn`'s
+    /// change flag alone would rebuild thirty times a second at idle. The
+    /// deep compare costs tens of microseconds against milliseconds for a
+    /// rebuild, and at idle it is all this system does.
     ///
     /// Compared through [`same_fixed`] rather than with `==`: a `<Model>` item
-    /// is drawn by its own pass, so what it says about itself cannot make the
+    /// is drawn by its own group, so a change inside it does not make the
     /// fixed meshes stale.
     last_items: Vec<crate::lua::widgets::draw::Item>,
     last_screen: Vec2,
-    /// The window's scale factor at the last build. It moves without the
-    /// logical size moving — a window dragged to a monitor at another DPI —
-    /// and every glyph in the tree is rastered against it, so it is part of
-    /// what makes the meshes stale.
+    /// The window's scale factor at the last build. It can change while the
+    /// logical size does not (a window moved to a monitor at another DPI), and
+    /// every glyph is rasterised against it, so a change makes the meshes
+    /// stale.
     last_dpi: f32,
-    /// What the minimap drew from — the one population whose inputs are the
-    /// world rather than the widget tree, compared by value for the same
-    /// reason `last_items` is: `MinimapView` is rewritten every frame and its
-    /// change flag says nothing about whether the player moved.
+    /// The minimap's inputs at the last build. The minimap is the one group
+    /// whose inputs are the world rather than the widget tree. Compared by
+    /// value because `MinimapView` is rewritten every frame, so its change
+    /// flag does not say whether the player moved.
     last_place: Option<(bool, (f32, f32), f32, bool, String)>,
     reported_models: HashSet<String>,
-    /// The one first-build log, the mesh counterpart of the egui painter's
-    /// "first frame drawn" line.
+    /// Whether the first-build log line was written; the mesh counterpart of
+    /// the egui painter's "first frame drawn" line.
     reported: bool,
 }
 
@@ -147,29 +141,40 @@ impl Plugin for UiMeshPlugin {
         app.add_plugins(Material2dPlugin::<InterfaceMaterial>::default())
             .init_resource::<textures::UiTextures>()
             .init_resource::<fonts::UiFonts>()
-            // After the walk, so a tick's items are drawn the frame they are
-            // produced — the same latency the egui emission has. The walk runs
-            // inside bevy_egui's context pass (`framexml::paint` is registered
-            // in `EguiPrimaryContextPass`), whose loop system sits in
-            // `EguiPostUpdateSet::EndPass` — so the ordering is against the
-            // set, stated rather than inherited.
+            // After the walk, so a tick's items are drawn in the frame they are
+            // produced, with the same latency the egui emission has. The walk
+            // runs inside bevy_egui's context pass (`framexml::paint` is
+            // registered in `EguiPrimaryContextPass`), whose loop system is in
+            // `EguiPostUpdateSet::EndPass`, so the edge is against that set.
             //
-            // **…and before the frame's own sweeps, which is a flicker fix and
-            // not tidiness.** These systems spawn entities and swap material
-            // and `Transform` components through `Commands`; a `before` edge
-            // makes bevy flush those commands ahead of the target, so
-            // propagation computes this frame's `GlobalTransform` (a batch
-            // whose z moved sorts right *now*, not next frame), the visibility
-            // sweeps see a fresh spawn's bounds, and the specialization check
-            // marks a swapped material for this frame's queue. Without the
-            // edges every one of those landed a frame late: a click that
-            // reordered the list blinked the whole interface for one frame,
-            // and a dropdown opened over the world map spent a frame under
-            // the overlays it should cover.
+            // Before the frame's transform, visibility and specialization
+            // sweeps. These systems spawn entities and swap material and
+            // `Transform` components through `Commands`, and a `before` edge
+            // makes bevy flush those commands ahead of the target. Propagation
+            // then computes this frame's `GlobalTransform`, the visibility
+            // sweeps see a new entity's bounds, and the specialization check
+            // queues a swapped material in this frame. Without the edges each
+            // of those landed one frame late: a click that reordered the list
+            // blinked the whole interface for one frame, and a dropdown opened
+            // over the world map was drawn for one frame under the overlays it
+            // should cover.
+            //
+            // Before `AssetEventSystems`. These systems rewrite `Mesh` and
+            // `Image` assets in place (batch geometry, glyph atlas pages,
+            // textures). A write becomes an `AssetEvent` only when that
+            // asset's `asset_events` system runs, and the render world
+            // extracts an asset only on its event. Both systems take
+            // `ResMut<Assets<Mesh>>`, so without the edge bevy may run them in
+            // either order, and the order can differ from frame to frame. In
+            // a frame where `asset_events` ran first, the new geometry reached
+            // the GPU one frame after the material and z changes made through
+            // `Commands`, so for one frame a batch was drawn with its previous
+            // vertices and its new texture and z.
             .add_systems(
                 PostUpdate,
                 (rebuild, floats::paint, loading::paint)
                     .after(bevy_egui::EguiPostUpdateSet::EndPass)
+                    .before(bevy::asset::AssetEventSystems)
                     .before(bevy::transform::TransformSystems::Propagate)
                     .before(bevy::camera::visibility::VisibilitySystems::CalculateBounds)
                     .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate)
@@ -182,8 +187,8 @@ impl Plugin for UiMeshPlugin {
     }
 }
 
-/// What the rebuild reads and never writes, bundled — the bare parameter list
-/// was past Bevy's sixteen.
+/// The resources the rebuild reads and does not write, bundled because the
+/// full parameter list exceeded Bevy's limit of sixteen.
 #[derive(bevy::ecs::system::SystemParam)]
 struct Reads<'w> {
     drawn: Res<'w, crate::ui::framexml::Drawn>,
@@ -255,9 +260,9 @@ fn rebuild(
         place.indoors,
         place.directory.clone(),
     );
-    // The icon on the pointer, which is the one input here that moves at
-    // frame rate — the pointer position, in the same logical pixels the egui
-    // painter read off its context.
+    // The icon on the pointer, the one input here that moves at frame rate:
+    // the pointer position, in the logical pixels the egui painter read from
+    // its context.
     let holding: Option<(String, Vec2)> = cursor
         .held
         .as_ref()
@@ -272,10 +277,10 @@ fn rebuild(
         || !same_fixed(items, &state.last_items);
     let minimap_stale = fixed_stale || state.last_place.as_ref() != Some(&here);
     let carried_stale = fixed_stale || holding != state.last_carried;
-    // **Every frame there is a model on the screen**, which is what an
-    // animation is: `build::model_batches` reads the wall clock and nothing in
-    // the item list, so there is no staleness test to make. An empty screen
-    // costs the `any` and stops.
+    // Models are rebuilt on every frame that has one on the screen:
+    // `build::model_batches` reads the wall clock and nothing in the item
+    // list, so there is no staleness test to make. With no model on the screen
+    // this costs the `any`.
     let models_stale = items
         .iter()
         .any(|item| matches!(item.content, crate::lua::widgets::draw::Content::Model(_)))
@@ -374,17 +379,17 @@ fn rebuild(
     }
 }
 
-/// **Are these two item lists the same as far as the *fixed* meshes go?**
+/// Whether two item lists produce the same fixed meshes.
 ///
-/// `==` on the whole list would do, and did — but a `<Model>` item is drawn by
-/// `build::model_batches` and contributes nothing to the fixed batches except
-/// its index, so anything it says about itself moving is not a reason to
-/// rebuild the rest of the interface. `Scene::elapsed` moves every tick of
-/// every running cooldown, and under the old compare that was the whole screen
-/// rebuilt thirty times a second whenever an ability was on cooldown.
+/// A `<Model>` item is drawn by `build::model_batches` and contributes only
+/// its index to the fixed batches, so a change inside it is not a reason to
+/// rebuild the rest of the interface. `Scene::elapsed` changes every tick of
+/// every running cooldown; compared with `==`, the whole interface was rebuilt
+/// thirty times a second while any ability was on cooldown.
 ///
-/// The index still matters, which is why this walks in step rather than
-/// filtering: a model appearing or disappearing shifts every z below it.
+/// The index still matters, so this compares the lists position by position
+/// rather than filtering models out: a model appearing or disappearing shifts
+/// the z of every later item.
 fn same_fixed(
     items: &[crate::lua::widgets::draw::Item],
     last: &[crate::lua::widgets::draw::Item],
@@ -403,10 +408,10 @@ fn despawn(commands: &mut Commands, slots: &mut Vec<Slot>) {
     }
 }
 
-/// Fit the standing entities to this build's batches: rewrite each mesh under
-/// its own handle, respawn nothing that already exists, and only touch a
-/// slot's material or z when they actually moved — see [`Slot`], which is the
-/// flicker argument.
+/// Fit the slots to this build's batches: rewrite each mesh under its own
+/// handle, spawn an entity only for a batch with no slot, and change a slot's
+/// material or z only when it differs. See [`Slot`] for why entities are not
+/// respawned.
 #[allow(clippy::too_many_arguments)]
 fn apply(
     commands: &mut Commands,
@@ -434,9 +439,9 @@ fn apply(
                 if slot.print != print {
                     slot.print = print;
                     // The slot holds the handle, so the id's generation is
-                    // live and this cannot fail today; a line rather than an
-                    // unwrap, so a future change to slot lifetime degrades to
-                    // a stale batch and a warning instead of a panic.
+                    // live and this cannot fail. It warns rather than unwraps,
+                    // so a later change to slot lifetime produces a stale
+                    // batch and a warning instead of a panic.
                     if meshes.insert(slot.mesh.id(), to_screen_mesh(&batch, screen)).is_err() {
                         warn!("interface mesh: a batch mesh handle went stale");
                     }
@@ -448,9 +453,17 @@ fn apply(
                 }
                 if slot.z != batch.z {
                     slot.z = batch.z;
-                    commands
-                        .entity(slot.entity)
-                        .insert(Transform::from_xyz(0.0, 0.0, batch.z));
+                    // `Transparent2d` keeps each entity's phase item between
+                    // frames and computes its sort key from the z only when
+                    // the entity is queued, which happens when `Mesh2d` or
+                    // the material changed. A `Transform` change alone leaves
+                    // the old sort key in place. Re-inserting the same
+                    // `Mesh2d` marks it changed, so the entity is queued again
+                    // this frame with the new z.
+                    commands.entity(slot.entity).insert((
+                        Transform::from_xyz(0.0, 0.0, batch.z),
+                        bevy::mesh::Mesh2d(slot.mesh.clone()),
+                    ));
                 }
             }
             None => {
@@ -460,13 +473,11 @@ fn apply(
                         bevy::mesh::Mesh2d(mesh.clone()),
                         MeshMaterial2d(material),
                         Transform::from_xyz(0.0, 0.0, batch.z),
-                        // **The present camera's layer, and it is not
-                        // decoration.** That camera is the only 2D one in the
-                        // app and it sees exactly this layer, so a batch
-                        // spawned without it is a batch nothing draws. See
-                        // [`crate::render::present::PRESENT_LAYER`], and
-                        // `the_interface_is_on_the_layer_that_draws_it` below,
-                        // which is the test that would have caught it.
+                        // The present camera's layer. That camera is the only
+                        // 2D camera in the app and it sees only this layer, so
+                        // a batch spawned without it is not drawn. See
+                        // [`crate::render::present::PRESENT_LAYER`] and the
+                        // test `the_interface_is_on_the_layer_that_draws_it`.
                         RenderLayers::layer(crate::render::present::PRESENT_LAYER),
                         Name::new("interface batch"),
                     ))
@@ -487,10 +498,10 @@ fn apply(
     }
 }
 
-/// One batch's geometry as a number, screen size folded in — the size is part
-/// of the pixel-to-camera mapping, so the same pixels at a new window are a
+/// A hash of one batch's geometry and the screen size. The size is part of the
+/// pixel-to-camera mapping, so the same pixels at another window size are a
 /// different mesh. A collision draws one stale batch for one tick; the hasher
-/// is 64-bit SipHash and the input is the batch's own bytes.
+/// is 64-bit SipHash over the batch's own bytes.
 fn fingerprint(batch: &build::Batch, screen: Vec2) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::hash::DefaultHasher::new();
@@ -513,9 +524,10 @@ fn fingerprint(batch: &build::Batch, screen: Vec2) -> u64 {
     hasher.finish()
 }
 
-/// Window pixels (y down) into the present camera's world — a `Fixed { 1, 1 }`
-/// orthographic projection, so the viewport is the unit square about the
-/// origin, y up. See `render::present`, whose full-screen quad set the space.
+/// Window pixels (y down) into the present camera's world. The camera has a
+/// `Fixed { 1, 1 }` orthographic projection, so the viewport is the unit
+/// square about the origin, y up. See `render::present`, whose full-screen
+/// quad uses the same space.
 fn to_screen_mesh(batch: &build::Batch, screen: Vec2) -> Mesh {
     let mut mesh = Mesh::new(
         bevy::mesh::PrimitiveTopology::TriangleList,
@@ -543,19 +555,14 @@ mod tests {
     use crate::lua::widgets::model::Scene;
     use crate::lua::widgets::statusbar::Bar;
 
-    /// **The painter draws onto the layer the present camera sees.**
+    /// The painter draws onto the layer the present camera sees.
     ///
-    /// The one property in this file that nothing else can check and that
-    /// nothing in it makes obvious. The present camera is the only 2D camera in
-    /// the app; a batch on any other layer is a batch no camera draws, and the
-    /// symptom is the entire interface silently absent while every count, every
-    /// log line and every audit reports success — the frames load, the scripts
-    /// run, the loading screen goes up and comes down on time, and the window
-    /// shows the world and nothing over it.
-    ///
-    /// That is not hypothetical: it is what happened when the present camera
-    /// was given a layer of its own to stop it re-drawing the world's gizmos,
-    /// and the painter was left spawning onto layer 0.
+    /// The present camera is the only 2D camera in the app, so a batch on any
+    /// other layer is not drawn. The interface is then absent from the window
+    /// while every count, log line and audit reports success. This happened
+    /// when the present camera was moved to its own layer, so that it stopped
+    /// drawing the world's gizmos a second time, and the painter still spawned
+    /// onto layer 0.
     #[test]
     fn the_interface_is_on_the_layer_that_draws_it() {
         let present = RenderLayers::layer(crate::render::present::PRESENT_LAYER);
@@ -564,9 +571,8 @@ mod tests {
             present.intersects(&batch),
             "the interface painter spawns onto a layer the present camera cannot see"
         );
-        // …and the world's layer is still not one of them, which is the
-        // property the layer was introduced for. The two together are the whole
-        // constraint: over the world, and not a second copy of it.
+        // The present camera does not see the world's layer, which is what its
+        // own layer is for: it draws over the world and not a second copy of it.
         assert!(!present.intersects(&RenderLayers::layer(0)));
     }
 
@@ -606,23 +612,21 @@ mod tests {
         }))
     }
 
-    /// **A `<Model>` moving is not a reason to rebuild the interface**, and a
-    /// model appearing is.
+    /// A change inside a `<Model>` item does not make the fixed meshes stale;
+    /// a model appearing or disappearing does.
     ///
-    /// The first half is the cooldown swirl: `Scene::elapsed` moves every tick
-    /// of every running cooldown, and under a whole-list `==` that was the
-    /// entire screen re-tessellated thirty times a second whenever an ability
-    /// was on cooldown. The second is the reason [`super::same_fixed`] walks in
-    /// step rather than filtering the models out — the z of every batch is its
-    /// item's index, so a model that was not there before shifts everything
-    /// under it.
+    /// `Scene::elapsed` changes every tick of every running cooldown, and with
+    /// a whole-list `==` the whole interface was rebuilt thirty times a second
+    /// while an ability was on cooldown. [`super::same_fixed`] compares position
+    /// by position rather than filtering models out because each batch's z is
+    /// its item's index, so a new model shifts the z of every later item.
     #[test]
     fn a_models_own_clock_does_not_make_the_fixed_meshes_stale() {
         let a = vec![a_bar(), a_model(0.0)];
         assert!(super::same_fixed(&a, &[a_bar(), a_model(1.5)]), "only the clock moved");
 
-        // …and a model whose *frame* moved is still not the fixed pass's
-        // business: the fixed pass draws nothing at all for one.
+        // A change to the model item's own fields, here its alpha, does not
+        // either: the fixed group draws nothing for a model.
         let mut faded = a_model(0.0);
         faded.alpha = 0.5;
         assert!(super::same_fixed(&a, &[a_bar(), faded]));
@@ -632,8 +636,7 @@ mod tests {
         assert!(!super::same_fixed(&a, &[a_model(0.0), a_bar()]));
         assert!(!super::same_fixed(&a, &[a_bar(), a_bar()]));
 
-        // …and everything that is not a model still compares by value, which
-        // is the whole of what this test is protecting.
+        // An item that is not a model still compares by value.
         let mut fuller = a_bar();
         if let Content::Bar(bar) = &mut fuller.content {
             bar.fraction = 0.75;
@@ -641,9 +644,70 @@ mod tests {
         assert!(!super::same_fixed(&a, &[fuller, a_model(0.0)]));
     }
 
-    /// The URI the material returns is the path the macro registers — the
-    /// same assertion every embedded shader in this crate carries, from a file
-    /// whose `file!()` parent is the embedder's.
+    /// A slot whose z changed has its `Mesh2d` marked changed, and a slot whose
+    /// z did not change does not.
+    ///
+    /// Bevy's 2d phase computes a batch's sort key when the entity is queued
+    /// and queues it again only when `Mesh2d` or the material changed. If a z
+    /// change touched only `Transform`, the batch kept its old place in the
+    /// draw order: a static border could sort under a health bar whose
+    /// geometry, and so whose sort key, had been updated since.
+    #[test]
+    fn a_batch_whose_z_moved_is_marked_for_queueing_again() {
+        use bevy::ecs::world::CommandQueue;
+
+        let batch = |z: f32| build::Batch {
+            image: Handle::default(),
+            blend: Blend::Alpha,
+            z,
+            positions: vec![[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]],
+            uvs: vec![[0.0; 2]; 3],
+            colours: vec![[1.0; 4]; 3],
+            indices: vec![0, 1, 2],
+        };
+        let mut world = World::new();
+        let mut meshes = Assets::<Mesh>::default();
+        let mut materials = Assets::<InterfaceMaterial>::default();
+        let mut cache = HashMap::new();
+        let mut slots = Vec::new();
+        let screen = Vec2::new(100.0, 100.0);
+        let mut run = |world: &mut World, slots: &mut Vec<Slot>, z: f32| {
+            let mut queue = CommandQueue::default();
+            let mut commands = Commands::new(&mut queue, world);
+            apply(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                &mut cache,
+                slots,
+                vec![batch(z)],
+                screen,
+            );
+            queue.apply(world);
+        };
+
+        run(&mut world, &mut slots, 1.0);
+        let entity = slots[0].entity;
+        world.clear_trackers();
+
+        run(&mut world, &mut slots, 1.0);
+        let mesh = world.entity(entity).get_ref::<bevy::mesh::Mesh2d>().unwrap();
+        assert!(!mesh.is_changed(), "nothing moved, so nothing is queued again");
+        world.clear_trackers();
+
+        run(&mut world, &mut slots, 1.002);
+        assert_eq!(slots.len(), 1, "the slot is reused, not respawned");
+        let entity_ref = world.entity(entity);
+        assert_eq!(entity_ref.get::<Transform>().unwrap().translation.z, 1.002);
+        assert!(
+            entity_ref.get_ref::<bevy::mesh::Mesh2d>().unwrap().is_changed(),
+            "a moved z must mark Mesh2d changed, or the phase keeps the old sort key"
+        );
+    }
+
+    /// The URI the material returns is the path the macro registers. Every
+    /// embedded shader in this crate has this test, written in a file whose
+    /// `file!()` parent is the embedder's.
     #[test]
     fn the_shader_uri_is_the_path_the_macro_registers() {
         assert_eq!(
