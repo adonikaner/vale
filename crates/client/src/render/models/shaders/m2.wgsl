@@ -3,11 +3,11 @@
 // the batches the group's `MOGP` header marks as transition batches, the
 // second faded into the first per vertex, which is how a doorway is lit.
 //
-// Ported from MODEL_FRAG in web/models.js, with different lighting: the
-// 0.55/0.45 split there was a colourless stand-in for a sun and a fill the
-// game states per zone and per hour. Both now come from `atmosphere.wgsl`, the
-// same code the ground is lit by, so a tree and the ground under it are lit
-// for the same time of day.
+// The structure follows MODEL_FRAG in web/models.js. The lighting does not:
+// that shader's 0.55/0.45 split was a colourless stand-in for the sun and the
+// fill, which the game states per zone and per hour. Both come from
+// `atmosphere.wgsl`, the same code the ground is lit by, so a model and the
+// ground under it are lit for the same time of day.
 //
 // ## Interior lighting
 //
@@ -38,13 +38,13 @@
 //
 // The test is taken at the end, against the fragment's own alpha. The 1.12
 // alpha test is a ROP stage: it runs after every texture stage and after the
-// vertex diffuse has been modulated in, and before the blend. Testing the
-// texel instead, as this shader previously did, makes the test blind to the
-// two things that carry a fade: a particle's over-life ramp and a batch's
-// `M2Color` transparency track. Effects textured with a file that has no alpha
-// channel (`SPELLS\CLOUDS.BLP` decodes 0% transparent) then passed a test their
-// own opacity ramp should have failed and drew as hard opaque tiles; Evocation
-// drew as a wall of blue squares.
+// vertex diffuse has been modulated in, and before the blend. A test against
+// the texel alone does not see the two things that carry a fade: a particle's
+// over-life ramp and a batch's `M2Color` transparency track. When this shader
+// tested the texel, effects textured with a file that has no alpha channel
+// (`SPELLS\CLOUDS.BLP` decodes 0% transparent) passed a test their own
+// opacity ramp should have failed and drew as opaque tiles; Evocation drew as
+// blue squares.
 //
 // ## Binding layouts
 //
@@ -87,8 +87,9 @@ struct M2Params {
     // read some other material. One surface sets it: the shadow blob under a
     // unit, which is a `modulate` draw. See the fog at the end of the fragment.
     ambient: vec4<f32>,
-    // The alpha-key cutoff, or 0 for no test. M2 cuts at 0.5; a WMO cuts at
-    // 224/255, which is why this is a number and not a flag.
+    // The alpha cutoff, or 0 for no test: 224/255 for an alpha key (M2 and
+    // WMO alike) and 1/255 for a translucent blend mode, which is why this is
+    // a number and not a flag. See `models::alpha_cut`.
     alpha_cutoff: f32,
     // Material flag 0x01 — ignore lighting. 1.0 or 0.0, because a uniform
     // cannot be a bool without a shader def and this costs nothing.
@@ -238,10 +239,11 @@ fn with_table_matrix(
 // `uv_row0.w` is 0, which is every batch but two dozen. Called after any table
 // row has been copied into `uv_row0`/`uv_row1`, so `w` is then 0 or 1.
 //
-// Applied in the fragment rather than the vertex program. In the 1.12 client
-// `Model2.bls` passes `vertex.texcoord[0]` through untouched and the transform
-// is fixed-function texture-matrix state. Doing it per pixel is the same
-// arithmetic on an affine map, and it keeps the vertex program Bevy's own.
+// Applied in the fragment rather than the vertex program. The 1.12.1 client
+// leaves the texture coordinate unchanged in its model vertex program and
+// applies the transform as fixed-function texture-matrix state. Applying it
+// per pixel is the same arithmetic on an affine map, and it keeps the vertex
+// program Bevy's own.
 fn transformed_uv(params: M2Params, uv: vec2<f32>) -> vec2<f32> {
     let moved = vec2<f32>(
         dot(params.uv_row0.xy, uv) + params.uv_row0.z,
@@ -353,12 +355,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // `MeshTag` (`0x00RRGGBB`, sRGB bytes) rather than in the material: a
     // material is a batch set, and one tile of Stormwind's furniture holds
     // 2,249 distinct lights. The top byte is the instance's sun scale in
-    // 1/32nds, the per-instance multiplier the game's `Model2.bls` ends in:
-    // 2.5 for a terrain doodad on lit ground and 0.5 for one in the ground's
-    // baked `MCSH` shadow (`models::sun_scale`). Zero (every entity, every WMO
-    // batch, every untagged instance) is no room light and the neutral sun,
-    // so nothing that never sets a tag changes. See `RoomLight` and
-    // `instance_tag`.
+    // 1/32nds, the per-instance multiplier the 1.12.1 client applies to a
+    // model's sun colour: 2.5 for an entity on lit ground or standing on a
+    // building outdoors, 0.5 for an entity or a doodad over the ground's baked
+    // `MCSH` shadow, and 1.0 for a doodad on lit ground (`models::sun_scale`).
+    // Zero (every WMO batch and every other untagged instance) is no room
+    // light and the neutral sun. See `RoomLight` and `instance_tag`.
     let tag = mesh[in.instance_index].tag;
     let spawn_light = vec3<f32>(
         f32((tag >> 16u) & 0xFFu),
@@ -385,16 +387,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // The lamps standing near this fragment, which is the one term in this
     // shader that is not the game's; see `render::lamps`. Black in daylight
-    // and black wherever nothing is burning, so every batch this client has
-    // measured draws the same pixel as without it.
+    // and black wherever nothing is burning, so in those conditions every
+    // batch draws the same pixel as without it.
     //
     // Not computed for an `unlit` batch. The `mix` at the end of the lighting
     // block discards `light` entirely when `unlit` is 1, so the cluster walk
-    // would be work whose result is thrown away, and the unlit batches are the
-    // ones with the worst overdraw in this game: a building's lit windows, a
-    // lamp's own glow, every additive quad drawn with no depth write. A house
-    // of lit windows is several of those over every pixel it covers, which
-    // caused the report "the GPU time doubles when I look at that building".
+    // would be work whose result is thrown away, and the unlit batches have the
+    // worst overdraw in this game: a building's lit windows, a lamp's own glow,
+    // every additive quad drawn with no depth write. A house of lit windows is
+    // several of those over every pixel it covers, and computing the lamps for
+    // them doubled the GPU time of a frame looking at such a building.
     // `params.unlit` is a uniform, so the branch is coherent over the whole
     // draw.
     var lamps = vec3<f32>(0.0);
@@ -406,12 +408,13 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // interior lean below needs the bare lambert against the same direction,
     // which is why both come from there.
     //
-    // The sun term is the clamped cosine the 1.12.1 client's Direct3D path
-    // uses. On Direct3D, the path every reference picture is of, the client
-    // lights a model with fixed-function state: its vertex colour is
+    // The sun term is the clamped cosine the 1.12.1 client uses on Direct3D,
+    // the path every reference picture is of. There the client lights a model
+    // with fixed-function state: its vertex colour is
     // `sun × max(N·L, 0) × scale + fill`, saturated, and the texture modulates
-    // that. `Model2.bls`'s spherical-harmonic wrap belongs to the OpenGL path
-    // and stays in `atmosphere.wgsl` as `daylight_scaled_lamplit_sh` for an
+    // that. The scale multiplies the sun only, never the fill. The
+    // spherical-harmonic wrap of `Model2.bls` is used only on the OpenGL path,
+    // and is kept in `atmosphere.wgsl` as `daylight_scaled_lamplit_sh` for an
     // A/B comparison.
     let sun = daylight_scaled_lamplit(in.world_normal, sun_scale, lamps);
     let lambert = sun_lambert(in.world_normal);
@@ -442,12 +445,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // its tag with a zero ambient and no colour attribute. One expression, and
     // the unused terms are zero rather than branched over.
     //
-    // The lean is 0.9..1.1, the documented ratio; it was previously 0.7..1.1.
-    // The lean is Noggit's addition, not the file's (the 1.12 client draws
-    // pre-lit geometry flat), so its only job is relief, and it has to average
-    // out to no darkening: at 0.7..1.1 every surface facing away from the
-    // sun's azimuth lost a fifth of the light the file states, which is a fifth
-    // of every room, since a room's walls face every direction.
+    // The lean is 0.9..1.1, Noggit's documented ratio. It is Noggit's
+    // addition, not the file's (the 1.12 client draws pre-lit geometry flat),
+    // so its only job is relief, and it has to average out to no darkening. A
+    // range of 0.7..1.1 took a fifth of the light the file states from every
+    // surface facing away from the sun's azimuth, which is a fifth of every
+    // room, since a room's walls face every direction.
     //
     // The sum is multiplied by the vertex's own emissive mask, after the clamp
     // and inside the decode. The game's `MapObjOverbright.bls`, its standard
@@ -492,11 +495,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // and not two.
     //
     // At alpha 0 it is the room, at alpha 1 it is the room's own colour under
-    // full daylight, and the arch between them is a gradient. The parser
-    // previously folded Noggit's reduction of the same two passes, against a
-    // black lit pass, into the vertex colour: an outdoor-facing vertex came out
-    // black, so walking out of a building crossed a step of darkness. See
-    // `WmoGroup::shaded_colours`, which no longer folds it.
+    // full daylight, and the arch between them is a gradient. The reduction is
+    // not folded into the vertex colour at parse time: folding Noggit's
+    // reduction of the same two passes against a black lit pass made an
+    // outdoor-facing vertex black, so walking out of a building crossed a step
+    // of darkness. See `WmoGroup::shaded_colours`.
     let seam = room * mix(vec3<f32>(1.0), sun, vertex_alpha);
     // The third lighting model, for a model that carries its own lights. It
     // replaces the sun rather than adding to it: a scene that states its own
@@ -730,14 +733,13 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // once toward black, and then discarded both for a batch that is not
     // fogged at all.
     //
-    // That was affordable while each was a `linear_fog`: a lerp and a clamp.
-    // It is not with the deep night inside them, because `night_air` is two
-    // `exp`s, a `pow`, a `length` and a `normalize`, and the batches that pay
-    // it most are the ones with the worst overdraw in the game. Goldshire's inn
-    // measured 11 ms against 5 ms looking away with the night on, and 5 against
-    // 4 with it off: its lit windows are large additive quads drawn with no
-    // depth write, several deep over every pixel of the building, and each of
-    // them ran the mist twice.
+    // Each fog call contains the deep night, and `night_air` is two `exp`s, a
+    // `pow`, a `length` and a `normalize`. The batches that pay it most have
+    // the worst overdraw in the game. With `select`, Goldshire's inn measured
+    // 11 ms against 5 ms looking away with the night on, and 5 against 4 with
+    // it off: its lit windows are large additive quads drawn with no depth
+    // write, several deep over every pixel of the building, and each of them
+    // ran the mist twice.
     //
     // Both conditions are material uniforms, so the branches are coherent over
     // the whole draw rather than per fragment, the cheapest kind of branch a

@@ -71,9 +71,8 @@ mod fields {
     /// value read is 0, 0 is a legal variant meaning "the default", and the
     /// default is the bare body. A character in plate boots is then drawn with
     /// bare feet, a robe has no skirt, and gloves have no cuffs, while every
-    /// path resolves, every texture is painted correctly onto the skin
-    /// underneath, and no warning is logged. The result looks like equipment
-    /// geometry that was never implemented.
+    /// path resolves, every texture is painted onto the skin underneath, and
+    /// no warning is logged.
     pub const GEOSET_GROUP: usize = 6;
     /// `flags`, then `spellVisualID`, then the sound group: the three fields
     /// between the variants and the helmet masks. They are named because they
@@ -84,10 +83,10 @@ mod fields {
     /// `groupSoundIndex`: a row of `ItemGroupSounds.dbc`, which gives the
     /// sounds the item makes when it is picked up and put down.
     ///
-    /// The field is 11. This constant was 10 while nothing read it. Field 10 is
-    /// `spellVisualID`, whose values (224, 743, 2797…) are plausible numbers
-    /// that match none of the 24 rows, so the first reader would have found no
-    /// sound and reported no error. Three observations fix the field at 11:
+    /// The field is 11, not 10. Field 10 is `spellVisualID`, whose values
+    /// (224, 743, 2797…) match none of the 24 rows of `ItemGroupSounds`, so
+    /// reading it finds no sound and reports no error. Three observations fix
+    /// the field at 11:
     ///
     /// * The column's range fits the table. Over all 29,604 rows field 11
     ///   holds exactly `{0, 3..24}`, 23 distinct values for a 24-row table,
@@ -96,7 +95,7 @@ mod fields {
     ///   field 11 names, taking the requested column of that row, and plays
     ///   nothing for a value outside that table.
     /// * 8,274 rows hold 7, which is `PickUpCloth_Leather`, the largest class
-    ///   of item in the game by a wide margin.
+    ///   of item in the game.
     pub const GROUP_SOUND: usize = 11;
     /// Which of the wearer's own geosets a helmet hides — hair, ears, facial
     /// hair.
@@ -525,7 +524,6 @@ impl ItemDisplays {
             .filter(|s| !s.is_empty())
     }
 
-    /// The raw component name a row gives, before any suffix.
     /// The row's flags field, 0 for a display id the table does not have.
     /// Bit 0 marks a guild tabard; see [`crate::look::emblem`].
     pub fn flags(&self, display_id: u32) -> u32 {
@@ -535,6 +533,7 @@ impl ItemDisplays {
             .unwrap_or(0)
     }
 
+    /// The raw component name a row gives, before any suffix.
     pub fn texture_name(&self, display_id: u32, component: usize) -> Option<String> {
         let record = *self.by_id.get(&display_id)?;
         self.dbc
@@ -616,27 +615,82 @@ impl Slot {
         }
     }
 
-    /// Where this slot's textures sit in the paint order of the composite.
+    /// The order the 1.12.1 client applies the body slots in: shirt, chest,
+    /// belt, trousers, boots, bracers, gloves, tabard. 0 for a slot that paints
+    /// nothing onto the body.
     ///
-    /// A later layer covers an earlier one; the number means nothing else. A
-    /// sleeve goes under a glove, a trouser leg under a boot, and a tabard over
-    /// the chest it hangs on, so the order runs outward from the body. The DBC
-    /// does not state it. The client of a later expansion derives the same
-    /// order from a per-section layer table; this is that table's order for the
-    /// slots 1.12 has. It can only be checked by looking at a dressed
-    /// character.
+    /// This is not the paint order. Which texture covers which is
+    /// [`Slot::paint_priority`], per body region. This order decides only
+    /// between two items with the same priority in the same region, where the
+    /// later one replaces the earlier, and which item's geoset wins when two
+    /// claim one group.
     pub fn layer(self) -> u8 {
         match self {
             Slot::Shirt => 1,
-            Slot::Legs => 2,
-            Slot::Chest | Slot::Robe => 3,
-            Slot::Feet => 4,
-            Slot::Wrists => 5,
-            Slot::Waist => 6,
+            Slot::Chest | Slot::Robe => 2,
+            Slot::Waist => 3,
+            Slot::Legs => 4,
+            Slot::Feet => 5,
+            Slot::Wrists => 6,
             Slot::Hands => 7,
             Slot::Tabard => 8,
             // Head, shoulders and back paint nothing onto the body.
             _ => 0,
+        }
+    }
+
+    /// The paint priority of this slot's texture in one body region, or
+    /// `None` when the slot never paints that region. A higher priority is
+    /// painted later and covers a lower one.
+    ///
+    /// The priorities the 1.12.1 client paints with, by region:
+    ///
+    /// ```text
+    ///           arm up  arm low  hand  torso up  torso low  leg up  leg low  foot
+    /// shirt       0       0       -       0         0         -       -       -
+    /// chest       1       1       -       1         1         1       1       -
+    /// belt        -       -       -       -         -         2       -       -
+    /// trousers    -       -       -       -         -         0       0       -
+    /// boots       -       -       -       -         -         -       2       0
+    /// bracers     -       2       -       -         -         -       -       -
+    /// gloves      -       3       0       -         -         -       -       -
+    /// tabard      -       -       -       4         4         -       -       -
+    /// ```
+    ///
+    /// The lower leg is adjusted by the items' geosets: boots with a bootleg
+    /// (`geosetGroup[0]` non-zero) paint at 3; a chest with a skirt
+    /// (`geosetGroup[2]` non-zero) at 4; trousers with a skirt at 4, or at 3
+    /// when the chest also has one. So a robe's skirt covers the boots, and a
+    /// bootleg covers the trousers. `look` is this item's row and
+    /// `chest_skirt` whether the worn chest has a skirt.
+    pub fn paint_priority(
+        self,
+        component: Component,
+        look: &ItemAppearance,
+        chest_skirt: bool,
+    ) -> Option<u8> {
+        use Component::*;
+        let skirt = look.geoset_groups[2] != 0;
+        match (self, component) {
+            (Slot::Shirt, ArmUpper | ArmLower | TorsoUpper | TorsoLower) => Some(0),
+            (Slot::Chest | Slot::Robe, LegLower) => Some(if skirt { 4 } else { 1 }),
+            (Slot::Chest | Slot::Robe, ArmUpper | ArmLower | TorsoUpper | TorsoLower | LegUpper) => {
+                Some(1)
+            }
+            (Slot::Waist, LegUpper) => Some(2),
+            (Slot::Legs, LegUpper) => Some(0),
+            (Slot::Legs, LegLower) => Some(match (skirt, chest_skirt) {
+                (false, _) => 0,
+                (true, false) => 4,
+                (true, true) => 3,
+            }),
+            (Slot::Feet, LegLower) => Some(if look.geoset_groups[0] != 0 { 3 } else { 2 }),
+            (Slot::Feet, Foot) => Some(0),
+            (Slot::Wrists, ArmLower) => Some(2),
+            (Slot::Hands, ArmLower) => Some(3),
+            (Slot::Hands, Hand) => Some(0),
+            (Slot::Tabard, TorsoUpper | TorsoLower) => Some(4),
+            _ => None,
         }
     }
 
@@ -650,7 +704,8 @@ impl Slot {
     /// set's chest, copied into every row of the set. Painting them puts the
     /// chest piece's colour on the wearer's torso over whatever they are
     /// wearing: a mage in a blue robe and this set's leggings is drawn red from
-    /// the neck down. That looks like a composition bug but is a filtering one.
+    /// the neck down. The fault is in which columns are painted, not in how the
+    /// composite is built.
     ///
     /// The names say which columns a garment fills, without ambiguity: the
     /// second-to-last token of a component texture is the piece (`Sleeve`,
@@ -662,10 +717,12 @@ impl Slot {
     pub fn components(self) -> &'static [Component] {
         use Component::*;
         match self {
-            // Sleeves and the chest itself.
-            Slot::Shirt | Slot::Chest => &[ArmUpper, ArmLower, TorsoUpper, TorsoLower],
-            // A robe is a chest that continues down the legs.
-            Slot::Robe => &[ArmUpper, ArmLower, TorsoUpper, TorsoLower, LegUpper, LegLower],
+            // Sleeves and the shirt itself.
+            Slot::Shirt => &[ArmUpper, ArmLower, TorsoUpper, TorsoLower],
+            // A chest may continue down the legs. The 1.12.1 client lets any
+            // chest paint the two leg regions when its row names textures
+            // there, a robe or not.
+            Slot::Chest | Slot::Robe => &[ArmUpper, ArmLower, TorsoUpper, TorsoLower, LegUpper, LegLower],
             Slot::Legs => &[LegUpper, LegLower],
             // A boot covers the shin as well as the foot.
             Slot::Feet => &[LegLower, Foot],
@@ -710,8 +767,8 @@ impl Slot {
     ///
     /// The texture is `modelTexture[0]`, from `Item\ObjectComponents\Cape\`:
     /// display 35444 is `Cape_Naxxramas_03Red`, and the row carries no model
-    /// and no components. Without it the geoset is drawn magenta, as the hair
-    /// was while its texture was not yet supplied.
+    /// and no components. Without it the geoset is drawn magenta, as hair is
+    /// when its texture is not supplied.
     pub fn is_cloak(self) -> bool {
         matches!(self, Slot::Back)
     }
@@ -786,10 +843,9 @@ impl Slot {
             Slot::Legs => &[9, 11, 13],
             Slot::Feet => &[5],
             Slot::Hands => &[4],
-            // A bracer shares the arm's frill group with a sleeve and, being
-            // painted over it, wins. See
-            // [`crate::world::m2::CharacterGeosets::equip`], which keeps one
-            // variant per group in paint order.
+            // The arm's frill group, which a bracer's variant would name.
+            // The 1.12.1 client draws no geometry for bracers, and
+            // [`item_geosets`] skips this slot, so this list is not drawn.
             Slot::Wrists => &[8],
             Slot::Back => &[15],
             Slot::Tabard => &[12],
@@ -841,13 +897,13 @@ pub struct Weapon {
     /// non-metal and `Mace1HMetal_ArmorFlesh` for metal, and the same split
     /// runs through the two-handed maces, the polearms, the staves, the misc
     /// weapons and the fishing poles. The bladed subclasses carry the same id
-    /// in both rows, so keying the table on the subclass alone gave the right
+    /// in both rows, so keying the table on the subclass alone gives the right
     /// sound for a sword and an arbitrary one of the two for a mace.
     ///
     /// 1 is metal ([`MATERIAL_METAL`]); the other values are wood, cloth,
     /// leather and values no weapon uses. `Creature::SetVirtualItem` packs it
     /// at byte 2 of the first word of `UNIT_VIRTUAL_ITEM_INFO`, beside the
-    /// class and the subclass. An earlier version of this client did not read
+    /// class and the subclass, so a creature's material has to be read from
     /// that byte.
     pub material: u8,
     /// The item's seven enchantment ids in slot order: 0 permanent, 1
@@ -876,14 +932,14 @@ impl Weapon {
     /// The test is `INVTYPE_SHIELD` (14) and nothing else. The 1.12 client
     /// applies the same test, `inventoryType == 14`, when it draws a
     /// character's weapons on the character-select screen, and the archive
-    /// confirms it. This method once accepted 14 or 23, and that made every
-    /// off-hand holdable in the game invisible. A tome, an orb or a torch
-    /// (`INVTYPE_HOLDABLE`, 23) is held in the left hand, and its model is
-    /// under `Weapon\` with every other held item: the 222 holdable items
-    /// vmangos ships have 71 distinct models, all 71 under `Weapon\` and none
-    /// under `Shield\`. Accepting 23 sent each of them to a directory that
-    /// holds none of them ("`Shield\Hand_1H_AhnQiraj_D_01` will not read") and
-    /// hung the missing model from the wrong point as well.
+    /// confirms it. Accepting 23 as well makes every off-hand holdable in the
+    /// game invisible. A tome, an orb or a torch (`INVTYPE_HOLDABLE`, 23) is
+    /// held in the left hand, and its model is under `Weapon\` with every
+    /// other held item: the 222 holdable items vmangos ships have 71 distinct
+    /// models, all 71 under `Weapon\` and none under `Shield\`. Accepting 23
+    /// looks each of them up in a directory that holds none of them
+    /// ("`Shield\Hand_1H_AhnQiraj_D_01` will not read") and hangs the missing
+    /// model from the wrong point as well.
     pub fn is_shield(&self) -> bool {
         const ITEM_CLASS_ARMOR: u8 = 4;
         const INVTYPE_SHIELD: u8 = 14;
@@ -966,8 +1022,8 @@ pub enum WeaponAnim {
     OneHand,
     /// A dagger, which stabs rather than swings: `Attack1HPierce` (85) and
     /// `AttackOffPierce` (88) are separate sequences that every character
-    /// model carries. Drawing a rogue's daggers as one-handed swings lost a
-    /// visible difference on the class that attacks most often.
+    /// model carries. Drawn with the one-handed swing, a dagger is slashed
+    /// where it should stab.
     Dagger,
     /// A fist weapon: a punch with the weapon on the hand. Held in the
     /// one-handed guard and thrown as `AttackUnarmed`; the models have no
@@ -1160,13 +1216,12 @@ impl WeaponAnim {
 ///
 /// The 1.12 client has five sheath values, not eight: `MAINHAND, LARGEWEAPON,
 /// HIPWEAPON, SHIELD` and none. The side is not part of the value; it comes
-/// from the hand. vmangos and TrinityCore (and this project, before this
-/// function) name seven: `MAINHAND, OFFHAND, LARGEWEAPONLEFT,
-/// LARGEWEAPONRIGHT, HIPWEAPONLEFT, HIPWEAPONRIGHT, SHIELD`. Joining those
-/// names to the attachment points of the same names fits the numbers, and
-/// leaves the two values 1.12 never uses on the two points nothing else
-/// claims, but it is wrong. A sheath type names a place, and the left or right
-/// of that place is decided separately.
+/// from the hand. vmangos and TrinityCore name seven: `MAINHAND, OFFHAND,
+/// LARGEWEAPONLEFT, LARGEWEAPONRIGHT, HIPWEAPONLEFT, HIPWEAPONRIGHT, SHIELD`.
+/// Joining those names to the attachment points of the same names fits the
+/// numbers, and leaves the two values 1.12 never uses on the two points
+/// nothing else claims, but it does not match the client. A sheath type names
+/// a place, and the left or right of that place is decided separately.
 ///
 /// The two readings differ in what is drawn. Under the seven-name join every
 /// one-handed weapon in the game (`Sheath` 3) hangs from `LargeWeaponLeft`,
@@ -1216,9 +1271,9 @@ pub fn sheath_point(sheath: u8, main_hand: bool) -> Option<u32> {
 /// The sheath types the 1.12 client recognises: four values and none.
 ///
 /// These are not vmangos' seven values, which name a left and a right for two
-/// of them; the side comes from the hand instead. See [`sheath_point`] for the
-/// difference, which put every one-handed weapon in the game on the wrong part
-/// of a character's back.
+/// of them; the side comes from the hand instead. Read with vmangos' values,
+/// every one-handed weapon hangs high on the back instead of at the hip; see
+/// [`sheath_point`].
 const SHEATHETYPE_MAINHAND: u8 = 1;
 const SHEATHETYPE_LARGEWEAPON: u8 = 2;
 const SHEATHETYPE_HIPWEAPON: u8 = 3;
@@ -1262,26 +1317,42 @@ pub fn item_layers_with_emblem(
 ) -> Vec<crate::look::character::SkinLayer> {
     use crate::look::emblem;
     let mut wearing: Vec<&Equipped> = items.iter().filter(|i| i.slot.layer() > 0).collect();
-    // Stable by layer, so two items in the same layer keep the order the
-    // caller listed them in rather than an arbitrary one.
+    // Stable by slot order, so two items of one slot keep the order the
+    // caller listed them in.
     wearing.sort_by_key(|i| i.slot.layer());
+    let chest_skirt = wearing.iter().any(|i| {
+        matches!(i.slot, Slot::Chest | Slot::Robe)
+            && table
+                .appearance(i.display_id, gender)
+                .is_some_and(|look| look.geoset_groups[2] != 0)
+    });
 
-    let mut layers = Vec::new();
+    // Each texture with its region and priority. The client keeps one texture
+    // per (region, priority), so a later item in slot order replaces an
+    // earlier one with the same pair. A guild tabard's emblem is painted last.
+    let mut painted: Vec<(Component, u8, crate::look::character::SkinLayer)> = Vec::new();
+    let mut emblem_layers = Vec::new();
     let mut emblazoned = false;
     for item in wearing {
         if let Some((numbers, _)) = emblem {
             if item.slot == Slot::Tabard
                 && table.flags(item.display_id) & emblem::DISPLAY_FLAG_GUILD_TABARD != 0
             {
-                layers.extend(emblem::layers(numbers).into_iter().filter(|l| exists(&l.path)));
+                emblem_layers.extend(emblem::layers(numbers).into_iter().filter(|l| exists(&l.path)));
                 emblazoned = true;
                 continue;
             }
         }
+        let Some(look) = table.appearance(item.display_id, gender) else {
+            continue;
+        };
         // Only the components this slot wears; see [`Slot::components`]. The
         // other columns hold the rest of the armour set and belong to the pieces
         // that are worn elsewhere.
         for component in item.slot.components() {
+            let Some(priority) = item.slot.paint_priority(*component, &look, chest_skirt) else {
+                continue;
+            };
             let Some(name) = table.texture_name(item.display_id, component.index()) else {
                 continue;
             };
@@ -1291,12 +1362,22 @@ pub fn item_layers_with_emblem(
             else {
                 continue;
             };
-            layers.push(crate::look::character::SkinLayer {
-                path,
-                region: component.region(),
-            });
+            painted.retain(|(c, p, _)| !(*c == *component && *p == priority));
+            painted.push((
+                *component,
+                priority,
+                crate::look::character::SkinLayer {
+                    path,
+                    region: component.region(),
+                },
+            ));
         }
     }
+    // Lower priorities first. The sort is stable, so equal priorities keep
+    // slot order; those are in different regions, which do not overlap.
+    painted.sort_by_key(|(_, priority, _)| *priority);
+    let mut layers: Vec<_> = painted.into_iter().map(|(_, _, layer)| layer).collect();
+    layers.extend(emblem_layers);
     if let Some((numbers, true)) = emblem {
         if !emblazoned {
             layers.extend(emblem::layers(numbers).into_iter().filter(|l| exists(&l.path)));
@@ -1376,20 +1457,67 @@ pub fn cloak_texture(table: &ItemDisplays, items: &[Equipped]) -> Option<String>
 /// drawn id is `group * 100 + value + 1`, because the table counts from the
 /// default: 0 means the default variant, `x01`, and the item still claims the
 /// group so that the bare-body geometry underneath is dropped.
+///
+/// Four rules of the 1.12.1 client override the slots' own numbers:
+///
+/// * A skirt (a chest's or the trousers' `geosetGroup[2]` non-zero) is drawn
+///   as `1301 + value`, the chest's when it has one. Under it nothing is drawn
+///   in groups 5, 9 and 11: no foot, no bootleg, no kneepad, no trouser leg.
+///   The tabard's own geoset is left off.
+/// * Boots with a bootleg, without a skirt, leave group 9 empty: the trousers'
+///   kneepad is not drawn.
+/// * Gloves with a cuff (`geosetGroup[0]` non-zero) replace the chest's sleeve
+///   cuff in group 8.
+/// * Bracers draw no geometry.
+///
+/// A group is left empty by claiming it with its `x00` id, which no model
+/// carries: the claim suppresses the group's default and draws nothing.
 pub fn item_geosets(table: &ItemDisplays, items: &[Equipped]) -> [u16; 12] {
+    let groups_of = |slots: &[Slot]| {
+        items
+            .iter()
+            .rev()
+            .filter(|i| slots.contains(&i.slot))
+            .find_map(|i| table.appearance(i.display_id, 0))
+            .map(|look| look.geoset_groups)
+    };
+    let chest_skirt = groups_of(&[Slot::Chest, Slot::Robe]).map_or(0, |g| g[2]);
+    let legs_skirt = groups_of(&[Slot::Legs]).map_or(0, |g| g[2]);
+    let skirt = chest_skirt != 0 || legs_skirt != 0;
+    let bootleg = !skirt && groups_of(&[Slot::Feet]).is_some_and(|g| g[0] != 0);
+    let glove_cuff = groups_of(&[Slot::Hands]).is_some_and(|g| g[0] != 0);
+
     let mut out = crate::world::m2::CharacterGeosets::default();
-    // Paint order, so that where two garments claim one group the outer one
-    // wins: a sleeve over a bracer's cuff, a robe's skirt over trousers. See
-    // `CharacterGeosets::equip`, which keeps one variant per group.
+    // Slot order, so that where two garments claim one group the later one
+    // wins. See `CharacterGeosets::equip`, which keeps one variant per group.
     let mut wearing: Vec<&Equipped> = items.iter().collect();
     wearing.sort_by_key(|i| i.slot.layer());
     for item in wearing {
+        if item.slot == Slot::Wrists || (skirt && item.slot == Slot::Tabard) {
+            continue;
+        }
         let Some(look) = table.appearance(item.display_id, 0) else {
             continue;
         };
         for (group, value) in item.slot.geoset_groups().iter().zip(look.geoset_groups) {
-            out.equip(group * 100 + value as u16 + first_variant(*group));
+            let group = *group;
+            let left_out = (skirt && matches!(group, 5 | 9 | 11 | 13))
+                || (bootleg && group == 9)
+                || (glove_cuff && group == 8 && matches!(item.slot, Slot::Chest | Slot::Robe));
+            if !left_out {
+                out.equip(group * 100 + value as u16 + first_variant(group));
+            }
         }
+    }
+    if skirt {
+        for group in [5, 9, 11] {
+            out.equip(group * 100);
+        }
+        let value = if chest_skirt != 0 { chest_skirt } else { legs_skirt };
+        out.equip(1301 + value as u16);
+    }
+    if bootleg {
+        out.equip(900);
     }
     out.equipment
 }
@@ -1405,8 +1533,7 @@ const CAPE_GROUP: u16 = 15;
 /// the group-15 batches are `(1501, type 1) (1502..1506, type 2)`; type 1 is
 /// the composed body skin and type 2 is the object skin an item supplies.
 /// Drawing 1501 for a character wearing a cloak draws their bare back,
-/// correctly textured, and no cloak, which looks like unimplemented equipment
-/// rather than an off-by-one.
+/// textured with the body skin, and no cloak.
 ///
 /// Group 7 has the same inversion: 701 is the hidden ears.
 fn first_variant(group: u16) -> u16 {

@@ -1,10 +1,9 @@
 //! The third-person camera.
 //!
 //! The rig is kept in WoW's axes (yaw about +Z, target in world coordinates)
-//! and converted once, when the `Transform` is written. The orbit maths is a
-//! direct port of the one in `web/terrain.js`, which frames the character
-//! correctly. Keeping it in WoW's axes means a camera bug and an axes bug cannot
-//! be confused with each other.
+//! and converted once, when [`place`] writes the `Transform`. Keeping it in
+//! WoW's axes means a camera bug and an axes bug cannot be confused with each
+//! other.
 
 use crate::axes;
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -22,18 +21,18 @@ pub struct CameraRig {
     /// feet: a unit's position is its ground point, which is also the point the
     /// terrain lookup and the anticheat use.
     pub target: Vec3,
-    /// How far above [`Self::target`] the camera actually looks, in yards.
+    /// How far above [`Self::target`] the camera looks, in yards.
     ///
     /// Orbiting the feet puts the head out of frame when zoomed in: at a
     /// distance of two yards the pitch has to be aimed at the ground the
-    /// character is standing on, so the character is above the screen. This lifts
-    /// the whole rig, the focus and the eye, to head height, which is what the
-    /// real client orbits.
+    /// character is standing on, so the character is above the screen. This
+    /// lifts the whole rig, the focus and the eye, to the character's camera
+    /// anchor near the head, which is the point the 1.12.1 client orbits.
     ///
     /// Set from the model, because a gnome, a tauren and a mounted character do
-    /// not share a head height; see `head_height` in `entities.rs`. Zero until
-    /// the local player has a model, which is only the first moment of a
-    /// session.
+    /// not share an anchor height; see `EntityModel::anchor` in
+    /// `world/entities/mod.rs` and `vale_assets::look::anchor`. Zero until the
+    /// local player has a model, which is only the first moment of a session.
     pub target_height: f32,
     /// Radians about +Z (up). Zero looks from the north.
     ///
@@ -41,9 +40,9 @@ pub struct CameraRig {
     /// not parented to the player: `--view` sets this by hand and the eye maths
     /// reads it directly. `session::follow_player` adds every change in the
     /// character's facing to it, so turning with A/D swings the camera with the
-    /// character while a left-drag still looks freely around them. Without that
-    /// the camera stayed pointed north while the character turned, and every
-    /// turn ended with the character side-on to the view.
+    /// character while a left-drag still looks freely around them. Without
+    /// that, the camera stays pointed north while the character turns, and
+    /// every turn ends with the character side-on to the view.
     ///
     /// While the right button is held the dependency is reversed: the mouse
     /// writes this, and the character is aimed at `yaw + π` from it.
@@ -54,7 +53,7 @@ pub struct CameraRig {
     /// `looking_at` straight down has no defined roll.
     ///
     /// Negative values are allowed: the eye below the character, looking up.
-    /// The real client allows this, and a limit level with the ground
+    /// The 1.12.1 client allows this, and a limit level with the ground
     /// ([`PITCH_LIMIT`]) made the sky above the character impossible to see.
     /// [`collide`] keeps the eye above ground by pulling it in when the ground
     /// gets between it and the head.
@@ -86,9 +85,9 @@ impl CameraRig {
     /// The point the camera looks at: the target lifted to head height.
     ///
     /// Everything that frames the view goes through this rather than through
-    /// `target`, so the two cannot disagree about where the middle of the screen
-    /// is — a rig whose eye orbits the head and whose `looking_at` is the feet
-    /// tilts further off the character the closer you zoom.
+    /// `target`, so the two cannot disagree about where the middle of the
+    /// screen is. A rig whose eye orbits the head and whose `looking_at` is the
+    /// feet tilts further off the character the closer the zoom.
     pub fn focus(&self) -> Vec3 {
         self.target + Vec3::new(0.0, 0.0, self.target_height)
     }
@@ -114,17 +113,17 @@ impl CameraRig {
     }
 }
 
-/// The current mouse gesture on the world, decided once and read by three
-/// directories.
+/// The current mouse gesture on the world, decided once and read by systems
+/// in three directories.
 ///
-/// A press is not always a click and a drag is not always a look. Before this
-/// resource each of the three readers decided for itself, with these results:
+/// A press is not always a click and a drag is not always a look. When each of
+/// the three readers decided for itself, the results were:
 ///
 /// * [`orbit`] turned the camera whenever a button was down, wherever the press
 ///   had landed, so dragging a bag icon or the slider in the options panel
-///   swung the view with it. 1.12 does not have this problem because the world
-///   is a frame (`WorldFrame`) and the pointer lands on exactly one thing. This
-///   client keeps its own pick and has to decline explicitly, in the same way
+///   swung the view with it. In 1.12 the world is a frame (`WorldFrame`) and
+///   the pointer lands on exactly one thing. This client keeps its own pick
+///   and has to decline explicitly, in the same way
 ///   [`crate::interface::target::hover`] does for the pick and
 ///   `select_on_click` for the click.
 /// * [`crate::ui::cursor`] hid the pointer for the right button only, so a
@@ -178,18 +177,19 @@ pub struct PointerTaken(pub bool);
 /// How far the pointer travels before a press becomes a look rather than a
 /// click, in window pixels.
 ///
-/// The same value as the interface's `lua::mouse::DRAG_THRESHOLD`, which is 4:
-/// this is the same gesture one layer out. It is a small screen-space slop and
-/// not a constant taken from the client. Its purpose is that a release is a
+/// The same value as the interface's `lua::mouse::DRAG_THRESHOLD`, which is 4.
+/// That constant separates a click from a drag on a frame; this one makes the
+/// same separation in the world. It is a small screen-space slop chosen by
+/// this client, not a value of the 1.12.1 client. With it, a release is a
 /// click or a look and never both.
 pub const LOOK_SLOP: f32 = 4.0;
 
 /// Decide what the current mouse gesture is, once, before anything acts on it.
 ///
 /// Runs before [`orbit`], before [`crate::interface::target::select_on_click`] and
-/// before [`crate::ui::cursor`]'s hide — all three stated with `.after`, because
-/// each of them reads a resource this writes and Bevy will not otherwise
-/// sequence them.
+/// before [`crate::ui::cursor`]'s hide. All three are stated with `.after`,
+/// because each of them reads a resource this writes and Bevy will not
+/// otherwise sequence them.
 pub fn arm_look(
     buttons: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
@@ -233,7 +233,7 @@ pub fn arm_look(
 /// Not quite π/2 at the top because `looking_at` straight down has no defined
 /// roll and the view rolls unpredictably there; not quite -π/2 at the bottom for
 /// the same reason. Between them the camera can be put under the character and
-/// aimed at the sky, as in the real client.
+/// aimed at the sky, as in the 1.12.1 client.
 pub(crate) const PITCH_LIMIT: f32 = std::f32::consts::FRAC_PI_2 - 0.02;
 
 pub struct CameraPlugin;
@@ -324,14 +324,14 @@ impl Plugin for CameraPlugin {
 #[derive(Resource, Clone, PartialEq, Eq)]
 pub struct RenderTuning {
     /// Off by default, where Bevy's default is 4x. `Camera3d::default()`
-    /// carries no `Msaa` and `Msaa::default()` is `Sample4`, so before this
-    /// field the client resolved four samples a pixel over a city's overdraw
-    /// since the migration without anyone choosing it. Alpha-keyed foliage is
-    /// where MSAA would help most, and MSAA cannot help it: its coverage comes
-    /// from a `discard`, not from the edge of a triangle.
+    /// carries no `Msaa` and `Msaa::default()` is `Sample4`, so without this
+    /// field the camera resolves four samples a pixel over a city's overdraw.
+    /// MSAA does not smooth alpha-keyed foliage, where aliasing is worst,
+    /// because foliage coverage comes from a `discard`, not from the edge of a
+    /// triangle.
     pub msaa: bool,
-    /// Wait for the display. On by default, which is the right setting for
-    /// play, and it distorts every measurement. Under vsync a frame is 16.7 ms
+    /// Wait for the display. On by default, for play. It distorts every
+    /// measurement: under vsync a frame is 16.7 ms
     /// or 33.3 ms and nothing in between, so a scene that misses the budget by
     /// one millisecond shows as the frame rate halving, and the wait itself is
     /// indistinguishable from CPU cost in the frame-against-gpu-spans
@@ -355,7 +355,7 @@ pub struct RenderTuning {
 /// [`crate::render::overlay::OVERLAYS`], for the reason both of those give in
 /// their own files: a panel that writes its checkboxes out by hand drifts from
 /// the struct when a setting is added, and a setting no panel draws cannot be
-/// reached. This was the last of the three to be hand-written.
+/// reached.
 ///
 /// The key is the function key that writes the same field, so a surface drawing
 /// these can say which one without knowing anything about the bindings.
@@ -425,17 +425,19 @@ fn spawn(
         //
         // The extra distance costs little: every light in the game fogs out by
         // 888 yards at the latest (`vale light`), so the terrain this admits
-        // is drawn entirely in the fog colour. The real client shows a
+        // is drawn entirely in the fog colour. The 1.12.1 client shows a
         // silhouette in the fog colour there, not a hole in the mountain.
         Projection::Perspective(PerspectiveProjection {
             far: reach.yards(),
-            // The reference client's opening angle, which is a diagonal `π/2`
-            // and therefore not `π/2` of any angle Bevy names. See
-            // [`crate::render::lens`], which holds the constant, the conversion
-            // and the one deviation from it. This is the 16:9 value, used until
-            // the window is measured: `frame_the_view` replaces it with the
-            // value for this window. `PerspectiveProjection`'s own default
-            // aspect is 1.0, which matches no screen.
+            // The world camera's opening angle is a diagonal one, 1.925 rad
+            // ([`crate::render::lens::WORLD_FIELD_OF_VIEW`], the value the
+            // `vanilla-tweaks` patch sets), and Bevy takes a vertical one.
+            // [`crate::render::lens`] holds the constant, the conversion and
+            // the 16:9 clamp, which is a deviation from the client. This is the
+            // 16:9 value, used until the window is measured: `frame_the_view`
+            // replaces it with the value for this window.
+            // `PerspectiveProjection`'s own default aspect is 1.0, which
+            // matches no screen.
             fov: crate::render::lens::framed_vertical_fov(
                 crate::render::lens::WORLD_FIELD_OF_VIEW,
                 crate::render::lens::WIDEST_FRAMED_ASPECT,
@@ -507,11 +509,11 @@ fn follow_reach(
 /// clusterable, and it had no point light, spot light, clustered decal or light
 /// probe.
 ///
-/// Measured in the round that added this, at the Elwynn framing that also
-/// produced the traced-build finding: `prepare_clusters_for_gpu_clustering`
-/// 0.46 ms/frame, `prepare_clustering_bind_groups` 0.10, the `cluster_on_gpu`
-/// encode 0.40, and a 0.14 ms GPU pass beside them. That is about a
-/// millisecond of a ten-millisecond frame, spent on an empty set.
+/// Measured at an Elwynn framing when this was added:
+/// `prepare_clusters_for_gpu_clustering` 0.46 ms/frame,
+/// `prepare_clustering_bind_groups` 0.10, the `cluster_on_gpu` encode 0.40,
+/// and a 0.14 ms GPU pass beside them. That is about a millisecond of a
+/// ten-millisecond frame, spent on an empty set.
 ///
 /// `gpu_clustering: None` is Bevy's own documented switch for this (see
 /// `GlobalClusterSettings`). Every GPU-clustering system is
@@ -519,15 +521,15 @@ fn follow_reach(
 /// the schedule rather than making them return early, and the CPU path takes
 /// over.
 ///
-/// The condition written for undoing this was the first real point light: a
-/// lantern, a campfire glow, a spell light. Point lights want the grid back,
-/// and this should be measured again rather than assumed, since GPU clustering
-/// exists because the CPU path does not scale. `render::lamps` now adds such
-/// lights at night (see the note on `ClusterConfig::Single` in [`spawn`]).
+/// Point lights (a lantern, a campfire glow, a spell light) are the case for
+/// undoing this: they need the grid, and GPU clustering exists because the
+/// CPU path does not scale. `render::lamps` adds such lights at night (see the
+/// note on `ClusterConfig::Single` in [`spawn`]), so this setting has to be
+/// measured again rather than assumed.
 fn stop_clustering(settings: Option<ResMut<bevy::light::cluster::GlobalClusterSettings>>) {
     // Optional because the resource is inserted by `PbrPlugin`, and a headless
-    // test app has no such plugin — the same reason `DrawCallPlugin` checks for
-    // a render world.
+    // test app has no such plugin. `DrawCallPlugin` checks for a render world
+    // for the same reason.
     if let Some(mut settings) = settings {
         settings.gpu_clustering = None;
     }
@@ -617,34 +619,32 @@ fn apply_tuning(
     }
 }
 
-/// Left-drag orbits, right-drag looks *and* steers, the wheel zooms.
+/// Left-drag orbits, right-drag looks and steers, the wheel zooms.
 ///
-/// There is no pan. Shift+left-drag used to slide the focus across the ground
-/// plane and clear `CameraRig::follow`, with `Home` to return; this dated from
-/// when the program was a world viewer with no character. 1.12 has no such
-/// control: shift is a walk modifier and every drag orbits the character. A
-/// camera left pointing at empty ground stays there for the session if the
-/// player does not know how to return it. The field, the key and the "(free)"
-/// read-out were removed with the pan.
+/// There is no pan. 1.12 has no such control: shift is a walk modifier and
+/// every drag orbits the character. A shift+left-drag pan that slid the focus
+/// across the ground plane and cleared `CameraRig::follow` left the camera
+/// pointed at empty ground for the rest of the session if the player did not
+/// know to press `Home`. The pan, the field, the key and the "(free)" read-out
+/// were removed together.
 ///
 /// Both buttons turn the camera, and only the right button turns the
-/// character, as in the game. A right-drag used to rotate the character while
-/// the camera stayed where it was, so steering ended with the view side-on.
+/// character, as in the game. A right-drag that rotated only the character
+/// left the camera where it was, so steering ended with the view side-on.
 ///
-/// The mouse moves the camera, and the character follows it. The direction
-/// matters. When a right-drag turned the character and the camera picked the
-/// turn up from the character's interpolated facing in `follow_player`, every
+/// The mouse moves the camera, and the character follows it. In the reverse
+/// arrangement a right-drag turned the character and the camera picked the
+/// turn up from the character's interpolated facing in `follow_player`: every
 /// pixel of drag went out on a channel to the session thread, waited for its
 /// next simulation step, came back in the poll, and was then drawn 1.5 steps
-/// behind by `Motion`'s play-out delay. The view answered the mouse about
-/// 80 ms late. In addition, the accumulator it turned was
-/// `WorldStatus::orientation`, which `poll_world` overwrites from the session
-/// every time the simulation advances, so a drag's increment was discarded
-/// whenever the round trip had not completed and the turn was slower than its
-/// own rate.
+/// behind by `Motion`'s play-out delay, so the view answered the mouse about
+/// 80 ms late. The accumulator it turned was also `WorldStatus::orientation`,
+/// which `poll_world` overwrites from the session every time the simulation
+/// advances, so a drag's increment was discarded whenever the round trip had
+/// not completed and the turn was slower than its own rate.
 ///
-/// The rig is now the accumulator, nothing else writes it while the button is
-/// held, and `session::send_input` aims the character at `yaw + π`.
+/// The rig is therefore the accumulator, nothing else writes it while the
+/// button is held, and `session::send_input` aims the character at `yaw + π`.
 pub fn orbit(
     look: Res<MouseLook>,
     interface: Res<crate::lua::api::mouse::MouseFocus>,
@@ -661,14 +661,14 @@ pub fn orbit(
 ) {
     // `CAMERAZOOMIN` / `CAMERAZOOMOUT`, which can be keys as well as the
     // wheel. The shipped defaults put them on the wheel and a player may bind
-    // them to any key; one notch is `1.0`, which is the argument every call
-    // site in the directory passes.
+    // them to any key; one notch is `1.0`, which is the argument
+    // `Bindings.xml` passes to `CameraZoomIn` and `CameraZoomOut`.
     //
     // The wheel below is read directly. `MOUSEWHEELUP` is a key name no
     // `KeyCode` can produce, so no key press reaches those two bindings, and
-    // without the direct read the wheel would not zoom. The consequence is that
-    // the wheel cannot be re-bound; joining the mouse to the key table is
-    // an item this shares with steering.
+    // without the direct read the wheel would not zoom. As a result the wheel
+    // cannot be re-bound. Routing mouse input through the binding table is not
+    // implemented, for zoom or for steering.
     for crate::input::bindings::BindingPressed(binding) in pressed.read() {
         if let crate::input::bindings::Binding::CameraZoom(hundredths) = binding {
             let notches = *hundredths as f32 / 100.0;
@@ -683,11 +683,11 @@ pub fn orbit(
         // the whole tile.
         //
         // Gated on a frame having handled the wheel, not on the pointer being
-        // over the interface, as in the reference client. 5875 hands the wheel
-        // to the frame under the pointer and passes it up to the first ancestor
-        // with an `<OnMouseWheel>`, so a wheel over the chat or over an open bag
-        // reaches no handler and falls through to the zoom, while a wheel over
-        // a scroll frame is taken. `lua::mouse` decides it and
+        // over the interface, as in the 1.12.1 client. That client hands the
+        // wheel to the frame under the pointer and passes it up to the first
+        // ancestor with an `<OnMouseWheel>`, so a wheel over the chat or over
+        // an open bag reaches no handler and falls through to the zoom, while
+        // a wheel over a scroll frame is taken. `lua::mouse` decides it and
         // `MouseFocus::wheel_taken` carries it here.
         rig.distance =
             (rig.distance * (1.0 - scroll.delta.y * 0.1)).clamp(CLOSEST, furthest(&cvars));
@@ -717,27 +717,26 @@ pub fn orbit(
     // and the world slides right, so the camera swings left (yaw down, towards
     // the east); drag down and the world tips away from the viewer, so the
     // camera rises (pitch up). Both signs follow from this one convention, so
-    // they cannot be wrong independently. The pan, when it existed, was derived
-    // from the same convention, and checking it against the convention found
-    // a sign error in it.
+    // they cannot be wrong independently.
     //
-    // There is no authority to check this against: vmangos says nothing about
-    // a camera and the game's files nothing about input. It is written down
-    // here and pinned by a test that asserts where the eye ends up rather than
-    // which way a number moved. An error here is only visible in the window.
-    // It was reported twice: the pitch was the inverted axis, and flipping the
-    // yaw beside it broke the axis that had been correct.
+    // No public source states the convention: vmangos says nothing about a
+    // camera and the game's files nothing about input. An error here is only
+    // visible in the window, so the convention is written down here and pinned
+    // by a test that asserts where the eye ends up rather than which way a
+    // number moved. A fix to the inverted pitch once also flipped the yaw,
+    // which broke the axis that had been correct.
     rig.yaw -= d.x * rate.x;
     // Clear of both poles: at exactly straight down the up vector is degenerate
-    // and the view rolls unpredictably. Below the horizon is deliberate — see
+    // and the view rolls unpredictably. Below the horizon is allowed; see
     // [`PITCH_LIMIT`].
     rig.pitch = (rig.pitch + d.y * rate.y).clamp(-PITCH_LIMIT, PITCH_LIMIT);
 }
 
-/// Degrees the camera turns per second on a turn key — and, reused, the scale
-/// on a pixel of mouse-look. `cameraYawMoveSpeed`, default `"180.0"`.
+/// Degrees the camera turns per second on a turn key, and the scale on a
+/// pixel of mouse-look. `cameraYawMoveSpeed`, default `"180.0"`.
 ///
-/// The client's mouse-look reads it too. See [`look_rate`].
+/// The 1.12.1 client's mouse-look rate depends on it as well. See
+/// [`look_rate`].
 ///
 /// This is the fallback, not the value. The value is the CVar of that name,
 /// which `UIOptionsFrame.lua`'s `UIOptionsFrameSliders` table gives a slider
@@ -752,16 +751,15 @@ const PITCH_MOVE_SPEED: f32 = 90.0;
 /// `cameraDistanceMax * cameraDistanceMaxFactor`.
 ///
 /// Both are the game's own CVars, registered as `"15.0"` and `"1.0"`. The
-/// factor is a slider on `UIOptionsFrame.lua`'s own
-/// panel (`MAX_FOLLOW_DIST`, 1 to 2 in tenths), which is why this is not a
-/// constant. It used to be a constant 1,500 yards, dating from before there was
-/// a character to stand behind, and the game's zoom slider had no effect.
+/// factor is a slider on `UIOptionsFrame.lua`'s own panel (`MAX_FOLLOW_DIST`,
+/// 1 to 2 in tenths), which is why this is not a constant. A constant limit
+/// (previously 1,500 yards) leaves the game's zoom slider with no effect.
 ///
 /// The product is floored at [`CLOSEST`] so that a `Config.wtf` carrying a zero
 /// or a typo cannot produce an empty range for `clamp`, which panics.
 ///
-/// It is applied to the wheel and to nothing else, deliberately, with one
-/// visible consequence. [`CameraRig::default`] starts at 25 yards (this
+/// It is applied to the wheel and to nothing else, which has one visible
+/// consequence. [`CameraRig::default`] starts at 25 yards (this
 /// project's screenshot framing, which predates the limit), so the first wheel
 /// notch of a session lands on the limit rather than a notch away from the
 /// start. Clamping the rig itself would fix that and break
@@ -814,8 +812,8 @@ fn turn_rate(cvars: &crate::settings::cvars::CVars, name: &str, registered: f32)
     }
 }
 
-/// The client's own reference viewport, which the mouse deltas are divided by.
-/// `1/800` and `1/600` are the constants the client's mouse-look uses.
+/// The reference viewport the mouse deltas are divided by. The 1.12.1 client's
+/// mouse-look scales a delta by `1/800` horizontally and `1/600` vertically.
 const REFERENCE_VIEWPORT: Vec2 = Vec2::new(800.0, 600.0);
 
 /// Where a character steered by the mouse should be facing.
@@ -837,7 +835,7 @@ pub fn mouse_look_heading(rig: &CameraRig) -> f32 {
 /// Radians of camera turn per pixel of drag, yaw and pitch, by the game's own
 /// formula.
 ///
-/// The 1.12 client's mouse-look computes, for a mouse delta `(dx, dy)`:
+/// The 1.12.1 client turns the camera, for a mouse delta `(dx, dy)`, by:
 ///
 /// ```text
 /// yaw   = radians(cameraYawMoveSpeed)   * (dx / sx) / 800
@@ -851,17 +849,16 @@ pub fn mouse_look_heading(rig: &CameraRig) -> f32 {
 /// than a constant used: 0.281°/px yaw and 0.250°/px pitch at 4:3, 0.258° and
 /// 0.306° at 16:9.
 ///
-/// One interpretation is made: `dx` is taken to be raw pixels. It comes from a
-/// mouse event's own fields and nothing in the client states the unit. The
-/// alternative, the client's normalised screen units (which the `/sx` beside it
-/// converts out of), would make a full-screen sweep turn the camera by half a
-/// degree, so it is not that.
+/// One interpretation is made: `dx` is taken to be raw pixels. The
+/// alternative, the client's normalised screen units (which the `/sx` beside
+/// it converts out of), would make a full-screen sweep turn the camera by half
+/// a degree, which does not match the 1.12.1 client.
 ///
-/// The sensitivity setting 1.12 gives the player is not applied in the client.
-/// `mouseSpeed` clamps to `[0.1, 2.0]`, multiplies by 10 and calls
-/// `SystemParametersInfo(SPI_SETMOUSESPEED)`: it moves the Windows pointer
-/// speed slider and never touches a delta. This client therefore has no
-/// sensitivity setting either; the operating system's setting is the game's.
+/// The sensitivity setting 1.12 gives the player does not scale a delta.
+/// `mouseSpeed` is clamped to `[0.1, 2.0]`, multiplied by 10 and applied as the
+/// Windows pointer speed (`SystemParametersInfo(SPI_SETMOUSESPEED)`). This
+/// client therefore has no sensitivity setting either; the operating system's
+/// setting is the game's.
 fn look_rate(aspect: f32, cvars: &crate::settings::cvars::CVars) -> Vec2 {
     let sy = 1.0 / (aspect * aspect + 1.0).sqrt();
     let sx = aspect * sy;
@@ -916,9 +913,9 @@ pub fn collide(
 
     // The ground, sampled: the terrain is a height field, so "is the eye under
     // it" is a question asked at points rather than at triangles. Sixteen steps
-    // over at most 1500 yards is coarse at full zoom-out and exact where it
-    // matters — the near samples are fractions of a yard apart, and it is the
-    // near end that decides whether the view is buried.
+    // over at most 1500 yards is coarse at full zoom-out and fine at the near
+    // end: the near samples are fractions of a yard apart, and the near end
+    // decides whether the view is buried.
     //
     // Asked only when the character stands on top of the terrain. A height
     // field has no underside: for anybody already below it every sample reads
@@ -967,24 +964,25 @@ pub fn collide(
 /// Write the rig onto the camera's `Transform`. The single point where the
 /// camera crosses from WoW's axes into Bevy's.
 ///
-/// Public so the sky dome can order itself after it — the dome is centred on the
-/// camera, and a frame behind is a sky that slides against the world every time
-/// the character moves.
+/// Public so the sky dome can order itself after it. The dome is centred on
+/// the camera, and a dome placed a frame behind slides against the world every
+/// time the character moves.
 pub fn place(rig: Res<CameraRig>, mut camera: Query<&mut Transform, With<WorldCamera>>) {
     let Ok(mut transform) = camera.single_mut() else {
         return;
     };
     let eye = axes::to_bevy(rig.eye().to_array());
     let target = axes::to_bevy(rig.focus().to_array());
-    // Bevy's up is +Y, which is WoW's +Z — `axes` is what makes that true.
+    // Bevy's up is +Y, which is WoW's +Z; `axes` does that conversion.
     *transform = Transform::from_translation(eye).looking_at(target, Vec3::Y);
 }
 
-/// Keep the opening angle on the reference's rule as the window changes.
+/// Keep the opening angle on the 1.12.1 client's rule as the window changes.
 ///
-/// The rule reads the aspect, so the angle is not a constant. The 5875 client
-/// stores one diagonal field of view and divides it by `sqrt(aspect² + 1)`
-/// inside its one perspective build. All of that is in `crate::render::lens`,
+/// The rule reads the aspect, so the vertical angle is not a constant. The
+/// 1.12.1 client's field of view is one diagonal angle, and the vertical angle
+/// it draws with depends on the aspect through `sqrt(aspect² + 1)`. The rule
+/// and the world camera's diagonal angle are in `crate::render::lens`,
 /// including the 16:9 clamp past which this project stops following it. This
 /// function decides only when to apply it.
 ///
@@ -1075,7 +1073,8 @@ mod tests {
     ///
     /// The aspect is written by hand: Bevy fills `aspect_ratio` from the render
     /// target in `PostUpdate`, and this app has no target. The live value was
-    /// measured separately: a 1000-wide window snapped to 1000x563 reported
+    /// measured separately, when the world camera still used the unmodified
+    /// client's `π/2`: a 1000-wide window snapped to 1000x563 reported
     /// `aspect 1.776199` and took the fov to 44.153.
     #[test]
     fn the_opening_angle_follows_the_window() {
@@ -1096,25 +1095,24 @@ mod tests {
             _ => unreachable!(),
         };
         app.update();
-        // 4:3 is where the reference is furthest from Bevy's fixed 45deg.
-        assert!((fov(&app, camera) - 54.0).abs() < 0.05, "{}", fov(&app, camera));
+        // The vertical angle at 4:3.
+        assert!((fov(&app, camera) - 66.18).abs() < 0.05, "{}", fov(&app, camera));
 
-        // At 16:9 the two nearly coincide, so the change is not visible at the
-        // window size this client opens at.
+        // At 16:9 the vertical angle is smaller.
         let mut projection = app.world_mut().get_mut::<Projection>(camera).unwrap();
         if let Projection::Perspective(p) = &mut *projection {
             p.aspect_ratio = 16.0 / 9.0;
         }
         app.update();
-        assert!((fov(&app, camera) - 44.13).abs() < 0.05, "{}", fov(&app, camera));
+        assert!((fov(&app, camera) - 54.08).abs() < 0.05, "{}", fov(&app, camera));
 
-        // Past 16:9 it stops moving — `lens::WIDEST_FRAMED_ASPECT`.
+        // Past 16:9 it stops moving; see `lens::WIDEST_FRAMED_ASPECT`.
         let mut projection = app.world_mut().get_mut::<Projection>(camera).unwrap();
         if let Projection::Perspective(p) = &mut *projection {
             p.aspect_ratio = 3440.0 / 1440.0;
         }
         app.update();
-        assert!((fov(&app, camera) - 44.13).abs() < 0.05, "{}", fov(&app, camera));
+        assert!((fov(&app, camera) - 54.08).abs() < 0.05, "{}", fov(&app, camera));
     }
 
     /// A settled camera is not written to, so the frustum and every view
@@ -1307,11 +1305,10 @@ mod tests {
 
     /// There is no pan, and a shift-drag is an ordinary orbit.
     ///
-    /// The pan cleared `follow`, and for a time nothing set it again, so one
+    /// The removed pan cleared `follow` and nothing set it again, so one
     /// accidental shift-drag detached the camera from the character for the
-    /// rest of the session. The control was removed rather than fixed (see
-    /// [`orbit`]), so this test pins that shift is only a walk modifier: the
-    /// focus must not move, whichever button is held.
+    /// rest of the session (see [`orbit`]). This test pins that shift is only a
+    /// walk modifier: the focus must not move, whichever button is held.
     #[test]
     fn a_shift_drag_orbits_and_never_moves_the_focus() {
         let mut app = app();
@@ -1351,10 +1348,10 @@ mod tests {
 
     /// The camera can be put under the character and aimed at the sky.
     ///
-    /// The pitch used to be clamped to `0.05..π/2`: the eye was never allowed
-    /// below the height it was orbiting, so the view could look down at the
-    /// ground from any angle and never up, and dragging towards the horizon
-    /// stopped well short of it. The fix was the sign of the lower limit.
+    /// A pitch clamped to `0.05..π/2` never lets the eye below the height it
+    /// orbits, so the view can look down at the ground from any angle and
+    /// never up, and dragging towards the horizon stops well short of it. The
+    /// lower limit is therefore `-PITCH_LIMIT`.
     #[test]
     fn the_pitch_reaches_below_the_horizon_as_well_as_above_it() {
         let drag = |from: f32, dy: f32| {
@@ -1387,9 +1384,9 @@ mod tests {
     /// A right-drag turns the camera itself, at the same rate as a left-drag
     /// and in the same frame the mouse moved.
     ///
-    /// It used to do neither: the yaw arrived by way of the character, which
-    /// meant a channel to the session thread, a simulation step, a poll and
-    /// `Motion`'s play-out delay, about 80 ms of camera lag. `follow_player`
+    /// When the yaw arrived by way of the character it did neither: a channel
+    /// to the session thread, a simulation step, a poll and `Motion`'s
+    /// play-out delay added about 80 ms of camera lag. `follow_player`
     /// not writing the yaw while the button is held is the other half of the
     /// same rule; it stops the turn being counted twice when the facing
     /// arrives.
@@ -1411,8 +1408,8 @@ mod tests {
 
     /// Shift is a walk modifier and nothing else. A steer with shift held is
     /// still a steer, with the character walking, which is what shift means to
-    /// `send_input`. Before the pan was removed it slid the camera off the
-    /// character mid-turn.
+    /// `send_input`. The removed pan slid the camera off the character
+    /// mid-turn.
     #[test]
     fn a_steer_with_shift_held_still_steers() {
         let mut app = app();
@@ -1461,9 +1458,9 @@ mod tests {
     }
 
     /// The game's own rate, at the two common aspect ratios. Pins the
-    /// arithmetic in [`look_rate`] against the degrees per pixel the client's
-    /// constants produce, so a later change to the rate has to contradict the
-    /// client rather than a chosen number.
+    /// arithmetic in [`look_rate`] against the 1.12.1 client's degrees per
+    /// pixel, so a change to the rate fails against the client's values rather
+    /// than against a chosen number.
     #[test]
     fn the_look_rate_is_the_clients() {
         let four_three = look_rate(4.0 / 3.0, &Default::default());
@@ -1532,7 +1529,7 @@ mod tests {
     }
 
     /// The eye is drawn at [`CameraRig::reach`], not at the distance asked for,
-    /// and everything that frames the view goes through the one accessor — so a
+    /// and everything that frames the view goes through the one accessor, so a
     /// camera pulled in by a wall keeps its focus, its angles and the property
     /// that the billboards and the view matrix agree about where the eye is.
     #[test]
@@ -1548,7 +1545,7 @@ mod tests {
     }
 
     /// A plain left-drag orbits the character and never carries the focus with
-    /// it — the camera has no way to stop following, so the focus is the
+    /// it. The camera has no way to stop following, so the focus is the
     /// session's one fixed point.
     #[test]
     fn orbiting_turns_the_camera_and_leaves_the_focus_alone() {
@@ -1565,14 +1562,13 @@ mod tests {
         assert_ne!(rig.yaw, 0.0, "orbiting must turn the camera");
     }
 
-    /// Which way a drag moves the view. There is no source to check this
-    /// against (vmangos says nothing about a camera and the game's files nothing
-    /// about input), so the convention is stated here, and an error in it is
-    /// only visible in the window. It was reported twice in one session: the
-    /// pitch was the inverted axis, and flipping the yaw beside it on a report
-    /// that "the drag controls are inverted" broke the axis that had been
-    /// correct. Hence one convention covering both axes, and a test that
-    /// asserts where the eye ends up rather than which way a number moved.
+    /// Which way a drag moves the view. No public source states this (vmangos
+    /// says nothing about a camera and the game's files nothing about input),
+    /// so the convention is stated here, and an error in it is only visible in
+    /// the window. A fix to the inverted pitch once also flipped the yaw, which
+    /// broke the axis that had been correct. One convention therefore covers
+    /// both axes, and this test asserts where the eye ends up rather than
+    /// which way a number moved.
     ///
     /// The drag moves the world and the eye goes the other way. A point on the
     /// character follows the cursor, so dragging right swings the eye east (the
@@ -1606,14 +1602,8 @@ mod tests {
     }
 
     /// No drag of any kind moves the focus, which is what "there is no pan"
-    /// means.
-    ///
-    /// This replaces the test that pinned the pan's two axes against each
-    /// other. That test was needed while the control existed: one axis dragging
-    /// the world while the other pushed it looked like the terrain being skewed
-    /// rather than an inverted control, and that sign error did occur. With the
-    /// control removed the property to test is simpler, and this test covers
-    /// every button and modifier combination this client has.
+    /// means. The test covers every button and modifier combination this
+    /// client has.
     #[test]
     fn no_drag_moves_the_focus() {
         for button in [MouseButton::Left, MouseButton::Right] {

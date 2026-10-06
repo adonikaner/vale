@@ -27,9 +27,9 @@
 //!
 //! Bevy's animation system is not used. The only engine feature used is
 //! `SkinnedMesh`, which blends four joint matrices per vertex on the GPU and
-//! packs every skinned mesh's joints into shared storage buffers. That removes
-//! the WebGL renderer's 38-bone limit: a wolf's 64 bones did not fit in 128
-//! vertex uniform vectors, and `Models.initSkinning` fell back to no animation.
+//! packs every skinned mesh's joints into shared storage buffers. Storage
+//! buffers have no per-mesh bone limit. Joints held in vertex uniforms do: 128
+//! uniform vectors hold 38 bones, and a wolf has 64.
 //!
 //! Everything else stays here, because three properties of a vanilla M2 cannot
 //! be expressed in Bevy's hierarchy:
@@ -135,8 +135,8 @@ pub struct EntityModel {
     pub display_id: u32,
     /// `modelScale * displayScale` from the DBCs, used when the entity's own
     /// `OBJECT_FIELD_SCALE_X` never arrived. The field and this value are not
-    /// multiplied together: `Unit::GetScaleForDisplayId` returns the product,
-    /// and the field holds that product.
+    /// multiplied together: vmangos's `Unit::GetScaleForDisplayId` returns the
+    /// product, and the field holds that product.
     pub dbc_scale: f32,
     /// The joint entities, in bone order, with the identity joint last.
     pub joints: Vec<Entity>,
@@ -221,8 +221,8 @@ pub struct EntityModel {
     /// [`CarriedEffects`], because it records what the materials currently
     /// carry, not what the auras request. A re-dressing builds fresh materials
     /// with no tint and drops this field with the old model, so the next
-    /// frame's comparison finds `None` against, for example, a stone-formed
-    /// dwarf and reapplies the colour.
+    /// frame's comparison finds `None` against the aura's colour (a
+    /// stone-formed dwarf, for example) and reapplies it.
     painted: Option<[u8; 3]>,
     /// The opacity this model's own batches are currently drawn at, or `None`
     /// (the usual case). See [`tint::fade_models`].
@@ -281,9 +281,9 @@ pub struct EntityModel {
     /// a caller multiplies by the entity's scale. See
     /// [`vale_assets::look::anchor`], whose rule matches the 1.12.1 client.
     ///
-    /// Attachment point 17, the neck, not the helm point above it. The
-    /// difference is 0.13 yards on a human, and it caused the report that the
-    /// camera's focal point was slightly too high.
+    /// Attachment point 17, the neck, not the helm point above it. The helm
+    /// point is 0.13 yards higher on a human and puts the camera's focus
+    /// visibly too high.
     pub anchor: f32,
     /// The camera anchor's height once the `Mount` clip has placed the body in
     /// a saddle, or `None` for a model with no such clip (every model that is
@@ -337,13 +337,13 @@ pub struct EntityModel {
     /// The room this model was dressed for. Always `None`; kept so the retag
     /// path stays one comparison.
     ///
-    /// Units were once re-dressed with room lighting when crossing a door and
-    /// retagged with the room's colour between rooms. The 1.12.1 client does
-    /// neither: every model inside an inn is lit by the same sun in view space
-    /// at the 0.5 scale, the zone's own fill, and the room's point lights. The
-    /// room's baked colour applies to its walls and furniture, not to units. So
-    /// a unit keeps its sun-lit dressing everywhere, and what changes at a door
-    /// is [`SunScale`], which blends.
+    /// The 1.12.1 client neither re-dresses a unit with room lighting at a door
+    /// nor tints it with the room's colour between rooms. A model inside an
+    /// inn is lit by the same sun in view space, at the scale [`SunScale`]
+    /// gives it (2.5 on the inn's floor), by the zone's own fill, and by the
+    /// room's point lights. The room's baked colour applies to its walls and
+    /// furniture, not to units. So a unit keeps its sun-lit dressing
+    /// everywhere, and what changes at a door is [`SunScale`], which blends.
     room: Option<RoomLight>,
     /// The sun scale its batches were tagged with; see [`SunScale`]. Stored so
     /// that a change is a retag rather than a rebuild, as the room's colour is.
@@ -463,9 +463,9 @@ struct EffectSet {
 /// glow, an impact landing at the same moment, and the ground decals owned by
 /// all of them.
 ///
-/// That teardown was not the only cause of spell effects being cut short; the
-/// other was the dropped hit list (see `Entity::casts_landed`). Any other
-/// rebuild of the model, such as walking through a door, still tears it down.
+/// The other cause of spell effects being cut short was the dropped hit list
+/// (see `Entity::casts_landed`). Any other rebuild of the model, such as
+/// walking through a door, also tears the model down.
 ///
 /// So [`super::spawn::rebuild_changed_models`] lifts the sets off the old
 /// model and leaves their roots in place, and [`super::spawn::spawn_models`]
@@ -705,7 +705,7 @@ pub struct AttachedPart {
     /// The resolved index of the model's own Stand (id 0), or its first
     /// non-empty sequence. This is the sequence an attached model plays.
     sequence: usize,
-    /// Whether that sequence loops (bit 0 of its flags clear, as in the 5875
+    /// Whether that sequence loops (bit 0 of its flags clear, as in the 1.12.1
     /// client). A non-looping effect holds its last frame, which for a
     /// one-shot like Arcane Explosion's dome is the collapsed one.
     loops: bool,
@@ -898,23 +898,20 @@ pub struct Indoors(pub Option<RoomLight>);
 
 /// The per-instance multiplier on the sun term this entity's batches carry:
 /// [`crate::render::models::sun_scale`]'s 2.5 on lit ground and 0.5 on ground
-/// that carries a baked `MCSH` shadow, indoors or out.
+/// that carries a baked `MCSH` shadow. An entity standing on a building, where
+/// the building's floor under it is higher than the terrain, takes 2.5 with no
+/// shadow test.
 ///
-/// A doodad takes this from the shadow bit under its origin at tile load. A
-/// unit moves, so it is sampled here once a frame from the same terrain cache
-/// the mover stands on. Units take it as doodads do: the 1.12.1 client draws
-/// the character's own batches at `Diffuse = 2.5 × band 0` outdoors and the
-/// models around it at 0.5 inside an inn, all with the zone's own fill and
-/// the room's lamps and none lit by the room's colour. Which condition makes
-/// the 1.12.1 client use 0.5 for a model is not established; this client uses
-/// the ground's shadow bit, and an inn's floor lies in the inn's own baked
-/// shadow.
+/// A doodad's scale is decided once, at tile load. A unit moves, so it is
+/// sampled here once a frame from the same terrain cache the mover stands on.
+/// The 1.12.1 client lights the character with 2.5 times band 0's sun colour
+/// outdoors and on an inn's floor, with the zone's own fill and the room's
+/// lamps, and never with the room's colour.
 ///
-/// The scale is blended, not switched. The bit is per 0.5-yard texel, so a
-/// unit crossing a shadow's edge would otherwise jump between 2.5 and 0.5 in
-/// one step, which was reported as the lighting flipping on. The 1.12.1 client
-/// has been seen with one model mid-way, at 0.81, so it eases the value. Its
-/// rate is not measured; [`SUN_SCALE_RATE`] is this client's value.
+/// The client moves the value toward its target at a fixed rate rather than
+/// switching it, so a unit crossing a shadow's edge does not change brightness
+/// in one frame. The 1.12.1 client has been seen with one model at 0.81,
+/// part-way between the two values. The rate is [`SUN_SCALE_RATE`].
 #[derive(Component, Clone, Copy, PartialEq, Debug)]
 pub struct SunScale {
     /// What the batches are tagged with this frame.
@@ -923,9 +920,10 @@ pub struct SunScale {
     target: f32,
 }
 
-/// How fast the sun scale moves toward its target, per second: the full
-/// 2.5 to 0.5 change takes one second. See [`SunScale`].
-const SUN_SCALE_RATE: f32 = 2.0;
+/// How fast the sun scale moves toward its target, per second: the 1.12.1
+/// client's 3.333, so the full 2.5 to 0.5 change takes 0.6 s. See
+/// [`SunScale`].
+const SUN_SCALE_RATE: f32 = 10.0 / 3.0;
 
 impl SunScale {
     /// A scale that is already where it is going.
@@ -977,6 +975,9 @@ fn light_entities(
     // Optional because the indoor test needs no session and is tested without
     // one. With no terrain, the ground counts as lit.
     session: Option<Res<crate::world::session::Session>>,
+    // The buildings' floors, for an entity standing on one. Optional for the
+    // same reason as the session.
+    solids: Option<Res<crate::world::session::Solids>>,
     // For the blend; an app with no clock steps the whole way at once.
     time: Option<Res<Time>>,
 ) {
@@ -996,10 +997,13 @@ fn light_entities(
         if current != Some(&now) {
             commands.entity(entity).insert(now);
         }
-        let target = if active.is_some_and(|a| a.terrain_shadowed(a.map_id, feet[0], feet[1])) {
-            crate::render::models::sun_scale::SHADOWED_GROUND
-        } else {
-            crate::render::models::sun_scale::LIT_GROUND
+        let target = match active {
+            Some(a) if !on_building(a, solids.as_deref(), feet)
+                && a.terrain_shadowed(a.map_id, feet[0], feet[1]) =>
+            {
+                crate::render::models::sun_scale::SHADOWED_GROUND
+            }
+            _ => crate::render::models::sun_scale::LIT_GROUND,
         };
         let sun = match scale {
             Some(scale) => scale.toward(target, dt),
@@ -1009,6 +1013,30 @@ fn light_entities(
             commands.entity(entity).insert(sun);
         }
     }
+}
+
+/// Whether an entity stands on a building rather than on the terrain: a
+/// building floor lies under the point [`INDOOR_PROBE`] above its feet, and
+/// it is higher than the terrain there. Such an entity takes the lit sun
+/// scale without the shadow test.
+fn on_building(
+    active: &crate::world::session::ActiveSession,
+    solids: Option<&crate::world::session::Solids>,
+    feet: [f32; 3],
+) -> bool {
+    let Some(solids) = solids else {
+        return false;
+    };
+    let Some((floor, _)) =
+        solids
+            .0
+            .building_floor(active.map_id, feet[0], feet[1], feet[2] + INDOOR_PROBE)
+    else {
+        return false;
+    };
+    active
+        .terrain_height(active.map_id, feet[0], feet[1])
+        .is_none_or(|ground| floor > ground)
 }
 
 /// An entity whose display id resolves to nothing, or whose model will not read.
@@ -1114,13 +1142,13 @@ pub struct Playback {
     /// 1.12.1 client shows the mage standing still inside the ice, not idling
     /// and not breathing, and this field draws that.
     ///
-    /// Part of this is established and part comes from a report. Established:
-    /// the 1.12.1 client uses this flag, and nothing in the `SpellVisual` chain
-    /// names a pose for this spell. Not established: that the client does it
-    /// by stopping the animation clock. None of `SpellVisualKit`'s 35 columns
-    /// says "freeze", so this reproduces the reported picture in the simplest
-    /// way. It applies only when the flag is set and no pose is stated, so no
-    /// spell that states its own pose reaches it.
+    /// Established: the 1.12.1 client uses this flag, and nothing in the
+    /// `SpellVisual` chain names a pose for this spell. Not established: that
+    /// the client does it by stopping the animation clock. None of
+    /// `SpellVisualKit`'s 35 columns says "freeze", so this reproduces the
+    /// observed picture in the simplest way. It applies only when the flag is
+    /// set and no pose is stated, so no spell that states its own pose reaches
+    /// it.
     frozen: Option<u32>,
     /// Whether this frame wants the clock held; see [`Self::frozen`].
     freeze: bool,
@@ -1175,7 +1203,7 @@ pub struct Playback {
     played: Option<u16>,
 }
 
-/// A play on the masked upper-body track — see [`Playback::overlay`].
+/// A play on the masked upper-body track; see [`Playback::overlay`].
 ///
 /// Like [`OneShot`], with one addition: it carries the sequence as well as the
 /// id, because unlike the base track nothing else records what the torso
@@ -1312,12 +1340,12 @@ struct Fade {
     /// The clock keeps running for a loop (see `since`), and
     /// `M2Skeleton::phase` wraps it, which for a one-shot that has just
     /// reached its end gives frame zero. The test `jump_pose_continuity`
-    /// showed both effects: `JumpStart` ended mid-air and the fade sampled its
-    /// crouch on the ground, a 2-yard bone move in one frame; `JumpLandRun`
-    /// ended on the ground and the fade sampled its airborne first frame. This
-    /// was reported as the model resetting mid-air and then replaying the
-    /// second half of the jump after landing. `None` for a loop keeps the
-    /// wolf's stride finishing.
+    /// covers both effects: `JumpStart` ends mid-air and a fade on the wrapped
+    /// clock samples its crouch on the ground, a 2-yard bone move in one frame;
+    /// `JumpLandRun` ends on the ground and the fade samples its airborne first
+    /// frame. On screen the model resets mid-air and then replays the second
+    /// half of the jump after landing. `None` for a loop keeps the wolf's
+    /// stride finishing.
     held: Option<f32>,
 }
 
@@ -1343,7 +1371,7 @@ impl DisplayCache {
     /// the session, so dropping the asset bank's copy leaves this pass reading
     /// the old parse. `forget_tables`' own doc warns about this case ("anything
     /// holding an `Arc` from before keeps what it holds, which is every pass
-    /// that cached one"), and this is that pass.
+    /// that cached one"), and this pass is one of them.
     ///
     /// It is for a host that has made `DBFilesClient\` return different bytes:
     /// an edited `SpellVisualKit` naming a different model, an edited
@@ -1514,7 +1542,7 @@ mod mount;
 /// [`crate::world::session::poll_world`] writes the component only when it
 /// changes. Only a change to the entity can make a model stop matching it, so
 /// an unchanged entity never needs a rebuild. Without the filter, every
-/// modelled entity was compared every frame at 100+ fps against a snapshot
+/// modelled entity is compared every frame at 100+ fps against a snapshot
 /// that changes 40 times a second; with it, a city of standing guards costs
 /// nothing here.
 mod pose;

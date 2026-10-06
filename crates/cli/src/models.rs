@@ -1,4 +1,4 @@
-//! `vale models` — every M2 a tile places: decode, place, verify.
+//! `vale models`: decodes, places and checks every M2 a tile places.
 
 use crate::common::*;
 use vale_assets::{world::adt::Adt, adt_path};
@@ -6,12 +6,12 @@ use vale_config::Config;
 
 /// Every model placed on one tile: decode it, place it, and check it landed.
 ///
-/// This is the counterpart of `vale textures` for geometry, and it exists to
-/// check the two things unit tests on invented bytes cannot: that real 1.12 M2s
-/// parse, and that a placement lands on the terrain it is supposed to stand on.
-/// The height check is the load-bearing one — a wrong axis order in
-/// `placement_to_world` still produces plausible coordinates, but it puts the
-/// doodads hundreds of yards off the ground.
+/// The counterpart of `vale textures` for geometry. It checks the two things
+/// unit tests on invented bytes cannot: that real 1.12 M2s parse, and that a
+/// placement lands on the terrain it is supposed to stand on. The height check
+/// matters most: a wrong axis order in `placement_to_world` still produces
+/// plausible coordinates, but puts the doodads hundreds of yards off the
+/// ground.
 pub fn cmd_models(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> {
     use vale_assets::world::m2::M2;
     use std::collections::{BTreeMap, BTreeSet};
@@ -39,21 +39,21 @@ pub fn cmd_models(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String>
     let mut textures: BTreeSet<String> = BTreeSet::new();
     let mut blends: BTreeMap<u16, usize> = BTreeMap::new();
     let mut radii: BTreeMap<String, f32> = BTreeMap::new();
-    // Scenery is drawn instanced and is never posed, so its keyframes are dead
-    // weight in the payload. Worth knowing how much of it there is before
-    // deciding whether the `model` command should learn to leave them out.
+    // Scenery is drawn instanced and is never posed, so its keyframes are
+    // unused data in the payload. They are counted to decide whether the
+    // `model` command should leave them out.
     let mut animated = 0usize;
     let mut keyframes = 0usize;
-    // **The number that decides whether animating them is affordable**, and it
-    // is the one this used to leave out: a *model* carrying a skeleton costs
-    // nothing, and a *placement* of one costs a pose, a joint entity per bone
-    // and a skin upload every frame. The two are wildly different counts —
-    // windmills and banners are a handful of models placed a handful of times,
-    // where the trees are most of the tile.
+    // The placements of skeletal models, which decide whether animating them is
+    // affordable: a model carrying a skeleton costs nothing, and a placement
+    // of one costs a pose, a joint entity per bone and a skin upload every
+    // frame. The two counts differ widely: windmills and banners are a few
+    // models placed a few times, while the trees are most of the tile.
     let mut animated_names: BTreeSet<String> = BTreeSet::new();
 
-    // **Which models this tile places are lamps**, by the one rule that says so
-    // — see `vale_assets::world::glow`, whose whole population this names.
+    // Which models this tile places are lamps, by the rule in
+    // `vale_assets::world::glow`. This lists that rule's population on the
+    // tile.
     let mut lamps: BTreeSet<String> = BTreeSet::new();
     let distinct: BTreeSet<String> = doodads.iter().map(|d| d.path.clone()).collect();
     for path in &distinct {
@@ -76,9 +76,9 @@ pub fn cmd_models(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String>
                 for b in m.visible_batches(vale_assets::world::m2::Dress::Creature) {
                     *blends.entry(b.blend).or_insert(0) += 1;
                 }
-                // **The two shapes a glow batch comes in**, counted apart —
-                // see the census printed below, which is what the rule in
-                // `assets::world::glow` was widened against.
+                // A model with any glow batch is a lamp. The census printed
+                // below is the population the rule in `assets::world::glow`
+                // was checked against.
                 if !vale_assets::world::glow::glows(&m).is_empty() {
                     lamps.insert(path.clone());
                 }
@@ -107,12 +107,11 @@ pub fn cmd_models(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String>
         textures.len()
     );
     println!("  blend modes in use: {blends:?}  (0 opaque, 1 alpha-key, 2 blend, 3 additive)");
-    // **What the lamp rule fires on**, which is the measurement that decides
-    // whether "an unlit batch is a light" is a rule or a wish. An `unlit`
-    // material is the file's own statement that a surface is not lit by
-    // anything, which is what a source is — but the flag is cheap and a model
-    // may carry it for other reasons, so the population it selects is worth
-    // looking at rather than assuming. See `vale_assets::world::glow`.
+    // The models the lamp rule selects, printed to check whether "an unlit
+    // batch is a light" holds. An `unlit` material is the file's statement
+    // that a surface is not lit by anything, which is what a light source is,
+    // but a model may set the flag for other reasons, so the selected
+    // population is listed for inspection. See `vale_assets::world::glow`.
     println!("  {} of the {} distinct models are lamps:", lamps.len(), distinct.len());
     for name in lamps.iter().take(12) {
         println!("    lamp: {name}");
@@ -169,20 +168,20 @@ pub fn cmd_models(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String>
         println!("    furthest from the ground: {delta:+.1}y  {path}");
     }
 
-    // **The `MCSH` bit under each placement's origin**, which is what picks
-    // the per-instance sun scale the client keeps on every placed M2 (2.5 lit
-    // / 0.5 shadowed — see `models::sun_scale` in the renderer). The share
-    // should read as the zone the same way the ground's own coverage does:
-    // high in Duskwood, near zero on a Tanaris tile — a count that tracks the
-    // tile's shadow share is what says the lookup samples the ground the
-    // placement stands on rather than some other chunk's map.
+    // The `MCSH` bit under each placement's origin, which picks the doodad's
+    // sun scale: 1.0 on lit ground, 0.5 in the shadow (see
+    // `models::sun_scale` in the renderer). The share should follow the zone
+    // as the ground's own shadow coverage does, high in Duskwood and near zero
+    // on a Tanaris tile; a count that tracks the tile's shadow share shows the
+    // lookup samples the ground the placement stands on and not another
+    // chunk's map.
     let shadowed = doodads
         .iter()
         .filter(|d| adt.shadowed_at(d.position[0], d.position[1]))
         .count();
     println!(
         "  {shadowed} of {} placements stand in the ground's baked MCSH shadow \
-         (sun scale 0.5 against 2.5 lit)",
+         (sun scale 0.5 against 1.0 lit)",
         doodads.len()
     );
 

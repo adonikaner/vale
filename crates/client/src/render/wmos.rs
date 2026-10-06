@@ -1,42 +1,43 @@
 //! The WMO pass: buildings, the rooms inside them, and their furniture.
 //!
-//! `vale_assets::world::wmo` does the parsing and is untouched. What lives here is
-//! the turn from a `WmoModel` into entities, and three decisions about how.
+//! `vale_assets::world::wmo` does the parsing. This module turns a `WmoModel`
+//! into entities, and makes three decisions about how.
 //!
-//! ## A building is drawn through the model material, not its own
+//! ## A building is drawn through the model material
 //!
-//! This is the WebGL renderer's decision carried across: `web/wmos.js` drew
-//! buildings with `models.js`' own program and shader, and `WmoModel::assemble`
-//! deliberately shapes a `WmoDraw` like an `M2Batch` so that it can. They differ
-//! in exactly two things, and both are *parameters* rather than branches — the
-//! alpha-key cutoff is 224/255 where an M2 cuts at 0.5, and the lighting comes
-//! from baked `MOCV` vertex colours rather than from the sun. So a draw here
-//! goes through [`models::upload_prepared`] like any doodad's.
+//! The WebGL renderer did the same: `web/wmos.js` drew buildings with
+//! `models.js`' program and shader, and `WmoModel::assemble` shapes a `WmoDraw`
+//! like an `M2Batch` so that it can. The two differ in two parameters, not in
+//! shader branches: the alpha-key cutoff arrives through its own constant,
+//! [`WMO_ALPHA_KEY`] (the same 224/255 as an M2's blend mode 1), and the
+//! lighting comes from baked `MOCV` vertex colours rather than from the sun. A
+//! draw here therefore goes through [`models::upload_prepared`] like any
+//! doodad's.
 //!
-//! ## One entity per batch, which culls better than the thing it replaces
+//! ## One entity per batch, culled per batch
 //!
 //! `web/wmos.js` culled twice by hand: once per placement against the whole
-//! model's bounding sphere, then once per *group* — a group being a room or a
-//! wall, and `WmoGroupDraw` owning a contiguous range of the draw list precisely
-//! so that the second test could be a range check rather than a scan.
+//! model's bounding sphere, then once per group (a room or a wall).
+//! `WmoGroupDraw` owns a contiguous range of the draw list so that the second
+//! test is a range check rather than a scan.
 //!
 //! Here a placement is an entity and each of its batches is a child entity with
-//! its own mesh, so Bevy's per-entity frustum cull subsumes both tests and is
-//! *finer* than either: a batch is a subset of a group, so its `Aabb` is at least
-//! as tight. The group ranges are not lost, only unused — `WmoGroupDraw` is still
-//! what says whether a draw is vertex-lit.
+//! its own mesh, so Bevy's per-entity frustum cull replaces both tests and is
+//! finer than either: a batch is a subset of a group, so its `Aabb` is at least
+//! as tight. The group ranges are unused by the cull; `WmoGroupDraw` still says
+//! whether a draw is vertex-lit.
 //!
 //! ## Interior doodads go through the ordinary doodad path
 //!
 //! `MODS`/`MODN`/`MODD` furniture is the same M2s from the same cache as the
-//! trees outside; all that is different is that `WmoDoodad::matrix` is
-//! WMO-*local*. Folding the placement's matrix into it (`wmo::mul4`, which exists
-//! for this) turns each spawn into an ordinary `PlacedModel`, so they are handed
-//! to [`crate::doodads`] rather than given a second spawner that would drift from
-//! it. They cannot be handed over any earlier than this, because which doodads
-//! there are is not known until the WMO has been read: a `MODF` picks one doodad
-//! set by index, which is how the same building stands furnished in one spot and
-//! empty in another.
+//! trees outside. The only difference is that `WmoDoodad::matrix` is WMO-local.
+//! Folding the placement's matrix into it (`wmo::mul4`, which exists for this)
+//! turns each spawn into an ordinary `PlacedModel`, so the spawns are handed to
+//! [`crate::doodads`] rather than to a second spawner that could diverge from
+//! it. They cannot be handed over earlier, because the set of doodads is not
+//! known until the WMO has been read: a `MODF` picks one doodad set by index,
+//! which is how the same building stands furnished in one place and empty in
+//! another.
 
 use crate::axes;
 use crate::render::doodads::PendingDoodads;
@@ -59,28 +60,27 @@ use std::sync::{mpsc, Arc, Mutex};
 
 /// The alpha-key cutoff for a WMO material (blend mode 1).
 ///
-/// **224/255 — and an M2 cuts at the same number**, which is a retraction: this
-/// comment used to say the two differed and that the difference showed on
-/// window lattices. The engine has exactly one alpha reference and it is a flat
-/// table indexed by blend mode; see
-/// [`models::M2_ALPHA_KEY`], which is where that reading is written up. The two
-/// constants are kept as two names because the *cutoff* is still a per-material
-/// uniform — `Models.applyBlend` takes it as a parameter and so does
-/// [`models::upload_prepared`] — not because they are two policies.
+/// 224/255, the same value an M2 uses for blend mode 1. The 1.12.1 client
+/// alpha-tests a WMO material and an M2 material with the same per-blend-mode
+/// reference, so there is no WMO-specific difference on window lattices or
+/// elsewhere; see [`models::M2_ALPHA_KEY`]. The two constants are separate
+/// names because the cutoff is a per-material uniform: `Models.applyBlend`
+/// takes it as a parameter and so does [`models::upload_prepared`]. They are
+/// not two policies.
 pub const WMO_ALPHA_KEY: f32 = 224.0 / 255.0;
 
 /// How much of a building to turn into GPU assets in one frame — one unit is
 /// one texture or one batch.
 ///
-/// The budget used to count *buildings* (two a frame), which made its unit as
-/// large as the largest thing in the game: `stormwind.wmo` is 844,627 vertices
-/// in 3,042 batches naming 155 textures, and converting the whole of it in one
-/// frame was the biggest single hitch a tile crossing could produce — even
-/// with the meshes prebuilt on the loader thread, the render world still
-/// uploads every byte added in a frame. At 256 units that building spreads
-/// over ~13 frames and appears all at once when the last batch lands, a fifth
-/// of a second later than it otherwise would — invisible next to the seconds
-/// the tile takes to stream in at all.
+/// The unit is not a whole building, because a building can be very large:
+/// `stormwind.wmo` is 844,627 vertices in 3,042 batches naming 155 textures.
+/// With a budget of two buildings a frame, converting all of it in one frame
+/// was the largest single hitch a tile crossing produced. The meshes are
+/// prebuilt on the loader thread, but the render world still uploads every
+/// byte added in a frame. At 256 units that building spreads over ~13 frames
+/// and appears all at once when the last batch lands, about a fifth of a
+/// second later than in one frame. The tile itself takes seconds to stream
+/// in, so the delay is not visible.
 const UPLOAD_UNITS: usize = 256;
 
 /// One placed building. Its batches are its children.
@@ -90,17 +90,17 @@ pub struct WmoPlacement {
     pub unique_id: u32,
     /// The archive path this was built from.
     ///
-    /// **Carried so that a building standing in the world cannot age out of
-    /// [`WmoCache`].** A placement asks the cache once, when its tile hands it
-    /// over, and then never again — so the idle clock would expire under a
-    /// city the player is standing in the middle of, and the next tile reload
-    /// would re-read the whole of `stormwind.wmo` (311 groups, 844,627
-    /// vertices) instead of hitting the cache. The residency sweep touches
-    /// these paths, which is a dozen strings per tile.
+    /// Carried so that a building standing in the world does not age out of
+    /// [`WmoCache`]. A placement asks the cache once, when its tile hands it
+    /// over, and not again, so without this the idle clock would expire under
+    /// a city the player is standing in, and the next tile reload would
+    /// re-read the whole of `stormwind.wmo` (311 groups, 844,627 vertices)
+    /// instead of hitting the cache. The residency sweep touches these paths,
+    /// which is a dozen strings per tile.
     ///
-    /// The doodads deliberately carry no equivalent: there are twelve thousand
-    /// of them to a building's dozen, and a tree that has to be re-read is
-    /// milliseconds on a loader thread against a whole city's staging.
+    /// Doodads carry no equivalent: there are twelve thousand of them to a
+    /// building's dozen, and re-reading a tree costs milliseconds on a loader
+    /// thread, against a whole city's staging for a building.
     pub path: String,
 }
 
@@ -108,24 +108,24 @@ pub struct WmoPlacement {
 #[derive(Component)]
 pub struct WmoPart;
 
-/// **The rooms of one placed building, what standing in one is lit by, and
-/// which of the game's areas each of its groups is.**
+/// The rooms of one placed building, the light an entity standing in one
+/// takes, and which of the game's areas each of its groups is.
 ///
-/// This is the half of the interior lighting that a `MODD` spawn does not need.
-/// Furniture arrives with its own baked colour and never moves, so it is dressed
-/// once and correctly; a *player* walks in and out of the same door, and no file
-/// and no packet says which side of it they are on. So the test is geometric:
-/// the building's own indoor groups, from [`wmo::WmoModel::interior_bounds`].
+/// A `MODD` spawn does not need this part of the interior lighting: furniture
+/// arrives with its own baked colour and never moves, so it is dressed once. A
+/// player walks in and out through the same door, and no file or packet says
+/// which side of it they are on, so the test is geometric: the building's own
+/// indoor groups, from [`wmo::WmoModel::interior_bounds`].
 ///
-/// **Kept in the building's own frame, and the entity is brought to it.** The
-/// alternative is transforming eight corners per room into the world and testing
-/// against their axis-aligned hull, which is both looser (a rotated room's hull
-/// is bigger than the room) and more work — a `MODF` matrix is a rotation and a
-/// uniform scale, so its inverse is exact and costs one transform per building
-/// per entity.
+/// The boxes are kept in the building's own frame, and the entity's position
+/// is transformed into it. The alternative, transforming eight corners per
+/// room into the world and testing against their axis-aligned hull, is looser
+/// (a rotated room's hull is bigger than the room) and more work. A `MODF`
+/// matrix is a rotation and a uniform scale, so its inverse is exact and costs
+/// one transform per building per entity.
 #[derive(Component)]
 pub struct Interior {
-    /// World -> this building's local space, in **WoW** axes: the entity's
+    /// World -> this building's local space, in WoW axes: the entity's
     /// position arrives from the object manager in those, and the group boxes
     /// are in the file's own.
     pub inverse: Mat4,
@@ -137,9 +137,8 @@ pub struct Interior {
     /// The mean of this placement's own doodad set's baked lights — see
     /// [`wmo::mean_light`].
     pub light: RoomLight,
-    /// **…and the same boxes for *every* group, with the id that names the
-    /// place** — see [`wmo::WmoModel::area_bounds`] and
-    /// [`vale_assets::tables::wmoarea`].
+    /// One box per group of any type, with the id that names the place. See
+    /// [`wmo::WmoModel::area_bounds`] and [`vale_assets::tables::wmoarea`].
     ///
     /// A second list rather than a flag on `rooms`, because the two questions
     /// have different answers: Stormwind's districts are `EXTERIOR` groups, so
@@ -153,8 +152,8 @@ pub struct Interior {
 
 impl Interior {
     /// Whether a world point (WoW axes) is within `reach` yards of this
-    /// building's whole bounds — the cheap per-building gate in front of a
-    /// batch of [`Self::holds`] calls, used by the weather to skip every
+    /// building's whole bounds. This is the cheap per-building test in front
+    /// of a batch of [`Self::holds`] calls; the weather uses it to skip every
     /// particle test in open country. A `MODF` placement's scale is uniform,
     /// so a local yard is a world yard and the box can be widened in local
     /// space.
@@ -171,8 +170,8 @@ impl Interior {
         self.holds_within(world, 0.0)
     }
 
-    /// [`Self::holds`] with the boxes widened by `margin` yards — for a thing
-    /// with *extent*: a weather mist sprite is up to nine yards across, and a
+    /// [`Self::holds`] with the boxes widened by `margin` yards, for an object
+    /// with extent: a weather mist sprite is up to nine yards across, and a
     /// centre test alone lets its sheet clip through the wall its centre is
     /// just outside of. A `MODF` placement's scale is uniform, so a local yard
     /// is a world yard.
@@ -187,12 +186,12 @@ impl Interior {
         within(&self.bounds) && self.rooms.iter().any(within)
     }
 
-    /// **Which of this building's groups a world point is in** — the first one
+    /// Which of this building's groups a world point is in: the first one
     /// whose box holds it, or `None` for a point outside the building.
     ///
     /// First rather than smallest: a city's district boxes overlap and the file
-    /// states no priority between them, so picking the tightest would be this
-    /// client inventing a rule. See [`wmo::WmoModel::area_bounds`].
+    /// states no priority between them, so picking the tightest would be a rule
+    /// this client made up. See [`wmo::WmoModel::area_bounds`].
     pub fn group_at(&self, world: [f32; 3]) -> Option<u32> {
         let local = self.inverse.transform_point3(Vec3::from(world)).to_array();
         if !wmo::box_contains(&self.bounds, local) {
@@ -208,7 +207,7 @@ impl Interior {
 /// The `MODF` placements a tile owns that have not been spawned yet.
 ///
 /// Attached by the terrain pass and drained as each model becomes available,
-/// exactly as [`PendingDoodads`] is. Empty is the steady state.
+/// as [`PendingDoodads`] is. Empty is the steady state.
 #[derive(Component)]
 pub struct PendingWmos(pub Vec<PlacedModel>);
 
@@ -219,20 +218,21 @@ pub struct WmoReady {
     /// also what a `MODD` spawn naming no colour of its own is lit by.
     ambient: [f32; 3],
     doodad_sets: Vec<WmoDoodadSet>,
-    /// **The lights the building states** — `MOLT`, see
+    /// The lights the building's `MOLT` chunk lists; see
     /// [`vale_assets::world::wmo::WmoLight`]. Kept on the ready model rather
-    /// than resolved at load because the position is the *placement's*: the
-    /// same inn stands in Goldshire and in Menethil.
+    /// than resolved at load because the position depends on the placement:
+    /// the same inn stands in Goldshire and in Menethil.
     lights: Vec<wmo::WmoLight>,
     /// Every `MODD` spawn, in WMO-local space. Sliced per placement by set.
     doodads: Vec<wmo::WmoDoodad>,
-    /// The building's *solid* triangles, in WMO-local space — a different set
-    /// from `draws`, for the reasons in [`vale_assets::world::collision`]. Shared
-    /// across every placement of the model and transformed per placement.
+    /// The building's solid triangles, in WMO-local space. A different set
+    /// from `draws`, for the reasons in [`vale_assets::world::collision`].
+    /// Shared across every placement of the model and transformed per
+    /// placement.
     collision: Arc<CollisionMesh>,
-    /// One box per indoor group, WMO-local — see [`Interior`].
+    /// One box per indoor group, WMO-local. See [`Interior`].
     interior: Vec<[[f32; 3]; 2]>,
-    /// …and one per group of any kind, with its `MOGP` id — see
+    /// One box per group of any type, with its `MOGP` id. See
     /// [`Interior::areas`].
     areas: Vec<([[f32; 3]; 2], u32)>,
     /// `MOHD`'s own id, the first key into `WMOAreaTable`.
@@ -242,26 +242,26 @@ pub struct WmoReady {
 }
 
 impl WmoReady {
-    /// **The batches, for a placement that is not a `MODF` row.** A continent
-    /// transport is a building the *server* spawns and moves, so it has no
-    /// placement in any file and cannot go through [`spawn_wmos`] — see
+    /// The batches, for a placement that is not a `MODF` row. A continent
+    /// transport is a building the server spawns and moves, so it has no
+    /// placement in any file and cannot go through [`spawn_wmos`]. See
     /// [`crate::render::ships`], which spawns the same batches under an entity
     /// whose transform is written every frame.
     pub fn draws(&self) -> &[ModelDraw] {
         &self.draws
     }
 
-    /// …and its solid triangles, in the building's own space. Shared, so a
-    /// caller placing it somewhere new pays only the transform.
+    /// The building's solid triangles, in its own space. Shared, so a caller
+    /// placing it somewhere new pays only the transform.
     pub fn collision(&self) -> &Arc<CollisionMesh> {
         &self.collision
     }
 
     /// The spawns belonging to one `MODF` doodad set.
     ///
-    /// Only the named set, as `Wmos.doodadsOf` does — set 0 is not additionally
-    /// drawn. That is the behaviour that has been looked at against the game's own
-    /// interiors, and this pass is a port of it.
+    /// Only the named set, as `Wmos.doodadsOf` does; set 0 is not drawn in
+    /// addition. That behaviour was compared against the game's interiors, and
+    /// this pass ports it.
     fn doodads_in_set(&self, set: u16) -> &[wmo::WmoDoodad] {
         let Some(s) = self.doodad_sets.get(set as usize) else {
             return &[];
@@ -283,12 +283,12 @@ pub enum Lookup {
 
 /// Every building that has been asked for, by archive path.
 ///
-/// **The biggest single entries the client holds.** `stormwind.wmo` alone is
-/// 311 groups and 844,627 vertices, and until this round nothing ever let one
-/// go — so a session that visited three cities held all three, meshes and
-/// textures, for the life of the process. [`Self::evict`] drops a building
-/// nothing has placed for [`crate::render::residency::IDLE_SECS`], on the same
-/// sweep and the same reasoning as [`crate::render::models::ModelCache`].
+/// These are the largest single entries the client holds: `stormwind.wmo`
+/// alone is 311 groups and 844,627 vertices. Without eviction, a session that
+/// visited three cities held all three, meshes and textures, for the life of
+/// the process. [`Self::evict`] drops a building nothing has placed for
+/// [`crate::render::residency::IDLE_SECS`], on the same sweep and for the same
+/// reason as [`crate::render::models::ModelCache`].
 #[derive(Resource, Default)]
 pub struct WmoCache {
     ready: HashMap<String, ReadyWmo>,
@@ -296,14 +296,14 @@ pub struct WmoCache {
     pending: HashSet<String>,
     arrived: Vec<Loaded>,
     /// The building currently being converted to GPU assets, part-way through.
-    /// One at a time: the point of the staging is to bound the per-frame work,
-    /// and two buildings in flight would be two budgets.
+    /// One at a time: the staging exists to bound the per-frame work, and two
+    /// buildings in flight would be two budgets.
     staging: Option<Staging>,
     loader: Option<Loader>,
     /// The one magenta placeholder every unfilled texture slot shares. See
     /// [`Self::missing_texture`]; `ModelCache` keeps its own for the same reason.
     missing: Option<Handle<Image>>,
-    /// The renderer's clock, for the stamps [`Self::evict`] reads — written
+    /// The renderer's clock, for the stamps [`Self::evict`] reads. Written
     /// once a frame by [`crate::render::residency::tick`], for the same reason
     /// `ModelCache` keeps one.
     now: f32,
@@ -329,12 +329,11 @@ impl WmoCache {
 
     /// Where `path` has got to, requesting it if this is the first time.
     ///
-    /// **It used to take a world position too**, carried through the cache and
-    /// the staging so that the water inside the building could be tinted by the
-    /// light where the first placement of it stood. Nothing needs it now: every
-    /// liquid surface in the world takes one colour, resolved where the camera
-    /// is — see [`crate::render::water`]. The whole "cached by path, so it keeps
-    /// the place it was first seen from" trade went with it.
+    /// It takes no world position. The water inside a building does not
+    /// depend on where the building stands: every liquid surface in the world
+    /// takes one colour, resolved where the camera is (see
+    /// [`crate::render::water`]). A building cached by path therefore carries
+    /// nothing from the place it was first seen.
     pub fn lookup(&mut self, path: &str) -> Lookup {
         if let Some(ready) = self.ready.get_mut(path) {
             ready.used = self.now;
@@ -364,15 +363,16 @@ impl WmoCache {
         (self.ready.len(), self.failed.len())
     }
 
-    /// How many buildings this pass is still working on — asked for and not
-    /// back, back and not staged, and the one part-way through staging.
+    /// How many buildings this pass is still working on: requested and not
+    /// returned, returned and not staged, and the one part-way through
+    /// staging.
     ///
-    /// Read by [`crate::glue::loading`] for the same reason
-    /// [`crate::render::terrain::LoadedTiles::settling`] is: the ground being
-    /// there is not the same as the city on it being there, and a client that
-    /// took the loading screen down between the two would show Stormwind
-    /// assembling itself — which is the picture half of the bug
-    /// `Standing::floor` covers by holding the character's altitude.
+    /// Read by [`crate::glue::loading`] for the same reason as
+    /// [`crate::render::terrain::LoadedTiles::settling`]: the ground can be
+    /// loaded before the city on it, and taking the loading screen down
+    /// between the two would show Stormwind assembling. `Standing::floor`
+    /// handles the movement side of the same gap by holding the character's
+    /// altitude.
     ///
     /// A building that will not read leaves `pending` for `failed`, so this
     /// reaches zero whatever the archives contain.
@@ -396,33 +396,32 @@ impl WmoCache {
     /// Drop every building nothing has placed since `before`, and answer how
     /// many went.
     ///
-    /// Dropping the entry drops this cache's handles on its meshes and images;
-    /// anything still standing in the world holds its own, so a building whose
-    /// tile is still loaded is unaffected however long ago the *lookup* was —
-    /// which is why the sweep interval has to be shorter than the idle window
-    /// and not the other way round. A re-entry costs the same read it cost the
-    /// first time, which is a background thread and a few frames of staging.
+    /// Dropping the entry drops this cache's handles on its meshes and images.
+    /// Anything still standing in the world holds its own, so a building whose
+    /// tile is still loaded is unaffected however long ago the lookup was;
+    /// this is why the sweep interval must be shorter than the idle window. A
+    /// re-entry costs the same read as the first time: a background thread and
+    /// a few frames of staging.
     pub fn evict(&mut self, before: f32) -> usize {
         let count = self.ready.len();
         self.ready.retain(|_, ready| ready.used >= before);
         count - self.ready.len()
     }
 
-    /// **Forget which buildings would not read**, on the way out of the world.
+    /// Forgets which buildings would not read, on leaving the world.
     ///
-    /// [`Self::failed`] is what stops a placement asking again for something
-    /// that is not in the archives, which is right within a session and wrong
-    /// across one: nothing evicts it, so a building that failed to read *once* —
-    /// an archive open that lost a race on a busy login, a loader thread that
-    /// had gone — was gone for the rest of the **process**, and every placement
-    /// of it anywhere in the world silently drew nothing. A map whose whole
-    /// geometry is one building is the case where that is not a missing prop,
-    /// it is an empty room with no floor.
+    /// [`Self::failed`] stops a placement asking again for something that is
+    /// not in the archives. That is correct within a session and wrong across
+    /// sessions: nothing evicts the set, so a building that failed to read
+    /// once (an archive open that lost a race on a busy login, a loader thread
+    /// that had exited) stayed failed for the rest of the process, and every
+    /// placement of it drew nothing, with no message. On a map whose whole
+    /// geometry is one building, the result is a room with no floor.
     ///
     /// Cleared here rather than on a timer because a session boundary is the
-    /// one moment nothing is holding a placement, and because "log out and back
-    /// in" is what a player would try — and, until this existed, the only thing
-    /// that would not have worked either.
+    /// one moment nothing holds a placement, and because logging out and back
+    /// in is what a player tries first. Without this, that did not recover the
+    /// building either.
     ///
     /// Called by [`crate::render::residency::leave_world`]. Returns how many
     /// were forgotten, for the log line.
@@ -442,9 +441,9 @@ impl Plugin for WmoPlugin {
         app.init_resource::<WmoCache>()
             .add_systems(Startup, start_loader)
             .add_systems(Update, (receive_wmos, spawn_wmos, retire_colliders).chain())
-            // **The placement rather than the batch**, so a building goes as a
-            // whole — and deliberately *not* its `MODD` furniture, which is a
-            // child of the tile and rides the doodad switch with the trees.
+            // Switches the placement rather than the batch, so a building is
+            // hidden as a whole. Its `MODD` furniture is not affected: it is a
+            // child of the tile and follows the doodad switch with the trees.
             // See [`crate::render::tuning`].
             .add_systems(
                 Update,
@@ -488,9 +487,9 @@ struct RawWmo {
 
 /// The thread that reads WMOs, and the two channels to it.
 ///
-/// Its own thread and its own archive chain rather than sharing the model pass's,
-/// for the reason that pass has one at all: `Assets::read` needs `&mut`, and a
-/// building is dozens of files — a root plus one per group — so a WMO load and a
+/// Its own thread and its own archive chain rather than the model pass's, for
+/// the same reason that pass has its own: `Assets::read` needs `&mut`, and a
+/// building is dozens of files (a root plus one per group), so a WMO load and a
 /// tile's 130 doodads should not queue behind each other. Both ends are behind a
 /// `Mutex` because a Bevy resource must be `Sync`; neither is ever contended.
 struct Loader {
@@ -542,11 +541,11 @@ impl Loader {
     }
 }
 
-/// One WMO — root, groups and textures — decoded.
+/// One WMO (root, groups and textures), decoded.
 ///
-/// A group that will not read costs that room and not the cathedral;
-/// `wmo::load` already does that and reports which, so those are logged once
-/// here rather than once per placement.
+/// A group that will not read loses that room, not the whole building.
+/// `wmo::load` already skips such groups and reports which, so they are logged
+/// once here rather than once per placement.
 fn read_wmo(archive: &mut Archive, path: &str) -> Option<RawWmo> {
     let (model, failed_groups) = wmo::load(archive, path).ok()?;
     for failure in &failed_groups {
@@ -566,8 +565,8 @@ fn read_wmo(archive: &mut Archive, path: &str) -> Option<RawWmo> {
         .draws
         .iter()
         .filter_map(|draw| batch_draw(&model, draw))
-        // Meshes built here, on the loader thread — a city's 3,042 batches are
-        // a memcpy the main thread must not make.
+        // Meshes are built here, on the loader thread, so the main thread
+        // does not copy a city's 3,042 batches.
         .map(PreparedDraw::from_raw)
         .collect();
 
@@ -580,10 +579,10 @@ fn read_wmo(archive: &mut Archive, path: &str) -> Option<RawWmo> {
         doodads: model.doodads.clone(),
         // Where the inside of this building is. Read here with the geometry
         // because the groups it comes from are dropped when `wmo::load`
-        // returns, exactly as the collision hull is.
+        // returns, as the collision hull is.
         interior: model.interior_bounds(),
-        // …and where its *areas* are, which is a different subset of the same
-        // groups — see `Interior::areas`.
+        // Where its areas are, which is a different subset of the same
+        // groups. See `Interior::areas`.
         areas: model.area_bounds(),
         wmo_id: model.wmo_id,
         bounds: model.bounds,
@@ -596,16 +595,16 @@ fn read_wmo(archive: &mut Archive, path: &str) -> Option<RawWmo> {
 
 /// One `WmoDraw` as its own vertex buffer, in Bevy's axes.
 ///
-/// The same remap the terrain groups and the M2 batches get, and it buys the same
-/// thing: the batch carries only the vertices it uses, so its `Aabb` is tight and
-/// Bevy's cull does useful work on it.
+/// The same remap the terrain groups and the M2 batches get, for the same
+/// reason: the batch carries only the vertices it uses, so its `Aabb` is tight
+/// and Bevy's cull does useful work on it.
 ///
-/// **The winding is left alone**, as an M2's is. `MOVT` vertices are in the same
-/// model space as an M2's — vmangos writes M2 vertices through `fixCoordSystem`
-/// and straight back through its inverse and writes `MOVT` raw, so both reach
-/// `ModelInstance` in the file's own axes — and `models.js` drew both with
-/// `CULL_FACE` on and the default front face. A change of basis is a rotation and
-/// cannot reverse it.
+/// The winding is not changed, as an M2's is not. `MOVT` vertices are in the
+/// same model space as an M2's: vmangos writes M2 vertices through
+/// `fixCoordSystem` and straight back through its inverse and writes `MOVT`
+/// raw, so both reach `ModelInstance` in the file's own axes, and `models.js`
+/// drew both with `CULL_FACE` on and the default front face. A change of basis
+/// is a rotation and cannot reverse the winding.
 fn batch_draw(model: &WmoModel, draw: &WmoDraw) -> Option<RawDraw> {
     let range = draw.index_start as usize..(draw.index_start + draw.index_count) as usize;
     let indices = model.indices.get(range)?;
@@ -637,25 +636,25 @@ fn batch_draw(model: &WmoModel, draw: &WmoDraw) -> Option<RawDraw> {
             positions.push(axes::to_bevy(model.positions[i]).to_array());
             normals.push(axes::to_bevy(model.normals[i]).to_array());
             uvs.push(model.uvs[i]);
-            // The shaded `MOCV` light, normalised. Kept literal rather than
-            // sRGB-decoded, because MODEL_FRAG used the byte value as it stood
-            // and this is a port of it; `vale wmos` reports the resulting
-            // range (Darkshire: mean peak channel 95/255, nothing saturated) so
-            // the choice stays checkable against the files.
+            // The shaded `MOCV` light, normalised. Kept as stored rather than
+            // sRGB-decoded, because MODEL_FRAG used the byte value unchanged
+            // and this is a port of it. `vale wmos` reports the resulting
+            // range (Darkshire: mean peak channel 95/255, nothing saturated),
+            // so the choice can be checked against the files.
             colours.push(model.colours[i].map(|c| c as f32 / 255.0));
             next
         });
         out.push(mapped);
     }
 
-    // Only vertex-lit batches need the attribute at all, and its *presence* is
-    // what compiles the branch in `m2.wgsl` — a sunlit exterior wall would pay
-    // for a colour it never reads.
+    // Only vertex-lit batches need the attribute, and its presence is what
+    // compiles the branch in `m2.wgsl`, so a sunlit exterior wall would
+    // otherwise pay for a colour it never reads.
     //
-    // **A liquid surface keeps it for the alpha alone.** Its RGB is black and
-    // it is lit by the sun like any exterior, but the alpha is `MLIQ`'s own
-    // per-vertex depth and is the whole of what makes the water visible —
-    // clearing it here is what left the canals blended by `lake_a`'s foam mask.
+    // A liquid surface keeps it for the alpha. Its RGB is black and it is lit
+    // by the sun like any exterior, but the alpha is `MLIQ`'s per-vertex depth
+    // and is what makes the water visible. Clearing it here left the canals
+    // blended by `lake_a`'s foam mask.
     if draw.light == vale_assets::world::wmo::BatchLight::Sun && draw.liquid.is_none() {
         colours.clear();
     }
@@ -705,10 +704,10 @@ fn batch_draw(model: &WmoModel, draw: &WmoDraw) -> Option<RawDraw> {
 /// A building part-way through becoming GPU assets.
 ///
 /// The meshes arrive prebuilt from the loader thread, so what is left here is
-/// `Assets::add` and the materials — but the render world still uploads every
-/// byte added in a frame, so even the cheap half is budgeted. A building
-/// spawns nowhere until its last batch lands: `WmoReady` is inserted whole, so
-/// `spawn_wmos` never sees half a cathedral.
+/// `Assets::add` and the materials. The render world still uploads every byte
+/// added in a frame, so this part is budgeted too. A building spawns nowhere
+/// until its last batch lands: `WmoReady` is inserted whole, so `spawn_wmos`
+/// never sees a partly staged building.
 struct Staging {
     path: String,
     /// Handles for the slots already added, parallel to the model's texture
@@ -756,17 +755,16 @@ fn receive_wmos(
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: Materials,
-    // **The water's colour, which is not in the water.** `lake_a` and `ocean_h`
-    // carry no colour at all — see `vale_assets::tables::light` — so an `MLIQ`
-    // surface is tinted from `Light.dbc`, and the whole world's water takes one
-    // answer, resolved where the camera is. `Option` because the headless
-    // harnesses build worlds with no render plugins. See
-    // [`crate::render::water`], which also keeps it current afterwards: a
-    // building is cached by path and its batches outlive the place they were
-    // first seen from.
+    // The water's colour. `lake_a` and `ocean_h` carry no colour of their own
+    // (see `vale_assets::tables::light`), so an `MLIQ` surface is tinted from
+    // `Light.dbc`, and all water in the world takes one colour, resolved where
+    // the camera is. `Option` because the headless harnesses build worlds with
+    // no render plugins. See [`crate::render::water`], which also keeps the
+    // colour current afterwards: a building is cached by path and its batches
+    // outlive the place they were first seen from.
     palette: Option<Res<crate::render::water::LiquidPalette>>,
-    // …and the flipbook, for the same reason and on the same terms: a canal
-    // takes the same thirty frames a lake does, out of one shared set.
+    // The liquid flipbook, for the same reason and on the same terms: a canal
+    // takes the same thirty frames a lake does, from one shared set.
     flipbook: Option<Res<crate::render::water::LiquidFlipbook>>,
 ) {
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::Wmos);
@@ -778,11 +776,11 @@ fn receive_wmos(
         return;
     }
 
-    // **One magenta image for the whole pass, not one per unfilled slot.**
-    // A fresh `images.add` per slot is a different `AssetId`, so two
-    // otherwise identical materials would key differently and land in
-    // separate batch sets — which is exactly the cost `MaterialPool` exists
-    // to remove. It was also a texture upload per missing slot.
+    // One magenta image for the whole pass, not one per unfilled slot. A
+    // fresh `images.add` per slot is a different `AssetId`, so two otherwise
+    // identical materials would key differently and land in separate batch
+    // sets, which is the cost `MaterialPool` exists to remove. It would also
+    // be a texture upload per missing slot.
     let missing = cache.missing_texture(&mut images);
 
     let mut budget = UPLOAD_UNITS;
@@ -821,13 +819,14 @@ fn receive_wmos(
             let Some(draw) = staging.pending_draws.pop_front() else {
                 break;
             };
-            // **A liquid batch's texture is not the building's**, although
+            // A liquid batch does not use the building's texture, although
             // `WmoModel::add_liquid` names one in `MOTX` so that the file stays
-            // self-describing: it is the shared flipbook's anchor frame, which
-            // is what puts a canal and a lake on one material and keeps them
-            // animating together. Anchored rather than showing — see
-            // [`crate::render::water::LiquidFlipbook::anchor`], where the cost
-            // of keying a material on the wall clock is.
+            // self-describing. It uses the shared flipbook's anchor frame,
+            // which puts a canal and a lake on one material and keeps them
+            // animating together. The anchor frame keys the material; it is
+            // not the frame shown. See
+            // [`crate::render::water::LiquidFlipbook::anchor`] for the cost of
+            // keying a material on the wall clock.
             let texture = draw
                 .liquid
                 .and_then(|kind| flipbook.as_ref()?.anchor(kind))
@@ -881,21 +880,25 @@ fn receive_wmos(
 
 /// Spawn whatever placements have a building ready.
 ///
-/// No frame budget: a tile holds a dozen buildings, not twelve hundred trees, and
-/// the expensive half is [`receive_wmos`], which has one.
+/// No frame budget: a tile holds a dozen buildings, not twelve hundred trees,
+/// and the expensive part is [`receive_wmos`], which has one.
 ///
-/// Public so the doodad pass can order itself after it — a building's interior
-/// `MODD` furniture is handed over through the tile's `PendingDoodads`, and that
-/// hand-over used to be sequenced only by the two systems' conflicting access to
-/// that component. See `doodads::DoodadPlugin`.
+/// Public so the doodad pass can order itself after it. A building's interior
+/// `MODD` furniture is handed over through the tile's `PendingDoodads`, and
+/// without an explicit order that hand-over is sequenced only by the two
+/// systems' conflicting access to that component. See `doodads::DoodadPlugin`.
 pub fn spawn_wmos(
     mut commands: Commands,
     mut cache: ResMut<WmoCache>,
     mut tiles: Query<(Entity, &TerrainTile, &mut PendingWmos, &mut PendingDoodads)>,
     focus: Res<crate::render::focus::WorldFocus>,
     solids: Res<Solids>,
+    // The terrain cache the mover reads, for the baked shadow under an
+    // exterior prop. Absent with no session, where every prop counts as lit.
+    session: Option<Res<crate::world::session::Session>>,
 ) {
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::Wmos);
+    let active = session.as_ref().and_then(|s| s.active.as_ref());
     if !focus.present {
         return;
     }
@@ -903,19 +906,17 @@ pub fn spawn_wmos(
     for (tile, coord, mut pending, mut tile_doodads) in &mut tiles {
         let coord = coord.coord;
         pending.0.retain(|placement| {
-            // **Every path out of this closure but `Loading` settles the
-            // placement**, and that is load-bearing rather than tidy: the
-            // mover refuses to stand on the ground under a `MODF` box it has
-            // no answer for (`Standing::floor`), so a building that turns out
-            // to have nothing solid in it — or that will not load at all —
-            // has to *say* so, or it is a permanent hole nobody can land in.
-            // A hull that is coming settles when it arrives, inside
+            // Every path out of this closure except `Loading` settles the
+            // placement. The mover refuses to stand on the ground under a
+            // `MODF` box it has no answer for (`Standing::floor`), so a
+            // building that has nothing solid in it, or that will not load,
+            // must be settled here, or it is a permanent hole nobody can land
+            // in. A hull that is still coming settles when it arrives, inside
             // `CollisionWorld::insert`.
             let ready = match cache.lookup(&placement.path) {
                 Lookup::Ready(ready) => ready,
                 // Still reading it: keep the placement and try next frame.
-                // This is the one state that is genuinely "not yet", and it is
-                // the one the reference's own loader waits on.
+                // This is the only state that means "not yet".
                 Lookup::Loading => return true,
                 // Reported once by the loader.
                 Lookup::Failed => {
@@ -930,16 +931,16 @@ pub fn spawn_wmos(
                 }
             }
 
-            // Composed in the file's own frame — 180° term and all, which
-            // `vale wmos` puts on the game's own `MODF` boxes to 0.00 yards —
-            // and conjugated once here. A rotation and a uniform scale, so the
-            // decomposition into a `Transform` is exact.
+            // Composed in the file's own frame, including the 180° term (which
+            // `vale wmos` matches to the game's own `MODF` boxes to 0.00
+            // yards), and conjugated once here. A rotation and a uniform scale,
+            // so the decomposition into a `Transform` is exact.
             let placement_matrix = Mat4::from_cols_array(&placement.matrix);
-            // **What the rooms of this placement are, and what they light.** A
-            // child of the tile like everything else here, so walking out of
-            // range retires it with the building — an interior left behind is a
-            // lit room standing in an empty field, which is the same failure
-            // `retire_colliders` exists for one component along.
+            // The rooms of this placement and the light they give. A
+            // component of the building, which is a child of the tile, so
+            // walking out of range retires it with the building. An interior
+            // left behind would be a lit room standing in an empty field: the
+            // same failure `retire_colliders` prevents for colliders.
             let interior = Interior {
                 inverse: placement_matrix.inverse(),
                 bounds: ready.bounds,
@@ -948,20 +949,21 @@ pub fn spawn_wmos(
                     ready.doodads_in_set(placement.doodad_set),
                     ready.ambient,
                 )),
-                // **…and which places this building's groups are**, which is the
-                // placement's own question rather than the model's: the same
-                // inn stands in Goldshire and in Menethil, and only the `MODF`
-                // name set says which of them this one is. See
-                // `interface::worldmap`, which asks.
+                // Which places this building's groups are. This depends on the
+                // placement, not only the model: the same inn stands in
+                // Goldshire and in Menethil, and only the `MODF` name set says
+                // which of them this one is. See `interface::worldmap`, which
+                // reads it.
                 areas: ready.areas.clone(),
                 wmo_id: ready.wmo_id,
                 name_set: placement.name_set,
             };
             let transform = Transform::from_matrix(axes::to_bevy_affine(placement_matrix));
-            // **What the building says it is lit by** — `MOLT`, resolved to
-            // world space once here because a building does not move. `None`
-            // for a barn and ten for the Goldshire inn. See `render::lamps`;
-            // 1.12 itself reads these records for nothing at all.
+            // The lights the building's `MOLT` chunk lists, resolved to world
+            // space once here because a building does not move. `None` for a
+            // barn and ten for the Goldshire inn. See `render::lamps`. The
+            // 1.12.1 client does not use these records; lighting from them is
+            // a deviation of this client.
             let lamps = crate::render::lamps::StaticLamps::of_building(&ready.lights, &transform);
             let building = commands
                 .spawn((
@@ -990,10 +992,9 @@ pub fn spawn_wmos(
                         ChildOf(building),
                     ))
                     .id();
-                // **A canal is water, whichever chunk it came out of.** The
-                // building's `MLIQ` batches carry the terrain pass's own water
-                // marker so that one switch reaches every liquid surface on
-                // screen — see [`crate::render::tuning::WorldTuning::water`].
+                // A building's `MLIQ` batches carry the terrain pass's water
+                // marker, so that one switch reaches every liquid surface on
+                // screen. See [`crate::render::tuning::WorldTuning::water`].
                 if let Some(kind) = draw.liquid {
                     commands
                         .entity(batch)
@@ -1001,17 +1002,17 @@ pub fn spawn_wmos(
                 }
             }
 
-            // And the solid half. The *matrix* is only known here — the loader
-            // has the model, this has the placement — but the transform itself
-            // runs on the compute pool: `Collider::place` walks every solid
-            // triangle, and Stormwind's five placements cost 27.6 ms (measured
-            // by `vale collision Azeroth 31 48`), which as main-thread work
-            // was a whole dropped frame the moment a city arrived. The task
-            // inserts straight into [`Solids`], which is an `Arc` around a
-            // lock the session thread already shares. A task that lands after
-            // its tile has walked away leaves a hull `retire_colliders` removes
-            // on its next pass — that check runs every frame precisely so a
-            // stale collider cannot outlive the comparison.
+            // The collision hull. The matrix is only known here (the loader
+            // has the model, this system has the placement), but the
+            // transform runs on the compute pool: `Collider::place` walks
+            // every solid triangle, and Stormwind's five placements cost
+            // 27.6 ms (measured by `vale collision Azeroth 31 48`), a dropped
+            // frame on the main thread when a city arrives. The task inserts
+            // directly into [`Solids`], which is an `Arc` around a lock the
+            // session thread already shares. A task that completes after its
+            // tile has been unloaded leaves a hull that `retire_colliders`
+            // removes on its next pass; that check runs every frame so that a
+            // stale collider does not persist.
             if !ready.collision.is_empty() {
                 let collision = Arc::clone(&ready.collision);
                 let matrix = placement.matrix;
@@ -1026,43 +1027,42 @@ pub fn spawn_wmos(
             }
 
             // The furniture, folded into world space and handed to the doodad
-            // pass — see the module note. This is the earliest it can happen:
-            // which doodads there are was not known until the model arrived.
+            // pass; see the module doc. This is the earliest it can happen:
+            // the set of doodads is not known until the model has arrived.
             tile_doodads.indoor.extend(
                 ready
                     .doodads_in_set(placement.doodad_set)
                     .iter()
                     .filter(|d| d.drawable())
-                    .map(|d| crate::render::doodads::PlacedDoodad {
-                        placement: interior_placement(
+                    .map(|d| {
+                        let placed = interior_placement(
                             placement,
                             &wmo::mul4(&placement.matrix, &d.matrix),
                             &d.path,
-                        ),
-                        // **The spawn's own baked light, or the building's — or
-                        // the sun, for the spawns `MODR` puts outside.** A
-                        // `MODD` doodad in a room is under a roof and carries no
-                        // `MOCV` of its own, so the sun must not light it — see
-                        // `WmoDoodad::light`. But a doodad set also holds the
-                        // lamp-posts and market stalls in the street, and those
-                        // are referenced only by `EXTERIOR` groups: lighting
-                        // them by their bake draws them at dusk in the middle of
-                        // the day (see `WmoDoodad::exterior_lit`). Every indoor
-                        // spawn measured so far names a colour; the root's
-                        // `MOHD` ambient is the documented fallback for one that
-                        // does not, and it is dark (Stormwind states 11/11/11),
-                        // which is the honest answer for a room with no baked
-                        // light rather than a flattering one.
-                        light: if d.exterior_lit {
-                            None
+                        );
+                        // A prop referenced only by exterior groups is lit by
+                        // the sun, and its sun scale is the terrain doodad's:
+                        // 0.5 over the ground's baked shadow, otherwise 1.0. A
+                        // prop in a room is lit by the spawn's own colour, or
+                        // the building's `MOHD` ambient when the spawn names
+                        // none, and takes no sun (see `WmoDoodad::light` and
+                        // `WmoDoodad::exterior_lit`).
+                        let (light, sun_scale) = if d.exterior_lit {
+                            let shadowed = active.is_some_and(|a| {
+                                a.terrain_shadowed(map_id, placed.position[0], placed.position[1])
+                            });
+                            (None, crate::render::doodads::doodad_sun_scale(shadowed))
                         } else {
-                            Some(RoomLight::new(d.light().unwrap_or(ready.ambient)))
-                        },
-                        // A WMO's own prop takes the neutral sun, not the
-                        // terrain boost — the client's per-instance scale is
-                        // 1.0 for an exterior WMO doodad, and an indoor one
-                        // never sees the sun at all. See `models::sun_scale`.
-                        sun_scale: models::sun_scale::NEUTRAL,
+                            (
+                                Some(RoomLight::new(d.light().unwrap_or(ready.ambient))),
+                                models::sun_scale::NEUTRAL,
+                            )
+                        };
+                        crate::render::doodads::PlacedDoodad {
+                            placement: placed,
+                            light,
+                            sun_scale,
+                        }
                     }),
             );
             false
@@ -1072,10 +1072,10 @@ pub fn spawn_wmos(
 
 /// Drop the collision hulls of tiles that have walked out of range.
 ///
-/// Keyed off the tiles that still *exist* rather than off a despawn hook,
+/// Keyed off the tiles that still exist rather than off a despawn hook,
 /// because a building is a child of its tile and Bevy's recursive despawn does
-/// not tell this pass which children went with it — and a collider left behind
-/// is an invisible wall standing in an empty field. Nine coordinates a frame
+/// not tell this pass which children went with it. A collider left behind is
+/// an invisible wall standing in an empty field. Nine coordinates a frame
 /// with an early-out when nothing has changed, which is the steady state.
 fn retire_colliders(tiles: Query<&TerrainTile>, solids: Res<Solids>) {
     let live: std::collections::HashSet<(u32, u32)> = tiles.iter().map(|t| t.coord).collect();
@@ -1098,7 +1098,7 @@ fn interior_placement(placement: &PlacedModel, matrix: &[f32; 16], path: &str) -
         matrix: *matrix,
         scale: 1.0,
         doodad_set: 0,
-        // Both meaningless for an M2 — a doodad has no groups and no name sets.
+        // Both unused for an M2: a doodad has no groups and no name sets.
         name_set: 0,
     }
 }
@@ -1159,7 +1159,7 @@ mod tests {
     }
 
     /// Splitting a building into per-batch meshes must not lose a triangle, and a
-    /// batch must carry only the vertices it uses — that is what makes its
+    /// batch must carry only the vertices it uses. That is what makes its
     /// bounding box, and therefore Bevy's cull, tighter than the per-group cull
     /// it replaces.
     #[test]
@@ -1174,12 +1174,11 @@ mod tests {
         assert_eq!(half.positions.len(), 3);
     }
 
-    /// **The colours must stay parallel to the positions through the remap.**
-    /// `WmoModel::assemble` is careful to emit one colour per vertex even for
-    /// groups with no `MOCV`, precisely so this stays true across the group
-    /// concatenation; a remap that dropped or reordered them would light each
-    /// vertex with some *other* vertex's lamp, which renders as a plausibly lit
-    /// room rather than as an error.
+    /// The colours stay parallel to the positions through the remap.
+    /// `WmoModel::assemble` emits one colour per vertex even for groups with no
+    /// `MOCV`, so that this holds across the group concatenation. A remap that
+    /// dropped or reordered them would light each vertex with another vertex's
+    /// light, which renders as a plausibly lit room rather than as an error.
     #[test]
     fn the_baked_light_follows_its_own_vertex() {
         let model = sample();
@@ -1207,12 +1206,12 @@ mod tests {
         assert_eq!(batch.light, vale_assets::world::wmo::BatchLight::Sun);
     }
 
-    /// **The bug that left Stormwind's canals empty.** A liquid surface is not
-    /// vertex-*lit* — the sun lights water — so it fell into the same branch as
-    /// a sunlit exterior wall and had its colour attribute cleared. That alpha
-    /// is `MLIQ`'s depth, and it is what the fragment shader mixes the shallow
-    /// and deep opacities with; without it the whole surface draws at the bank's
-    /// alpha.
+    /// A liquid batch keeps its colour attribute. A liquid surface is not
+    /// vertex-lit (the sun lights water), so it once fell into the same branch
+    /// as a sunlit exterior wall and had its colour attribute cleared, which
+    /// left Stormwind's canals empty. That alpha is `MLIQ`'s depth, and the
+    /// fragment shader mixes the shallow and deep opacities with it; without
+    /// it the whole surface draws at the bank's alpha.
     #[test]
     fn a_liquid_batch_keeps_its_colours_although_it_is_not_vertex_lit() {
         let model = sample();
@@ -1241,10 +1240,10 @@ mod tests {
         assert!(batch_draw(&model, &draw(4, 6, true)).is_none());
     }
 
-    /// The winding survives the change of basis, exactly as an M2's does — and
-    /// for the same reason, since `MOVT` vertices are in the same model space.
-    /// Bevy back-face culls by default, which is what turned the *terrain* inside
-    /// out when its winding was wrong.
+    /// The winding survives the change of basis, as an M2's does, for the same
+    /// reason: `MOVT` vertices are in the same model space. Bevy back-face
+    /// culls by default, so a wrong winding turns the surface inside out, as it
+    /// once did for the terrain.
     #[test]
     fn a_batch_keeps_the_winding_the_file_gave_it() {
         let model = sample();
@@ -1262,12 +1261,11 @@ mod tests {
         );
     }
 
-    /// **The join this pass has to get right.** A `MODD` spawn's matrix is
-    /// WMO-local, so a table inside a building is the placement's matrix times its
-    /// own. Getting the multiplication the wrong way round puts the furniture at
-    /// plausible world coordinates — somewhere else entirely, but on the map —
-    /// which is why this is checked against the point transformed the long way
-    /// rather than by eye.
+    /// A `MODD` spawn's matrix is WMO-local, so a table inside a building is
+    /// placed by the placement's matrix times its own. Multiplying in the wrong
+    /// order puts the furniture at plausible world coordinates elsewhere on the
+    /// map, so this is checked against the point transformed one matrix at a
+    /// time rather than by eye.
     #[test]
     fn a_doodad_inside_a_building_lands_where_both_matrices_say() {
         let building = vale_assets::world::adt::placement_matrix(
@@ -1309,11 +1307,11 @@ mod tests {
         );
     }
 
-    /// **The interiority test in the building's own frame, checked against the
-    /// point transformed the long way** — the same shape of check the `MODD`
-    /// matrix gets one test down, and for the same reason: an inverse applied
-    /// the wrong way round puts the room at plausible coordinates somewhere else
-    /// on the map, and every count stays right.
+    /// The interior test in the building's own frame, checked against points
+    /// transformed forward through the placement. This is the same check the
+    /// `MODD` matrix gets in the test above, for the same reason: an inverse
+    /// applied the wrong way round puts the room at plausible coordinates
+    /// elsewhere on the map, and every count stays right.
     #[test]
     fn a_room_holds_the_points_its_own_matrix_says_it_does() {
         // A building 1,000 yards out, turned 60 degrees, with one room ten
@@ -1334,17 +1332,17 @@ mod tests {
             name_set: 0,
         };
 
-        // A point taken *forward* through the placement from inside the room
+        // A point taken forward through the placement from inside the room
         // must test as inside; one from outside it must not. Neither is a
-        // coordinate anyone can eyeball, which is the point of going this way
-        // round.
+        // coordinate that can be checked by eye, which is why the test works
+        // in this direction.
         let world = |local: [f32; 3]| {
             Mat4::from_cols_array(&matrix)
                 .transform_point3(Vec3::from(local))
                 .to_array()
         };
         assert!(interior.holds(world([0.0, 0.0, 1.0])), "the middle of the room");
-        // Not *on* the floor: a point round-tripped through a rotation lands a
+        // Not on the floor: a point round-tripped through a rotation lands a
         // few billionths off, and the box's own bottom face is at z = 0. The
         // exact-boundary case is pinned in the assets crate, where there is no
         // matrix in the way.
@@ -1361,12 +1359,12 @@ mod tests {
         );
     }
 
-    /// **…and the area test is the same transform over a different set of
-    /// boxes**, answering *which* group rather than yes or no.
+    /// The area test is the same transform over a different set of boxes, and
+    /// answers which group rather than yes or no.
     ///
-    /// The two lists disagree on purpose: a city's districts are `EXTERIOR`
-    /// groups, so `rooms` is empty where `areas` is not — a building that holds
-    /// nobody indoors still names the place you are standing in.
+    /// The two lists differ by design: a city's districts are `EXTERIOR`
+    /// groups, so `rooms` is empty where `areas` is not. A building with no
+    /// indoor group still names the place a point is in.
     #[test]
     fn a_group_names_the_place_a_point_is_standing_in() {
         let matrix = vale_assets::world::adt::placement_matrix(
@@ -1400,8 +1398,8 @@ mod tests {
         assert_eq!(interior.group_at([-2.0, 0.0, 1.0]), None);
     }
 
-    /// A building with no indoor group holds nobody — which is most of the
-    /// world's WMOs (bridges, walls, wall posts).
+    /// A building with no indoor group holds nobody. Most of the world's WMOs
+    /// are such buildings (bridges, walls, wall posts).
     #[test]
     fn a_building_with_no_rooms_lights_nothing() {
         let interior = Interior {
@@ -1418,8 +1416,8 @@ mod tests {
 
     /// A `MODF` names one doodad set and gets that set's spawns, which is how the
     /// same building stands furnished in one place and empty in another. A set the
-    /// root does not have is empty rather than a panic — a patched archive can
-    /// name one.
+    /// root does not have is empty rather than a panic, because a patched
+    /// archive can name one.
     #[test]
     fn a_placement_gets_only_its_own_doodad_set() {
         let spawn = |name: &str| WmoDoodad {
@@ -1469,7 +1467,7 @@ mod tests {
                 .collect()
         };
         assert_eq!(names(0), ["global.m2"]);
-        // Set 1 only — set 0 is *not* additionally drawn, matching `Wmos.doodadsOf`.
+        // Set 1 only. Set 0 is not drawn in addition, matching `Wmos.doodadsOf`.
         assert_eq!(names(1), ["a1.m2", "a2.m2"]);
         assert_eq!(names(2), ["a2.m2"], "an overhanging run is clamped");
         assert!(names(9).is_empty(), "a set that does not exist is empty");

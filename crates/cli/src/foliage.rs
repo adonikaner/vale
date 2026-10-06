@@ -1,37 +1,38 @@
-//! `vale foliage` — the ground effects: the table, the models, and what one
-//! tile actually plants.
+//! `vale foliage`: the ground effects. Reports the table, the models, and what
+//! one tile plants.
 //!
-//! Two forms, and they check different halves.
+//! The command has two forms, which check different parts.
 //!
-//! **`vale foliage`** is the *table* against the archives: how many of
+//! `vale foliage` checks the table against the archives: how many of
 //! `GroundEffectTexture`'s 12,742 rows plant anything, how many distinct models
-//! they name between them, and how many of those models are files that actually
-//! exist. That last number is the one worth watching — 32 of the 443 names are
-//! in no archive in the chain, and a client that quietly drew 411 of 443 would
-//! look exactly like one that drew all of them.
+//! they name between them, and how many of those models are files that exist.
+//! 32 of the 443 names are in no archive in the chain. A client that drew 411
+//! of 443 would look the same as one that drew all of them, so only this count
+//! shows the missing ones.
 //!
-//! **`vale foliage <Map> <x> <y>`** is one tile's own ground: how its 16,384
-//! detail cells divide into suppressed, bare and planted, how many tufts that
-//! comes to, and which models over which textures. It also runs the two
-//! placement checks that cannot be made from the table alone —
+//! `vale foliage <Map> <x> <y>` checks one tile's ground: how its 16,384
+//! detail cells divide into suppressed, bare and planted, how many tufts the
+//! tile grows at the default `frillDensity`, and which models over which
+//! textures. It also runs the two placement checks that cannot be made from
+//! the table alone:
 //!
-//! * **every tuft stands inside the chunk that planted it**, which is the
-//!   check on the cell axes (they run along *decreasing* world x and y, and
-//!   getting that backwards grows a chunk's grass on its neighbour);
-//! * **every tuft stands on the drawn ground**, sampled again through
-//!   `Adt::height_at` — the height a *character* walks on — so the two
-//!   interpolations cannot drift apart without this saying so.
+//! * every tuft stands inside the chunk that planted it. This checks the cell
+//!   axes, which run along decreasing world x and y; with them reversed a
+//!   chunk's grass grows on its neighbour.
+//! * every tuft stands on the drawn ground, sampled again through
+//!   `Adt::height_at`, the height a character walks on, so a difference
+//!   between the two interpolations is reported.
 //!
-//! And it reports the number the renderer's design rests on: the **distinct
-//! textures per chunk**, which is how many draw calls a chunk's merged foliage
-//! comes to. It is 1 on every tile measured.
+//! It also reports the distinct textures per chunk, which is how many draw
+//! calls a chunk's merged foliage comes to: 1 on `Azeroth_34_51`, up to 2 on
+//! `Azeroth_32_48` and up to 3 on `Kalimdor_39_30`.
 
 use crate::common::*;
 use vale_assets::adt_path;
 use vale_assets::tables::dbc::dbc_path;
 use vale_assets::tables::foliage::GroundEffects;
 use vale_assets::world::adt::{Adt, CHUNK_SIZE};
-use vale_assets::world::foliage::{ChunkFoliage, CELLS_PER_CHUNK};
+use vale_assets::world::foliage::{ChunkFoliage, CELLS_PER_CHUNK, DEFAULT_FRILL_DENSITY};
 use vale_assets::world::m2::M2;
 use vale_config::Config;
 use std::collections::{BTreeMap, BTreeSet};
@@ -84,10 +85,9 @@ pub fn cmd_foliage(cfg: &Config) -> Result<(), String> {
         println!("    …and {} more", missing.len() - 6);
     }
 
-    // **The merge's premise, stated as a number.** A detail doodad that is one
-    // batch is one that can be concatenated into its chunk's mesh without
-    // splitting it; the whole population being one batch is why a chunk's
-    // foliage is a single draw call.
+    // A detail doodad that is one batch can be concatenated into its chunk's
+    // mesh without splitting it. Every model being one batch is why a chunk's
+    // foliage is one draw call per texture.
     let mut line: Vec<String> = batches
         .iter()
         .map(|(n, count)| format!("{count} of {n}"))
@@ -139,8 +139,8 @@ pub fn cmd_foliage_tile(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), S
          that plants nothing, {planted} planted"
     );
 
-    // The plans, then the tufts. Both are what the renderer does, in the order
-    // it does them — the plan survives the parse and the tufts are made from it.
+    // The plans, then the tufts, in the order the renderer makes them: the
+    // plan is kept from the parse and the tufts are made from it.
     let mut plans = 0usize;
     let mut tufts = Vec::new();
     let mut per_chunk_textures: BTreeMap<usize, usize> = BTreeMap::new();
@@ -150,7 +150,7 @@ pub fn cmd_foliage_tile(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), S
     let mut worst = 0.0f32;
 
     // The model -> texture join, read once: a chunk's draw-call count is the
-    // number of distinct *textures* over the models it plants, not models.
+    // number of distinct textures over the models it plants, not of models.
     let mut texture_of: BTreeMap<u16, String> = BTreeMap::new();
     for (index, path) in effects.models().iter().enumerate() {
         let texture = assets
@@ -168,7 +168,8 @@ pub fn cmd_foliage_tile(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), S
         };
         plans += 1;
         let before = tufts.len();
-        plan.grow(&effects, &mut tufts);
+        // At the client's default `frillDensity`; a session reads `Config.wtf`.
+        plan.grow(&effects, DEFAULT_FRILL_DENSITY, &mut tufts);
 
         let mut here: BTreeSet<&str> = BTreeSet::new();
         for tuft in &tufts[before..] {
@@ -192,7 +193,7 @@ pub fn cmd_foliage_tile(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), S
     }
 
     println!(
-        "  {plans}/{} chunks plant anything, {} tufts over the tile ({:.0} per planted chunk)",
+        "  {plans}/{} chunks plant anything, {} tufts over the tile at frillDensity {DEFAULT_FRILL_DENSITY} ({:.0} per planted chunk)",
         adt.chunks.len(),
         tufts.len(),
         tufts.len() as f32 / plans.max(1) as f32

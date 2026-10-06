@@ -70,12 +70,13 @@ fn the_gender_suffix_falls_back_to_unisex() {
     assert!(female[1].ends_with("_U.blp"));
 }
 
-/// `Slot::layer` is the paint order. A glove and a sleeve both paint the arm,
-/// and the one painted last is the one seen.
+/// A glove and a sleeve both paint the lower arm, and the one painted last is
+/// the one seen. [`Slot::paint_priority`] gives the gloves 3 there and the
+/// shirt 0, so the glove is painted over the sleeve.
 #[test]
 fn equipment_paints_body_outwards() {
     // Both paint the forearm: a sleeve runs down it and a glove's cuff runs
-    // up it. The paint order resolves that overlap.
+    // up it. The paint priority resolves that overlap.
     let strings = b"\0Sleeve_AL\0Glove_AL\0";
     let mut shirt = vec![0u32; 23];
     shirt[0] = 1;
@@ -85,8 +86,8 @@ fn equipment_paints_body_outwards() {
     gloves[fields::TEXTURE + 1] = 11;
     let table = ItemDisplays::parse(&build(&[shirt, gloves], 23, strings)).expect("a table");
 
-    // The gloves are listed first: the result order comes from the slot,
-    // not from the caller's list.
+    // The gloves are listed first: the result order comes from the paint
+    // priority, not from the caller's list.
     let items = [
         Equipped {
             display_id: 2,
@@ -131,7 +132,9 @@ fn an_items_variants_land_in_its_slots_groups() {
     assert!(geosets.contains(&803), "{geosets:?}");
     assert!(geosets.contains(&1001), "the default variant still claims 10");
     assert!(geosets.contains(&1305), "{geosets:?}");
-    assert_eq!(geosets.iter().filter(|g| **g != 0).count(), 3);
+    // The skirt empties groups 5, 9 and 11 with their `x00` claims.
+    let drawn = geosets.iter().filter(|g| **g != 0 && **g % 100 != 0).count();
+    assert_eq!(drawn, 3, "{geosets:?}");
 
     // The cape is the exception: its x01 geoset is the bare back, so a cloak
     // asking for variant 0 draws 1502. Drawing 1501 shows a character with no
@@ -150,19 +153,19 @@ fn an_items_variants_land_in_its_slots_groups() {
 }
 
 /// A group holds one variant. Where two garments claim the same group, the
-/// outer one wins.
+/// later one in slot order wins.
 ///
-/// A bracer and a sleeve both state group 8, and a robe's skirt and a pair of
-/// trousers both state 13. Drawing both variants of a group puts two cuffs
-/// on one arm in the same place, and they z-fight. The duplicates did not
-/// appear while `geosetGroup` was read one field high: every value was 0, so
-/// every item asked for its group's default and the duplicates were
-/// identical.
+/// A shirt and a chest both state group 8; drawing both variants puts two
+/// cuffs on one arm in the same place, and they z-fight. A robe's skirt and a
+/// pair of trousers both state group 13; there the skirt rule in
+/// [`item_geosets`] draws the chest's skirt. With `geosetGroup` read one field
+/// high every value is 0, every item asks for its group's default, and the
+/// duplicates are identical, so this test needs non-zero variants.
 #[test]
-fn two_garments_claiming_one_group_resolve_by_paint_order() {
-    let mut bracer = vec![0u32; fields::COUNT];
-    bracer[0] = 1;
-    bracer[fields::GEOSET_GROUP] = 2; // group 8 -> 803
+fn two_garments_claiming_one_group_resolve_by_slot_order() {
+    let mut shirt = vec![0u32; fields::COUNT];
+    shirt[0] = 1;
+    shirt[fields::GEOSET_GROUP] = 2; // group 8 -> 803
     let mut robe = vec![0u32; fields::COUNT];
     robe[0] = 2;
     robe[fields::GEOSET_GROUP] = 1; // group 8 -> 802
@@ -170,27 +173,116 @@ fn two_garments_claiming_one_group_resolve_by_paint_order() {
     let mut trousers = vec![0u32; fields::COUNT];
     trousers[0] = 3;
     trousers[fields::GEOSET_GROUP + 2] = 0; // group 13 -> 1301, bare legs
-    let table = ItemDisplays::parse(&build(&[bracer, robe, trousers], fields::COUNT, b"\0"))
+    let table = ItemDisplays::parse(&build(&[shirt, robe, trousers], fields::COUNT, b"\0"))
         .expect("a table");
 
-    // The items are listed in an arbitrary order: the slot's paint order
-    // decides, not the caller's list.
+    // The items are listed in an arbitrary order: the slot order decides,
+    // not the caller's list.
     let geosets = item_geosets(
         &table,
         &[
             Equipped { display_id: 2, slot: Slot::Robe },
-            Equipped { display_id: 1, slot: Slot::Wrists },
+            Equipped { display_id: 1, slot: Slot::Shirt },
             Equipped { display_id: 3, slot: Slot::Legs },
         ],
     );
-    // A bracer paints over a sleeve, which is why a vanilla character's
-    // bracer is visible over a robe. The bracer's cuff is the one drawn.
-    assert!(geosets.contains(&803), "the bracer is the outer cuff: {geosets:?}");
-    assert!(!geosets.contains(&802), "both cuffs drawn at once: {geosets:?}");
-    // The robe is outside the trousers, so its skirt replaces the bare legs
-    // rather than being drawn through them.
+    assert!(geosets.contains(&802), "the chest's cuff is drawn: {geosets:?}");
+    assert!(!geosets.contains(&803), "both cuffs drawn at once: {geosets:?}");
     assert!(geosets.contains(&1302), "the skirt beats the trousers: {geosets:?}");
     assert!(!geosets.contains(&1301), "bare legs under the skirt: {geosets:?}");
+}
+
+/// The 1.12.1 client's four overrides of the slots' own geosets: a skirt
+/// empties the foot, bootleg, kneepad and trouser groups; bootleg boots drop
+/// the trousers' kneepad; gloves with a cuff replace the chest's cuff; and
+/// bracers draw no geometry. Without the first rule a robe is drawn with the
+/// boots' bootleg below its hem.
+#[test]
+fn a_skirt_hides_the_boots_and_a_glove_cuff_replaces_the_sleeve() {
+    let row = |id: u32, groups: [u32; 3]| {
+        let mut row = vec![0u32; fields::COUNT];
+        row[0] = id;
+        row[fields::GEOSET_GROUP..fields::GEOSET_GROUP + 3].copy_from_slice(&groups);
+        row
+    };
+    let table = ItemDisplays::parse(&build(
+        &[
+            row(1, [1, 0, 1]), // robe: cuff 802, skirt 1302
+            row(2, [2, 0, 0]), // boots: bootleg 503
+            row(3, [1, 0, 0]), // trousers: kneepad 902
+            row(4, [1, 0, 0]), // gloves: cuff 402
+            row(5, [2, 0, 0]), // bracers: would be 803
+            row(6, [0, 0, 0]), // chest without a skirt
+        ],
+        fields::COUNT,
+        b"\0",
+    ))
+    .expect("a table");
+    let worn = |items: &[(u32, Slot)]| {
+        let items: Vec<Equipped> = items
+            .iter()
+            .map(|&(display_id, slot)| Equipped { display_id, slot })
+            .collect();
+        item_geosets(&table, &items)
+    };
+
+    let robed = worn(&[(1, Slot::Robe), (2, Slot::Feet), (3, Slot::Legs)]);
+    assert!(robed.contains(&1302), "{robed:?}");
+    assert!(robed.contains(&500), "the foot group is emptied: {robed:?}");
+    assert!(!robed.iter().any(|g| (501..600).contains(g)), "{robed:?}");
+    assert!(!robed.iter().any(|g| (901..1000).contains(g)), "{robed:?}");
+
+    let booted = worn(&[(6, Slot::Chest), (2, Slot::Feet), (3, Slot::Legs)]);
+    assert!(booted.contains(&503), "{booted:?}");
+    assert!(booted.contains(&900), "the bootleg drops the kneepad: {booted:?}");
+    assert!(!booted.contains(&902), "{booted:?}");
+
+    let gloved = worn(&[(1, Slot::Robe), (4, Slot::Hands), (5, Slot::Wrists)]);
+    assert!(gloved.contains(&402), "{gloved:?}");
+    assert!(!gloved.iter().any(|g| (801..900).contains(g)), "{gloved:?}");
+}
+
+/// A robe's lower leg covers the boots', and bootleg boots cover the
+/// trousers'. The paint order is per region, not per slot: boots paint over a
+/// plain chest's lower leg, and a chest with a skirt paints over the boots.
+#[test]
+fn a_robes_lower_leg_covers_the_boots() {
+    let strings = b"\0Robe_LL\0Boot_LL\0Pant_LL\0";
+    let mut robe = vec![0u32; fields::COUNT];
+    robe[0] = 1;
+    robe[fields::GEOSET_GROUP + 2] = 1;
+    robe[fields::TEXTURE + 6] = 1;
+    let mut boots = vec![0u32; fields::COUNT];
+    boots[0] = 2;
+    boots[fields::TEXTURE + 6] = 9;
+    let mut tall_boots = boots.clone();
+    tall_boots[0] = 3;
+    tall_boots[fields::GEOSET_GROUP] = 1;
+    let mut trousers = vec![0u32; fields::COUNT];
+    trousers[0] = 4;
+    trousers[fields::TEXTURE + 6] = 17;
+    let mut chest = robe.clone();
+    chest[0] = 5;
+    chest[fields::GEOSET_GROUP + 2] = 0;
+    let table = ItemDisplays::parse(&build(
+        &[robe, boots, tall_boots, trousers, chest],
+        fields::COUNT,
+        strings,
+    ))
+    .expect("a table");
+    let last = |items: &[(u32, Slot)]| {
+        let items: Vec<Equipped> = items
+            .iter()
+            .map(|&(display_id, slot)| Equipped { display_id, slot })
+            .collect();
+        item_layers(&table, 0, &items, |_| true)
+            .last()
+            .map(|l| l.path.clone())
+            .unwrap_or_default()
+    };
+    assert!(last(&[(2, Slot::Feet), (1, Slot::Robe)]).contains("Robe_LL"));
+    assert!(last(&[(5, Slot::Chest), (2, Slot::Feet)]).contains("Boot_LL"));
+    assert!(last(&[(3, Slot::Feet), (4, Slot::Legs)]).contains("Boot_LL"));
 }
 
 /// Each block of the row starts where the previous one ends, and the
@@ -219,7 +311,7 @@ fn the_row_layout_accounts_for_every_field() {
 /// Taken from `Leggings of Polarity` (display 35514), whose real row names
 /// the tier chest's sleeves and chest beside its own trousers. Painting all
 /// eight columns puts that chest over whatever the character is wearing: a
-/// mage in a blue robe was drawn red from the neck down, with every path
+/// mage in a blue robe is drawn red from the neck down, with every path
 /// resolving and no warning.
 #[test]
 fn a_slot_paints_only_its_own_components() {
@@ -243,8 +335,9 @@ fn a_slot_paints_only_its_own_components() {
     assert_eq!(layers.len(), 1, "{layers:?}");
     assert!(layers[0].path.contains("Own_Pant_LU"));
 
-    // The same row worn as a chest paints the other two textures, which
-    // shows the columns belong to the set and not to the one item.
+    // The same row worn as a chest paints the other two textures as well,
+    // which shows the columns belong to the set and not to the one item. A
+    // chest may also paint the legs, so the trousers' column is painted too.
     let layers = item_layers(
         &table,
         0,
@@ -254,8 +347,7 @@ fn a_slot_paints_only_its_own_components() {
         }],
         |_| true,
     );
-    assert_eq!(layers.len(), 2, "{layers:?}");
-    assert!(layers.iter().all(|l| !l.path.contains("Pant")));
+    assert_eq!(layers.len(), 3, "{layers:?}");
 }
 
 /// Where an attached model comes from: the slot's directory, the row's two
@@ -381,8 +473,9 @@ fn a_slot_knows_which_geoset_groups_its_variants_fill() {
     assert_eq!(Slot::Robe.geoset_groups(), &[8, 10, 13]);
     assert_eq!(Slot::Feet.geoset_groups(), &[5]);
     assert_eq!(Slot::Head.geoset_groups(), &[]);
-    // Gloves cover sleeves, boots cover trousers: the paint order is
-    // body-outwards.
+    // `Slot::layer` is the slot order that breaks ties between equal paint
+    // priorities and decides geoset claims: gloves after the chest, boots
+    // after the trousers, the tabard after the chest.
     assert!(Slot::Hands.layer() > Slot::Chest.layer());
     assert!(Slot::Feet.layer() > Slot::Legs.layer());
     assert!(Slot::Tabard.layer() > Slot::Chest.layer());

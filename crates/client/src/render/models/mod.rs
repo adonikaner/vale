@@ -664,30 +664,34 @@ impl RoomLight {
     }
 }
 
-/// The per-instance multiplier on a model's sun term, which the 1.12.1
-/// client applies to every placed M2.
+/// The per-instance multiplier the 1.12.1 client applies to a model's sun
+/// colour.
 ///
-/// `Model2.bls`, the game's model vertex shader, ends its lighting with
-/// `MAD result.color, c28[0], R1, c28[1]`: a per-instance scale applied after
-/// the light is summed. The client's values are 2.5 for a terrain doodad on
-/// lit ground, 0.5 for one standing in the ground's baked `MCSH` shadow, and
-/// 1.0 for everything else; an exterior WMO prop takes 1.0 rather than the
-/// boost. The shadow bit is [`vale_assets::world::adt::Adt::shadowed_at`],
-/// sampled once at the placement's origin when the tile is read.
+/// | object | lit ground | in the ground's `MCSH` shadow |
+/// |---|---|---|
+/// | a terrain (`MDDF`) doodad | 1.0 | 0.5 |
+/// | a WMO's `MODD` prop in an exterior group | 1.0 | 0.5 |
+/// | an entity: unit, player, game object | 2.5 | 0.5 |
+/// | an entity standing on a building outdoors | 2.5 | 2.5, not tested |
 ///
-/// The scale applies to the sun and never to the fill, and it is not clamped
-/// first. It multiplies the lambert term inside `daylight`'s byte-space sum
-/// (`atmosphere.wgsl::daylight_scaled`), so the side of a boosted tree facing
-/// away from the sun keeps the cool fill instead of turning pale with the
-/// rest. Clamping `sun × 2.5` before the sum would turn a warm dawn white.
+/// A prop in an interior group is lit by its room's colour and takes no
+/// scale. A doodad's value is decided once, from the shadow bit under its
+/// origin ([`vale_assets::world::adt::Adt::shadowed_at`]); an entity's moves
+/// with the entity, toward its target at a fixed rate (see
+/// [`crate::world::entities::SunScale`]).
+///
+/// The scale multiplies the sun colour and never the ambient fill. It is
+/// applied inside `daylight`'s byte-space sum
+/// (`atmosphere.wgsl::daylight_scaled`) and not clamped first, so the side of
+/// a unit facing away from the sun keeps the cool fill, and a warm low sun is
+/// not turned white by clamping `sun × 2.5` on its own.
 pub mod sun_scale {
-    /// A terrain (`MDDF`) doodad whose origin is on lit ground.
+    /// An entity on lit ground, or standing on a building outdoors.
     pub const LIT_GROUND: f32 = 2.5;
-    /// One standing in the ground's baked `MCSH` shadow, dimmed with the
-    /// ground under it. Without it, a tree in a building's shadow took full
-    /// sun.
+    /// A doodad or an entity whose position is in the ground's baked `MCSH`
+    /// shadow.
     pub const SHADOWED_GROUND: f32 = 0.5;
-    /// Everything else: WMO batches, `MODD` props, entities, and the
+    /// A doodad on lit ground, WMO batches, an interior prop, and the
     /// encoding's absent value.
     pub const NEUTRAL: f32 = 1.0;
 }
@@ -717,8 +721,8 @@ pub fn tint_tag(rgba: [f32; 4]) -> u32 {
 /// The tag is Bevy's per-instance `u32`: the low 24 bits are [`RoomLight`]'s
 /// `0x00RRGGBB`, and the sun scale is stored in the byte the colour does not
 /// use, as fixed-point 1/32ths (2.5 → 80, 0.5 → 16). Zero means "unspecified",
-/// which the shader reads as [`sun_scale::NEUTRAL`], so every entity and WMO
-/// batch that never sets a tag is lit at a sun scale of 1.0.
+/// which the shader reads as [`sun_scale::NEUTRAL`], so every WMO batch and
+/// every other instance that never sets a tag is lit at a sun scale of 1.0.
 pub fn instance_tag(room: Option<RoomLight>, sun: f32) -> u32 {
     let scale = if sun == sun_scale::NEUTRAL {
         0
@@ -1919,13 +1923,11 @@ fn parse_character_key(key: &str) -> Option<CharacterLook> {
 /// `render::portraits` (which builds a model's parts on its own render layer
 /// for the unit-frame faces). When each had its own copy of these four lines,
 /// the change that introduced bone subsets updated only two of them. The login
-/// and character-select screens then bound the model's whole skeleton to
-/// meshes whose joint indices were subset-local, which poses every vertex off
-/// the wrong bone: splayed shoulders, a twisted weapon and a body that clips
-/// through itself. The test suite, six interface probes and two in-world
-/// screenshots missed it, because none of them shows the glue screens.
-/// `render::portraits` kept the same fault for longer: on a 64-pixel face a
-/// wrong bone is a smear, and no headless check looks at a portrait.
+/// and character-select screens, and the portraits, then bound the model's
+/// whole skeleton to meshes whose joint indices were subset-local, which poses
+/// every vertex off the wrong bone: splayed shoulders, a twisted weapon and a
+/// body that clips through itself. No test or headless check renders the glue
+/// screens or a portrait, so none of them detected it.
 ///
 /// `every_skinned_mesh_is_built_through_skin_for` in this module's tests reads
 /// the call sites from the source and fails if a further spawner builds a

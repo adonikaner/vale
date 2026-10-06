@@ -8,17 +8,18 @@
 //! Each batch of each placement is one entity, spawned only while the player
 //! is within that placement's draw range. Bevy batches draws by mesh and
 //! material and culls each placement individually, so no per-model instance
-//! grouping is needed. (The WebGL renderer grouped instances by model across
-//! every loaded tile and rebuilt the buffers when the tile set changed,
-//! because one draw call per placement was tens of thousands a frame.)
+//! grouping is needed. (The WebGL renderer had no such batching, so it grouped
+//! instances by model across every loaded tile and rebuilt the buffers when
+//! the tile set changed; one draw call per placement would have been tens of
+//! thousands a frame.)
 //!
 //! Spawning happens in two stages. [`resolve_doodads`] turns a placement whose
 //! model has loaded into a [`Resident`]: hull placed, transform composed,
 //! draws held. [`stream_doodads`] spawns and despawns the entities as the
 //! player crosses each resident's own draw range. The reason is the CPU-floor
 //! measurement: the per-frame render cost scales with spawned meshes, not
-//! visible ones, so a `VisibilityRange` alone leaves a city's six thousand
-//! mugs paying the binned-phase rebuild from three hundred yards away. The
+//! visible ones, so with a `VisibilityRange` alone the six thousand mugs of a
+//! city still cost a binned-phase rebuild at three hundred yards. The
 //! `VisibilityRange` still decides which pixels are drawn, and streaming
 //! spawns a margin before it, so objects appear and disappear at the same
 //! distance as when everything was spawned.
@@ -64,10 +65,11 @@
 //!
 //! The difference from buildings is the count. A tile has a dozen buildings
 //! and up to four thousand solid doodads once a city's furniture is counted.
-//! Two operations that were cheap at forty hulls are not at four thousand, so
+//! Two operations that are cheap at forty hulls are not at four thousand, so
 //! the dedup that recognises a repeated placement does not scan, and the wall
-//! query rejects a hull by its XY box before ray-testing it. With both, `vale collision Azeroth 31 48` measures a floor-plus-stride
-//! query pair at 67 us against Stormwind's 3,817 hulls and 418,692 triangles.
+//! query rejects a hull by its XY box before ray-testing it. With both,
+//! `vale collision Azeroth 31 48` measures a floor-plus-stride query pair at
+//! 67 us against Stormwind's 3,817 hulls and 418,692 triangles.
 //! The mover queries twenty times a second, so no distance cull is applied.
 
 use crate::axes;
@@ -133,8 +135,8 @@ const RANGE_CEILING: f32 = 800.0;
 /// zero is culled, not drawn transparent. A mug is therefore not drawn past
 /// 50 yards. The previous rule, `radius × 60, floor 150`, gave ranges about
 /// 3x longer. The spawned population sets the CPU floor (see the module doc),
-/// so under that rule every candle in a city paid the render world's
-/// per-frame walk from three times the distance the client draws it.
+/// so under that rule every candle in a city was in the render world's
+/// per-frame walk at three times the distance the client draws it.
 ///
 /// Two deviations, both of which draw more, never less:
 /// * The cutoff is abrupt at the band's far end. The client feathers across
@@ -222,9 +224,9 @@ pub struct PendingDoodads {
 pub struct PlacedDoodad {
     pub placement: PlacedModel,
     pub light: Option<RoomLight>,
-    /// The per-instance multiplier on the sun term: 2.5 or 0.5 for an `MDDF`
-    /// placement, chosen by the `MCSH` bit under its origin, and 1.0 for a
-    /// WMO's own props. See [`crate::render::models::sun_scale`].
+    /// The per-instance multiplier on the sun term: 0.5 when the `MCSH` bit
+    /// under the origin is set, otherwise 1.0. An interior prop has a room
+    /// light and is not scaled. See [`crate::render::models::sun_scale`].
     pub sun_scale: f32,
 }
 
@@ -236,12 +238,19 @@ impl PlacedDoodad {
         PlacedDoodad {
             placement,
             light: None,
-            sun_scale: if shadowed {
-                crate::render::models::sun_scale::SHADOWED_GROUND
-            } else {
-                crate::render::models::sun_scale::LIT_GROUND
-            },
+            sun_scale: doodad_sun_scale(shadowed),
         }
+    }
+}
+
+/// The sun scale of a doodad lit by the sun: a terrain doodad or a WMO prop in
+/// an exterior group. 0.5 in the ground's baked shadow, otherwise 1.0. The
+/// 2.5 that units take on lit ground does not apply to doodads.
+pub fn doodad_sun_scale(shadowed: bool) -> f32 {
+    if shadowed {
+        crate::render::models::sun_scale::SHADOWED_GROUND
+    } else {
+        crate::render::models::sun_scale::NEUTRAL
     }
 }
 
@@ -320,12 +329,12 @@ struct SceneryRig {
 
 /// Every rigged placement is posed from the frame it is spawned.
 ///
-/// There is no separate posing range. A sixty-yard range was tried, because a
-/// posed doodad is a skinned draw and this renderer is bound by per-draw-call
-/// encoding. It needed a second distance, a hysteresis band, and a despawn and
-/// respawn when the player crossed it, and it saved no measurable time. It
-/// also left distant animated scenery still: the Great Forge did not move until
-/// the player was within sixty yards. It was removed.
+/// There is no separate posing range. A sixty-yard posing range, intended to
+/// save per-draw-call encoding because a posed doodad is a skinned draw,
+/// needed a second distance, a hysteresis band, and a despawn and respawn when
+/// the player crossed it. It saved no measurable time, and it left distant
+/// animated scenery still: the Great Forge did not move until the player was
+/// within sixty yards. It is not used.
 ///
 /// The draw range decides whether a placement is posed: it is posed only while
 /// spawned, and spawned only while the player is within its draw range. Beyond
@@ -416,8 +425,8 @@ pub struct TileDoodads {
     /// screen. `rigged` at zero means the animated build never resolved and
     /// nothing can move. `rigged` high with `posed` at zero means the range is
     /// wrong or the player is not near any rigged placement. The first failure
-    /// once went undetected on screen and by 2,271 tests; these counts expose
-    /// it.
+    /// has occurred with no visible symptom and no failing test among 2,271;
+    /// these counts show it.
     pub rigged: usize,
     pub posed: usize,
 }
@@ -434,12 +443,13 @@ impl Plugin for DoodadPlugin {
         // access: if one system stopped taking `PendingDoodads` mutably, the
         // two would run in parallel in whatever order the scheduler picks.
         //
-        // Nothing would fail. Furniture handed over after this pass has run is
-        // spawned on the next frame instead, one frame late. The same class of
-        // one-frame ordering bug has occurred twice before (`camera::place`
-        // against `follow_player`, and a joint against its attachment). In both,
-        // a value existed in two versions for one stage of the frame, nothing
-        // was logged, and the symptom looked like a different bug.
+        // No error would be raised. Furniture handed over after this pass has
+        // run is spawned on the next frame instead, one frame late. The same
+        // type of one-frame ordering bug has occurred twice before
+        // (`camera::place` against `follow_player`, and a joint against its
+        // attachment). In both, a value existed in two versions for one stage
+        // of the frame, nothing was logged, and the symptom resembled a
+        // different bug.
         app.add_systems(
             Update,
             (
@@ -532,8 +542,8 @@ fn resolve_doodads(
                 // next frame. Treating `Loading` as "no rig" and resolving the
                 // placement anyway gives every doodad `rig: None` permanently,
                 // because the placement leaves the pending list that frame and
-                // is never reconsidered. An earlier version did this, and no
-                // doodad animated while every test passed.
+                // is never reconsidered. An earlier version did this: no doodad
+                // animated, and no test failed.
                 //
                 // The placement is therefore held pending, as for the
                 // unskinned build. An animated placement resolves one frame
