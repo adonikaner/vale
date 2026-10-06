@@ -30,7 +30,7 @@
 //!              around the camera, coloured by what a path query makes of
 //!              each polygon
 //! tools/       what the pointer does when a button is held, one file per tool
-//! ui/          the panels: the shell, the look, and one file per region of it
+//! ui/          the panels: the shell, the theme, and one file per region of it
 //! server/      what is sent to the server a playtest runs against; the one
 //!              destination of an edit that is not a file
 //! ```
@@ -317,7 +317,7 @@ pub struct Args {
     /// the same split as the client's own `--view`. It exists for the same
     /// reason as `--row` and `--browse`: the camera opens 60 yards out and a
     /// scripted run has no mouse wheel, so without this flag a scripted picture
-    /// cannot show anything further away than a hillside. That includes the
+    /// cannot show distant ground. That includes the
     /// streamed block itself, which is 3,733 yards across and cannot be seen
     /// from 60.
     pub view: Option<(f32, Option<f32>, Option<f32>)>,
@@ -778,9 +778,9 @@ pub struct Args {
     /// segmented control, the search is typing, and the choice is a click on a
     /// row.
     ///
-    /// It cannot show the ghost, and no flag can: the model on the cursor
-    /// stands where the pointer meets the ground, and a scripted run has no
-    /// pointer. The placement tools' own preview has the same limitation.
+    /// It cannot show the translucent preview, and no flag can: the model on
+    /// the cursor stands where the pointer meets the ground, and a scripted run
+    /// has no pointer. The placement tools' own preview has the same limitation.
     pub pick: Option<u32>,
     /// `--bits <column>`: open the mask dialog on that column of `--row`.
     ///
@@ -813,8 +813,9 @@ pub struct Args {
     ///
     /// A scripted run cannot make this selection otherwise: the rectangle is a
     /// drag, and a script has no pointer. It is released seven seconds before
-    /// `--after`'s shutter, so the picture shows the group and the frame
-    /// sample, which covers the last five seconds, is taken with it selected.
+    /// the `--after` picture is taken, so the picture shows the group and the
+    /// frame sample, which covers the last five seconds, is taken with it
+    /// selected.
     pub enclose: Option<[f32; 4]>,
     /// `--taxi-node <id>`: the flight path tool, open on one node, with the
     /// camera over it.
@@ -832,6 +833,10 @@ pub struct Args {
     /// `--taxi-node-add <x>,<y>`: a new node on the ground at that place, once
     /// its tile is open.
     pub taxi_node_add: Option<(f32, f32)>,
+    /// `--flight-map`: Make a flight map (or Fit the flight map) on the open
+    /// map, once its nodes are read: the `WorldMapContinent.dbc` row and the
+    /// picture.
+    pub flight_map: bool,
 }
 
 impl Default for Args {
@@ -878,6 +883,7 @@ impl Default for Args {
             taxi_path: None,
             taxi_connect: None,
             taxi_node_add: None,
+            flight_map: false,
             spawn: None,
             waypoints: false,
             waypoint_add: None,
@@ -1123,6 +1129,10 @@ impl Args {
                 }
                 "--taxi-node-add" => {
                     parsed.taxi_node_add = args.next().as_deref().and_then(parse_pair);
+                    parsed.tool = Some(tools::Tool::Flightpaths);
+                }
+                "--flight-map" => {
+                    parsed.flight_map = true;
                     parsed.tool = Some(tools::Tool::Flightpaths);
                 }
                 "--tour" => {
@@ -1597,8 +1607,8 @@ mod tests {
         );
     }
 
-    /// `--character` names who a playtest is, and is absent by default so the
-    /// folder's own answer is what a run with no flag uses.
+    /// `--character` names the character a playtest logs in as, and is absent
+    /// by default so the folder's own answer is what a run with no flag uses.
     #[test]
     fn a_character_can_be_named_on_the_command_line() {
         let args = Args::parse(["--character", "Alden"].into_iter().map(String::from));

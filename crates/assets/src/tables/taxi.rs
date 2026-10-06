@@ -1,5 +1,5 @@
-//! The flight map: which nodes are on it, where they sit on the parchment, and
-//! what it costs to fly to each one.
+//! The flight map: which nodes are on it, where they are drawn on the map art,
+//! and what it costs to fly to each one.
 //!
 //! ```text
 //! TaxiNodes.dbc       85 rows: an id, a map, a world position, a name and two
@@ -18,16 +18,15 @@
 //! rather than `crates/client`, where `vale taxi` can check it with no
 //! session.
 //!
-//! ## The client's rules
+//! ## What the client computes from the tables
 //!
-//! The client keeps one record per drawn node. The six steps that fill and
-//! read it are:
+//! The client builds the flight map and answers the interface in six steps:
 //!
 //! ```text
-//! the SMSG_SHOWTAXINODES handler: prune, project, search
-//! is there a direct path? paths[from * 256 + to] != 0
-//! how long is it? the sum of its TaxiPathNode segments
-//! the relaxation, which is what makes a node *drawn*
+//! on SMSG_SHOWTAXINODES: prune the mask to the continent, project, search
+//! direct path: a TaxiPath row from the one node to the other
+//! path length: the sum of its TaxiPathNode segments
+//! the route search, which decides whether a node is drawn
 //! TaxiNodeCost, TaxiNodeGetType
 //! TakeTaxiNode: direct -> ACTIVATETAXI, else EXPRESS
 //! ```
@@ -36,13 +35,11 @@
 //! the tables:
 //!
 //! * The search minimises distance, not cost and not hop count. The client
-//!   compares `dist[from] + length(from, to)` against `dist[to]` and carries the
-//!   cost along beside it, so the window does not necessarily offer the
-//!   cheapest route.
-//! * A node is drawn only if the search reached it. The node's type
-//!   starts at 0 and is set only in the relaxation's
-//!   first-visit branch, so a known node with no route from the current node
-//!   is `"NONE"` and is not drawn.
+//!   gives each node the route with the smallest total path length and adds up
+//!   that route's cost separately, so the window does not necessarily offer
+//!   the cheapest route.
+//! * A node is drawn only if the search reached it. A known node with no route
+//!   from the current node has the type `"NONE"` and is not drawn.
 //! * The faction filter reads the values of the node's two mount columns, not
 //!   their order. Booty Bay's Alliance node carries the gryphon in column 14 and
 //!   the Horde node carries the wind rider in the same column. See [`serves`].
@@ -50,12 +47,11 @@
 //! ## `NodeKind::Distant` cannot occur in 5875
 //!
 //! [`NodeKind::Distant`], the yellow icon `TaxiFrame.lua` has art for, cannot
-//! occur in 5875. The client returns it when the
-//! node's taxi mask bit is clear, but the build loop clears that bit for every
-//! node it rejects and adds a row for
-//! every node it keeps, so every row in the list has its bit set. It is
-//! implemented anyway because the branch is in the client and a shipped table
-//! could reach it.
+//! occur in 5875. The client returns it for a drawn node whose taxi mask bit is
+//! clear. But the client clears the mask bit of every node it does not draw,
+//! and draws every node whose bit stays set, so every drawn node has its bit
+//! set. It is implemented anyway because the client returns it in that case
+//! and a shipped table could reach it.
 
 use std::collections::HashMap;
 
@@ -65,10 +61,9 @@ use crate::AssetError;
 /// `TaxiMaskSize`: 256 bits, one per node, indexed from node id 1.
 pub const TAXI_MASK_WORDS: usize = 8;
 
-/// The largest node id the flight map can reach. The client bounds both node
-/// ids at `0x100` before it indexes `paths[from << 8 | to]`, so a node id past
-/// 256 has no edges at all. The taxi mask is 256 bits for the same reason, on
-/// both sides of the wire.
+/// The largest node id the flight map can reach. The 1.12.1 client finds no
+/// path from or to a node id above 256, so such a node has no edges at all.
+/// The taxi mask is 256 bits for the same reason, on both sides of the wire.
 pub const MAX_NODE_ID: u32 = 0x100;
 
 /// The length the client uses for a path whose waypoints are missing: `1e11`.
@@ -79,7 +74,8 @@ pub const MISSING_PATH_LENGTH: f32 = 1e11;
 /// The four mount creature ids the client compares against.
 ///
 /// These are values, not column positions; see [`serves`]. The Horde pair is
-/// first because it is the pair the Alliance branch tests for.
+/// first because it is the pair an Alliance character's node is tested
+/// against.
 const HORDE_MOUNTS: [u32; 2] = [2224, 3574];
 const ALLIANCE_MOUNTS: [u32; 2] = [3837, 541];
 
@@ -89,10 +85,10 @@ const ALLIANCE_MOUNTS: [u32; 2] = [3837, 541];
 /// The two literals are 3 and 5, which are
 /// `Player | Alliance` and `Player | Horde`, since `FactionGroup.dbc`'s
 /// `MaskID`s are Player 0, Alliance 1, Horde 2 (the same join
-/// [`crate::tables::charcreate`] makes for the race buttons). The two literals
-/// are copied as equality tests rather than bit tests because that is what the
-/// branch does: a monster's or a creature's template matches neither and gets
-/// no faction filtering.
+/// [`crate::tables::charcreate`] makes for the race buttons). The 1.12.1
+/// client compares the whole mask for equality with each value rather than
+/// testing bits, so a monster's or a creature's template matches neither and
+/// gets no faction filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Team {
     Alliance,
@@ -115,9 +111,9 @@ impl Team {
 pub struct TaxiMask(pub [u32; TAXI_MASK_WORDS]);
 
 impl TaxiMask {
-    /// Node ids are one-based: `PlayerTaxi::IsTaximaskNodeKnown` computes
-    /// `(nodeidx - 1) / 32` and the client computes `(id - 1) >> 6`.
-    /// Node 0 does not exist and returns false rather than reading
+    /// Node ids are one-based, in the 1.12.1 client and in vmangos
+    /// (`PlayerTaxi::IsTaximaskNodeKnown` computes `(nodeidx - 1) / 32`): bit 0
+    /// is node 1. Node 0 does not exist and returns false rather than reading
     /// bit -1.
     pub fn knows(&self, node: u32) -> bool {
         let Some(bit) = node.checked_sub(1) else {
@@ -225,7 +221,7 @@ impl TaxiBox {
         self.max[0] - self.min[0] > 0.0 && self.max[1] - self.min[1] > 0.0
     }
 
-    /// Where a node lands on the parchment, in `0..1` from the bottom left.
+    /// Where a node is drawn on the map art, in `0..1` from the bottom left.
     ///
     /// As the client computes it, including its crossed denominators:
     ///
@@ -250,8 +246,8 @@ impl TaxiBox {
 
 /// Whether a node's mounts serve this side.
 ///
-/// Both of the client's branches reduce to one rule: skip the node when
-/// it names one of the other side's generic mounts and none of this side's.
+/// The 1.12.1 client skips a node when it names one of the other side's
+/// generic mounts and none of this side's.
 /// Every other node is served: a node with no mounts, a node with one of each,
 /// and a node naming a mount in neither pair (Northshire's 308, Alterac
 /// Valley's 15665).
@@ -277,8 +273,8 @@ pub fn serves(node: &TaxiNode, team: Option<Team>) -> bool {
 #[derive(Debug, Clone, Default)]
 pub struct TaxiTables {
     nodes: HashMap<u32, TaxiNode>,
-    /// Keyed `(from, to)`, as the client's own `paths[from << 8 | to]` array
-    /// is, so that "is there a direct path" is a lookup rather than a scan.
+    /// Keyed `(from, to)`, so that "is there a direct path" is a lookup rather
+    /// than a scan.
     paths: HashMap<(u32, u32), TaxiPath>,
     /// The waypoints, keyed by path id and in `NodeIndex` order. They are kept
     /// whole rather than reduced to a length because a transport route
@@ -342,9 +338,24 @@ pub mod path_node_fields {
     pub const COUNT: usize = 9;
 }
 
-mod continent_fields {
+/// `WorldMapContinent.dbc`'s 13 fields. The flight map reads the map and the
+/// box; the rest are read only for a map that also has a `WorldMapArea`
+/// continent row, and by the world map's zoomed-out view of the player's
+/// position (fields 6..8).
+pub mod continent_fields {
+    pub const ID: usize = 0;
     pub const MAP: usize = 1;
+    /// The first tile index's range, then the second's.
+    pub const LEFT_TILE: usize = 2;
+    pub const RIGHT_TILE: usize = 3;
+    pub const TOP_TILE: usize = 4;
+    pub const BOTTOM_TILE: usize = 5;
+    pub const OFFSET_X: usize = 6;
+    pub const OFFSET_Y: usize = 7;
+    pub const SCALE: usize = 8;
+    /// The taxi box: min x, min y, max x, max y, in world yards.
     pub const TAXI_MIN_X: usize = 9;
+    pub const COUNT: usize = 13;
 }
 
 impl TaxiTables {
@@ -489,8 +500,8 @@ impl TaxiTables {
     }
 
     /// The single path from one node to the other, if there is one.
-    /// The id bounds are the client's own; because of them a shipped node past
-    /// 256 would be unreachable rather than mis-indexed.
+    /// Node ids 0 and above 256 have no paths, as in the 1.12.1 client, so a
+    /// shipped node past 256 is unreachable.
     pub fn direct(&self, from: u32, to: u32) -> Option<&TaxiPath> {
         if from == 0 || from > MAX_NODE_ID || to == 0 || to > MAX_NODE_ID {
             return None;
@@ -524,8 +535,8 @@ pub enum NodeKind {
     /// White: the search reached it, so it can be flown to.
     Reachable,
     /// Yellow: drawn, but its mask bit is clear. As the module documentation
-    /// explains, this cannot happen in 5875; it exists because the client has
-    /// the branch.
+    /// explains, this cannot happen in 5875; it exists because the client
+    /// returns it for a drawn node whose mask bit is clear.
     Distant,
     /// Not drawn at all.
     None,
@@ -565,8 +576,8 @@ pub struct Row {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Board {
     /// One per known node on this continent, ascending by node id. That is the
-    /// order the client's bit walk produces, and therefore the numbering every
-    /// interface read uses.
+    /// order the 1.12.1 client numbers the nodes in, and therefore the
+    /// numbering every interface read uses.
     pub rows: Vec<Row>,
     /// The node the flight master stands at.
     pub current: u32,
@@ -608,11 +619,11 @@ impl Board {
         // be in the mask. It always is, because `SendLearnNewTaxiNode` sets
         // that bit before the menu is sent.
         //
-        // This deliberately departs from the reference in the case that cannot
-        // happen. The reference leaves its index at 0 when the search fails and
-        // seeds the first row, which draws a map centred on the wrong node.
-        // Returning an empty board makes the failure visible instead of
-        // plausible.
+        // In that case, which cannot happen, this code differs from the 1.12.1
+        // client. The client starts the search from the first row instead,
+        // and draws a map centred on the wrong node. This code returns an empty
+        // board, so the failure is visible rather than a map that looks
+        // correct.
         let Some(source) = rows.iter().position(|row| row.node == current) else {
             return Board::default();
         };
@@ -622,8 +633,9 @@ impl Board {
 
         relax(&mut rows, tables, source, team);
 
-        // The type of each drawn row, decided as the client decides it and in
-        // its order: the current node first, then the mask.
+        // The type of each row, as the 1.12.1 client assigns it: a node with
+        // no route is NONE, the current node is CURRENT, a node in the mask is
+        // REACHABLE, and any other node is DISTANT.
         for row in &mut rows {
             if row.route.is_empty() {
                 row.kind = NodeKind::None;
@@ -718,22 +730,22 @@ pub enum Take {
     Express { nodes: Vec<u32>, cost: u32 },
     /// A `GlobalStrings.lua` key for `UIErrorsFrame`.
     Refused(&'static str),
-    /// An index that names no row: the reference returns without a sound.
+    /// An index that names no row: the 1.12.1 client does nothing and plays
+    /// no sound.
     Nothing,
 }
 
 /// The relaxation: the route search that decides which nodes are drawn and
 /// which route each one gets.
 ///
-/// The client's search is recursive: it relaxes a node's neighbours as soon as it
-/// improves that node, which is Bellman-Ford with an explicit stack rather than
-/// Dijkstra. It is written as a worklist here, which gives the same result
-/// without the recursion depth. A graph of 85 nodes and 287 edges settles in a
-/// few passes.
+/// Each time a shorter route to a node is found, its neighbours are examined
+/// again, until no distance improves. This code keeps the nodes still to be
+/// examined in a worklist, and the result is the 1.12.1 client's. A graph of 85
+/// nodes and 287 edges settles in a few passes.
 ///
-/// The faction filter applies to the destination node and is checked before the
-/// weight, as the client does, so a node the filter rejects is not only hidden:
-/// no route may pass through it either.
+/// The faction filter applies to every node a route would enter, as in the
+/// client, so a node the filter rejects is not only hidden: no route may pass
+/// through it either.
 fn relax(rows: &mut [Row], tables: &TaxiTables, source: usize, team: Option<Team>) {
     let mut queue = vec![source];
     while let Some(from) = queue.pop() {
@@ -751,9 +763,9 @@ fn relax(rows: &mut [Row], tables: &TaxiTables, source: usize, team: Option<Team
                 continue;
             };
             let distance = rows[from].distance + path.length;
-            // Strictly shorter only, matching the client's comparison, which
-            // fails on an unordered result: an equal-length alternative does not
-            // replace the route already found.
+            // Strictly shorter only, as in the 1.12.1 client: an equal-length
+            // alternative, or a length that is not a number, does not replace
+            // the route already found.
             let better = distance < rows[to].distance;
             if !better {
                 continue;
@@ -849,7 +861,7 @@ mod tests {
 
     /// The search minimises length and carries the cost along. Node 3 has a
     /// direct 20-yard edge for 500 and a two-hop 8-yard route for 200. The
-    /// reference takes the shorter one, so the window offers two hops and 200
+    /// 1.12.1 client takes the shorter one, so the window offers two hops and 200
     /// copper for a flight that has a one-hop path.
     #[test]
     fn the_route_is_the_shortest_and_not_the_cheapest_or_the_fewest_hops() {
@@ -875,8 +887,8 @@ mod tests {
         assert_eq!(board.row(1).unwrap().kind, NodeKind::Current);
         assert_eq!(board.row(2).unwrap().kind, NodeKind::Reachable);
         assert_eq!(board.row(1).unwrap().kind.word(), "CURRENT");
-        // A node with no edge from the current node is not drawn: the
-        // relaxation never sets its type byte.
+        // A node with no route from the current node is not drawn: its type
+        // is NONE.
         let stranded = Board::build(&tables(), 3, &mask(&[3, 5]), Some(Team::Alliance));
         assert_eq!(stranded.rows.len(), 1, "node 5 is on another continent");
     }
@@ -912,13 +924,13 @@ mod tests {
             assert_eq!(row.kind, expected, "node {}", row.node);
         }
         // With no team (a template neither literal matches) the filter does
-        // not apply, as in the client's fall-through.
+        // not apply, as in the 1.12.1 client.
         let ungated = Board::build(&tables, 1, &mask(&[1, 2, 3, 4]), None);
         assert!(ungated.rows.iter().all(|row| row.kind != NodeKind::None));
     }
 
-    /// Both directions of [`serves`], including the three shapes that are
-    /// served by everybody.
+    /// Both directions of [`serves`], including the three mount combinations
+    /// that both sides are served at.
     #[test]
     fn a_mount_column_carries_no_faction_and_the_values_do() {
         let node = |mounts: [u32; 2]| TaxiNode {
@@ -963,7 +975,7 @@ mod tests {
         assert!(bounds.usable());
         assert_eq!(bounds.project([bounds.min[0], bounds.max[1], 0.0]), [0.0, 0.0]);
         assert_eq!(bounds.project([bounds.max[0], bounds.min[1], 0.0]), [1.0, 1.0]);
-        // Stormwind, near enough: x rises as world y falls.
+        // Approximately Stormwind's position: x rises as world y falls.
         let [x, y] = bounds.project([-8833.0, 628.0, 94.0]);
         assert!((0.4..0.5).contains(&x), "x = {x}");
         assert!((0.3..0.4).contains(&y), "y = {y}");

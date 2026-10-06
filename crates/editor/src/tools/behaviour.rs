@@ -2,7 +2,7 @@
 //! rows, the `creature_spells` list its template names, and the scripts
 //! either of them runs.
 //!
-//! ## Not a tool of its own
+//! ## Why there is no rail entry
 //!
 //! An event, a spell list and a script have no place in the world and are
 //! named by a creature, so there is no rail entry. The Events and Spells
@@ -31,7 +31,8 @@
 //! the row's key. A script has no key of its own and is the session's second
 //! store (`EditSession::server_scripts`): the whole script is set on every
 //! edit, and the undo stack folds the edits made close together into one
-//! entry. `vale_mangos::scripts`' module comment is where that was decided.
+//! entry. `vale_mangos::scripts`' module comment gives the reason for this
+//! design.
 //!
 //! ## Existing rows as a starting point
 //!
@@ -77,8 +78,9 @@ pub struct About {
     pub ai_name: String,
 }
 
-/// One event as a window draws it: the database's reading with the project's
-/// edits over it, and what the project says is to become of it.
+/// One event as a window draws it: the database's row with the project's
+/// edits over it, and the project's [`Life`] for the row (update, insert or
+/// delete).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShownEvent {
     pub event: Event,
@@ -256,12 +258,13 @@ pub struct Behaviour {
     /// Every `broadcast_text` row read so far, by entry; `None` for an entry
     /// the table does not hold, so a missing one is asked for once.
     texts: HashMap<u32, Option<Text>>,
-    /// How many creature templates name each list read so far.
+    /// The creature templates that name each list read so far, by entry and name.
     users: HashMap<u32, Vec<(u32, String)>>,
     /// The highest id each table holds, read once.
     max_ids: HashMap<&'static str, u32>,
     reading: Option<Reading>,
-    /// What those were read at: `EditSession::database_writes`.
+    /// The `EditSession::database_writes` value the caches above were read
+    /// at.
     loaded_for: Option<u64>,
     /// Why the last read answered nothing, when it answered nothing.
     pub trouble: Option<String>,
@@ -272,8 +275,8 @@ pub struct Behaviour {
     /// the gossip window's lines and option labels. Written by that window
     /// each frame.
     pub other_texts: Vec<u32>,
-    /// Whether another window makes new texts, so the table's highest entry
-    /// is read to number them.
+    /// Whether another window makes new texts and gossip scripts (the gossip
+    /// window), so the two tables' highest ids are read to number them.
     pub numbering_texts: bool,
 }
 
@@ -749,7 +752,7 @@ impl Behaviour {
             wanted.extend([scripts::GENERIC, broadcast::TABLE]);
         }
         if self.numbering_texts {
-            wanted.push(broadcast::TABLE);
+            wanted.extend([broadcast::TABLE, scripts::GOSSIP]);
         }
         wanted.into_iter().find(|table| !self.max_ids.contains_key(table))
     }
@@ -791,8 +794,8 @@ fn keep_row(session: &mut EditSession, table: &'static str, key: &Key, label: &'
     session.set_server_row(table, key, None, Some(crate::session::Gesture { label, subject: &subject, now }));
 }
 
-/// One column set on a row of either table: cleared when it is what the
-/// database holds, written into the creation for a created row.
+/// Set one column on a keyed row: the edit is cleared when the value is what
+/// the database holds, and written into the creation for a created row.
 #[allow(clippy::too_many_arguments)]
 fn set_column(
     session: &mut EditSession,
@@ -872,9 +875,10 @@ fn list_of(key: &Key, row: &RowEdit) -> Option<List> {
     List::from_row(&whole)
 }
 
-/// The store holds a text column as a quoted literal and a row from the
-/// database holds the text; the two text columns are read back the second
-/// way.
+/// The store holds a text column as a quoted SQL literal; a row read from the
+/// database holds the plain text. This turns a stored value of a text column
+/// (`comment`, `name`, `male_text`, `female_text`) back into plain text and
+/// returns any other column's value unchanged.
 fn unquoted(column: &str, value: &str) -> String {
     match column {
         "comment" | "name" | "male_text" | "female_text" => value
@@ -910,8 +914,10 @@ fn land(behaviour: &mut Behaviour) -> bool {
     let Some(mut reading) = behaviour.reading.take() else {
         return false;
     };
-    // `Ok(true)` landed and was stored; `Ok(false)` landed as a search's
-    // failure, which is the chooser's to show rather than every window's.
+    // `None`: the read is still running. `Some(Ok(()))`: the answer was
+    // stored. A search's failure also gives `Some(Ok(()))`, because
+    // `land_search` shows it in the chooser rather than in every window.
+    // `Some(Err(_))`: the read failed.
     let done: Option<Result<(), String>> = match &mut reading {
         Reading::Events(creature, task) => block_on(future::poll_once(task)).map(|done| {
             done.map(|rows| {
@@ -1227,10 +1233,10 @@ fn read_the_rows(
     behaviour.reading = Some(reading);
 }
 
-/// `--events`, `--event-add`, `--spells`, `--script` and `--find-event`: the
-/// windows and the chooser opened,
-/// and an event added to the creature's, with nobody at the keyboard. Waits for the
-/// creature's events to be read, since the new id is numbered among them.
+/// `--events`, `--event-add`, `--spells`, `--script` and `--find-event` open
+/// the windows and the chooser and add an event to the creature without user
+/// input. `--event-add` waits for the creature's events to be read, since the
+/// new id is numbered among them.
 fn on_the_command_line(
     args: Res<crate::Args>,
     mut behaviour: ResMut<Behaviour>,

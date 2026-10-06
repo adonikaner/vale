@@ -4,13 +4,14 @@
 //! Five row subjects share this module, one per [`Group`]: each has its own
 //! block on the Server panel, its own SQL and revert files, its own reloads and
 //! its own place in `super::stack`'s order. They share the row rules, which are
-//! the same for all twelve tables.
+//! the same for all thirteen tables.
 //!
-//! ## Twelve tables, written as keyed rows
+//! ## Thirteen tables, written as keyed rows
 //!
 //! ```text
 //! conditions                    the server's reusable yes-or-no tests
 //! npc_text                      what a gossip text says: up to eight lines
+//! points_of_interest            a place a gossip option marks on the map
 //! gossip_menu                   one text of a gossip menu
 //! gossip_menu_option            one option of a gossip menu
 //! map_template                  a new map's server row
@@ -42,8 +43,8 @@
 //!
 //! ## What makes an applied row live
 //!
-//! Five of the eight tables have a `.reload` whose loader clears its map first,
-//! so an apply asks a running playtest for all five, removals included.
+//! Ten of the thirteen tables have a `.reload` whose loader clears its map
+//! first, so an apply asks a running playtest for all ten, removals included.
 //! `areatrigger_template`, `areatrigger_bg_entrance` and
 //! `world_safe_locs_facing` are read at startup only. A new `map_template` row
 //! is read on its reload, but the server opens a map's grids at startup, so a
@@ -136,7 +137,7 @@ impl Group {
         }
     }
 
-    /// What puts it back.
+    /// The SQL file that puts the group's rows back.
     pub fn revert_vpath(self) -> &'static str {
         match self {
             Group::Conditions => "sql\\conditions-revert.sql",
@@ -158,7 +159,7 @@ impl Group {
         }
     }
 
-    /// …and the subject, plural, for a file's header and an error.
+    /// The group's subject, plural, for a file's header and an error message.
     pub fn subject(self) -> &'static str {
         match self {
             Group::Conditions => "conditions",
@@ -170,10 +171,11 @@ impl Group {
     }
 }
 
-/// The twelve tables, by group. [`Group::tables`] names each group's.
-pub const TABLES: [&str; 12] = [
+/// The thirteen tables, by group. [`Group::tables`] names each group's.
+pub const TABLES: [&str; 13] = [
     condition::TABLE,
     gossip::NPC_TEXT,
+    gossip::POI,
     gossip::MENU,
     gossip::OPTION,
     map::TEMPLATE,
@@ -186,7 +188,7 @@ pub const TABLES: [&str; 12] = [
     graveyard::FACING,
 ];
 
-/// The static name of one of the twelve tables, or `None`.
+/// The static name of one of the thirteen tables, or `None`.
 pub fn table_named(name: &str) -> Option<&'static str> {
     TABLES.into_iter().find(|table| *table == name)
 }
@@ -196,7 +198,7 @@ pub fn owns(table: &str) -> bool {
     table_named(table).is_some()
 }
 
-/// Every column of one of the twelve tables.
+/// Every column of one of the thirteen tables.
 pub fn columns_of(table: &str) -> &'static [vale_mangos::schema::Column] {
     match Group::of(table) {
         Some(Group::Conditions) => condition::columns_of(table),
@@ -208,12 +210,12 @@ pub fn columns_of(table: &str) -> &'static [vale_mangos::schema::Column] {
     }
 }
 
-/// One column of one of the twelve tables.
+/// One column of one of the thirteen tables.
 pub fn column(table: &str, name: &str) -> Option<&'static vale_mangos::schema::Column> {
     columns_of(table).iter().find(|column| column.name == name)
 }
 
-/// One row's worth of change: what is to become of it, and the columns it sets.
+/// The change to one row: its [`Life`] and the columns it sets.
 #[derive(Debug, Clone)]
 pub struct Row {
     pub table: &'static str,
@@ -420,7 +422,7 @@ pub fn write_sql(session: &mut EditSession, group: Group) -> Result<usize, Strin
     Ok(count)
 }
 
-/// The three groups' half of a save: the SQL the store comes to. The store
+/// The five groups' half of a save: the SQL the store comes to. The store
 /// itself is written by [`super::creatures::save`], on the same save.
 pub fn save(session: &mut EditSession) {
     for group in Group::ALL {
@@ -428,7 +430,7 @@ pub fn save(session: &mut EditSession) {
     }
 }
 
-/// …one group of it.
+/// One group's part of a save: its SQL file, and a status line.
 pub fn save_group(session: &mut EditSession, group: Group) {
     match write_sql(session, group) {
         Ok(0) => {}
@@ -474,7 +476,7 @@ pub struct ApplyJob {
     at: vale_mangos::conn::Where,
 }
 
-/// What running one answered.
+/// The result of running an [`ApplyJob`].
 pub struct ApplyDone {
     group: Group,
     signature: u64,
@@ -682,8 +684,8 @@ pub fn revert_step(
     })))
 }
 
-/// What of this project is in the database; [`super::items::OnTheServer`] for
-/// this subject.
+/// Which of this project's rows are in the database;
+/// [`super::items::OnTheServer`] for this subject.
 pub struct OnTheServer {
     undo: Undo,
     current: bool,
@@ -776,7 +778,7 @@ mod tests {
     }
 
     #[test]
-    fn the_subjects_own_the_twelve_tables_and_no_other() {
+    fn the_subjects_own_the_thirteen_tables_and_no_other() {
         for table in TABLES {
             assert!(owns(table));
             assert!(!columns_of(table).is_empty(), "{table}");

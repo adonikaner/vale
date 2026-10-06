@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! This spawn      one creature, at one place
-//! Its template    every creature of this kind, everywhere
+//! Its template    every spawn of this creature_template entry, everywhere
 //! ```
 //!
 //! Apart from drawing the columns, the panel exists to state that scope. A
@@ -18,8 +18,8 @@
 //! elite".
 //!
 //! The two rows are drawn in two places on the same split: the columns of the
-//! clicked spawn are in the sidebar, and the columns of its kind are behind a
-//! button. The sidebar carries the spawn's own 21 columns, which describe a
+//! clicked spawn are in the sidebar, and the columns of its template are behind
+//! a button. The sidebar carries the spawn's own 21 columns, which describe a
 //! place in the world shown by the viewport beside them. Above them are two
 //! folding sections and a row of buttons: Spawn (the selected spawn's guid,
 //! level, what it offers and what this project does to it), Creature (a
@@ -30,8 +30,8 @@
 //! [`template_window`] holds `creature_template`'s 78, in a window that can be
 //! dragged off the panel and left open while the pointer works in the world.
 //!
-//! The sidebar is also where the other things a creature has are opened from,
-//! and each is its own window for the same reason: waypoints are a path drawn
+//! The sidebar is also where a creature's rows in other tables are opened
+//! from, and each is its own window for the same reason: waypoints are a path drawn
 //! in the world and edited beside it, a quest list is a list, and a trainer's
 //! spells are another list. One panel holding all of them would be a single
 //! long scroll.
@@ -1346,8 +1346,8 @@ const SUMMARY_PICTURE: f32 = 56.0;
 /// window so that it can be larger than the panel and placed elsewhere on the
 /// screen.
 ///
-/// The title names the creature and entry, not only the body: two creatures'
-/// windows hold numbers that look alike, and the entry is what tells them
+/// The title names the creature and its entry, as the body does: two
+/// creatures' windows hold numbers that look alike, and the entry tells them
 /// apart.
 pub fn template_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui::Rect> {
     if !subject.creatures.template_window {
@@ -1471,8 +1471,8 @@ fn template_head(
 /// a key that moved on every digit typed would re-key the row four times on
 /// the way to `20000`, and three of those are entries somebody else may own.
 ///
-/// What it does is one thing whatever the row is: the project's claim on the
-/// row is re-keyed, so the template is one row before and after; see
+/// It does the same for any row: the project's claim on the row is re-keyed,
+/// so the template is one row before and after; see
 /// [`crate::tools::creatures::Creatures::rekey_template`]. For a row the
 /// database holds, the apply then moves the row and every column of the world
 /// database that names a creature by entry.
@@ -1595,7 +1595,7 @@ fn groups(
     ui.add_space(12.0);
 }
 
-/// One column on a row of its own: its name, the control its kind asks for,
+/// One column on a row of its own: its name, the control its [`Kind`] asks for,
 /// what the value means, and the revert arrow when this project has changed
 /// it.
 fn field(
@@ -1668,6 +1668,20 @@ fn field(
                 written
             }
         };
+        // A gossip menu can be opened from here, and a new one made and named.
+        if table == creature::TEMPLATE && column.name == "gossip_menu_id" {
+            let npc_flags = subject
+                .session
+                .server_edits
+                .get(table, key, "npc_flags")
+                .map(str::to_string)
+                .or_else(|| creature::column(table, "npc_flags").and_then(|flags| flags.literal(row)))
+                .and_then(|flags| flags.trim().parse::<u32>().ok())
+                .unwrap_or(0);
+            let menu = showing.trim().parse().unwrap_or(0);
+            let now = subject.now;
+            super::gossip::menu_buttons(ui, subject.session, subject.gossip, subject.behaviour, key, menu, npc_flags, now);
+        }
         if let Some(written) = written {
             target(table, key, column, &in_database, creating).write(
                 subject.session,
@@ -1733,8 +1747,8 @@ fn target(
 /// A display id: the number, a picture of the model it names, the button
 /// that opens the picker, and the model's path.
 ///
-/// The number stays editable beside the picture, because an id read off a
-/// wiki is a thing people have in hand. The picture is the same rendered
+/// The number stays editable beside the picture, because a user often has the
+/// id already, for example from a wiki. The picture is the same rendered
 /// portrait the Place picker's rows draw.
 fn display_cell(
     ui: &mut egui::Ui,

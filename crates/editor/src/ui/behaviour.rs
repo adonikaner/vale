@@ -776,15 +776,33 @@ fn script_buttons(
     preferred: Option<u32>,
     answer: ScriptAnswer,
 ) -> Option<String> {
+    let now = subject.now;
+    script_controls(ui, subject.session, subject.behaviour, table, script, preferred, answer, now)
+}
+
+/// [`script_buttons`] for a form outside this module, which holds the
+/// session and the behaviour tool but not this module's subject: the gossip
+/// window's script columns.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn script_controls(
+    ui: &mut egui::Ui,
+    session: &mut EditSession,
+    behaviour: &mut Behaviour,
+    table: &'static str,
+    script: u32,
+    preferred: Option<u32>,
+    answer: ScriptAnswer,
+    now: f64,
+) -> Option<String> {
     let mut out = None;
     if script != 0 {
-        let open = subject.behaviour.script_open && subject.behaviour.script == Some((table, script));
+        let open = behaviour.script_open && behaviour.script == Some((table, script));
         if ui
             .selectable_label(open, egui::RichText::new("edit\u{2026}").size(12.0))
             .on_hover_text(format!("Open {table} {script} in the script window."))
             .clicked()
         {
-            subject.behaviour.open_script(table, script);
+            behaviour.open_script(table, script);
         }
     } else {
         meaning(ui, "none");
@@ -794,17 +812,16 @@ fn script_buttons(
         .on_hover_text(format!("Search {table} by comment or id, and use an existing script."))
         .clicked()
     {
-        subject.behaviour.chooser = Some(Chooser::Script { table, answer, search: Search::default() });
+        behaviour.chooser = Some(Chooser::Script { table, answer, search: Search::default() });
     }
     let next = match preferred {
-        Some(preferred) => subject
-            .behaviour
-            .next_script_id(table, subject.session)
-            .map(|next| match preferred >= next && !subject.session.server_scripts.touches(table, preferred) {
+        Some(preferred) => behaviour
+            .next_script_id(table, session)
+            .map(|next| match preferred >= next && !session.server_scripts.touches(table, preferred) {
                 true => preferred,
                 false => next,
             }),
-        None => subject.behaviour.next_script_id(table, subject.session),
+        None => behaviour.next_script_id(table, session),
     };
     let button = ui
         .add_enabled(next.is_some(), egui::Button::new(egui::RichText::new("+ new").size(12.0)).small())
@@ -815,9 +832,8 @@ fn script_buttons(
         .on_disabled_hover_text("Reading the table's highest id.");
     if button.clicked() {
         if let Some(id) = next {
-            let now = subject.now;
-            subject.behaviour.set_script(subject.session, &Script::empty(table, id), now);
-            subject.behaviour.open_script(table, id);
+            behaviour.set_script(session, &Script::empty(table, id), now);
+            behaviour.open_script(table, id);
             out = Some(id.to_string());
         }
     }

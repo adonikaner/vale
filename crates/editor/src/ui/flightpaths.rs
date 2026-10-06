@@ -41,6 +41,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
     }
 
     summary(ui, flights);
+    flight_map_block(ui, session, flights, assets);
     ui.add_space(4.0);
     controls(ui, flights);
 
@@ -48,9 +49,9 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
         .id_salt("flightpaths")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            // Each selected thing is a section that folds, so a node with
-            // its paths, a path and a point together do not run the panel
-            // off the screen.
+            // Each selection (node, path, point) is a section that folds, so
+            // a node with its paths, a path and a point together do not run
+            // the panel off the screen.
             if let Some(id) = flights.node {
                 section(ui, &format!("Node {id}"), "node", |ui| {
                     node_block(ui, session, flights, id, now);
@@ -140,6 +141,93 @@ fn summary(ui: &mut egui::Ui, flights: &Flightpaths) {
                 .size(theme::SMALL)
                 .color(theme::WARN),
         );
+    }
+}
+
+/// Whether the client opens a flight map on this map, and the buttons that
+/// give it one, fit it to the nodes, and draw its picture again.
+fn flight_map_block(
+    ui: &mut egui::Ui,
+    session: &mut EditSession,
+    flights: &mut Flightpaths,
+    assets: &vale_client::assets::GameAssets,
+) {
+    use vale_edit::flightmap;
+    for table in [flightmap::TABLE, flightpaths::WORLD_MAP_AREA] {
+        if !session.open_table(assets, table) {
+            theme::note(ui, format!("opening {table}.dbc\u{2026}"));
+            return;
+        }
+    }
+    let Some(state) = flightpaths::flight_map(session, flights) else {
+        return;
+    };
+    let mut make = false;
+    let mut redraw: Option<flightmap::FlightMap> = None;
+    match &state {
+        flightpaths::FlightMap::Shipped => {}
+        flightpaths::FlightMap::Missing => {
+            if !flights.nodes.is_empty() {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "The 1.12.1 client opens no flight map on this map: WorldMapContinent.dbc has \
+                         no row for map {}, so speaking to a flight master here does nothing.",
+                        flights.map
+                    ))
+                    .size(theme::SMALL)
+                    .color(theme::WARN),
+                );
+            }
+            make = ui
+                .button("Make a flight map")
+                .on_hover_text(
+                    "Add a WorldMapContinent.dbc row for this map, with a square box over its tiles \
+                     and nodes, and draw Interface\\TaxiFrame\\TAXIMAP<map>.blp from its minimap \
+                     tiles. Client only: the server reads neither.",
+                )
+                .clicked();
+        }
+        flightpaths::FlightMap::Made { flight, outside } => {
+            let side = flight.taxi_box[2] - flight.taxi_box[0];
+            theme::note(ui, format!("Flight map: {side:.0} yards square."));
+            if !outside.is_empty() {
+                let ids: Vec<String> = outside.iter().map(u32::to_string).collect();
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Node(s) {} are outside the flight map's box; the client does not draw them.",
+                        ids.join(", ")
+                    ))
+                    .size(theme::SMALL)
+                    .color(theme::WARN),
+                );
+            }
+            if !flightpaths::has_picture(assets, flights) {
+                ui.label(
+                    egui::RichText::new("The flight map has no picture; the client draws the nodes over nothing.")
+                        .size(theme::SMALL)
+                        .color(theme::WARN),
+                );
+            }
+            ui.horizontal_wrapped(|ui| {
+                make = ui
+                    .button("Fit the flight map")
+                    .on_hover_text("Set the box again to cover this map's tiles and nodes, and draw the picture again.")
+                    .clicked();
+                if ui
+                    .button("Redraw the picture")
+                    .on_hover_text("Draw TAXIMAP<map>.blp again from the minimap tiles as they are now, for the same box.")
+                    .clicked()
+                {
+                    redraw = Some(*flight);
+                }
+            });
+        }
+    }
+    if make {
+        session.status = flightpaths::make_flight_map(session, assets, flights);
+    }
+    if let Some(flight) = redraw {
+        session.status = flightpaths::draw_flight_map(session, assets, flights, &flight);
     }
 }
 
@@ -502,7 +590,7 @@ fn path_block(
         if ui
             .button("Fly to")
             .on_hover_text(
-                "Frames the whole path. From that far back the world's fog can hide                  the ground; FOG on the view bar turns it off.",
+                "Frames the whole path. From that far back the world's fog can hide the ground; FOG on the view bar turns it off.",
             )
             .clicked()
         {
@@ -718,8 +806,8 @@ mod tests {
         };
         assert_eq!(sides(&node([0, 541])), "Offered to the Alliance.");
         assert_eq!(sides(&node([2224, 541])), "Offered to both sides.");
-        // Node 9's shape: the Alliance gryphon in the column vmangos reads as
-        // the Horde's.
+        // Node 9 has this pair: the Alliance gryphon in the column vmangos
+        // reads as the Horde's.
         assert_eq!(
             sides(&node([541, 0])),
             "The server offers it to the Horde; the client's flight map draws it for the Alliance."

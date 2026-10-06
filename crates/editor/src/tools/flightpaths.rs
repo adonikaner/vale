@@ -204,13 +204,16 @@ pub struct Flightpaths {
     pub transports: bool,
     /// A fly-to asked for by the panel, consumed by [`fly`].
     pub fly_to: Option<Vec3>,
-    /// …and the camera distance it asks for, when it asks for one: a path is
-    /// framed whole, a node or a point is not.
+    /// The camera distance that `fly_to` asks for, when it asks for one: a
+    /// path is framed whole, a node or a point is not.
     pub fly_distance: Option<f32>,
     /// Whether the command line's flight path flags have run, or none were
     /// given. `crate::server::release::migration_on_the_command_line` waits on
     /// it.
     pub scripted_done: bool,
+    /// Whether the archive chain holds the flight map picture of a map, by
+    /// map, read once per map and again after [`draw_flight_map`].
+    pub picture_known: Option<(u32, bool)>,
 }
 
 impl Default for Flightpaths {
@@ -237,6 +240,7 @@ impl Default for Flightpaths {
             fly_to: None,
             fly_distance: None,
             scripted_done: false,
+            picture_known: None,
         }
     }
 }
@@ -364,8 +368,9 @@ impl Flightpaths {
 /// flights cruise well above this; it is a floor for a point placed by hand.
 pub const DEFAULT_CLEARANCE: f32 = 40.0;
 
-/// How wide a handle is to the pointer, in logical pixels. The light tool's
-/// width, for the same reason: a point cannot be clicked, a disc can.
+/// How wide a handle is to the pointer, in logical pixels. The light tool
+/// uses the same width for the same reason: a handle is a point, so the
+/// pointer picks it within a disc of this width around it.
 pub(super) const HANDLE_PIXELS: f32 = 12.0;
 
 /// How far the pointer travels before a press on a handle becomes a drag.
@@ -1342,8 +1347,8 @@ fn draw(
             };
             handles.sphere(bevy(at), marker_radius(at, eye) * 0.6, colour);
         }
-        // The selected point's drop to the ground, which is what says how high
-        // it is.
+        // A line from the selected point down to the ground, which shows its
+        // height.
         if let (Some((_, point)), Some(session)) =
             (flights.point.and_then(|id| flights.point(id)), session.as_ref())
         {
@@ -1491,10 +1496,12 @@ pub fn framing_distance(across: f32) -> f32 {
 
 /// The command line's flight path flags, once the tables are read and, for a
 /// new node, the ground under it is open: `--taxi-node`, `--taxi-path`,
-/// `--taxi-connect` and `--taxi-node-add`.
+/// `--taxi-connect`, `--taxi-node-add` and `--flight-map`.
+#[allow(clippy::too_many_arguments)]
 fn scripted(
     mut flights: ResMut<Flightpaths>,
     args: Res<crate::Args>,
+    assets: Res<vale_client::assets::GameAssets>,
     mut session: Option<ResMut<EditSession>>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
@@ -1503,7 +1510,8 @@ fn scripted(
     let asked = args.taxi_node.is_some()
         || args.taxi_path.is_some()
         || args.taxi_connect.is_some()
-        || args.taxi_node_add.is_some();
+        || args.taxi_node_add.is_some()
+        || args.flight_map;
     if *done {
         return;
     }
@@ -1525,6 +1533,18 @@ fn scripted(
         info!("--taxi-node-add: {line}");
         session.status = line;
         rebuilt(session, &mut flights);
+    }
+    if args.flight_map {
+        use vale_edit::flightmap;
+        if !session.open_table(&assets, flightmap::TABLE) || !session.open_table(&assets, WORLD_MAP_AREA) {
+            return;
+        }
+        let line = match flight_map(session, &flights) {
+            Some(FlightMap::Shipped) => "this map is a continent of the world map; its flight map is shipped".to_string(),
+            _ => make_flight_map(session, &assets, &mut flights),
+        };
+        info!("--flight-map: {line}");
+        session.status = line;
     }
     if let Some((from, to)) = args.taxi_connect {
         let (with_return, clearance) = (flights.with_return, flights.clearance);
@@ -1588,6 +1608,143 @@ fn rebuilt(session: &EditSession, flights: &mut Flightpaths) -> Option<()> {
         map,
     );
     Some(())
+}
+
+/// What the open map's flight map is.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FlightMap {
+    /// The map is a continent of the world map, whose flight map the game
+    /// ships.
+    Shipped,
+    /// The map has no `WorldMapContinent` row, so the client opens no flight
+    /// map here.
+    Missing,
+    /// The map has a row: its box, and the nodes outside it, which the client
+    /// does not draw.
+    Made { flight: vale_edit::flightmap::FlightMap, outside: Vec<u32> },
+}
+
+/// The open map's flight map. `None` while the tables are not open.
+pub fn flight_map(session: &EditSession, flights: &Flightpaths) -> Option<FlightMap> {
+    use vale_edit::flightmap;
+    let continents = session.table(flightmap::TABLE)?;
+    let areas = session.table(WORLD_MAP_AREA)?;
+    let continent = (0..areas.record_count()).any(|record| {
+        areas.u32_at(record, 1) == Some(flights.map) && areas.u32_at(record, 2) == Some(0)
+    });
+    if continent {
+        return Some(FlightMap::Shipped);
+    }
+    let Some(flight) = flightmap::row_of(continents, flights.map).and_then(|record| flightmap::read(continents, record)) else {
+        return Some(FlightMap::Missing);
+    };
+    let outside = flights.nodes.iter().filter(|node| !flight.holds(node.at[0], node.at[1])).map(|node| node.id).collect();
+    Some(FlightMap::Made { flight, outside })
+}
+
+/// The table whose continent rows (area 0) mark a map as one of the world
+/// map's continents: field 1 is the map, field 2 the area.
+pub const WORLD_MAP_AREA: &str = "WorldMapArea";
+
+/// Give the open map a flight map, or fit the one it has to its tiles and
+/// nodes: write its `WorldMapContinent` row as one undo entry, and draw the
+/// picture. Answers what happened, for the status line.
+pub fn make_flight_map(session: &mut EditSession, assets: &vale_client::assets::GameAssets, flights: &mut Flightpaths) -> String {
+    use vale_edit::flightmap;
+    if session.map_id != flights.map {
+        return "the flight path tool is still reading this map".to_string();
+    }
+    let index = minimap_index(assets);
+    let mut tiles: Vec<(u32, u32)> = session.claimed.iter().copied().collect();
+    tiles.extend(index.tiles_of(&session.map));
+    tiles.sort_unstable();
+    tiles.dedup();
+    let nodes: Vec<[f32; 2]> = flights.nodes.iter().map(|node| [node.at[0], node.at[1]]).collect();
+    let Some(flight) = flightmap::plan(flights.map, &tiles, &nodes) else {
+        return "this map has no tiles and no nodes to make a flight map of".to_string();
+    };
+    let Some(table) = session.table_mut(flightmap::TABLE) else {
+        return format!("{} is not open", flightmap::TABLE);
+    };
+    let written = match flightmap::write(table, &flight) {
+        Ok(written) => written,
+        Err(why) => return why.to_string(),
+    };
+    session.history.begin("Make flight map");
+    match written {
+        flightmap::Written::Added(row) => session.history.record_row(flightmap::TABLE, row),
+        flightmap::Written::Changed(cells) => {
+            for cell in cells {
+                session.history.record_cell(flightmap::TABLE, cell);
+            }
+        }
+    }
+    session.history.end();
+    session.table_edited(flightmap::TABLE);
+    let side = flight.taxi_box[2] - flight.taxi_box[0];
+    let drawn = draw_flight_map(session, assets, flights, &flight);
+    format!("flight map for map {}: {side:.0} yards square; {drawn}", flight.map)
+}
+
+/// Draw the flight map picture of `flight` from the map's minimap tiles and
+/// write it into the project. Answers what happened.
+pub fn draw_flight_map(
+    session: &mut EditSession,
+    assets: &vale_client::assets::GameAssets,
+    flights: &mut Flightpaths,
+    flight: &vale_edit::flightmap::FlightMap,
+) -> String {
+    use vale_assets::world::blp;
+    use vale_edit::flightmap;
+    let index = minimap_index(assets);
+    let directory = session.map.clone();
+    let mut drawn = 0usize;
+    let rgba = flightmap::picture(flight.taxi_box, |col, row| {
+        let path = index.texture(&directory, col, row)?;
+        let bytes = assets.with_archive(|chain| Ok(chain.read(&path).ok())).ok().flatten()?;
+        let picture = blp::decode(&bytes).ok()?;
+        let side = flightmap::TILE_SIDE;
+        (picture.width == side && picture.height == side).then(|| {
+            drawn += 1;
+            picture.rgba
+        })
+    });
+    let bytes = match blp::encode_dxt1(&rgba, flightmap::SIDE, flightmap::SIDE) {
+        Ok(bytes) => bytes,
+        Err(why) => return format!("the picture could not be encoded: {why}"),
+    };
+    let path = vale_assets::tables::taxi::map_art(flight.map);
+    if !session.save_bytes(&path, bytes) {
+        return format!("{path} could not be written");
+    }
+    flights.picture_known = Some((flight.map, true));
+    match drawn {
+        0 => "the picture is blank: no minimap tile of this map is drawn".to_string(),
+        n => format!("picture drawn from {n} minimap tile(s)"),
+    }
+}
+
+/// Whether the archive chain holds the open map's flight map picture, read
+/// once per map.
+pub fn has_picture(assets: &vale_client::assets::GameAssets, flights: &mut Flightpaths) -> bool {
+    if let Some((map, known)) = flights.picture_known {
+        if map == flights.map {
+            return known;
+        }
+    }
+    let path = vale_assets::tables::taxi::map_art(flights.map);
+    let known = assets.with_archive(|chain| Ok(chain.read(&path).is_ok())).unwrap_or(false);
+    flights.picture_known = Some((flights.map, known));
+    known
+}
+
+/// The minimap index as the archive chain holds it now, the project's own
+/// tiles included. Read each time rather than through the cached copy,
+/// which predates any tile drawn this session.
+fn minimap_index(assets: &vale_client::assets::GameAssets) -> vale_assets::tables::minimap::MinimapTiles {
+    use vale_assets::tables::minimap::{MinimapTiles, MD5_TRANSLATE};
+    let raw = assets.with_archive(|chain| Ok(chain.read(MD5_TRANSLATE).ok())).ok().flatten().unwrap_or_default();
+    MinimapTiles::parse(&raw)
 }
 
 #[cfg(test)]

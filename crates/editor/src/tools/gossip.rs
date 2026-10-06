@@ -12,17 +12,20 @@
 //! its `gossip_menu_option` rows, and the `npc_text` rows its texts name.
 //! The `broadcast_text` lines an `npc_text` row names are read and edited
 //! through `super::behaviour`, which already holds that table for scripts.
-//! Everything read is kept until an apply moves the database.
+//! Everything read is kept until an apply writes to the database.
 //!
 //! Every row is a row of the project's store on `super::services`' terms. A
 //! new text is three rows: a `broadcast_text` line, the `npc_text` row that
 //! shows it, and the `gossip_menu` row that puts it in the menu.
+//!
+//! `points_of_interest` is read whole with the first menu, a few hundred
+//! rows, so an option's point can be chosen by name.
 
 use crate::session::{EditSession, Gesture};
 use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::future, Task};
 use std::collections::HashMap;
-use vale_mangos::gossip::{self, MenuOption, MenuText, NpcText};
+use vale_mangos::gossip::{self, MenuOption, MenuText, NpcText, Point};
 use vale_mangos::row::{Edits, Key, Life};
 
 /// The selected creature, which the shell writes each frame.
@@ -34,10 +37,13 @@ pub struct About {
     pub template_key: Key,
     pub gossip_menu_id: u32,
     pub npc_flags: u32,
+    /// Where the selected spawn stands, world x and y, which a new point of
+    /// interest starts at.
+    pub at: Option<[f32; 2]>,
 }
 
-/// One row as the window draws it: the shown value, the database's, and what
-/// the project says is to become of it.
+/// One row as the window draws it: the shown value, the database's value, and
+/// the project's change to the row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Shown<T> {
     pub row: T,
@@ -45,7 +51,7 @@ pub struct Shown<T> {
     pub life: Life,
 }
 
-/// What one read of a menu answered.
+/// The rows one read of a menu returned.
 struct Read {
     menu: u32,
     texts: Vec<MenuText>,
@@ -53,6 +59,7 @@ struct Read {
     npc_texts: Vec<NpcText>,
     asked_texts: Vec<u32>,
     highest: Option<(u32, u32)>,
+    points: Option<Vec<Point>>,
 }
 
 /// The window's state.
@@ -68,6 +75,13 @@ pub struct Gossip {
     pub trail: Vec<u32>,
     /// The number typed into the Open field.
     pub typed: u32,
+    /// The npc_text id typed beside Add existing text.
+    pub existing_text: u32,
+    /// The point of interest chooser, open for one option: its menu and id,
+    /// and the search typed.
+    pub point_chooser: Option<(u32, u32, String)>,
+    /// Every `points_of_interest` row, by entry, read with the first menu.
+    points: Option<HashMap<u32, Point>>,
     texts: HashMap<u32, Vec<MenuText>>,
     options: HashMap<u32, Vec<MenuOption>>,
     npc_texts: HashMap<u32, Option<NpcText>>,
@@ -188,7 +202,7 @@ impl Gossip {
         Some(menu.max(created) + 1)
     }
 
-    /// …and the id a new `npc_text` row takes.
+    /// The id a new `npc_text` row takes, once the highest has been read.
     pub fn next_npc_text(&self, edits: &Edits) -> Option<u32> {
         let (_, text) = self.highest?;
         let created = edits
@@ -287,6 +301,79 @@ impl Gossip {
         });
     }
 
+    /// One point of interest as the project leaves it. `None` when neither
+    /// the table nor the project has it, or the table is not read.
+    pub fn point(&self, edits: &Edits, entry: u32) -> Option<Shown<Point>> {
+        let held = self.points.as_ref()?.get(&entry).cloned();
+        let key = gossip::point_key(entry);
+        let assignments = held.as_ref().filter(|_| !created(edits, gossip::POI, &key)).map(Point::assignments);
+        let (row, life) = super::triggers::shown(edits, gossip::POI, &key, assignments.as_deref())?;
+        Some(Shown { row: Point::from_row(&row)?, in_database: held.filter(|_| life != Life::Insert), life })
+    }
+
+    /// Whether the points of interest have been read.
+    pub fn points_read(&self) -> bool {
+        self.points.is_some()
+    }
+
+    /// Every point of interest whose entry or name matches `search`, removals
+    /// left out, by entry.
+    pub fn points_matching(&self, edits: &Edits, search: &str) -> Vec<Shown<Point>> {
+        let Some(held) = self.points.as_ref() else {
+            return Vec::new();
+        };
+        let mut entries: Vec<u32> = held.keys().copied().collect();
+        entries.extend(
+            edits
+                .rows()
+                .filter(|(table, _, row)| *table == gossip::POI && row.life == Life::Insert)
+                .filter_map(|(_, key, _)| key.first().map(|entry| entry as u32)),
+        );
+        entries.sort_unstable();
+        entries.dedup();
+        let search = search.trim().to_lowercase();
+        entries
+            .into_iter()
+            .filter_map(|entry| self.point(edits, entry))
+            .filter(|shown| shown.life != Life::Delete)
+            .filter(|shown| {
+                search.is_empty() || shown.row.entry.to_string() == search || shown.row.name.to_lowercase().contains(&search)
+            })
+            .collect()
+    }
+
+    /// The entry a new point of interest takes, once the table is read.
+    pub fn next_point(&self, edits: &Edits) -> Option<u32> {
+        let held = self.points.as_ref()?.keys().copied().max().unwrap_or(0);
+        let created = edits
+            .rows()
+            .filter(|(table, _, row)| *table == gossip::POI && row.life == Life::Insert)
+            .filter_map(|(_, key, _)| key.first())
+            .max()
+            .unwrap_or(0) as u32;
+        Some(held.max(created) + 1)
+    }
+
+    /// Make a point of interest at `x`, `y`. Answers its entry.
+    pub fn new_point(&mut self, session: &mut EditSession, x: f32, y: f32, name: &str, now: f64) -> Option<u32> {
+        let entry = self.next_point(&session.server_edits)?;
+        let point = Point::new(entry, x, y, name);
+        create(session, gossip::POI, &point.key(), &point.assignments(), now);
+        Some(entry)
+    }
+
+    /// Set one column of a point of interest. `value` is a SQL literal.
+    pub fn set_point(&mut self, session: &mut EditSession, shown: &Shown<Point>, column: &'static str, value: String, now: f64) {
+        let held = shown.in_database.as_ref().map(Point::assignments);
+        write(session, gossip::POI, &shown.row.key(), held, column, value, "Edit point of interest", now);
+    }
+
+    /// Put an existing `npc_text` row into a menu: the menu row naming it.
+    pub fn add_existing_text(&mut self, session: &mut EditSession, menu: u32, text_id: u32, now: f64) {
+        let row = MenuText { entry: menu, text_id, ..MenuText::default() };
+        create(session, gossip::MENU, &row.key(), &row.assignments(), now);
+    }
+
     /// Make a new menu with one text, saying `broadcast_text`. Answers the
     /// menu's entry.
     pub fn new_menu(&mut self, session: &mut EditSession, broadcast_text: u32, now: f64) -> Option<u32> {
@@ -354,8 +441,8 @@ fn on_the_command_line(args: Res<crate::Args>, mut gossip: ResMut<Gossip>, mut d
 }
 
 /// Read the shown menu's rows while the window is open, the `npc_text` rows
-/// they name, and the highest ids once; forget everything when an apply has
-/// moved the database.
+/// they name, and the highest ids once; clear everything read when an apply
+/// has written to the database.
 fn read_the_rows(
     mut gossip: ResMut<Gossip>,
     session: Option<Res<EditSession>>,
@@ -378,6 +465,9 @@ fn read_the_rows(
                     if read.highest.is_some() {
                         gossip.highest = read.highest;
                     }
+                    if let Some(points) = read.points {
+                        gossip.points = Some(points.into_iter().map(|point| (point.entry, point)).collect());
+                    }
                     gossip.trouble = None;
                 }
                 Err(e) => {
@@ -395,6 +485,7 @@ fn read_the_rows(
         gossip.options.clear();
         gossip.npc_texts.clear();
         gossip.highest = None;
+        gossip.points = None;
         gossip.trouble = None;
     }
     if !gossip.open || gossip.trouble.is_some() {
@@ -409,7 +500,7 @@ fn read_the_rows(
         .map(|shown| shown.row.text_id)
         .filter(|id| !gossip.npc_texts.contains_key(id))
         .collect();
-    if gossip.is_read(menu) && claimed.is_empty() && gossip.highest.is_some() {
+    if gossip.is_read(menu) && claimed.is_empty() && gossip.highest.is_some() && gossip.points.is_some() {
         return;
     }
     let Some((at, _source)) = settings.resolve() else {
@@ -417,6 +508,7 @@ fn read_the_rows(
         return;
     };
     let want_highest = gossip.highest.is_none();
+    let want_points = gossip.points.is_none();
     gossip.reading = Some(crate::server::queue::read(async move {
         use vale_mangos::schema::RowValue;
         let mut db = vale_mangos::conn::Db::open(&at)?;
@@ -435,7 +527,11 @@ fn read_the_rows(
             }),
             false => None,
         };
-        Ok(Read { menu, texts, options, npc_texts, asked_texts: asked, highest })
+        let points = match want_points {
+            true => Some(db.rows(&gossip::points_query())?.iter().filter_map(Point::from_row).collect()),
+            false => None,
+        };
+        Ok(Read { menu, texts, options, npc_texts, asked_texts: asked, highest, points })
     }));
 }
 
@@ -448,6 +544,34 @@ mod tests {
         let _ = std::fs::remove_dir_all(&install);
         let project = vale_edit::project::Project::open(&install, "default").unwrap();
         (EditSession::for_tests(project), install)
+    }
+
+    /// A point of interest is numbered above the table's highest, found by
+    /// name or entry, and edited as a created row or as the database's.
+    #[test]
+    fn a_point_of_interest_is_made_found_and_edited() {
+        let (mut session, install) = session();
+        let inn = Point::new(1693, -9459.0, 42.0, "Lion's Pride Inn");
+        let mut gossip = Gossip { points: Some(HashMap::from([(1693, inn)])), ..Gossip::default() };
+        assert_eq!(gossip.next_point(&session.server_edits), Some(1694));
+        let made = gossip.new_point(&mut session, -8800.0, 600.0, "Bank", 1.0).unwrap();
+        assert_eq!(made, 1694);
+        assert_eq!(gossip.next_point(&session.server_edits), Some(1695));
+        let found: Vec<u32> = gossip.points_matching(&session.server_edits, "BANK").iter().map(|point| point.row.entry).collect();
+        assert_eq!(found, vec![1694]);
+        assert_eq!(gossip.points_matching(&session.server_edits, "1693").len(), 1);
+        assert_eq!(gossip.points_matching(&session.server_edits, "").len(), 2);
+
+        let created = gossip.point(&session.server_edits, 1694).unwrap();
+        assert_eq!((created.life, created.row.icon, created.row.flags), (Life::Insert, 6, 99));
+        gossip.set_point(&mut session, &created, "icon_name", vale_mangos::sql::text("Stormwind Bank"), 2.0);
+        assert_eq!(gossip.point(&session.server_edits, 1694).unwrap().row.name, "Stormwind Bank");
+
+        let held = gossip.point(&session.server_edits, 1693).unwrap();
+        gossip.set_point(&mut session, &held, "x", "-9000".to_string(), 3.0);
+        let moved = gossip.point(&session.server_edits, 1693).unwrap();
+        assert_eq!((moved.row.x, moved.life), (-9000.0, Life::Update));
+        let _ = std::fs::remove_dir_all(&install);
     }
 
     /// A new menu is a menu row and an npc_text row above the highest held,

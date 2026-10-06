@@ -10,11 +10,13 @@
 //!                     or script it leads to, a confirmation box, a condition
 //! npc_text            what a text says: up to eight broadcast_text lines with
 //!                     the chance each is chosen
+//! points_of_interest  a place an option marks on the player's map: a
+//!                     position, an icon and a name ([`Point`])
 //! ```
 //!
 //! `creature_template.gossip_menu_id` names a menu, and so does a game object
-//! of the quest giver type. An option's `action_menu_id` names the next menu,
-//! which is how a conversation goes deeper; 0 stays, -1 closes.
+//! of the quest giver type. An option's `action_menu_id` names the menu the
+//! option opens next; 0 stays, -1 closes.
 //!
 //! ## What the loaders skip
 //!
@@ -31,8 +33,9 @@
 //! option's `npc_option_npcflag` (`Player.cpp:12020`). [`flag_for`] gives the
 //! flag each type is shipped with.
 //!
-//! Live on `.reload gossip_menu`, `.reload gossip_menu_option` and
-//! `.reload npc_text` (`Chat.cpp:847`, `868`).
+//! Live on `.reload gossip_menu`, `.reload gossip_menu_option`,
+//! `.reload npc_text` and `.reload points_of_interest` (`Chat.cpp:847`, `868`,
+//! `880`).
 
 use crate::row::{Assignment, Key};
 use crate::schema::{Column, Group, Kind, Value};
@@ -40,10 +43,12 @@ use crate::schema::{Column, Group, Kind, Value};
 pub const MENU: &str = "gossip_menu";
 pub const OPTION: &str = "gossip_menu_option";
 pub const NPC_TEXT: &str = "npc_text";
+pub const POI: &str = "points_of_interest";
 
-/// The three tables, in the order a plan writes them: a text before the menu
-/// rows that name it, the menu before its options.
-pub const TABLES: [&str; 3] = [NPC_TEXT, MENU, OPTION];
+/// The four tables, in the order a plan writes them: a text before the menu
+/// rows that name it, a point of interest and the menu before the options
+/// that name them.
+pub const TABLES: [&str; 4] = [NPC_TEXT, POI, MENU, OPTION];
 
 /// The static name for one of [`TABLES`] read out of a file, or `None`.
 pub fn table_named(name: &str) -> Option<&'static str> {
@@ -165,12 +170,25 @@ pub const NPC_TEXT_COLUMNS: [Column; 17] = [
     Column { name: "Probability7", kind: Kind::Float, group: Group::Text, about: "the chance of line 8" },
 ];
 
+/// `points_of_interest`, in table order (`ObjectMgr::LoadPointsOfInterest`,
+/// `ObjectMgr.cpp:9081`).
+pub const POI_COLUMNS: [Column; 7] = [
+    Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the id an option's action_poi_id names" },
+    Column { name: "x", kind: Kind::Float, group: Group::Place, about: "world x of the place marked" },
+    Column { name: "y", kind: Kind::Float, group: Group::Place, about: "world y of the place marked" },
+    Column { name: "icon", kind: Kind::Unsigned, group: Group::Appearance, about: "the icon drawn there; every shipped row uses 6" },
+    Column { name: "flags", kind: Kind::Unsigned, group: Group::Advanced, about: "sent to the client as they are; every shipped row uses 99" },
+    Column { name: "data", kind: Kind::Unsigned, group: Group::Advanced, about: "sent to the client as it is; every shipped row uses 0" },
+    Column { name: "icon_name", kind: Kind::Text, group: Group::Text, about: "the name shown with the mark" },
+];
+
 /// Every column of one of [`TABLES`].
 pub fn columns_of(table: &str) -> &'static [Column] {
     match table {
         MENU => &MENU_COLUMNS,
         OPTION => &OPTION_COLUMNS,
         NPC_TEXT => &NPC_TEXT_COLUMNS,
+        POI => &POI_COLUMNS,
         _ => &[],
     }
 }
@@ -190,6 +208,76 @@ pub fn option_key(menu_id: u32, id: u32) -> Key {
 
 pub fn text_key(id: u32) -> Key {
     Key::one("ID", u64::from(id))
+}
+
+pub fn point_key(entry: u32) -> Key {
+    Key::one("entry", u64::from(entry))
+}
+
+/// The icon, flags and data every shipped `points_of_interest` row holds, which
+/// a new row takes.
+pub const POI_ICON: u32 = 6;
+pub const POI_FLAGS: u32 = 99;
+pub const POI_DATA: u32 = 0;
+
+/// How far from the centre of the world a coordinate may be, in yards:
+/// 32 tiles of 533.33 yards. `MaNGOS::IsValidMapCoord` refuses a point
+/// outside it, and the loader skips the row.
+pub const MAP_HALF_SIZE: f32 = 17066.666;
+
+/// One `points_of_interest` row: a place an option marks on the map.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Point {
+    pub entry: u32,
+    pub x: f32,
+    pub y: f32,
+    pub icon: u32,
+    pub flags: u32,
+    pub data: u32,
+    pub name: String,
+}
+
+impl Point {
+    /// A new point at `x`, `y`, with the shipped icon, flags and data.
+    pub fn new(entry: u32, x: f32, y: f32, name: &str) -> Point {
+        Point { entry, x, y, icon: POI_ICON, flags: POI_FLAGS, data: POI_DATA, name: name.to_string() }
+    }
+
+    pub fn key(&self) -> Key {
+        point_key(self.entry)
+    }
+
+    pub fn assignments(&self) -> Vec<Assignment> {
+        vec![
+            Assignment { column: "x", value: crate::sql::float(self.x) },
+            Assignment { column: "y", value: crate::sql::float(self.y) },
+            Assignment { column: "icon", value: self.icon.to_string() },
+            Assignment { column: "flags", value: self.flags.to_string() },
+            Assignment { column: "data", value: self.data.to_string() },
+            Assignment { column: "icon_name", value: crate::sql::text(&self.name) },
+        ]
+    }
+
+    pub fn from_row(row: &crate::schema::Row) -> Option<Point> {
+        use crate::schema::RowValue;
+        Some(Point {
+            entry: row.integer("entry")? as u32,
+            x: row.number("x").unwrap_or(0.0) as f32,
+            y: row.number("y").unwrap_or(0.0) as f32,
+            icon: row.integer("icon").unwrap_or(0) as u32,
+            flags: row.integer("flags").unwrap_or(0) as u32,
+            data: row.integer("data").unwrap_or(0) as u32,
+            name: row.text("icon_name").unwrap_or_default().to_string(),
+        })
+    }
+
+    /// Why the loader would skip the row.
+    pub fn check(&self) -> Vec<String> {
+        match self.x.abs() <= MAP_HALF_SIZE && self.y.abs() <= MAP_HALF_SIZE {
+            true => Vec::new(),
+            false => vec![format!("{}, {} is off the map; the server skips the point", self.x, self.y)],
+        }
+    }
 }
 
 /// One text of a menu.
@@ -394,7 +482,7 @@ pub const TEXT_COLUMNS: [&str; LINES] = [
     "BroadcastTextID7",
 ];
 
-/// …and of its chance.
+/// The column of each line's chance.
 pub const CHANCE_COLUMNS: [&str; LINES] = [
     "Probability0",
     "Probability1",
@@ -412,6 +500,7 @@ pub fn check_created(table: &str, row: &crate::schema::Row) -> Vec<String> {
     match table {
         MENU => MenuText::from_row(row).map(|text| text.check()).unwrap_or_default(),
         NPC_TEXT => NpcText::from_row(row).map(|text| text.check()).unwrap_or_default(),
+        POI => Point::from_row(row).map(|point| point.check()).unwrap_or_default(),
         _ => Vec::new(),
     }
 }
@@ -433,6 +522,11 @@ pub fn npc_texts_query(ids: &[u32]) -> Option<String> {
     }
     let list: Vec<String> = ids.iter().map(u32::to_string).collect();
     Some(format!("SELECT * FROM `{NPC_TEXT}` WHERE `ID` IN ({})", list.join(", ")))
+}
+
+/// Every point of interest. The table is a few hundred rows.
+pub fn points_query() -> String {
+    format!("SELECT * FROM `{POI}` ORDER BY `entry`")
 }
 
 /// The highest menu entry and npc_text id the tables hold, as `menu` and
@@ -457,6 +551,25 @@ mod tests {
         assert_eq!(flag_for(15), 0x4000);
         assert_eq!(flag_for(16), 0x10);
         assert_eq!(flag_for(0), 0);
+    }
+
+    /// A new point carries the shipped icon, flags and data, reads back from
+    /// its columns, and is refused off the map.
+    #[test]
+    fn a_new_point_reads_back_and_is_checked_against_the_map() {
+        let point = Point::new(1700, -9459.35, 42.08, "Lion's Pride Inn");
+        let row: crate::schema::Row = std::iter::once(("entry".to_string(), Some("1700".to_string())))
+            .chain(point.assignments().into_iter().map(|change| {
+                let value = change.value.trim_matches('\'').replace("\\'", "'");
+                (change.column.to_string(), Some(value))
+            }))
+            .collect();
+        let read = Point::from_row(&row).unwrap();
+        assert_eq!((read.icon, read.flags, read.data), (6, 99, 0));
+        assert_eq!(read.name, "Lion's Pride Inn");
+        assert!(read.check().is_empty());
+        assert_eq!(Point::new(1, 20000.0, 0.0, "").check().len(), 1);
+        assert_eq!(columns_of(POI).len(), 7);
     }
 
     #[test]

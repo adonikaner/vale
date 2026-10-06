@@ -6,9 +6,9 @@
 //!
 //! Several subjects store their edits as rows in vmangos' database rather than
 //! as bytes in a file: the client tables (spells, flight nodes and skill line
-//! abilities), creatures,
-//! objects, items, quests, loot, vendors and trainers, and behaviour. Each
-//! subject used to keep these operations in its own panel. The result was three names for one operation
+//! abilities), creatures, objects, items, quests, loot, vendors and trainers,
+//! and behaviour. Each subject used to keep these operations in its own panel.
+//! The result was three names for one operation
 //! (*Apply to the server*, *Apply*, and a checkbox in a third window for
 //! spells), three names for its inverse (*Put the rows back*, *Revert*, *Put
 //! the server back*), and one panel that applied on every save while the other
@@ -47,7 +47,7 @@
 //! the server.
 //!
 //! Apply and Put back on a row subject also act on the blocks below it. The
-//! seven row subjects stand in the database in the panel's order, and an item
+//! twelve row subjects stand in the database in the panel's order, and an item
 //! renumber moves loot rows and quest columns, so every applied subject below
 //! the one pressed is put back first and applied again after. See
 //! `crate::server::stack`. The client-table block is outside that order.
@@ -114,8 +114,8 @@ use vale_client::assets::GameAssets;
 /// Each answer is therefore recomputed at most every [`REFRESH`] seconds, and
 /// [`Self::forget`] drops them all as soon as anything is applied, put back or
 /// discarded. Those presses are the only events after which a stale number
-/// could be shown for longer than [`REFRESH`] and be wrong in a way that
-/// matters.
+/// could be shown for longer than [`REFRESH`] and be wrong about the block's
+/// line or which of its buttons are enabled.
 #[derive(Resource, Default)]
 pub struct Standings {
     /// `(taken at, what it said)` per subject, in [`Half::ALL`]'s order.
@@ -134,7 +134,7 @@ pub struct Standings {
     files: Option<(f64, Result<dbcs::Standing, String>)>,
 }
 
-/// How long one of those answers is reused for.
+/// How long a held [`Standing`] is reused, in seconds.
 const REFRESH: f64 = 0.5;
 
 /// How long the tile count is reused for. Computing it reads every tile in
@@ -261,7 +261,7 @@ pub enum Half {
     Items,
     Quests,
     /// The nine loot tables, which have no rail entry of their own: a loot
-    /// set is reached from the creature, the object or the item it hangs off.
+    /// set is reached from the creature, the object or the item it belongs to.
     Loot,
     /// What creatures sell and teach, reached from a selected creature's
     /// Vendor and Trainer windows.
@@ -333,7 +333,7 @@ impl Half {
             Half::Services => "npc_vendor, npc_vendor_template, npc_trainer, npc_trainer_template",
             Half::Behaviour => "creature_ai_events, creature_spells, broadcast_text, and the eleven *_scripts tables",
             Half::Conditions => "conditions",
-            Half::Gossip => "npc_text, gossip_menu, gossip_menu_option",
+            Half::Gossip => "npc_text, points_of_interest, gossip_menu, gossip_menu_option",
             Half::Maps => "map_template",
             Half::Triggers => "areatrigger_template (label, script, condition, cooldown), areatrigger_teleport, areatrigger_tavern, areatrigger_involvedrelation, areatrigger_bg_entrance",
             Half::Graveyards => "game_graveyard_zone, world_safe_locs_facing",
@@ -443,8 +443,8 @@ impl Half {
                  restart."
             }
             Half::Gossip => {
-                "Live on `.reload npc_text`, `.reload gossip_menu` and \
-                 `.reload gossip_menu_option`, which an apply sends when it is made with the \
+                "Live on `.reload npc_text`, `.reload points_of_interest`, `.reload gossip_menu` \
+                 and `.reload gossip_menu_option`, which an apply sends when it is made with the \
                  panels open over a playtest \u{2014} removals included. A text a menu shows is \
                  broadcast_text, applied by Behaviour above."
             }
@@ -506,7 +506,7 @@ impl Half {
         }
     }
 
-    /// The `places` group behind the three blocks that module writes.
+    /// The `places` group behind the five blocks that module writes.
     pub fn group(self) -> Option<places::Group> {
         self.subject().and_then(stack::Subject::group)
     }
@@ -560,7 +560,8 @@ pub struct Standing {
 }
 
 impl Standing {
-    /// Whether there is anything to say about this subject at all.
+    /// Whether there is nothing to say about this subject: no change, no
+    /// applied row, no unsaved table, no refusal and no error.
     pub fn quiet(&self) -> bool {
         self.changed == 0
             && self.applied == 0
@@ -861,7 +862,7 @@ pub fn apply(half: Half, work: &mut Work<'_>) -> Result<String, String> {
     let work_for = match half {
         Half::Tables => {
             // The files the server reads from DataDir\5875\dbc are copied here, on
-            // the press: a few hundred kilobytes, and nothing to wait for.
+            // the press: a few hundred kilobytes, small enough to copy on the main thread.
             let files = sync_files(work);
             let plan = rows::plan(work.session, work.assets)?;
             if plan.nothing() {
@@ -890,7 +891,7 @@ pub fn apply(half: Half, work: &mut Work<'_>) -> Result<String, String> {
             };
             Some((label, rows::apply_work(work.session, plan, work.server)?))
         }
-        // The six row subjects go through the stack, which puts back and
+        // The twelve row subjects go through the stack, which puts back and
         // applies again every applied subject after this one. See
         // `crate::server::stack`.
         _ => match half.subject() {
@@ -1178,8 +1179,8 @@ fn block_body(
 }
 
 /// A block's three buttons, laid out from the right: Apply, Put back, then
-/// Discard or the note that the subject is edited as a file. A press is
-/// answered into `said`.
+/// Discard or the note that the subject is edited as a file. A press stores
+/// its result in `said`.
 #[allow(clippy::too_many_arguments)]
 fn buttons(
     ui: &mut egui::Ui,

@@ -52,7 +52,7 @@
 //! conditions.rs the condition window: one row of `conditions`, its values
 //!               named by its type, opened from any form that names one
 //! rowform.rs    the widgets all of those forms are built from: how a column
-//!               of each kind is drawn, and what typing into one produces. The
+//!               of each type is drawn, and what typing into one produces. The
 //!               form itself stays with its subject
 //! reference.rs  a column that names a row of another table, as the creature
 //!               and game object forms draw it: the picker button, the name
@@ -71,9 +71,10 @@
 //!               and place, and its teleport, inn and quest rows
 //! graveyards.rs the graveyard tool's panel: the selected safe place, its
 //!               facing, and the zones it serves
-//! bands.rs      the one table no reference reaches: a light's eighteen
-//!               colours and six numbers over the day, each drawn as the day
-//!               it produces rather than as sixteen pairs of numbers
+//! bands.rs      the form for a light's bands, the one table no other row
+//!               references: a light's eighteen colours and six numbers over
+//!               the day, each drawn as the day it produces rather than as
+//!               sixteen pairs of numbers
 //! lab.rs        the attachment lab's card and pane: an effect's model on a
 //!               body, with the handles that move it
 //! hovercard.rs  the card beside the pointer that names the creature or game
@@ -94,9 +95,9 @@
 //! ## Layout: four docked regions
 //!
 //! The controls are docked rather than held in one floating `egui::Window`. A
-//! floating window listing a map drop-down, a coordinate readout, three
-//! "go to" rows, the brush, the history, the project and the playtest in no
-//! particular order reads as a debug window.
+//! single floating window that lists a map drop-down, a coordinate readout,
+//! three "go to" rows, the brush, the history, the project and the playtest
+//! has no fixed order and no grouping by purpose.
 //!
 //! The shell has four docked regions with one job each:
 //!
@@ -114,7 +115,7 @@
 //! ```
 //!
 //! A new control goes in the top bar or the inspector by this rule: the bar
-//! holds session state and the inspector holds the thing being edited. Which
+//! holds session state and the inspector holds what is being edited. Which
 //! project, which map, whether the work is saved, whether the game is running
 //! go in the bar. A brush radius, a placement's rotation and the undo stack go
 //! in the inspector.
@@ -148,8 +149,9 @@
 //! click on the inspector therefore fell through to the world and moved the
 //! selection.
 //!
-//! `is_pointer_over_area` has no `any_down()` term and asks the right
-//! question, but it also fails here: for a widget on the background layer egui
+//! `is_pointer_over_area` has no `any_down()` term, so it would answer
+//! correctly on the press frame, but it also fails here: for a widget on the
+//! background layer egui
 //! compares the pointer against `root_ui_available_rect`, which is written by
 //! `Context::run_ui`. bevy_egui does not call `run_ui`, because it drives
 //! `begin_pass`/`end_pass` itself. With the rectangle unset egui takes its
@@ -158,7 +160,8 @@
 //!
 //! The shell therefore keeps its own answer. [`Viewport`] is the rectangle the
 //! four panels leave, written here where the panels are drawn and read by
-//! every tool. [`Viewport::holds`] is the one place the question is asked.
+//! every tool. [`Viewport::holds`] is the one function that decides whether a
+//! pointer position is over the world.
 
 pub mod bands;
 pub mod behaviour;
@@ -214,7 +217,7 @@ use vale_client::render::focus::WorldFocus;
 
 /// The part of the window the chrome leaves for the world, in window points.
 ///
-/// It has two parts because the chrome has two kinds of element. The docked
+/// It has two parts because the chrome has two types of element. The docked
 /// panels shrink the root `Ui`, so what they leave is one rectangle. A popover,
 /// a window or a modal floats over that rectangle and shrinks nothing, so its
 /// rectangle is listed separately; without that, a press on a popover's
@@ -351,8 +354,8 @@ pub struct Editing<'w> {
     pub(crate) shading: ResMut<'w, crate::tools::shading::Shading>,
     pub(crate) textures: ResMut<'w, Textures>,
     pub(crate) selection: ResMut<'w, Selection>,
-    /// The doodad and WMO tools' drag state, for the one thing each panel
-    /// tells it: that a group change made in the panel's fields needs its
+    /// The doodad and WMO tools' drag state. Each panel uses it for one
+    /// message: that a group change made in the panel's fields needs its
     /// members settled and, for buildings, their boxes re-fitted.
     pub(crate) doodad_held: ResMut<'w, crate::tools::doodads::Held>,
     pub(crate) wmos: ResMut<'w, crate::tools::wmos::Selection>,
@@ -385,7 +388,8 @@ pub struct Editing<'w> {
     /// The area trigger subject: the triggers on the map, what is selected,
     /// and the server rows read for them. See [`crate::tools::triggers`].
     pub(crate) triggers: ResMut<'w, crate::tools::triggers::Triggers>,
-    /// …and the safe place subject's, which has the same shape. See
+    /// The safe place (graveyard) subject's state, which has the same shape
+    /// as the area trigger subject's. See
     /// [`crate::tools::graveyards`].
     pub(crate) graveyards: ResMut<'w, crate::tools::graveyards::Graveyards>,
     /// The world half of the creature subject: the map's spawns, which is
@@ -523,7 +527,7 @@ fn draw(
     // A playtest has two layouts, chosen by [`crate::playtest::ShellOpen`].
     // Shut, the whole window is the game's and the bar is one row of controls.
     // Open, the panels are drawn as they are while editing, so there is no
-    // second layout to learn for the same subjects. Three things change: the
+    // second layout to learn for the same subjects. Three parts differ: the
     // rail is not drawn, the top bar's World part is disabled with the reason
     // on its hover text, and the right-hand end of the top bar holds the
     // playtest's controls.
@@ -699,8 +703,9 @@ fn draw(
 
     // The rail is not drawn over a playtest. Every tile on it keeps the
     // viewport, and no such tool can be used then; see
-    // [`Tool::survives_playtest`](crate::tools::Tool::survives_playtest). The
-    // workspace control on the top bar is the whole of the choice.
+    // [`Tool::survives_playtest`](crate::tools::Tool::survives_playtest).
+    // During a playtest the workspace control on the top bar is the only way
+    // to choose a tool.
     if !in_world {
         egui::Panel::left("editor-rail")
             .exact_size(theme::RAIL_WIDTH)
@@ -1402,6 +1407,11 @@ fn draw(
                 template_key: services.template_key.clone(),
                 gossip_menu_id,
                 npc_flags: services.npc_flags,
+                at: editing
+                    .creatures
+                    .selected
+                    .and_then(|guid| editing.creatures.spawns.iter().find(|spawn| spawn.guid == guid))
+                    .map(|spawn| [spawn.at.x, spawn.at.y]),
             }
         }),
         _ => None,
@@ -1417,6 +1427,7 @@ fn draw(
             session,
             gossip: &mut editing.gossip,
             behaviour: &mut editing.behaviour,
+            quests: &mut editing.quests,
             now: time.elapsed_secs_f64(),
         },
     );
@@ -1448,8 +1459,9 @@ fn draw(
         );
         viewport.floating.extend(service_windows);
     }
-    // The script window also opens from a trigger's script id.
-    if matches!(*tool, Tool::Creatures | Tool::Triggers) {
+    // The script window also opens from a trigger's script id, and from the
+    // gossip window's script columns under any tool.
+    if matches!(*tool, Tool::Creatures | Tool::Triggers) || editing.gossip.open {
         let behaviour_windows = behaviour::windows(
             &ctx,
             behaviour::Subject {

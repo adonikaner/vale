@@ -1,22 +1,25 @@
 //! Editing the game's own files.
 //!
 //! ```text
-//! adt/       one terrain tile, taken apart and put back together byte for byte
-//! dbc/       …and one client table, on the same terms
-//! wdt.rs     …and the map file that says which tiles exist at all
-//! shadow.rs  MCSH recomputed: what the world on a chunk throws across it
-//! minimap.rs …and the little round map's picture, drawn from the tile
-//! ops.rs     what an edit is: applied, inverted, and named
-//! undo.rs    …and the stack the two directions are read off
+//! adt/       one ADT terrain tile, parsed and written back byte for byte
+//! dbc/       one DBC table, parsed and written back byte for byte
+//! wdt.rs     the WDT map file, which lists the tiles a map has
+//! shadow.rs  MCSH recomputed: the shadow cast across a chunk by the ground
+//!            and the objects standing on it
+//! minimap.rs a tile's minimap picture, drawn from the tile
+//! flightmap.rs the row a map needs before the client opens its flight map,
+//!            and the picture drawn behind the nodes
+//! ops.rs     the edit operations: how each is applied, inverted and named
+//! undo.rs    the undo stack, from which edits are undone and redone
 //! m2.rs      a rigid transform baked into a copy of a model, which is how 1.12
 //!            positions a spell effect: the tables carry no offset, so the
 //!            offset lives in the file
 //! project.rs where an edit is written, and how it reaches a client
-//! manifest.rs …and what a project changes, file by file, against the files
-//!            it was edited from
+//! manifest.rs what a project changes, file by file, against the files it
+//!            was edited from
 //! ```
 //!
-//! Nothing here opens a window, and nothing here needs one. The split against
+//! This crate opens no window and needs none. The split against
 //! `vale-ide` is the same one `vale-assets` keeps against
 //! `vale-client`: a decision that could be made with no renderer running is
 //! made here, where it can be unit-tested and where a command-line check can
@@ -30,7 +33,7 @@
 //! y corner. An editor with its own copy of any of those places a doodad a unit
 //! off the ground the client walks on, and neither side is visibly wrong.
 //!
-//! ## Losslessness is the first requirement
+//! ## Why an edit leaves every unedited byte as it was
 //!
 //! An editor that rewrites a file it only partly understands destroys the parts
 //! it does not. [`adt::AdtFile`] is therefore a container rather than a model:
@@ -41,6 +44,7 @@
 
 pub mod adt;
 pub mod dbc;
+pub mod flightmap;
 pub mod m2;
 pub mod manifest;
 pub mod ops;
@@ -66,10 +70,9 @@ pub enum EditError {
     #[error("writing the archive failed: {0}")]
     Archive(String),
 
-    /// What was asked for is not a thing this crate will do — a project
-    /// name that is not one, deleting the project every install has. It is
-    /// not a failure of the filesystem and it is not malformed data, so it is
-    /// neither of the two above.
+    /// A request this crate refuses, such as an invalid project name or
+    /// deleting the default project that every install has. It is neither a
+    /// filesystem failure (`Io`) nor malformed data (`Malformed`).
     #[error("{0}")]
     Refused(String),
 }
