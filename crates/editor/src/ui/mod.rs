@@ -1420,7 +1420,8 @@ fn draw(
         true => editing.gossip.broadcast_texts(&session.server_edits),
         false => Vec::new(),
     };
-    editing.behaviour.numbering_texts = editing.gossip.open;
+    editing.behaviour.numbering_texts = editing.gossip.open || editing.gossip.numbering;
+    gossip::make_pending(session, &mut editing.gossip, &mut editing.behaviour, time.elapsed_secs_f64());
     let gossip_window = gossip::window(
         &ctx,
         gossip::Subject {

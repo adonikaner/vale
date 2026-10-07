@@ -60,7 +60,20 @@ pub struct CameraRig {
     pub pitch: f32,
     /// How far the eye is asked to sit from the focus. The position it gets is
     /// [`Self::eye`], which is this shortened by whatever is in the way.
+    ///
+    /// The zoom moves this value over time rather than in one step; see
+    /// [`Self::glide`].
     pub distance: f32,
+    /// Seconds of zoom still to run, positive towards the character and
+    /// negative away from it.
+    ///
+    /// The 1.12.1 client does not move the camera by a whole notch in one
+    /// frame. A notch of `CameraZoomIn(amount)` starts a movement of `amount`
+    /// yards at `cameraDistanceMoveSpeed` yards per second (8.33 by default,
+    /// so one notch takes 120 ms), and [`glide`] runs it a frame at a time.
+    /// A further notch the same way lengthens the movement; a notch the other
+    /// way cancels what is left and starts its own. See [`zoom`].
+    pub glide: f32,
     /// The distance actually used this frame, after collision. Held on the rig
     /// rather than recomputed by each reader for the same reason [`Self::eye`]
     /// is shared: the billboard bones and the view matrix must come from one
@@ -76,6 +89,7 @@ impl Default for CameraRig {
             yaw: 0.0,
             pitch: 0.5,
             distance: 25.0,
+            glide: 0.0,
             reach: 25.0,
         }
     }
@@ -651,18 +665,29 @@ pub fn orbit(
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    // The drag's four settings, which are the game's own CVars; see
-    // [`look_rate`] and [`inversion`]. Read per frame, because a CVar can be
-    // written by any script between two frames; this is two hash lookups and
-    // two parses on a frame where the button is held.
+    // The drag's four settings and the zoom's three, which are the game's own
+    // CVars; see [`look_rate`], [`inversion`], [`rate`] and [`furthest`]. Read
+    // per frame, because a CVar can be written by any script between two
+    // frames: three hash lookups and parses on every frame, and four more on a
+    // frame where the button is held.
     cvars: Res<crate::settings::cvars::CVars>,
+    // The zoom moves the eye at a speed, so it needs the frame's length.
+    time: Res<Time>,
     mut pressed: MessageReader<crate::input::bindings::BindingPressed>,
     mut rig: ResMut<CameraRig>,
 ) {
+    let speed = rate(&cvars, "cameraDistanceMoveSpeed", DISTANCE_MOVE_SPEED);
+
+    // The zoom already under way runs before this frame's notches are added.
+    // In the 1.12.1 client a notch starts its movement at the time of the
+    // press, so the frame that reads the press does not move the camera yet.
+    glide(&mut rig, time.delta_secs(), speed, furthest(&cvars));
+
     // `CAMERAZOOMIN` / `CAMERAZOOMOUT`, which can be keys as well as the
     // wheel. The shipped defaults put them on the wheel and a player may bind
-    // them to any key; one notch is `1.0`, which is the argument
-    // `Bindings.xml` passes to `CameraZoomIn` and `CameraZoomOut`.
+    // them to any key. The argument is in yards: `Bindings.xml` passes `1.0`
+    // to `CameraZoomIn` and `CameraZoomOut`, so one notch moves the eye one
+    // yard.
     //
     // The wheel below is read directly. `MOUSEWHEELUP` is a key name no
     // `KeyCode` can produce, so no key press reaches those two bindings, and
@@ -671,16 +696,21 @@ pub fn orbit(
     // implemented, for zoom or for steering.
     for crate::input::bindings::BindingPressed(binding) in pressed.read() {
         if let crate::input::bindings::Binding::CameraZoom(hundredths) = binding {
-            let notches = *hundredths as f32 / 100.0;
-            rig.distance =
-                (rig.distance * (1.0 - notches * 0.1)).clamp(CLOSEST, furthest(&cvars));
+            zoom(&mut rig, *hundredths as f32 / 100.0, speed);
         }
     }
 
-    if scroll.delta.y != 0.0 && !interface.wheel_taken {
-        // Multiplicative, so a click of the wheel moves the same proportion of
-        // the distance whether the eye is on the character's shoulder or above
-        // the whole tile.
+    let notches = match scroll.unit {
+        bevy::input::mouse::MouseScrollUnit::Line => scroll.delta.y,
+        // A touchpad reports pixels. Bevy's own factor converts them to lines,
+        // so a touchpad swipe zooms about as far as the same travel on a wheel.
+        bevy::input::mouse::MouseScrollUnit::Pixel => {
+            scroll.delta.y / bevy::input::mouse::MouseScrollUnit::SCROLL_UNIT_CONVERSION_FACTOR
+        }
+    };
+    if notches != 0.0 && !interface.wheel_taken {
+        // One wheel notch is one `CameraZoomIn(1.0)`: a yard, whatever the
+        // distance, as in the 1.12.1 client.
         //
         // Gated on a frame having handled the wheel, not on the pointer being
         // over the interface, as in the 1.12.1 client. That client hands the
@@ -689,8 +719,7 @@ pub fn orbit(
         // an open bag reaches no handler and falls through to the zoom, while
         // a wheel over a scroll frame is taken. `lua::mouse` decides it and
         // `MouseFocus::wheel_taken` carries it here.
-        rig.distance =
-            (rig.distance * (1.0 - scroll.delta.y * 0.1)).clamp(CLOSEST, furthest(&cvars));
+        zoom(&mut rig, notches, speed);
     }
 
     // A press that landed on the interface does not steer; see [`MouseLook`].
@@ -747,8 +776,19 @@ const YAW_MOVE_SPEED: f32 = 180.0;
 /// The same for pitch. `cameraPitchMoveSpeed`, default `"90.0"`.
 const PITCH_MOVE_SPEED: f32 = 90.0;
 
+/// Yards per second the zoom moves the eye. `cameraDistanceMoveSpeed`, default
+/// `"8.33"`.
+///
+/// The fallback, as [`YAW_MOVE_SPEED`] is: the value is the CVar, which
+/// `CVars` seeds with this number. See [`CameraRig::glide`].
+const DISTANCE_MOVE_SPEED: f32 = 8.33;
+
+/// The furthest the 1.12.1 client lets the zoom go, in yards, whatever
+/// `cameraDistanceMax` and `cameraDistanceMaxFactor` say.
+const DISTANCE_CEILING: f32 = 50.0;
+
 /// How far the wheel may pull the eye back, in yards:
-/// `cameraDistanceMax * cameraDistanceMaxFactor`.
+/// `cameraDistanceMax * cameraDistanceMaxFactor`, at most [`DISTANCE_CEILING`].
 ///
 /// Both are the game's own CVars, registered as `"15.0"` and `"1.0"`. The
 /// factor is a slider on `UIOptionsFrame.lua`'s own panel (`MAX_FOLLOW_DIST`,
@@ -756,18 +796,60 @@ const PITCH_MOVE_SPEED: f32 = 90.0;
 /// (previously 1,500 yards) leaves the game's zoom slider with no effect.
 ///
 /// The product is floored at [`CLOSEST`] so that a `Config.wtf` carrying a zero
-/// or a typo cannot produce an empty range for `clamp`, which panics.
+/// or a typo cannot produce an empty range, and the eye cannot be sent nearer
+/// than the near limit by zooming out.
 ///
-/// It is applied to the wheel and to nothing else, which has one visible
-/// consequence. [`CameraRig::default`] starts at 25 yards (this
-/// project's screenshot framing, which predates the limit), so the first wheel
-/// notch of a session lands on the limit rather than a notch away from the
-/// start. Clamping the rig itself would fix that and break
-/// `--view <distance>,…`, which frames every scripted shot in this repository
-/// and may ask for a hundred yards.
+/// It is applied to a zoom outwards and to nothing else, as in the 1.12.1
+/// client. [`CameraRig::default`] starts at 25 yards (this project's screenshot
+/// framing, which predates the limit), so the first notch out of a session
+/// moves the eye in to the limit, while a notch in moves it one yard from 25.
+/// Clamping the rig itself would break `--view <distance>,…`, which frames
+/// every scripted shot in this repository and may ask for a hundred yards.
 fn furthest(cvars: &crate::settings::cvars::CVars) -> f32 {
     let max = cvars.number("cameraDistanceMax") * cvars.number("cameraDistanceMaxFactor");
-    max.max(CLOSEST)
+    max.min(DISTANCE_CEILING).max(CLOSEST)
+}
+
+/// Start a zoom of `yards`, positive towards the character.
+///
+/// The 1.12.1 client turns the amount into a duration at the moment of the
+/// press, `yards / cameraDistanceMoveSpeed` seconds truncated to whole
+/// milliseconds, and moves the eye at that speed for that long. A zoom the
+/// same way as the one under way adds its duration to it; a zoom the other
+/// way stops the one under way where it is and starts afresh.
+fn zoom(rig: &mut CameraRig, yards: f32, speed: f32) {
+    if yards == 0.0 {
+        return;
+    }
+    let seconds = (yards.abs() / speed * 1000.0).trunc() / 1000.0;
+    let seconds = seconds.copysign(yards);
+    if rig.glide * seconds > 0.0 {
+        rig.glide += seconds;
+    } else {
+        rig.glide = seconds;
+    }
+}
+
+/// Run `dt` seconds of the zoom under way, at `speed` yards per second.
+///
+/// Each direction is bounded on its own side only, as in the 1.12.1 client: a
+/// zoom in stops at [`CLOSEST`] and a zoom out at `furthest`. The movement is
+/// linear rather than eased. It is spent by time, not by distance, so a zoom
+/// that reaches a bound early ends at the time it would have ended anyway.
+fn glide(rig: &mut CameraRig, dt: f32, speed: f32, furthest: f32) {
+    let left = rig.glide.abs();
+    if left == 0.0 {
+        return;
+    }
+    let run = left.min(dt);
+    let travel = speed * run;
+    if rig.glide > 0.0 {
+        rig.distance = (rig.distance - travel).max(CLOSEST);
+        rig.glide = left - run;
+    } else {
+        rig.distance = (rig.distance + travel).min(furthest);
+        rig.glide = -(left - run);
+    }
 }
 
 /// How close the wheel may push the eye, in yards. This is the one number here
@@ -795,15 +877,16 @@ fn inversion(cvars: &crate::settings::cvars::CVars) -> Vec2 {
     )
 }
 
-/// One of the two turn rates, in degrees per second, or the client's registered
-/// default if the string is not a number.
+/// One of the camera's rate settings (the two turn rates in degrees per second,
+/// the zoom in yards per second), or the client's registered default if the
+/// string is not a number.
 ///
 /// [`crate::settings::cvars::CVars::number`] answers `0.0` for anything it cannot
-/// parse, and a zero rate disables mouse-look, so a typo in the folder's
-/// `Config.wtf` would disable the control without any message. Zero is treated
-/// as absent for the same reason. The deviation is small: 1.12's own slider
-/// stops well above zero.
-fn turn_rate(cvars: &crate::settings::cvars::CVars, name: &str, registered: f32) -> f32 {
+/// parse, and a zero rate disables mouse-look or the zoom, so a typo in the
+/// folder's `Config.wtf` would disable the control without any message. Zero is
+/// treated as absent for the same reason. The deviation is small: 1.12's own
+/// slider stops well above zero.
+fn rate(cvars: &crate::settings::cvars::CVars, name: &str, registered: f32) -> f32 {
     let value = cvars.number(name);
     if value.is_finite() && value != 0.0 {
         value
@@ -862,8 +945,8 @@ pub fn mouse_look_heading(rig: &CameraRig) -> f32 {
 fn look_rate(aspect: f32, cvars: &crate::settings::cvars::CVars) -> Vec2 {
     let sy = 1.0 / (aspect * aspect + 1.0).sqrt();
     let sx = aspect * sy;
-    let yaw = turn_rate(cvars, "cameraYawMoveSpeed", YAW_MOVE_SPEED);
-    let pitch = turn_rate(cvars, "cameraPitchMoveSpeed", PITCH_MOVE_SPEED);
+    let yaw = rate(cvars, "cameraYawMoveSpeed", YAW_MOVE_SPEED);
+    let pitch = rate(cvars, "cameraPitchMoveSpeed", PITCH_MOVE_SPEED);
     Vec2::new(
         yaw.to_radians() / (REFERENCE_VIEWPORT.x * sx),
         pitch.to_radians() / (REFERENCE_VIEWPORT.y * sy),
@@ -1162,6 +1245,9 @@ mod tests {
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<AccumulatedMouseMotion>()
             .init_resource::<AccumulatedMouseScroll>()
+            // No `TimePlugin`, so the frame length is whatever a test advances
+            // it by, and zero otherwise.
+            .init_resource::<Time>()
             // The four settings the drag reads, at their registered values,
             // which these tests are written against.
             .init_resource::<crate::settings::cvars::CVars>()
@@ -1476,7 +1562,7 @@ mod tests {
     /// The two rates in [`look_rate`] come from the CVars, not from this file.
     /// A `Config.wtf` that halves `cameraYawMoveSpeed` halves the drag, and an
     /// unparseable value leaves the rate at its default rather than disabling
-    /// the control. See [`turn_rate`], which is the part of this that is a
+    /// the control. See [`rate`], which is the part of this that is a
     /// choice made by this client.
     #[test]
     fn the_look_rate_follows_the_settings() {
@@ -1625,5 +1711,104 @@ mod tests {
                 assert_ne!(rig.yaw, 0.0, "…and it is still a turn: {button:?}");
             }
         }
+    }
+
+    /// One notch of `CameraZoomIn(1.0)` moves the eye one yard at
+    /// `cameraDistanceMoveSpeed`, over 120 ms at the default 8.33 yards per
+    /// second, and in a straight line rather than an ease.
+    #[test]
+    fn a_notch_moves_the_eye_a_yard_at_the_zoom_speed() {
+        let mut rig = CameraRig {
+            distance: 10.0,
+            ..default()
+        };
+        zoom(&mut rig, 1.0, DISTANCE_MOVE_SPEED);
+        assert!((rig.glide - 0.120).abs() < 1e-6, "{}", rig.glide);
+
+        glide(&mut rig, 0.05, DISTANCE_MOVE_SPEED, 15.0);
+        assert!((rig.distance - (10.0 - 0.05 * 8.33)).abs() < 1e-5, "{}", rig.distance);
+        // Past the end the movement stops where its duration says.
+        glide(&mut rig, 0.5, DISTANCE_MOVE_SPEED, 15.0);
+        assert!((rig.distance - (10.0 - 0.120 * 8.33)).abs() < 1e-5, "{}", rig.distance);
+        assert_eq!(rig.glide, 0.0);
+        glide(&mut rig, 0.5, DISTANCE_MOVE_SPEED, 15.0);
+        assert!((rig.distance - (10.0 - 0.120 * 8.33)).abs() < 1e-5, "it moved after it ended");
+    }
+
+    /// Notches the same way add up; a notch the other way drops what was left
+    /// and starts its own movement.
+    #[test]
+    fn notches_add_up_and_a_reversal_starts_afresh() {
+        let mut rig = CameraRig::default();
+        zoom(&mut rig, 1.0, DISTANCE_MOVE_SPEED);
+        zoom(&mut rig, 1.0, DISTANCE_MOVE_SPEED);
+        assert!((rig.glide - 0.240).abs() < 1e-6, "{}", rig.glide);
+        zoom(&mut rig, -1.0, DISTANCE_MOVE_SPEED);
+        assert!((rig.glide + 0.120).abs() < 1e-6, "{}", rig.glide);
+    }
+
+    /// A zoom in stops at the near limit and a zoom out at the far one, and
+    /// neither looks at the other bound. From the 25-yard start, beyond the
+    /// default 15-yard limit, a notch in moves the eye a yard and a notch out
+    /// puts it on the limit.
+    #[test]
+    fn each_direction_is_bounded_on_its_own_side() {
+        let run = |yards: f32| {
+            let mut rig = CameraRig::default();
+            zoom(&mut rig, yards, DISTANCE_MOVE_SPEED);
+            glide(&mut rig, 20.0, DISTANCE_MOVE_SPEED, 15.0);
+            rig.distance
+        };
+        assert!((run(1.0) - (25.0 - 0.120 * 8.33)).abs() < 1e-4, "{}", run(1.0));
+        assert_eq!(run(-1.0), 15.0);
+        assert_eq!(run(100.0), CLOSEST);
+    }
+
+    /// The press is read in one frame and the eye starts moving in the next,
+    /// at the speed the CVar says, and the far limit never exceeds 50 yards.
+    #[test]
+    fn the_wheel_zooms_over_the_following_frames() {
+        let mut app = app();
+        app.world_mut().resource_mut::<CameraRig>().distance = 10.0;
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_millis(40));
+        app.world_mut().insert_resource(AccumulatedMouseScroll {
+            unit: bevy::input::mouse::MouseScrollUnit::Line,
+            delta: Vec2::new(0.0, 1.0),
+        });
+        app.update();
+        assert_eq!(app.world().resource::<CameraRig>().distance, 10.0);
+
+        app.world_mut().insert_resource(AccumulatedMouseScroll::default());
+        app.update();
+        let distance = app.world().resource::<CameraRig>().distance;
+        assert!((distance - (10.0 - 0.040 * 8.33)).abs() < 1e-4, "{distance}");
+
+        // Twice the speed, twice the travel in the same frame.
+        let mut fast = self::app();
+        fast.insert_resource(crate::settings::cvars::CVars::with_saved(&[(
+            "cameraDistanceMoveSpeed".into(),
+            "16.66".into(),
+        )]));
+        fast.world_mut().resource_mut::<CameraRig>().distance = 10.0;
+        fast.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_millis(40));
+        fast.world_mut().insert_resource(AccumulatedMouseScroll {
+            unit: bevy::input::mouse::MouseScrollUnit::Line,
+            delta: Vec2::new(0.0, 1.0),
+        });
+        fast.update();
+        fast.world_mut().insert_resource(AccumulatedMouseScroll::default());
+        fast.update();
+        let distance = fast.world().resource::<CameraRig>().distance;
+        assert!((distance - (10.0 - 0.040 * 16.66)).abs() < 1e-4, "{distance}");
+
+        let far = crate::settings::cvars::CVars::with_saved(&[(
+            "cameraDistanceMax".into(),
+            "100".into(),
+        )]);
+        assert_eq!(furthest(&far), DISTANCE_CEILING);
     }
 }

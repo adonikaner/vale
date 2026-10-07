@@ -101,9 +101,9 @@ pub struct WorldMapState {
     /// It is a different answer from `sub_name` being non-empty, and that is the
     /// whole reason it exists: 21,115 `WMOAreaTable` rows over the game's
     /// thousands of models is a few per building, so standing in an unnamed room
-    /// is common and reads as open country. Nothing about the *zone* cares; the
-    /// minimap does, because 1.12 has a second, tighter set of zoom radii for
-    /// indoors — see [`super::minimap`].
+    /// is common and reads as open country. Nothing about the *zone* cares, and
+    /// the minimap does not read it: [`super::minimap`] decides indoors from the
+    /// floor under the feet, as [`Self::outdoors`] does.
     pub indoors: bool,
     /// **Whether the character is under open sky for the rules that care** —
     /// a mount, and every outdoor-only or indoor-only spell.
@@ -114,8 +114,7 @@ pub struct WorldMapState {
     /// so the cast check refused every mount in the city. This is the server's
     /// own test instead — the group the floor underfoot belongs to, read for
     /// `MOGP` `0x8000` — see [`vale_assets::world::wmo::outdoors_at`], which
-    /// states the rule and its two sources. `indoors` still drives the
-    /// minimap's radius, which is a separate question this round did not dig.
+    /// states the rule and its two sources.
     pub outdoors: bool,
     /// **What this place sounds like** — the ambience, the zone music and the
     /// intro fanfare, already resolved through all three levels: the building's

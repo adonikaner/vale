@@ -2600,6 +2600,39 @@ mod tests {
         assert!((end[0] - 1.0).abs() < 1.0e-3, "x stopped at {}", end[0]);
     }
 
+    /// **A run along a wall at a shallow angle never crosses it**, at any
+    /// stride length the mover produces and at a whole 250 ms mounted stride.
+    ///
+    /// Each stride is swept along its whole length and half a yard beyond, so
+    /// the wall is met before the stride reaches it however long the stride is
+    /// and however shallow the angle. The strides are the session's run and
+    /// mounted ticks (0.175 and 0.35 yards), the mover's longest piece (0.5),
+    /// and an unbroken mounted stall (3.5).
+    #[test]
+    fn a_run_along_a_wall_at_a_shallow_angle_never_crosses_it() {
+        let world = world_with(&wall());
+        for stride in [0.175_f32, 0.35, 0.5, 3.5] {
+            for degrees in [2.0_f32, 5.0, 10.0, 20.0, 45.0] {
+                let angle = degrees.to_radians();
+                let (dx, dy) = (angle.sin() * stride, angle.cos() * stride);
+                let mut at = [3.5_f32, 0.5, 0.0];
+                while at[1] < 9.0 {
+                    let end = world.step(0, at, [at[0] + dx, at[1] + dy, at[2]]);
+                    assert!(
+                        end[0] < 5.0,
+                        "{stride}-yard strides at {degrees} degrees reached x = {} through the \
+                         wall at x = 5",
+                        end[0],
+                    );
+                    if end == at {
+                        break;
+                    }
+                    at = end;
+                }
+            }
+        }
+    }
+
     /// The reason the probes start above [`STEP_UP`]: a stair riser is a wall,
     /// and stopping at one is stopping at the bottom of every staircase.
     #[test]

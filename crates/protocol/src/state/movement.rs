@@ -821,6 +821,46 @@ struct Ride {
 /// one value rather than two that agree today.
 pub const FALL_THRESHOLD: f32 = 0.7;
 
+/// The longest piece, in yards, that [`Mover::advance`] resolves against the
+/// world at once.
+///
+/// A step is checked against the world in two parts: the wall probe sweeps the
+/// horizontal stride, and the floor is then read at the end of it with a
+/// ceiling one step height (`STEP_UP`, 1.0 yard) above the feet the stride
+/// started from. The probe covers any length. The floor read does not: a
+/// stride that rises more than a step height before its end puts the end point
+/// under the surface it should be standing on, so the floor read answers the
+/// surface below and the character walks into the slope. The same holds going
+/// down, where a drop deeper than [`FALL_THRESHOLD`] over one stride starts a
+/// fall on a slope that should have been walked.
+///
+/// A step is therefore cut into pieces no longer than this, horizontally or
+/// vertically, and each piece is checked on its own. At 0.5 yards a surface
+/// rises at most 0.87 yards over one piece before it is steep enough to be a
+/// wall (60 degrees, `WALL_NORMAL_Z`), which is under the step height. The
+/// same length is the body's radius (`PLAYER_RADIUS`), so a fall at terminal
+/// velocity is checked every half yard of its descent as well.
+///
+/// At a run over the session's 25 ms tick the stride is 0.18 yards and a step
+/// is one piece. A mounted run over a 250 ms stall is 3.5 yards and seven
+/// pieces; a fall at terminal velocity over the same stall is thirty.
+///
+/// The 1.12.1 client does not cut a step into fixed pieces. It sweeps the
+/// body's box over the whole displacement and stops it at the first contact,
+/// so its answer does not depend on the step's length at all. Cutting the
+/// step gives the same independence from speed with the probe and the floor
+/// read this client has.
+pub const MAX_STRIDE: f32 = 0.5;
+
+/// The most pieces one step is cut into; see [`MAX_STRIDE`].
+///
+/// A step is at most 250 ms (the session clamps a stall to that), and the
+/// fastest thing the mover does without a ride is fall at
+/// [`TERMINAL_VELOCITY`]: 15 yards, thirty pieces. The cap is above that and
+/// exists so a corrupt speed from the server cannot turn one step into an
+/// unbounded loop.
+const MAX_PIECES: u32 = 64;
+
 /// The fraction of a unit's own height the water has to reach before it is
 /// swimming in it — **0.75**.
 ///
@@ -1112,6 +1152,34 @@ pub struct Restraint {
     /// else, always beside `UNIT_FLAG_REMOVE_CLIENT_CONTROL`, whose own comment
     /// is *"disable player movement"*.
     pub on_taxi: bool,
+}
+
+/// A movement key change or a jump, given to [`Mover::advance_through`] with
+/// the moment it happened.
+///
+/// The 1.12.1 client queues movement input with a timestamp and advances the
+/// character to that moment under the old flags before it applies the input.
+/// A key change therefore takes effect where the character was when the key
+/// went down, not where it is at the end of the step that read it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Input {
+    /// The movement keys held from this moment on.
+    Controls(Controls),
+    /// Leave the ground; see [`Mover::jump`].
+    Jump,
+}
+
+/// A packet the mover owes the server, with the movement block as it stood at
+/// the moment the packet became owed.
+///
+/// The block is kept because one step can owe several packets: a key change
+/// part-way through it, a landing, the start of a swim. Each must report the
+/// position at its own moment. A block read after the whole step has run
+/// would report the end of the step for all of them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Owed {
+    pub opcode: Opcode,
+    pub info: MovementInfo,
 }
 
 /// The client's own copy of where it is and where it is going.
@@ -2139,7 +2207,112 @@ impl Mover {
     /// is a parabola drawn from the wrong place; and a packet that *drops* the
     /// flag under any opcode but `MSG_MOVE_FALL_LAND` is
     /// `CHEAT_TYPE_BAD_FALL_STOP`.
+    ///
+    /// The step is resolved in pieces no longer than [`MAX_STRIDE`]; see that
+    /// constant. When more than one piece owes a packet, this returns the
+    /// first. [`Self::advance_through`] returns all of them, and is what the
+    /// session uses.
     pub fn advance(&mut self, dt: f32, world: Option<&dyn Footing>) -> Option<Opcode> {
+        let mut owed = Vec::new();
+        self.advance_pieces(dt, world, &mut owed);
+        owed.first().map(|o| o.opcode)
+    }
+
+    /// Advance by `dt` seconds with each input applied at its own moment, and
+    /// return every packet owed, in the order it became owed.
+    ///
+    /// `inputs` holds each input with its offset in seconds from the start of
+    /// the step, in the order given. An offset outside `0..=dt` is clamped into
+    /// it: an input from before the step began takes effect at its start, which
+    /// is the earliest moment the step can still change.
+    ///
+    /// A key change owes one packet per flag it changes ([`transitions`]), each
+    /// reported with the position at the moment of the change. A jump owes
+    /// `MSG_MOVE_JUMP` with the position it took off from.
+    pub fn advance_through(
+        &mut self,
+        dt: f32,
+        inputs: &[(f32, Input)],
+        world: Option<&dyn Footing>,
+    ) -> Vec<Owed> {
+        let dt = dt.max(0.0);
+        let mut owed = Vec::new();
+        let mut done = 0.0_f32;
+        for &(at, input) in inputs {
+            let at = at.clamp(done, dt);
+            if at > done {
+                self.advance_pieces(at - done, world, &mut owed);
+                done = at;
+            }
+            match input {
+                Input::Controls(controls) => {
+                    // One packet per flag change, in order: the server rejects
+                    // a packet whose opcode does not match the flag it added.
+                    for event in self.set_controls(controls) {
+                        self.info.flags = event.flags;
+                        owed.push(Owed { opcode: event.opcode, info: self.info });
+                    }
+                }
+                Input::Jump => {
+                    if let Some(event) = self.jump() {
+                        owed.push(Owed { opcode: event.opcode, info: self.info });
+                    }
+                }
+            }
+        }
+        if dt > done {
+            self.advance_pieces(dt - done, world, &mut owed);
+        }
+        owed
+    }
+
+    /// How many pieces a step of `dt` seconds is resolved in: enough that no
+    /// piece moves the character further than [`MAX_STRIDE`] along the ground
+    /// or up and down.
+    ///
+    /// The speeds are the ones the step will use: the frozen take-off speed in
+    /// the air, the keys' speed on the ground, and in the air the larger of the
+    /// vertical speeds at the two ends of the step, which bounds the vertical
+    /// speed anywhere between them.
+    fn pieces(&self, dt: f32) -> u32 {
+        let across = match &self.air {
+            Some(_) => self.info.jump.xy_speed.abs(),
+            None if self.info.has(move_flags::MASK_TRAVEL) => self.info.speed(&self.speeds),
+            None => 0.0,
+        };
+        let vertical = match &self.air {
+            Some(air) => {
+                let start = (air.up - GRAVITY * air.elapsed).abs();
+                let end = (air.up - GRAVITY * (air.elapsed + dt)).abs();
+                start.max(end).min(TERMINAL_VELOCITY.max(air.up.abs()))
+            }
+            None => 0.0,
+        };
+        let reach = across.max(vertical) * dt;
+        if !reach.is_finite() {
+            return 1;
+        }
+        ((reach / MAX_STRIDE).ceil() as u32).clamp(1, MAX_PIECES)
+    }
+
+    /// [`Self::advance`] without the packet selection: every piece's packet is
+    /// pushed onto `owed` with the block as it stood when it became owed.
+    fn advance_pieces(&mut self, dt: f32, world: Option<&dyn Footing>, owed: &mut Vec<Owed>) {
+        if dt <= 0.0 {
+            return;
+        }
+        let pieces = self.pieces(dt);
+        let piece = dt / pieces as f32;
+        for _ in 0..pieces {
+            if let Some(opcode) = self.advance_piece(piece, world) {
+                owed.push(Owed { opcode, info: self.info });
+            }
+        }
+    }
+
+    /// One piece of a step: the turn, the stride against the walls, and then
+    /// the floor, the water and the arc at the end of the stride.
+    fn advance_piece(&mut self, dt: f32, world: Option<&dyn Footing>) -> Option<Opcode> {
         if dt <= 0.0 {
             return None;
         }

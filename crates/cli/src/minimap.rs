@@ -6,6 +6,8 @@
 //! vale minimap                 the whole index, every map, the zoom table
 //! vale minimap Azeroth         one map: its pictures against its own tiles
 //! vale minimap Azeroth 32 48   …one tile, decoded — and the orientation check
+//! vale minimap wmo             every WMO's pictures against its groups' grids
+//! vale minimap <path>.wmo      one WMO: its groups, grids and orientation vote
 //! ```
 //!
 //! ## The orientation is the check that matters, and it is measurable
@@ -55,11 +57,291 @@ pub fn cmd_minimap(cfg: &Config, map: Option<&str>, tile: Option<(u32, u32)>) ->
         index.len(),
         index.directories().len()
     );
+    println!(
+        "  {} WMO picture(s) over {} WMO(s)",
+        index.interior_len(),
+        index.interior_stems().len()
+    );
     match (map, tile) {
         (Some(map), Some((x, y))) => one_tile(&mut assets, &index, map, x, y),
+        (Some("wmo"), None) => every_interior(&mut assets, &index),
+        (Some(path), None) if path.to_ascii_lowercase().ends_with(".wmo") => {
+            one_interior(&mut assets, &index, path)
+        }
         (Some(map), None) => one_map(&mut assets, &index, map),
         _ => whole_index(&mut assets, &index),
     }
+}
+
+/// The archive path of the WMO a `.trs` stem names.
+fn wmo_path_of(stem: &str) -> String {
+    format!("World\\{stem}.wmo")
+}
+
+/// **Every WMO the index has pictures for, against the grid its groups give.**
+///
+/// For each WMO: the cells [`minimap::group_tiles`] produces for its groups,
+/// against the cells the index names. A named cell the grid does not produce
+/// is a fault in the grid rule, and is what this prints. A produced cell
+/// with no picture is common (a cell over empty space is not baked) and is
+/// only counted. It also counts which group flags carry pictures.
+fn every_interior(assets: &mut Assets, index: &MinimapTiles) -> Result<(), String> {
+    let mut wmos = 0usize;
+    let mut named_total = 0usize;
+    let mut stray_total = 0usize;
+    let mut unresolved = 0usize;
+    let mut missing_wmo = Vec::new();
+    // Group-flag census over groups that carry at least one picture.
+    let (mut pictured, mut pictured_exterior, mut pictured_unreachable) = (0usize, 0usize, 0usize);
+    let mut exterior_groups = 0usize;
+    let mut exterior_outdoor = 0usize;
+    for stem in index.interior_stems() {
+        let path = wmo_path_of(&stem);
+        let Some(model) = minimap::InteriorModel::load(&path, |p| assets.read(p).ok()) else {
+            missing_wmo.push(path);
+            continue;
+        };
+        wmos += 1;
+        let named = index.interior_cells(&stem);
+        named_total += named.len();
+        let mut produced = std::collections::BTreeSet::new();
+        for (group, header) in model.groups.iter().enumerate() {
+            let Some(header) = header else { continue };
+            if header.flags & vale_assets::world::wmo::group_flags::EXTERIOR != 0 {
+                exterior_groups += 1;
+                if header.flags & vale_assets::world::wmo::group_flags::OUTDOOR != 0 {
+                    exterior_outdoor += 1;
+                }
+            }
+            for tile in minimap::group_tiles(&header.bounds) {
+                produced.insert((group as u32, tile.x, tile.y));
+            }
+        }
+        let mut strays = Vec::new();
+        let mut groups_with_pictures = std::collections::BTreeSet::new();
+        for cell in &named {
+            groups_with_pictures.insert(cell.0);
+            if !produced.contains(cell) {
+                strays.push(*cell);
+            }
+            if index
+                .interior_texture(&stem, cell.0, cell.1, cell.2)
+                .is_none_or(|p| !assets.exists(&p))
+            {
+                unresolved += 1;
+            }
+        }
+        for group in groups_with_pictures {
+            pictured += 1;
+            if let Some(Some(header)) = model.groups.get(group as usize) {
+                if header.flags & vale_assets::world::wmo::group_flags::EXTERIOR != 0 {
+                    pictured_exterior += 1;
+                }
+                if header.flags & vale_assets::world::wmo::group_flags::UNREACHABLE != 0 {
+                    pictured_unreachable += 1;
+                }
+            }
+        }
+        stray_total += strays.len();
+        if !strays.is_empty() {
+            println!(
+                "  ** {stem}: {} of {} named cell(s) are not on the grid, first {:?}",
+                strays.len(),
+                named.len(),
+                strays[0]
+            );
+        }
+    }
+    println!("  {wmos} WMO(s) read, {} not in the archives", missing_wmo.len());
+    for path in missing_wmo.iter().take(5) {
+        println!("    missing {path}");
+    }
+    println!(
+        "  {} of {named_total} named cell(s) are on the grid the groups give",
+        named_total - stray_total
+    );
+    println!("  {} of {named_total} named picture(s) resolve", named_total - unresolved);
+    println!(
+        "  {pictured} group(s) carry pictures: {pictured_exterior} EXTERIOR (0x8), \
+         {pictured_unreachable} UNREACHABLE (0x80)"
+    );
+    println!("  {exterior_groups} EXTERIOR group(s) in these WMOs, {exterior_outdoor} of them OUTDOOR (0x8000)");
+    Ok(())
+}
+
+/// **One WMO**: its groups, their grids against the index, and the
+/// orientation vote over every picture it has.
+///
+/// The orientation is measured as the terrain's is, against something the
+/// same group states in another form: its floor. The group's upward-facing
+/// triangles are drawn into the cell's texel grid, and the picture's opaque
+/// texels are compared with that mask under four readings. The assumed one is
+/// texel column 0 at the cell's least `x` and row 0 at its greatest `y`.
+fn one_interior(assets: &mut Assets, index: &MinimapTiles, path: &str) -> Result<(), String> {
+    let model = minimap::InteriorModel::load(path, |p| assets.read(p).ok())
+        .ok_or_else(|| format!("{path} is not in the archives"))?;
+    let stem = model.stem.clone();
+    println!("{path}");
+    println!("  stem {stem}, {} group(s), {} portal(s)", model.groups.len(), model.portals.portals.len());
+    let named = index.interior_cells(&stem);
+    println!("  {} picture(s) named", named.len());
+    let mut wins = [0usize; 4];
+    let mut totals = [0f32; 4];
+    let mut voted = 0usize;
+    for (group, header) in model.groups.iter().enumerate() {
+        let Some(header) = header else {
+            println!("    group {group:3}: ** not read");
+            continue;
+        };
+        let tiles = minimap::group_tiles(&header.bounds);
+        let have = tiles
+            .iter()
+            .filter(|t| index.interior_texture(&stem, group as u32, t.x, t.y).is_some())
+            .count();
+        let [min, max] = header.bounds;
+        println!(
+            "    group {group:3}: flags {:#07x}  {:6.1} x {:6.1}y  grid {} cell(s), {have} pictured",
+            header.flags,
+            max[0] - min[0],
+            max[1] - min[1],
+            tiles.len()
+        );
+        if have == 0 {
+            continue;
+        }
+        let Ok(raw) = assets.read(&vale_assets::world::wmo::group_path(path, group as u32)) else {
+            continue;
+        };
+        let Ok(geometry) = vale_assets::world::wmo::WmoGroup::parse(&raw) else {
+            continue;
+        };
+        for tile in &tiles {
+            let Some(picture) = index.interior_texture(&stem, group as u32, tile.x, tile.y) else {
+                continue;
+            };
+            let Ok(raw) = assets.read(&picture) else { continue };
+            let Ok(blp) = vale_assets::world::blp::decode(&raw) else { continue };
+            let Some(scores) = score_interior(&blp, &geometry, tile) else {
+                continue;
+            };
+            voted += 1;
+            for (slot, score) in scores.iter().enumerate() {
+                totals[slot] += score;
+            }
+            let best = (0..4).max_by(|a, b| scores[*a].total_cmp(&scores[*b])).unwrap_or(0);
+            wins[best] += 1;
+        }
+    }
+    if voted == 0 {
+        println!("  no picture with enough floor and enough empty space to vote on");
+        return Ok(());
+    }
+    println!("  orientation, voted over {voted} picture(s), opaque texels against the floor:");
+    for (slot, name) in INTERIOR_READINGS.iter().enumerate() {
+        println!(
+            "    {name:<34} won {:>3}, {:.1}% mean agreement",
+            wins[slot],
+            totals[slot] / voted as f32 * 100.0
+        );
+    }
+    Ok(())
+}
+
+/// The four readings [`score_interior`] scores, in its order.
+const INTERIOR_READINGS: [&str; 4] = [
+    "assumed (column +x, row -y)",
+    "mirrored in x",
+    "mirrored in y",
+    "transposed (column +y, row -x)",
+];
+
+/// **How well a WMO picture's opaque texels agree with its group's floor**,
+/// under four readings; `None` for a picture with no transparent texel or no
+/// opaque one, or a cell whose floor mask is all one thing.
+fn score_interior(
+    blp: &vale_assets::world::blp::Blp,
+    group: &vale_assets::world::wmo::WmoGroup,
+    tile: &minimap::InteriorTile,
+) -> Option<[f32; 4]> {
+    const GRID: usize = 32;
+    let (w, h) = (blp.width as usize, blp.height as usize);
+    if w < GRID || h < GRID {
+        return None;
+    }
+    // The picture, binned to GRID x GRID: a cell is opaque when most of its
+    // texels are.
+    let mut opaque = vec![0u32; GRID * GRID];
+    for py in 0..h {
+        for px in 0..w {
+            if blp.rgba[(py * w + px) * 4 + 3] >= 128 {
+                opaque[(py * GRID / h) * GRID + px * GRID / w] += 1;
+            }
+        }
+    }
+    let per_cell = (w / GRID * (h / GRID)) as u32;
+    let picture: Vec<bool> = opaque.iter().map(|n| *n * 2 > per_cell).collect();
+    let solid = picture.iter().filter(|b| **b).count();
+    if solid == 0 || solid == picture.len() {
+        return None;
+    }
+    // The floor, in the same grid over the cell's rectangle: every triangle
+    // whose normal points up, sampled at the centre of each grid cell. `floor`
+    // is indexed `[i][j]` with `i` along +x and `j` along +y.
+    let [lo, hi] = tile.rect;
+    let mut floor = vec![false; GRID * GRID];
+    for tri in group.indices.chunks_exact(3) {
+        let [a, b, c] = [tri[0], tri[1], tri[2]].map(|i| group.positions.get(usize::from(i)).copied());
+        let (Some(a), Some(b), Some(c)) = (a, b, c) else { continue };
+        let normal_z = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+        let area = normal_z.abs();
+        if area < 1e-6 {
+            continue;
+        }
+        let tri_lo = [a[0].min(b[0]).min(c[0]), a[1].min(b[1]).min(c[1])];
+        let tri_hi = [a[0].max(b[0]).max(c[0]), a[1].max(b[1]).max(c[1])];
+        for i in 0..GRID {
+            let x = lo[0] + (i as f32 + 0.5) / GRID as f32 * (hi[0] - lo[0]);
+            if x < tri_lo[0] || x > tri_hi[0] {
+                continue;
+            }
+            for j in 0..GRID {
+                let y = lo[1] + (j as f32 + 0.5) / GRID as f32 * (hi[1] - lo[1]);
+                if y < tri_lo[1] || y > tri_hi[1] {
+                    continue;
+                }
+                let side = |p: [f32; 3], q: [f32; 3]| (q[0] - p[0]) * (y - p[1]) - (q[1] - p[1]) * (x - p[0]);
+                let (s1, s2, s3) = (side(a, b), side(b, c), side(c, a));
+                if (s1 >= 0.0 && s2 >= 0.0 && s3 >= 0.0) || (s1 <= 0.0 && s2 <= 0.0 && s3 <= 0.0) {
+                    floor[i * GRID + j] = true;
+                }
+            }
+        }
+    }
+    let covered = floor.iter().filter(|b| **b).count();
+    if covered == 0 || covered == floor.len() {
+        return None;
+    }
+    // Where floor cell (i, j) lands in the picture's (row, column) under each
+    // reading. Assumed: column grows with x, row grows as y falls.
+    let last = GRID - 1;
+    let readings: [fn(usize, usize, usize) -> (usize, usize); 4] = [
+        |i, j, last| (last - j, i),
+        |i, j, last| (last - j, last - i),
+        |i, j, _| (j, i),
+        |i, j, last| (last - i, j),
+    ];
+    let mut scores = [0f32; 4];
+    for (slot, reading) in readings.into_iter().enumerate() {
+        let agree = (0..GRID)
+            .flat_map(|i| (0..GRID).map(move |j| (i, j)))
+            .filter(|(i, j)| {
+                let (row, col) = reading(*i, *j, last);
+                floor[i * GRID + j] == picture[row * GRID + col]
+            })
+            .count();
+        scores[slot] = agree as f32 / (GRID * GRID) as f32;
+    }
+    Some(scores)
 }
 
 /// **How far the view reaches**, printed at every level of both of the client's

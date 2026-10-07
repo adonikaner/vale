@@ -1174,8 +1174,16 @@ fn minimap(
     let tint = colour([1.0, 1.0, 1.0, 1.0], alpha);
     let index = assets.minimap_tiles();
     art.minimap_tick += 1;
-    let radius = vale_assets::tables::minimap::radius_yards(widget.zoom, view.indoors);
-    for tile in vale_assets::tables::minimap::tiles_in_view(view.position.0, view.position.1, radius) {
+    let radius =
+        vale_assets::tables::minimap::radius_yards(widget.level(view.indoors), view.indoors);
+    // Inside a building the terrain is not drawn; see `interior`.
+    let terrain = if view.indoors {
+        interior(painter, ctx, assets, art, view, rect, tint, alpha, radius);
+        Vec::new()
+    } else {
+        vale_assets::tables::minimap::tiles_in_view(view.position.0, view.position.1, radius)
+    };
+    for tile in terrain {
         let Some(path) = index.texture(&view.directory, tile.tile.0, tile.tile.1) else {
             // A tile the index does not list is black, which is what the
             // 1.12.1 client shows for a tile with no picture; it is not a gap
@@ -1226,6 +1234,69 @@ fn minimap(
         crate::lua::panels::worldmap::arrow_angle(view.facing),
         tint,
     )));
+}
+
+/// The minimap inside a building: the egui form of `mesh::build::interior`,
+/// whose comment gives the rule. A black disc, then each picture as a turned
+/// quad cut to the disc, alpha-blended, its uv inset by half a texel.
+#[allow(clippy::too_many_arguments)]
+fn interior(
+    painter: &egui::Painter,
+    ctx: &egui::Context,
+    assets: &GameAssets,
+    art: &mut Art,
+    view: &crate::interface::minimap::MinimapView,
+    rect: egui::Rect,
+    tint: egui::Color32,
+    alpha: f32,
+    radius: f32,
+) {
+    use vale_assets::tables::minimap as rule;
+    painter.add(egui::Shape::mesh(disc(
+        egui::TextureId::default(),
+        rect,
+        solid_colour([0.0, 0.0, 0.0, 1.0], alpha),
+        |_| egui::epaint::WHITE_UV,
+    )));
+    let Some(inside) = view.interior.as_ref() else {
+        return;
+    };
+    let index = assets.minimap_tiles();
+    let centre = [rect.center().x, rect.center().y];
+    let reach = (rect.width().min(rect.height()) / 2.0 - 0.5).max(0.0);
+    let at = |[u, v]: [f32; 2]| [rect.min.x + u * rect.width(), rect.min.y + v * rect.height()];
+    let position = [view.position.0, view.position.1, view.elevation];
+    for picture in inside.pictures(position, radius) {
+        // 48 sides, as `disc` draws.
+        let polygon = rule::clip_to_disc(picture.corners.map(at), rule::PICTURE_UV, centre, reach, 48);
+        if polygon.is_empty() {
+            continue;
+        }
+        let Some(path) = index.interior_texture(&inside.model.stem, picture.group, picture.x, picture.y)
+        else {
+            continue;
+        };
+        let Some(handle) = art.minimap_texture(ctx, assets, &path) else {
+            continue;
+        };
+        let [width, height] = handle.size().map(|side| side.max(1) as f32);
+        let inset = [0.5 / width, 0.5 / height];
+        let mut mesh = egui::Mesh::with_texture(handle.id());
+        for (p, uv) in &polygon {
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: egui::pos2(p[0], p[1]),
+                uv: egui::pos2(
+                    inset[0] + uv[0] * (1.0 - 2.0 * inset[0]),
+                    inset[1] + uv[1] * (1.0 - 2.0 * inset[1]),
+                ),
+                color: tint,
+            });
+        }
+        for corner in 1..polygon.len() as u32 - 1 {
+            mesh.add_triangle(0, corner, corner + 1);
+        }
+        painter.add(egui::Shape::mesh(mesh));
+    }
 }
 
 /// The dots and the two markers: the egui form of `mesh::build::blips`, whose

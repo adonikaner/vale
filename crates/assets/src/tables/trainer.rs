@@ -69,6 +69,7 @@
 
 use crate::tables::skills::{Skills, GENERAL};
 use crate::tables::spellbook::{SpellInfo, Spells};
+use crate::tables::tradeskill::CREATE_ITEM_EFFECT;
 
 /// **The two tables the rules need, behind one door.**
 ///
@@ -305,6 +306,9 @@ pub struct Row {
     /// how it read "Development Skills" for one session. Empty for a header,
     /// and for a line the tables cannot name.
     pub line_name: String,
+    /// The service spell's own icon. At a tradeskill trainer
+    /// `GetTrainerServiceIcon` shows the created item's icon instead when
+    /// [`icon_item`] names one.
     pub icon: Option<String>,
     /// The spell's own description, **unsubstituted** — `$s1` and its siblings
     /// are resolved at the read, by whoever has the character's level.
@@ -320,9 +324,9 @@ pub struct Row {
     /// The prerequisite spells that are actually set, named — the zero padding
     /// is gone, which is what `GetTrainerServiceNumAbilityReq` counts.
     pub req_spells: Vec<u32>,
-    /// Whether the service teaches a spell at all, and whether it teaches it to
-    /// a *pet* — `IsTrainerServiceLearnSpell`'s two answers, off the same
-    /// three-slot effect scan the grouping uses.
+    /// Whether the service teaches a spell that is not a recipe, and whether
+    /// it teaches it to the pet: `IsTrainerServiceLearnSpell`'s two answers,
+    /// from [`learns`].
     pub learn_spell: bool,
     pub learn_pet_spell: bool,
     /// Whether this line is on screen at all under the current three filters.
@@ -400,6 +404,7 @@ impl Board {
                 }
             };
             groups[position].counts[service.state.index()] += 1;
+            let learned = learns(&described, &|id| catalog.spell(id));
             rows.push((id, Row {
                 group: position,
                 service: Some(index),
@@ -423,13 +428,8 @@ impl Board {
                 req_skill: (service.req_skill != 0)
                     .then(|| (catalog.skill_line_name(service.req_skill), service.req_skill_value)),
                 req_spells: service.req_spells.iter().copied().filter(|s| *s > 0).collect(),
-                learn_spell: described.effects.iter().any(|e| {
-                    e.kind == EFFECT_LEARN_SPELL || e.kind == EFFECT_LEARN_PET_SPELL
-                }),
-                learn_pet_spell: described
-                    .effects
-                    .iter()
-                    .any(|e| e.kind == EFFECT_LEARN_PET_SPELL),
+                learn_spell: learned.0,
+                learn_pet_spell: learned.1,
                 visible: true,
                 req_skill_value: service.req_skill_value,
             }));
@@ -711,6 +711,168 @@ pub fn taught_spell(info: &SpellInfo) -> u32 {
         .iter()
         .find(|e| e.kind == EFFECT_LEARN_SPELL || e.kind == EFFECT_LEARN_PET_SPELL)
         .map_or(info.id, |e| e.trigger_spell)
+}
+
+/// The index of a teaching spell's first `LEARN_SPELL` or `LEARN_PET_SPELL`
+/// slot, or `None` when it has neither.
+fn learn_slot(teacher: &SpellInfo) -> Option<usize> {
+    teacher
+        .effects
+        .iter()
+        .position(|e| e.kind == EFFECT_LEARN_SPELL || e.kind == EFFECT_LEARN_PET_SPELL)
+}
+
+/// Whether a taught spell is a recipe that makes an item: `Attributes` carries
+/// `SPELL_ATTR_TRADESPELL` and its first effect is `CREATE_ITEM`.
+fn makes_item(taught: &SpellInfo) -> bool {
+    taught.recipe() && taught.effects[0].kind == CREATE_ITEM_EFFECT
+}
+
+/// The item whose icon `GetTrainerServiceIcon` shows, or `None` for the
+/// service spell's own icon.
+///
+/// Only a tradeskill trainer shows an item. The 1.12.1 client takes the
+/// service spell's first `LEARN_SPELL` or `LEARN_PET_SPELL` slot, looks up
+/// that slot's trigger spell, and shows the icon of the item in the taught
+/// spell's `EffectItemType[0]` when that is not 0. No attribute or effect type
+/// is checked on this path. Every other case shows the service spell's own
+/// icon, not the taught spell's: a class trainer, a service with no learn
+/// slot, a trigger spell `Spell.dbc` has no row for, and a taught spell that
+/// makes nothing.
+///
+/// The item's icon comes from the item cache. On a cache miss the client
+/// answers nil, and it raises `TRAINER_UPDATE` when the template arrives.
+pub fn icon_item(
+    kind: Kind,
+    teacher: &SpellInfo,
+    spell: &dyn Fn(u32) -> Option<SpellInfo>,
+) -> Option<u32> {
+    if kind != Kind::Tradeskill {
+        return None;
+    }
+    let slot = learn_slot(teacher)?;
+    let taught = spell(teacher.effects[slot].trigger_spell)?;
+    Some(taught.effects[0].item_type).filter(|item| *item != 0)
+}
+
+/// What `GameTooltip:SetTrainerService` shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Plate {
+    /// The item plate for this item entry.
+    Item(u32),
+    /// The spell plate for this spell. `pet` is set when the service teaches
+    /// the spell to the pet (`LEARN_PET_SPELL`).
+    Spell { id: u32, pet: bool },
+}
+
+/// The plate `GameTooltip:SetTrainerService` shows for one service, on any
+/// trainer type.
+///
+/// The 1.12.1 client walks the service spell's three slots in order. The
+/// first `LEARN_SPELL` or `LEARN_PET_SPELL` slot whose trigger spell has a
+/// `Spell.dbc` row decides the plate; a slot whose trigger spell has no row is
+/// skipped. If the taught spell is a recipe that makes an item (see
+/// [`makes_item`]), the plate is that item: the taught spell's
+/// `EffectItemType` at the same slot index as the service spell's learn slot.
+/// Otherwise it is the taught spell's plate. A service with no such slot
+/// shows its own spell plate.
+pub fn plate(teacher: &SpellInfo, spell: &dyn Fn(u32) -> Option<SpellInfo>) -> Plate {
+    for (slot, effect) in teacher.effects.iter().enumerate() {
+        if effect.kind != EFFECT_LEARN_SPELL && effect.kind != EFFECT_LEARN_PET_SPELL {
+            continue;
+        }
+        let Some(taught) = spell(effect.trigger_spell) else {
+            continue;
+        };
+        if makes_item(&taught) {
+            return Plate::Item(taught.effects[slot].item_type);
+        }
+        return Plate::Spell {
+            id: taught.id,
+            pet: effect.kind == EFFECT_LEARN_PET_SPELL,
+        };
+    }
+    Plate::Spell {
+        id: teacher.id,
+        pet: false,
+    }
+}
+
+/// Where `GetTrainerServiceDescription` takes its text from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Describe {
+    /// This spell's `Description`, with its `$` tokens substituted.
+    Spell(u32),
+    /// The item's own description from the item cache, as it is, without
+    /// substitution. When the item is not cached or its description is empty,
+    /// the text is the `otherwise` spell's description, or nothing when
+    /// `otherwise` is `None`.
+    Item { entry: u32, otherwise: Option<u32> },
+}
+
+/// Where one service's description comes from, or `None` for no text.
+///
+/// The 1.12.1 client applies this order:
+///
+/// 1. The service spell's own description, when it is not empty. A talent
+///    trainer skips this step for a row in the `used` state.
+/// 2. Otherwise, when the service spell has a `LEARN_SPELL` or
+///    `LEARN_PET_SPELL` slot and the first such slot's trigger spell has a
+///    `Spell.dbc` row: that taught spell's description, when it is not empty.
+/// 3. Otherwise, when that taught spell is a recipe that makes an item (see
+///    [`makes_item`]): the description of the item in its
+///    `EffectItemType[0]`, when the item cache holds it and it is not empty.
+/// 4. Otherwise the service spell's own description when it is not empty, and
+///    no text when it is.
+pub fn describe(
+    kind: Kind,
+    state: State,
+    teacher: &SpellInfo,
+    spell: &dyn Fn(u32) -> Option<SpellInfo>,
+) -> Option<Describe> {
+    let own = (!teacher.description.is_empty()).then_some(teacher.id);
+    let skip_own = kind == Kind::Talent && state == State::Used;
+    if own.is_some() && !skip_own {
+        return own.map(Describe::Spell);
+    }
+    let taught = learn_slot(teacher).and_then(|slot| spell(teacher.effects[slot].trigger_spell));
+    if let Some(taught) = taught {
+        if !taught.description.is_empty() {
+            return Some(Describe::Spell(taught.id));
+        }
+        if makes_item(&taught) {
+            return Some(Describe::Item {
+                entry: taught.effects[0].item_type,
+                otherwise: own,
+            });
+        }
+    }
+    own.map(Describe::Spell)
+}
+
+/// `IsTrainerServiceLearnSpell(i)`'s two answers: whether the service teaches a
+/// spell that is not a recipe, and whether it teaches one to the pet.
+///
+/// The 1.12.1 client walks the three slots in order. A `LEARN_SPELL` slot
+/// whose trigger spell is a recipe (`SPELL_ATTR_TRADESPELL`) is skipped; any
+/// other `LEARN_SPELL` slot answers `(true, false)`, including one whose
+/// trigger spell has no `Spell.dbc` row. A `LEARN_PET_SPELL` slot answers
+/// `(true, true)`. A service with neither answers `(false, false)`, so a
+/// profession recipe at a tradeskill trainer is not a learn spell.
+pub fn learns(teacher: &SpellInfo, spell: &dyn Fn(u32) -> Option<SpellInfo>) -> (bool, bool) {
+    for effect in &teacher.effects {
+        match effect.kind {
+            EFFECT_LEARN_SPELL => {
+                if spell(effect.trigger_spell).is_some_and(|taught| taught.recipe()) {
+                    continue;
+                }
+                return (true, false);
+            }
+            EFFECT_LEARN_PET_SPELL => return (true, true),
+            _ => {}
+        }
+    }
+    (false, false)
 }
 
 /// Which group one service goes in, or [`GENERAL`] for one that is dropped.
@@ -1182,6 +1344,160 @@ mod tests {
         // …and its default filter is available + used, not available +
         // unavailable.
         assert_eq!(default_types(Kind::Talent), 5);
+    }
+
+    /// A recipe: `SPELL_ATTR_TRADESPELL`, and a first effect that creates
+    /// `item`.
+    fn recipe(id: u32, name: &str, item: u32) -> SpellInfo {
+        let mut effects = [SpellEffect::default(); 3];
+        effects[0] = SpellEffect {
+            kind: CREATE_ITEM_EFFECT,
+            item_type: item,
+            ..SpellEffect::default()
+        };
+        SpellInfo {
+            id,
+            name: name.to_string(),
+            attributes: crate::tables::spellbook::spell_attributes::TRADESPELL,
+            effects,
+            ..SpellInfo::default()
+        }
+    }
+
+    /// A Blacksmithing trainer's Copper Mace: service 40 teaches recipe 2737,
+    /// which creates item 2844.
+    fn copper_mace() -> Fake {
+        Fake {
+            spells: vec![teacher(40, "Copper Mace", "", 2737), recipe(2737, "Copper Mace", 2844)],
+            ..Fake::default()
+        }
+    }
+
+    /// A tradeskill trainer shows the created item's icon. Any other trainer
+    /// type, or a recipe that makes nothing, shows the service spell's own.
+    #[test]
+    fn a_tradeskill_service_shows_the_created_items_icon() {
+        let catalog = copper_mace();
+        let lookup = |id| catalog.spell(id);
+        let service = catalog.spell(40).expect("the service spell");
+        assert_eq!(icon_item(Kind::Tradeskill, &service, &lookup), Some(2844));
+        assert_eq!(icon_item(Kind::Class, &service, &lookup), None);
+        // A trigger spell with no row shows the service spell's icon.
+        let orphan = teacher(41, "Lost", "", 9999);
+        assert_eq!(icon_item(Kind::Tradeskill, &orphan, &lookup), None);
+        // A taught spell that makes nothing shows the service spell's icon.
+        let plain = Fake {
+            spells: vec![teacher(42, "Smelt", "", 2657), teacher(2657, "Smelt", "", 0)],
+            ..Fake::default()
+        };
+        let service = plain.spell(42).expect("the service spell");
+        assert_eq!(icon_item(Kind::Tradeskill, &service, &|id| plain.spell(id)), None);
+    }
+
+    /// The tooltip is the created item's plate for a recipe, the taught spell's
+    /// for anything else, and the service spell's own when nothing is taught.
+    #[test]
+    fn the_tooltip_follows_the_learn_slot_to_the_item_or_the_spell() {
+        let catalog = Fake {
+            spells: vec![
+                teacher(40, "Copper Mace", "", 2737),
+                recipe(2737, "Copper Mace", 2844),
+                teacher(10, "Fireball", "Rank 2", 145),
+                teacher(145, "Fireball", "Rank 2", 0),
+            ],
+            ..Fake::default()
+        };
+        let lookup = |id| catalog.spell(id);
+        let plate_of = |id| plate(&catalog.spell(id).expect("a service"), &lookup);
+        assert_eq!(plate_of(40), Plate::Item(2844));
+        assert_eq!(plate_of(10), Plate::Spell { id: 145, pet: false });
+        // A pet's spell is flagged.
+        let mut pet = teacher(50, "Bite", "Rank 2", 145);
+        pet.effects[0].kind = EFFECT_LEARN_PET_SPELL;
+        assert_eq!(plate(&pet, &lookup), Plate::Spell { id: 145, pet: true });
+        // A slot whose trigger spell has no row is skipped, and the next learn
+        // slot decides.
+        let mut skip = teacher(51, "Two", "", 9999);
+        skip.effects[1] = skip.effects[0];
+        skip.effects[1].trigger_spell = 145;
+        assert_eq!(plate(&skip, &lookup), Plate::Spell { id: 145, pet: false });
+        // Nothing taught: the service spell's own plate.
+        let none = teacher(52, "Nothing", "", 9999);
+        assert_eq!(plate(&none, &lookup), Plate::Spell { id: 52, pet: false });
+    }
+
+    /// The created item is read at the slot index of the service spell's learn
+    /// slot, not always slot 0.
+    #[test]
+    fn the_tooltip_item_is_read_at_the_learn_slot_index() {
+        let mut taught = recipe(2737, "Copper Mace", 2844);
+        taught.effects[1].item_type = 7777;
+        let catalog = Fake {
+            spells: vec![taught],
+            ..Fake::default()
+        };
+        let mut service = teacher(40, "Copper Mace", "", 0);
+        service.effects[1] = service.effects[0];
+        service.effects[0] = SpellEffect::default();
+        service.effects[1].trigger_spell = 2737;
+        assert_eq!(plate(&service, &|id| catalog.spell(id)), Plate::Item(7777));
+    }
+
+    /// The description: the service spell's own, then the taught spell's, then
+    /// the created item's, then the service spell's again.
+    #[test]
+    fn the_description_falls_back_from_service_to_taught_to_item() {
+        let mut catalog = copper_mace();
+        let service = catalog.spell(40).expect("the service spell");
+        let lookup = |id| catalog.spell(id);
+        // Neither spell has text, and the taught one makes an item.
+        assert_eq!(
+            describe(Kind::Tradeskill, State::Available, &service, &lookup),
+            Some(Describe::Item { entry: 2844, otherwise: None })
+        );
+        // The service spell's own text comes first.
+        let mut worded = service.clone();
+        worded.description = "Teaches you how to make a Copper Mace.".to_string();
+        assert_eq!(
+            describe(Kind::Tradeskill, State::Available, &worded, &lookup),
+            Some(Describe::Spell(40))
+        );
+        // A talent trainer skips it for a used row, and returns to it last.
+        assert_eq!(
+            describe(Kind::Talent, State::Used, &worded, &lookup),
+            Some(Describe::Item { entry: 2844, otherwise: Some(40) })
+        );
+        // The taught spell's text comes before the item's.
+        catalog.spells[1].description = "Creates a mace.".to_string();
+        let lookup = |id| catalog.spell(id);
+        assert_eq!(
+            describe(Kind::Tradeskill, State::Available, &service, &lookup),
+            Some(Describe::Spell(2737))
+        );
+        // Nothing taught and no text of its own: no description.
+        let none = teacher(52, "Nothing", "", 9999);
+        assert_eq!(describe(Kind::Class, State::Available, &none, &lookup), None);
+    }
+
+    /// A recipe is not a learn spell; a class spell is, and a pet's spell is
+    /// one for the pet.
+    #[test]
+    fn a_recipe_is_not_a_learn_spell() {
+        let catalog = Fake {
+            spells: vec![recipe(2737, "Copper Mace", 2844), teacher(145, "Fireball", "", 0)],
+            ..Fake::default()
+        };
+        let lookup = |id| catalog.spell(id);
+        assert_eq!(learns(&teacher(40, "Copper Mace", "", 2737), &lookup), (false, false));
+        assert_eq!(learns(&teacher(10, "Fireball", "Rank 2", 145), &lookup), (true, false));
+        // A trigger spell with no row still counts.
+        assert_eq!(learns(&teacher(41, "Lost", "", 9999), &lookup), (true, false));
+        let mut pet = teacher(50, "Bite", "Rank 2", 145);
+        pet.effects[0].kind = EFFECT_LEARN_PET_SPELL;
+        assert_eq!(learns(&pet, &lookup), (true, true));
+        let mut step = teacher(20, "Journeyman", "", 0);
+        step.effects[0].kind = EFFECT_SKILL_STEP;
+        assert_eq!(learns(&step, &lookup), (false, false));
     }
 
     /// **The taught spell decides the group; the teaching spell decides the

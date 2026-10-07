@@ -2817,3 +2817,256 @@ fn a_transport_spline_is_walked_in_the_platforms_frame() {
     assert_eq!(plain.in_world(None), Some(plain.position_and_heading()));
 }
 
+
+/// The speeds of a character on a 100% mount: twice the run.
+fn mounted() -> Speeds {
+    let mut speeds = Speeds::default();
+    speeds.0[1] = 2.0 * BASE_RUN_SPEED;
+    speeds
+}
+
+/// A ramp rising along `+x` from flat ground at zero, as the session's join
+/// answers it: the ramp is a building surface and counts only within a step
+/// height (1.0 yard) above the feet asked from; the ground is always there.
+///
+/// That ceiling is what a long stride runs into. The ramp at the far end of a
+/// stride that rose more than a step height is above the ceiling, so the floor
+/// read answers the ground underneath the ramp.
+struct Ramp {
+    grade: f32,
+}
+
+impl Ramp {
+    fn surface(&self, x: f32) -> f32 {
+        (x * self.grade).max(0.0)
+    }
+}
+
+impl Footing for Ramp {
+    fn floor(&self, x: f32, _y: f32, z: f32) -> Option<f32> {
+        let ramp = x * self.grade;
+        Some(if ramp <= z + 1.0 { ramp.max(0.0) } else { 0.0 })
+    }
+}
+
+/// **A stride longer than a step height's rise climbs a ramp instead of
+/// entering it**, at any speed and any step length.
+///
+/// The floor is read at the end of a stride with a ceiling one step height
+/// above where the stride started. A mounted run over a 250 ms step is 3.5
+/// yards, which on a 45-degree ramp rises 3.5 yards: the end point was under
+/// the ramp, the read answered the ground below it, and the character fell
+/// inside the ramp. Cut into pieces of [`MAX_STRIDE`], each piece rises less
+/// than a step height on any surface flatter than a wall.
+#[test]
+fn a_long_stride_climbs_a_ramp_rather_than_entering_it() {
+    for (speeds, name) in [(Speeds::default(), "run"), (mounted(), "mounted")] {
+        for dt in [0.025_f32, 0.2, 0.25] {
+            for grade in [0.5_f32, 1.0, 1.6] {
+                let ramp = Ramp { grade };
+                let mut m = Mover::new(Position { x: -1.0, ..Position::default() }, speeds);
+                m.set_controls(Controls { forward: true, ..Default::default() });
+                for step in 0..12 {
+                    m.advance(dt, Some(&ramp));
+                    let p = m.position();
+                    assert!(
+                        (p.z - ramp.surface(p.x)).abs() < 1e-3 && !m.is_airborne(),
+                        "{name}, {dt} s steps, grade {grade}: step {step} left the character \
+                         at {p:?} against a ramp at {}",
+                        ramp.surface(p.x),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// **…and walks down a slope rather than falling off it.** A drop of more
+/// than [`FALL_THRESHOLD`] over one stride starts a fall; a mounted stride over
+/// a long step dropped that far on an ordinary hillside.
+#[test]
+fn a_long_stride_walks_down_a_slope_rather_than_falling() {
+    for dt in [0.025_f32, 0.2, 0.25] {
+        let hill = Slope { grade: -1.0 };
+        let mut m = Mover::new(Position::default(), mounted());
+        m.set_controls(Controls { forward: true, ..Default::default() });
+        for step in 0..12 {
+            let owed = m.advance(dt, Some(&hill));
+            let p = m.position();
+            assert!(
+                !m.is_airborne() && owed.is_none() && (p.z + p.x).abs() < 1e-3,
+                "{dt} s steps: step {step} left the character at {p:?}, airborne {}",
+                m.is_airborne(),
+            );
+        }
+    }
+}
+
+/// A building floor at 50 yards over ground at zero, answered as the session's
+/// join answers it: the floor counts only within a step height above the feet.
+struct Storey;
+
+impl Footing for Storey {
+    fn floor(&self, _x: f32, _y: f32, z: f32) -> Option<f32> {
+        Some(if 50.0 <= z + 1.0 { 50.0 } else { 0.0 })
+    }
+}
+
+/// Ground at zero and nothing else.
+struct Ground;
+
+impl Footing for Ground {
+    fn floor(&self, _x: f32, _y: f32, _z: f32) -> Option<f32> {
+        Some(0.0)
+    }
+}
+
+/// **A fall at terminal velocity lands on the first floor under it**, whether
+/// that is a building's floor or the ground, over the session's ordinary step
+/// and over a 250 ms stall. At 60 y/s a stall is 15 yards of fall in one step.
+#[test]
+fn a_fall_at_terminal_velocity_lands_on_the_first_floor_under_it() {
+    let worlds: [(&dyn Footing, f32, &str); 2] =
+        [(&Storey, 50.0, "a building floor"), (&Ground, 0.0, "the ground")];
+    for dt in [0.025_f32, 0.2, 0.25] {
+        for (world, floor, name) in worlds {
+            let mut m = Mover::new(Position { z: 1_000.0, ..Position::default() }, Speeds::default());
+            let mut landed = false;
+            for _ in 0..(20.0 / dt) as usize {
+                let owed = m.advance(dt, Some(world));
+                let z = m.position().z;
+                assert!(z >= floor - 1e-3, "{dt} s steps onto {name}: fell to {z}");
+                if owed == Some(Opcode::MSG_MOVE_FALL_LAND) {
+                    landed = true;
+                    break;
+                }
+            }
+            assert!(landed, "{dt} s steps onto {name}: never landed");
+            assert!(
+                (m.position().z - floor).abs() < 1e-3,
+                "{dt} s steps onto {name}: {:?}",
+                m.position()
+            );
+        }
+    }
+}
+
+/// A wall in the plane `x = 10` from the ground to 38 yards up, with ground at
+/// zero on both sides. Its [`Footing::step`] tests the stride the way the
+/// collision world does: at 1.2 and 1.9 yards above the feet, along the whole
+/// stride and half a yard beyond, cancelling the stride's motion into the wall.
+struct Rampart;
+
+impl Footing for Rampart {
+    fn floor(&self, _x: f32, _y: f32, _z: f32) -> Option<f32> {
+        Some(0.0)
+    }
+    fn step(&self, from: [f32; 3], to: [f32; 3]) -> [f32; 3] {
+        let probed = [1.2_f32, 1.9]
+            .iter()
+            .any(|h| (0.0..=38.0).contains(&(from[2] + h)));
+        if probed && from[0] < 10.0 && to[0] + 0.5 >= 10.0 {
+            [from[0], to[1], to[2]]
+        } else {
+            to
+        }
+    }
+}
+
+/// **A character falling past the top of a wall is stopped by the wall**, not
+/// carried through it.
+///
+/// The wall probe is cast at the height the stride starts from. Over one long
+/// step a fall descends many yards, so a stride that began above the wall's top
+/// crossed it at a height where the body was level with the wall, and the
+/// character landed on the far side. Cut into pieces, each piece's probe is
+/// cast from where that piece starts.
+#[test]
+fn a_fall_past_a_wall_is_stopped_by_it() {
+    for dt in [0.025_f32, 0.25] {
+        let mut m = Mover::new(Position { x: 0.0, y: 0.0, z: 40.0, orientation: 0.0 }, mounted());
+        m.set_controls(Controls { forward: true, ..Default::default() });
+        for _ in 0..(4.0 / dt) as usize {
+            m.advance(dt, Some(&Rampart));
+        }
+        let p = m.position();
+        assert!(p.x < 10.0, "{dt} s steps: ended at {p:?}, past the wall at x = 10");
+        assert!(!m.is_airborne() && p.z.abs() < 1e-3, "{dt} s steps: never came down: {p:?}");
+    }
+}
+
+/// **A key change takes effect at its own moment in the step**, and its packets
+/// carry the position at that moment.
+///
+/// The 1.12.1 client advances the character to the moment of a queued input
+/// under the old flags before it applies the input. Applied at the start of the
+/// step instead, a strafe reversal moved the character the new way for the
+/// part of the step before the key changed, which the renderer drew as a step
+/// back.
+#[test]
+fn a_key_change_takes_effect_at_its_own_moment() {
+    let speeds = Speeds::default();
+    let mut m = Mover::new(Position::default(), speeds);
+    m.set_controls(Controls { strafe_right: true, ..Default::default() });
+    let owed = m.advance_through(
+        0.025,
+        &[(0.010, Input::Controls(Controls { strafe_left: true, ..Default::default() }))],
+        None,
+    );
+    // Facing +x, so a strafe right is -y and a strafe left is +y: 10 ms one way
+    // and 15 ms back.
+    let p = m.position();
+    assert!((p.y - speeds.run() * 0.005).abs() < 1e-5, "ended at {p:?}");
+
+    let opcodes: Vec<Opcode> = owed.iter().map(|o| o.opcode).collect();
+    assert_eq!(
+        opcodes,
+        [Opcode::MSG_MOVE_STOP_STRAFE, Opcode::MSG_MOVE_START_STRAFE_LEFT],
+    );
+    for o in &owed {
+        assert!(
+            (o.info.position.y + speeds.run() * 0.010).abs() < 1e-5,
+            "{:?} reported {:?}, not where the key changed",
+            o.opcode,
+            o.info.position,
+        );
+    }
+
+    // An input stamped before the step began takes effect at its start.
+    let mut early = Mover::new(Position::default(), speeds);
+    early.set_controls(Controls { strafe_right: true, ..Default::default() });
+    early.advance_through(
+        0.025,
+        &[(-0.004, Input::Controls(Controls { strafe_left: true, ..Default::default() }))],
+        None,
+    );
+    assert!(
+        (early.position().y - speeds.run() * 0.025).abs() < 1e-5,
+        "{:?}",
+        early.position()
+    );
+}
+
+/// **A jump given part-way through a step takes off from where the character
+/// was at that moment**, at the speed of the keys held then.
+#[test]
+fn a_jump_takes_off_at_its_own_moment() {
+    let speeds = Speeds::default();
+    let mut m = Mover::new(Position::default(), speeds);
+    m.advance(0.025, Some(&Ground));
+    let owed = m.advance_through(
+        0.025,
+        &[
+            (0.010, Input::Controls(Controls { forward: true, ..Default::default() })),
+            (0.010, Input::Jump),
+        ],
+        Some(&Ground),
+    );
+    let jump = owed
+        .iter()
+        .find(|o| o.opcode == Opcode::MSG_MOVE_JUMP)
+        .expect("the jump was refused");
+    assert!(jump.info.position.x.abs() < 1e-5, "took off from {:?}", jump.info.position);
+    assert!((jump.info.jump.xy_speed - speeds.run()).abs() < 1e-5, "{:?}", jump.info.jump);
+    assert!(m.is_airborne() && m.position().z > 0.0, "{:?}", m.position());
+}

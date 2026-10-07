@@ -186,15 +186,21 @@ const TERRAIN_OVER_FLOOR: f32 = 2.0;
 /// `z += 1.0f` and keeps a character standing on a floor from reading the
 /// floor as above them.
 pub fn outdoors_at(building: Option<(f32, u32)>, terrain: Option<f32>, probe_z: f32) -> bool {
-    let Some((floor, flags)) = building else {
-        return true;
-    };
+    building_under(building, terrain, probe_z).is_none_or(|flags| flags & group_flags::OUTDOOR != 0)
+}
+
+/// **The `MOGP` flags of the building group a character counts as standing
+/// in**, or `None` where the building does not count: the first two clauses
+/// of [`outdoors_at`], before the flag is read. The minimap asks this to
+/// decide whether it shows the building's own pictures.
+pub fn building_under(building: Option<(f32, u32)>, terrain: Option<f32>, probe_z: f32) -> Option<u32> {
+    let (floor, flags) = building?;
     if let Some(ground) = terrain {
         if probe_z + TERRAIN_OVER_FLOOR > ground && ground > floor {
-            return true;
+            return None;
         }
     }
-    flags & group_flags::OUTDOOR != 0
+    Some(flags)
 }
 
 /// One `MOMT` material.
@@ -1874,6 +1880,100 @@ pub fn group_path(root_path: &str, index: u32) -> String {
             format!("{}{suffix}", &root_path[..dot])
         }
         _ => format!("{root_path}{suffix}"),
+    }
+}
+
+/// One `MOPR` record: a group's reference to a portal and to the group on the
+/// portal's other side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WmoPortalRef {
+    /// Index into [`WmoPortals::portals`].
+    pub portal: u16,
+    /// The group on the other side; `0xFFFF` names none.
+    pub group: u16,
+    /// Which side of the portal's plane the owning group is on.
+    pub side: i16,
+}
+
+/// A root's portal graph, WMO-local: `MOPV` vertices, `MOPT` portals and `MOPR`
+/// references. A group's own references are the slice
+/// [`WmoGroupHeader::portal_start`]..+[`WmoGroupHeader::portal_count`] of
+/// [`Self::refs`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct WmoPortals {
+    pub vertices: Vec<[f32; 3]>,
+    /// `MOPT`, 20 bytes each: the first vertex and the vertex count. The plane
+    /// that follows them is not read.
+    pub portals: Vec<(u16, u16)>,
+    /// `MOPR`, 8 bytes each.
+    pub refs: Vec<WmoPortalRef>,
+}
+
+impl WmoPortals {
+    /// Read the three chunks out of a root file. A root without them (most
+    /// small buildings have no portals) gives an empty graph.
+    pub fn parse(root: &[u8]) -> WmoPortals {
+        let mut out = WmoPortals::default();
+        let u16_at = |b: &[u8], at: usize| u16::from_le_bytes([b[at], b[at + 1]]);
+        for c in ChunkReader::new(root) {
+            match &c.magic {
+                b"MOPV" => out.vertices = c.data.chunks_exact(12).map(|v| read_vec3(v, 0)).collect(),
+                b"MOPT" => {
+                    out.portals = c.data.chunks_exact(20).map(|p| (u16_at(p, 0), u16_at(p, 2))).collect();
+                }
+                b"MOPR" => {
+                    out.refs = c
+                        .data
+                        .chunks_exact(8)
+                        .map(|r| WmoPortalRef {
+                            portal: u16_at(r, 0),
+                            group: u16_at(r, 2),
+                            side: u16_at(r, 4) as i16,
+                        })
+                        .collect();
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// One portal's polygon, or `None` for an index or a vertex range the file
+    /// does not hold.
+    pub fn polygon(&self, portal: u16) -> Option<&[[f32; 3]]> {
+        let &(start, count) = self.portals.get(usize::from(portal))?;
+        let start = usize::from(start);
+        self.vertices.get(start..start + usize::from(count))
+    }
+}
+
+/// The part of a group file's `MOGP` header that does not need the geometry:
+/// the flags, the box and the group's slice of the root's portal references.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WmoGroupHeader {
+    pub flags: u32,
+    /// WMO-local, `[min, max]`.
+    pub bounds: [[f32; 3]; 2],
+    /// `MOGP` 0x24: the first of this group's `MOPR` records.
+    pub portal_start: u16,
+    /// `MOGP` 0x26: how many there are.
+    pub portal_count: u16,
+}
+
+impl WmoGroupHeader {
+    /// `None` for a file with no `MOGP` or a short header.
+    pub fn parse(buf: &[u8]) -> Option<WmoGroupHeader> {
+        let mogp = ChunkReader::new(buf).find(|c: &Chunk| c.is(b"MOGP"))?;
+        let data = mogp.data;
+        if data.len() < MOGP_HEADER_SIZE {
+            return None;
+        }
+        Some(WmoGroupHeader {
+            flags: chunk::u32_at(data, 0x08),
+            bounds: [read_vec3(data, 0x0C), read_vec3(data, 0x18)],
+            portal_start: u16::from_le_bytes([data[0x24], data[0x25]]),
+            portal_count: u16::from_le_bytes([data[0x26], data[0x27]]),
+        })
     }
 }
 

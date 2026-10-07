@@ -1560,8 +1560,8 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
     //
     // Four of the five are the item plate, reached four ways, and all go
     // through the same [`item_lines`] as the bags, so a quest reward and the
-    // same item in a bag show the same plate. The fifth is the spell plate,
-    // for what a trainer teaches.
+    // same item in a bag show the same plate. The fifth, for what a trainer
+    // teaches, is the spell plate or the item plate.
     let item_plate = |lua: &mlua::Lua,
                       this: &mlua::Table,
                       entry: Option<u32>|
@@ -1603,10 +1603,17 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
     // `ClassTrainerSkillIcon`'s `OnEnter` passes
     // `ClassTrainerFrame.selectedService`, so it is the row the panel last
     // selected, not the one under the pointer.
+    //
+    // A service whose taught spell is a recipe that makes an item shows that
+    // item's plate, as the bags would; any other service shows a spell plate.
+    // See `vale_assets::tables::trainer::plate`.
     let set_trainer_service =
         scope.create_function(move |lua, (this, row): (mlua::Table, Option<i64>)| {
             let row = usize::try_from(row.unwrap_or(0)).ok().filter(|i| *i > 0);
-            spell_plate(lua, &this, row.and_then(|row| answers.trainer_tooltip(row)))
+            match row.and_then(|row| answers.trainer_tooltip_item(row)) {
+                Some(entry) => item_plate(lua, &this, Some(entry)),
+                None => spell_plate(lua, &this, row.and_then(|row| answers.trainer_tooltip(row))),
+            }
         })?;
     methods.set("SetTrainerService", set_trainer_service)?;
 

@@ -9,6 +9,10 @@
 //! number. The creature form's `gossip_menu_id` row has two buttons, open
 //! and + new, drawn by [`menu_buttons`].
 //!
+//! A button that makes a menu is never disabled. Pressed before the highest
+//! menu and text ids are read, it asks for them, and [`make_pending`] makes
+//! the menu once they are.
+//!
 //! What a text says is a `broadcast_text` line, read and edited through the
 //! behaviour tool, which holds that table for scripts. A condition opens in
 //! the condition window, and a script in the script window. See
@@ -35,7 +39,7 @@ use super::rowform::{choice_cell, flags_cell, meaning, page_row, page_spacing};
 use super::theme;
 use crate::session::EditSession;
 use crate::tools::behaviour::{Behaviour, Chooser, ScriptAnswer, Search};
-use crate::tools::gossip::{Gossip, Shown};
+use crate::tools::gossip::{Gossip, NewMenu, Shown};
 use crate::tools::quests::{ColumnTarget, PickFor, Picker, Quests};
 use vale_mangos::gossip::{self, MenuOption, MenuText, NpcText, Point};
 use vale_mangos::row::{Key, Life};
@@ -126,21 +130,15 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
             let typed = subject.gossip.typed;
             subject.gossip.show(typed);
         }
-        let ready = can_make(subject.session, subject.gossip, subject.behaviour);
         if ui
-            .add_enabled(ready, egui::Button::new("New menu"))
+            .button("New menu")
             .on_hover_text("A new menu with one text, opened here. Nothing names it until a creature, an object or an option does.")
-            .on_disabled_hover_text("Reading the highest menu and text ids\u{2026}")
             .clicked()
         {
-            if let Some(menu) = new_menu(subject.session, subject.gossip, subject.behaviour, now) {
-                subject.gossip.show(menu);
-                subject.session.status = format!("gossip menu {menu} made");
-            }
+            ask(subject.session, subject.gossip, NewMenu::Open);
         }
     });
     if let Some(about) = subject.gossip.about.clone() {
-        let ready = can_make(subject.session, subject.gossip, subject.behaviour);
         match about.gossip_menu_id {
             0 => {
                 ui.label(egui::RichText::new(format!("{} has no gossip menu.", about.label)).color(theme::INK));
@@ -165,16 +163,20 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
                 _ => "New menu for it",
             };
             if ui
-                .add_enabled(ready, egui::Button::new(label))
+                .button(label)
                 .on_hover_text(
                     "A new menu with one text, named in the template's gossip_menu_id, and \
                      the gossip flag added to its npc_flags so the server offers it. A menu \
                      it named before is left as it is, for whatever else names it.",
                 )
-                .on_disabled_hover_text("Reading the highest menu and text ids\u{2026}")
                 .clicked()
             {
-                make_menu_for(subject, &about, now);
+                let asked = NewMenu::For {
+                    template_key: about.template_key.clone(),
+                    npc_flags: about.npc_flags,
+                    label: about.label.clone(),
+                };
+                ask(subject.session, subject.gossip, asked);
             }
             if let Some(shown) = subject.gossip.showing().filter(|shown| *shown != about.gossip_menu_id) {
                 if ui
@@ -255,14 +257,48 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     });
 }
 
-/// Make a menu for the selected creature and name it in the template.
-fn make_menu_for(subject: &mut Subject<'_>, about: &crate::tools::gossip::About, now: f64) {
-    let Some(menu) = new_menu(subject.session, subject.gossip, subject.behaviour, now) else {
+/// Ask for a new menu: [`make_pending`] makes it once the highest menu and
+/// text ids are read, which is the next frame when they already are.
+fn ask(session: &mut EditSession, gossip: &mut Gossip, asked: NewMenu) {
+    gossip.numbering = true;
+    gossip.pending = Some(asked);
+    session.status = "making a gossip menu\u{2026}".to_string();
+}
+
+/// Make the menu [`ask`] asked for once the highest menu entry, npc_text id
+/// and broadcast_text entry are read, and drop it when a read failed. Called
+/// every frame, with the gossip window open or shut.
+pub fn make_pending(session: &mut EditSession, gossip: &mut Gossip, behaviour: &mut Behaviour, now: f64) {
+    let Some(asked) = gossip.pending.clone() else {
         return;
     };
-    name_menu(subject.session, &about.template_key, about.npc_flags, menu, now);
-    subject.gossip.show(menu);
-    subject.session.status = format!("gossip menu {menu} made for {}", about.label);
+    if let Some(trouble) = gossip.trouble.clone().or_else(|| behaviour.trouble.clone()) {
+        gossip.pending = None;
+        session.status = format!("no gossip menu made: {trouble}");
+        return;
+    }
+    if !can_make(session, gossip, behaviour) {
+        return;
+    }
+    gossip.pending = None;
+    let Some(made) = new_menu(session, gossip, behaviour, now) else {
+        return;
+    };
+    match asked {
+        NewMenu::Open => {
+            gossip.show(made);
+            session.status = format!("gossip menu {made} made");
+        }
+        NewMenu::For { template_key, npc_flags, label } => {
+            name_menu(session, &template_key, npc_flags, made, now);
+            gossip.show(made);
+            session.status = format!("gossip menu {made} made for {label}");
+        }
+        NewMenu::Lead(option) => {
+            gossip.set_option(session, &option, "action_menu_id", made.to_string(), now);
+            session.status = format!("gossip menu {made} made for option {}", option.row.id);
+        }
+    }
 }
 
 /// Whether the next menu and text ids are known, which making a menu needs.
@@ -291,38 +327,32 @@ fn name_menu(session: &mut EditSession, template_key: &vale_mangos::row::Key, np
 
 /// The buttons the creature form draws after its `gossip_menu_id`: open the
 /// menu in the gossip window, and make a new one and name it here.
-/// `menu` is the column's value and `npc_flags` the template's.
-#[allow(clippy::too_many_arguments)]
+/// `menu` is the column's value, `npc_flags` the template's and `label` the
+/// creature's name for the status line. Drawing the buttons has the highest
+/// menu and text ids read, so + new is ready by the time it is pressed.
 pub fn menu_buttons(
     ui: &mut egui::Ui,
     session: &mut EditSession,
     gossip: &mut Gossip,
-    behaviour: &mut Behaviour,
     template_key: &vale_mangos::row::Key,
     menu: u32,
     npc_flags: u32,
-    now: f64,
+    label: &str,
 ) {
+    gossip.numbering = true;
     if menu != 0 && ui.small_button("open").on_hover_text("Open this menu in the gossip window.").clicked() {
-        gossip.open = true;
         gossip.show(menu);
     }
-    let ready = can_make(session, gossip, behaviour);
     if ui
-        .add_enabled(ready, egui::Button::new("+ new").small())
+        .small_button("+ new")
         .on_hover_text(
             "A new menu with one text, named here, with the gossip flag added to npc_flags, and \
              opened in the gossip window. A menu named here before is left as it is.",
         )
-        .on_disabled_hover_text("Open the gossip window once, so the highest menu and text ids are read.")
         .clicked()
     {
-        if let Some(made) = new_menu(session, gossip, behaviour, now) {
-            name_menu(session, template_key, npc_flags, made, now);
-            gossip.open = true;
-            gossip.show(made);
-            session.status = format!("gossip menu {made} made");
-        }
+        let asked = NewMenu::For { template_key: template_key.clone(), npc_flags, label: label.to_string() };
+        ask(session, gossip, asked);
     }
 }
 
@@ -774,18 +804,8 @@ fn option_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: 
         }
         match o.action_menu {
             0 => {
-                let ready = subject.gossip.next_menu(&subject.session.server_edits).is_some()
-                    && subject.behaviour.next_text_entry(subject.session).is_some();
-                if ui
-                    .add_enabled(ready, egui::Button::new("New menu").small())
-                    .on_hover_text("A new menu with one text, which this option opens.")
-                    .clicked()
-                {
-                    if let Some(line) = subject.behaviour.create_text(subject.session, NEW_TEXT, 0, now) {
-                        if let Some(made) = subject.gossip.new_menu(subject.session, line, now) {
-                            set(subject, "action_menu_id", made.to_string());
-                        }
-                    }
+                if ui.small_button("New menu").on_hover_text("A new menu with one text, which this option opens.").clicked() {
+                    ask(subject.session, subject.gossip, NewMenu::Lead(option.clone()));
                 }
             }
             -1 => meaning(ui, "closes the window"),

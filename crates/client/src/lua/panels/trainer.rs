@@ -30,6 +30,31 @@
 //! spelling wrong draws every row in the red "unavailable" colour and gives no
 //! other sign.
 //!
+//! ## Which spell or item a service row describes
+//!
+//! The service spell id the server sends is a teaching spell: a `Spell.dbc` row
+//! whose effect is `LEARN_SPELL` (36) naming the spell being bought. At a
+//! profession trainer that taught spell is usually a recipe whose first effect
+//! is `CREATE_ITEM` (24). The 1.12.1 client reads each answer from a different
+//! one of the three:
+//!
+//! ```text
+//! name, rank         the service spell
+//! icon               tradeskill trainer: the created item's icon, nil while the
+//!                    item is not cached; otherwise the service spell's icon
+//! tooltip            a recipe that makes an item: the item's plate; otherwise
+//!                    the taught spell's plate, or the service spell's when
+//!                    nothing is taught
+//! description        the service spell's text, else the taught spell's, else
+//!                    the created item's own description
+//! isLearn            false for a recipe
+//! ```
+//!
+//! The rules are [`vale_assets::tables::trainer::icon_item`],
+//! [`vale_assets::tables::trainer::plate`],
+//! [`vale_assets::tables::trainer::describe`] and
+//! [`vale_assets::tables::trainer::learns`].
+//!
 //! ## Two answers are stated approximations, and both are `hasReq`
 //!
 //! `GetTrainerServiceSkillReq`'s third return is whether the character's rank in
@@ -45,6 +70,7 @@ use super::super::api::{one_or_nil, to_boolean, Answers};
 // The unit-token surface these answers read the world through — imported
 // here now that the subject's own answers live beside its registration.
 use crate::interface::api;
+use vale_assets::tables::trainer::{self as rules, Describe, Plate};
 
 /// One row, as the panel reads it — every accessor's answer in one shape, so
 /// the window is walked once per row rather than once per question.
@@ -455,7 +481,14 @@ pub trait TrainerAnswers {
     fn trainer_select(&self, row: usize);
     /// The selected service's plate — `GameTooltip:SetTrainerService(i)`, off
     /// the same [`crate::interface::api::spell_tip`] the bar and the book compose.
+    /// Read only when [`Self::trainer_tooltip_item`] answers `None`.
     fn trainer_tooltip(&self, row: usize) -> Option<api::SpellTip>;
+    /// The item `GameTooltip:SetTrainerService(i)` shows instead of a spell:
+    /// the item a taught recipe creates. `None` means the spell plate. See
+    /// [`vale_assets::tables::trainer::plate`].
+    fn trainer_tooltip_item(&self, _row: usize) -> Option<u32> {
+        None
+    }
     /// `IsTradeskillTrainer()` / `IsTalentTrainer()`.
     fn trainer_is_tradeskill(&self) -> bool;
     fn trainer_is_talent(&self) -> bool;
@@ -464,12 +497,82 @@ pub trait TrainerAnswers {
     fn trainer_line_filter(&self, group: usize) -> bool;
 }
 
+impl super::super::api::Live<'_, '_, '_> {
+    /// The board, the row and the service spell for one service row, or `None`
+    /// for a header, a row past the end, or a spell `Spell.dbc` has no row for.
+    fn trainer_service(
+        &self,
+        row: usize,
+    ) -> Option<(&vale_assets::tables::trainer::Board, &rules::Row, vale_assets::tables::spellbook::SpellInfo)>
+    {
+        let board = self.trainer.board()?;
+        let line = board.row(row)?;
+        line.state?;
+        let teacher = self.tables.as_ref()?.spellbook()?.info(line.spell)?;
+        Some((board, line, teacher))
+    }
+
+    /// `GetTrainerServiceIcon(i)`. See [`rules::icon_item`]: at a tradeskill
+    /// trainer it is the created item's icon, read from the item cache, and
+    /// nil while the template has not arrived; reading it queues the query.
+    /// Otherwise it is the service spell's own icon.
+    fn trainer_icon(&self, row: usize) -> Option<String> {
+        let line = self.trainer.board()?.row(row)?;
+        let Some((board, _, teacher)) = self.trainer_service(row) else {
+            return line.icon.clone();
+        };
+        let catalog = self.tables.as_ref()?.spellbook()?;
+        match rules::icon_item(board.kind, &teacher, &|id| catalog.info(id)) {
+            Some(entry) => {
+                let template = self.session_template(entry)?;
+                self.tables.as_deref()?.item_icon(template.display_id)
+            }
+            None => line.icon.clone(),
+        }
+    }
+
+    /// `GetTrainerServiceDescription(i)`, substituted for the character's
+    /// level. See [`rules::describe`] for the order the sources are tried in.
+    /// The item's own description is used as it is, without substitution.
+    fn trainer_description(&self, row: usize) -> String {
+        let Some((board, line, teacher)) = self.trainer_service(row) else {
+            return String::new();
+        };
+        let Some(state) = line.state else {
+            return String::new();
+        };
+        let Some(catalog) = self.tables.as_ref().and_then(|t| t.spellbook()) else {
+            return String::new();
+        };
+        let level = self.units.level(crate::interface::api::UnitId::Player).max(1) as u32;
+        let spell_text = |id: u32| {
+            catalog.info(id).map_or_else(String::new, |info| {
+                vale_assets::tables::spelltext::describe(&info, level, Some(catalog), Some(&self.home))
+            })
+        };
+        match rules::describe(board.kind, state, &teacher, &|id| catalog.info(id)) {
+            None => String::new(),
+            Some(Describe::Spell(id)) => spell_text(id),
+            Some(Describe::Item { entry, otherwise }) => self
+                .session_template(entry)
+                .map(|item| item.description)
+                .filter(|text| !text.is_empty())
+                .unwrap_or_else(|| otherwise.map_or_else(String::new, spell_text)),
+        }
+    }
+}
+
 impl TrainerAnswers for super::super::api::Live<'_, '_, '_> {
 
     fn trainer_rows(&self) -> usize {
         self.trainer.board().map_or(0, |board| board.visible())
     }
 
+    /// Filling a service row reads its icon and description, which at a
+    /// tradeskill trainer asks the item cache for the created item and queues
+    /// a query on a miss. The 1.12.1 client asks only when the icon,
+    /// description or tooltip of the selected row is read. The difference is
+    /// when the query is sent, not what is shown.
     fn trainer_line(&self, row: usize) -> Option<super::trainer::TrainerLine> {
         let board = self.trainer.board()?;
         let line = board.row(row)?;
@@ -490,17 +593,13 @@ impl TrainerAnswers for super::super::api::Live<'_, '_, '_> {
                 ..Default::default()
             });
         };
-        let level = self.units.level(crate::interface::api::UnitId::Player).max(1) as u32;
-        let info = catalog.and_then(|c| c.info(line.spell));
         Some(super::trainer::TrainerLine {
             kind: state.word().to_string(),
             name: line.name.clone(),
             sub_text: line.sub_text.clone(),
             expanded: true,
-            icon: line.icon.clone(),
-            description: info.as_ref().map_or_else(String::new, |info| {
-                vale_assets::tables::spelltext::describe(info, level, catalog, Some(&self.home))
-            }),
+            icon: self.trainer_icon(row),
+            description: self.trainer_description(row),
             cost: (line.cost, line.point_cost.0, line.point_cost.1),
             level_req: u32::from(line.req_level),
             // **The skill rank is not parsed by this client** — see the module
@@ -568,32 +667,21 @@ impl TrainerAnswers for super::super::api::Live<'_, '_, '_> {
     /// exactly the "is this worth the money" question the tooltip exists to
     /// answer.
     ///
-    /// The reference walks the teacher's three effect slots for kind **36**
-    /// (`LEARN_SPELL`) or **57**, takes that effect's trigger spell and fills the
-    /// plate from *it*, falling back to the teacher when no slot names one —
-    /// and [`vale_assets::tables::trainer::taught_spell`] is that scan, already
-    /// written for the grouping.
-    ///
-    /// **One branch of it is deliberately not here**: a taught spell whose own
-    /// first effect is 24 (`CREATE_ITEM`) puts up the created *item*'s plate
-    /// instead — the recipe case at a tradeskill
-    /// trainer. That wants `SetTrainerService` to be able to answer either
-    /// shape, where this client's [`super::super::widgets::tooltip`] splits the two at the call
-    /// site; a recipe shows its spell plate here rather than nothing.
+    /// [`rules::plate`] chooses the spell; a service that teaches nothing (a
+    /// talent point, a tradeskill step) shows its own plate. A taught spell
+    /// that is a recipe making an item answers `None` here, because
+    /// [`TrainerAnswers::trainer_tooltip_item`] answers it with the item. The
+    /// pet flag the rule carries is not used: [`api::spell_tip`] composes a
+    /// pet's spell the same way as the character's.
     fn trainer_tooltip(&self, row: usize) -> Option<api::SpellTip> {
-        let catalog = self.tables.as_ref().and_then(|t| t.spellbook());
-        let line = self.trainer.board()?.row(row)?;
-        // A header has no spell to describe — `ClassTrainerSkillIcon` is only
-        // ever shown for a service, but a script can ask for any row.
-        line.state?;
-        let teacher = catalog?.info(line.spell)?;
-        // The fallback is the teacher itself, which `taught_spell` answers by
-        // returning the id it was given — a service that teaches nothing (a
-        // talent point, a tradeskill step) is described by its own row.
-        let taught = vale_assets::tables::trainer::taught_spell(&teacher);
-        let info = match taught == teacher.id {
+        let (_, _, teacher) = self.trainer_service(row)?;
+        let catalog = self.tables.as_ref()?.spellbook()?;
+        let Plate::Spell { id, .. } = rules::plate(&teacher, &|id| catalog.info(id)) else {
+            return None;
+        };
+        let info = match id == teacher.id {
             true => teacher,
-            false => catalog?.info(taught).unwrap_or(teacher),
+            false => catalog.info(id)?,
         };
         let names = |entry| self.reagent_name(entry);
         Some(api::spell_tip(
@@ -602,11 +690,22 @@ impl TrainerAnswers for super::super::api::Live<'_, '_, '_> {
                 level: self.tip_level(),
                 race: 0,
                 class: 0,
-                catalog,
+                catalog: Some(catalog),
                 item_names: &names,
                 home: Some(self.home.clone()),
             },
         ))
+    }
+
+    /// The created item, when [`rules::plate`] says the plate is an item. The
+    /// item plate reads the item cache, which queues a query on a miss.
+    fn trainer_tooltip_item(&self, row: usize) -> Option<u32> {
+        let (_, _, teacher) = self.trainer_service(row)?;
+        let catalog = self.tables.as_ref()?.spellbook()?;
+        match rules::plate(&teacher, &|id| catalog.info(id)) {
+            Plate::Item(entry) => Some(entry),
+            Plate::Spell { .. } => None,
+        }
     }
 
     fn trainer_is_tradeskill(&self) -> bool {

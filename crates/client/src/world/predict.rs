@@ -169,8 +169,12 @@
 use crate::world::session::{Session, Solids};
 use vale_protocol::state::movement::{
     fall_elevation, move_flags, strode, turned, wrap_angle, Controls, Ferry, MovementInfo, Platform,
-    Restraint, Speeds,
+    Restraint, Speeds, MAX_STRIDE,
 };
+
+/// The most pieces one frame's stride is walked in; the mover's own cap, for
+/// the same reason. See [`MAX_STRIDE`].
+const MAX_PIECES: u32 = 64;
 use vale_protocol::socket::session::World;
 use vale_protocol::state::update::Position;
 use bevy::prelude::*;
@@ -283,10 +287,24 @@ struct Commanded {
 #[derive(Resource, Default)]
 pub struct Predicted {
     base: Option<Base>,
-    /// The keys held right now, which is the half that removes the tick wait:
-    /// the base's own flags are what the session thread had heard about when it
-    /// took the step, and by definition that is not what was pressed since.
-    controls: Controls,
+    /// The keys held at the base's moment, or before the first entry of
+    /// [`Self::changes`].
+    settled: Controls,
+    /// Every change of keys since the base, with the render clock it was made
+    /// at, oldest first. The last entry, or [`Self::settled`] when there is
+    /// none, is what is held now.
+    ///
+    /// The keys are the half that removes the tick wait: the base's own flags
+    /// are what the session thread had heard about when it took the step, and
+    /// by definition that is not what was pressed since. They are kept with
+    /// their moments because the session applies each change at the moment it
+    /// was made, part-way through its step (`Mover::advance_through`). A
+    /// continuation that applied the keys held now to the whole time since the
+    /// base would move the character as if the change had happened at the
+    /// base's moment. On a strafe reversal that draws the character a step back
+    /// by twice the speed times the time since the base, up to 0.4 yards at a
+    /// run, in the frame the key changes.
+    changes: Vec<(f32, Controls)>,
     /// The heading the mouse-look has commanded, and the render clock it was
     /// commanded at.
     ///
@@ -365,6 +383,10 @@ impl Predicted {
     pub fn reset(&mut self) {
         self.base = None;
         self.now = None;
+        // The keys held now are kept; their history is about a base that is
+        // gone.
+        self.settled = self.controls();
+        self.changes.clear();
         // Dropped with the base, and for the base's own reason. A logout or a
         // cross-continent teleport ends with the character pointing wherever the
         // server put them. A heading commanded on the old map is one no reading
@@ -373,9 +395,36 @@ impl Predicted {
         self.facing = None;
     }
 
-    /// Adopt the keys `send_input` is about to hand the session thread.
-    pub fn set_controls(&mut self, controls: Controls) {
-        self.controls = controls;
+    /// Adopt the keys `send_input` is about to hand the session thread, held
+    /// from `now` on the render clock.
+    pub fn set_controls(&mut self, controls: Controls, now: f32) {
+        if controls != self.controls() {
+            self.changes.push((now, controls));
+        }
+    }
+
+    /// The keys held now.
+    fn controls(&self) -> Controls {
+        self.changes.last().map_or(self.settled, |&(_, c)| c)
+    }
+
+    /// The keys held over `from..to`, as consecutive spans of `(keys,
+    /// seconds)`. A change at or before `from` is in force from `from`.
+    fn spans(&self, from: f32, to: f32) -> Vec<(Controls, f32)> {
+        let mut spans = Vec::new();
+        let (mut t, mut keys) = (from, self.settled);
+        for &(at, next) in &self.changes {
+            if at >= to {
+                break;
+            }
+            if at > t {
+                spans.push((keys, at - t));
+                t = at;
+            }
+            keys = next;
+        }
+        spans.push((keys, (to - t).max(0.0)));
+        spans
     }
 
     /// Adopt the heading `send_input` is about to hand the session thread, at
@@ -418,10 +467,19 @@ impl Predicted {
         if self.facing.is_some_and(|c| now - age >= c.at + ACK_MARGIN) {
             self.facing = None;
         }
+        // A change made at or before the reading's moment is in it, so it
+        // becomes the settled keys; the later ones stay to be applied part-way
+        // through the continuation.
+        let at = now - age;
+        let held = self.changes.iter().take_while(|&&(t, _)| t <= at).count();
+        if let Some(&(_, keys)) = self.changes[..held].last() {
+            self.settled = keys;
+        }
+        self.changes.drain(..held);
         self.base = Some(Base {
             movement,
             speeds,
-            at: now - age,
+            at,
             airborne,
             restraint,
             riding,
@@ -498,11 +556,13 @@ impl Predicted {
         // airborne state, so a reading that carries both is one taken in the
         // step before the root arrived. Continuing its parabola would fly the
         // character on for a frame after the server has pinned it.
+        // The keys are applied span by span, each from the moment it was
+        // pressed; see [`Self::changes`].
+        let spans = self.spans(base.at, base.at + dt);
         if base.airborne && !movement.has(move_flags::ROOT) {
-            return Some(arc(&movement, &base.speeds, self.controls, base.restraint, dt));
+            return Some(arc(&movement, &base.speeds, &spans, base.restraint, dt));
         }
-        let (position, stride) =
-            flat_step(&movement, &base.speeds, self.controls, base.restraint, dt);
+        let (position, stride) = flat_walk(&movement, &base.speeds, &spans, base.restraint);
         Some(Continued {
             position,
             stride,
@@ -556,6 +616,27 @@ fn flat_step(
         return (info.position, [0.0, 0.0]);
     }
     (info.position, strode(&info, speeds, dt))
+}
+
+/// [`flat_step`] over consecutive spans of held keys, each span continuing
+/// from where the last one left the character: the turn and the stride of a
+/// key change applied at the moment it was made, as `Mover::advance_through`
+/// applies it.
+fn flat_walk(
+    base: &MovementInfo,
+    speeds: &Speeds,
+    spans: &[(Controls, f32)],
+    restraint: Restraint,
+) -> (Position, [f32; 2]) {
+    let mut info = *base;
+    let mut stride = [0.0, 0.0];
+    for &(keys, dt) in spans {
+        let (position, [dx, dy]) = flat_step(&info, speeds, keys, restraint, dt);
+        info.position = position;
+        stride[0] += dx;
+        stride[1] += dy;
+    }
+    (info.position, stride)
 }
 
 /// `Mover::can_move`, over a base rather than over the mover itself.
@@ -664,13 +745,15 @@ fn reframe(ferry: &Ferry, now: Platform, position: Position, stride: [f32; 2]) -
 fn arc(
     base: &MovementInfo,
     speeds: &Speeds,
-    controls: Controls,
+    spans: &[(Controls, f32)],
     restraint: Restraint,
     dt: f32,
 ) -> Continued {
     let mut position = base.position;
     if can_turn(restraint) {
-        position.orientation = turned(base.position.orientation, speeds, controls, dt);
+        position.orientation = spans
+            .iter()
+            .fold(base.position.orientation, |o, &(keys, dt)| turned(o, speeds, keys, dt));
     }
 
     // `fall_elevation` takes the **down-positive** start velocity, which is what
@@ -808,32 +891,62 @@ pub(super) fn advance(
             [dx, dy] = stride;
         }
     }
+    let standing = active.standing(&solids);
+    predicted.now = Some(resolve(
+        &standing,
+        active.map_id,
+        step.contact,
+        position,
+        held_z,
+        [dx, dy],
+        adrift,
+    ));
+}
+
+/// Offer a frame's continuation to the world: the stride to the walls, and the
+/// height to the floor the [`Contact`] says it is meeting.
+///
+/// Split from [`advance`] so a test can hold it against a world of its own;
+/// the system passes the same [`crate::world::session::Standing`] the session
+/// thread walks on.
+fn resolve(
+    world: &dyn World,
+    map_id: u32,
+    contact: Contact,
+    mut position: Position,
+    held_z: f32,
+    [dx, dy]: [f32; 2],
+    adrift: bool,
+) -> Position {
     // The same pair the session thread walks on, asked in the same order it asks
     // them: what is in the way shortens the stride, and only then is the height
     // looked up. The other way round stands the character on the floor *inside*
     // the building they were stopped from entering.
-    let standing = active.standing(&solids);
+    //
+    // On the ground the stride is walked in pieces no longer than
+    // `MAX_STRIDE`, with the floor read after each, as `Mover::advance` walks
+    // it. Read once at the end of a long stride, the floor misses a slope that
+    // rises more than a step height before the end and the character is drawn
+    // inside it; see `MAX_STRIDE`. In the air the stride is one sweep and the
+    // floor is the arc's business, below.
+    let walking = contact == Contact::Ground && !adrift;
     if dx != 0.0 || dy != 0.0 {
-        let from = [position.x, position.y, position.z];
-        let to = [position.x + dx, position.y + dy, position.z];
-        let end = standing.step(active.map_id, from, to);
-        position.x = end[0];
-        position.y = end[1];
-    }
-    // …and the held deck answers nothing about the height, exactly as it does
-    // on the session thread. Not folded into the match below because both of
-    // its arms would need it and neither is the interesting one.
-    if adrift {
-        position.z = held_z;
-        predicted.now = Some(position);
-        return;
-    }
-    // What the floor *means* depends on which of the three this step is — see
-    // [`Contact`]. A rising arc never asks, which is also why the lookup is not
-    // hoisted out of the match: it is a terrain and collision query per frame.
-    match step.contact {
-        Contact::Ground if dx != 0.0 || dy != 0.0 => {
-            if let Some(floor) = standing.floor(active.map_id, position.x, position.y, position.z) {
+        let pieces = if walking {
+            ((dx.hypot(dy) / MAX_STRIDE).ceil() as u32).clamp(1, MAX_PIECES)
+        } else {
+            1
+        };
+        let (px, py) = (dx / pieces as f32, dy / pieces as f32);
+        for _ in 0..pieces {
+            let from = [position.x, position.y, position.z];
+            let to = [from[0] + px, from[1] + py, from[2]];
+            let end = world.step(map_id, from, to);
+            position.x = end[0];
+            position.y = end[1];
+            if !walking {
+                continue;
+            }
+            if let Some(floor) = world.floor(map_id, position.x, position.y, position.z) {
                 // **`Mover::advance`'s own rule, both ways.** A drop deeper than
                 // `FALL_THRESHOLD` is a cliff and the arc off it begins on the
                 // mover's say-so, so it is left alone; anything shallower is a
@@ -852,6 +965,17 @@ pub(super) fn advance(
                 position.z = stood_on(position.z, floor);
             }
         }
+    }
+    // …and the held deck answers nothing about the height, exactly as it does
+    // on the session thread. Not folded into the match below because both of
+    // its arms would need it and neither is the interesting one.
+    if adrift {
+        position.z = held_z;
+        return position;
+    }
+    // What the floor *means* depends on which of the three this step is — see
+    // [`Contact`]. The ground was answered piece by piece above.
+    match contact {
         // **Never below the ground, rising or falling.** Where the arc actually
         // ends is the mover's answer and arrives with the next reading; what
         // this owes is not to draw the character through the floor while it
@@ -866,8 +990,18 @@ pub(super) fn advance(
         //
         // Clamping is **not** landing, which is the distinction the two arms
         // keep: the contact stays what the arc says, and only the mover ends it.
+        //
+        // The floor is read from the higher of the drawn height and the
+        // reading's own (`held_z`). Falling, that is the reading's, which is
+        // what `Mover::advance` does with the height it started the step at:
+        // the ceiling on the floor read is a step height above the feet it is
+        // given, so read from the drawn height it misses a floor the arc has
+        // already passed more than a step through. At terminal velocity,
+        // 60 y/s, that is two frames, and the character was drawn under a
+        // building's floor until the reading of the landing arrived.
         Contact::Rising | Contact::Falling => {
-            match standing.floor(active.map_id, position.x, position.y, position.z) {
+            let from = position.z.max(held_z);
+            match world.floor(map_id, position.x, position.y, from) {
                 Some(floor) => position.z = position.z.max(floor),
                 // **No data holds the arc**, which is the mover's own rule —
                 // `Footing::floor` answers `None` for *no data*, never for no
@@ -880,7 +1014,7 @@ pub(super) fn advance(
         }
         Contact::Ground | Contact::Ridden => {}
     }
-    predicted.now = Some(position);
+        position
 }
 
 #[cfg(test)]
@@ -1026,7 +1160,7 @@ mod tests {
         mover.set_controls(keys);
 
         let mut predicted = Predicted::default();
-        predicted.set_controls(keys);
+        predicted.set_controls(keys, 0.0);
 
         let (mut simulated_to, mut world_ms) = (0.0_f32, 0_u64);
         let mut drawn: Vec<(f32, [f32; 2])> = Vec::new();
@@ -1092,7 +1226,7 @@ mod tests {
         mover.advance(TICK, Some(&Flat));
 
         let mut predicted = Predicted::default();
-        predicted.set_controls(keys);
+        predicted.set_controls(keys, 0.0);
 
         let (mut simulated_to, mut world_ms) = (0.0_f32, 0_u64);
         let mut drawn: Vec<(f32, f32)> = Vec::new();
@@ -1213,7 +1347,7 @@ mod tests {
     fn a_reading_adopted_this_very_frame_is_still_drawn() {
         let speeds = vale_protocol::state::movement::Speeds::default();
         let mut predicted = Predicted::default();
-        predicted.set_controls(Controls { forward: true, ..Default::default() });
+        predicted.set_controls(Controls { forward: true, ..Default::default() }, 0.0);
         let mover = Mover::new(position(), speeds);
         predicted.adopt(4.0, 0.0, Reading { movement: mover.info, speeds, airborne: false, restraint: mover.restraint(), ferry: None, riding: None, world_ms: 1 });
         assert!(predicted.step(4.0).is_some(), "went blank on the frame it rebased");
@@ -1229,7 +1363,7 @@ mod tests {
         mover.set_controls(keys);
 
         let mut predicted = Predicted::default();
-        predicted.set_controls(keys);
+        predicted.set_controls(keys, 0.0);
         predicted.adopt(0.0, 0.0, Reading { movement: mover.info, speeds, airborne: false, restraint: mover.restraint(), ferry: None, riding: None, world_ms: 1 });
 
         let [dx, dy] = predicted.step(10.0).expect("a base").stride;
@@ -1279,7 +1413,7 @@ mod tests {
         );
 
         let mut predicted = Predicted::default();
-        predicted.set_controls(keys);
+        predicted.set_controls(keys, 0.0);
         predicted.adopt(0.0, 0.0, Reading { movement: mover.info, speeds, airborne: false, restraint: mover.restraint(), ferry: None, riding: mover.ride_velocity(), world_ms: 1 });
 
         // **The mouse does not steer a charge either** — the spline states the
@@ -1403,7 +1537,7 @@ mod tests {
         mover.set_controls(keys);
 
         let mut predicted = Predicted::default();
-        predicted.set_controls(keys);
+        predicted.set_controls(keys, 0.0);
         predicted.adopt(0.0, 0.0, Reading { movement: mover.info, speeds, airborne: false, restraint: mover.restraint(), ferry: None, riding: None, world_ms: 1 });
 
         // What this pass would draw 25 ms on, through the same two calls
@@ -1459,7 +1593,7 @@ mod tests {
         assert!(mover.is_airborne(), "the jump ended before the test began");
 
         let mut predicted = Predicted::default();
-        predicted.set_controls(keys);
+        predicted.set_controls(keys, 0.0);
         predicted.adopt(0.0, 0.0, Reading { movement: mover.info, speeds, airborne: true, restraint: mover.restraint(), ferry: None, riding: None, world_ms: 1 });
 
         // Adopted this instant, the answer is the reading — which is what makes
@@ -1827,5 +1961,140 @@ mod tests {
             (drawn - position().orientation).abs() < 1e-6,
             "a stunned character turned on the mouse, to {drawn}"
         );
+    }
+
+    /// **A strafe reversed and reversed again is drawn as one continuous path.**
+    ///
+    /// The session applies a key change at the moment it was read, part-way
+    /// through its step (`Mover::advance_through`), and the prediction applies
+    /// it from the frame it was read. Before both did, the session applied a
+    /// change from the start of the step that drained it and the prediction
+    /// applied the keys held now to the whole time since its base, so the
+    /// reversal frame drew the character back by twice the speed times the
+    /// time since the last reading: up to 0.4 yards at a run, every reversal.
+    ///
+    /// The session here steps at Windows' sleep granularity, alternating
+    /// 15.6 ms and 31.2 ms, against frames at 144 Hz. The property is that no
+    /// frame moves the character further than a frame's travel, which a step
+    /// back on a reversal or a snap on a reading would both exceed.
+    #[test]
+    fn a_strafe_reversal_is_drawn_without_a_step_back() {
+        use vale_protocol::state::movement::Input;
+        const TICKS: [f32; 2] = [0.015_625, 0.031_25];
+        const FRAME: f32 = 1.0 / 144.0;
+        /// Frames between reversals: about 0.3 s, a quick side-to-side.
+        const HOLD: usize = 43;
+
+        let speeds = Speeds::default();
+        let start = position();
+        let mut mover = Mover::new(start, speeds);
+        let mut predicted = Predicted::default();
+        let left = start.orientation + std::f32::consts::FRAC_PI_2;
+        let (lx, ly) = (left.cos(), left.sin());
+        let keys = |frame: usize| match (frame / HOLD) % 2 {
+            0 => Controls { strafe_right: true, ..Default::default() },
+            _ => Controls { strafe_left: true, ..Default::default() },
+        };
+
+        let (mut simulated_to, mut world_ms, mut tick) = (0.0_f32, 0_u64, 0_usize);
+        let mut queued: Vec<(f32, Input)> = Vec::new();
+        let mut held = Controls::default();
+        let mut drawn: Vec<(usize, f32)> = Vec::new();
+        for frame in 0..400 {
+            let now = frame as f32 * FRAME;
+            // Every step the session has finished by now. A key read before a
+            // step's end is in that step, at its own offset.
+            loop {
+                let dt = TICKS[tick % 2];
+                let end = simulated_to + dt;
+                if end > now {
+                    break;
+                }
+                let inputs: Vec<(f32, Input)> = queued
+                    .iter()
+                    .filter(|(at, _)| *at <= end)
+                    .map(|&(at, input)| (at - simulated_to, input))
+                    .collect();
+                queued.retain(|(at, _)| *at > end);
+                mover.advance_through(dt, &inputs, None);
+                simulated_to = end;
+                tick += 1;
+                world_ms += 1;
+                predicted.adopt(
+                    now,
+                    now - simulated_to,
+                    Reading {
+                        movement: mover.info,
+                        speeds,
+                        airborne: false,
+                        restraint: mover.restraint(),
+                        ferry: None,
+                        riding: None,
+                        world_ms,
+                    },
+                );
+            }
+            let c = keys(frame);
+            if c != held {
+                queued.push((now, Input::Controls(c)));
+                held = c;
+            }
+            predicted.set_controls(c, now);
+            if let Some(step) = predicted.step(now) {
+                let p = step.position;
+                let along = (p.x + step.stride[0] - start.x) * lx + (p.y + step.stride[1] - start.y) * ly;
+                drawn.push((frame, along));
+            }
+        }
+
+        assert!(drawn.len() > 350, "the prediction went blank: {} frames", drawn.len());
+        let most = speeds.run() * FRAME * 1.001;
+        for pair in drawn.windows(2) {
+            let ((_, before), (frame, after)) = (pair[0], pair[1]);
+            let moved = (after - before).abs();
+            assert!(
+                moved <= most,
+                "frame {frame} moved {moved} yards against at most {most} for one frame"
+            );
+        }
+        // …and the path does reverse: the character ends on the side the last
+        // keys drove it to, rather than standing still and passing the test.
+        let span = drawn.iter().map(|&(_, a)| a).fold(f32::MIN, f32::max)
+            - drawn.iter().map(|&(_, a)| a).fold(f32::MAX, f32::min);
+        assert!(span > 1.5, "the strafe covered only {span} yards");
+    }
+
+    /// **A fall is drawn on a floor it has passed more than a step through
+    /// since the last reading**, as the mover lands on it.
+    ///
+    /// The floor is read with a ceiling a step height above the feet it is
+    /// given. Read from the drawn height of an arc at terminal velocity, a
+    /// building's floor a frame or two above it was out of reach, and the
+    /// character was drawn under the floor until the landing's reading came.
+    #[test]
+    fn a_fall_is_drawn_on_the_floor_it_has_passed_through() {
+        let storey = |_map: u32, _x: f32, _y: f32, z: f32| Some(if 50.0 <= z + 1.0 { 50.0 } else { 0.0 });
+        let drawn = Position { x: 0.0, y: 0.0, z: 47.0, orientation: 0.0 };
+        let placed = resolve(&storey, 0, Contact::Falling, drawn, 51.0, [0.0, 0.0], false);
+        assert!((placed.z - 50.0).abs() < 1e-4, "drawn at {} under a floor at 50", placed.z);
+        // …and an arc still above the floor is left where the parabola has it.
+        let above = Position { z: 53.0, ..drawn };
+        let placed = resolve(&storey, 0, Contact::Falling, above, 55.0, [0.0, 0.0], false);
+        assert!((placed.z - 53.0).abs() < 1e-4, "an arc above the floor was moved to {}", placed.z);
+    }
+
+    /// **A long drawn stride climbs a ramp rather than entering it**: the
+    /// mover's pieces, made here as well. See `MAX_STRIDE`.
+    #[test]
+    fn a_long_drawn_stride_climbs_a_ramp() {
+        let ramp = |_map: u32, x: f32, _y: f32, z: f32| {
+            let ramp = x * 1.0;
+            Some(if ramp <= z + 1.0 { ramp.max(0.0) } else { 0.0 })
+        };
+        let start = Position { x: 0.0, y: 0.0, z: 0.0, orientation: 0.0 };
+        // A mounted run over the prediction's whole lead: 14 y/s for 250 ms.
+        let placed = resolve(&ramp, 0, Contact::Ground, start, 0.0, [3.5, 0.0], false);
+        assert!((placed.x - 3.5).abs() < 1e-4, "{placed:?}");
+        assert!((placed.z - 3.5).abs() < 1e-3, "drawn at {} inside a ramp at 3.5", placed.z);
     }
 }

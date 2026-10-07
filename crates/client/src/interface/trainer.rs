@@ -81,6 +81,10 @@ struct Open {
     /// row's group and they can arrive after the packet does.
     built_for: (u8, u8),
     board: Board,
+    /// Item entries the window may read from the item cache (a created item's
+    /// icon, plate or description) whose templates were not cached when last
+    /// checked. See [`templates_landed`].
+    waiting: Vec<u32>,
 }
 
 impl TrainerWindow {
@@ -127,7 +131,7 @@ impl Plugin for TrainerPlugin {
             .init_resource::<TrainerWindow>()
             .add_systems(
                 Update,
-                (announce, relayout, presses, act)
+                (announce, relayout, templates_landed, presses, act)
                     .chain()
                     .in_set(super::GameSet),
             );
@@ -177,6 +181,7 @@ fn announce(
                 let Some(board) = lay_out(&assets, kind, &services, who) else {
                     continue;
                 };
+                let waiting = created_items(&assets, kind, &services);
                 window.open = Some(Open {
                     guid: list.guid,
                     greeting: list.greeting.clone(),
@@ -184,6 +189,7 @@ fn announce(
                     kind,
                     built_for: who,
                     board,
+                    waiting,
                 });
                 shown.write(TrainerShow);
             }
@@ -271,6 +277,81 @@ fn lay_out(
             class,
         },
     ))
+}
+
+/// Every item a service row may read from the item cache: the created item
+/// behind [`vale_assets::tables::trainer::icon_item`],
+/// [`vale_assets::tables::trainer::plate`] and
+/// [`vale_assets::tables::trainer::describe`]. Empty while the archives are
+/// still opening.
+fn created_items(assets: &GameAssets, kind: Kind, services: &[Service]) -> Vec<u32> {
+    use vale_assets::tables::trainer::{describe, icon_item, plate, Describe, Plate};
+    let Ok(tables) = assets.display_tables() else {
+        return Vec::new();
+    };
+    let Some(spells) = tables.spellbook() else {
+        return Vec::new();
+    };
+    let lookup = |id: u32| spells.info(id);
+    let mut items: Vec<u32> = Vec::new();
+    for service in services {
+        let Some(teacher) = spells.info(service.spell) else {
+            continue;
+        };
+        let icon = icon_item(kind, &teacher, &lookup);
+        let plate = match plate(&teacher, &lookup) {
+            Plate::Item(entry) => Some(entry),
+            Plate::Spell { .. } => None,
+        };
+        let text = match describe(kind, service.state, &teacher, &lookup) {
+            Some(Describe::Item { entry, .. }) => Some(entry),
+            _ => None,
+        };
+        for entry in [icon, plate, text].into_iter().flatten() {
+            if entry != 0 && !items.contains(&entry) {
+                items.push(entry);
+            }
+        }
+    }
+    items
+}
+
+/// Raise `TRAINER_UPDATE` when an item template the window reads arrives.
+///
+/// The 1.12.1 client answers a created item's icon with nil while the item is
+/// not cached, and raises `TRAINER_UPDATE` when the template arrives.
+/// `ClassTrainerFrame_OnEvent` then calls `ClassTrainer_SetSelection` again,
+/// which reads the icon and description a second time. Reading them queues
+/// the item query (see `Live::session_template`); this system only watches
+/// for the answer.
+fn templates_landed(
+    mut window: ResMut<TrainerWindow>,
+    session: Res<Session>,
+    mut updated: MessageWriter<TrainerUpdate>,
+) {
+    let waiting = match window.open.as_ref() {
+        Some(open) if !open.waiting.is_empty() => &open.waiting,
+        _ => return,
+    };
+    let Some(active) = session.active.as_ref() else {
+        return;
+    };
+    let world = active.live.world();
+    let landed: Vec<u32> = {
+        let world = world.lock().unwrap_or_else(|e| e.into_inner());
+        waiting
+            .iter()
+            .copied()
+            .filter(|entry| world.items.contains_key(entry))
+            .collect()
+    };
+    if landed.is_empty() {
+        return;
+    }
+    if let Some(open) = window.open.as_mut() {
+        open.waiting.retain(|entry| !landed.contains(entry));
+    }
+    updated.write(TrainerUpdate);
 }
 
 /// The wire's row, decoded — see `vale_assets::tables::trainer`'s module note on why

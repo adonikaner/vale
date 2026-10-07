@@ -999,7 +999,7 @@ fn disc(
     clip: Option<[f32; 4]>,
     uv_at: impl Fn(Vec2) -> Vec2,
 ) {
-    const SEGMENTS: usize = 48;
+    const SEGMENTS: usize = DISC_SEGMENTS;
     let centre = Vec2::new((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0);
     let radius = ((rect[2] - rect[0]).min(rect[3] - rect[1]) / 2.0).max(0.0);
     let faded = [colour[0], colour[1], colour[2], 0.0];
@@ -1023,7 +1023,8 @@ fn disc(
     emit.raw(image, blend, &vertices, &indices, clip);
 }
 
-/// The minimap: tiles through the disc, then the player arrow —
+/// The minimap: the terrain tiles through the disc, or inside a building its
+/// pictures (see [`interior`]), then the dots and the player arrow —
 /// `framexml::minimap` with the per-tile clip done by the triangle clipper.
 fn minimap(
     emit: &mut Emitter,
@@ -1040,10 +1041,16 @@ fn minimap(
     let colour = tint([1.0, 1.0, 1.0, 1.0], item.alpha);
     let index = painter.assets.minimap_tiles();
     painter.textures.minimap_tick += 1;
-    let radius = vale_assets::tables::minimap::radius_yards(widget.zoom, view.indoors);
-    for tile in
+    let radius =
+        vale_assets::tables::minimap::radius_yards(widget.level(view.indoors), view.indoors);
+    // Inside a building the terrain is not drawn; see `interior`.
+    let terrain = if view.indoors {
+        interior(emit, painter, rect, clip, colour, item.alpha, radius);
+        Vec::new()
+    } else {
         vale_assets::tables::minimap::tiles_in_view(view.position.0, view.position.1, radius)
-    {
+    };
+    for tile in terrain {
         let Some(path) = index.texture(&view.directory, tile.tile.0, tile.tile.1) else {
             continue;
         };
@@ -1105,6 +1112,79 @@ fn minimap(
         colour,
         clip,
     );
+}
+
+/// How many sides the minimap's disc has: the same count [`disc`] draws, so a
+/// building picture is cut along the edge the terrain is.
+const DISC_SEGMENTS: usize = 48;
+
+/// The minimap inside a building: a black disc, which is what the 1.12.1
+/// client clears its interior map to, and the building's pictures over it in
+/// [`vale_assets::tables::minimap::place_pictures`]' order, each a turned
+/// quad cut to the disc and alpha-blended so a floor below shows through the
+/// gaps in the one above. The uv is inset by half a texel at each edge, as
+/// the client draws them.
+fn interior(
+    emit: &mut Emitter,
+    painter: &mut Painter,
+    rect: [f32; 4],
+    clip: Option<[f32; 4]>,
+    colour: [f32; 4],
+    alpha: f32,
+    radius: f32,
+) {
+    use vale_assets::tables::minimap as rule;
+    let white = painter.textures.white(painter.images);
+    disc(
+        emit,
+        &white,
+        Blend::Alpha,
+        rect,
+        solid_tint([0.0, 0.0, 0.0, 1.0], alpha),
+        clip,
+        |_| Vec2::splat(0.5),
+    );
+    let view = painter.place;
+    let Some(inside) = view.interior.as_ref() else {
+        return;
+    };
+    let index = painter.assets.minimap_tiles();
+    let centre = [(rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0];
+    let reach = ((rect[2] - rect[0]).min(rect[3] - rect[1]) / 2.0 - 0.5).max(0.0);
+    let at = |[u, v]: [f32; 2]| [rect[0] + u * (rect[2] - rect[0]), rect[1] + v * (rect[3] - rect[1])];
+    let position = [view.position.0, view.position.1, view.elevation];
+    for picture in inside.pictures(position, radius) {
+        let polygon =
+            rule::clip_to_disc(picture.corners.map(at), rule::PICTURE_UV, centre, reach, DISC_SEGMENTS);
+        if polygon.is_empty() {
+            continue;
+        }
+        let Some(path) =
+            index.interior_texture(&inside.model.stem, picture.group, picture.x, picture.y)
+        else {
+            continue;
+        };
+        let Some(image) = painter.textures.minimap_texture(painter.images, painter.assets, &path)
+        else {
+            continue;
+        };
+        let (width, height) = painter
+            .images
+            .get(&image)
+            .map_or((256.0, 256.0), |i| (i.width().max(1) as f32, i.height().max(1) as f32));
+        let inset = Vec2::new(0.5 / width, 0.5 / height);
+        let vertices: Vec<V> = polygon
+            .iter()
+            .map(|(p, uv)| V {
+                pos: Vec2::from(*p),
+                uv: inset + Vec2::from(*uv) * (Vec2::ONE - inset * 2.0),
+                colour,
+            })
+            .collect();
+        let indices: Vec<u32> =
+            (1..vertices.len() as u32 - 1).flat_map(|i| [0, i, i + 1]).collect();
+        emit.raw(&image, Blend::Alpha, &vertices, &indices, clip);
+    }
 }
 
 /// The minimap dots and the two kinds of marker: the mesh form of

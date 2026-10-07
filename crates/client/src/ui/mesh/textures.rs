@@ -146,17 +146,23 @@ impl UiTextures {
         self.minimap.clear();
     }
 
-    /// Drop all but the [`MINIMAP_CACHE`] most recently drawn tiles.
+    /// Drop all but the [`MINIMAP_CACHE`] most recently drawn tiles, never one
+    /// drawn in the current pass. Inside a building one pass can draw more
+    /// than sixteen pictures, and evicting those would decode them again on
+    /// every rebuild.
     pub fn trim_minimap(&mut self) {
         while self.minimap.len() > MINIMAP_CACHE {
-            let Some(oldest) = self
+            let Some((oldest, seen)) = self
                 .minimap
                 .iter()
                 .min_by_key(|(_, (_, seen))| *seen)
-                .map(|(path, _)| path.clone())
+                .map(|(path, (_, seen))| (path.clone(), *seen))
             else {
                 return;
             };
+            if seen == self.minimap_tick {
+                return;
+            }
             self.minimap.remove(&oldest);
         }
     }

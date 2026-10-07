@@ -18,27 +18,33 @@
 //! draws is in `crate::ui::framexml`. This file holds only the state a script
 //! can read and write.
 //!
-//! ## The zoom is stored on the widget, not in a CVar
+//! ## Two zoom levels, indoor and outdoor, stored on the widget
 //!
-//! The 1.12.1 client has two zoom CVars, `minimapZoom` and
-//! `minimapInsideZoom`, and uses one or the other depending on whether the
-//! character is indoors. This client keeps one number on the single minimap
-//! widget the game creates, and applies the indoor/outdoor difference where
-//! the radius is chosen ([`vale_assets::tables::minimap::radius_yards`])
-//! instead of holding two levels. The visible difference is that entering a
-//! building does not restore the zoom last used indoors; nothing in the
-//! directory reads that preference.
+//! The 1.12.1 client keeps two zoom levels, the outdoor one (`minimapZoom`)
+//! and the indoor one (`minimapInsideZoom`), and `GetZoom` and `SetZoom` act
+//! on whichever matches where the character stands. This client keeps both on
+//! the widget's table, each starting at its CVar's shipped default, and reads
+//! which one is current from [`INSIDE_KEY`], which [`announce_inside`] writes.
+//! The levels are not written back to the CVars, so they do not outlast the
+//! session.
 //!
-//! `MINIMAP_UPDATE_ZOOM` is not raised. Its only handler enables and disables
-//! the two zoom buttons at the ends of the range, and `Minimap_ZoomInClick`
-//! and `Minimap_ZoomOutClick` already do that themselves. The event reports a
-//! zoom change made from outside those buttons, and nothing in this client
-//! changes the zoom except those two buttons.
+//! `MINIMAP_UPDATE_ZOOM` is raised when the character goes in or out, as the
+//! 1.12.1 client raises it, and when the world is first entered. Its handler
+//! in `Minimap.lua` re-reads `GetZoom` and enables or disables the two zoom
+//! buttons, which would otherwise keep the state of the level just left.
 
+use bevy::prelude::*;
 use vale_assets::tables::minimap::{DEFAULT_ZOOM, ZOOM_LEVELS};
 
-/// The key of the zoom level on the widget's table.
+/// The key of the outdoor zoom level on the widget's table.
 const ZOOM_KEY: &str = "__minimapZoom";
+
+/// The key of the indoor zoom level on the widget's table.
+const INSIDE_ZOOM_KEY: &str = "__minimapInsideZoom";
+
+/// The registry key that says whether the character is inside a building,
+/// which chooses the zoom level `GetZoom` and `SetZoom` act on.
+const INSIDE_KEY: &str = "vale.minimap.inside";
 
 /// The key of the ping, stored as an offset from the widget's centre in the
 /// widget's units.
@@ -67,9 +73,22 @@ pub const METHODS: [&str; 7] = [
 /// without any borrow of the world.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MinimapWidget {
-    /// 0..[`ZOOM_LEVELS`): an index into the outdoor and indoor radius tables
-    /// in [`vale_assets::tables::minimap`].
+    /// 0..[`ZOOM_LEVELS`): the outdoor zoom level, an index into the outdoor
+    /// radius table in [`vale_assets::tables::minimap`].
     pub zoom: usize,
+    /// …and the indoor one, into the indoor table.
+    pub inside_zoom: usize,
+}
+
+impl MinimapWidget {
+    /// The level that applies: the indoor one inside a building.
+    pub fn level(&self, inside: bool) -> usize {
+        if inside {
+            self.inside_zoom
+        } else {
+            self.zoom
+        }
+    }
 }
 
 /// Install the five methods onto the shared frame method table.
@@ -88,15 +107,18 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
         })?;
         methods.set(name, set)?;
     }
-    let get_zoom = lua.create_function(|_, this: mlua::Table| Ok(zoom_of(&this)))?;
+    let get_zoom = lua.create_function(|lua, this: mlua::Table| {
+        Ok(zoom_of(&this, current_key(lua)))
+    })?;
     methods.set("GetZoom", get_zoom)?;
 
     // Clamped rather than rejected, as the 1.12.1 client does: a value above
     // 5 becomes 5. `Minimap_ZoomInClick` relies on this; it increments first
-    // and checks afterwards whether it has reached the top.
+    // and checks afterwards whether it has reached the top. It sets the level
+    // of the place the character is in, indoor or outdoor.
     let set_zoom = lua.create_function(|lua, (this, zoom): (mlua::Table, Option<i64>)| {
         let zoom = zoom.unwrap_or(0).clamp(0, ZOOM_LEVELS as i64 - 1);
-        super::widget::set_paint(lua, &this, ZOOM_KEY, zoom)
+        super::widget::set_paint(lua, &this, current_key(lua), zoom)
     })?;
     methods.set("SetZoom", set_zoom)?;
 
@@ -141,14 +163,55 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     Ok(())
 }
 
-/// The frame's zoom level, defaulting to the `minimapZoom` CVar's shipped
-/// value; see [`DEFAULT_ZOOM`]. That default is why a session opens at 133
-/// yards.
-fn zoom_of(frame: &mlua::Table) -> usize {
-    let held: Option<i64> = frame.raw_get(ZOOM_KEY).ok().flatten();
+/// The widget key of the zoom level that applies now; see [`INSIDE_KEY`].
+fn current_key(lua: &mlua::Lua) -> &'static str {
+    let inside: Option<bool> = lua.named_registry_value(INSIDE_KEY).ok().flatten();
+    if inside == Some(true) {
+        INSIDE_ZOOM_KEY
+    } else {
+        ZOOM_KEY
+    }
+}
+
+/// One of the frame's two zoom levels, defaulting to its CVar's shipped
+/// value: `"3"` for both `minimapZoom` and `minimapInsideZoom`, which is
+/// [`DEFAULT_ZOOM`]. That default is why a session opens at 133 yards.
+fn zoom_of(frame: &mlua::Table, key: &str) -> usize {
+    let held: Option<i64> = frame.raw_get(key).ok().flatten();
     held.map_or(DEFAULT_ZOOM, |zoom| {
         zoom.clamp(0, ZOOM_LEVELS as i64 - 1) as usize
     })
+}
+
+/// **Tell the interface which zoom level applies**, and raise
+/// `MINIMAP_UPDATE_ZOOM` when that changes: on the first frame in the world
+/// and on every move between inside and outside a building, as the 1.12.1
+/// client does. Leaving the world forgets the last answer, so the next entry
+/// raises it again.
+pub fn announce_inside(
+    host: Option<NonSendMut<super::super::host::LuaHost>>,
+    world: super::super::api::LuaWorld,
+    view: Res<crate::interface::minimap::MinimapView>,
+    mut last: Local<Option<bool>>,
+    mut pressed: MessageWriter<crate::input::bindings::BindingPressed>,
+) {
+    let Some(mut host) = host else { return };
+    if !view.in_world {
+        *last = None;
+        return;
+    }
+    if *last == Some(view.indoors) {
+        return;
+    }
+    *last = Some(view.indoors);
+    let live = world.live();
+    let inside = view.indoors;
+    if let Err(e) = host.run(&live, |lua| lua.set_named_registry_value(INSIDE_KEY, inside)) {
+        warn!("minimap: could not record the indoor flag: {e}");
+    }
+    for binding in host.fire_event("MINIMAP_UPDATE_ZOOM", &[], &live) {
+        pressed.write(crate::input::bindings::BindingPressed(binding));
+    }
 }
 
 /// What a frame is showing, or `None` for a frame that is not a minimap.
@@ -160,7 +223,10 @@ fn zoom_of(frame: &mlua::Table) -> usize {
 /// rather than a blank square.
 pub(super) fn widget(frame: &mlua::Table) -> Option<MinimapWidget> {
     let kind: Option<String> = frame.raw_get(super::widget::KIND_KEY).ok().flatten();
-    (kind.as_deref() == Some("Minimap")).then(|| MinimapWidget { zoom: zoom_of(frame) })
+    (kind.as_deref() == Some("Minimap")).then(|| MinimapWidget {
+        zoom: zoom_of(frame, ZOOM_KEY),
+        inside_zoom: zoom_of(frame, INSIDE_ZOOM_KEY),
+    })
 }
 
 #[cfg(test)]
@@ -199,6 +265,35 @@ mod tests {
         assert_eq!(after_in, DEFAULT_ZOOM + 1);
         assert!(at_top, "a zoom past the last level clamps rather than refusing");
         assert_eq!(after_out, 0, "…and so does one below the first");
+    }
+
+    /// The indoor and outdoor levels are separate: `SetZoom` inside a building
+    /// leaves the outdoor level alone, and each starts at its CVar's `3`.
+    #[test]
+    fn indoors_and_outdoors_keep_their_own_zoom() {
+        let host = LuaHost::new().expect("the interpreter starts");
+        let world = Stub::default();
+        let (outside, inside_start, back_out, painted): (usize, usize, usize, (usize, usize)) = host
+            .run(&world, |lua| {
+                let map: mlua::Table = lua
+                    .load(r#"local m = CreateFrame("Minimap", "TwoZooms"); m:SetZoom(5); return m"#)
+                    .eval()?;
+                let get = |lua: &mlua::Lua| lua.load("return TwoZooms:GetZoom()").eval::<usize>();
+                let outside = get(lua)?;
+                lua.set_named_registry_value(INSIDE_KEY, true)?;
+                let inside_start = get(lua)?;
+                lua.load("TwoZooms:SetZoom(1)").exec()?;
+                lua.set_named_registry_value(INSIDE_KEY, false)?;
+                let back_out = get(lua)?;
+                let painted = widget(&map).map(|w| (w.zoom, w.inside_zoom)).unwrap_or_default();
+                Ok((outside, inside_start, back_out, painted))
+            })
+            .expect("the body runs");
+        assert_eq!(outside, 5);
+        assert_eq!(inside_start, DEFAULT_ZOOM, "minimapInsideZoom's shipped `3`");
+        assert_eq!(back_out, 5, "the indoor SetZoom did not move the outdoor level");
+        assert_eq!(painted, (5, 1));
+        assert_eq!(MinimapWidget { zoom: 5, inside_zoom: 1 }.level(true), 1);
     }
 
     /// A frame that is not a `<Minimap>` is not treated as one, whatever its

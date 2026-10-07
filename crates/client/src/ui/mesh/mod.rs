@@ -87,6 +87,10 @@ struct Slot {
     print: u64,
 }
 
+/// The minimap's inputs a rebuild is keyed on: in the world, position,
+/// height, facing, indoors, the building's placement and group, and the map.
+type PlaceKey = (bool, (f32, f32), f32, f32, bool, Option<(u32, u32)>, String);
+
 /// Everything the rebuild keeps between runs.
 #[derive(Default)]
 struct MeshState {
@@ -125,8 +129,10 @@ struct MeshState {
     /// The minimap's inputs at the last build. The minimap is the one group
     /// whose inputs are the world rather than the widget tree. Compared by
     /// value because `MinimapView` is rewritten every frame, so its change
-    /// flag does not say whether the player moved.
-    last_place: Option<(bool, (f32, f32), f32, bool, String)>,
+    /// flag does not say whether the player moved. The height and the
+    /// building (placement and group) are in it because the pictures drawn
+    /// inside a building depend on both.
+    last_place: Option<PlaceKey>,
     reported_models: HashSet<String>,
     /// Whether the first-build log line was written; the mesh counterpart of
     /// the egui painter's "first frame drawn" line.
@@ -256,8 +262,10 @@ fn rebuild(
     let here = (
         place.in_world,
         place.position,
+        place.elevation,
         place.facing,
         place.indoors,
+        place.interior.as_ref().map(|inside| (inside.unique_id, inside.group)),
         place.directory.clone(),
     );
     // The icon on the pointer, the one input here that moves at frame rate:

@@ -1093,3 +1093,49 @@ fn outdoors_is_the_floor_group_bit_unless_the_ground_covers_it() {
     // decides alone.
     assert!(!outdoors_at(Some((50.0, bank)), None, 51.0));
 }
+
+/// `MOPV`, `MOPT` and `MOPR` read at their 12-, 20- and 8-byte strides, and a
+/// portal's polygon is its own vertex range.
+#[test]
+fn the_portal_graph_reads_at_its_three_strides() {
+    let mopv = f32s(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 9.0, 9.0, 9.0]);
+    let mut mopt = vec![0u8; 40];
+    mopt[0..2].copy_from_slice(&0u16.to_le_bytes());
+    mopt[2..4].copy_from_slice(&4u16.to_le_bytes());
+    mopt[20..22].copy_from_slice(&4u16.to_le_bytes());
+    mopt[22..24].copy_from_slice(&3u16.to_le_bytes());
+    let mut mopr = Vec::new();
+    for (portal, group, side) in [(0u16, 1u16, 1i16), (0, 0, -1)] {
+        mopr.extend(portal.to_le_bytes());
+        mopr.extend(group.to_le_bytes());
+        mopr.extend(side.to_le_bytes());
+        mopr.extend(0u16.to_le_bytes());
+    }
+    let mut root = encode(b"MVER", &17u32.to_le_bytes());
+    root.extend(encode(b"MOPV", &mopv));
+    root.extend(encode(b"MOPT", &mopt));
+    root.extend(encode(b"MOPR", &mopr));
+    let graph = WmoPortals::parse(&root);
+    assert_eq!(graph.vertices.len(), 5);
+    assert_eq!(graph.portals, vec![(0, 4), (4, 3)]);
+    assert_eq!(graph.refs[0], WmoPortalRef { portal: 0, group: 1, side: 1 });
+    assert_eq!(graph.refs[1], WmoPortalRef { portal: 0, group: 0, side: -1 });
+    assert_eq!(graph.polygon(0).map(<[_]>::len), Some(4));
+    assert_eq!(graph.polygon(1), None, "a range past the vertices is refused");
+    assert!(WmoPortals::parse(&encode(b"MVER", &17u32.to_le_bytes())).refs.is_empty());
+}
+
+/// The header fields the minimap's group walk reads: flags, box and the slice
+/// of `MOPR` at 0x24 and 0x26.
+#[test]
+fn a_group_header_reads_its_portal_slice() {
+    let mut raw = build_group(0x2000, 1);
+    let mogp = raw.windows(4).position(|w| w == b"PGOM").expect("MOGP") + 8;
+    raw[mogp + 0x24..mogp + 0x26].copy_from_slice(&7u16.to_le_bytes());
+    raw[mogp + 0x26..mogp + 0x28].copy_from_slice(&3u16.to_le_bytes());
+    let header = WmoGroupHeader::parse(&raw).expect("a header");
+    assert_eq!(header.flags, 0x2000);
+    assert_eq!(header.bounds, [[0.0; 3], [2.0; 3]]);
+    assert_eq!((header.portal_start, header.portal_count), (7, 3));
+    assert_eq!(WmoGroupHeader::parse(&encode(b"MVER", &17u32.to_le_bytes())), None);
+}

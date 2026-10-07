@@ -1679,8 +1679,9 @@ fn field(
                 .and_then(|flags| flags.trim().parse::<u32>().ok())
                 .unwrap_or(0);
             let menu = showing.trim().parse().unwrap_or(0);
-            let now = subject.now;
-            super::gossip::menu_buttons(ui, subject.session, subject.gossip, subject.behaviour, key, menu, npc_flags, now);
+            use vale_mangos::schema::RowValue;
+            let label = format!("{} ({})", row.text("name").unwrap_or("creature"), row.integer("entry").unwrap_or(0));
+            super::gossip::menu_buttons(ui, subject.session, subject.gossip, key, menu, npc_flags, &label);
         }
         if let Some(written) = written {
             target(table, key, column, &in_database, creating).write(

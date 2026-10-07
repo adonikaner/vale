@@ -3174,8 +3174,10 @@ pub fn send_input(
     active.live.set_controls(controls);
     // The same keys go to the prediction in the same frame. The session thread
     // receives them on its next tick, but the character has to move in this
-    // frame. See `crate::world::predict`.
-    predicted.set_controls(controls);
+    // frame. See `crate::world::predict`. Both halves apply a change from the
+    // moment it was read: the session from the instant the command carries,
+    // the prediction from this frame's render clock.
+    predicted.set_controls(controls, time.elapsed_secs());
 
     // Mouse-look: the character faces wherever the camera looks, from the
     // moment the button goes down. The rig's yaw is the angle to the eye, so

@@ -14,6 +14,12 @@
 //! through `super::behaviour`, which already holds that table for scripts.
 //! Everything read is kept until an apply writes to the database.
 //!
+//! A new menu is numbered above the highest `gossip_menu` entry and
+//! `npc_text` id the database holds. Those are read while the window is open
+//! or while any button that makes a menu is drawn ([`Gossip::numbering`]),
+//! whether or not a menu is shown. A press before they are read is kept as
+//! [`Gossip::pending`] and carried out when they are.
+//!
 //! Every row is a row of the project's store on `super::services`' terms. A
 //! new text is three rows: a `broadcast_text` line, the `npc_text` row that
 //! shows it, and the `gossip_menu` row that puts it in the menu.
@@ -51,9 +57,22 @@ pub struct Shown<T> {
     pub life: Life,
 }
 
-/// The rows one read of a menu returned.
+/// A new menu asked for before the ids it is numbered from were read.
+#[derive(Debug, Clone, PartialEq)]
+pub enum NewMenu {
+    /// A menu of its own, opened in the window.
+    Open,
+    /// A menu named in a creature template's `gossip_menu_id`, with the
+    /// gossip npc flag added; `label` names the creature in the status line.
+    For { template_key: Key, npc_flags: u32, label: String },
+    /// A menu the option opens, written to its `action_menu_id`.
+    Lead(Shown<MenuOption>),
+}
+
+/// The rows one read returned: a menu's, when one was shown, and the highest
+/// ids, when they were wanted.
 struct Read {
-    menu: u32,
+    menu: Option<u32>,
     texts: Vec<MenuText>,
     options: Vec<MenuOption>,
     npc_texts: Vec<NpcText>,
@@ -85,9 +104,14 @@ pub struct Gossip {
     texts: HashMap<u32, Vec<MenuText>>,
     options: HashMap<u32, Vec<MenuOption>>,
     npc_texts: HashMap<u32, Option<NpcText>>,
-    /// The highest menu entry and npc_text id the database holds, read with
-    /// the first menu.
+    /// The highest menu entry and npc_text id the database holds, read while
+    /// the window is open or [`Self::numbering`] is set.
     highest: Option<(u32, u32)>,
+    /// Whether a button that makes a menu has been drawn, so the highest ids
+    /// are read with the window shut. Set by that button; once set, it stays.
+    pub numbering: bool,
+    /// A new menu asked for before the highest ids were read.
+    pub pending: Option<NewMenu>,
     loaded_for: Option<u64>,
     reading: Option<Task<Result<Read, String>>>,
     pub trouble: Option<String>,
@@ -440,9 +464,10 @@ fn on_the_command_line(args: Res<crate::Args>, mut gossip: ResMut<Gossip>, mut d
     }
 }
 
-/// Read the shown menu's rows while the window is open, the `npc_text` rows
-/// they name, and the highest ids once; clear everything read when an apply
-/// has written to the database.
+/// Read the shown menu's rows while the window is open and the `npc_text`
+/// rows they name; read the highest ids once while the window is open or
+/// [`Gossip::numbering`] is set; clear everything read when an apply has
+/// written to the database.
 fn read_the_rows(
     mut gossip: ResMut<Gossip>,
     session: Option<Res<EditSession>>,
@@ -453,16 +478,19 @@ fn read_the_rows(
             gossip.reading = None;
             match done {
                 Ok(read) => {
-                    info!("gossip: menu {}: {} text(s), {} option(s)", read.menu, read.texts.len(), read.options.len());
-                    gossip.texts.insert(read.menu, read.texts);
-                    gossip.options.insert(read.menu, read.options);
+                    if let Some(menu) = read.menu {
+                        info!("gossip: menu {menu}: {} text(s), {} option(s)", read.texts.len(), read.options.len());
+                        gossip.texts.insert(menu, read.texts);
+                        gossip.options.insert(menu, read.options);
+                    }
                     for id in read.asked_texts {
                         gossip.npc_texts.entry(id).or_insert(None);
                     }
                     for text in read.npc_texts {
                         gossip.npc_texts.insert(text.id, Some(text));
                     }
-                    if read.highest.is_some() {
+                    if let Some((menu, text)) = read.highest {
+                        info!("gossip: highest menu {menu}, npc_text {text}");
                         gossip.highest = read.highest;
                     }
                     if let Some(points) = read.points {
@@ -488,39 +516,43 @@ fn read_the_rows(
         gossip.points = None;
         gossip.trouble = None;
     }
-    if !gossip.open || gossip.trouble.is_some() {
+    if gossip.trouble.is_some() {
         return;
     }
-    let Some(menu) = gossip.showing() else { return };
+    let want_highest = gossip.highest.is_none() && (gossip.open || gossip.numbering);
+    let menu = gossip.showing().filter(|_| gossip.open);
     // The texts the project's own menu rows name, which the menu's read does
     // not know of, are read with it.
-    let claimed: Vec<u32> = gossip
-        .texts_of(&session.server_edits, menu)
+    let claimed: Vec<u32> = menu
+        .map(|menu| gossip.texts_of(&session.server_edits, menu))
+        .unwrap_or_default()
         .iter()
         .map(|shown| shown.row.text_id)
         .filter(|id| !gossip.npc_texts.contains_key(id))
         .collect();
-    if gossip.is_read(menu) && claimed.is_empty() && gossip.highest.is_some() && gossip.points.is_some() {
+    let menu = menu.filter(|menu| !gossip.is_read(*menu) || !claimed.is_empty() || gossip.points.is_none());
+    if menu.is_none() && !want_highest {
         return;
     }
     let Some((at, _source)) = settings.resolve() else {
         gossip.trouble = Some(vale_mangos::conn::Where::absent());
         return;
     };
-    let want_highest = gossip.highest.is_none();
-    let want_points = gossip.points.is_none();
+    let want_points = menu.is_some() && gossip.points.is_none();
     gossip.reading = Some(crate::server::queue::read(async move {
         use vale_mangos::schema::RowValue;
         let mut db = vale_mangos::conn::Db::open(&at)?;
-        let texts: Vec<MenuText> = db.rows(&gossip::texts_query(menu))?.iter().filter_map(MenuText::from_row).collect();
-        let options: Vec<MenuOption> = db.rows(&gossip::options_query(menu))?.iter().filter_map(MenuOption::from_row).collect();
-        let mut asked: Vec<u32> = texts.iter().map(|text| text.text_id).chain(claimed).collect();
-        asked.sort_unstable();
-        asked.dedup();
-        let npc_texts = match gossip::npc_texts_query(&asked) {
-            Some(sql) => db.rows(&sql)?.iter().filter_map(NpcText::from_row).collect(),
-            None => Vec::new(),
-        };
+        let (mut texts, mut options, mut npc_texts, mut asked) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        if let Some(menu) = menu {
+            texts = db.rows(&gossip::texts_query(menu))?.iter().filter_map(MenuText::from_row).collect();
+            options = db.rows(&gossip::options_query(menu))?.iter().filter_map(MenuOption::from_row).collect();
+            asked = texts.iter().map(|text: &MenuText| text.text_id).chain(claimed).collect();
+            asked.sort_unstable();
+            asked.dedup();
+            if let Some(sql) = gossip::npc_texts_query(&asked) {
+                npc_texts = db.rows(&sql)?.iter().filter_map(NpcText::from_row).collect();
+            }
+        }
         let highest = match want_highest {
             true => db.row(&gossip::highest_query())?.map(|row| {
                 (row.integer("menu").unwrap_or(0) as u32, row.integer("text").unwrap_or(0) as u32)
