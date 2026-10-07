@@ -82,6 +82,11 @@ fn step(
     m2: Res<Assets<vale_client::render::models::material::M2Material>>,
     lua: Option<NonSend<vale_client::lua::host::LuaHost>>,
     mut quit: MessageWriter<AppExit>,
+    // The frame times and the longest frames, printed when the tour ends: the
+    // tour is also the measurement of what streaming a block costs the frame.
+    #[cfg(feature = "diagnostics")] mut spans: Option<
+        ResMut<vale_client::ui::debug::spans::Spans>,
+    >,
 ) {
     let now = time.elapsed_secs();
     if tour.done || now < tour.until {
@@ -142,14 +147,73 @@ fn step(
     }
     match tour.stops.get(stop).copied() {
         Some((x, y)) => {
+            // Measured from the second stop, so the start-up and the first
+            // block are not in it: what is left is the jumps.
+            #[cfg(feature = "diagnostics")]
+            if stop == 1 {
+                if let Some(spans) = spans.as_mut() {
+                    spans.restart();
+                }
+            }
+            #[cfg(feature = "span-census")]
+            if stop == 1 {
+                vale_client::ui::debug::census::restart();
+            }
             camera.go_to(Vec2::new(x, y));
             tour.next += 1;
             tour.until = now + tour.dwell;
         }
         None => {
+            #[cfg(feature = "diagnostics")]
+            if let Some(spans) = spans.as_ref() {
+                report_frames(spans);
+            }
+            #[cfg(feature = "span-census")]
+            for (name, longest, total, runs) in vale_client::ui::debug::census::report(40) {
+                info!("--census: {longest:8.2} ms longest  {total:9.1} ms total  {runs:6} runs  {name}");
+            }
             tour.done = true;
             quit.write(AppExit::Success);
         }
+    }
+}
+
+/// The frame times over the tour: the median and p95, the cumulative cost of
+/// each measured slot, and the longest frames with what each spent. The
+/// longest frames are the ones a tile arriving causes, which a mean hides.
+#[cfg(feature = "diagnostics")]
+fn report_frames(spans: &vale_client::ui::debug::spans::Spans) {
+    let (frames, median, p95) = spans.distribution();
+    let over = |limit: f32| spans.since.iter().filter(|ms| **ms > limit).count();
+    info!(
+        "--tour: {frames} frames, median {median:.2} ms, p95 {p95:.2} ms,          {} over 33 ms, {} over 50 ms, {} over 100 ms",
+        over(33.3),
+        over(50.0),
+        over(100.0),
+    );
+    for (name, ms, calls) in spans.measured().into_iter().take(16) {
+        info!("--tour: {ms:6.3} ms/frame  {name}  ({calls:.1} runs/frame)");
+    }
+    for frame in &spans.worst {
+        let own: Vec<String> = frame
+            .top(6)
+            .into_iter()
+            .filter(|(_, ms)| *ms >= 0.05)
+            .map(|(name, ms)| format!("{name} {ms:.1}"))
+            .collect();
+        let phases: Vec<String> = frame
+            .phases()
+            .into_iter()
+            .filter(|(_, ms)| *ms >= 0.5)
+            .map(|(name, ms)| format!("{} {ms:.1}", name.trim_start_matches("phase ")))
+            .collect();
+        info!(
+            "--tour: {:7.1}s {:6.1} ms  systems: {}  phases: {}",
+            frame.at_secs,
+            frame.ms,
+            if own.is_empty() { "-".to_string() } else { own.join(", ") },
+            phases.join(", "),
+        );
     }
 }
 

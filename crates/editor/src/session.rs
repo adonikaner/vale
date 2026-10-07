@@ -718,6 +718,18 @@ impl EditSession {
         locks.hold(tile, edits)
     }
 
+    /// Take a tile read and parsed elsewhere as open, unless one is already
+    /// open at that place. `crate::tools::open_tiles` reads tiles on the task
+    /// pool and hands them over here; [`Self::open`] is the same on the
+    /// calling thread.
+    pub fn insert_opened(&mut self, coord: (u32, u32), tile: AdtFile) {
+        if self.tiles.contains_key(&coord) {
+            return;
+        }
+        self.read_placement_locks();
+        self.tiles.insert(coord, tile);
+    }
+
     /// Let go of an open tile, so that a session that has flown across a
     /// continent is not holding every tile it flew over.
     ///
@@ -727,7 +739,18 @@ impl EditSession {
     /// go: `crate::tools::close_tiles`, which keeps anything unsaved or on
     /// the history.
     pub fn close(&mut self, coord: (u32, u32)) -> bool {
-        self.tiles.remove(&coord).is_some()
+        match self.tiles.remove(&coord) {
+            // A parsed tile is megabytes in many allocations, and a jump closes
+            // a block of them at once; they are freed on the task pool rather
+            // than in the frame that closes them.
+            Some(tile) => {
+                bevy::tasks::AsyncComputeTaskPool::get()
+                    .spawn(async move { drop(tile) })
+                    .detach();
+                true
+            }
+            None => false,
+        }
     }
 
     /// One tile's bytes, as they are now.

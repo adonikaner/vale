@@ -128,10 +128,14 @@ struct Snapshot {
 pub fn layer(app: &mut App) -> Option<BoxedLayer> {
     let ring = LogRing::default();
     app.insert_resource(ring.clone());
-    Some(Box::new(RingLayer {
+    let layer = RingLayer {
         ring,
         since: Instant::now(),
-    }))
+    };
+    // The per-system timer, in an attribution build. See `super::census`.
+    #[cfg(feature = "span-census")]
+    let layer = layer.and_then(super::census::CensusLayer);
+    Some(Box::new(layer))
 }
 
 /// The `tracing_subscriber` layer that copies each event into the ring.

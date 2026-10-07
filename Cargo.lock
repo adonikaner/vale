@@ -524,6 +524,7 @@ checksum = "950238d3049d81006a6fd6b898a34cfc01bb5462a7668795a54d640aed19fd0a"
 dependencies = [
  "bevy_dylib",
  "bevy_internal",
+ "tracing",
 ]
 
 [[package]]
@@ -631,6 +632,7 @@ dependencies = [
  "downcast-rs 2.0.2",
  "log",
  "thiserror 2.0.19",
+ "tracing",
  "variadics_please",
  "wasm-bindgen",
  "web-sys",
@@ -888,6 +890,7 @@ dependencies = [
  "slotmap",
  "smallvec",
  "thiserror 2.0.19",
+ "tracing",
  "variadics_please",
 ]
 
@@ -1279,6 +1282,7 @@ dependencies = [
  "bevy_platform",
  "bevy_utils",
  "tracing",
+ "tracing-error",
  "tracing-log",
  "tracing-oslog",
  "tracing-subscriber",
@@ -1591,6 +1595,7 @@ dependencies = [
  "naga",
  "nonmax",
  "offset-allocator",
+ "profiling",
  "send_wrapper",
  "smallvec",
  "thiserror 2.0.19",
@@ -5281,6 +5286,20 @@ name = "profiling"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
+dependencies = [
+ "profiling-procmacros",
+ "tracing",
+]
+
+[[package]]
+name = "profiling-procmacros"
+version = "1.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4488a4a36b9a4ba6b9334a32a39971f77c1436ec82c38707bce707699cc3bbcb"
+dependencies = [
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "pxfm"
@@ -6426,6 +6445,16 @@ checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
  "valuable",
+]
+
+[[package]]
+name = "tracing-error"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b1581020d7a273442f5b45074a6a57d5757ad0a47dac0e9f0bd57b81936f3db"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

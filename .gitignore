@@ -25,3 +25,4 @@ __pycache__/
 *.bak
 *.orig
 .DS_Store
+/target-census

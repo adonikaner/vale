@@ -691,6 +691,16 @@ pub struct CollisionWorld {
     inner: RwLock<Inner>,
 }
 
+/// Tiles [`CollisionWorld::retain_tiles`] took out, for the caller to drop
+/// wherever freeing them costs nothing that matters.
+pub struct Retired(Vec<Tile>);
+
+impl Retired {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
 #[derive(Default)]
 struct Inner {
     /// Which map these colliders belong to. A far teleport invalidates every
@@ -1351,15 +1361,28 @@ impl CollisionWorld {
 
     /// Forget every tile not in `live`. Called with the tiles the renderer
     /// still has, so a building goes when the ground it stands on does.
-    pub fn retain_tiles(&self, live: &HashSet<(u32, u32)>) {
+    ///
+    /// The forgotten tiles are returned rather than dropped here. A tile's
+    /// hulls are every triangle of its buildings and doodads, and freeing a
+    /// block of them took up to 19 ms on the caller's thread, which is the main
+    /// thread; the caller drops [`Retired`] on a background task instead. The
+    /// write lock is held only to move them out.
+    pub fn retain_tiles(&self, live: &HashSet<(u32, u32)>) -> Retired {
         // Checked under a read lock first, because the caller is a Bevy system
         // running every frame and the steady state is "nothing has changed" —
         // taking the write lock sixty times a second would block the session
         // thread's floor query for no reason at all.
         if self.read().tiles.keys().all(|k| live.contains(k)) {
-            return;
+            return Retired(Vec::new());
         }
-        self.write().tiles.retain(|coord, _| live.contains(coord));
+        let mut inner = self.write();
+        let gone: Vec<(u32, u32)> = inner
+            .tiles
+            .keys()
+            .copied()
+            .filter(|coord| !live.contains(coord))
+            .collect();
+        Retired(gone.into_iter().filter_map(|coord| inner.tiles.remove(&coord)).collect())
     }
 
     pub fn clear(&self) {

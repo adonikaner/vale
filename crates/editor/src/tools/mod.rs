@@ -134,10 +134,11 @@
 //!
 //! ## Where tiles are opened
 //!
-//! [`open_tiles`] parses the square of tiles `TerrainReach` names around the
-//! focus (7x7 by default), one tile a frame. It is not part of the terrain
-//! tool: the doodad pick reads the same `AdtFile` to find which `MDDF` entry
-//! was clicked, so the function sits here, shared by both.
+//! [`open_tiles`] reads and parses the square of tiles `TerrainReach` names
+//! around the focus (7x7 by default) on the task pool, and puts each in the
+//! session when it is ready. It is not part of the terrain tool: the doodad
+//! pick reads the same `AdtFile` to find which `MDDF` entry was clicked, so
+//! the function sits here, shared by both.
 
 pub mod areas;
 pub mod behaviour;
@@ -642,10 +643,38 @@ impl Tool {
     }
 }
 
-/// How many tiles are parsed a frame. One: a tile is about two megabytes, and
-/// parsing nine on the frame a map opens is a visible stall, while one a frame
-/// spreads the same work over nine frames with no visible stall.
-const OPEN_BUDGET: usize = 1;
+/// How many tiles are read and parsed on the task pool at once. Bevy's
+/// async-compute pool has four threads and the renderer's own tile loads share
+/// it, so two keeps the editor's reads from queueing the renderer's behind
+/// them.
+const OPEN_IN_FLIGHT: usize = 2;
+
+/// The tiles being read and parsed off the main thread for the session. See
+/// [`open_tiles`].
+#[derive(Resource, Default)]
+pub struct Opening {
+    tasks: Vec<OpeningTile>,
+    /// Claimed tiles that could not be read or parsed, by map, so they are
+    /// not asked for again every frame. The reason is in the status line.
+    failed: std::collections::HashSet<(String, (u32, u32))>,
+}
+
+/// One tile being read.
+struct OpeningTile {
+    coord: (u32, u32),
+    /// The map and the project it was asked for. A tile that lands after
+    /// either has changed is dropped.
+    map: String,
+    project: std::path::PathBuf,
+    task: bevy::tasks::Task<Result<vale_edit::adt::AdtFile, String>>,
+}
+
+impl Opening {
+    /// Whether a tile is being read.
+    pub fn is_opening(&self, coord: (u32, u32)) -> bool {
+        self.tasks.iter().any(|t| t.coord == coord)
+    }
+}
 
 /// Close the open tiles the focus has moved away from.
 ///
@@ -710,6 +739,7 @@ pub struct ToolPlugin;
 impl Plugin for ToolPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Tool>()
+            .init_resource::<Opening>()
             .add_systems(Update, (open_tiles, close_tiles, modes).chain())
             .add_systems(Update, maps::follow_map_table)
             .add_systems(Update, release_held);
@@ -776,7 +806,8 @@ fn release_held(mut session: Option<ResMut<EditSession>>, buttons: Res<ButtonInp
     }
 }
 
-/// Parse the tiles around the focus, one a frame.
+/// Open the tiles around the focus: read and parse each on the task pool, and
+/// put it in the session when it is ready.
 ///
 /// It opens the block that is drawn, not only the tile under the pointer,
 /// because the pointer cannot pick against a tile that is not open and a
@@ -785,26 +816,69 @@ fn release_held(mut session: Option<ResMut<EditSession>>, buttons: Res<ButtonInp
 /// puts on screen, so the editable area and the visible area are the same:
 /// otherwise a tool would refuse edits on drawn ground the person can see.
 ///
-/// Tiles are opened nearest first. A 3x3 reach does not need the ordering; a
-/// 7x7 reach does. One tile is parsed a frame ([`OPEN_BUDGET`]), so at 49 tiles a row-major
-/// walk spends its first half-second on the corners while the ground under
-/// the pointer is still unopened, and until it is opened the pointer reports
-/// no ground and the brush does nothing.
+/// ## Off the main thread
+///
+/// A tile is a 10 to 35 ms archive read and a 5 to 10 ms parse. This used to
+/// open one tile a frame on the main thread, through the main archive chain
+/// and under its lock, so every frame of a block filling (49 tiles after a
+/// jump) was a long frame. The read is now on a chain borrowed from the pool
+/// with the editor's overlay set, as `render::terrain::read_tile`'s is, and
+/// the parse runs on the same task; the main thread only moves the finished
+/// `AdtFile` into the session.
+///
+/// Only the tiles the WDT claims are asked for, which is every tile the map
+/// has. A claimed tile that fails is remembered in [`Opening::failed`] and not
+/// asked for again on that map.
+///
+/// Tiles are asked for nearest first. A 3x3 reach does not need the ordering;
+/// a 7x7 reach does: until the tile under the pointer is open, the pointer
+/// reports no ground and the brush does nothing.
 fn open_tiles(
     mut session: Option<ResMut<EditSession>>,
     assets: Res<GameAssets>,
     focus: Res<vale_client::render::focus::WorldFocus>,
     reach: Res<vale_client::render::terrain::TerrainReach>,
     state: Res<crate::playtest::Playtest>,
+    mut opening: ResMut<Opening>,
 ) {
     let Some(session) = session.as_mut() else {
         return;
     };
+    // The reads that have finished. Taken whether or not the focus is
+    // present, so a task never outlives the need for it by more than a frame.
+    let mut index = 0;
+    while index < opening.tasks.len() {
+        let done = bevy::tasks::block_on(bevy::tasks::futures_lite::future::poll_once(
+            &mut opening.tasks[index].task,
+        ));
+        let Some(result) = done else {
+            index += 1;
+            continue;
+        };
+        let pending = opening.tasks.swap_remove(index);
+        let current = pending.map == session.map && pending.project == session.project.root;
+        match result {
+            Ok(tile) if current => session.insert_opened(pending.coord, tile),
+            Ok(_) => {}
+            Err(why) => {
+                if current {
+                    session.status = why;
+                }
+                opening.failed.insert((pending.map, pending.coord));
+            }
+        }
+    }
+
     // Not during a playtest. The focus follows the character then, so this
     // would parse two megabytes a frame along the character's route, for
     // tiles no tool may touch, and hold every one of them for the rest of the
     // session.
     if !focus.present || !state.editing() {
+        return;
+    }
+    // The claims are read for the open map when it opens; until they are,
+    // nothing is known to exist.
+    if session.claims_for != session.map {
         return;
     }
     let (cx, cy) = vale_assets::tile_for_position(focus.position.x, focus.position.y);
@@ -817,26 +891,49 @@ fn open_tiles(
                 continue;
             }
             let coord = (x as u32, y as u32);
-            if session.tiles.contains_key(&coord) {
+            if session.tiles.contains_key(&coord)
+                || !session.wdt_claims(coord)
+                || opening.is_opening(coord)
+                || opening.failed.contains(&(session.map.clone(), coord))
+            {
                 continue;
             }
             wanted.push((dx * dx + dy * dy, coord));
         }
     }
     wanted.sort_unstable_by_key(|(distance, _)| *distance);
-    let mut opened = 0;
+    // `VALE_OPEN_INLINE=1`: the old path, one tile a frame read and parsed on
+    // this thread, kept as a measurement probe so the two can be compared in
+    // one binary with `--tour`.
+    static INLINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *INLINE.get_or_init(|| std::env::var_os("VALE_OPEN_INLINE").is_some()) {
+        if let Some((_, coord)) = wanted.first() {
+            if !session.open(&assets, *coord) {
+                opening.failed.insert((session.map.clone(), *coord));
+            }
+        }
+        return;
+    }
     for (_, coord) in wanted {
-        if opened >= OPEN_BUDGET {
+        if opening.tasks.len() >= OPEN_IN_FLIGHT {
             return;
         }
-        // A coordinate the map does not have is asked for once a frame for
-        // as long as the camera is over it. That is one archive miss, which
-        // is a hash lookup in each of nineteen archives. The alternative, a
-        // second set that remembers the absences, is not used because the
-        // cost of the miss has not been measured as significant.
-        if session.open(&assets, coord) {
-            opened += 1;
-        }
+        let chains = assets.chains();
+        let dir = assets.gamedata_dir.clone();
+        let overlay = assets.overlay();
+        let path = session.key(coord).vpath();
+        let task = bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
+            let mut chain = chains.take(&dir).map_err(|e| format!("{path}: {e}"))?;
+            chain.set_overlay(overlay);
+            let bytes = chain.read(&path).map_err(|e| format!("{path}: {e}"))?;
+            vale_edit::adt::AdtFile::parse(&bytes).map_err(|e| format!("{path}: {e}"))
+        });
+        opening.tasks.push(OpeningTile {
+            coord,
+            map: session.map.clone(),
+            project: session.project.root.clone(),
+            task,
+        });
     }
 }
 

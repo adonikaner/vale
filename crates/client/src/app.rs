@@ -203,6 +203,54 @@ pub fn core(app: &mut App, gamedata_dir: String, config: vale_config::Config) {
             sound::SoundPlugins,
             ui::UiPlugins,
         ));
+    upload_budgets(app);
+}
+
+/// How much the render world uploads to the GPU in one frame.
+///
+/// ## No texture and mesh upload budget
+///
+/// Bevy's `RenderAssetBytesPerFrame` carries an `Image` or `Mesh` that does
+/// not fit a frame's budget to the next frame. It is left unset. With a
+/// 16 MiB budget, ground groups went undrawn until something re-specialised
+/// every mesh (a fog toggle, or the tile streaming in again): an entity whose
+/// mesh had not been uploaded when Bevy specialised it was skipped, and
+/// nothing asked again when the mesh arrived. Measured on a five-stop editor
+/// `--tour` (`span-census` build), the budget also changed little: the
+/// longest `prepare_assets<GpuImage>` was 35 ms with it and 36 ms without,
+/// because the cost is per texture rather than per byte. The terrain's own
+/// `UPLOAD_BYTES` budget (`render::terrain`) spreads a tile's pieces over
+/// frames on the main-world side, which does not have the problem.
+///
+/// `VALE_UPLOAD_MIB=<n>` sets a budget of `n` MiB for an A/B.
+///
+/// ## The mesh buffers
+///
+/// Bevy's mesh allocator packs meshes into shared buffers ("slabs") per
+/// vertex layout, starting at 1 MiB and growing by half when full, and every
+/// growth is a new buffer and a copy of the old one. The same census measured
+/// `allocate_and_free_meshes` at up to 43 ms in a frame while a block
+/// streamed. Starting at 8 MiB and doubling makes the growths fewer. The
+/// minimum is kept small because every vertex layout has slabs of its own.
+/// `VALE_SLAB_DEFAULT=1` restores Bevy's defaults for an A/B.
+fn upload_budgets(app: &mut App) {
+    let mib = std::env::var("VALE_UPLOAD_MIB")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    app.insert_resource(match mib {
+        0 => bevy::render::render_asset::RenderAssetBytesPerFrame::default(),
+        mib => bevy::render::render_asset::RenderAssetBytesPerFrame::new(mib * 1024 * 1024),
+    });
+    if std::env::var_os("VALE_SLAB_DEFAULT").is_some() {
+        return;
+    }
+    if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
+        let mut settings = bevy::render::mesh::allocator::MeshAllocatorSettings::default();
+        settings.min_slab_size = 8 * 1024 * 1024;
+        settings.growth_factor = 2.0;
+        render_app.insert_resource(settings);
+    }
 }
 
 /// The schedule executors, set from seven separate measurements.

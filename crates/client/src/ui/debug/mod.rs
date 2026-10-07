@@ -25,6 +25,8 @@
 //!               bounded ring by a `tracing` layer, with the Lua command line
 //!               under it
 //! spans.rs      the CPU ledger frame.rs' system list is published from
+//! census.rs     per-system run times from Bevy's own system spans, for
+//!               attributing a long frame; only with the `span-census` feature
 //! ```
 //!
 //! ## The layout: a header and seven tabs
@@ -124,6 +126,8 @@ pub mod net;
 pub mod render;
 pub mod scene;
 pub mod spans;
+#[cfg(feature = "span-census")]
+pub mod census;
 pub mod world;
 
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;

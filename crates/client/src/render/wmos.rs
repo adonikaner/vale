@@ -1077,9 +1077,16 @@ pub fn spawn_wmos(
 /// not tell this pass which children went with it. A collider left behind is
 /// an invisible wall standing in an empty field. Nine coordinates a frame
 /// with an early-out when nothing has changed, which is the steady state.
+///
+/// The hulls of the tiles that went are freed on the task pool: a block of
+/// them is every triangle of every building and doodad on it, and freeing them
+/// here took up to 19 ms of a frame. See `CollisionWorld::retain_tiles`.
 fn retire_colliders(tiles: Query<&TerrainTile>, solids: Res<Solids>) {
     let live: std::collections::HashSet<(u32, u32)> = tiles.iter().map(|t| t.coord).collect();
-    solids.0.retain_tiles(&live);
+    let retired = solids.0.retain_tiles(&live);
+    if !retired.is_empty() {
+        AsyncComputeTaskPool::get().spawn(async move { drop(retired) }).detach();
+    }
 }
 
 /// One interior doodad as an ordinary [`PlacedModel`].

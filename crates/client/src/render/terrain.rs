@@ -703,6 +703,7 @@ impl Plugin for TerrainPlugin {
         embedded_asset!(app, "shaders/terrain.wgsl");
         app.add_plugins(MaterialPlugin::<TerrainMaterial>::default())
             .init_resource::<LoadedTiles>()
+            .init_resource::<RetiringTiles>()
             // Off, so the client pays nothing for it — see [`LiveEdits`].
             .init_resource::<LiveEdits>()
             // The 3x3, unless a host has already inserted its own — see
@@ -713,7 +714,7 @@ impl Plugin for TerrainPlugin {
                 // `light_sheen` after the spawner, so a group spawned this
                 // frame carries the hour's colour on the frame it appears
                 // rather than one frame of matte ground.
-                (request_tiles, receive_tiles, light_sheen).chain(),
+                (request_tiles, receive_tiles, light_sheen, despawn_retired).chain(),
             )
             // The two layers this pass draws, each switchable on its own — see
             // [`crate::render::tuning`]. Nothing else writes either one's
@@ -781,7 +782,102 @@ fn report(
     );
 }
 
+/// Tiles that have left the block and wait to be despawned, oldest first. See
+/// [`retire_tile`].
+#[derive(Resource, Default)]
+pub struct RetiringTiles(std::collections::VecDeque<Entity>);
+
+/// How many retired tiles are despawned a frame. See [`retire_tile`].
+const DESPAWNS_PER_FRAME: usize = 1;
+
+/// Take a tile out of the world now and despawn it later.
+///
+/// A tile is a hierarchy of thousands of entities: its ground groups, water,
+/// foliage, doodads and buildings. A jump in the editor drops a 7x7 block, and
+/// despawning all of it in one frame was up to 75 ms of command application on
+/// the main thread (`request_tiles`' commands, in a per-system census of a
+/// five-stop `--tour`). Here the tile loses its [`TerrainTile`] component,
+/// which every streaming pass keys on, so to all of them it is gone at once;
+/// it is hidden, so nothing of it is drawn; and [`despawn_retired`] despawns
+/// [`DESPAWNS_PER_FRAME`] such tiles a frame.
+fn retire_tile(commands: &mut Commands, retiring: &mut RetiringTiles, tile: Entity) {
+    commands
+        .entity(tile)
+        .remove::<TerrainTile>()
+        .insert(Visibility::Hidden);
+    retiring.0.push_back(tile);
+}
+
+/// Despawn the oldest retired tiles. See [`retire_tile`].
+fn despawn_retired(mut retiring: ResMut<RetiringTiles>, mut commands: Commands) {
+    if retiring.0.is_empty() {
+        return;
+    }
+    for _ in 0..DESPAWNS_PER_FRAME {
+        let Some(tile) = retiring.0.pop_front() else {
+            return;
+        };
+        if let Ok(mut entity) = commands.get_entity(tile) {
+            entity.despawn();
+        }
+    }
+}
+
+/// A tile's own ground meshes and alpha atlas, taken out of `Assets` before
+/// the tile is despawned so they can be freed on the task pool. See
+/// [`retire_tile_assets`].
+struct RetiredAssets {
+    meshes: Vec<Mesh>,
+    images: Vec<Image>,
+}
+
+/// Take a despawning tile's own ground meshes and alpha atlas out of
+/// `Assets`, when they have a main-world copy.
+///
+/// Under [`LiveEdits`] both keep their data in the main world (the editor
+/// writes into them), so despawning a tile left Bevy's `Assets::track_assets`
+/// to free them on the main thread in `PreUpdate`. A jump in the editor drops
+/// a 7x7 block at once, and that was a frame of up to 160 ms: every
+/// `track_assets` system holds the asset server's lock while it frees, so the
+/// others queue behind it. Taken out here, the handle drops later find nothing
+/// to free, and the data is freed on the task pool by [`drop_in_background`].
+///
+/// Only assets the tile owns alone are taken: the ground groups (one mesh
+/// each) and the atlas. Tileset textures are shared through a cache and have
+/// no main-world copy. Without [`LiveEdits`] none of these has a main-world
+/// copy either, and this finds nothing.
+fn retire_tile_assets(
+    tile: Entity,
+    children: &Query<&Children>,
+    grounds: &Query<&Mesh3d, With<TerrainGround>>,
+    atlases: &Query<&TileAlpha>,
+    meshes: &mut Assets<Mesh>,
+    images: &mut Assets<Image>,
+    into: &mut RetiredAssets,
+) {
+    if let Ok(atlas) = atlases.get(tile) {
+        into.images.extend(images.remove(atlas.0.id()));
+    }
+    let Ok(kids) = children.get(tile) else {
+        return;
+    };
+    for child in kids.iter() {
+        if let Ok(mesh) = grounds.get(child) {
+            into.meshes.extend(meshes.remove(mesh.0.id()));
+        }
+    }
+}
+
+/// Free what [`retire_tile_assets`] took, on the task pool.
+fn drop_in_background(retired: RetiredAssets) {
+    if retired.meshes.is_empty() && retired.images.is_empty() {
+        return;
+    }
+    AsyncComputeTaskPool::get().spawn(async move { drop(retired) }).detach();
+}
+
 /// Load the 3x3 around the character, and drop anything outside it.
+#[allow(clippy::too_many_arguments)]
 fn request_tiles(
     focus: Res<WorldFocus>,
     live: Res<LiveEdits>,
@@ -795,6 +891,16 @@ fn request_tiles(
     // the 3x3 below can never want, so without this exclusion the streamer
     // despawns it on the first frame and again every time one is spawned.
     tiles: Query<(Entity, &TerrainTile), Without<crate::render::globalwmo::GlobalWmo>>,
+    // What a despawning tile owns, for [`retire_tile_assets`], and the queue
+    // it is despawned from, for [`retire_tile`].
+    (children, grounds, atlases, mut meshes, mut images, mut retiring): (
+        Query<&Children>,
+        Query<&Mesh3d, With<TerrainGround>>,
+        Query<&TileAlpha>,
+        ResMut<Assets<Mesh>>,
+        ResMut<Assets<Image>>,
+        ResMut<RetiringTiles>,
+    ),
 ) {
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::TerrainRequest);
     if !focus.present {
@@ -824,9 +930,12 @@ fn request_tiles(
         loaded.ready.clear();
         loaded.building = None;
         loaded.present.clear();
+        let mut retired = RetiredAssets { meshes: Vec::new(), images: Vec::new() };
         for (entity, _) in &tiles {
-            commands.entity(entity).despawn();
+            retire_tile_assets(entity, &children, &grounds, &atlases, &mut meshes, &mut images, &mut retired);
+            retire_tile(&mut commands, &mut retiring, entity);
         }
+        drop_in_background(retired);
     }
     loaded.centre = Some((cx, cy));
 
@@ -846,12 +955,15 @@ fn request_tiles(
     // which has already despawned all of them — asking twice in one frame is
     // Bevy's "despawning an entity that does not exist" warning.
     if !changed_map {
+        let mut retired = RetiredAssets { meshes: Vec::new(), images: Vec::new() };
         for (entity, tile) in &tiles {
             if !wanted.contains(&tile.coord) {
-                commands.entity(entity).despawn();
+                retire_tile_assets(entity, &children, &grounds, &atlases, &mut meshes, &mut images, &mut retired);
+                retire_tile(&mut commands, &mut retiring, entity);
                 loaded.present.remove(&tile.coord);
             }
         }
+        drop_in_background(retired);
         // …and the finished loads that walked out of range before their turn
         // came. The loop above cannot see them: a `ready` tile has no
         // entity yet, so without this it stays in `present`, is handed over

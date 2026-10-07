@@ -63,3 +63,11 @@ diagnostics = []
 # Not on by default because the resulting binary needs Bevy's dynamic library
 # beside it, which makes it awkward to move — fine for iterating, wrong to ship.
 fast-dev = ["bevy/dynamic_linking"]
+# **Per-system run times, for attributing a long frame.** Turns on Bevy's
+# `trace` feature, which opens a `tracing` span around every system run, and
+# `ui::debug::census`, which times those spans. An attribution build: the
+# spans cost time of their own, so take before-and-after frame times with a
+# build without it.
+#
+#   cargo build --release -p vale-ide --features span-census
+span-census = ["diagnostics", "bevy/trace"]

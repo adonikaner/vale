@@ -362,10 +362,13 @@ pub fn fly(
     if !camera.active {
         return;
     }
-    // A key typed into one of the panels' fields belongs to the panel.
-    if wants.wants_keyboard_input() {
-        return;
-    }
+    // A key typed into one of the panels' fields belongs to the panel. Only
+    // the keys: bevy_egui reports keyboard input as wanted whenever any egui
+    // widget has focus, and a button that was clicked keeps the focus, so
+    // returning here also stopped the wheel and the right-drag after a press
+    // of the view bar's MAP button, until a click in the world took the focus
+    // away.
+    let typing = wants.wants_keyboard_input();
     // …and so does a wheel notch over one, and a drag that began on one. The
     // shell's own answer and not egui's — see the module comment.
     let in_world = crate::ui::over_the_world(&viewport, &wants, &windows);
@@ -397,7 +400,7 @@ pub fn fly(
     // The map view: north is at the top of the picture, so the right-drag
     // moves the map with the pointer and the keys move along the compass.
     if top.on {
-        top_down(&mut camera, &mut top, &keys, &motion, &scroll, &windows, &time, in_world, looking);
+        top_down(&mut camera, &mut top, &keys, &motion, &scroll, &windows, &time, in_world, looking, typing);
         return;
     }
 
@@ -420,6 +423,9 @@ pub fn fly(
     // cursor, which is what a person scrolling a list and flying at the same
     // time expects.
 
+    if typing {
+        return;
+    }
     // The horizontal frame the keys move in. The eye sits at `yaw` from the
     // focus, so the direction the view runs in is the opposite of it.
     let (sin, cos) = camera.yaw.sin_cos();
@@ -469,6 +475,8 @@ fn top_down(
     time: &Time,
     in_world: bool,
     steering: bool,
+    // Whether a panel has the keyboard; the keys are its then.
+    typing: bool,
 ) {
     // Yards per physical pixel. The world camera renders the whole window, and
     // the span is the picture's full height.
@@ -490,6 +498,10 @@ fn top_down(
         top.span = (top.span * step).clamp(*SPAN.start(), *SPAN.end());
     }
 
+    camera.wants_the_ground = true;
+    if typing {
+        return;
+    }
     let mut step = Vec3::ZERO;
     for (key, direction) in [
         (KeyCode::KeyW, Vec3::X),
@@ -510,7 +522,6 @@ fn top_down(
         }
         camera.target += step.normalize() * speed * time.delta_secs();
     }
-    camera.wants_the_ground = true;
 }
 
 /// …and write it onto the rig the whole client reads.

@@ -70,6 +70,9 @@ default = ["diagnostics"]
 # that window; what the feature buys here is the F4 window itself, which is the
 # only place the frame cost of an edited scene can be read.
 diagnostics = ["vale-client/diagnostics"]
+# Per-system run times printed at the end of a `--tour`. See the client's
+# feature of the same name.
+span-census = ["diagnostics", "vale-client/span-census"]
 # **The size-class census on the heap** — `src/heap.rs`, printed by `--tour`.
 # Off by default and deliberately not part of `diagnostics`: it is a
 # `#[global_allocator]`, so it is two relaxed atomics on every allocation the
