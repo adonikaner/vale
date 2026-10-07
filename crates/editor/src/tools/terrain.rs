@@ -1022,7 +1022,12 @@ pub(crate) fn carry(
     standing: impl IntoIterator<Item = ((u32, u32), vale_edit::ops::follow::Standing)>,
 ) -> usize {
     let mut carried = 0;
-    for (coord, was) in standing {
+    for (coord, mut was) in standing {
+        // A locked placement is left where it is: `follow` moves only the
+        // placements `was` names.
+        let locks = session.placement_locks();
+        was.doodads.retain(|(id, _)| !locks.doodads.contains(id));
+        was.buildings.retain(|(id, _)| !locks.wmos.contains(id));
         let key = session.key(coord);
         let Some(tile) = session.tiles.get_mut(&coord) else {
             continue;
@@ -1344,17 +1349,17 @@ fn remesh(
     // together is replaced together, which for the one thing that makes two
     // tiles stale at once is the whole point.
     mut batch: Local<u64>,
-    // **The revision each in-flight replacement was started at** — see the loop
-    // below, and `crate::session::EditSession::revision`.
+    // **The change count each in-flight replacement was started at** — see the
+    // loop below, and `crate::session::EditSession::changes`.
     mut started: Local<bevy::platform::collections::HashMap<(u32, u32), u64>>,
 ) {
     let Some(session) = session.as_mut() else {
         return;
     };
 
-    // **A replacement reads the file once, when it is started.** Anything
-    // published between then and the frame it lands is a change that read cannot
-    // have seen, and nothing downstream corrects it: the live sets — the
+    // **A replacement reads the file once, when it is started.** Any change
+    // made between then and the frame it lands is one that read cannot have
+    // seen, and nothing downstream corrects it: the live sets — the
     // ground's vertices, a placement's transform, a chunk's blend map — were
     // drained against the *outgoing* copy, which is despawned the moment the
     // incoming one appears. So the tile on screen goes back to whatever the
@@ -1375,8 +1380,11 @@ fn remesh(
             .any(|(_, tile, going)| tile.coord == *coord && going.is_some())
     });
     let mut behind: Vec<(u32, u32)> = Vec::new();
+    // Compared against every in-memory change and not only against publishes:
+    // a vertex drag changes the tile on every frame and publishes it only when
+    // the button comes up. See `crate::session::EditSession::changes`.
     for (coord, had) in started.iter() {
-        if *had != session.revision(*coord) {
+        if *had != session.changes(*coord) {
             behind.push(*coord);
         }
     }
@@ -1420,9 +1428,18 @@ fn remesh(
                 commands.entity(entity).insert(Replacing(*batch));
             }
         }
+        // **The read sees the tile as it is now.** A read is of the overlay,
+        // which is what was last published, and a tile can be ahead of that:
+        // a vertex drag publishes when the button comes up, while carrying the
+        // placements on the moved ground can mark the tile stale on any frame
+        // of it. Read from the older bytes, the replacement drew the ground
+        // part as it was before the drag.
+        if session.is_unpublished(coord) {
+            session.publish(coord);
+        }
         // What the read about to start will see. Taken here rather than when it
         // lands, so the error is on the side of one read too many.
-        started.insert(coord, session.revision(coord));
+        started.insert(coord, session.changes(coord));
         // **Without the despawn this time**, which is the half `LoadedTiles`'
         // own comment warns about: forgetting a tile without despawning it
         // draws the tile twice. [`swap`] is what pairs with it, one frame later

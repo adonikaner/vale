@@ -2,6 +2,8 @@
 //!
 //! ```text
 //! camera.rs    the free camera, which the client does not have
+//! context.rs   the right-click menu over the viewport: when a click opens
+//!              one and what it is about
 //! pick.rs      what the camera points at: the edited ground, and the
 //!              buildings and scenery standing on it
 //! places.rs    the zones of a map and the middle of each one, for the
@@ -79,6 +81,7 @@
 
 pub mod bookmarks;
 pub mod camera;
+pub mod context;
 pub mod favourites;
 pub mod jobs;
 pub mod lab;
@@ -233,6 +236,7 @@ impl Plugin for EditorPlugins {
             shot::ShotPlugin,
             tour::TourPlugin,
             camera::CameraPlugin,
+            context::ContextMenuPlugin,
             pick::PickPlugin,
             tools::ToolPlugin,
             stage::StagePlugin,

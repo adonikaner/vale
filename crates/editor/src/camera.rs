@@ -346,6 +346,11 @@ pub fn fly(
     mut steering: Local<bool>,
     time: Res<Time>,
     mut top: ResMut<TopDown>,
+    // How far the pointer has moved since the right button went down, in
+    // mouse units. Under `crate::context::CLICK_SLOP` the press is a click
+    // that asks for the right-click menu, and turns nothing.
+    mut travel: Local<f32>,
+    mut menu: ResMut<crate::context::ContextMenu>,
 ) {
     // **The editor drives while it is editing, and not one frame longer.** It
     // used to be `session.active.is_none()`, which is also true on the login
@@ -371,19 +376,32 @@ pub fn fly(
     // viewport with the button still down.
     if buttons.just_pressed(MouseButton::Right) {
         *steering = in_world;
+        *travel = 0.0;
+    }
+    if *steering {
+        *travel += motion.delta.length();
+    }
+    // A press and release that barely moved is a click, which opens the
+    // right-click menu at the pointer. See `crate::context`.
+    if buttons.just_released(MouseButton::Right) && *steering && *travel <= crate::context::CLICK_SLOP {
+        if let Some(at) = windows.single().ok().and_then(Window::cursor_position) {
+            menu.pending = Some(at);
+        }
     }
     if !buttons.pressed(MouseButton::Right) {
         *steering = false;
     }
+    // The view turns, or the map pans, only once the press has become a drag.
+    let looking = *steering && *travel > crate::context::CLICK_SLOP;
 
     // The map view: north is at the top of the picture, so the right-drag
     // moves the map with the pointer and the keys move along the compass.
     if top.on {
-        top_down(&mut camera, &mut top, &keys, &motion, &scroll, &windows, &time, in_world, *steering);
+        top_down(&mut camera, &mut top, &keys, &motion, &scroll, &windows, &time, in_world, looking);
         return;
     }
 
-    if *steering {
+    if looking {
         let delta = motion.delta;
         camera.yaw -= delta.x * LOOK_RATE;
         camera.pitch = (camera.pitch + delta.y * LOOK_RATE).clamp(-PITCH_LIMIT, PITCH_LIMIT);

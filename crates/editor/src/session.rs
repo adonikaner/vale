@@ -245,6 +245,23 @@ pub struct EditSession {
     /// left the building drawn where it had been dragged, while the file was
     /// already correct.
     revision: HashMap<(u32, u32), u64>,
+    /// How many times each open tile has changed in memory: every
+    /// [`Self::touched`], [`Self::shaded`], [`Self::moved`],
+    /// [`Self::moved_building`], [`Self::repainted`] and [`Self::publish`].
+    ///
+    /// [`Self::revision`] counts publishes, and some edits are not published
+    /// while they are being made: a selection of vertices dragged to a new
+    /// height or tilt is published when the mouse button comes up. A tile
+    /// re-read during such a drag is built from bytes the drag has moved on
+    /// from, and when it replaces the drawn tile the live patches are lost,
+    /// which drew the ground part old and part new. `remesh` compares this
+    /// counter instead, so a tile that changed while its re-read was in flight
+    /// is read again.
+    changes: HashMap<(u32, u32), u64>,
+    /// The open tiles whose in-memory bytes are ahead of what was last
+    /// published. `remesh` publishes such a tile before it asks for a re-read,
+    /// so the read sees every edit made so far.
+    unpublished: HashSet<(u32, u32)>,
     edited: Edited,
     /// The rows this project changes in the server's database.
     ///
@@ -369,6 +386,79 @@ pub struct EditSession {
     /// with no entry has not been read yet; an empty set is a tile with no
     /// locks.
     locks: HashMap<(u32, u32), vale_edit::ops::vertices::Selected>,
+    /// The locked doodads and WMOs of the open map, by `uniqueId`. `None`
+    /// until the first tile of the map is opened, which reads them; see
+    /// [`PlacementLocks`].
+    placement_locks: Option<PlacementLocks>,
+}
+
+/// The doodads and WMOs of one map that are locked: no tool selects, moves or
+/// deletes them, and moving the ground does not carry them. Kept by
+/// `uniqueId`, which every copy of a placement in the tiles it crosses shares
+/// and which does not change when other placements are added or removed.
+///
+/// Stored in the project as `editor\locks\<Map>.placements.txt`, one line per
+/// placement: `doodad <uniqueId>` or `wmo <uniqueId>`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PlacementLocks {
+    pub doodads: std::collections::BTreeSet<u32>,
+    pub wmos: std::collections::BTreeSet<u32>,
+}
+
+impl PlacementLocks {
+    /// The set for one kind of placement.
+    pub fn of(&self, kind: crate::tools::place::Kind) -> &std::collections::BTreeSet<u32> {
+        match kind {
+            crate::tools::place::Kind::Doodad => &self.doodads,
+            crate::tools::place::Kind::Wmo => &self.wmos,
+        }
+    }
+
+    fn of_mut(&mut self, kind: crate::tools::place::Kind) -> &mut std::collections::BTreeSet<u32> {
+        match kind {
+            crate::tools::place::Kind::Doodad => &mut self.doodads,
+            crate::tools::place::Kind::Wmo => &mut self.wmos,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.doodads.is_empty() && self.wmos.is_empty()
+    }
+
+    /// The stored form. See [`Self::from_text`].
+    pub fn to_text(&self) -> String {
+        let mut text = String::from(
+            "# Locked doodads and WMOs of one map, by uniqueId, written by the world editor.\n",
+        );
+        for id in &self.doodads {
+            text.push_str(&format!("doodad {id}\n"));
+        }
+        for id in &self.wmos {
+            text.push_str(&format!("wmo {id}\n"));
+        }
+        text
+    }
+
+    /// Read [`Self::to_text`]'s form. Blank lines and `#` lines are skipped; a
+    /// line that is neither `doodad <id>` nor `wmo <id>` is an error naming it.
+    pub fn from_text(text: &str) -> Result<PlacementLocks, String> {
+        let mut locks = PlacementLocks::default();
+        for (number, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let bad = || format!("line {}: {line:?} is not `doodad <id>` or `wmo <id>`", number + 1);
+            let (kind, id) = line.split_once(char::is_whitespace).ok_or_else(bad)?;
+            let id: u32 = id.trim().parse().map_err(|_| bad())?;
+            match kind {
+                "doodad" => locks.doodads.insert(id),
+                "wmo" => locks.wmos.insert(id),
+                _ => return Err(bad()),
+            };
+        }
+        Ok(locks)
+    }
 }
 
 /// What undo entry a server-row edit goes on, and what folds into it.
@@ -409,6 +499,8 @@ impl EditSession {
             moved: HashMap::default(),
             moved_buildings: HashMap::default(),
             revision: HashMap::default(),
+            changes: HashMap::default(),
+            unpublished: HashSet::default(),
             repaint: HashMap::default(),
             stale: HashSet::default(),
             unsaved: HashSet::default(),
@@ -444,6 +536,7 @@ impl EditSession {
             shipped: None,
             unchanged: None,
             locks: HashMap::default(),
+            placement_locks: None,
         }
     }
 
@@ -462,6 +555,9 @@ impl EditSession {
         if self.tiles.contains_key(&coord) {
             return true;
         }
+        // The map's locked placements, read with its first tile so that every
+        // reader after this can answer without the session borrowed mutably.
+        self.read_placement_locks();
         let path = self.key(coord).vpath();
         let bytes = match assets.with_archive(|chain| Ok(chain.read(&path).ok())) {
             Ok(Some(bytes)) => bytes,
@@ -509,6 +605,79 @@ impl EditSession {
             self.locks.insert(coord, set);
         }
         &self.locks[&coord]
+    }
+
+    /// Where the open map's locked placements are stored. See
+    /// [`PlacementLocks`].
+    fn placement_locks_vpath(&self) -> String {
+        format!(r"editor\locks\{}.placements.txt", self.map)
+    }
+
+    /// Read the open map's locked placements, if they have not been read.
+    fn read_placement_locks(&mut self) {
+        if self.placement_locks.is_some() {
+            return;
+        }
+        let vpath = self.placement_locks_vpath();
+        let locks = match self.project.read(&vpath) {
+            None => PlacementLocks::default(),
+            Some(bytes) => match PlacementLocks::from_text(&String::from_utf8_lossy(&bytes)) {
+                Ok(locks) => locks,
+                Err(e) => {
+                    self.status = format!("{vpath}: {e}; no placement is treated as locked");
+                    PlacementLocks::default()
+                }
+            },
+        };
+        self.placement_locks = Some(locks);
+    }
+
+    /// The open map's locked placements. Empty before the first tile is open.
+    pub fn placement_locks(&self) -> &PlacementLocks {
+        static NONE: std::sync::OnceLock<PlacementLocks> = std::sync::OnceLock::new();
+        self.placement_locks
+            .as_ref()
+            .unwrap_or_else(|| NONE.get_or_init(PlacementLocks::default))
+    }
+
+    /// Whether one placement is locked.
+    pub fn placement_locked(&self, kind: crate::tools::place::Kind, unique_id: u32) -> bool {
+        self.placement_locks().of(kind).contains(&unique_id)
+    }
+
+    /// Lock or unlock placements, and write the map's locks to the project at
+    /// once. Returns how many changed. Like the vertex locks, these are not on
+    /// the undo history.
+    pub fn set_placements_locked(
+        &mut self,
+        kind: crate::tools::place::Kind,
+        ids: impl IntoIterator<Item = u32>,
+        locked: bool,
+    ) -> usize {
+        self.read_placement_locks();
+        let mut locks = self.placement_locks.clone().unwrap_or_default();
+        let set = locks.of_mut(kind);
+        let mut changed = 0;
+        for id in ids {
+            let did = match locked {
+                true => set.insert(id),
+                false => set.remove(&id),
+            };
+            changed += usize::from(did);
+        }
+        if changed == 0 {
+            return 0;
+        }
+        let vpath = self.placement_locks_vpath();
+        let written = match locks.is_empty() {
+            true => self.project.revert(&vpath).map(|_| ()),
+            false => self.project.write(&vpath, locks.to_text().as_bytes()).map(|_| ()),
+        };
+        if let Err(e) = written {
+            self.status = format!("{vpath}: the locked placements were not saved: {e}");
+        }
+        self.placement_locks = Some(locks);
+        changed
     }
 
     /// A tile's locked vertices if they have been read, for a reader that
@@ -657,6 +826,7 @@ impl EditSession {
         self.tiles.clear();
         // The locks are the project's, read from its folder.
         self.locks.clear();
+        self.placement_locks = None;
         self.tables.clear();
         self.unsaved.clear();
         self.unsaved_tables.clear();
@@ -676,6 +846,7 @@ impl EditSession {
         self.history = History::new();
         self.table_revision += 1;
         self.revision.clear();
+        self.unpublished.clear();
         self.claimed = claimed_tiles(assets, &self.project, &self.map);
         self.claims_for = self.map.clone();
         // The maps are `Map.dbc`'s, which the project may change: a map the
@@ -817,6 +988,8 @@ impl EditSession {
         // Keyed by tile coordinate, which names a different tile on the next
         // map.
         self.locks.clear();
+        self.placement_locks = None;
+        self.unpublished.clear();
         self.stale.clear();
         self.map = name;
         self.map_id = id;
@@ -1541,6 +1714,26 @@ impl EditSession {
         }
         self.unsaved.insert(coord);
         *self.revision.entry(coord).or_default() += 1;
+        *self.changes.entry(coord).or_default() += 1;
+        self.unpublished.remove(&coord);
+    }
+
+    /// How many times a tile has changed in memory or been published. See
+    /// [`Self::changes`], the field.
+    pub fn changes(&self, coord: (u32, u32)) -> u64 {
+        self.changes.get(&coord).copied().unwrap_or_default()
+    }
+
+    /// Whether an open tile's bytes are ahead of what was last published.
+    pub fn is_unpublished(&self, coord: (u32, u32)) -> bool {
+        self.unpublished.contains(&coord)
+    }
+
+    /// Note an in-memory change to a tile, for [`Self::changes`] and
+    /// [`Self::is_unpublished`].
+    fn changed(&mut self, coord: (u32, u32)) {
+        *self.changes.entry(coord).or_default() += 1;
+        self.unpublished.insert(coord);
     }
 
     /// How many times this tile's bytes have been republished — see
@@ -1556,6 +1749,7 @@ impl EditSession {
         self.dirty.entry(coord).or_default().insert(chunk);
         self.regrow.entry(coord).or_default().insert(chunk);
         self.unsaved.insert(coord);
+        self.changed(coord);
     }
 
     /// …and for one chunk's shading, which moves a vertex attribute and
@@ -1569,6 +1763,7 @@ impl EditSession {
     pub fn shaded(&mut self, coord: (u32, u32), chunk: usize) {
         self.dirty.entry(coord).or_default().insert(chunk);
         self.unsaved.insert(coord);
+        self.changed(coord);
     }
 
     /// …and the same for one `MDDF` entry, whose drawn copy has to be put where
@@ -1576,12 +1771,14 @@ impl EditSession {
     pub fn moved(&mut self, coord: (u32, u32), index: usize) {
         self.moved.entry(coord).or_default().insert(index);
         self.unsaved.insert(coord);
+        self.changed(coord);
     }
 
     /// …and the same for one `MODF` entry.
     pub fn moved_building(&mut self, coord: (u32, u32), index: usize) {
         self.moved_buildings.entry(coord).or_default().insert(index);
         self.unsaved.insert(coord);
+        self.changed(coord);
     }
 
     /// …and for one chunk's paint, whose blend maps on the GPU are behind the
@@ -1589,6 +1786,7 @@ impl EditSession {
     pub fn repainted(&mut self, coord: (u32, u32), chunk: usize) {
         self.repaint.entry(coord).or_default().insert(chunk);
         self.unsaved.insert(coord);
+        self.changed(coord);
     }
 
     /// Write one tile to the project folder, or take it out of the folder
@@ -2223,6 +2421,8 @@ fn open(
         moved: HashMap::default(),
         moved_buildings: HashMap::default(),
         revision: HashMap::default(),
+        changes: HashMap::default(),
+        unpublished: HashSet::default(),
         repaint: HashMap::default(),
         stale: HashSet::default(),
         unsaved: HashSet::default(),
@@ -2258,6 +2458,7 @@ fn open(
         shipped: Some(shipped),
         unchanged,
         locks: HashMap::default(),
+        placement_locks: None,
     });
 }
 
@@ -2715,6 +2916,40 @@ fn follow_the_camera(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The map's locked placements read back as written, are saved to the
+    /// project as they change, and the file goes when the last one is
+    /// unlocked.
+    #[test]
+    fn locked_placements_are_stored_in_the_project() {
+        use crate::tools::place::Kind;
+        let text = "# comment
+doodad 7
+wmo 12
+
+doodad 3
+";
+        let locks = PlacementLocks::from_text(text).unwrap();
+        assert_eq!(locks.doodads.iter().copied().collect::<Vec<_>>(), [3, 7]);
+        assert_eq!(locks.wmos.iter().copied().collect::<Vec<_>>(), [12]);
+        assert_eq!(PlacementLocks::from_text(&locks.to_text()).unwrap(), locks);
+        assert!(PlacementLocks::from_text("tree 4").unwrap_err().starts_with("line 1:"));
+
+        let install =
+            std::env::temp_dir().join(format!("vale-session-placement-locks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let project = Project::open(&install, "default").unwrap();
+        let mut session = EditSession::for_tests(project);
+        assert_eq!(session.set_placements_locked(Kind::Doodad, [5, 6], true), 2);
+        assert_eq!(session.set_placements_locked(Kind::Doodad, [6], true), 0, "already locked");
+        assert!(session.placement_locked(Kind::Doodad, 5));
+        assert!(!session.placement_locked(Kind::Wmo, 5), "a doodad id is not a WMO id");
+        let vpath = session.placement_locks_vpath();
+        assert!(session.project.has(&vpath));
+        assert_eq!(session.set_placements_locked(Kind::Doodad, [5, 6], false), 2);
+        assert!(!session.project.has(&vpath), "no locks, no file");
+        let _ = std::fs::remove_dir_all(&install);
+    }
 
     /// A table a preview published is taken back out of the overlay, and the
     /// client is told to read its tables again. Discard depends on this: it

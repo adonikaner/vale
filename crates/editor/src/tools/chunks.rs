@@ -1404,6 +1404,41 @@ pub fn paste(
     written
 }
 
+/// The clip pasted centred on `at`, with the panel's parts, height and stitch
+/// settings, as one undo entry; the pasted footprint becomes the selection.
+/// Answers the status line. `Ctrl+V` and the right-click menu's Paste here
+/// both come here.
+pub fn paste_at(session: &mut EditSession, chunks: &mut Chunks, at: Cell) -> String {
+    if chunks.clip.is_empty() {
+        return "no chunks have been copied".to_string();
+    }
+    let (clip, parts, level) = (chunks.clip.clone(), chunks.parts, chunks.level);
+    let footprint: BTreeSet<Cell> = clip.footprint(at).map(|(cell, _)| cell).collect();
+    // The paste and its stitch are one entry, so one undo takes both back.
+    session
+        .history
+        .begin(format!("Paste {} chunks", clip.chunks.len()));
+    let written = paste_in(session, &clip, at, parts, level);
+    let stitched = match chunks.stitch_pasted && parts.heights && !written.is_empty() {
+        true => stitch_in(session, &footprint, chunks.stitch),
+        false => 0,
+    };
+    session.history.end();
+    let said = match stitched {
+        0 => format!("pasted onto {} of {} chunks", written.len(), clip.chunks.len()),
+        n => format!(
+            "pasted onto {} of {} chunks; the stitch changed {n} chunks",
+            written.len(),
+            clip.chunks.len()
+        ),
+    };
+    // What was asked for is selected, so the outline shows where the paste
+    // went even where it changed nothing.
+    chunks.select(footprint);
+    chunks.primary = Some(at);
+    said
+}
+
 /// [`paste`], recorded in whatever history entry is open.
 fn paste_in(
     session: &mut EditSession,
@@ -1698,34 +1733,7 @@ fn press(
         let status = match (chunks.clip.is_empty(), chunks.at) {
             (true, _) => "no chunks have been copied".to_string(),
             (false, None) => "no chunk under the pointer to paste onto".to_string(),
-            (false, Some(at)) => {
-                let (clip, parts, level) = (chunks.clip.clone(), chunks.parts, chunks.level);
-                let footprint: BTreeSet<Cell> = clip.footprint(at).map(|(cell, _)| cell).collect();
-                // The paste and its stitch are one entry, so one undo takes
-                // both back.
-                session
-                    .history
-                    .begin(format!("Paste {} chunks", clip.chunks.len()));
-                let written = paste_in(session, &clip, at, parts, level);
-                let stitched = match chunks.stitch_pasted && parts.heights && !written.is_empty() {
-                    true => stitch_in(session, &footprint, chunks.stitch),
-                    false => 0,
-                };
-                session.history.end();
-                let said = match stitched {
-                    0 => format!("pasted onto {} of {} chunks", written.len(), clip.chunks.len()),
-                    n => format!(
-                        "pasted onto {} of {} chunks; the stitch changed {n} chunks",
-                        written.len(),
-                        clip.chunks.len()
-                    ),
-                };
-                // What was asked for is selected, so the outline shows where
-                // the paste went even where it changed nothing.
-                chunks.select(footprint);
-                chunks.primary = Some(at);
-                said
-            }
+            (false, Some(at)) => paste_at(session, &mut chunks, at),
         };
         session.bypass_change_detection().status = status;
     }

@@ -153,7 +153,7 @@ impl Plugin for WmoToolPlugin {
                     // without telling the panel holding a copy of the record.
                     .after(super::shortcuts),
             )
-            .add_systems(Update, draw_marker);
+            .add_systems(Update, (draw_marker, draw_locked));
     }
 }
 
@@ -237,10 +237,45 @@ pub(crate) fn select(
     cursor: Res<Cursor>,
     // Tuples, because this system is past Bevy's limit of sixteen parameters.
     (gizmo, placing): (Res<super::gizmo::Gizmo>, Res<super::place::Placing>),
-    (keys, mut marquee): (Res<ButtonInput<KeyCode>>, ResMut<super::group::Marquee>),
+    (keys, mut marquee, mut menu): (
+        Res<ButtonInput<KeyCode>>,
+        ResMut<super::group::Marquee>,
+        ResMut<crate::context::ContextMenu>,
+    ),
 ) {
+    if *tool != Tool::Wmos || !state.editing() {
+        return;
+    }
+    // A right click: the building under the pointer, locked or not, for the
+    // menu, as the doodad pick does. See `crate::context`.
+    if menu.asked() {
+        let Some(session) = session else { return };
+        let hit = super::doodads::pointer_ray(&windows, &camera).and_then(|(origin, direction)| {
+            let boxed = super::doodads::boxes_hit(
+                parts.iter().filter_map(|(parent, at, aabb)| {
+                    let id = placements.get(parent.parent()).ok()?.unique_id;
+                    Some((id, at, aabb))
+                }),
+                origin,
+                direction,
+            );
+            solid_hit(&boxed, &session, &mut buildings, origin, direction)
+                .or_else(|| boxed.first().map(|&(_, unique_id, _)| unique_id))
+        });
+        menu.object = hit.map(|unique_id| {
+            let locked = session.placement_locked(super::place::Kind::Wmo, unique_id);
+            if !locked && !selection.holds(unique_id) {
+                if let Some(found) = find(&session, unique_id) {
+                    selection.only(Some(found));
+                    picked_primary(&mut held, &selection);
+                }
+            }
+            crate::context::Target::Wmo { unique_id, locked }
+        });
+        return;
+    }
     // A click that places must not also select — see [`super::place`].
-    if *tool != Tool::Wmos || !state.editing() || placing.armed() {
+    if placing.armed() {
         return;
     }
     if !buttons.just_pressed(MouseButton::Left) {
@@ -279,8 +314,10 @@ pub(crate) fn select(
         ray.origin,
         *ray.direction,
     );
+    // A locked building is not picked; see `crate::session::PlacementLocks`.
     let hit = solid_hit(&boxed, &session, &mut buildings, ray.origin, *ray.direction)
         .or_else(|| boxed.first().map(|&(_, unique_id, _)| unique_id))
+        .filter(|unique_id| !session.placement_locked(super::place::Kind::Wmo, *unique_id))
         .and_then(|unique_id| find(&session, unique_id));
     // The same four cases as the doodad pick — see `super::doodads::select`.
     let adding = super::group::shift(&keys);
@@ -350,7 +387,9 @@ fn enclose(
     for (coord, tile) in &session.tiles {
         let names = tile.building_names();
         for (index, record) in tile.building_list().iter().enumerate() {
-            if !shown.contains(&record.unique_id) {
+            if !shown.contains(&record.unique_id)
+                || session.placement_locked(super::place::Kind::Wmo, record.unique_id)
+            {
                 continue;
             }
             let world = vale_assets::world::adt::placement_to_world(record.position);
@@ -519,7 +558,9 @@ pub(crate) fn all_of(session: &EditSession, path: &str) -> Vec<Selected> {
         let names = tile.building_names();
         for (index, record) in tile.building_list().iter().enumerate() {
             let named = names.get(record.name_id as usize).cloned().unwrap_or_default();
-            if !named.eq_ignore_ascii_case(path) {
+            if !named.eq_ignore_ascii_case(path)
+                || session.placement_locked(super::place::Kind::Wmo, record.unique_id)
+            {
                 continue;
             }
             let world = vale_assets::world::adt::placement_to_world(record.position);
@@ -806,11 +847,16 @@ fn remove(
     state: Res<crate::playtest::Playtest>,
     keys: Res<ButtonInput<KeyCode>>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
+    mut menu: ResMut<crate::context::ContextMenu>,
 ) {
-    if *tool != Tool::Wmos || !state.editing() || wants.wants_keyboard_input() {
+    if *tool != Tool::Wmos || !state.editing() {
         return;
     }
-    if !keys.just_pressed(KeyCode::Delete) {
+    // The Delete key, or the right-click menu's Delete.
+    let asked = menu
+        .take_request(|r| *r == crate::context::Request::Delete)
+        .is_some();
+    if !asked && (wants.wants_keyboard_input() || !keys.just_pressed(KeyCode::Delete)) {
         return;
     }
     let Some(session) = session.as_mut() else {
@@ -1327,6 +1373,41 @@ fn resync(mut selection: ResMut<Selection>, session: Option<Res<EditSession>>) {
 /// cathedral, and a marker that size says nothing about which building it is
 /// around. The `MODF` box is drawn too, in a second colour, because it is a
 /// thing this tool edits and a thing that can be wrong.
+/// Box every part of a locked WMO in red while the tool is chosen. See
+/// `crate::session::PlacementLocks`.
+fn draw_locked(
+    mut gizmos: Gizmos<super::gizmo::EditorHandles>,
+    session: Option<Res<EditSession>>,
+    tool: Res<Tool>,
+    parts: Query<(&ChildOf, &GlobalTransform, &Aabb), With<WmoPart>>,
+    placements: Query<&WmoPlacement>,
+) {
+    if *tool != Tool::Wmos {
+        return;
+    }
+    let Some(session) = session else { return };
+    let locked = &session.placement_locks().wmos;
+    if locked.is_empty() {
+        return;
+    }
+    for (parent, transform, aabb) in &parts {
+        let Ok(placement) = placements.get(parent.parent()) else {
+            continue;
+        };
+        if !locked.contains(&placement.unique_id) {
+            continue;
+        }
+        let centre = transform.affine().transform_point3(Vec3::from(aabb.center));
+        let half = Vec3::from(aabb.half_extents) * transform.scale();
+        gizmos.cube(
+            Transform::from_translation(centre)
+                .with_rotation(transform.rotation())
+                .with_scale(half * 2.0),
+            super::doodads::LOCKED.with_alpha(0.5),
+        );
+    }
+}
+
 fn draw_marker(
     // In front of the world — see [`super::gizmo::EditorHandles`]. This is
     // the case that made it necessary: a cathedral's box is drawn entirely

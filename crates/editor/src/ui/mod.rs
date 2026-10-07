@@ -11,6 +11,8 @@
 //! rail.rs       the subject list: what the editor edits now and what it will
 //!               edit
 //! inspector.rs  the panel beside the viewport: the chosen tool's controls
+//! context.rs    the right-click menu over the viewport: each world tool's
+//!               one-click operations on what was clicked
 //! thumbnails.rs the pictures the inspector draws in a list, decoded a few per
 //!               frame
 //! data.rs       the workspace a table is edited in, which replaces the
@@ -166,6 +168,7 @@
 pub mod bands;
 pub mod behaviour;
 pub mod conditions;
+pub mod context;
 pub mod creatures;
 pub mod data;
 pub mod displays;
@@ -439,6 +442,10 @@ pub struct Editing<'w> {
     /// The command line, for the two flags that open something a press would
     /// otherwise have to open: `--projects` here, `--row` in the browser.
     pub(crate) args: Res<'w, crate::Args>,
+    /// The right-click menu over the viewport. See [`context`].
+    pub(crate) menu: ResMut<'w, crate::context::ContextMenu>,
+    /// What the doodad and WMO tools have copied, for the menu's Paste here.
+    pub(crate) clipboard: Res<'w, crate::tools::group::Clipboard>,
 }
 
 /// What the view bar reads and writes, as one parameter.
@@ -1021,6 +1028,10 @@ fn draw(
     let world_rect = viewport.rect.unwrap_or(egui::Rect::NOTHING);
     let corner = rail::pointer(&ctx, world_rect, &mut tool, &mut viewing.rail, &viewing.icons);
     viewport.floating.extend(corner);
+    // The right-click menu, on the root context so it is not clipped to a
+    // panel. Its area is added to the floating list with the other areas at
+    // the end of this function.
+    context::draw(&ctx, session, &mut editing, &assets, viewport.zoom);
 
     // The creature template's own window, drawn on the root context like the
     // map window: a window inside a panel is clipped to the panel, and this

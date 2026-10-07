@@ -250,7 +250,7 @@ impl Plugin for DoodadToolPlugin {
                     // a drag.
                     .after(crate::pick::aim),
             )
-            .add_systems(Update, draw_marker);
+            .add_systems(Update, (draw_marker, draw_locked));
     }
 }
 
@@ -324,11 +324,36 @@ pub(crate) fn select(
     gizmo: Res<super::gizmo::Gizmo>,
     placing: Res<super::place::Placing>,
     // A tuple, because this system is at Bevy's limit of sixteen parameters.
-    (keys, mut marquee): (Res<ButtonInput<KeyCode>>, ResMut<super::group::Marquee>),
+    (keys, mut marquee, mut menu): (
+        Res<ButtonInput<KeyCode>>,
+        ResMut<super::group::Marquee>,
+        ResMut<crate::context::ContextMenu>,
+    ),
 ) {
+    if *tool != Tool::Doodads || !state.editing() {
+        return;
+    }
+    // A right click: what is under the pointer, locked or not, for the menu.
+    // An unlocked placement outside the selection becomes the selection, so
+    // the menu's actions apply to it. See `crate::context`.
+    if menu.asked() {
+        let Some(session) = session else { return };
+        let hit = pointer_ray(&windows, &camera)
+            .and_then(|(origin, direction)| nearest(&drawn, &session, &mut models, origin, direction));
+        menu.object = hit.map(|unique_id| {
+            let locked = session.placement_locked(super::place::Kind::Doodad, unique_id);
+            if !locked && !selection.holds(unique_id) {
+                if let Some(found) = find(&session, unique_id) {
+                    selection.only(Some(found));
+                }
+            }
+            crate::context::Target::Doodad { unique_id, locked }
+        });
+        return;
+    }
     // A click that places must not also select. `place::commit` runs first
     // and has already taken it — see that module, where the ordering is stated.
-    if *tool != Tool::Doodads || !state.editing() || placing.armed() {
+    if placing.armed() {
         return;
     }
     if !buttons.just_pressed(MouseButton::Left) {
@@ -363,7 +388,10 @@ pub(crate) fn select(
         return;
     };
 
+    // A locked placement is not picked: the click is treated as landing on
+    // nothing. See `crate::session::PlacementLocks`.
     let hit = nearest(&drawn, &session, &mut models, ray.origin, *ray.direction)
+        .filter(|unique_id| !session.placement_locked(super::place::Kind::Doodad, *unique_id))
         .and_then(|unique_id| find(&session, unique_id));
     let adding = super::group::shift(&keys);
     held.dragging = false;
@@ -400,6 +428,19 @@ pub(crate) fn select(
     held.group_was = selection.also.clone();
 }
 
+/// The pointer's ray through the world camera, in Bevy's axes. Physical
+/// pixels, for the reason `crate::pick::aim` gives beside its own copy.
+pub(crate) fn pointer_ray(
+    windows: &Query<&Window>,
+    camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
+) -> Option<(Vec3, Vec3)> {
+    let window = windows.single().ok()?;
+    let at = window.cursor_position()?;
+    let (camera, eye) = camera.single().ok()?;
+    let ray = camera.viewport_to_world(eye, at * window.scale_factor()).ok()?;
+    Some((ray.origin, *ray.direction))
+}
+
 /// Select everything drawn whose origin is inside a finished rectangle.
 ///
 /// Only drawn placements are considered, because only drawn ones can be
@@ -433,7 +474,9 @@ fn enclose(
     for (coord, tile) in &session.tiles {
         let names = tile.model_names();
         for (index, record) in tile.doodad_list().iter().enumerate() {
-            if !shown.contains(&record.unique_id) {
+            if !shown.contains(&record.unique_id)
+                || session.placement_locked(super::place::Kind::Doodad, record.unique_id)
+            {
                 continue;
             }
             let world = vale_assets::world::adt::placement_to_world(record.position);
@@ -673,7 +716,9 @@ pub(crate) fn all_of(session: &EditSession, path: &str) -> Vec<Selected> {
                 .get(record.name_id as usize)
                 .map(|name| vale_assets::world::m2::model_path(name))
                 .unwrap_or_default();
-            if !named.eq_ignore_ascii_case(path) {
+            if !named.eq_ignore_ascii_case(path)
+                || session.placement_locked(super::place::Kind::Doodad, record.unique_id)
+            {
                 continue;
             }
             let world = vale_assets::world::adt::placement_to_world(record.position);
@@ -855,6 +900,40 @@ pub(crate) fn lean_onto_ground(session: &EditSession, at: &mut Selected) -> bool
 }
 
 /// …and the inverse: stand it upright, keeping its turn.
+/// Align every selected doodad to the slope under its own origin, or stand
+/// every one upright, as one undo entry: the doodad panel's two slope buttons
+/// over the whole selection. Returns how many were written.
+pub(crate) fn lean_selection(
+    session: &mut EditSession,
+    selection: &mut Selection,
+    held: &mut Held,
+    upright: bool,
+) -> usize {
+    let label = match upright {
+        true => "Stand doodads upright",
+        false => "Align doodads to slope",
+    };
+    session.history.begin(label);
+    let mut written = 0;
+    let members = selection.at.iter_mut().chain(selection.also.iter_mut());
+    for member in members {
+        match upright {
+            true => stand_upright(member),
+            false => {
+                if !lean_onto_ground(session, member) {
+                    continue;
+                }
+            }
+        }
+        write_record(session, member);
+        session.publish(member.tile);
+        written += 1;
+    }
+    held.members_moved();
+    session.history.end();
+    written
+}
+
 pub(crate) fn stand_upright(at: &mut Selected) {
     let turns = vale_assets::world::adt::placement_euler_to_world(at.record.rotation);
     at.record.rotation =
@@ -1080,11 +1159,16 @@ fn remove(
     state: Res<crate::playtest::Playtest>,
     keys: Res<ButtonInput<KeyCode>>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
+    mut menu: ResMut<crate::context::ContextMenu>,
 ) {
-    if *tool != Tool::Doodads || !state.editing() || wants.wants_keyboard_input() {
+    if *tool != Tool::Doodads || !state.editing() {
         return;
     }
-    if !keys.just_pressed(KeyCode::Delete) {
+    // The Delete key, or the right-click menu's Delete.
+    let asked = menu
+        .take_request(|r| *r == crate::context::Request::Delete)
+        .is_some();
+    if !asked && (wants.wants_keyboard_input() || !keys.just_pressed(KeyCode::Delete)) {
         return;
     }
     let Some(session) = session.as_mut() else {
@@ -1470,6 +1554,40 @@ fn draw_marker(
     let foot = axes::to_bevy(world);
     gizmos.line(foot, foot + Vec3::Y * 2.0, colour);
 }
+
+/// Box every locked doodad in red while the tool is chosen, so a click that
+/// selects nothing is explained. See `crate::session::PlacementLocks`.
+fn draw_locked(
+    mut gizmos: Gizmos<super::gizmo::EditorHandles>,
+    session: Option<Res<EditSession>>,
+    tool: Res<Tool>,
+    drawn: Query<(&Doodad, &GlobalTransform, &Aabb)>,
+) {
+    if *tool != Tool::Doodads {
+        return;
+    }
+    let Some(session) = session else { return };
+    let locked = &session.placement_locks().doodads;
+    if locked.is_empty() {
+        return;
+    }
+    for (doodad, transform, aabb) in &drawn {
+        if !locked.contains(&doodad.unique_id) {
+            continue;
+        }
+        let centre = transform.affine().transform_point3(Vec3::from(aabb.center));
+        let half = Vec3::from(aabb.half_extents) * transform.scale();
+        gizmos.cube(
+            Transform::from_translation(centre)
+                .with_rotation(transform.rotation())
+                .with_scale(half * 2.0),
+            LOCKED,
+        );
+    }
+}
+
+/// The colour a locked placement is outlined in.
+pub(crate) const LOCKED: Color = Color::srgba(1.0, 0.35, 0.3, 0.8);
 
 #[cfg(test)]
 mod tests {

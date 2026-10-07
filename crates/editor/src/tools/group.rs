@@ -181,21 +181,35 @@ fn clipboard(
         &GlobalTransform,
         &bevy::camera::primitives::Aabb,
     )>,
+    // A right-click menu item asking for the same thing as a key, and for a
+    // paste, where. See `crate::context::Request`.
+    mut menu: ResMut<crate::context::ContextMenu>,
 ) {
-    if !state.editing() || wants.wants_keyboard_input() || typing.active {
+    use crate::context::Request;
+    if !state.editing() {
         return;
     }
-    if !keys.pressed(KeyCode::ControlLeft) && !keys.pressed(KeyCode::ControlRight) {
-        return;
-    }
+    let asked = match *tool {
+        Tool::Doodads | Tool::Wmos => {
+            menu.take_request(|r| matches!(r, Request::Copy | Request::Paste(_) | Request::Duplicate))
+        }
+        _ => None,
+    };
+    let control = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    let keyed = control && !wants.wants_keyboard_input() && !typing.active;
     let (copy, paste, duplicate) = (
-        keys.just_pressed(KeyCode::KeyC),
-        keys.just_pressed(KeyCode::KeyV),
-        keys.just_pressed(KeyCode::KeyD),
+        asked == Some(Request::Copy) || (keyed && keys.just_pressed(KeyCode::KeyC)),
+        matches!(asked, Some(Request::Paste(_))) || (keyed && keys.just_pressed(KeyCode::KeyV)),
+        asked == Some(Request::Duplicate) || (keyed && keys.just_pressed(KeyCode::KeyD)),
     );
     if !copy && !paste && !duplicate {
         return;
     }
+    // Where a paste lands: the menu's point, or the pointer's.
+    let paste_at = match asked {
+        Some(Request::Paste(at)) => Some(at),
+        _ => cursor.surface,
+    };
     let Some(session) = session.as_mut() else {
         return;
     };
@@ -217,7 +231,7 @@ fn clipboard(
                 }
             }
             if paste {
-                let Some(anchor) = cursor.surface else {
+                let Some(anchor) = paste_at else {
                     session.status = "no surface under the pointer; nothing pasted".to_string();
                     return;
                 };
@@ -247,7 +261,7 @@ fn clipboard(
                 }
             }
             if paste {
-                let Some(anchor) = cursor.surface else {
+                let Some(anchor) = paste_at else {
                     session.status = "no surface under the pointer; nothing pasted".to_string();
                     return;
                 };

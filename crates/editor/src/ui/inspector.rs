@@ -2288,7 +2288,14 @@ fn wmo(
                 session.status = format!("{} selected", selection.count());
             }
         }
+        Group::Lock => {
+            let ids: Vec<u32> = selection.members().map(|at| at.unique_id).collect();
+            let n = session.set_placements_locked(Kind::Wmo, ids, true);
+            selection.only(None);
+            session.status = format!("locked {n} WMOs");
+        }
     }
+    locked_placements(ui, session, Kind::Wmo);
     let grouped = selection.count() > 1;
     let Some(at) = selection.at.as_mut() else {
         theme::note(
@@ -4121,6 +4128,36 @@ enum Group {
     Clear,
     /// Add every placement of the primary's model in the open tiles.
     AllOfModel,
+    /// Lock every selected placement and drop the selection.
+    Lock,
+}
+
+/// How many doodads or WMOs of the map are locked, and a button that unlocks
+/// them all. See `crate::session::PlacementLocks`.
+fn locked_placements(ui: &mut egui::Ui, session: &mut EditSession, kind: Kind) {
+    let noun = match kind {
+        Kind::Doodad => "doodads",
+        Kind::Wmo => "WMOs",
+    };
+    let locked = session.placement_locks().of(kind).len();
+    if locked == 0 {
+        return;
+    }
+    ui.horizontal(|ui| {
+        theme::note(ui, format!("{locked} {noun} locked on this map, marked red"));
+        if ui
+            .small_button("Unlock all")
+            .on_hover_text(format!(
+                "Unlock every locked {} on this map. Right-click one to unlock it alone.",
+                noun.trim_end_matches('s')
+            ))
+            .clicked()
+        {
+            let ids: Vec<u32> = session.placement_locks().of(kind).iter().copied().collect();
+            let n = session.set_placements_locked(kind, ids, false);
+            session.status = format!("unlocked {n} {noun}");
+        }
+    });
 }
 
 /// The lines about a selection of several, above the primary's own numbers:
@@ -4173,6 +4210,17 @@ fn group(ui: &mut egui::Ui, chosen: &[&str], noun: &str) -> Group {
             .clicked()
         {
             asked = Group::AllOfModel;
+        }
+        if ui
+            .small_button("Lock")
+            .on_hover_text(format!(
+                "Lock the selected {noun}: no tool selects, moves or deletes them, and \
+                 moving the ground does not carry them, until they are unlocked. \
+                 Right-click a locked one to unlock it."
+            ))
+            .clicked()
+        {
+            asked = Group::Lock;
         }
         if chosen.len() > 1 {
             if ui
@@ -4239,7 +4287,14 @@ fn doodad(
                 session.status = format!("{} selected", selection.count());
             }
         }
+        Group::Lock => {
+            let ids: Vec<u32> = selection.members().map(|at| at.unique_id).collect();
+            let n = session.set_placements_locked(Kind::Doodad, ids, true);
+            selection.only(None);
+            session.status = format!("locked {n} doodads");
+        }
     }
+    locked_placements(ui, session, Kind::Doodad);
     let grouped = selection.count() > 1;
     let Selection { at, align, .. } = &mut *selection;
     let Some(at) = at.as_mut() else {
