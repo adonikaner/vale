@@ -1144,19 +1144,9 @@ fn summary(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn, edited: 
 
     // The few columns worth reading at a glance, from the row the map query
     // already carries, so this shows something before the whole row has been
-    // fetched. The model beside them, from the same display id.
+    // fetched. The model is drawn at the panel's right edge, from the same
+    // display id.
     ui.horizontal(|ui| {
-        let (rect, _) =
-            ui.allocate_exact_size(egui::Vec2::splat(SUMMARY_PICTURE), egui::Sense::hover());
-        match worn(subject, spawn.display_id) {
-            Some(worn) => {
-                let key = subject.portraits.want_worn(&worn);
-                crate::portraits::paint(ui, subject.portraits, &key, rect);
-            }
-            None => {
-                ui.painter().rect_filled(rect, 3.0, theme::DEAD);
-            }
-        }
         egui::Grid::new("creature-summary")
             .num_columns(2)
             .spacing([8.0, 2.0])
@@ -1176,6 +1166,19 @@ fn summary(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn, edited: 
                     ui.end_row();
                 }
             });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            let (rect, _) =
+                ui.allocate_exact_size(egui::Vec2::splat(SUMMARY_PICTURE), egui::Sense::hover());
+            match worn(subject, spawn.display_id) {
+                Some(worn) => {
+                    let key = subject.portraits.want_worn(&worn);
+                    crate::portraits::paint(ui, subject.portraits, &key, rect);
+                }
+                None => {
+                    ui.painter().rect_filled(rect, 3.0, theme::DEAD);
+                }
+            }
+        });
     });
 }
 

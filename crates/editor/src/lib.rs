@@ -182,6 +182,9 @@ pub fn run() {
     if args.navmesh {
         app.insert_resource(navmesh::Navmesh::shown());
     }
+    if args.map_view {
+        app.insert_resource(camera::TopDown::shown());
+    }
     // Inserted before `EditorPlugins` and before the client's own
     // `init_resource`, which keeps a value that is already present. See
     // [`REACH`].
@@ -449,6 +452,9 @@ pub struct Args {
     /// `--navmesh`: start with the server's navmesh drawn over the ground,
     /// which is otherwise the view bar's NAV button. See [`navmesh`].
     pub navmesh: bool,
+    /// `--map-view`: start in the top-down map view, which is otherwise the
+    /// view bar's MAP button. See [`camera::TopDown`].
+    pub map_view: bool,
     /// `--character <name>`: who a playtest logs in as.
     ///
     /// A default for [`playtest::Login`]'s field rather than a setting of its
@@ -948,6 +954,7 @@ impl Default for Args {
             show_map: false,
             new_map: false,
             navmesh: false,
+            map_view: false,
             shot: None,
             after: None,
             tour: None,
@@ -1081,6 +1088,7 @@ impl Args {
                     parsed.new_map = true;
                 }
                 "--navmesh" => parsed.navmesh = true,
+                "--map-view" => parsed.map_view = true,
                 "--enclose" => {
                     parsed.enclose = args.next().as_deref().and_then(parse_rect);
                 }

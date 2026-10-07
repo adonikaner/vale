@@ -127,6 +127,164 @@ impl EditorCamera {
     }
 }
 
+/// The top-down map view: the world drawn straight down through an
+/// orthographic projection with north at the top, as the game's minimap is.
+/// The view bar's MAP button switches it; `--map-view` starts with it on.
+///
+/// While it is on, the editor's camera looks straight down from just above the
+/// focus, the wheel sets [`Self::span`], a right-drag moves the map under the
+/// pointer, and W, A, S and D move north, west, south and east. Q and E do
+/// nothing: the focus is put on the ground under it every frame, so the slab
+/// of world that is drawn follows the terrain. The tools work as they do in
+/// the perspective view, because the pick casts its ray through the same
+/// camera.
+///
+/// The eye stays one yard above the focus and the projection draws from
+/// [`ABOVE`] yards above it to [`BELOW`] yards below. Bevy culls a doodad by
+/// its distance from the eye (`VisibilityRange`), so an eye far above the
+/// ground would remove every small doodad from the picture; an orthographic
+/// view does not need the eye to be far away to see a wide area.
+#[derive(Resource, Debug)]
+pub struct TopDown {
+    pub on: bool,
+    /// Yards from the top of the picture to the bottom.
+    pub span: f32,
+    /// What the view replaced while it is on, restored when it is turned off.
+    held: Option<Held>,
+}
+
+impl TopDown {
+    /// The map view switched on, for `--map-view`.
+    pub fn shown() -> TopDown {
+        TopDown {
+            on: true,
+            ..TopDown::default()
+        }
+    }
+}
+
+impl Default for TopDown {
+    fn default() -> TopDown {
+        TopDown {
+            on: false,
+            span: vale_assets::world::adt::TILE_SIZE,
+            held: None,
+        }
+    }
+}
+
+/// The perspective projection and the world switches the map view turns off.
+#[derive(Debug)]
+struct Held {
+    projection: Projection,
+    fog: bool,
+    sky_dome: bool,
+    stars: bool,
+    celestial: bool,
+    weather: bool,
+}
+
+/// Yards above the focus the map view still draws. Peaks higher than this
+/// above the ground under the focus are cut off.
+const ABOVE: f32 = 600.0;
+
+/// Yards below the focus the map view still draws.
+const BELOW: f32 = 1500.0;
+
+/// The depth of the slab the map view draws. The pick follows its ray this far
+/// in an orthographic view, because the ray starts at the top of the slab; see
+/// `pick::range`.
+pub const MAP_DEPTH: f32 = ABOVE + BELOW;
+
+/// The narrowest and widest [`TopDown::span`]: from about five chunks to the
+/// whole open block.
+const SPAN: std::ops::RangeInclusive<f32> = 20.0..=crate::OPEN_BLOCK;
+
+/// Switch the world camera between its perspective projection and the map
+/// view's orthographic one, and the sky, fog and weather off and on with it.
+///
+/// Runs in [`crate::playtest`]'s chain after the playtest state is decided and
+/// before `keep_view_settings` stores the editor's view settings: a playtest
+/// started with the map view on turns it off here first, so the settings
+/// stored for editing are the ones the person had before the map view, and
+/// the playtest starts in perspective.
+pub fn look_down(
+    state: Res<Playtest>,
+    mut top: ResMut<TopDown>,
+    mut world: ResMut<vale_client::render::tuning::WorldTuning>,
+    mut cameras: Query<&mut Projection, With<vale_client::world::camera::WorldCamera>>,
+) {
+    if !state.editing() && top.on {
+        top.on = false;
+    }
+    let Ok(mut projection) = cameras.single_mut() else {
+        return;
+    };
+    match (top.on, top.held.is_some()) {
+        (true, false) => {
+            top.held = Some(Held {
+                projection: projection.clone(),
+                fog: world.fog,
+                sky_dome: world.sky_dome,
+                stars: world.stars,
+                celestial: world.celestial,
+                weather: world.weather,
+            });
+            switch_off_for_map_view(&mut world);
+            *projection = orthographic(top.span);
+        }
+        (true, true) => {
+            // Written only when the span changed: a `Projection` marked changed
+            // re-derives the frustum and the view uniforms.
+            if let Projection::Orthographic(current) = &*projection {
+                let changed = !matches!(
+                    current.scaling_mode,
+                    bevy::camera::ScalingMode::FixedVertical { viewport_height }
+                        if (viewport_height - top.span).abs() < 1e-3
+                );
+                if changed {
+                    *projection = orthographic(top.span);
+                }
+            }
+        }
+        (false, true) => {
+            let held = top.held.take().expect("checked above");
+            *projection = held.projection;
+            world.fog = held.fog;
+            world.sky_dome = held.sky_dome;
+            world.stars = held.stars;
+            world.celestial = held.celestial;
+            world.weather = held.weather;
+        }
+        (false, false) => {}
+    }
+}
+
+/// Turn off the world switches the map view has no use for.
+///
+/// The sky, stars, sun and moons are drawn on a dome around the eye and show
+/// nothing useful looking straight down. Fog is measured from the eye and would
+/// grey the picture by distance from the focus. Weather is drawn in a volume
+/// around the eye. The view bar's echo uses this too, so that `--map-view`
+/// does not also print these five as `--without`.
+pub fn switch_off_for_map_view(world: &mut vale_client::render::tuning::WorldTuning) {
+    world.fog = false;
+    world.sky_dome = false;
+    world.stars = false;
+    world.celestial = false;
+    world.weather = false;
+}
+
+/// The map view's projection for a picture `span` yards tall.
+fn orthographic(span: f32) -> Projection {
+    Projection::Orthographic(OrthographicProjection {
+        near: -ABOVE,
+        far: BELOW,
+        scaling_mode: bevy::camera::ScalingMode::FixedVertical { viewport_height: span },
+        ..OrthographicProjection::default_3d()
+    })
+}
+
 /// How much faster a held shift is.
 pub const SPRINT: f32 = 6.0;
 
@@ -150,7 +308,7 @@ pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<EditorCamera>().add_systems(
+        app.init_resource::<EditorCamera>().init_resource::<TopDown>().add_systems(
             Update,
             (fly, drive)
                 .chain()
@@ -187,6 +345,7 @@ pub fn fly(
     // Whether the right-drag now in progress was started over the world.
     mut steering: Local<bool>,
     time: Res<Time>,
+    mut top: ResMut<TopDown>,
 ) {
     // **The editor drives while it is editing, and not one frame longer.** It
     // used to be `session.active.is_none()`, which is also true on the login
@@ -216,6 +375,14 @@ pub fn fly(
     if !buttons.pressed(MouseButton::Right) {
         *steering = false;
     }
+
+    // The map view: north is at the top of the picture, so the right-drag
+    // moves the map with the pointer and the keys move along the compass.
+    if top.on {
+        top_down(&mut camera, &mut top, &keys, &motion, &scroll, &windows, &time, in_world, *steering);
+        return;
+    }
+
     if *steering {
         let delta = motion.delta;
         camera.yaw -= delta.x * LOOK_RATE;
@@ -264,8 +431,72 @@ pub fn fly(
     }
 }
 
+/// The map view's half of [`fly`].
+///
+/// The right-drag moves the focus by the pointer's movement at the picture's
+/// scale, so the ground under the pointer stays under it. The keys move along
+/// the compass at a speed proportional to the span, so crossing the picture
+/// takes the same time at every zoom. The wheel sets the span. The focus is
+/// asked onto the ground every frame, which `session::drop_to_the_ground`
+/// answers wherever the ground under it is open; over a hole, or past the open
+/// tiles, it keeps its last height.
+#[allow(clippy::too_many_arguments)]
+fn top_down(
+    camera: &mut EditorCamera,
+    top: &mut TopDown,
+    keys: &ButtonInput<KeyCode>,
+    motion: &AccumulatedMouseMotion,
+    scroll: &AccumulatedMouseScroll,
+    windows: &Query<&Window>,
+    time: &Time,
+    in_world: bool,
+    steering: bool,
+) {
+    // Yards per physical pixel. The world camera renders the whole window, and
+    // the span is the picture's full height.
+    let height = windows
+        .single()
+        .map(|window| window.physical_height() as f32)
+        .unwrap_or(1.0)
+        .max(1.0);
+    let yards_per_pixel = top.span / height;
+    if steering {
+        // North (+X) is up and west (+Y) is left, so a drag to the right moves
+        // the focus west and a drag down moves it north.
+        camera.target.x += motion.delta.y * yards_per_pixel;
+        camera.target.y += motion.delta.x * yards_per_pixel;
+    }
+
+    if in_world && scroll.delta.y != 0.0 && crate::tools::Wheel::held(keys).is_none() {
+        let step = 1.0 - scroll.delta.y * 0.1;
+        top.span = (top.span * step).clamp(*SPAN.start(), *SPAN.end());
+    }
+
+    let mut step = Vec3::ZERO;
+    for (key, direction) in [
+        (KeyCode::KeyW, Vec3::X),
+        (KeyCode::KeyS, -Vec3::X),
+        (KeyCode::KeyA, Vec3::Y),
+        (KeyCode::KeyD, -Vec3::Y),
+    ] {
+        if keys.pressed(key) {
+            step += direction;
+        }
+    }
+    if step != Vec3::ZERO {
+        // Half the picture's height a second, and a held shift as in the
+        // perspective view.
+        let mut speed = top.span * 0.5;
+        if keys.pressed(KeyCode::ShiftLeft) {
+            speed *= SPRINT;
+        }
+        camera.target += step.normalize() * speed * time.delta_secs();
+    }
+    camera.wants_the_ground = true;
+}
+
 /// …and write it onto the rig the whole client reads.
-fn drive(camera: Res<EditorCamera>, mut rig: ResMut<CameraRig>) {
+fn drive(camera: Res<EditorCamera>, top: Res<TopDown>, mut rig: ResMut<CameraRig>) {
     if !camera.active {
         return;
     }
@@ -273,6 +504,15 @@ fn drive(camera: Res<EditorCamera>, mut rig: ResMut<CameraRig>) {
     // The rig lifts its focus to the head height of whatever it is following,
     // and it is following nothing here.
     rig.target_height = 0.0;
+    if top.on {
+        // Straight down from one yard above the focus, with a yaw of pi, which
+        // `world::camera::place` turns into north at the top of the picture.
+        // See [`TopDown`] for why the eye is kept close to the ground.
+        rig.yaw = std::f32::consts::PI;
+        rig.pitch = std::f32::consts::FRAC_PI_2;
+        rig.distance = 1.0;
+        return;
+    }
     rig.yaw = camera.yaw;
     rig.pitch = camera.pitch;
     // **`distance` and not `reach`** — see the module comment. `reach` is

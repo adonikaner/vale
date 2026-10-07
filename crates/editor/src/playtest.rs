@@ -268,6 +268,10 @@ impl Plugin for PlaytestPlugin {
                 (
                     on_the_command_line,
                     follow_the_session,
+                    // Between the two: a playtest turns the map view off, and
+                    // the view settings stored for editing must be the ones
+                    // from before the map view. See `crate::camera::look_down`.
+                    crate::camera::look_down,
                     keep_view_settings,
                     arrange,
                     stand_the_world_down,

@@ -178,8 +178,19 @@ fn raise(
     if leaving.read().count() > 0 {
         screen.up = None;
     }
+    let transfer = transfers.read().last().copied();
 
-    let destination: Option<u32> = match (transfers.read().last().copied(), session.screen()) {
+    // No world, and none being entered: take the screen down. The message
+    // above covers a world that ended. A login that fails while the screen is
+    // up never had a world, so it raises no `PlayerLeavingWorld`, and without
+    // this the screen stayed over the login screen and its "Disconnected from
+    // server" dialog until [`GIVE_UP_SECS`].
+    if !world_coming(session.screen()) {
+        screen.up = None;
+        return;
+    }
+
+    let destination: Option<u32> = match (transfer, session.screen()) {
         // A transfer wins over a login: the two cannot both be happening, and
         // the packet is the more recent statement if they somehow were.
         (Some(TransferPending(map)), _) => Some(map),
@@ -214,6 +225,13 @@ fn raise(
         raised_at: time.elapsed_secs(),
         progress: 0.0,
     });
+}
+
+/// Whether a loading screen has a world to wait for on this screen: one being
+/// entered, or one already entered and possibly teleporting. On the login,
+/// connecting and character screens there is none.
+fn world_coming(screen: Screen) -> bool {
+    matches!(screen, Screen::Entering | Screen::InWorld)
 }
 
 /// **How full the bar is and whether the world is there**, as arithmetic over
@@ -388,6 +406,19 @@ mod tests {
             app.world().resource::<LoadingScreen>().picture().is_none(),
             "the screen outlived its own deadline"
         );
+    }
+
+    /// A screen is held only while a world is being entered or is there. A
+    /// login that fails during the screen returns to `Screen::Login` with no
+    /// world ever having existed, and the screen must come down there rather
+    /// than at [`GIVE_UP_SECS`].
+    #[test]
+    fn only_entering_or_being_in_the_world_holds_the_screen() {
+        assert!(world_coming(Screen::Entering));
+        assert!(world_coming(Screen::InWorld));
+        assert!(!world_coming(Screen::Login));
+        assert!(!world_coming(Screen::Connecting));
+        assert!(!world_coming(Screen::Characters));
     }
 
     /// The deadline has to be well clear of the floor, or a screen that is

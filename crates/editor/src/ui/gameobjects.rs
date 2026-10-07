@@ -901,15 +901,8 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
     let lock = known.lock().map(|id| {
         format!("{id} — {}", lock_words(locks(&mut subject.objects.locks, subject.assets), id))
     });
+    // The model is drawn at the panel's right edge, after the columns.
     ui.horizontal(|ui| {
-        let (rect, _) =
-            ui.allocate_exact_size(egui::Vec2::splat(SUMMARY_PICTURE), egui::Sense::hover());
-        match subject.objects.model_of(subject.assets, known.display_id) {
-            Some(path) => crate::portraits::paint(ui, subject.portraits, &path, rect),
-            None => {
-                ui.painter().rect_filled(rect, 3.0, theme::DEAD);
-            }
-        }
         egui::Grid::new("object-summary")
             .num_columns(2)
             .spacing([8.0, 2.0])
@@ -933,6 +926,16 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
                     ui.end_row();
                 }
             });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            let (rect, _) =
+                ui.allocate_exact_size(egui::Vec2::splat(SUMMARY_PICTURE), egui::Sense::hover());
+            match subject.objects.model_of(subject.assets, known.display_id) {
+                Some(path) => crate::portraits::paint(ui, subject.portraits, &path, rect),
+                None => {
+                    ui.painter().rect_filled(rect, 3.0, theme::DEAD);
+                }
+            }
+        });
     });
 
     ui.add_space(4.0);

@@ -130,7 +130,7 @@ const PICTURE: f32 = 24.0;
 /// by. `short` is drawn when the switch has no icon.
 ///
 /// A label absent from this table is drawn from [`initials`].
-pub const ART: [(&str, &str); 28] = [
+pub const ART: [(&str, &str); 29] = [
     // --- the world, in the order the frame is built ---
     ("fog", "FOG"),
     ("sky dome", "SKY"),
@@ -158,6 +158,8 @@ pub const ART: [(&str, &str); 28] = [
     ("skinned bounds", "SKN"),
     ("collision", "COL"),
     ("unit facing", "FAC"),
+    // --- the editor camera's own view ---
+    ("map view", "MAP"),
     // --- and how the frame is made ---
     ("MSAA", "AA"),
     ("vsync", "VSY"),
@@ -180,6 +182,7 @@ pub fn names() -> Vec<&'static str> {
     #[cfg(feature = "diagnostics")]
     names.extend(OVERLAYS.iter().map(|(label, _, _)| *label));
     names.push("navmesh");
+    names.push("map view");
     names
 }
 
@@ -225,6 +228,12 @@ pub struct Bar<'a> {
     pub navmesh: &'a mut crate::navmesh::Navmesh,
     /// The ground guides. A copy, written back by the caller when it changed.
     pub guides: &'a mut crate::tools::guides::Guides,
+    /// Whether the top-down map view is on. A copy, written back by the caller
+    /// when it changed. See [`crate::camera::TopDown`].
+    pub map_view: &'a mut bool,
+    /// Whether the editor is editing. The map view is the editor camera's, so
+    /// it is unavailable during a playtest.
+    pub editing: bool,
     /// Whether the Areas tool is drawing its own wash, which takes the place
     /// of the texture count while it is. The menu says so.
     pub areas_shown: bool,
@@ -328,6 +337,23 @@ pub fn draw(ui: &mut Ui, bar: &mut Bar) {
         rule(ui);
         guides_menu(ui, bar.guides, bar.areas_shown, bar.open_guides);
 
+        // The editor camera's top-down view. Its own group, because it changes
+        // how the world is looked at rather than what is drawn.
+        rule(ui);
+        let why = match bar.editing {
+            true => "camera: the world seen straight down with north at the top, as the \
+                     game's minimap shows it, through an orthographic projection. The wheel \
+                     zooms, a right-drag moves the map, and W, A, S and D move north, west, \
+                     south and east. Sky, fog and weather are off while it is on."
+                .to_string(),
+            false => "camera: unavailable during a playtest, which uses the game's camera."
+                .to_string(),
+        };
+        let on = *bar.map_view;
+        if toggle(ui, bar.icons, "map view", on, false, bar.editing, &why) {
+            *bar.map_view = !on;
+        }
+
         rule(ui);
         for (key, label, field) in FRAME {
             // The function key, which toggles it without the pointer.
@@ -353,6 +379,7 @@ pub fn draw(ui: &mut Ui, bar: &mut Bar) {
             *bar.frame = RenderTuning::default();
             bar.navmesh.on = false;
             *bar.guides = crate::tools::guides::Guides::default();
+            *bar.map_view = false;
             #[cfg(feature = "diagnostics")]
             {
                 *bar.overlay = editor_overlay(None);
@@ -597,20 +624,32 @@ fn toggle(
 ///
 /// The frame settings are not echoed: they are on function keys, and
 /// `--tune` spells them differently (`novsync`, `shadows`).
+///
+/// With the map view on, `--map-view` is echoed and the five switches it
+/// turns off are measured against a baseline that has them off, so they are
+/// not echoed again as `--without`.
 pub fn scripted(
     world: &WorldTuning,
     baseline: &WorldTuning,
     #[cfg(feature = "diagnostics")] overlay: &DebugOverlay,
     navmesh: bool,
+    map_view: bool,
     guides: &crate::tools::guides::Guides,
 ) -> Vec<String> {
+    let mut base = baseline.clone();
+    if map_view {
+        crate::camera::switch_off_for_map_view(&mut base);
+    }
     let (off, on) = lists(
         world,
-        baseline,
+        &base,
         #[cfg(feature = "diagnostics")]
         overlay,
     );
     let mut flags = Vec::new();
+    if map_view {
+        flags.push("--map-view".to_string());
+    }
     if !off.is_empty() {
         flags.push(format!("--without {off}"));
     }
@@ -716,6 +755,7 @@ mod tests {
                 #[cfg(feature = "diagnostics")]
                 &overlay,
                 navmesh,
+                false,
                 &crate::tools::guides::Guides::default(),
             )
         };
@@ -739,8 +779,30 @@ mod tests {
             #[cfg(feature = "diagnostics")]
             &overlay,
             false,
+            false,
             &guides,
         );
         assert_eq!(echoed, vec!["--guides chunks,slope"]);
+    }
+
+    /// The map view is echoed as its own flag, and the switches it turns off
+    /// are not echoed again as `--without`.
+    #[test]
+    fn the_map_view_is_echoed_once() {
+        let editing = crate::playtest::world_baseline(true);
+        let mut world = editing.clone();
+        crate::camera::switch_off_for_map_view(&mut world);
+        #[cfg(feature = "diagnostics")]
+        let overlay = editor_overlay(None);
+        let echoed = scripted(
+            &world,
+            &editing,
+            #[cfg(feature = "diagnostics")]
+            &overlay,
+            false,
+            true,
+            &crate::tools::guides::Guides::default(),
+        );
+        assert_eq!(echoed, vec!["--map-view"]);
     }
 }

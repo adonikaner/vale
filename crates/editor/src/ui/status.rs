@@ -221,13 +221,30 @@ pub fn draw(
             ui.add_space(4.0);
         }
 
-        // The session's last status message, pushed to the right so it has the
-        // room a sentence needs and never moves the numbers.
+        // The session's last status message, pushed to the right so it never
+        // moves the numbers. It is truncated to the room left of them, and
+        // egui shows the whole message on hover when it is cut. An untruncated
+        // message in this right-to-left layout is drawn back over the numbers.
+        // With view flags shown, the message takes at most 60% of the room so
+        // the flags keep some.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(
-                egui::RichText::new(&session.status)
-                    .size(theme::SMALL)
-                    .color(theme::INK_DIM),
+            let room = match scripted.is_empty() {
+                true => ui.available_width(),
+                false => ui.available_width() * 0.6,
+            };
+            ui.allocate_ui_with_layout(
+                egui::vec2(room.max(0.0), ui.available_height()),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(&session.status)
+                                .size(theme::SMALL)
+                                .color(theme::INK_DIM),
+                        )
+                        .truncate(),
+                    );
+                },
             );
             // The view flags go between the numbers and the message, coloured
             // like the unsaved count: both are states left over from earlier

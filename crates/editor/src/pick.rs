@@ -102,6 +102,21 @@ const STEP: f32 = 2.0;
 /// at any pitch a person edits at.
 const RANGE: f32 = 2.0 * TILE_SIZE;
 
+/// How far the ray is followed through `camera`.
+///
+/// [`RANGE`] for the perspective view. In the editor's orthographic map view
+/// (`crate::camera::TopDown`) the ray starts at the top of the slab the view
+/// draws, which is far above the ground, so it is followed through the whole
+/// slab instead: [`crate::camera::MAP_DEPTH`]. An orthographic projection has
+/// 1 in the last element of its matrix, which is how Bevy's own shaders tell
+/// the two apart.
+fn range(camera: &Camera) -> f32 {
+    match camera.clip_from_view().w_axis.w == 1.0 {
+        true => crate::camera::MAP_DEPTH,
+        false => RANGE,
+    }
+}
+
 /// How many times the crossing interval is halved. Ten takes a two-yard interval
 /// to two millimetres, which is well under the resolution of anything that reads
 /// this.
@@ -163,6 +178,7 @@ pub fn aim(
     let Ok(ray) = camera.viewport_to_world(transform, at * window.scale_factor()) else {
         return;
     };
+    let range = range(camera);
 
     // The ray in the world's own axes, which is what the height field is in.
     let origin = Vec3::from(axes::to_wow(ray.origin));
@@ -186,12 +202,12 @@ pub fn aim(
     // terrain at all. It is one query against a uniform grid — the same one the
     // client's camera makes every frame — where the march below is five hundred
     // height lookups, so the order costs nothing either way.
-    let hull = hull_hit(&solids, &tuning, session.map_id, origin, direction);
+    let hull = hull_hit(&solids, &tuning, session.map_id, origin, direction, range);
 
     let mut previous: Option<(f32, f32)> = None;
     let mut distance = STEP;
     let mut ground: Option<f32> = None;
-    while distance < RANGE {
+    while distance < range {
         if let Some(above) = gap(distance) {
             if above <= 0.0 {
                 // The first sample under the ground. The crossing is between
@@ -231,7 +247,7 @@ pub fn aim(
     // over when it reaches the height the camera is orbiting, which is what a
     // panel needs to say "open this tile".
     let flat = (origin.z - session_ground(&session, origin)) / -direction.z;
-    if flat.is_finite() && flat > 0.0 && flat < RANGE {
+    if flat.is_finite() && flat > 0.0 && flat < range {
         let at = origin + direction * flat;
         cursor.tile = Some(vale_assets::tile_for_position(at.x, at.y));
     }
@@ -259,6 +275,7 @@ pub fn solid_under(
     camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) -> Option<Vec3> {
     let (origin, direction) = ray(windows, camera)?;
+    let range = range(camera.single().ok()?.0);
     let gap = |distance: f32| {
         let at = origin + direction * distance;
         let coord = vale_assets::tile_for_position(at.x, at.y);
@@ -268,7 +285,7 @@ pub fn solid_under(
 
     let mut previous: Option<(f32, f32)> = None;
     let mut distance = STEP;
-    while distance < RANGE {
+    while distance < range {
         if let Some(above) = gap(distance) {
             if above <= 0.0 {
                 let (was, _) = previous.filter(|(_, above)| *above > 0.0)?;
@@ -362,19 +379,20 @@ fn hull_hit(
     map_id: u32,
     origin: Vec3,
     direction: Vec3,
+    range: f32,
 ) -> Option<f32> {
     let want = Surfaces {
         buildings: tuning.buildings,
         doodads: tuning.doodads,
         objects: tuning.entities,
     };
-    let to = origin + direction * RANGE;
+    let to = origin + direction * range;
     // A fraction of the segment, which is what the camera's question wanted;
-    // the segment is `RANGE` long, so this is a distance in yards.
+    // the segment is `range` long, so this is a distance in yards.
     let hit = solids
         .0
         .ray_of(map_id, origin.to_array(), to.to_array(), want)?;
-    Some(hit * RANGE)
+    Some(hit * range)
 }
 
 /// The nearer of two distances along the ray, where either may be absent.
@@ -473,34 +491,34 @@ mod tests {
         tuning.doodads = true;
         // Both shown: each slab answers, 70 yards down from the eye.
         for at in [over_building, over_doodad] {
-            let hit = hull_hit(&solids, &tuning, 0, at, down).expect("a shown hull did not answer");
+            let hit = hull_hit(&solids, &tuning, 0, at, down, RANGE).expect("a shown hull did not answer");
             assert!((hit - 70.0).abs() < 0.1, "met the slab at {hit}");
         }
 
         tuning.buildings = false;
         assert!(
-            hull_hit(&solids, &tuning, 0, over_building, down).is_none(),
+            hull_hit(&solids, &tuning, 0, over_building, down, RANGE).is_none(),
             "a hidden building was still a surface"
         );
         assert!(
-            hull_hit(&solids, &tuning, 0, over_doodad, down).is_some(),
+            hull_hit(&solids, &tuning, 0, over_doodad, down, RANGE).is_some(),
             "hiding the buildings took the doodads with them"
         );
 
         tuning.buildings = true;
         tuning.doodads = false;
         assert!(
-            hull_hit(&solids, &tuning, 0, over_doodad, down).is_none(),
+            hull_hit(&solids, &tuning, 0, over_doodad, down, RANGE).is_none(),
             "a hidden doodad was still a surface"
         );
         assert!(
-            hull_hit(&solids, &tuning, 0, over_building, down).is_some(),
+            hull_hit(&solids, &tuning, 0, over_building, down, RANGE).is_some(),
             "hiding the doodads took the buildings with them"
         );
 
         // …and a hull on another map is never a surface, whatever is shown.
         assert!(
-            hull_hit(&solids, &tuning, 1, over_building, down).is_none(),
+            hull_hit(&solids, &tuning, 1, over_building, down, RANGE).is_none(),
             "another map's hull answered"
         );
     }

@@ -467,6 +467,9 @@ pub struct Viewing<'w> {
     /// The ground guides, which the view bar's Guides menu switches. See
     /// [`crate::tools::guides`].
     guides: ResMut<'w, crate::tools::guides::Guides>,
+    /// The top-down map view, which the view bar's MAP button switches. See
+    /// [`crate::camera::TopDown`].
+    top_down: ResMut<'w, crate::camera::TopDown>,
     icons: Res<'w, icons::Icons>,
     /// Which world tool the World part of the top bar returns to. See
     /// [`rail::Rail`].
@@ -654,12 +657,19 @@ fn draw(
                 &baseline,
                 &edited_overlay,
                 viewing.navmesh.on,
+                viewing.top_down.on,
                 &viewing.guides,
             )
         }
         #[cfg(not(feature = "diagnostics"))]
         {
-            viewbar::scripted(&edited_world, &baseline, viewing.navmesh.on, &viewing.guides)
+            viewbar::scripted(
+                &edited_world,
+                &baseline,
+                viewing.navmesh.on,
+                viewing.top_down.on,
+                &viewing.guides,
+            )
         }
     };
     egui::Panel::bottom("editor-status")
@@ -671,6 +681,7 @@ fn draw(
         });
 
     let mut edited_guides = viewing.guides.clone();
+    let mut map_view = viewing.top_down.on;
     egui::Panel::bottom("editor-view")
         .frame(bar(theme::PANEL))
         .show(&mut root, |ui| {
@@ -687,6 +698,8 @@ fn draw(
                     drawn: &viewing.drawn,
                     navmesh: &mut viewing.navmesh,
                     guides: &mut edited_guides,
+                    map_view: &mut map_view,
+                    editing: playing.state.editing(),
                     areas_shown: *tool == Tool::Areas,
                     open_guides: editing.args.guides_menu
                         && time.elapsed_secs() > 3.0
@@ -699,6 +712,9 @@ fn draw(
     // Written back only when a switch moved, as the other view settings are.
     if edited_guides != *viewing.guides {
         *viewing.guides = edited_guides;
+    }
+    if map_view != viewing.top_down.on {
+        viewing.top_down.on = map_view;
     }
 
     // The rail is not drawn over a playtest. Every tile on it keeps the

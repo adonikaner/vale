@@ -1931,6 +1931,9 @@ impl Plugin for SessionPlugin {
                 Update,
                 (
                     finish_login,
+                    // Before the poll, so a frame never reconciles a world
+                    // whose session has already ended.
+                    end_a_lost_session,
                     keep_selection_alive,
                     poll_world,
                     // After the poll and before the input. The base is the
@@ -2389,6 +2392,47 @@ fn finish_login(mut session: ResMut<Session>) {
     } else {
         session.started = None;
     }
+}
+
+/// End a world session whose thread has stopped with an error, and report it
+/// as the 1.12.1 client does: the login screen, with `GlueStrings.lua`'s
+/// `DISCONNECTED` ("Disconnected from server") in a dialog over it.
+///
+/// The session thread stops with an error when the socket fails: the server
+/// closed the connection (a kick, a shutdown, a crash), a read or a write
+/// failed, or a packet could not be handled. `LiveSession` records the reason
+/// in `SessionStatus::error` and the thread exits. Without this system nothing
+/// read that record: `active` stayed set, [`poll_world`] returned early on a
+/// `world_ms` that no longer advanced, and the client showed a frozen world
+/// with no message. A failure during a loading screen also left the screen up,
+/// because the world it waited for never arrived.
+///
+/// A thread that stopped without an error is not handled here. That is a
+/// requested stop, or `SMSG_LOGOUT_COMPLETE`, which
+/// `interface::logout` answers by returning to character select on the same
+/// socket.
+///
+/// Dropping `active` is the same edge a logout makes, so
+/// `interface::leaving` raises `PLAYER_LEAVING_WORLD`, `render::residency`
+/// tears the world down, and `glue::loading` takes down a loading screen.
+/// [`crate::glue::glue`]'s `watch_dialog` shows the dialog from
+/// [`Session::error`].
+fn end_a_lost_session(mut session: ResMut<Session>) {
+    let Some(active) = session.active.as_ref() else {
+        return;
+    };
+    if active.live.is_running() {
+        return;
+    }
+    let Some(reason) = active.live.status().error else {
+        return;
+    };
+    warn!("world session ended: {reason}");
+    session.log_out();
+    session.error = Some(LoginFailure::local(
+        "DISCONNECTED",
+        format!("the world session ended: {reason}"),
+    ));
 }
 
 /// Ping the world socket while the character screen is open.
