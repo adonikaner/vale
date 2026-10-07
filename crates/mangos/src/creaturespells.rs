@@ -69,14 +69,14 @@ pub const SLOT_KINDS: [Kind; 11] = [
 pub const SLOT_ABOUT: [&str; 11] = [
     "the spell, or 0 for an empty slot",
     "percent chance to cast when its timer is up",
-    "who it is cast on",
-    "named by the cast target",
-    "named by the cast target",
-    "how it is cast",
+    "the cast target type",
+    "its meaning depends on the cast target type",
+    "its meaning depends on the cast target type",
+    "cast flags: how it is cast",
     "least seconds into combat before the first cast",
-    "most",
+    "most seconds into combat before the first cast",
     "least seconds between casts",
-    "most",
+    "most seconds between casts",
     "a creature_spells_scripts id run when the cast lands, or 0",
 ];
 
@@ -112,8 +112,8 @@ const SLOT_COLUMNS: [[Column; 11]; SLOTS] = [
 /// The ninety columns, in the loader's `SELECT` order.
 pub const COLUMNS: [Column; 2 + 11 * SLOTS] = {
     let mut out = [Column { name: "", kind: Kind::Unsigned, group: Group::Combat, about: "" }; 2 + 11 * SLOTS];
-    out[0] = Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the list's id, which creature_template.spell_list_id names" };
-    out[1] = Column { name: "name", kind: Kind::Text, group: Group::Identity, about: "for the person; the server never reads it" };
+    out[0] = Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the list id; creature_template.spell_list_id references it" };
+    out[1] = Column { name: "name", kind: Kind::Text, group: Group::Identity, about: "a label for editors; not read by the server" };
     let mut slot = 0;
     while slot < SLOTS {
         let mut field = 0;

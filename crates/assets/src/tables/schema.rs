@@ -663,46 +663,46 @@ const MODEL: Kind = Kind::Reference("SpellVisualEffectName");
 
 const SPELL_VISUAL_COLUMNS: [Column; 16] = [
     c(0, "Id", Kind::Id),
-    ca(1, "PrecastKit", KIT, "The wind-up, while the cast bar fills."),
-    ca(2, "CastKit", KIT, "The release, on the frame the cast completes."),
+    ca(1, "PrecastKit", KIT, "Played while the cast bar fills."),
+    ca(2, "CastKit", KIT, "Played on the frame the cast completes."),
     ca(
         3,
         "ImpactKit",
         KIT,
-        "Played on the victim rather than the caster, when the spell lands. \
-         8,751 spells burst; nothing on the wire announces it, so the client \
-         times it from the missile's arrival.",
+        "Played on the target, not the caster, when the spell lands. Set on \
+         8,751 rows. No server message marks the impact, so the client times \
+         it from the missile's arrival.",
     ),
     ca(
         4,
         "StateKit",
         KIT,
-        "Worn for as long as the aura is on the unit. The odd one of the five: \
-         every other kit is a moment and this is a condition, so it is driven \
-         by UNIT_FIELD_AURA rather than by a cast.",
+        "Played for as long as the aura is on the unit. The other four kits \
+         play at one point of a cast; this one lasts as long as the aura, so \
+         UNIT_FIELD_AURA drives it rather than a cast.",
     ),
     ca(5, "ChannelKit", KIT, "Held for the duration of a channel."),
     ca(
         6,
         "HasMissile",
         Kind::Bool,
-        "228 rows, and the only value is 1. The gate on the four columns after \
-         it.",
+        "Set on 228 rows, always to 1. The four columns after it are read only \
+         when it is set.",
     ),
-    ca(7, "MissileModel", MODEL, "What flies between caster and target."),
+    ca(7, "MissileModel", MODEL, "The model that flies from the caster to the target."),
     ca(
         8,
         "MissilePathType",
         Kind::Int,
-        "17 rows, values 1 and 2 — a straight line against an arc.",
+        "Set on 17 rows, to 1 or 2: a straight line and an arc.",
     ),
     ca(
         9,
         "MissileDestination",
         Kind::Enum(ATTACHMENTS),
-        "Which attachment on the victim the missile aims at. 1,460 rows, four \
-         distinct values. The names are the attachment ids `world::m2::attach` \
-         measured off the character models.",
+        "The attachment point on the target that the missile aims at. Set on \
+         1,460 rows, with four distinct values. The names are the attachment \
+         ids `world::m2::attach` measured on the character models.",
     ),
     ca(
         10,
@@ -714,40 +714,38 @@ const SPELL_VISUAL_COLUMNS: [Column; 16] = [
         11,
         "HasAreaEffect",
         Kind::Bool,
-        "The gate on the two columns after it, and the client refuses to draw a \
-         DynamicObject's visual at all unless it is set — logging \
-         SPELLEFFECTNOAREAEFFECT, which is the field's own name. 217 \
+        "The two columns after it are read only when it is set, and the \
+         client draws no DynamicObject visual unless it is set. Set on 217 \
          rows.",
     ),
     ca(
         12,
         "AreaModel",
         MODEL,
-        "What a persistent area is drawn as: a Flamestrike's fire, a \
-         Consecration. All 217 set values resolve.",
+        "The model a persistent area effect is drawn as, such as Flamestrike's \
+         fire or Consecration. All 217 set values are SpellVisualEffectName ids.",
     ),
     ca(
         13,
         "AreaKit",
         KIT,
-        "…and the kit that goes with it. This is where the \
-         falling-impact procedural lives — a Blizzard's shards.",
+        "The kit played with AreaModel. The falling-impact procedural, such \
+         as Blizzard's shards, is set in this kit.",
     ),
     ca(
         14,
         "AreaSound",
         Kind::Reference("SoundEntries"),
-        "Measured: ten rows, and all five distinct values are SoundEntries ids. \
-         Its role is inferred from where it sits rather than pinned — nothing \
-         in this client reads it.",
+        "Set on ten rows; all five distinct values are SoundEntries ids. The \
+         role is inferred from the column's position and is unconfirmed, \
+         because this client does not read the column.",
     ),
     ca(
         15,
         "Unknown 15",
         Kind::Int,
-        "56 rows, values 1 and 2. Unread by this client and unpinned. Named \
-         rather than hidden: a column with no name is a column somebody edits \
-         by accident.",
+        "Set on 56 rows, to 1 or 2. Meaning unknown; this client does not read \
+         it.",
     ),
 ];
 
@@ -762,7 +760,7 @@ pub const SPELL_VISUAL_KIT: Schema = Schema {
     columns: &SPELL_VISUAL_KIT_COLUMNS,
     sections: &[
         Section {
-            name: "Pose",
+            name: "Animation, sound and camera shake",
             fields: &[0, 1, 2, 13, 14],
         },
         Section {
@@ -788,7 +786,7 @@ const CHAR_PROCS: &[(u32, &str)] = &[
     (0, "Chain effect"),
     (1, "Model colour"),
     (9, "Falling impact (Blizzard)"),
-    (12, "Chain effect (same case as 0)"),
+    (12, "Chain effect (same as 0)"),
     (13, "Model glow"),
 ];
 
@@ -798,74 +796,74 @@ const SPELL_VISUAL_KIT_COLUMNS: [Column; 35] = [
         1,
         "StartAnim",
         Kind::Int,
-        "975 rows and only four distinct values (1, 2, 3, 5). Later builds call \
-         this startAnimID; that is a name rather than a measurement and this \
+        "Set on 975 rows, with four distinct values (1, 2, 3, 5). Later builds \
+         name it startAnimID; the name is not confirmed by measurement. This \
          client does not read it.",
     ),
     ca(
         2,
         "Animation",
         Kind::Reference("AnimationData"),
-        "The pose the caster plays. -1 is the table's own none, and 0 is Stand, \
-         which is not an answer either: a cast that resolved to Stand would \
-         interrupt the caster in order to stand still.",
+        "The animation the caster plays. -1 is none. 0 is Stand, which is also \
+         treated as none: playing Stand would interrupt the caster to stand \
+         still.",
     ),
-    ca(3, "HeadEffect", MODEL, "Hangs from the head attachment."),
-    ca(4, "ChestEffect", MODEL, "Hangs from the chest attachment."),
-    ca(5, "BaseEffect", MODEL, "Sits at the unit's feet."),
-    ca(6, "LeftHandEffect", MODEL, "The left spell-hand attachment."),
-    ca(7, "RightHandEffect", MODEL, "The right spell-hand attachment."),
+    ca(3, "HeadEffect", MODEL, "Drawn at the head attachment."),
+    ca(4, "ChestEffect", MODEL, "Drawn at the chest attachment."),
+    ca(5, "BaseEffect", MODEL, "Drawn at the unit's feet."),
+    ca(6, "LeftHandEffect", MODEL, "Drawn at the left spell-hand attachment."),
+    ca(7, "RightHandEffect", MODEL, "Drawn at the right spell-hand attachment."),
     ca(
         8,
         "BreathEffect",
         MODEL,
-        "68 rows, every one a SpellVisualEffectName id. Its attachment is not \
-         pinned and this client does not draw it.",
+        "Set on 68 rows, each a SpellVisualEffectName id. Its attachment is \
+         unknown, and this client does not draw it.",
     ),
     ca(
         9,
         "LeftWeaponEffect",
         MODEL,
-        "17 rows, 16 of which resolve. Not drawn by this client.",
+        "Set on 17 rows; 16 are SpellVisualEffectName ids. Not drawn by this client.",
     ),
     ca(
         10,
         "RightWeaponEffect",
         MODEL,
-        "Two rows. Not drawn by this client.",
+        "Set on two rows. Not drawn by this client.",
     ),
     ca(11, "Unused 11", Kind::Unused, "Zero on all 1,778 rows."),
     ca(
         12,
         "GroundEffect",
         MODEL,
-        "The column a note here once argued was not a model. It is: 37 kits set \
-         it and all 37 resolve — EntanglingRoots_State, Frost_Nova_state, \
-         Net_State, Web_State, ThunderClap_Cast_Base. 29 of the 37 set no other \
-         model column at all, so skipping it is why nothing rooted looked \
-         rooted. Drawn at the base.",
+        "A model drawn at the base attachment. Set on 37 kits, all \
+         SpellVisualEffectName ids: EntanglingRoots_State, Frost_Nova_state, \
+         Net_State, Web_State, ThunderClap_Cast_Base and others. 29 of the 37 \
+         set no other model column, so this is their only model.",
     ),
     ca(
         13,
         "Sound",
         Kind::Reference("SoundEntries"),
-        "1,123 rows. 27 of them name an id the table does not have, which is the \
-         file's own dangling reference rather than a reading error.",
+        "Set on 1,123 rows. 27 of them name an id that SoundEntries does not \
+         have. The shipped file holds these broken references; they are not a \
+         reading error.",
     ),
     ca(
         14,
         "CameraShake",
         Kind::Reference("SpellEffectCameraShakes"),
-        "Pinned by the population: 58 rows, seven distinct values, and every one \
-         is a row of a nine-row table — including 26 and 66, which a dense \
-         column could not have hit by chance.",
+        "Identified from its values: set on 58 rows, with seven distinct values, \
+         each an id in the nine-row SpellEffectCameraShakes table. The ids \
+         include 26 and 66, so the match is not chance.",
     ),
     ca(
         15,
         "CharProc 1",
         Kind::Enum(CHAR_PROCS),
-        "The procedural slots. Each takes its four parameters from the columns \
-         below at the same slot.",
+        "A procedural effect slot. Each slot takes its four parameters from the \
+         CharParam columns with the same number.",
     ),
     c(16, "CharProc 2", Kind::Enum(CHAR_PROCS)),
     c(17, "CharProc 3", Kind::Enum(CHAR_PROCS)),
@@ -874,9 +872,8 @@ const SPELL_VISUAL_KIT_COLUMNS: [Column; 35] = [
         19,
         "CharParamZero 1",
         Kind::Float,
-        "For the falling-impact procedural this is an index, held as a float, \
-         into a list of seven models the client holds, which no file \
-         carries.",
+        "For the falling-impact procedural: an index, stored as a float, into a \
+         list of seven models built into the client and stored in no file.",
     ),
     c(20, "CharParamZero 2", Kind::Float),
     c(21, "CharParamZero 3", Kind::Float),
@@ -885,8 +882,8 @@ const SPELL_VISUAL_KIT_COLUMNS: [Column; 35] = [
         23,
         "CharParamOne 1",
         Kind::Float,
-        "For the falling-impact procedural, impacts per second: Blizzard's kit \
-         reads 5.",
+        "For the falling-impact procedural: impacts per second. Blizzard's kit \
+         holds 5.",
     ),
     c(24, "CharParamOne 2", Kind::Float),
     c(25, "CharParamOne 3", Kind::Float),
@@ -911,23 +908,23 @@ pub const SPELL_VISUAL_EFFECT_NAME: Schema = Schema {
             1,
             "Name",
             Kind::Text,
-            "The row's own name, which is how the client reaches the handful of \
-             visuals no chain names.",
+            "The row's name. The client finds the few visuals that no \
+             SpellVisualKit references by this name.",
         ),
         ca(
             2,
             "Model",
             Kind::Text,
-            "An .mdx under Spells\\ or Particles\\ whose whole content is \
-             emitters. The archives hold the .m2 of the same name.",
+            "An .mdx path under Spells\\ or Particles\\. The model holds only \
+             particle emitters. The archives hold the .m2 of the same name.",
         ),
         ca(3, "Unused 3", Kind::Unused, "Zero on every row."),
         ca(
             4,
             "Scale",
             Kind::Float,
-            "The effect's own size, applied to the model and to nothing else — \
-             it is not the caster's scale.",
+            "The effect model's scale. It applies to this model only and is not \
+             the caster's scale.",
         ),
     ],
     sections: &[Section {
@@ -949,7 +946,7 @@ pub const ANIMATION_DATA: Schema = Schema {
             5,
             "Fallback",
             Kind::Reference("AnimationData"),
-            "What to play instead when a model does not carry this one.",
+            "The animation played instead when a model does not have this one.",
         ),
         c(6, "BehaviourId", Kind::Int),
     ],
@@ -983,7 +980,7 @@ pub const SPELL_CAST_TIMES: Schema = Schema {
     table: "SpellCastTimes",
     columns: &[
         c(0, "Id", Kind::Id),
-        ca(1, "Base", Kind::Signed, "Milliseconds. Fireball's row 16 is 1500."),
+        ca(1, "Base", Kind::Signed, "Milliseconds. Row 16, which Fireball uses, is 1500."),
         c(2, "PerLevel", Kind::Signed),
         c(3, "Minimum", Kind::Signed),
     ],
@@ -998,7 +995,7 @@ pub const SPELL_DURATION: Schema = Schema {
     table: "SpellDuration",
     columns: &[
         c(0, "Id", Kind::Id),
-        ca(1, "Duration", Kind::Signed, "Milliseconds. -1 is for ever."),
+        ca(1, "Duration", Kind::Signed, "Milliseconds. -1 is infinite."),
         c(2, "PerLevel", Kind::Signed),
         c(3, "Maximum", Kind::Signed),
     ],
@@ -1035,19 +1032,19 @@ pub const SPELL_CHAIN_EFFECTS: Schema = Schema {
             1,
             "AverageSegmentLength",
             Kind::Float,
-            "Yards per segment: how finely the bolt is chopped up.",
+            "The length of one bolt segment, in yards.",
         ),
         c(2, "Width", Kind::Float),
         ca(
             3,
             "NoiseScale",
             Kind::Float,
-            "How far a segment wanders off the straight line.",
+            "How far each segment deviates from the straight line.",
         ),
         c(4, "TexCoordScale", Kind::Float),
         c(5, "SegmentDuration", Kind::Int),
         c(6, "SegmentDelay", Kind::Int),
-        ca(7, "Texture", Kind::Text, "The bolt's own texture."),
+        ca(7, "Texture", Kind::Text, "The bolt's texture."),
     ],
     sections: &[Section {
         name: "Chain",
@@ -1099,8 +1096,8 @@ const SOUND_ENTRIES_COLUMNS: [Column; 29] = [
         1,
         "SoundType",
         Kind::Int,
-        "Which group of the game's sounds this is in. Kept raw: `vale sound` \
-         censuses by it.",
+        "The sound's category, shown as a number. `vale sound` counts sounds \
+         by it.",
     ),
     c(2, "Name", Kind::Text),
     c(3, "File 1", Kind::Text),
@@ -1117,7 +1114,7 @@ const SOUND_ENTRIES_COLUMNS: [Column; 29] = [
         13,
         "Weight 1",
         Kind::Int,
-        "How often the file beside it is picked, against the other nine.",
+        "The relative chance that the file with the same number is picked.",
     ),
     c(14, "Weight 2", Kind::Int),
     c(15, "Weight 3", Kind::Int),
@@ -1132,12 +1129,12 @@ const SOUND_ENTRIES_COLUMNS: [Column; 29] = [
         23,
         "Directory",
         Kind::Text,
-        "The folder every file above is under. Three rows end it with a \
-         separator; the reader trims it.",
+        "The folder that holds every file above. Three rows end it with a \
+         path separator, which the reader removes.",
     ),
     c(24, "Volume", Kind::Float),
     c(25, "Flags", Kind::Flags(&[])),
-    ca(26, "MinDistance", Kind::Float, "Inside this range, full volume."),
+    ca(26, "MinDistance", Kind::Float, "Within this distance the sound plays at full volume."),
     ca(
         27,
         "DistanceCutoff",
@@ -1148,7 +1145,7 @@ const SOUND_ENTRIES_COLUMNS: [Column; 29] = [
         28,
         "EAXDef",
         Kind::Int,
-        "Named after WDBX's reading. Not read by this client.",
+        "Name taken from WDBX. Not read by this client.",
     ),
 ];
 
@@ -1172,8 +1169,8 @@ const SPELL_RANGE_COLUMNS: [Column; 22] = [
         2,
         "RangeMax",
         Kind::Float,
-        "Yards. Row 1 reads 5.0 beside the name Combat Range, which pins the \
-         column; zero is a spell cast on its own caster.",
+        "Yards. Row 1, Combat Range, holds 5.0, which identifies the column. \
+         Zero is a spell cast on its own caster.",
     ),
     c(3, "Flags", Kind::Flags(&[])),
     c(4, "DisplayName", Kind::Text),
@@ -1222,13 +1219,13 @@ const SPELL_DISPEL_TYPE_COLUMNS: [Column; 12] = [
         10,
         "Unknown 10",
         Kind::Int,
-        "WDBX calls this Mask. Unmeasured, and named rather than hidden.",
+        "WDBX names this Mask. Not measured.",
     ),
     ca(
         11,
         "Unknown 11",
         Kind::Int,
-        "WDBX calls this ImmunityPossible. Unmeasured.",
+        "WDBX names this ImmunityPossible. Not measured.",
     ),
 ];
 
@@ -1376,8 +1373,8 @@ pub const LIGHT: Schema = Schema {
             3,
             "InternalY",
             Kind::Float,
-            "The height, in 1/36 of a yard — the one coordinate that is a \
-             plain distance rather than an offset from the corner.",
+            "The height, in 1/36 of a yard. Unlike InternalX and InternalZ it \
+             is not measured from the map's corner.",
         ),
         ca(
             4,
@@ -1405,7 +1402,7 @@ pub const LIGHT: Schema = Schema {
             7,
             "ParamsClear",
             Kind::Reference("LightParams"),
-            "Fair weather above the water — the ordinary one.",
+            "Clear weather, above the water. The default set.",
         ),
         ca(
             8,
@@ -1418,21 +1415,21 @@ pub const LIGHT: Schema = Schema {
             9,
             "ParamsStorm",
             Kind::Reference("LightParams"),
-            "What SMSG_WEATHER moves the sky toward. A row of 0 is a zone \
-             whose sky does not change when it rains.",
+            "The set the sky blends toward when SMSG_WEATHER starts weather. A \
+             row of 0 is a zone whose sky does not change when it rains.",
         ),
         ca(
             10,
             "ParamsStormUnderwater",
             Kind::Reference("LightParams"),
-            "A lake in a downpour, which is two switches rather than one.",
+            "Storm weather, seen from under the water.",
         ),
         ca(
             11,
             "ParamsDeath",
             Kind::Reference("LightParams"),
-            "The ghost world, which this client does not have. Four rows serve \
-             every light in the game: 2, 3, 4 and 5.",
+            "Used while the character is a ghost, which this client does not \
+             support. Every light uses one of four rows: 2, 3, 4 or 5.",
         ),
     ],
     sections: &[
@@ -1472,10 +1469,9 @@ pub const LIGHT_PARAMS: Schema = Schema {
             2,
             "Skybox",
             Kind::Reference("LightSkybox"),
-            "1.12 uses this for exactly one thing. Five rows carry a non-zero \
-             skybox and all five name row 3, DeathClouds.mdx; four of them are \
-             the whole of Light's ParamsDeath column and the fifth is named by \
-             no Light row at all. The other 421 rows carry 0.",
+            "Five rows set a skybox, and all five name row 3, DeathClouds.mdx. \
+             Four of them are the rows Light's ParamsDeath column uses; no \
+             Light row uses the fifth. The other 421 rows hold 0.",
         ),
         ca(
             3,
@@ -1489,7 +1485,8 @@ pub const LIGHT_PARAMS: Schema = Schema {
             5,
             "WaterShallowAlpha",
             Kind::Float,
-            "How opaque a river is close in. 0.0..1.0. One of the four columns              of this table the renderer reads, and it shows on water only.",
+            "How opaque a river is near the camera. 0.0..1.0. One of the four \
+             columns of this table the renderer reads; it affects water only.",
         ),
         c(6, "WaterDeepAlpha", Kind::Float),
         c(7, "OceanShallowAlpha", Kind::Float),
@@ -1580,8 +1577,8 @@ const LIGHT_INT_BAND_COLUMNS: [Column; 34] = [
         18,
         "Colour 1",
         Kind::Colour,
-        "Packed 0x00RRGGBB — red first, which is a measurement: read the other \
-         way round, map 0's noon sun comes out pale blue.",
+        "Packed as 0x00RRGGBB, red first. Measured: read in the reverse order, \
+         map 0's noon sun is pale blue.",
     ),
     c(19, "Colour 2", Kind::Colour),
     c(20, "Colour 3", Kind::Colour),
@@ -1831,7 +1828,7 @@ const RACE_BITS: &[(u32, &str, &str)] = &[
     (0x020, "Tauren", ""),
     (0x040, "Gnome", ""),
     (0x080, "Troll", ""),
-    (0x100, "Goblin", "Race 9, which no player character is."),
+    (0x100, "Goblin", "Race 9. Not a playable race."),
 ];
 
 /// The classes a mask names: bit `id - 1` for each `ChrClasses` id. Ids 6 and
@@ -2017,7 +2014,7 @@ pub const SKILL_LINE_ABILITY: Schema = Schema {
             fields: &[0, 1, 2, 8, 9],
         },
         Section {
-            name: "Who has it",
+            name: "Races and classes",
             fields: &[3, 4, 5, 6],
         },
         Section {
@@ -2025,7 +2022,7 @@ pub const SKILL_LINE_ABILITY: Schema = Schema {
             fields: &[7, 11, 10, 14],
         },
         Section {
-            name: "Unread",
+            name: "Unused",
             fields: &[12, 13],
         },
     ],
@@ -2079,7 +2076,7 @@ pub const SKILL_RACE_CLASS_INFO: Schema = Schema {
                 (0x010, "Always max value", "vmangos' SKILL_FLAG_ALWAYS_MAX_VALUE."),
                 (
                     0x020,
-                    "Unlearnable",
+                    "Can be unlearned",
                     "vmangos' SKILL_FLAG_UNLEARNABLE: the skill can be unlearned.",
                 ),
                 (
@@ -2102,8 +2099,8 @@ pub const SKILL_RACE_CLASS_INFO: Schema = Schema {
             5,
             "MinLevel",
             Kind::Int,
-            "The level a line the character has not started is shown at. Zero \
-             on 186 rows.",
+            "The character level at which a line the character does not have \
+             yet is listed. Zero on 186 rows.",
         ),
         ca(
             6,
@@ -2120,7 +2117,7 @@ pub const SKILL_RACE_CLASS_INFO: Schema = Schema {
             fields: &[0, 1, 4, 5, 6, 7],
         },
         Section {
-            name: "Who has it",
+            name: "Races and classes",
             fields: &[2, 3],
         },
     ],
@@ -2393,7 +2390,7 @@ pub const MAP: Schema = Schema {
             ],
         },
         Section {
-            name: "Other",
+            name: "Unidentified",
             fields: &[16, 17, 18, 39, 40, 41],
         },
     ],
@@ -2535,7 +2532,7 @@ pub const WORLD_SAFE_LOCS: Schema = Schema {
     ],
     sections: &[
         Section {
-            name: "Place",
+            name: "Location",
             fields: &[0, 1, 2, 3, 4],
         },
         Section {

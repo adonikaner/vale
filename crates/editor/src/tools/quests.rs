@@ -849,19 +849,19 @@ impl Quests {
             return Ok(());
         }
         if to == 0 {
-            return Err("0 is not a quest entry".to_string());
+            return Err("0 is not a valid quest entry".to_string());
         }
         if to > quest::MAX_ENTRY {
             return Err(format!(
-                "{to} is past {}, which is all `entry` can hold",
+                "{to} is above {}, the largest value `entry` can hold",
                 quest::MAX_ENTRY
             ));
         }
         if known.claim == Life::Delete {
-            return Err("this project removes that quest; take the removal back first".to_string());
+            return Err("this quest is marked for removal; click Keep first".to_string());
         }
         if self.entry_taken(to) && to != known.read_entry {
-            return Err(format!("entry {to} is already a quest"));
+            return Err(format!("entry {to} is already used by another quest"));
         }
         let subject = format!("quest {} entry", known.entry);
         let gesture = crate::session::Gesture {

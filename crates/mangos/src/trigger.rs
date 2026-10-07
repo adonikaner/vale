@@ -249,14 +249,14 @@ const REF_QUEST: Kind = Kind::Ref(crate::quest::TEMPLATE);
 pub const TELEPORT_COLUMNS: [Column; 11] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the AreaTrigger.dbc id" },
     Column { name: "patch", kind: Kind::Key, group: Group::Identity, about: "the content patch the row belongs to; the server reads the highest at or below its WowPatch" },
-    Column { name: "name", kind: Kind::Text, group: Group::Identity, about: "a label for people; the server does not show it" },
-    Column { name: "message", kind: Kind::Text, group: Group::Requirements, about: "what a character too low to enter is told" },
-    Column { name: "required_level", kind: Kind::Unsigned, group: Group::Requirements, about: "the level a character needs to be sent" },
+    Column { name: "name", kind: Kind::Text, group: Group::Identity, about: "a label for editors; not shown by the server" },
+    Column { name: "message", kind: Kind::Text, group: Group::Requirements, about: "the message a character below required_level receives" },
+    Column { name: "required_level", kind: Kind::Unsigned, group: Group::Requirements, about: "the level a character needs to be teleported" },
     Column { name: "required_condition", kind: Kind::Unsigned, group: Group::Requirements, about: "a row of `conditions` the character must meet, or 0" },
-    Column { name: "target_map", kind: REF_MAP, group: Group::Place, about: "the map the character is sent to" },
-    Column { name: "target_position_x", kind: Kind::Float, group: Group::Place, about: "north, in yards" },
-    Column { name: "target_position_y", kind: Kind::Float, group: Group::Place, about: "west, in yards" },
-    Column { name: "target_position_z", kind: Kind::Float, group: Group::Place, about: "up, in yards" },
+    Column { name: "target_map", kind: REF_MAP, group: Group::Place, about: "Map.dbc id of the map the character is teleported to" },
+    Column { name: "target_position_x", kind: Kind::Float, group: Group::Place, about: "target x: north, in yards" },
+    Column { name: "target_position_y", kind: Kind::Float, group: Group::Place, about: "target y: west, in yards" },
+    Column { name: "target_position_z", kind: Kind::Float, group: Group::Place, about: "target z: height, in yards" },
     Column { name: "target_orientation", kind: Kind::Float, group: Group::Place, about: "the facing on arrival, in radians" },
 ];
 
@@ -265,7 +265,7 @@ pub const TELEPORT_COLUMNS: [Column; 11] = [
 pub const TEMPLATE_COLUMNS_OF_THE_SERVER: [Column; 7] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the AreaTrigger.dbc id" },
     Column { name: "build", kind: Kind::Key, group: Group::Identity, about: "the client build the row belongs to; edits are written at 5875" },
-    Column { name: "name", kind: Kind::Text, group: Group::Identity, about: "a label for people; the server does not show it" },
+    Column { name: "name", kind: Kind::Text, group: Group::Identity, about: "a label for editors; not shown by the server" },
     Column { name: "cooldown", kind: Kind::Unsigned, group: Group::Requirements, about: "seconds before the script can run again on this map, or 0" },
     Column { name: "condition_id", kind: Kind::Unsigned, group: Group::Requirements, about: "a row of `conditions` the character must meet for the script to run, or 0" },
     Column { name: "script_id", kind: Kind::Unsigned, group: Group::Behaviour, about: "the id of the `areatrigger_scripts` rows to run, or 0" },
@@ -275,13 +275,13 @@ pub const TEMPLATE_COLUMNS_OF_THE_SERVER: [Column; 7] = [
 /// `areatrigger_bg_entrance`, in table order.
 pub const BG_ENTRANCE_COLUMNS: [Column; 9] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the AreaTrigger.dbc id" },
-    Column { name: "name", kind: Kind::Text, group: Group::Identity, about: "a label for people; the server does not show it" },
+    Column { name: "name", kind: Kind::Text, group: Group::Identity, about: "a label for editors; not shown by the server" },
     Column { name: "team", kind: Kind::Choice(&TEAMS), group: Group::Requirements, about: "the side the entrance serves: 469 Alliance, 67 Horde" },
-    Column { name: "bg_template", kind: Kind::Unsigned, group: Group::Identity, about: "the battleground_template id whose list opens" },
+    Column { name: "bg_template", kind: Kind::Unsigned, group: Group::Identity, about: "the battleground_template id whose queue list opens" },
     Column { name: "exit_map", kind: REF_MAP, group: Group::Place, about: "the map a character leaving the battleground returns to" },
-    Column { name: "exit_position_x", kind: Kind::Float, group: Group::Place, about: "north, in yards" },
-    Column { name: "exit_position_y", kind: Kind::Float, group: Group::Place, about: "west, in yards" },
-    Column { name: "exit_position_z", kind: Kind::Float, group: Group::Place, about: "up, in yards" },
+    Column { name: "exit_position_x", kind: Kind::Float, group: Group::Place, about: "exit x: north, in yards" },
+    Column { name: "exit_position_y", kind: Kind::Float, group: Group::Place, about: "exit y: west, in yards" },
+    Column { name: "exit_position_z", kind: Kind::Float, group: Group::Place, about: "exit z: height, in yards" },
     Column { name: "exit_orientation", kind: Kind::Float, group: Group::Place, about: "the facing on return, in radians" },
 ];
 
@@ -294,14 +294,14 @@ pub const TEAMS: [crate::schema::Value; 2] = [
 /// `areatrigger_tavern`, in table order.
 pub const TAVERN_COLUMNS: [Column; 3] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the AreaTrigger.dbc id" },
-    Column { name: "name", kind: Kind::Text, group: Group::Identity, about: "a label for people; the server does not show it" },
+    Column { name: "name", kind: Kind::Text, group: Group::Identity, about: "a label for editors; not shown by the server" },
     Column { name: "patch_min", kind: Kind::Unsigned, group: Group::Identity, about: "the first content patch the inn exists in" },
 ];
 
 /// `areatrigger_involvedrelation`, in table order.
 pub const QUEST_COLUMNS: [Column; 2] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the AreaTrigger.dbc id" },
-    Column { name: "quest", kind: REF_QUEST, group: Group::Objectives, about: "the quest whose exploration objective standing here completes" },
+    Column { name: "quest", kind: REF_QUEST, group: Group::Objectives, about: "the quest whose exploration objective is completed by entering the trigger" },
 ];
 
 /// Every column of one of [`TABLES`]. For the template, the key and the five

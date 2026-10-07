@@ -836,7 +836,7 @@ pub fn describe(
         "SpellDuration" => {
             let ms = table.i32_at(record, 1).unwrap_or(0);
             let title = match ms {
-                -1 => "for ever".to_string(),
+                -1 => "infinite".to_string(),
                 ms if ms % 1000 == 0 => format!("{} s", ms / 1000),
                 ms => format!("{ms} ms"),
             };
@@ -1639,7 +1639,7 @@ pub fn add_ability(session: &mut EditSession, spell: u32) -> Option<usize> {
 /// it, for every race and every class, as one undo entry. The flags start at
 /// zero, which lists the line normally and gives it a spellbook tab.
 pub fn add_race_class_row(session: &mut EditSession, skill: u32) -> Option<usize> {
-    session.history.begin("Give the skill line to races and classes");
+    session.history.begin("Add race/class row");
     let at = push_row(
         session,
         race_class::TABLE,
@@ -1899,20 +1899,20 @@ pub fn move_between_sets(
             edits.push((record, field, 0));
         }
         if !edits.is_empty() {
-            said.push(format!("item {item} taken out of set {from}'s items"));
+            said.push(format!("item {item} removed from ItemSet {from}"));
         }
     }
     if to != 0 {
         match sets.row_of(to) {
-            None => said.push(format!("ItemSet has no row {to}; item {item} is listed nowhere")),
+            None => said.push(format!("ItemSet has no row {to}; item {item} is not listed in any set")),
             Some(record) if set_lists(sets, record, item).is_some() => {}
             Some(record) => match empty_item_column(sets, record) {
                 Some(field) => {
                     edits.push((record, field, item));
-                    said.push(format!("item {item} added to set {to}'s items"));
+                    said.push(format!("item {item} added to ItemSet {to}"));
                 }
                 None => said.push(format!(
-                    "set {to} has no empty item column; item {item} is not listed in it"
+                    "ItemSet {to} has no empty item column; item {item} is not added to it"
                 )),
             },
         }
@@ -2199,9 +2199,9 @@ pub fn command_label(
                 false => "Create an instant teaching spell".to_string(),
             }
         }
-        Command::LookLike => "Look like a spell\u{2026}".to_string(),
+        Command::LookLike => "Visual from another spell\u{2026}".to_string(),
         Command::CloneChain => "Clone chain".to_string(),
-        Command::GiveToRacesAndClasses => "Give it to races and classes".to_string(),
+        Command::GiveToRacesAndClasses => "Add race/class row".to_string(),
         // Offered on a zone. A sub-area's own sub-area would be a third
         // level, which the table does not have.
         Command::AddSubArea => {
@@ -2210,7 +2210,7 @@ pub fn command_label(
             }
             "Add a sub-area".to_string()
         }
-        Command::PaintArea => "Paint it on the map".to_string(),
+        Command::PaintArea => "Paint on map".to_string(),
         Command::Clone => "Clone".to_string(),
         Command::Delete => match browser.used_by(session, table, id).len() {
             0 => "Delete".to_string(),
@@ -2225,38 +2225,38 @@ pub fn command_label(
 pub fn command_about(command: Command) -> &'static str {
     match command {
         Command::AddToSkillLine => {
-            "A new SkillLineAbility row naming this spell, and the picker for its skill \
-             line. One undo entry. A mask left at zero is every class or every race."
+            "Adds a SkillLineAbility row for this spell and opens the skill line picker. \
+             One undo entry. A race or class mask of zero means every race or every class."
         }
         Command::CreateTeachingSpell => {
-            "A new spell under the next id that teaches this one: Learn Spell as its first \
-             effect, an instant cast, and this spell's name, rank and icon. One undo entry. \
-             The Trainer window can then add it to a trainer's list."
+            "Adds a Spell row under the next id that teaches this spell: Learn Spell as its \
+             first effect, an instant cast, and this spell's name, rank and icon. One undo \
+             entry. The Trainer window can then add it to a trainer's list."
         }
         Command::LookLike => {
-            "Choose this spell's visual by another spell, with that spell playing: share \
-             its visual, or clone it."
+            "Choose another spell, previewed in the dialog, and either share its SpellVisual \
+             row with this spell or clone that row for this spell."
         }
         Command::CloneChain => {
-            "Copy this visual with every kit and effect it names, each rewired to the \
-             copies, and open the copy. The original and the spells that share it are \
-             untouched."
+            "Copies this visual with every kit and effect it references, points the copies \
+             at each other, and opens the copied visual. The original and the spells that \
+             use it do not change."
         }
         Command::GiveToRacesAndClasses => {
-            "A new SkillRaceClassInfo row naming this line, for every race and every class, \
-             with no flag set. One undo entry."
+            "Adds a SkillRaceClassInfo row for this skill line with every race, every class \
+             and no flags set. One undo entry."
         }
         Command::AddSubArea => {
-            "A new area inside this zone, on the zone's map, with the zone's flags, reverb, \
-             ambience and music and an explore bit no other area holds. One undo entry."
+            "Adds an AreaTable row with this zone as its parent, on the zone's map, with the \
+             zone's flags, reverb, ambience and music and an unused explore bit. One undo entry."
         }
         Command::PaintArea => {
-            "Switch to the Areas tool with this area on the brush. An area is on the map \
-             where chunks carry its id, and nowhere until some do."
+            "Switches to the Areas tool with this area on the brush. An area covers the map \
+             chunks that carry its id; a new area covers no chunks until it is painted."
         }
-        Command::Clone => "A copy of the row under the next id; a copied name gets \" (copy)\".",
-        Command::Delete => "Remove the row. One undo entry.",
-        Command::CopyId => "Put the row's id on the clipboard.",
+        Command::Clone => "Copies the row under the next id and appends \" (copy)\" to its name.",
+        Command::Delete => "Removes the row. One undo entry.",
+        Command::CopyId => "Copies the row's id to the clipboard.",
     }
 }
 
@@ -2537,9 +2537,9 @@ pub fn effect_anchor(
             };
             return (
                 format!(
-                    "Anchor: this effect is the {column} of kit {kit}, so the point defaulted to match. \
-                     The exported model bakes only the offset, so in game it lands the same way relative \
-                     to that attachment."
+                    "Anchor: this effect is the {column} of kit {kit}, so the attachment point defaults to \
+                     that column's point. The exported model stores only the offset, so in game it is placed \
+                     relative to the same attachment."
                 ),
                 ids,
             );
@@ -2557,16 +2557,16 @@ pub fn effect_anchor(
             };
             return (
                 format!(
-                    "Anchor: this effect is the {word} of visual {visual}, so the point defaulted to match. \
-                     The exported model bakes only the offset."
+                    "Anchor: this effect is the {word} of visual {visual}, so the attachment point defaults \
+                     to match. The exported model stores only the offset."
                 ),
                 ids,
             );
         }
     }
     (
-        "No kit or visual names this effect yet, so the point defaulted to the chest. The exported model \
-         bakes only the offset relative to the chosen point."
+        "No kit or visual references this effect, so the attachment point defaults to the chest. The \
+         exported model stores only the offset from the chosen point."
             .to_string(),
         CHEST,
     )

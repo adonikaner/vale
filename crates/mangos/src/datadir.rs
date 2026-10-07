@@ -168,7 +168,7 @@ impl Tools {
         }
         if !missing.is_empty() {
             return Err(format!(
-                "{} has no {}",
+                "{} does not contain the {}",
                 dir.display(),
                 missing.join(", ")
             ));
@@ -429,13 +429,13 @@ impl Outcome {
             parts.push(format!("{} .mmtile", self.mmaps.len()));
         }
         if !self.mmaps_failed.is_empty() {
-            parts.push(format!("{} navmesh tile(s) FAILED", self.mmaps_failed.len()));
+            parts.push(format!("{} navmesh tile(s) failed", self.mmaps_failed.len()));
         }
         let seconds: f32 = self.timings.iter().map(|(_, s)| s).sum();
         match parts.is_empty() {
             true => "no server tile to regenerate".to_string(),
             false => format!(
-                "server tiles: {} in {seconds:.0} s — restart the server to walk on them",
+                "server tiles: {} in {seconds:.0} s — restart the server to load them",
                 parts.join(", ")
             ),
         }
@@ -748,7 +748,7 @@ pub fn regenerate(
             (true, true) => out.mmaps.push(tile.mmtile_file()),
             (true, false) => out.mmaps_failed.push((
                 tile.mmtile_file(),
-                format!("the generator finished and wrote no tile: {tail}"),
+                format!("MoveMapGenerator exited without writing the tile: {tail}"),
             )),
             (false, _) => out.mmaps_failed.push((tile.mmtile_file(), tail)),
         }

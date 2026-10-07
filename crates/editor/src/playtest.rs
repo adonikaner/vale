@@ -684,7 +684,7 @@ pub fn start(
         }
         None => {
             auto.stand_down();
-            session.status = "playtesting: log in".into();
+            session.status = "playtesting: log in on the login screen".into();
         }
     }
     // Log which of the two routes it took. The panel shows the same, but a

@@ -1127,7 +1127,7 @@ impl GameObjects {
             gameobject::SPAWN,
             &key,
             wanted.as_ref(),
-            Some(crate::session::Gesture { label: "Keep game object", subject: &subject, now }),
+            Some(crate::session::Gesture { label: "Cancel game object removal", subject: &subject, now }),
         );
     }
 
@@ -1235,12 +1235,12 @@ pub fn plan_template_move(
     }
     if to > gameobject::MAX_ENTRY {
         return Err(format!(
-            "{to} is past {}, which is all `entry` can hold",
+            "{to} is above {}, the largest value `entry` can hold",
             gameobject::MAX_ENTRY
         ));
     }
     if taken && to != subject.read_entry {
-        return Err(format!("entry {to} is already a game object"));
+        return Err(format!("gameobject_template entry {to} already exists"));
     }
     Ok(Some((subject.key(), gameobject::template_key(to, subject.patch))))
 }
@@ -1713,7 +1713,7 @@ fn place_one(
     // The surface is used rather than the ground, so a chest clicked onto a
     // dock or a brazier onto a balcony stands on it. See [`crate::pick`].
     let Some(ground) = cursor.surface else {
-        session.status = "nothing under the pointer — nothing placed".into();
+        session.status = "no surface under the pointer; nothing placed".into();
         return;
     };
     let facing = objects.ghost_facing.unwrap_or_else(|| match camera.single() {

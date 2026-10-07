@@ -368,7 +368,7 @@ impl Conditions {
         let mut out = shown.check();
         out.extend(condition::check_tree(shown, |entry| all.iter().any(|other| other.entry == entry)));
         if let Some(same) = condition::same_test(shown, &all) {
-            out.push(format!("condition {} tests exactly the same, and the table holds only one such row", same.entry));
+            out.push(format!("condition {} tests exactly the same; the table's unique key allows only one such row", same.entry));
         }
         out
     }
@@ -399,7 +399,7 @@ impl Conditions {
     /// create. An error says why the draft cannot be written.
     pub fn plan(&self, edits: &Edits) -> Result<condition::Built, String> {
         let draft = self.draft.as_ref().ok_or("there is no condition to save")?;
-        let next = self.next_entry(edits).ok_or("the conditions are not read yet")?;
+        let next = self.next_entry(edits).ok_or("the conditions table has not been read yet")?;
         condition::build(&draft.tree, &self.all(edits), next)
     }
 

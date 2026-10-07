@@ -218,7 +218,7 @@ fn clipboard(
             }
             if paste {
                 let Some(anchor) = cursor.surface else {
-                    session.status = "nothing under the pointer to paste onto".to_string();
+                    session.status = "no surface under the pointer; nothing pasted".to_string();
                     return;
                 };
                 if board.doodads.is_empty() {
@@ -248,7 +248,7 @@ fn clipboard(
             }
             if paste {
                 let Some(anchor) = cursor.surface else {
-                    session.status = "nothing under the pointer to paste onto".to_string();
+                    session.status = "no surface under the pointer; nothing pasted".to_string();
                     return;
                 };
                 if board.buildings.is_empty() {
@@ -384,7 +384,7 @@ fn pasted_status(written: usize, asked: usize, skipped: usize, noun: &str) -> St
     match skipped {
         0 => format!("pasted {written} {noun}"),
         _ => format!(
-            "pasted {written} of {asked} {noun}; {skipped} would land on a tile that is not open"
+            "pasted {written} of {asked} {noun}; skipped {skipped} whose tile is not open"
         ),
     }
 }

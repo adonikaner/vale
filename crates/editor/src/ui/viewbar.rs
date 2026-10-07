@@ -308,7 +308,7 @@ pub fn draw(ui: &mut Ui, bar: &mut Bar) {
             None => {
                 let mut text = format!(
                     "server overlay: the server's navmesh (DataDir\\mmaps) around the camera, \
-                     which is where vmangos paths creatures. It shows the tiles as last \
+                     which vmangos uses for creature pathing. It shows the tiles as last \
                      regenerated, not unsaved edits.\n{}",
                     crate::navmesh::Navmesh::legend()
                 );
@@ -433,8 +433,8 @@ fn guides_menu(
             })
             .response
             .on_hover_text(
-                "Shade the ground steeper than this, in degrees from level. vmangos builds \
-                 its navmesh with 50\u{b0}: steeper ground is ground no creature paths across.",
+                "Shade ground steeper than this angle, in degrees from level. vmangos builds \
+                 its navmesh with a 50\u{b0} limit: creatures do not path across steeper ground.",
             );
             ui.horizontal(|ui| {
                 ui.checkbox(&mut guides.contours, "Contours every");
@@ -448,14 +448,14 @@ fn guides_menu(
                 );
             })
             .response
-            .on_hover_text("A line at every multiple of this height.");
+            .on_hover_text("Draw a contour line at every multiple of this height.");
 
             ui.add_space(2.0);
             theme::heading(ui, "Textures");
             ui.checkbox(&mut guides.layers, "Full chunks").on_hover_text(
-                "Wash red the chunks that carry four textures. A chunk holds four at \
-                 most, and a brush stroke with a fifth is refused there. The texture \
-                 brush's panel has the same switch.",
+                "Shade red the chunks that have four texture layers. A chunk holds at \
+                 most four, so a brush stroke that adds a fifth texture is refused there. \
+                 The texture brush panel has the same checkbox.",
             );
             if guides.layers && areas_shown {
                 theme::note(ui, "not drawn while the Areas tool shows areas");
@@ -465,8 +465,8 @@ fn guides_menu(
         egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
     }
     response.on_hover_text(
-        "ground guides: lines and shading drawn on the terrain to read it by. They edit \
-         nothing and are off during a playtest.",
+        "ground guides: lines and shading drawn on the terrain. They change no data and \
+         are hidden during a playtest.",
     );
 }
 
@@ -477,13 +477,13 @@ fn guides_menu(
 #[cfg(feature = "diagnostics")]
 fn collision_radius(ui: &mut Ui, overlay: &mut DebugOverlay, drawn: &CollisionDrawn) {
     let mut hover = format!(
-        "collision radius, in yards round the camera's target. {} hulls, {} triangles drawn.",
+        "collision radius, in yards around the camera's target. {} hulls, {} triangles drawn.",
         drawn.hulls, drawn.triangles
     );
     if drawn.capped {
         hover.push_str(&format!(
-            "\nCapped at {} triangles: the nearest hulls are drawn and the rest are not. \
-             Narrow the radius to see all of it.",
+            "\nCapped at {} triangles: only the nearest hulls are drawn. Reduce the radius \
+             to draw every hull in range.",
             overlay.collision_triangles
         ));
     }

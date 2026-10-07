@@ -118,7 +118,7 @@ pub fn export(
     path: &Path,
 ) -> Result<String, String> {
     let Some((origin, span)) = block(tiles) else {
-        return Err("nothing is selected".into());
+        return Err("no tiles selected".into());
     };
     let found: Vec<((u32, u32), AdtFile)> = tiles
         .iter()
@@ -267,7 +267,7 @@ pub fn read(path: &Path) -> Result<Pending, String> {
         png::ColorType::GrayscaleAlpha => 2,
         png::ColorType::Rgb => 3,
         png::ColorType::Rgba => 4,
-        png::ColorType::Indexed => return Err(said(path, "a palette picture that did not expand")),
+        png::ColorType::Indexed => return Err(said(path, "indexed-colour PNG that could not be expanded")),
     };
     // Every sample as 0 to 1.
     let samples: Vec<f32> = match frame.bit_depth {
@@ -315,7 +315,7 @@ pub fn import(
     objects_follow: bool,
 ) -> String {
     let Some((origin, span)) = block(tiles) else {
-        return "nothing is selected".into();
+        return "no tiles selected".into();
     };
     if pending.kind == Kind::Heights && pending.high <= pending.low {
         return "white must be higher than black".into();
@@ -399,8 +399,8 @@ pub fn import(
         session.unsaved.insert(at);
     }
     let mut line = match (open, changed) {
-        (0, _) => "none of the selection is open: fly to it first".to_string(),
-        (_, 0) => "the picture says what the tiles already hold: nothing changed".to_string(),
+        (0, _) => "none of the selected tiles is open: fly to them first".to_string(),
+        (_, 0) => "the image matches the selected tiles: nothing changed".to_string(),
         (_, n) => format!(
             "imported {} onto {n} tile{}: {chunks} chunk change{}",
             pending.name(),
@@ -409,7 +409,7 @@ pub fn import(
         ),
     };
     if carried > 0 {
-        line.push_str(&format!(", {carried} objects followed the ground"));
+        line.push_str(&format!(", {carried} doodad/WMO placements moved with the ground"));
     }
     if open > 0 && open < tiles.len() {
         line.push_str(&format!("; {} selected tiles were not open", tiles.len() - open));

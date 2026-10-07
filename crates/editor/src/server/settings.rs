@@ -241,11 +241,11 @@ impl ServerSettings {
             let _ = std::fs::remove_file(&path);
         } else {
             let body = format!(
-                "# Where this machine's vmangos is. Written by the editor's Server panel.\n\
-                 # The environment wins over it: VALE_WORLDDB, then VALE_MANGOSD.\n\
+                "# vmangos location on this machine. Written by the editor's Server panel.\n\
+                 # Environment variables override it: VALE_WORLDDB, then VALE_MANGOSD.\n\
                  {CONF} = {}\n\
                  # The folder holding vmangos' four map tools, a patched\n\
-                 # build. VALE_VMANGOS_TOOLS wins over it.\n\
+                 # build. VALE_VMANGOS_TOOLS overrides it.\n\
                  {TOOLS} = {}\n",
                 self.conf.trim(),
                 self.tools.trim(),
@@ -262,7 +262,7 @@ impl ServerSettings {
         };
         let at = project.join(vale_edit::project::SETTINGS_FILE);
         let body = format!(
-            "# This project's switches. Written by the editor's Server panel.\n\
+            "# This project's server settings. Written by the editor's Server panel.\n\
              # Whether a save writes the project's rows into the database.\n\
              {APPLY} = {}\n\
              # Whether a playtest runs with the query-answer cache off, so an edited\n\

@@ -99,7 +99,7 @@ impl Change {
     pub fn line(&self) -> String {
         match self {
             Change::New => "new".to_string(),
-            Change::Same => "same as the archives'".to_string(),
+            Change::Same => "same as in the archives".to_string(),
             Change::Differs(line) => line.clone(),
             Change::Unreadable(why) => format!("not compared: {why}"),
         }

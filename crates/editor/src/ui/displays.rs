@@ -72,7 +72,7 @@ pub fn window(
         );
         let search = ui.add(
             egui::TextEdit::singleline(&mut open.query)
-                .hint_text("part of the model path, or an id")
+                .hint_text("model path or display id")
                 .desired_width(WIDTH - 24.0),
         );
         if open.focus {
@@ -84,8 +84,8 @@ pub fn window(
         if total == 0 {
             theme::note(
                 ui,
-                "Nothing matches. A display row carries no name; the text searched is the \
-                 model's path and, for a creature, its skin names.",
+                "No matches. Display rows have no name; search text is matched against the \
+                 model path and, for creatures, the skin names.",
             );
         }
         let range = super::items::pager(ui, &mut open.page, total, PAGE);
@@ -120,8 +120,8 @@ pub fn window(
             if ui
                 .button("Set to none")
                 .on_hover_text(
-                    "Write 0. A creature with display 0 is drawn by the server as a box; \
-                     an object with display 0 is placed and drawn as a mark.",
+                    "Writes 0. The editor draws a creature with display 0 as a box and a \
+                     game object with display 0 as a marker.",
                 )
                 .clicked()
             {
@@ -260,15 +260,15 @@ fn preview(
                 }
                 None => {
                     ui.label(
-                        egui::RichText::new("no such display row, or one with no model")
+                        egui::RichText::new("no display row with this id, or the row has no model")
                             .small()
                             .color(theme::BAD),
                     );
                 }
             }
             used = ui
-                .button("Use this one")
-                .on_hover_text("Write this display id into the column, and close.")
+                .button("Use this display")
+                .on_hover_text("Writes this display id into the column and closes the picker.")
                 .clicked();
         });
     });

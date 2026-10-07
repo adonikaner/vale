@@ -148,7 +148,7 @@ fn item_name(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, entry: u32) {
         return;
     };
     let colour = super::items::quality_colour(found.quality);
-    if link(ui, &found.name, colour, &format!("Open item {entry}.")) {
+    if link(ui, &found.name, colour, &format!("Open item {entry} in the item workspace.")) {
         resolver.quests.show_item = Some(entry);
     }
 }

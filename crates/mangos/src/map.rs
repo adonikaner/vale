@@ -62,15 +62,15 @@ pub const MAP_TYPES: [Value; 4] = [
 pub const COLUMNS: [Column; 12] = [
     Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the Map.dbc id" },
     Column { name: "patch", kind: Kind::Key, group: Group::Identity, about: "the content patch the row belongs to" },
-    Column { name: "parent", kind: Kind::Ref("Map"), group: Group::Place, about: "for a dungeon reached through another, that dungeon, or 0" },
-    Column { name: "map_type", kind: Kind::Choice(&MAP_TYPES), group: Group::Identity, about: "what kind of place the map is" },
+    Column { name: "parent", kind: Kind::Ref("Map"), group: Group::Place, about: "the dungeon this one is entered through, or 0" },
+    Column { name: "map_type", kind: Kind::Choice(&MAP_TYPES), group: Group::Identity, about: "the map type: world, dungeon, raid or battleground" },
     Column { name: "linked_zone", kind: Kind::Ref("AreaTable"), group: Group::Place, about: "the area the map belongs to, as Map.dbc field 19 holds it" },
     Column { name: "player_limit", kind: Kind::Unsigned, group: Group::Requirements, about: "how many characters one instance holds" },
     Column { name: "reset_delay", kind: Kind::Unsigned, group: Group::Requirements, about: "days between a raid's resets, or 0" },
-    Column { name: "ghost_entrance_map", kind: Kind::Signed, group: Group::Place, about: "the map a dead character's ghost walks in from, or -1" },
-    Column { name: "ghost_entrance_x", kind: Kind::Float, group: Group::Place, about: "north, in yards, on the ghost entrance's map" },
-    Column { name: "ghost_entrance_y", kind: Kind::Float, group: Group::Place, about: "west, in yards" },
-    Column { name: "map_name", kind: Kind::Text, group: Group::Identity, about: "the server's own copy of the name" },
+    Column { name: "ghost_entrance_map", kind: Kind::Signed, group: Group::Place, about: "the map a dead character's ghost enters from, or -1" },
+    Column { name: "ghost_entrance_x", kind: Kind::Float, group: Group::Place, about: "x of the ghost entrance: north, in yards, on ghost_entrance_map" },
+    Column { name: "ghost_entrance_y", kind: Kind::Float, group: Group::Place, about: "y of the ghost entrance: west, in yards, on ghost_entrance_map" },
+    Column { name: "map_name", kind: Kind::Text, group: Group::Identity, about: "the server's copy of the map name" },
     Column { name: "script_name", kind: Kind::Text, group: Group::Behaviour, about: "the instance script the server runs, or empty" },
 ];
 

@@ -362,7 +362,7 @@ pub fn keys(
         };
         session.status = match made {
             Some(guid) => format!("duplicated as guid {guid}"),
-            None => "the spawn's row is still being read".to_string(),
+            None => "not duplicated: the spawn row has not loaded yet".to_string(),
         };
         return;
     }
@@ -474,7 +474,7 @@ fn group_keys(
     if control {
         if keys.just_pressed(KeyCode::KeyD) {
             session.status = format!(
-                "{} {noun} are selected; Ctrl+D copies one spawn at a time",
+                "{} {noun} selected; Ctrl+D duplicates one spawn at a time",
                 all.len()
             );
         }

@@ -882,8 +882,8 @@ pub fn set_area(session: &mut EditSession, cells: &BTreeSet<Cell>, area: u32) ->
 /// Set or clear the impassable flag on every selected chunk.
 pub fn set_impassable(session: &mut EditSession, cells: &BTreeSet<Cell>, on: bool) -> usize {
     let label = match on {
-        true => "Impassable",
-        false => "Passable",
+        true => "Set impassable",
+        false => "Clear impassable",
     };
     over(session, cells, label, false, |tile, chunk| {
         let before = tile.chunk(chunk)?.head().flags();
@@ -902,8 +902,8 @@ pub fn set_impassable(session: &mut EditSession, cells: &BTreeSet<Cell>, on: boo
 /// Cut all sixteen squares of every selected chunk, or put all sixteen back.
 pub fn set_holes(session: &mut EditSession, cells: &BTreeSet<Cell>, cut: bool) -> usize {
     let (label, after) = match cut {
-        true => ("Cut chunks", u16::MAX),
-        false => ("Patch chunks", 0),
+        true => ("Cut holes in chunks", u16::MAX),
+        false => ("Fill holes in chunks", 0),
     };
     over(session, cells, label, true, |tile, chunk| {
         let before = tile.chunk(chunk)?.head().holes();
@@ -955,7 +955,7 @@ fn texture_id(tile: &AdtFile, path: &str) -> Option<u32> {
 /// Make `path` the base texture of every selected chunk, under whatever each
 /// already carries. Every blend map is kept.
 pub fn set_base(session: &mut EditSession, cells: &BTreeSet<Cell>, path: &str) -> usize {
-    let label = format!("Base {}", super::textures::leaf(path));
+    let label = format!("Set base texture {}", super::textures::leaf(path));
     over(session, cells, &label, true, |tile, chunk| {
         repaint(tile, chunk, |tile, paint| {
             let id = tile.name_texture(path);
@@ -983,7 +983,7 @@ pub fn swap_texture(
     to: &str,
 ) -> usize {
     let label = format!(
-        "Swap {} to {}",
+        "Replace {} with {}",
         super::textures::leaf(from),
         super::textures::leaf(to)
     );
@@ -1659,7 +1659,7 @@ fn press(
     }
     if keys.just_pressed(KeyCode::Escape) && !chunks.selected.is_empty() {
         chunks.clear();
-        session.bypass_change_detection().status = "chunk selection dropped".to_string();
+        session.bypass_change_detection().status = "chunk selection cleared".to_string();
     }
     let control = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     if control && keys.just_pressed(KeyCode::KeyA) {
@@ -1701,7 +1701,7 @@ fn press(
                 let said = match stitched {
                     0 => format!("pasted onto {} of {} chunks", written.len(), clip.chunks.len()),
                     n => format!(
-                        "pasted onto {} of {} chunks, {n} moved by the stitch",
+                        "pasted onto {} of {} chunks; the stitch changed {n} chunks",
                         written.len(),
                         clip.chunks.len()
                     ),

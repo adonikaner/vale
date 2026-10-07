@@ -293,15 +293,15 @@ pub const FLOAT_BAND_NAMES: [&str; FLOAT_BANDS_PER_PARAMS as usize] = [
 /// `terrain1.bls`.
 pub const INT_BAND_NOTES: [&str; BANDS_PER_PARAMS as usize] = [
     "The single directional light the world is lit by.",
-    "The fill. Darker than the sun in 19 of 19 lights.",
+    "The ambient fill. Darker than the sun in all 19 default lights.",
     "",
     "",
     "",
     "",
-    "Haze sitting under the sky rather than more of it.",
-    "The horizon, and what the world fades into — one band used twice.",
-    "Read and carried; no sun sprite to paint it on yet.",
-    "Read and carried; no sun glare sprite yet.",
+    "Haze below the sky, separate from the sky gradient.",
+    "The horizon colour and the fog colour: one band used for both.",
+    "Read but not drawn: the renderer has no sun sprite yet.",
+    "Read but not drawn: the renderer has no sun glare sprite yet.",
     "Not read: no cloud sheet has been found in the archives.",
     "Not read: no cloud sheet has been found in the archives.",
     "Not read: no cloud sheet has been found in the archives.",
@@ -309,17 +309,17 @@ pub const INT_BAND_NOTES: [&str; BANDS_PER_PARAMS as usize] = [
     "",
     "",
     "",
-    "Unidentified. Dimmer than the fill in 7 of 7 open-sky lights and cool \
-     where the sun is warm, but `terrain1.bls` applies MCSH as a flat scalar, \
-     so it is not a shadow colour. River-far is the open candidate — see \
+    "Unidentified. Dimmer than the ambient band in all 7 open-sky lights and \
+     cool where the sun is warm. It is not a shadow colour: `terrain1.bls` \
+     applies MCSH as a flat scalar. It may be the far river colour; see \
      `band::SHADOW`.",
 ];
 
 /// …and the same for the six float bands.
 pub const FLOAT_BAND_NOTES: [&str; FLOAT_BANDS_PER_PARAMS as usize] = [
-    "How far away the world is fogged out. In 1/36 of a yard.",
-    "Where the fog starts, as a fraction of the end. Goes negative, which is \
-     fog from the first yard.",
+    "The distance at which the fog is complete, in 1/36 of a yard.",
+    "Where the fog starts, as a fraction of the fog end. A negative value \
+     starts the fog at the camera.",
     "Not read: flat across all 19 default lights.",
     "Not read: flat across all 19 default lights.",
     "Not read: flat across all 19 default lights.",

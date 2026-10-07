@@ -448,7 +448,7 @@ pub fn save(session: &mut EditSession) {
         Ok(rows) => session.status = format!("{rows} creature change(s) written to {SQL_VPATH}"),
         Err(e) => {
             warn!("creatures: {e}");
-            session.status = format!("saved, but {SQL_VPATH} did not: {e}");
+            session.status = format!("saved, but writing {SQL_VPATH} failed: {e}");
         }
     }
 }
@@ -469,7 +469,7 @@ impl Applied {
     pub fn line(&self) -> String {
         let taken_back = match self.taken_back {
             0 => String::new(),
-            n => format!(", {n} no longer claimed put back"),
+            n => format!(", restored {n} row(s) the project no longer changes"),
         };
         format!(
             "{} row(s) applied, {} affected{taken_back} — restart the server to see them",
@@ -756,7 +756,7 @@ pub fn revert_step(
     let Some(job) = prepare_revert(session, server)? else {
         return Ok(None);
     };
-    Ok(Some(super::stack::Step::new("putting back creatures", move || {
+    Ok(Some(super::stack::Step::new("restoring creatures", move || {
         let done = job.run();
         let ok = done.is_ok();
         let finish: super::queue::Finish = Box::new(move |session: &mut EditSession, _: &mut super::reload::Reloads| {
@@ -764,8 +764,8 @@ pub fn revert_step(
                 Ok(rows) => {
                     finish_revert(session);
                     format!(
-                        "put back {rows} row(s) \u{2014} restart the server. This project still \
-                         changes them; Discard gives them up"
+                        "restored {rows} row(s) \u{2014} restart the server. The project still holds \
+                         these edits; Discard removes them"
                     )
                 }
                 Err(e) => format!("creatures: {e}"),

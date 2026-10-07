@@ -386,7 +386,7 @@ impl Services {
             + other_rows.iter().filter(|s| s.life != Life::Delete && !s.forbidden).count();
         if !list.is_template() && other_rows.iter().any(|s| s.life != Life::Delete && s.ware.item == item) {
             return Err(format!(
-                "item {item} is already in the template list {} {}, and the server skips it in the \
+                "item {item} is already in the template list {} {}, so the server would skip it in the \
                  creature's own list",
                 vendor::TEMPLATE,
                 other.map_or(0, |o| o.entry)
@@ -408,7 +408,7 @@ impl Services {
         };
         if shown.iter().any(|s| s.ware.item == item && s.in_database.is_some()) {
             session.set_server_row(list.table, &key, None, Some(gesture));
-            return Ok(format!("kept item {item} in {} {}", list.table, list.entry));
+            return Ok(format!("cancelled removal of item {item} in {} {}", list.table, list.entry));
         }
         let slot = kept.iter().map(|s| s.ware.slot).max().unwrap_or(0) + 1;
         let ware = Ware::new(list.entry, item, slot);
@@ -444,7 +444,7 @@ impl Services {
                 .any(|s| s.life != Life::Delete && s.lesson.spell == spell);
             if taught_there {
                 return Err(format!(
-                    "spell {spell} is already in the template list {} {}, and the server skips it \
+                    "spell {spell} is already in the template list {} {}, so the server would skip it \
                      in the creature's own list",
                     trainer::TEMPLATE,
                     other.entry
@@ -461,7 +461,7 @@ impl Services {
         };
         if shown.iter().any(|s| s.lesson.key() == key && s.in_database.is_some()) {
             session.set_server_row(list.table, &key, None, Some(gesture));
-            return Ok(format!("kept spell {spell} in {} {}", list.table, list.entry));
+            return Ok(format!("cancelled removal of spell {spell} in {} {}", list.table, list.entry));
         }
         session.set_server_row(list.table, &key, Some(&creation(&lesson.assignments())), Some(gesture));
         Ok(format!("spell {spell} added to {} {}", list.table, list.entry))

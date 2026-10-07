@@ -54,17 +54,17 @@ pub const PATCH_MAX: u32 = 10;
 
 /// `game_graveyard_zone`, in table order.
 pub const ZONE_COLUMNS: [Column; 5] = [
-    Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the WorldSafeLocs.dbc id of the safe place" },
-    Column { name: "ghost_zone", kind: Kind::Key, group: Group::Identity, about: "the AreaTable id of the zone or area it serves" },
-    Column { name: "faction", kind: Kind::Choice(&FACTIONS), group: Group::Place, about: "which side it serves: 0 both, 67 Horde, 469 Alliance" },
+    Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the WorldSafeLocs.dbc id of the graveyard" },
+    Column { name: "ghost_zone", kind: Kind::Key, group: Group::Identity, about: "the AreaTable id of the zone or area the graveyard serves" },
+    Column { name: "faction", kind: Kind::Choice(&FACTIONS), group: Group::Place, about: "the side it serves: 0 both, 67 Horde, 469 Alliance" },
     Column { name: "patch_min", kind: Kind::Unsigned, group: Group::Identity, about: "the first content patch the link exists in" },
     Column { name: "patch_max", kind: Kind::Key, group: Group::Identity, about: "the last content patch the link exists in" },
 ];
 
 /// `world_safe_locs_facing`, in table order.
 pub const FACING_COLUMNS: [Column; 2] = [
-    Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the WorldSafeLocs.dbc id" },
-    Column { name: "orientation", kind: Kind::Float, group: Group::Place, about: "the facing a released spirit takes, in radians" },
+    Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the WorldSafeLocs.dbc id of the graveyard" },
+    Column { name: "orientation", kind: Kind::Float, group: Group::Place, about: "the facing a released spirit takes at the graveyard, in radians" },
 ];
 
 /// Every column of one of [`TABLES`].
@@ -161,7 +161,7 @@ pub fn check_created(table: &str, row: &crate::schema::Row) -> Vec<String> {
     match table {
         ZONE => Link::from_row(row)
             .map(|link| link.check())
-            .unwrap_or_else(|| vec!["the row does not name a safe place and a zone".to_string()]),
+            .unwrap_or_else(|| vec!["the row does not name a graveyard and a zone".to_string()]),
         _ => Vec::new(),
     }
 }

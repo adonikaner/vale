@@ -269,7 +269,7 @@ impl Reader<'_> {
     /// A count from the header, which must not be negative.
     fn count(&self, at: usize, what: &str) -> Result<usize, String> {
         let n = self.i32(at)?;
-        usize::try_from(n).map_err(|_| format!("{what} is {n}"))
+        usize::try_from(n).map_err(|_| format!("{what} is negative ({n})"))
     }
 }
 
@@ -289,7 +289,7 @@ pub fn parse_tile(bytes: &[u8]) -> Result<NavTile, String> {
     let mmap_version = r.u32(8)?;
     if dt_version != DETOUR_VERSION || mmap_version != MMAP_VERSION {
         return Err(format!(
-            "Detour version {dt_version} and mmap version {mmap_version}; this reads {DETOUR_VERSION} and {MMAP_VERSION}"
+            "Detour version {dt_version} and mmap version {mmap_version}; expected Detour {DETOUR_VERSION} and mmap {MMAP_VERSION}"
         ));
     }
     let size = r.u32(12)? as usize;
@@ -337,13 +337,13 @@ pub fn parse_tile(bytes: &[u8]) -> Result<NavTile, String> {
 
     let vert = |i: usize| -> Result<[f32; 3], String> {
         if i >= vert_count {
-            return Err(format!("vertex {i} of {vert_count}"));
+            return Err(format!("vertex index {i} is out of range; the tile has {vert_count} vertices"));
         }
         r.vec3(verts_at + VERT * i).map(world)
     };
     let detail_vert = |i: usize| -> Result<[f32; 3], String> {
         if i >= detail_vert_count {
-            return Err(format!("detail vertex {i} of {detail_vert_count}"));
+            return Err(format!("detail vertex index {i} is out of range; the tile has {detail_vert_count} detail vertices"));
         }
         r.vec3(detail_verts_at + VERT * i).map(world)
     };
@@ -366,7 +366,7 @@ pub fn parse_tile(bytes: &[u8]) -> Result<NavTile, String> {
             continue;
         }
         if count > VERTS_PER_POLYGON {
-            return Err(format!("polygon {p} has {count} vertices"));
+            return Err(format!("polygon {p} has {count} vertices; the limit is {VERTS_PER_POLYGON}"));
         }
         polygons += 1;
 
@@ -411,14 +411,14 @@ pub fn parse_tile(bytes: &[u8]) -> Result<NavTile, String> {
         for t in 0..tris {
             let tri = tri_base + t;
             if tri >= detail_tri_count {
-                return Err(format!("detail triangle {tri} of {detail_tri_count}"));
+                return Err(format!("detail triangle index {tri} is out of range; the tile has {detail_tri_count} detail triangles"));
             }
             let at = detail_tris_at + DETAIL_TRI * tri;
             for k in 0..3 {
                 let index = r.u8(at + k)? as usize;
                 if index >= local.len() {
                     return Err(format!(
-                        "polygon {p} triangle {t} names vertex {index} of {}",
+                        "polygon {p} triangle {t} names vertex {index}; only {} are available",
                         local.len()
                     ));
                 }

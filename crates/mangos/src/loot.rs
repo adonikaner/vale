@@ -114,15 +114,15 @@ pub struct Table {
 
 /// The nine, in [`TABLES`]' order.
 pub const ALL: [Table; 9] = [
-    Table { name: CREATURE, word: "Drops", keyed_by: "creature_template.loot_id" },
-    Table { name: PICKPOCKETING, word: "Pickpocket", keyed_by: "creature_template.pickpocket_loot_id" },
-    Table { name: SKINNING, word: "Skinning", keyed_by: "creature_template.skinning_loot_id" },
-    Table { name: GAMEOBJECT, word: "Holds", keyed_by: "gameobject_template's lootId data column" },
-    Table { name: ITEM, word: "Contains", keyed_by: "item_template.entry, with the LOOTABLE flag" },
-    Table { name: DISENCHANT, word: "Disenchants into", keyed_by: "item_template.disenchant_id" },
-    Table { name: FISHING, word: "Fishing", keyed_by: "AreaTable.dbc's zone id" },
-    Table { name: MAIL, word: "Mail", keyed_by: "MailTemplate.dbc's id" },
-    Table { name: REFERENCE, word: "Reference", keyed_by: "a negative mincountOrRef in any other loot table" },
+    Table { name: CREATURE, word: "Creature loot", keyed_by: "creature_template.loot_id" },
+    Table { name: PICKPOCKETING, word: "Pickpocketing loot", keyed_by: "creature_template.pickpocket_loot_id" },
+    Table { name: SKINNING, word: "Skinning loot", keyed_by: "creature_template.skinning_loot_id" },
+    Table { name: GAMEOBJECT, word: "Game object loot", keyed_by: "the lootId data column of gameobject_template" },
+    Table { name: ITEM, word: "Item loot", keyed_by: "item_template.entry of an item with the LOOTABLE flag" },
+    Table { name: DISENCHANT, word: "Disenchant loot", keyed_by: "item_template.disenchant_id" },
+    Table { name: FISHING, word: "Fishing loot", keyed_by: "the AreaTable.dbc zone id" },
+    Table { name: MAIL, word: "Mail loot", keyed_by: "the MailTemplate.dbc id" },
+    Table { name: REFERENCE, word: "Reference loot", keyed_by: "a negative mincountOrRef in any other loot table" },
 ];
 
 /// One of the nine, by name.
@@ -136,15 +136,15 @@ pub fn table(name: &str) -> Option<Table> {
 /// Five are the key — see the module comment for why `groupid` and the patch
 /// band are among them.
 pub const COLUMNS: [Column; 9] = [
-    Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "which loot set the row is in: the creature's loot_id, the chest's lootId, the item's entry" },
+    Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the loot set the row belongs to: the creature's loot_id, the chest's lootId, or the item's entry" },
     Column { name: "item", kind: Kind::Key, group: Group::Identity, about: "the item_template entry, or a label when the row is a reference" },
     Column { name: "ChanceOrQuestChance", kind: Kind::Float, group: Group::Loot, about: "drop chance in percent; negative is the same chance for a quest drop, offered only to a player whose quest asks for it; 0 in a group shares the remainder" },
-    Column { name: "groupid", kind: Kind::Key, group: Group::Loot, about: "0 rolls on its own; 1..127 is a group of which one row drops per loot" },
-    Column { name: "mincountOrRef", kind: Kind::Signed, group: Group::Loot, about: "the least that drops; negative is a reference_loot_template entry negated" },
-    Column { name: "maxcount", kind: Kind::Unsigned, group: Group::Loot, about: "the most that drops, at least the minimum; up to 255" },
+    Column { name: "groupid", kind: Kind::Key, group: Group::Loot, about: "group: 0 rolls on its own; in a group 1..127, one row of the group drops per loot" },
+    Column { name: "mincountOrRef", kind: Kind::Signed, group: Group::Loot, about: "the least count that drops; a negative value is a reference_loot_template entry, negated" },
+    Column { name: "maxcount", kind: Kind::Unsigned, group: Group::Loot, about: "the most that drops, at least mincountOrRef; up to 255" },
     Column { name: "condition_id", kind: Kind::Unsigned, group: Group::Loot, about: "a row of `conditions` the player must meet, or 0" },
     Column { name: "patch_min", kind: Kind::Key, group: Group::Identity, about: "the first content patch the row is loaded at" },
-    Column { name: "patch_max", kind: Kind::Key, group: Group::Identity, about: "…and the last" },
+    Column { name: "patch_max", kind: Kind::Key, group: Group::Identity, about: "the last content patch the row is loaded at" },
 ];
 
 /// The columns of a table, or an empty slice for a name this module does not

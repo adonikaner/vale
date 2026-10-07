@@ -144,8 +144,8 @@ pub fn draw(
         let at_server = ui
             .button("Server…")
             .on_hover_text(
-                "What this project has applied to the world database, Apply and Put back \
-                 for each subject, and where this machine's vmangos is.",
+                "The rows this project has applied to the world database, Apply and Restore \
+                 for each subject, and this machine's vmangos settings.",
             );
         popovers.server.track(&at_server);
         if at_server.clicked() {
@@ -192,7 +192,7 @@ pub struct Subjects<'a> {
 fn running(ui: &mut egui::Ui, playing: &mut Session, session: &mut EditSession) {
     if ui
         .button("End Playtest")
-        .on_hover_text("Ctrl+P. Drops the connection and returns to the tools.")
+        .on_hover_text("Ctrl+P. Disconnects from the server and returns to the editor.")
         .clicked()
     {
         crate::playtest::stop(playing.state, playing.client, playing.auto, session);
@@ -200,7 +200,7 @@ fn running(ui: &mut egui::Ui, playing: &mut Session, session: &mut EditSession) 
     }
     if ui
         .button("Hide Panels")
-        .on_hover_text("Ctrl+E. Leaves the playtest running, with the game's own screen.")
+        .on_hover_text("Ctrl+E. Hides the editor panels. The playtest keeps running.")
         .clicked()
     {
         playing.open.0 = false;
@@ -246,7 +246,7 @@ fn not_running(
     }
     let who = ui
         .button(label)
-        .on_hover_text("Who the playtest logs in as, whether it asks, and whether the client keeps its query cache.");
+        .on_hover_text("Playtest login: account, character, whether the login screen is skipped, and whether the client keeps its query cache.");
     popovers.login.track(&who);
     if who.clicked() {
         popovers.login.toggle(&who);
@@ -260,8 +260,8 @@ fn not_running(
             .corner_radius(egui::CornerRadius::same(3)),
         )
         .on_hover_text(
-            "Save the project and play the map you are editing. Ctrl+P, and \
-             Ctrl+P again to come back.",
+            "Save the project and start a playtest on the open map. Ctrl+P starts it; \
+             Ctrl+P again ends it.",
         )
         .clicked()
     {
@@ -328,10 +328,10 @@ fn project(
             // playtest first is one keypress and leaves nothing half-swapped.
             if ui
                 .add_enabled(!playing, egui::Button::new("Projects…"))
-                .on_hover_text("Which project the edits go into, and making another one.")
+                .on_hover_text("Open, create, clear or delete projects.")
                 .on_disabled_hover_text(
-                    "Not while a playtest is running: switching rebuilds the archive \
-                     overlay the running game is reading. Ctrl+P first.",
+                    "Not while a playtest is running: switching projects rebuilds the archive \
+                     overlay the client is reading. Press Ctrl+P to end the playtest first.",
                 )
                 .clicked()
             {
@@ -346,9 +346,9 @@ fn project(
             if ui
                 .add_enabled(!playing && !regenerating, egui::Button::new("Publish…"))
                 .on_hover_text(
-                    "Write a patch: one folder under the project's publish\\ holding the \
-                     client archive, the server's DBCs, a migration of the rows and the \
-                     server's maps, vmaps and mmaps, with a README saying where each goes. \
+                    "Write a patch: one folder under the project's publish\\ containing the \
+                     client archive, the server DBCs, an SQL migration of the rows and the \
+                     server's maps, vmaps and mmaps, with a README listing where each goes. \
                      Nothing is applied to this machine.",
                 )
                 .on_disabled_hover_text(match playing {
@@ -409,7 +409,7 @@ fn project(
         .on_hover_text(match playing {
             true => format!(
                 "Write the tiles, tables and server rows you have changed into {}, then \
-                 hand them to the running game. Ctrl+S.",
+                 republish them to the running playtest. Ctrl+S.",
                 session.project.root.display()
             ),
             false => format!(
@@ -561,8 +561,8 @@ fn map(
     new_map: &mut Option<crate::tools::maps::Form>,
     playing: bool,
 ) {
-    const HELD: &str = "Not while a playtest is running: the session has the camera and the \
-                        character is on this map. Ctrl+P to come back to the tools.";
+    const HELD: &str = "Not while a playtest is running: the playtest controls the camera and the \
+                        character is on this map. Press Ctrl+P to end the playtest.";
     let mut open_map: Option<(String, u32)> = None;
     let mut jump: Option<crate::bookmarks::Bookmark> = None;
     let mut ask_go = false;
@@ -574,8 +574,9 @@ fn map(
             if ui
                 .add_enabled(!playing, egui::Button::new("New map\u{2026}"))
                 .on_hover_text(
-                    "A map that does not exist yet: a Map.dbc row, a WDT with no tiles and \
-                     the server's map_template row. It opens empty, for Create.",
+                    "Create a new map: a Map.dbc row, a WDT with no tiles and the server's \
+                     map_template row. The map opens with no tiles; add them with Create \
+                     in Edit Map.",
                 )
                 .on_disabled_hover_text(HELD)
                 .clicked()
@@ -604,8 +605,8 @@ fn map(
             if ui
                 .add_enabled(!playing, egui::Button::new("Edit Map…"))
                 .on_hover_text(
-                    "The map from above: which tiles exist, and making, deleting, \
-                     copying and pasting them.",
+                    "Open the tile map: which tiles exist, and creating, deleting, \
+                     copying and pasting tiles.",
                 )
                 .on_disabled_hover_text(HELD)
                 .clicked()
@@ -628,7 +629,7 @@ fn map(
                     // Go to…; see the module comment.
                     if ui
                         .button("Add bookmark\u{2026}")
-                        .on_hover_text("Name the current view and keep it.")
+                        .on_hover_text("Save the current camera view as a named bookmark.")
                         .clicked()
                     {
                         ask_bookmark = true;

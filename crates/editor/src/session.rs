@@ -558,10 +558,10 @@ impl EditSession {
         self.adopt(assets, project);
         vale_edit::project::remember_opened(&assets.root, name);
         self.status = match (saved, tables) {
-            (0, 0) => format!("{name}: nothing to save first"),
-            (tiles, 0) => format!("{name}: {tiles} tiles saved first"),
-            (0, count) => format!("{name}: {count} tables saved first"),
-            (tiles, count) => format!("{name}: {tiles} tiles and {count} tables saved first"),
+            (0, 0) => format!("opened {name}; the previous project had nothing unsaved"),
+            (tiles, 0) => format!("opened {name}; saved {tiles} tiles of the previous project"),
+            (0, count) => format!("opened {name}; saved {count} tables of the previous project"),
+            (tiles, count) => format!("opened {name}; saved {tiles} tiles and {count} tables of the previous project"),
         };
         true
     }
@@ -669,14 +669,14 @@ impl EditSession {
         match Project::open(&assets.root, &name) {
             Ok(project) => self.adopt(assets, project),
             Err(e) => {
-                self.status = format!("{name} was cleared but will not re-open: {e}");
+                self.status = format!("{name} was cleared but could not be reopened: {e}");
                 return Some(went);
             }
         }
         self.status = match went {
             0 => format!("{name} was already empty"),
-            1 => format!("{name}: 1 file thrown away"),
-            n => format!("{name}: {n} files thrown away"),
+            1 => format!("{name}: 1 file permanently deleted"),
+            n => format!("{name}: {n} files permanently deleted"),
         };
         Some(went)
     }
@@ -1542,7 +1542,7 @@ impl EditSession {
             .is_some_and(|shipped| shipped.holds(&self.project, &vpath, &bytes));
         let done = match unchanged {
             true => self.project.revert(&vpath).map(|_| {
-                self.status = format!("{key} is the archives' own and is not kept in the project");
+                self.status = format!("{key} matches the archives, so it is not kept in the project");
                 Saved::Dropped
             }),
             false => self.project.write(&vpath, &bytes).map(|path| {
@@ -1604,11 +1604,11 @@ impl EditSession {
             (written, 0) => self.status = format!("saved {written} tiles to {root}"),
             (0, dropped) => {
                 self.status =
-                    format!("{dropped} tiles are the archives' own and are not kept in {root}")
+                    format!("{dropped} tiles match the archives, so they are not kept in {root}")
             }
             (written, dropped) => {
                 self.status = format!(
-                    "saved {written} tiles to {root}; {dropped} are the archives' own and are \
+                    "saved {written} tiles to {root}; {dropped} match the archives, so they are \
                      not kept"
                 )
             }
@@ -1638,7 +1638,7 @@ impl EditSession {
                     warn!("publish: {name} could not be removed: {why}");
                     line.push_str(&format!(
                         "; {name} could not be removed ({why}) and still holds the \
-                         project's older files — close what has it open and publish again"
+                         project's older files — close the program that has it open and publish again"
                     ));
                 }
                 self.status = line;
@@ -2029,7 +2029,7 @@ fn drop_unchanged_tiles(session: Option<ResMut<EditSession>>) {
     }
     if dropped > 0 {
         let line = format!(
-            "{dropped} tiles in {} were the archives' own and are no longer kept",
+            "{dropped} tiles in {} match the archives, so they are no longer kept",
             session.project.name
         );
         info!("{line}");
@@ -2379,8 +2379,8 @@ pub fn publish_for_the_preview(
     }
     session.tables_republished = true;
     session.status = match unsaved.len() {
-        1 => format!("{} put where the preview reads it", unsaved[0]),
-        n => format!("{n} tables put where the preview reads them"),
+        1 => format!("{} written to the overlay for the preview", unsaved[0]),
+        n => format!("{n} tables written to the overlay for the preview"),
     };
 }
 

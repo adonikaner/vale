@@ -251,7 +251,7 @@ pub fn plan_from(edits: &vale_mangos::row::Edits) -> Plan {
                     .collect();
                 if !missing.is_empty() {
                     out.refused.push(format!(
-                        "{table} {} is created without {} — it is not written",
+                        "{table} {} is created without {} — the row is not written",
                         key.text(),
                         missing.join(", ")
                     ));
@@ -329,7 +329,7 @@ pub fn save(session: &mut EditSession) {
         Ok(rows) => session.status = format!("{rows} item change(s) written to {SQL_VPATH}"),
         Err(e) => {
             warn!("items: {e}");
-            session.status = format!("saved, but {SQL_VPATH} did not: {e}");
+            session.status = format!("saved, but writing {SQL_VPATH} failed: {e}");
         }
     }
 }
@@ -354,11 +354,11 @@ impl Applied {
     pub fn line(&self) -> String {
         let taken_back = match self.taken_back {
             0 => String::new(),
-            n => format!(", {n} no longer claimed put back"),
+            n => format!(", restored {n} row(s) the project no longer changes"),
         };
         let then = match self.reloaded {
             true => "reloading item_template",
-            false => "an item is removed, so restart the server rather than reload",
+            false => "restart the server: .reload item_template does not apply an item removal",
         };
         format!(
             "{} item row(s) applied, {} affected{taken_back} — {then}",
@@ -624,14 +624,14 @@ pub fn revert_step(
     let Some(job) = prepare_revert(session, server)? else {
         return Ok(None);
     };
-    Ok(Some(super::stack::Step::new("putting back items", move || {
+    Ok(Some(super::stack::Step::new("restoring items", move || {
         let done = job.run();
         let ok = done.is_ok();
         let finish: super::queue::Finish = Box::new(move |session: &mut EditSession, reloads: &mut super::reload::Reloads| {
             session.status = match done {
                 Ok(rows) => {
                     finish_revert(session, reloads);
-                    format!("{rows} item row(s) put back")
+                    format!("{rows} item row(s) restored")
                 }
                 Err(e) => format!("items: {e}"),
             };

@@ -216,12 +216,12 @@ impl Db {
                     Some(Ok(value)) => value,
                     Some(Err(e)) => {
                         return Err(format!(
-                            "{name} could not be read as text ({e})\n  in: {}",
+                            "column {name} could not be read as text ({e})\n  in: {}",
                             head(sql)
                         ))
                     }
                     None => {
-                        return Err(format!("{name} is missing from the row\n  in: {}", head(sql)))
+                        return Err(format!("column {name} is missing from the row\n  in: {}", head(sql)))
                     }
                 };
                 one.insert(name, value);

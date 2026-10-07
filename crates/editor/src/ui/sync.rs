@@ -382,9 +382,9 @@ impl Half {
                  need a restart: `taxi_nodes`, `skill_line_ability` and `area_template` \
                  are read at startup and have no reload. So do the DBC files Apply copies into DataDir\\5875\\dbc: \
                  TaxiPath, TaxiPathNode, SkillLine, SkillRaceClassInfo and ItemSet among \
-                 them. A spell *removed* \
-                 needs a restart too: the reload overwrites and \
-                 adds, and never drops one it has already read."
+                 them. A removed spell \
+                 also needs a restart: the reload overwrites and \
+                 adds rows, and never drops a row it has already read."
             }
             Half::Creatures => {
                 "The server has to be restarted. `.reload creature_template` does not \
@@ -400,7 +400,7 @@ impl Half {
                 "Live on `.reload item_template`, which an apply sends when it is made \
                  with the panels open over a playtest — for every copy of the item \
                  already in a bag, in the world and on the auction house, with no relog. \
-                 Applied at any other time, it is live after a restart. An item *removed* \
+                 Applied at any other time, it is live after a restart. A removed item \
                  needs a restart, and the apply sends no reload while one is in the \
                  plan: a reload would leave every copy already loaded with no \
                  prototype, which the server does not check for."
@@ -410,7 +410,7 @@ impl Half {
                  written, which an apply sends in that order when it is made with the \
                  panels open over a playtest \u{2014} removals included. Applied at any \
                  other time, it is live after a restart. The reload frees every quest the server holds, so do \
-                 not apply while an escort quest is in progress on it."
+                 not apply while an escort quest is in progress on the server."
             }
             Half::Loot => {
                 "Live on `.reload <table>` for each loot table written, which an apply sends \
@@ -451,7 +451,7 @@ impl Half {
             Half::Maps => {
                 "Read on `.reload map_template`, which an apply sends when it is made with the \
                  panels open over a playtest, but the server opens a map's grids at startup, \
-                 so a new map needs a restart before anything can stand on it. The map's \
+                 so a new map needs a restart before a character can enter it. The map's \
                  Map.dbc row is a client table, applied by Client tables above, and its \
                  terrain reaches the server through Server files on the map window."
             }
@@ -466,8 +466,8 @@ impl Half {
             Half::Graveyards => {
                 "Live on `.reload game_graveyard_zone`, which an apply sends when it is made \
                  with the panels open over a playtest \u{2014} removals included. \
-                 world_safe_locs_facing has no reload and needs a restart. A safe place is a \
-                 client table, applied by Client tables above."
+                 world_safe_locs_facing has no reload and needs a restart. A graveyard's \
+                 position is a WorldSafeLocs.dbc row, applied by Client tables above."
             }
         }
     }
@@ -480,7 +480,7 @@ impl Half {
         match self.subject() {
             None | Some(stack::Subject::Graveyards) => "",
             Some(_) => {
-                " Applied subjects below this one are put back first and applied again \
+                " Applied subjects below this one are restored first and applied again \
                  after, because this one's statements can move their rows."
             }
         }
@@ -587,14 +587,14 @@ impl Standing {
             (0, 0) => "nothing changed".to_string(),
             (changed, 0) => format!("{changed} row(s) changed, none applied"),
             (0, applied) => format!(
-                "{applied} row(s) applied and undoable, and this project now changes none \
-                 of them"
+                "{applied} row(s) applied, none of them changed by this project any more; \
+                 Restore reverts them"
             ),
             (changed, applied) => {
                 let caveat = match (self.outstanding, self.current) {
                     (0, true) => " \u{2014} all applied".to_string(),
-                    (0, false) => " \u{2014} all applied, though something has been edited \
-                                   since or this is a later session"
+                    (0, false) => " \u{2014} all applied; the project may have changed since \
+                                   the last Apply"
                         .to_string(),
                     (out, _) => format!(" \u{2014} {out} not applied yet"),
                 };
@@ -919,8 +919,8 @@ pub fn put_back(half: Half, work: &mut Work<'_>) -> Result<String, String> {
                 (Some(files), None) => return Ok(files),
                 (files, Some(write)) => {
                     let label = match files {
-                        Some(files) => format!("{files}; putting back client table rows"),
-                        None => "putting back client table rows".to_string(),
+                        Some(files) => format!("{files}; restoring client table rows"),
+                        None => "restoring client table rows".to_string(),
                     };
                     Some((label, write))
                 }
@@ -976,7 +976,7 @@ fn put_back_files(work: &mut Work<'_>) -> Option<String> {
             .and_then(|dir| dbcs::put_back_at(project, &vale_mangos::datadir::dbc_dir(&dir)))
         {
             Ok(done) => done.line(),
-            Err(e) => format!("server DBC files not put back: {e}"),
+            Err(e) => format!("server DBC files not restored: {e}"),
         },
     )
 }
@@ -997,7 +997,7 @@ pub fn discard(half: Half, session: &mut EditSession) -> String {
 /// Draws the whole section: the *Apply on save* switch, then one block per
 /// subject.
 pub fn project(ui: &mut egui::Ui, work: &mut Work<'_>) {
-    theme::heading(ui, "This project on the server");
+    theme::heading(ui, "Server operations");
     let have_a_database = work.server.resolve().is_some();
 
     // One switch covers every subject, as its label says. See
@@ -1008,19 +1008,19 @@ pub fn project(ui: &mut egui::Ui, work: &mut Work<'_>) {
             egui::Checkbox::new(&mut work.server.apply_on_save, "Apply on save"),
         )
         .on_hover_text(
-            "Every save runs what it has just written, for every subject. A save made \
-             with the panels open over a playtest also tells the server to re-read the \
-             tables that take a reload. Off writes the SQL files and touches nothing.",
+            "Every save also runs the SQL it writes against the world database, for every \
+             subject. A save made with the panels open over a playtest also sends .reload \
+             for each table that has one. When off, a save only writes the SQL files.",
         )
-        .on_disabled_hover_text("There is no database to apply to.")
+        .on_disabled_hover_text("No world database is set.")
         .changed()
     {
         work.server.save(&work.assets.root);
     }
     theme::note(
         ui,
-        "A save always writes the statements into the project folder. This decides whether \
-         it also runs them.",
+        "A save always writes the SQL statements into the project folder. This setting \
+         decides whether the save also runs them against the database.",
     );
 
     ui.add_space(4.0);
@@ -1071,8 +1071,8 @@ fn block_body(
     colour: egui::Color32,
 ) {
     let about = format!(
-        "{}\n\nA save writes the statements to {}; {} holds the ones that put every \
-         applied row back.\n\n{}",
+        "{}\n\nA save writes the statements to {}; {} holds the statements that revert \
+         every applied row.\n\n{}",
         half.tables(),
         half.file(),
         half.revert_file(),
@@ -1130,9 +1130,9 @@ fn block_body(
             };
             ui.label(egui::RichText::new(files.line()).small().color(colour))
                 .on_hover_text(format!(
-                    "The client tables vmangos reads as files: {}. Apply copies the \
-                     project's copies into DataDir\\5875\\dbc, saving the server's own under \
-                     the project's {} first; Put back restores those.",
+                    "The client tables vmangos reads as DBC files: {}. Apply copies the \
+                     project's versions into DataDir\\5875\\dbc, first saving the server's \
+                     originals under the project's {}; Restore copies the originals back.",
                     match files.carried.is_empty() {
                         true => "none in this project".to_string(),
                         false => files.carried.join(", "),
@@ -1152,8 +1152,8 @@ fn block_body(
     if standing.unsaved {
         ui.label(
             egui::RichText::new(
-                "\u{2026}and a table edited since the last save, which is in no count above. \
-                 Apply writes it into the project first.",
+                "A table was edited since the last save and is not in the counts above. \
+                 Apply saves it into the project first.",
             )
             .small()
             .color(theme::WARN),
@@ -1204,8 +1204,8 @@ fn buttons(
                 half.order_note()
             ))
             .on_disabled_hover_text(match (have_a_database, busy) {
-                (false, _) => "There is no world database to reach.",
-                (true, true) => "A server sync is in progress.",
+                (false, _) => "No world database is set.",
+                (true, true) => "A server write is running.",
                 (true, false) => "This project changes no row of these tables.",
             })
             .clicked()
@@ -1213,16 +1213,16 @@ fn buttons(
             *said = Some(apply(half, work));
         }
         if ui
-            .add_enabled(can_put_back, egui::Button::new("Put back"))
+            .add_enabled(can_put_back, egui::Button::new("Restore"))
             .on_hover_text(format!(
-                "Run {}, which returns every row this project has applied to what it held \
-                 before the project first touched it, and then forgets it.{}",
+                "Run {}, which restores every row this project has applied to its value \
+                 before the project first changed it, then discard the revert record.{}",
                 half.revert_file(),
                 half.order_note()
             ))
             .on_disabled_hover_text(match (have_a_database, busy) {
-                (false, _) => "There is no world database to talk to.",
-                (true, true) => "A server sync is in progress.",
+                (false, _) => "No world database is set.",
+                (true, true) => "A server write is running.",
                 (true, false) => "This project has applied nothing.",
             })
             .clicked()
@@ -1233,9 +1233,9 @@ fn buttons(
             if ui
                 .add_enabled(changed, egui::Button::new("Discard"))
                 .on_hover_text(
-                    "Give up every edit this project carries for these tables. The rows in \
-                     the database are not touched, and the record of them is kept: Put back \
-                     still works afterwards, and the next Apply puts them back first.",
+                    "Discard every edit this project holds for these tables. The database \
+                     is not changed and the revert record is kept: Restore still works, \
+                     and the next Apply restores the applied rows first.",
                 )
                 .on_disabled_hover_text("This project changes no row of these tables.")
                 .clicked()
@@ -1249,9 +1249,9 @@ fn buttons(
                     .color(theme::INK_FAINT),
             )
             .on_hover_text(
-                "A spell edit is this project's own Spell.dbc against the archives', so \
-                 there is no claim to give up: the spell workspace's Undo and Discard are \
-                 what take one back.",
+                "Client table edits are stored in this project's DBC files, such as \
+                 Spell.dbc, not as rows, so there is nothing to discard here. To revert a \
+                 spell edit, use Undo or Discard in the Spells workspace.",
             );
         }
     }

@@ -192,7 +192,7 @@ pub fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: 
             ui.horizontal(|ui| {
                 if ui
                     .button("Reset")
-                    .on_hover_text("back to the model as it is")
+                    .on_hover_text("sets the offsets and rotations to 0 and the scale to 1")
                     .clicked()
                 {
                     lab.offset = [0.0; 3];
@@ -229,9 +229,9 @@ pub fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: 
                 (Some((_, _, kit)), Some(column), Some(_)) => (
                     theme::INK_FAINT,
                     format!(
-                        "This point is kit {kit}'s {} column, which is why it started here. \
-                         Choosing another of the six moves the effect to that column and the game \
-                         hangs it there; one press of undo puts it back.",
+                        "Kit {kit} attaches this effect here through its {} column. \
+                         Choosing another of the six kit points moves the effect to that point's \
+                         column in the kit; undo reverts the move.",
                         column.name
                     ),
                 ),
@@ -242,8 +242,8 @@ pub fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: 
                 (Some((_, _, kit)), _, None) => (
                     theme::WARN,
                     format!(
-                        "No column of kit {kit} hangs from this point, so this is the preview \
-                         only: in game the effect stays where the kit puts it."
+                        "No column of kit {kit} uses this point, so only the preview changes: \
+                         in game the effect stays at the point its kit column sets."
                     ),
                 ),
                 _ => (theme::INK_FAINT, lab.anchor.clone()),
@@ -292,12 +292,12 @@ pub fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: 
                         .fill(theme::ACCENT),
                     )
                     .on_hover_text(
-                        "Write the moved copy into the project under that path, and point this \
-                         effect's Model at it. Only the offset is baked into the file — which \
-                         attachment it hangs from is the point above, which writes the kit's own \
-                         column. Publish packs the file into the patch archive.",
+                        "Writes a copy of the model, with the offset, rotation and scale baked in, \
+                         into the project at the export path, and sets this effect's Model to it. \
+                         The attachment point is not part of the file: it is the kit column set by \
+                         the point above. Publish packs the file into the patch archive.",
                     )
-                    .on_disabled_hover_text("the export path has to end in .m2");
+                    .on_disabled_hover_text("the export path must end in .m2");
                 if bake.clicked() {
                     export(work, lab, record);
                 }
@@ -307,9 +307,9 @@ pub fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: 
                 if ui
                     .button("Close")
                     .on_hover_text(
-                        "Leave the body and go back to the model by itself. Nothing is written \
-                         and the numbers are kept, so pressing Position on character… again \
-                         picks up where this left off.",
+                        "Hides the reference character and shows the model alone. Nothing is \
+                         written; the offset, rotation and scale are kept for the next press \
+                         of Position on character\u{2026}",
                     )
                     .clicked()
                 {
@@ -363,7 +363,7 @@ fn point_combo(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab) {
         .show_ui(ui, |ui| {
             if !kit_slots.is_empty() {
                 ui.label(
-                    egui::RichText::new("THE KIT'S OWN — these move the table")
+                    egui::RichText::new("KIT COLUMNS — choosing one updates SpellVisualKit")
                         .small()
                         .color(theme::INK_FAINT),
                 );
@@ -374,8 +374,8 @@ fn point_combo(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab) {
             }
             ui.label(
                 egui::RichText::new(match slot.is_some() {
-                    true => "PREVIEW ONLY — no kit column hangs from these",
-                    false => "PREVIEW ONLY — no single kit names this effect",
+                    true => "PREVIEW ONLY — no kit column uses these points",
+                    false => "PREVIEW ONLY — this effect is not in exactly one kit",
                 })
                 .small()
                 .color(theme::INK_FAINT),
@@ -413,7 +413,7 @@ fn point_combo(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab) {
         let (anchor, _) = tables::effect_anchor(work.browser, work.session, effect);
         lab.anchor = anchor;
         work.session.status = format!(
-            "kit {kit}: {} now hangs from {}",
+            "kit {kit}: {} now attached at {}",
             lab.effect_name,
             named(point)
         );
@@ -657,17 +657,17 @@ pub fn pane(ui: &mut egui::Ui, work: &mut Workspace<'_>, stage: &mut Stage, lab:
         match work.wireframe.as_deref_mut() {
             Some(wireframe) => {
                 ui.checkbox(wireframe, "wireframe")
-                    .on_hover_text("every mesh as its edges — the view bar's own overlay");
+                    .on_hover_text("draws every mesh as edges; same switch as the view bar's wireframe");
             }
             None => {
                 ui.add_enabled(false, egui::Checkbox::new(&mut false, "wireframe"))
-                    .on_disabled_hover_text("built without diagnostics");
+                    .on_disabled_hover_text("requires a build with the diagnostics feature");
             }
         }
         ui.checkbox(&mut stage.spinning, "spin");
         if let Some(particles) = work.particles.as_deref_mut() {
             ui.checkbox(particles, "particles")
-                .on_hover_text("the emitters — the view bar's own switch");
+                .on_hover_text("draws particle emitters; same switch as the view bar's particles");
         }
         if ui.button("Reset view").clicked() {
             stage.yaw = 0.9;
@@ -692,7 +692,7 @@ pub fn pane(ui: &mut egui::Ui, work: &mut Workspace<'_>, stage: &mut Stage, lab:
         pane.horizontal_wrapped(|ui| {
             ui.label(
                 egui::RichText::new(format!(
-                    "hung at {} on a {} · drag to orbit · wheel to zoom",
+                    "attached at {} on a {} · drag to orbit · wheel to zoom",
                     super::storyboard::attachment_name(lab.point),
                     BODIES[lab.body].name
                 ))
@@ -750,7 +750,7 @@ fn sequences(ui: &mut egui::Ui, work: &mut Workspace<'_>, facts: &crate::lab::Fa
             describe(played),
             facts.sequences.len()
         ),
-        None => format!("{} anims, none with any length", facts.sequences.len()),
+        None => format!("{} anims, all of zero length", facts.sequences.len()),
     };
     let all: Vec<String> = facts
         .sequences

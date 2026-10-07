@@ -177,7 +177,7 @@ mod tests {
         names.push("Hamfort Gaga");
         assert!(!names.renew(0));
         assert_eq!(names.len(), 1);
-        assert!(names.renew(1), "an apply or a put back moved the counter");
+        assert!(names.renew(1), "an apply or a restore moved the counter");
         assert!(names.is_empty());
         assert!(names.is_current(1));
         assert!(!names.is_current(0), "a read started before the move is not kept");

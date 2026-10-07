@@ -216,7 +216,7 @@ pub fn save(
     // The client-table rows, which are a diff of two files rather than a
     // store, and which return their own apply under the same switch.
     if let Some(work) = rows::save(session, assets, server) {
-        queue.push("applying spells", work);
+        queue.push("applying client table rows", work);
     }
     // The DBC files the server reads from DataDir\5875\dbc go with the rows under
     // the same switch. They need no database, only the folder.

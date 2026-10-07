@@ -365,7 +365,7 @@ pub fn tools(server: &super::settings::ServerSettings) -> Result<Tools, String> 
     let dir = server.tools.trim();
     if dir.is_empty() {
         return Err(format!(
-            "no vmangos tools: set the folder on the Server panel, or {}",
+            "no vmangos tools folder: set it on the Server panel, or set {}",
             datadir::TOOLS_ENV
         ));
     }
@@ -377,7 +377,7 @@ pub fn tools(server: &super::settings::ServerSettings) -> Result<Tools, String> 
 pub fn data_dir(server: &super::settings::ServerSettings) -> Result<PathBuf, String> {
     let conf = server
         .conf_path()
-        .ok_or_else(|| "no mangosd.conf: set it on the Server panel, or VALE_MANGOSD".to_string())?;
+        .ok_or_else(|| "no mangosd.conf: set it on the Server panel, or set VALE_MANGOSD".to_string())?;
     if !conf.is_file() {
         return Err(format!("{} is not a file", conf.display()));
     }
@@ -477,7 +477,7 @@ impl Staging {
         let data_dir = std::path::absolute(gamedata_dir).map_err(|e| e.to_string())?;
         let into = project
             .path_for(super::patch::STAGE)
-            .ok_or_else(|| "the staging folder leaves the project".to_string())?;
+            .ok_or_else(|| "the staging folder is outside the project folder".to_string())?;
         let _ = std::fs::remove_dir_all(&into);
         let as_name = vale_edit::project::next_patch_name(&data_dir)
             .unwrap_or_else(|| "Patch-Z.MPQ".to_string());
@@ -637,7 +637,7 @@ impl Run {
         if dirty.is_empty() {
             return Ok(Ran::Nothing(match self.which {
                 Which::Changed => "no server tile has changed since the last regeneration",
-                Which::Named { .. } => "none of the selection can be regenerated",
+                Which::Named { .. } => "no selected tile can be regenerated",
             }
             .to_string()));
         }
@@ -664,7 +664,7 @@ impl Run {
             }
             Archive::Staged => {
                 let staging = Staging::build(project, &self.reader.gamedata_dir)?;
-                step.set("staging a copy of the install for the tools", 0, 0);
+                step.set("staging a copy of the client install for the map tools", 0, 0);
                 (staging.stage(), Some(staging), Vec::new())
             }
         };
@@ -721,14 +721,14 @@ fn finish(session: &mut EditSession, ran: Result<Ran, String>) {
             let mut line = outcome.line();
             if let Err(e) = recorded {
                 line.push_str(&format!(
-                    " — but {LIVE_RECORD} could not be written ({e}), so the next \
-                     regeneration does them again"
+                    " — {LIVE_RECORD} could not be written ({e}), so the next \
+                     regeneration repeats these tiles"
                 ));
             }
             for (name, why) in &left {
                 line.push_str(&format!(
                     "; {name} could not be removed ({why}) and still holds the project's older \
-                     files — close what has it open and regenerate again"
+                     files — close the program that has it open and regenerate again"
                 ));
             }
             session.status = line;
@@ -770,7 +770,7 @@ pub fn regenerate(
         return "a server write is still running".to_string();
     }
     if chosen.is_some_and(|tiles| tiles.is_empty()) {
-        return "none of the selection can be regenerated".to_string();
+        return "no selected tile can be regenerated".to_string();
     }
     let run = match Run::gather(session, assets, server, chosen) {
         Ok(run) => run,
@@ -791,7 +791,7 @@ pub fn regenerate(
             })
         }),
     );
-    format!("{label} \u{2014} the bar says which step is running")
+    format!("{label} \u{2014} the progress bar shows the current step")
 }
 
 /// Give every map WDT the project carries the zero-length `MWMO` a terrain map

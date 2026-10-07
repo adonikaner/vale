@@ -1166,10 +1166,10 @@ fn draw(
                                 value: spawn.entry.to_string(),
                                 label: format!("Set {name} to {}", spawn.entry),
                                 about: format!(
-                                    "Write creature_template.{name} = {}, which is the \
-                                     convention the shipped rows follow. It is a creature \
-                                     edit: applied from the Creatures block of the Server \
-                                     panel, and it needs the server restarted.",
+                                    "Write creature_template.{name} = {}, the convention \
+                                     the shipped rows follow. This is a creature edit: \
+                                     apply it from the Creatures block of the Server \
+                                     panel, then restart the server.",
                                     spawn.entry
                                 ),
                                 gesture: "Edit creature",
@@ -1182,10 +1182,10 @@ fn draw(
                     title: spawn.label(),
                     about: match template {
                         Some(_) => format!(
-                            "creature_template entry {}: every spawn of it drops these.",
+                            "creature_template entry {}: every spawn of this creature drops this loot.",
                             spawn.entry
                         ),
-                        None => "reading the template row\u{2026}".to_string(),
+                        None => "reading the creature_template row\u{2026}".to_string(),
                     },
                     sets,
                 }
@@ -1206,10 +1206,10 @@ fn draw(
                         value: spawn.entry.to_string(),
                         label: format!("Set lootId to {}", spawn.entry),
                         about: format!(
-                            "Write gameobject_template.data1 = {}, which is the convention \
-                             the shipped rows follow. It is a game object edit: applied from \
-                             the Objects block of the Server panel, and it needs the server \
-                             restarted.",
+                            "Write gameobject_template.data1 = {}, the convention the \
+                             shipped rows follow. This is a game object edit: apply it from \
+                             the Objects block of the Server panel, then restart the \
+                             server.",
                             spawn.entry
                         ),
                         gesture: "Edit game object",
@@ -1220,12 +1220,12 @@ fn draw(
                     about: match (known, looted) {
                         (None, _) => "No gameobject_template row at this content patch.".to_string(),
                         (Some(known), false) => format!(
-                            "type is {}, which the server takes no loot from: only a chest and \
-                             a fishing hole have a lootId it reads.",
+                            "type is {}, which has no loot: the server reads lootId only for \
+                             chests and fishing holes.",
                             known.type_word()
                         ),
                         (Some(_), true) => format!(
-                            "gameobject_template entry {}: every spawn of it holds these.",
+                            "gameobject_template entry {}: every spawn of this object contains this loot.",
                             spawn.entry
                         ),
                     },
@@ -1259,10 +1259,10 @@ fn draw(
                 column: "flags",
                 value: (known.flags | LOOTABLE).to_string(),
                 label: "Set LOOTABLE".to_string(),
-                about: "Write item_template.flags with LOOTABLE (0x4) added, which is what \
-                        makes the client offer to open the item and the server read this \
-                        set. It is an item edit: applied from the Items block of the \
-                        Server panel, live on the reload."
+                about: "Add LOOTABLE (0x4) to item_template.flags. With this flag the client \
+                        offers to open the item and the server reads this loot set. This is \
+                        an item edit: apply it from the Items block of the Server panel; it \
+                        is live after .reload item_template."
                     .to_string(),
                 gesture: "Edit item",
             }));
@@ -1284,7 +1284,7 @@ fn draw(
                          reads no item_loot_template for it and the client will not open it.",
                         known.entry
                     ),
-                    false => format!("item_template entry {}: opening it gives these.", known.entry),
+                    false => format!("item_template entry {}: opening the item gives this loot.", known.entry),
                 },
                 sets,
             }
@@ -1511,7 +1511,7 @@ fn draw(
         use crate::tools::areas::Ask;
         use crate::tools::tables::{self, area};
         match (session.open_table(&assets, area::TABLE), ask) {
-            (false, _) => session.status = "AreaTable did not open".to_string(),
+            (false, _) => session.status = "AreaTable could not be opened".to_string(),
             (true, Ask::Edit(id)) => {
                 if editing.browser.follow(session, area::TABLE, id) {
                     editing.browser.followed_in = true;
@@ -1530,9 +1530,9 @@ fn draw(
                 session.status = match id {
                     Some(id) => {
                         editing.areas.brush.area = id;
-                        format!("area {id} is made and on the brush: Edit\u{2026} names it")
+                        format!("area {id} created and set as the brush area; use Edit\u{2026} to name it")
                     }
-                    None => "the area was not made".to_string(),
+                    None => "the area could not be created".to_string(),
                 };
             }
         }
@@ -1545,7 +1545,7 @@ fn draw(
         editing.areas.search.clear();
         *tool = Tool::Areas;
         viewing.rail.follow(Tool::Areas);
-        session.status = format!("area {id} is on the brush");
+        session.status = format!("area {id} set as the brush area");
     }
     // A part of a workspace chosen on the strip at the head of its list.
     let part = editing.items.switch_to.take().or_else(|| editing.browser.switch_to.take());
@@ -1856,9 +1856,9 @@ fn playtest_bar(
                 if ui
                     .button("Live Edit")
                     .on_hover_text(
-                        "Ctrl+E. Open the editor's panels over the running game: \
-                         change a spell, an item, a quest or any table, save, and \
-                         the next thing to read it is the edited one. The world \
+                        "Ctrl+E. Open the editor panels over the running playtest. \
+                         Edit a spell, item, quest or any table and save; the client \
+                         uses the edited version the next time it reads it. The world \
                          tools are not available.",
                     )
                     .clicked()
@@ -1868,7 +1868,7 @@ fn playtest_bar(
                 }
                 if ui
                     .button("End Playtest")
-                    .on_hover_text("Ctrl+P. Drops the connection and returns to the tools.")
+                    .on_hover_text("Ctrl+P. Disconnects from the server and returns to the editor.")
                     .clicked()
                 {
                     crate::playtest::stop(state, client, auto, session);

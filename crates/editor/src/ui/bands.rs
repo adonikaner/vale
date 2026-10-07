@@ -237,7 +237,7 @@ pub fn blocks(ui: &mut egui::Ui, work: &mut Workspace<'_>, params_id: u32, hour:
         let colours = table == "LightIntBand";
         let title = match colours {
             true => format!("Colours ({count} bands)"),
-            false => format!("Numbers ({count} bands)"),
+            false => format!("Float values ({count} bands)"),
         };
         egui::CollapsingHeader::new(egui::RichText::new(title).size(14.0).strong())
             .default_open(colours)
@@ -495,7 +495,7 @@ fn keys(
             }
             if ui
                 .small_button("×")
-                .on_hover_text("Take this key out of the band")
+                .on_hover_text("Remove this key from the band")
                 .clicked()
             {
                 remove = Some(n);
@@ -508,15 +508,15 @@ fn keys(
         if ui
             .add_enabled(!full, egui::Button::new("+ key").small())
             .on_hover_text(match full {
-                true => format!("a band holds {BAND_KEYS} keys"),
-                false => "Add a key, halfway through the longest gap".to_string(),
+                true => format!("a band holds at most {BAND_KEYS} keys"),
+                false => "Add a key in the middle of the longest gap between keys".to_string(),
             })
             .clicked()
         {
             add(&mut edited);
         }
         if edited.times.is_empty() {
-            theme::note(ui, "This band states nothing, so nothing reads it.");
+            theme::note(ui, "This band has no keys and defines no value.");
         }
     });
 

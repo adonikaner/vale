@@ -49,7 +49,7 @@ impl Held {
             .collect();
         if !self.dbcs.is_empty() {
             out.push(format!(
-                "{} copied into the server's DataDir\\5875\\dbc, with the originals kept here",
+                "{} copied into the server's DataDir\\5875\\dbc; the originals are saved in the project's server\\dbc-before",
                 self.dbcs.join(", ")
             ));
         }

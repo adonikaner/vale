@@ -79,7 +79,7 @@ impl Subject {
         match self {
             Subject::Texture => "texture",
             Subject::Model => "model",
-            Subject::Building => "building",
+            Subject::Building => "WMO",
         }
     }
 
@@ -106,7 +106,7 @@ impl Subject {
 pub const SUBJECTS: [(&str, Subject); 3] = [
     ("Textures", Subject::Texture),
     ("Models", Subject::Model),
-    ("Buildings", Subject::Building),
+    ("WMOs", Subject::Building),
 ];
 
 /// What the last sweep came to.
@@ -340,16 +340,16 @@ fn finish(run: Run, session: &mut EditSession, sweep: &mut Sweep) {
     };
     session.status = match (replace, report.tiles) {
         (_, 0) => format!(
-            "no tile of this map names that {} ({} scanned)",
+            "no tile of this map references that {} ({} tiles scanned)",
             subject.name(),
             report.scanned
         ),
         (true, tiles) => format!(
-            "{} → {to} on {tiles} tile(s), {} name(s), {} scanned",
+            "replaced {} with {to} on {tiles} tile(s), {} name(s); {} tiles scanned",
             from, report.names, report.scanned
         ),
         (false, tiles) => format!(
-            "{from} is named on {tiles} tile(s), {} time(s), {} scanned",
+            "{from} is referenced on {tiles} tile(s), {} time(s); {} tiles scanned",
             report.names, report.scanned
         ),
     };

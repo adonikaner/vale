@@ -94,17 +94,17 @@ pub fn directory_problem<'a>(directory: &str, taken: impl IntoIterator<Item = &'
         return Some("a map needs a directory".to_string());
     }
     if directory.len() > MAX_DIRECTORY {
-        return Some(format!("a directory is at most {MAX_DIRECTORY} characters"));
+        return Some(format!("the directory must be at most {MAX_DIRECTORY} characters"));
     }
     if !directory.starts_with(|c: char| c.is_ascii_alphabetic()) {
-        return Some("a directory starts with a letter".to_string());
+        return Some("the directory must start with a letter".to_string());
     }
     if !directory.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Some("a directory holds only letters, digits and underscores".to_string());
+        return Some("the directory may contain only letters, digits and underscores".to_string());
     }
     if taken.into_iter().any(|had| had.eq_ignore_ascii_case(directory)) {
         return Some(format!(
-            "{directory} is already a map's directory; the archives do not tell two apart by case"
+            "another map already uses the directory {directory}; directory names are not case-sensitive"
         ));
     }
     None
@@ -146,7 +146,7 @@ mod tests {
         assert!(directory_problem("2Isle", taken).is_some());
         assert!(directory_problem("Isle of", taken).is_some());
         assert!(directory_problem("Isle\\x", taken).is_some());
-        assert!(directory_problem("azeroth", taken).unwrap().contains("by case"));
+        assert!(directory_problem("azeroth", taken).unwrap().contains("not case-sensitive"));
         assert!(directory_problem(&"a".repeat(MAX_DIRECTORY + 1), taken).is_some());
     }
 

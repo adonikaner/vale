@@ -156,8 +156,8 @@ pub fn new_light(
     browser.look_at("Light");
     browser.follow(session, "Light", id);
     match centre {
-        Some(_) => format!("light {id} made on map {map}, lit like light {like}"),
-        None => format!("light {id} made: map {map}'s default light"),
+        Some(_) => format!("created light {id} on map {map} with the settings of light {like}"),
+        None => format!("created light {id} as the default light of map {map}"),
     }
 }
 

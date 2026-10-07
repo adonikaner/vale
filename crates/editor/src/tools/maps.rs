@@ -82,7 +82,7 @@ impl Form {
             return Some("the map needs a name".to_string());
         }
         if map_table::next_id(maps.iter().map(|(id, _)| *id)).is_none() {
-            return Some(format!("map ids stop at {}", map_table::MAX_NEW_ID));
+            return Some(format!("the next map id would exceed the limit of {}", map_table::MAX_NEW_ID));
         }
         self.template(0, 0).check().into_iter().next()
     }
@@ -128,7 +128,7 @@ pub fn make(
     }
     let maps = session.table(places::MAPS).ok_or("Map.dbc is not open")?;
     let ids: Vec<u32> = places::map_directories(maps).into_iter().map(|(id, _)| id).collect();
-    let id = map_table::next_id(ids).ok_or_else(|| format!("map ids stop at {}", map_table::MAX_NEW_ID))?;
+    let id = map_table::next_id(ids).ok_or_else(|| format!("the next map id would exceed the limit of {}", map_table::MAX_NEW_ID))?;
     let loading_screen = form.loading_screen.unwrap_or_else(|| {
         maps.row_of(session.map_id)
             .and_then(|record| maps.u32_at(record, mf::LOADING_SCREEN))
@@ -138,7 +138,7 @@ pub fn make(
     // The zone first, since the map row names it.
     let zone = match form.zone {
         true => {
-            let record = super::tables::add_zone(session, id).ok_or("AreaTable.dbc took no new row")?;
+            let record = super::tables::add_zone(session, id).ok_or("AreaTable.dbc did not add a row")?;
             let area = session.table(super::tables::area::TABLE).ok_or("AreaTable.dbc is not open")?;
             let zone = area.u32_at(record, 0).unwrap_or(0);
             super::tables::set_text(
@@ -194,7 +194,7 @@ pub fn make(
     };
     info!("new map {id} {}{zone_line}", form.directory);
     Ok(format!(
-        "map {id} {} made{zone_line}; Create in the map window makes its first tiles",
+        "map {id} {} made{zone_line}; use Create in the map window to make its first tiles",
         form.directory
     ))
 }

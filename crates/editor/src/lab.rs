@@ -800,7 +800,7 @@ pub fn hang_the_effect(
             lab.report = match lab.point_exists() {
                 true => None,
                 false => Some(format!(
-                    "{} has no attachment {}, so nothing is hung",
+                    "{} has no attachment point {}, so the effect is not attached",
                     BODIES[lab.body].name, lab.point
                 )),
             };

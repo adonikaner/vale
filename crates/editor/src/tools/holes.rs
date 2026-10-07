@@ -216,7 +216,7 @@ fn stamp(
     if !session.history.is_open() {
         session.history.begin(match cut {
             true => "Cut hole".to_string(),
-            false => "Patch hole".to_string(),
+            false => "Fill hole".to_string(),
         });
     }
     if let Some(tile) = session.tiles.get_mut(&square.tile) {
@@ -232,7 +232,7 @@ fn stamp(
         "{} tile {},{} chunk {} square {}",
         match cut {
             true => "cut",
-            false => "patched",
+            false => "filled",
         },
         square.tile.0,
         square.tile.1,

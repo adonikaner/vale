@@ -429,7 +429,7 @@ fn created_keys(edits: &Edits, table: &str, column: &str, value: u32) -> Vec<Key
 fn create(session: &mut EditSession, table: &str, key: &Key, columns: &[vale_mangos::row::Assignment], now: f64) {
     let label = format!("{table} {}", key.text());
     let row = super::services::creation(columns);
-    session.set_server_row(table, key, Some(&row), Some(Gesture { label: "Add gossip", subject: &label, now }));
+    session.set_server_row(table, key, Some(&row), Some(Gesture { label: "Add gossip row", subject: &label, now }));
 }
 
 /// One column written under a gesture.

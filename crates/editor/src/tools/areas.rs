@@ -411,7 +411,7 @@ fn stroke(
         session.publish(coord);
     }
     if painted > 0 {
-        session.status = format!("area {} on {painted} chunk(s)", brush.area);
+        session.status = format!("set area {} on {painted} chunk(s)", brush.area);
     }
 }
 
@@ -670,8 +670,8 @@ pub fn set_impassable(
     }
     let after = tile.chunks[chunk].head().flags();
     session.history.begin(match impassable {
-        true => "Impassable".to_string(),
-        false => "Passable".to_string(),
+        true => "Set impassable".to_string(),
+        false => "Clear impassable".to_string(),
     });
     session.history.record(
         &key,

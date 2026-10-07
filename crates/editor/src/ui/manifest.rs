@@ -109,7 +109,7 @@ fn server_lines(project: &vale_edit::project::Project) -> Vec<(String, String)> 
             parts.push(format!("{path_count} path{} replaced", plural(path_count)));
         }
         let mut line = match parts.is_empty() {
-            true => "nothing changed now".to_string(),
+            true => "no rows changed".to_string(),
             false => parts.join(", "),
         };
         match applied {
@@ -128,7 +128,7 @@ fn server_lines(project: &vale_edit::project::Project) -> Vec<(String, String)> 
         out.push((
             "server DBC files".to_string(),
             format!(
-                "{} copied into DataDir\\5875\\dbc, with the originals kept here",
+                "{} copied into DataDir\\5875\\dbc; the originals are saved in this project",
                 held.dbcs.join(", ")
             ),
         ));
@@ -176,7 +176,7 @@ const WHAT_WIDTH: f32 = 340.0;
 /// caption row at the head of each section.
 pub fn draw(ui: &mut egui::Ui, report: &Report, session: &EditSession) {
     if report.is_empty() {
-        theme::note(ui, "No files. Every save from now on writes into this folder.");
+        theme::note(ui, "The project folder is empty. Saves are written into it.");
         return;
     }
     let m = &report.manifest;
@@ -263,10 +263,10 @@ pub fn draw(ui: &mut egui::Ui, report: &Report, session: &EditSession) {
 fn record_kind(kind: Kind, vpath: &str) -> &'static str {
     let lower = vpath.to_ascii_lowercase();
     match kind {
-        Kind::Sql if lower.contains("revert") => "what puts the database back",
-        Kind::Sql => "statements for the database",
-        _ if lower.contains("dbc-before") => "the server's own copy, saved before it was replaced",
-        _ => "the editor's record of what it changes",
+        Kind::Sql if lower.contains("revert") => "SQL statements that revert the applied rows",
+        Kind::Sql => "SQL statements for the database",
+        _ if lower.contains("dbc-before") => "the server's original file, saved before it was replaced",
+        _ => "the editor's record of the project's server changes",
     }
 }
 

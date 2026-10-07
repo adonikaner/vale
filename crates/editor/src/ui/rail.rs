@@ -75,52 +75,52 @@ const GROUPS: [(&str, &[Subject]); 3] = [
             s(
                 "Terrain",
                 Tool::Terrain,
-                "The shape of the ground: raise, lower, flatten, smooth. MCVT, the \
+                "Raises, lowers, flattens and smooths the ground. Writes MCVT, the \
                  145 heights of a chunk.",
             ),
             s(
                 "Grade",
                 Tool::Grade,
-                "A ramp between two points, which a round brush cannot make. Click a \
-                 start, click an end, set the width, then apply it.",
+                "Builds a straight ramp between two points. Click a start, click an \
+                 end, set the width, then apply.",
             ),
             s(
                 "Shading",
                 Tool::Shading,
-                "MCCV, the light painted onto the ground's vertices. It is a \
+                "Paints MCCV, the per-vertex colour of the ground. Each value is a \
                  multiplier: 1.00 leaves a vertex unchanged. The reference client \
-                 does not read it.",
+                 does not read MCCV.",
             ),
             s(
                 "Textures",
                 Tool::Textures,
-                "What the ground is painted with: paint a tileset on, and it becomes \
-                 a layer of every chunk the brush covers.",
+                "Paints tilesets onto the ground. A painted tileset becomes a \
+                 texture layer of every chunk the brush covers.",
             ),
             s(
                 "Holes",
                 Tool::Holes,
-                "Where the ground is not drawn at all: sixteen squares per chunk. \
-                 Click cuts, shift-click puts it back.",
+                "Cuts holes in the ground, sixteen squares per chunk. Click cuts a \
+                 square; shift-click fills it.",
             ),
             s(
                 "Water",
                 Tool::Water,
-                "MCLQ, the water standing on the ground. Paint it at a level, clear \
-                 it with shift, and take the level from what is already there.",
+                "Paints MCLQ water at a set level. Shift clears it. The level can be \
+                 taken from the water already under the pointer.",
             ),
             s(
                 "Areas",
                 Tool::Areas,
-                "The AreaTable row each chunk belongs to. It is the only field that \
-                 says where a character is standing.",
+                "Assigns an AreaTable row to each chunk. The client takes the zone \
+                 and sub-area a character is in from this field.",
             ),
             s(
                 "Chunks",
                 Tool::Chunks,
-                "A selection of chunks: click one, drag a block on the ground, shift \
-                 to add. Then one area, base texture, hole mask or impassable flag \
-                 is written to all of them as one undo entry.",
+                "Selects chunks: click one, drag a block on the ground, shift adds. \
+                 Then writes one area, base texture, hole mask or impassable flag \
+                 to all of them as one undo entry.",
             ),
         ],
     ),
@@ -130,45 +130,49 @@ const GROUPS: [(&str, &[Subject]); 3] = [
             s(
                 "Doodads",
                 Tool::Doodads,
-                "What stands on the ground: MDDF, one record per placed model. \
-                 Select, move, turn, scale.",
+                "MDDF: one record per placed M2 model. Select, move, rotate, \
+                 scale.",
             ),
             s(
                 "WMO",
                 Tool::Wmos,
-                "The buildings, MODF. Select, move, turn, remove. No scale: 1.12's \
-                 record has no scale field.",
+                "MODF: one record per placed WMO building. Select, move, rotate, \
+                 remove. No scale: the 1.12 record has no scale field.",
             ),
             s(
                 "Lights",
                 Tool::Lights,
-                "What the ground is lit by: Light.dbc and its chain (the sun, the \
-                 fill, the sky dome, the fog and the water's colour) per map and \
-                 per zone. A light is a sphere standing in the world, picked and \
-                 dragged like a doodad.",
+                "Light.dbc and the tables it references (sun, fill light, sky dome, \
+                 fog and water colour) per map and per zone. Each light is a \
+                 sphere in the world, selected and dragged like a doodad.",
             ),
             s(
                 "Taxi",
                 Tool::Flightpaths,
                 "The taxi network: TaxiNodes, TaxiPath and TaxiPathNode. Nodes and \
                  the paths between them are drawn on the map; drag a node or a \
-                 point, add points, connect two nodes, make a node.",
+                 point, add points, connect two nodes, create a node.",
             ),
             s(
                 "Triggers",
                 Tool::Triggers,
-                "AreaTrigger.dbc: the spheres and boxes the client reports standing in,                  and what the server does then: a teleport, an inn, a quest objective.                  Drag a trigger, make one, change its shape.",
+                "AreaTrigger.dbc: the spheres and boxes the client reports entering, \
+                 and the server's action for each: a teleport, an inn, a quest \
+                 objective. Drag a trigger, create one, change its shape.",
             ),
             s(
                 "Graveyards",
                 Tool::Graveyards,
-                "WorldSafeLocs.dbc: where a released spirit appears. Drag a place, make                  one, and link it to the zones it serves, which are rows in vmangos'                  database.",
+                "WorldSafeLocs.dbc: the graveyards where a released spirit appears. \
+                 Drag a graveyard, create one, and link it to the zones it serves \
+                 (game_graveyard_zone rows in vmangos' database).",
             ),
             s(
                 "Sweep",
                 Tool::Sweep,
-                "A find-and-replace over every tile of the map: a tileset retired \
-                 from a zone, or one tree changed across a forest.",
+                "Finds and replaces a texture, model or building path across every \
+                 tile of the map: for example, a tileset retired from a zone, or one \
+                 tree model replaced across a forest.",
             ),
         ],
     ),
@@ -178,16 +182,16 @@ const GROUPS: [(&str, &[Subject]); 3] = [
             s(
                 "Creatures",
                 Tool::Creatures,
-                "Every creature spawn on the map, drawn where it stands. Click one \
-                 to open the spawn and the creature_template behind it. Rows in \
-                 vmangos' database, so this needs a database connection.",
+                "Every creature spawn on the map, drawn at its position. Click one \
+                 to open the spawn and its creature_template. Rows in vmangos' \
+                 database, so this needs a database connection.",
             ),
             s(
                 "Objects",
                 Tool::GameObjects,
                 "Every game object spawn on the map (chests, doors, mining veins and \
-                 herbs, mailboxes, signs) drawn where it stands. Click one to open \
-                 the spawn and the gameobject_template behind it. Rows in vmangos' \
+                 herbs, mailboxes, signs), drawn at its position. Click one to open \
+                 the spawn and its gameobject_template. Rows in vmangos' \
                  database, so this needs a database connection.",
             ),
         ],
@@ -206,27 +210,25 @@ const WORKSPACES: [Subject; 5] = [
     s(
         "Items",
         Tool::Items,
-        "item_template: what an item is, what it does and what it is worth, with a \
-         picture of what its display id looks like. A row in vmangos' database, so \
-         this needs a database connection. Its second part, Sets, is ItemSet.dbc: \
-         which items make up a set and the bonuses it grants. That is a file and \
-         needs no database.",
+        "item_template: an item's stats, effects and price, with a preview of its \
+         display id. Rows in vmangos' database, so this needs a database \
+         connection. The Sets part edits ItemSet.dbc: the items in each set and \
+         the set bonuses. ItemSet.dbc is a client file and needs no database.",
     ),
     s(
         "Quests",
         Tool::Quests,
-        "quest_template and the four relation tables that say who hands a quest out \
-         and who takes it: what it asks for, says and gives. Rows in vmangos' \
-         database, so this needs a database connection.",
+        "quest_template (objectives, text and rewards) and the four relation tables \
+         that set which creatures and game objects start and end each quest. Rows \
+         in vmangos' database, so this needs a database connection.",
     ),
     s(
         "Zones",
         Tool::Zones,
-        "AreaTable.dbc: the zones and the sub-areas inside them. What each is called, \
-         which zone it is in, its music and ambience, whether duels and resting are \
-         allowed, and the level and bit it is explored by. Make a zone or a sub-area \
-         here, then paint it onto the ground with the Areas tool. The server reads its \
-         copy from area_template at startup.",
+        "AreaTable.dbc: zones and their sub-areas. Each row's name, parent zone, \
+         music and ambience, duel and rest flags, area level and exploration bit. \
+         Create a zone or sub-area here, then paint it onto the ground with the \
+         Areas tool. The server loads its copy from area_template at startup.",
     ),
     s(
         "Tables",
@@ -242,13 +244,13 @@ const POINTER: [Subject; 2] = [
     s(
         "Select",
         Tool::Select,
-        "The pointer reports where it is and changes nothing.",
+        "Reports the position under the pointer. Changes nothing.",
     ),
     s(
         "Measure",
         Tool::Measure,
-        "What is at a point: position, ground height, tile, chunk, area, slope and \
-         water. Click two points for the distance, rise and facing between them; \
+        "Reports the position, ground height, tile, chunk, area, slope and water \
+         at a point. Click two points for the distance, rise and facing between them; \
          Escape clears. Changes nothing.",
     ),
 ];
@@ -300,14 +302,14 @@ impl Rail {
 fn held(tool: Tool, playing: bool, server: bool) -> Option<&'static str> {
     if playing && !tool.survives_playtest() {
         return Some(
-            "Not while a playtest is running: the ground on screen is the game's own, \
-             streamed around the character. Ctrl+P to come back to the tools.",
+            "Unavailable during a playtest: the viewport shows the game's terrain, \
+             streamed around the character. Ctrl+P ends the playtest.",
         );
     }
     if !server && tool.server_table().is_some() {
         return Some(
-            "There is no world database to read. Server\u{2026} on the top bar is where \
-             this machine's vmangos is set, or VALE_MANGOSD.",
+            "No world database connection. Set this machine's vmangos with \
+             Server\u{2026} on the top bar, or with VALE_MANGOSD.",
         );
     }
     None
@@ -468,12 +470,12 @@ pub fn workspaces(ui: &mut egui::Ui, tool: &mut Tool, rail: &mut Rail, playing: 
     let world = ui
         .add_enabled(!playing, egui::Button::selectable(in_world, "World"))
         .on_hover_text(
-            "The world tools on the rail, and Select and Measure over the viewport. \
-             Returns to the tool that was last in use.",
+            "Shows the viewport with the rail tools, Select and Measure. Returns \
+             to the tool last used.",
         )
         .on_disabled_hover_text(
-            "Not while a playtest is running: the ground on screen is the game's own, \
-             streamed around the character. Ctrl+P to come back to the tools.",
+            "Unavailable during a playtest: the viewport shows the game's terrain, \
+             streamed around the character. Ctrl+P ends the playtest.",
         );
     if world.clicked() {
         // With no database the last tool may be a spawn tool that cannot be

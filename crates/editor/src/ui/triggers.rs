@@ -61,7 +61,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
                     theme::heading(ui, &format!("Trigger {}", trigger.id));
                     volume(ui, session, triggers, &trigger, now);
                     ui.add_space(6.0);
-                    theme::heading(ui, "On the server");
+                    theme::heading(ui, "Server rows");
                     server_half(ui, session, triggers, behaviour, &trigger, now);
                 }
                 None => theme::note(
@@ -118,9 +118,9 @@ fn controls(ui: &mut egui::Ui, triggers: &mut Triggers) {
         if ui
             .selectable_label(armed, "New trigger")
             .on_hover_text(
-                "Armed, a click on the ground makes a sphere trigger there, standing on \
-                 the ground. It goes at the end of this map's rows, which is the only \
-                 place the client reads it from.",
+                "Armed, a click on the ground makes a sphere trigger there, resting on \
+                 the ground. It is added after this map's last row, because the client \
+                 reads only the first block of each map's rows.",
             )
             .clicked()
         {
@@ -132,7 +132,7 @@ fn controls(ui: &mut egui::Ui, triggers: &mut Triggers) {
     });
     theme::row(ui, "new radius", |ui| {
         ui.add(egui::DragValue::new(&mut triggers.radius).range(0.5..=200.0).speed(0.25).suffix(" yd"))
-            .on_hover_text("The radius a new trigger is made with.");
+            .on_hover_text("Radius of a new trigger.");
     });
     if triggers.armed != Armed::Nothing {
         theme::note(ui, "Escape disarms.");
@@ -173,7 +173,7 @@ fn volume(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Triggers,
                 theme::row(ui, label, |ui| {
                     if ui
                         .add(egui::DragValue::new(&mut extent[axis]).range(0.1..=1000.0).speed(0.1).suffix(" yd"))
-                        .on_hover_text("The whole side, not half of it.")
+                        .on_hover_text("Full side length, not the half-extent.")
                         .changed()
                     {
                         fields.push((field, extent[axis].to_bits()));
@@ -181,10 +181,10 @@ fn volume(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Triggers,
                 });
             }
             let mut degrees = trigger.yaw.to_degrees();
-            theme::row(ui, "turn", |ui| {
+            theme::row(ui, "yaw", |ui| {
                 if ui
                     .add(egui::DragValue::new(&mut degrees).speed(0.5).suffix("\u{b0}"))
-                    .on_hover_text("The box's turn about up. The file holds it in radians.")
+                    .on_hover_text("Rotation of the box about the vertical axis. AreaTrigger.dbc stores it in radians.")
                     .changed()
                 {
                     fields.push((tf::BOX_YAW, degrees.rem_euclid(360.0).to_radians().to_bits()));
@@ -209,8 +209,8 @@ fn volume(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Triggers,
             triggers.fly_to(trigger.at);
         }
         if ui
-            .button("Drop to the ground")
-            .on_hover_text("Stand the trigger on the ground under its centre, where the ground is open.")
+            .button("Snap to ground")
+            .on_hover_text("Places the trigger on the ground under its centre, where the ground is open.")
             .clicked()
         {
             if let Some(ground) = crate::tools::doodads::ground_height(session, at[0], at[1]) {
@@ -247,18 +247,18 @@ fn volume(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Triggers,
     if triggers.confirm_remove == Some(trigger.id) {
         ui.label(
             egui::RichText::new(
-                "This is one of the game's own triggers. Without it, whatever the server does \
-                 here (a dungeon's entrance, an inn, a quest) stops happening.",
+                "This is a shipped trigger. Removing it also stops the server behaviour \
+                 attached to it (dungeon entrance, inn, quest objective).",
             )
             .size(theme::SMALL)
             .color(theme::WARN),
         );
         ui.horizontal(|ui| {
-            if ui.button("Remove it").clicked() {
+            if ui.button("Remove trigger").clicked() {
                 let line = triggers::remove_trigger(session, triggers, trigger.id, now);
                 session.status = line;
             }
-            if ui.button("Keep it").clicked() {
+            if ui.button("Cancel").clicked() {
                 triggers.confirm_remove = None;
             }
         });
@@ -284,8 +284,8 @@ fn pick_banner(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trig
     );
     theme::note(
         ui,
-        "Press on the ground for the place, drag before releasing to point the way a \
-         character faces, and release to write it. Escape cancels.",
+        "Press on the ground to set the position, drag before releasing to set the \
+         facing, and release to write both. Escape cancels.",
     );
     theme::row(ui, "facing", |ui| {
         ui.label(theme::number(format!("{:.0}\u{b0}", pick.facing.to_degrees().rem_euclid(360.0))));
@@ -322,11 +322,11 @@ fn pick_buttons(
             false => format!("Pick on {name}\u{2026}"),
         };
         let tip = match here {
-            true => "Press on the ground for the place and drag to point the facing.".to_string(),
+            true => "Press on the ground to set the position and drag to set the facing.".to_string(),
             false => format!(
-                "Opens {name} with the camera over the place the row names now. Press on the \
-                 ground for the place and drag to point the facing; the editor then comes \
-                 back to this trigger. Unsaved tiles are saved first, as any map change does."
+                "Opens {name} with the camera over the row's current position. Press on the \
+                 ground to set the position and drag to set the facing; the editor then \
+                 returns to this trigger. Unsaved tiles are saved first, as on any map change."
             ),
         };
         if ui.button(label).on_hover_text(tip).clicked() {
@@ -384,7 +384,7 @@ fn server_half(
     if !vale_mangos::trigger::fits(id) {
         ui.label(
             egui::RichText::new(format!(
-                "Trigger ids stop at {}: the server cannot hold a row for this one.",
+                "areatrigger_template.id holds at most {}; this trigger's id does not fit.",
                 vale_mangos::trigger::MAX_ID
             ))
             .color(theme::WARN),
@@ -457,7 +457,7 @@ fn template(
     theme::row(ui, "label", |ui| {
         if ui
             .text_edit_singleline(&mut name)
-            .on_hover_text("areatrigger_template.name: what the trigger is, for people. The game does not show it.")
+            .on_hover_text("areatrigger_template.name: a description for people reading the table. The game does not show it.")
             .changed()
         {
             triggers::set_template(session, triggers, id, "name", text(&name), now);
@@ -498,7 +498,7 @@ fn template(
             .width(18.0)
             .show_ui(ui, |ui| {
                 ui.label(
-                    egui::RichText::new("names other triggers use")
+                    egui::RichText::new("script names used by other triggers")
                         .size(theme::SMALL)
                         .color(theme::INK_FAINT),
                 );
@@ -529,7 +529,7 @@ fn template(
         match script_id {
             0 => {
                 if ui
-                    .button("Make script")
+                    .button("Create script")
                     .on_hover_text(
                         "Sets the script id to the trigger's own id, the shipped convention, and \
                          opens the script window on it to add steps.",
@@ -672,8 +672,8 @@ fn teleport(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trigger
         .checkbox(&mut on, "Teleport")
         .on_hover_text(
             "areatrigger_teleport: the server sends a character inside to a map and a \
-             position. Turned on, it sends to the trigger's own centre until a target is \
-             picked.",
+             position. When first enabled, the target is the trigger's own centre until \
+             a target is picked.",
         )
         .changed()
     {
@@ -694,8 +694,8 @@ fn teleport(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trigger
     if !lacking.is_empty() {
         ui.label(
             egui::RichText::new(format!(
-                "This teleport has no {}, so Apply skips it. Type the value, or pick the target \
-                 again, which writes all of them.",
+                "This teleport has no {}, so Apply skips it. Enter the value, or pick the target \
+                 again to write all of them.",
                 lacking.join(", ")
             ))
             .size(theme::SMALL)
@@ -704,7 +704,7 @@ fn teleport(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trigger
     }
     let f = vale_mangos::sql::float;
     let mut target_map = teleport.target_map;
-    theme::row(ui, "to map", |ui| map_choice(ui, session, ("trigger target map", id), &mut target_map));
+    theme::row(ui, "target map", |ui| map_choice(ui, session, ("trigger target map", id), &mut target_map));
     if target_map != teleport.target_map {
         triggers::set_teleport(session, triggers, id, "target_map", target_map.to_string(), now);
     }
@@ -727,7 +727,7 @@ fn teleport(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trigger
     theme::row(ui, "facing", |ui| {
         if ui
             .add(egui::DragValue::new(&mut degrees).speed(1.0).suffix("\u{b0}"))
-            .on_hover_text("The way the character faces on arrival. The row holds it in radians.")
+            .on_hover_text("The character's facing on arrival. The row stores it in radians.")
             .changed()
         {
             let radians = degrees.rem_euclid(360.0).to_radians();
@@ -738,7 +738,7 @@ fn teleport(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trigger
     theme::row(ui, "level", |ui| {
         if ui
             .add(egui::DragValue::new(&mut level).range(0..=60).speed(0.2))
-            .on_hover_text("The level a character needs to be sent. 0 for any.")
+            .on_hover_text("Minimum character level for the teleport. 0 for any.")
             .changed()
         {
             triggers::set_teleport(session, triggers, id, "required_level", level.to_string(), now);
@@ -760,7 +760,7 @@ fn teleport(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trigger
     theme::row(ui, "message", |ui| {
         if ui
             .text_edit_singleline(&mut message)
-            .on_hover_text("What a character who is not sent is told.")
+            .on_hover_text("Message shown to a character who does not meet the requirements.")
             .changed()
         {
             triggers::set_teleport(session, triggers, id, "message", vale_mangos::sql::text(&message), now);

@@ -320,7 +320,7 @@ impl Pushes {
             }],
             whole_secs: KIT_LOOP_SECS,
             alone: true,
-            line: format!("kit {kit} played on one body, every {KIT_LOOP_SECS:.1}s"),
+            line: format!("kit {kit} on the caster only, repeated every {KIT_LOOP_SECS:.1}s"),
         }
     }
 
@@ -373,8 +373,8 @@ impl Pushes {
             whole_secs: whole,
             alone: false,
             line: format!(
-                "visual {visual}: its kits in order, with no spell behind them, so no \
-                 missile, no area and a state played once"
+                "visual {visual}: kits only, without a spell; no missile, no area, \
+                 state kit played once"
             ),
         })
     }
@@ -657,7 +657,7 @@ impl Stage {
         }
         match self.self_cast {
             true => line.push_str(" · self-cast"),
-            false => line.push_str(&format!(" · shown at {APART:.0}yd")),
+            false => line.push_str(&format!(" · target at {APART:.0}yd")),
         }
         if self.missile_speed > 0.0 {
             line.push_str(&format!(" · missile {:.0} yd/s", self.missile_speed));

@@ -125,7 +125,7 @@ impl std::fmt::Display for Refused {
                 vale_assets::tables::map::MAX_NEW_ID
             ),
             Refused::BadDirectory(why) => write!(f, "{why}"),
-            Refused::WrongWidth(table) => write!(f, "{table}.dbc is not the width 1.12 ships"),
+            Refused::WrongWidth(table) => write!(f, "{table}.dbc does not have the 1.12 record size"),
         }
     }
 }

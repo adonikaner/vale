@@ -145,7 +145,7 @@ pub fn publish(
 ) -> Result<String, String> {
     let name = name.trim();
     if !is_a_name(name) {
-        return Err(format!("{name:?} is not a name a patch may have"));
+        return Err(format!("{name:?} is not a valid patch name: use 1 to 64 characters, no leading '.', and none of / \\ : * ? \" < > |"));
     }
     if queue.busy() {
         return Err("a server write is still running".to_string());
@@ -153,7 +153,7 @@ pub fn publish(
     let project = session.project.clone();
     let folder = project
         .path_for(&format!("{DIR}\\{name}"))
-        .ok_or_else(|| format!("{name}: leaves the project"))?;
+        .ok_or_else(|| format!("{name}: path is outside the project folder"))?;
 
     // Save everything the project holds, so the patch matches what is on
     // screen.
@@ -287,7 +287,7 @@ pub fn publish(
     let real_data_dir = tiles::data_dir(server)?;
     let stage = project
         .path_for(STAGE)
-        .ok_or_else(|| "the staging folder leaves the project".to_string())?;
+        .ok_or_else(|| "the staging folder is outside the project folder".to_string())?;
     let own: Vec<String> = project.published().into_iter().map(|a| a.name).collect();
     let archive_for_tools = head.archive.clone().map(|name| (client.join(&name), name));
     let dll_dirs: Vec<PathBuf> = server
@@ -298,7 +298,7 @@ pub fn publish(
     let progress = step.clone();
     let head_for_finish = head.clone();
     let label = format!("patch {name}: {} server tile(s)", dirty.len());
-    said.push(format!("{} server tile(s) to regenerate \u{2014} the bar says which step", dirty.len()));
+    said.push(format!("{} server tile(s) to regenerate \u{2014} the progress bar shows the current step", dirty.len()));
 
     let work: super::queue::Work = Box::new(move || {
         // The steps before and after the tools report no count. The tools'
@@ -306,7 +306,7 @@ pub fn publish(
         let say = |line: &str| progress.set(line, 0, 0);
         let result = (|| -> Result<Outcome, String> {
             carry_over(&project, previous.as_deref(), &folder)?;
-            say("staging a copy of the install for the tools");
+            say("staging a copy of the client install for the map tools");
             let client_root = match &archive_for_tools {
                 Some((archive, name)) => {
                     datadir::stage_client(&data_dir, &own, archive, name, &stage.join("client"))?
@@ -374,7 +374,7 @@ pub fn publish(
                     format!(
                         "patch {} finished: {}",
                         head_for_finish.name,
-                        outcome.line().trim_end_matches(" \u{2014} restart the server to walk on them")
+                        outcome.line().trim_end_matches(" \u{2014} restart the server to load them")
                     )
                 }
                 Err(e) => {
@@ -504,8 +504,8 @@ fn finish(project: &Project, head: &Head, outcome: Option<&Outcome>) -> Result<(
     let stamp = vale_mangos::migration::stamp(None);
     let mut text = format!(
         "{} — patch {}\n\
-         Written by the world editor on {}-{}-{} {}:{}:{} UTC. Nothing here has been\n\
-         applied to any install; every file is to be copied where this says.\n\n",
+         Written by the world editor on {}-{}-{} {}:{}:{} UTC. No file here has been\n\
+         applied to any install. Copy each file to the location given below.\n\n",
         project.name,
         head.name,
         &stamp[0..4],
@@ -573,14 +573,14 @@ fn finish(project: &Project, head: &Head, outcome: Option<&Outcome>) -> Result<(
     }
     if let Some(from) = &head.from {
         text.push_str(&format!(
-            "The server tiles unchanged since patch {from} are that patch's files, copied.\n"
+            "Server tiles unchanged since patch {from} are copied from that patch.\n"
         ));
     }
     if let Some(outcome) = outcome {
         text.push_str(&format!(
             "This publish regenerated {} tile(s): {}.\n",
             head.tiles_to_do,
-            outcome.line().trim_start_matches("server tiles: ").trim_end_matches(" \u{2014} restart the server to walk on them")
+            outcome.line().trim_start_matches("server tiles: ").trim_end_matches(" \u{2014} restart the server to load them")
         ));
         for (name, why) in &outcome.mmaps_failed {
             text.push_str(&format!("  {name} FAILED: {why}\n"));

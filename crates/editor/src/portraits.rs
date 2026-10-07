@@ -1220,7 +1220,7 @@ pub fn paint_large(
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "does not open",
+                "model failed to load",
                 egui::FontId::proportional(crate::ui::theme::SMALL),
                 crate::ui::theme::BAD,
             );
@@ -1229,13 +1229,13 @@ pub fn paint_large(
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "drawing…",
+                "rendering…",
                 egui::FontId::proportional(crate::ui::theme::SMALL),
                 crate::ui::theme::INK_FAINT,
             );
         }
     }
-    response.on_hover_text("Drag to turn the model.")
+    response.on_hover_text("Drag to rotate the model.")
 }
 
 #[cfg(test)]

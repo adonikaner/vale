@@ -148,7 +148,7 @@ pub fn create(
     at: (u32, u32),
 ) -> Result<String, String> {
     if session.wdt_claims(at) {
-        return Err(format!("{}, {} already exists", at.0, at.1));
+        return Err(format!("tile {}, {} already exists", at.0, at.1));
     }
     let mut wdt = load_wdt(session, assets)?;
     wdt.set_tile(at.0, at.1, true);
@@ -166,7 +166,7 @@ pub fn create(
     session.restream.insert(at);
 
     Ok(format!(
-        "made {}, {} — flat at {:.0}, {}",
+        "created tile {}, {}: height {:.0}, base texture {}",
         at.0, at.1, tiles.height, tiles.texture
     ))
 }
@@ -183,7 +183,7 @@ pub fn remove(
     at: (u32, u32),
 ) -> Result<String, String> {
     if !session.wdt_claims(at) {
-        return Err(format!("{}, {} does not exist", at.0, at.1));
+        return Err(format!("tile {}, {} does not exist", at.0, at.1));
     }
     let mut wdt = load_wdt(session, assets)?;
     wdt.set_tile(at.0, at.1, false);
@@ -192,7 +192,7 @@ pub fn remove(
     // do — see [`restream`].
     session.tombstone(at);
     Ok(format!(
-        "unclaimed {}, {}; its ADT is still in the project",
+        "removed tile {}, {} from the WDT; its ADT file stays in the project",
         at.0, at.1
     ))
 }
@@ -224,7 +224,7 @@ pub fn start_rebake(
     use bevy::tasks::AsyncComputeTaskPool;
 
     let Some(tile) = session.tiles.get(&at).cloned() else {
-        return Err(format!("{}, {} is not open", at.0, at.1));
+        return Err(format!("tile {}, {} is not open", at.0, at.1));
     };
     // The parsed form, which is what the hull builder reads placements out of.
     let raw = tile.write();
@@ -276,7 +276,7 @@ pub fn start_rebake(
     });
 
     Ok(crate::jobs::Job {
-        label: format!("rebaking {}, {}", at.0, at.1),
+        label: format!("rebaking tile {}, {}", at.0, at.1),
         progress,
         task,
     })
@@ -309,7 +309,7 @@ pub fn collect_bakes(
     for baked in done {
         if !session.tiles.contains_key(&baked.at) {
             tiles.said = format!(
-                "{}, {} closed before its bake landed",
+                "tile {}, {} was closed before its shadow bake finished; the bake was discarded",
                 baked.at.0, baked.at.1
             );
             continue;
@@ -331,7 +331,7 @@ pub fn collect_bakes(
             session.stale.insert(baked.at);
         }
         tiles.said = format!(
-            "rebaked {}, {}: {} chunks shadowed, {} changed",
+            "rebaked shadows of tile {}, {}: {} chunks shadowed, {} changed",
             baked.at.0, baked.at.1, baked.shadowed, baked.changed
         );
         session.status = tiles.said.clone();
@@ -518,7 +518,7 @@ pub fn start_minimaps(
                 break;
             }
             let picture = bytes_of(at)
-                .ok_or_else(|| "no tile there".to_string())
+                .ok_or_else(|| "no ADT for this tile".to_string())
                 .and_then(|raw| {
                     let neighbours = neighbours(at, &bytes_of);
                     draw_picture(&raw, &neighbours, at, map_id, &*reader, tables.as_deref())
@@ -619,7 +619,7 @@ fn land_minimaps(session: &mut EditSession, assets: &GameAssets, drawn: Drawn) -
                 // The client keeps the parsed index with the tables.
                 session.tables_republished = true;
             }
-            Err(why) => problems.push(format!("the minimap index: {why}")),
+            Err(why) => problems.push(format!("md5translate.trs: {why}")),
         }
     }
     let mut said = match written {
@@ -627,13 +627,13 @@ fn land_minimaps(session: &mut EditSession, assets: &GameAssets, drawn: Drawn) -
         n => format!("drew {n} minimaps"),
     };
     if !added.is_empty() {
-        said.push_str(&format!(", {} new in the index", added.len()));
+        said.push_str(&format!(", {} added to md5translate.trs", added.len()));
     }
     if drawn.stopped {
         said.push_str(", stopped");
     }
     if let Some(first) = problems.first() {
-        said.push_str(&format!("; {} failed, first {first}", problems.len()));
+        said.push_str(&format!("; {} failed, first: {first}", problems.len()));
     }
     said
 }
@@ -768,11 +768,11 @@ fn make_building(
         wdt.set_building(None);
         save_wdt(session, &wdt)?;
         tiles.building = None;
-        return Ok(format!("{map} is terrain again. Open the map again to see it."));
+        return Ok(format!("{map} is now a terrain map. Reopen the map to see the change."));
     }
     let count = wdt.tile_count();
     if count > 0 {
-        return Err(format!("{map} has {count} tiles; only a map with none can be one building"));
+        return Err(format!("{map} has {count} tiles; only a map with no tiles can be a single-WMO map"));
     }
     let path = tiles.building_path.trim().to_string();
     let root = assets
@@ -781,11 +781,11 @@ fn make_building(
         .flatten()
         .ok_or_else(|| format!("{path} is not in the archives or the project"))?;
     let root = vale_assets::world::wmo::WmoRoot::parse(&root)
-        .map_err(|e| format!("{path} does not read as a building: {e}"))?;
+        .map_err(|e| format!("{path} is not a valid WMO root file: {e}"))?;
     wdt.set_building(Some((&path, root.bounds)));
     save_wdt(session, &wdt)?;
     tiles.building = Some(path.clone());
-    Ok(format!("{map} is now one building: {path}. Open the map again to see it."))
+    Ok(format!("{map} is now a single-WMO map: {path}. Reopen the map to see the change."))
 }
 
 /// Keep [`Tiles::building`] in step with the map that is open.
@@ -824,7 +824,7 @@ pub fn is_open(session: &EditSession, at: (u32, u32)) -> bool {
 /// The blank a new tile is made from, exposed for the panel's own summary.
 pub fn describe_new(tiles: &Tiles) -> String {
     format!(
-        "256 chunks, flat at {:.0}, one layer of {}",
+        "256 chunks, height {:.0}, base texture {}",
         tiles.height,
         tiles
             .texture
@@ -879,7 +879,7 @@ pub fn run_asked(
     if let Asked::FlyTo(at) = asked {
         let centre = vale_assets::world::terrain::tile_centre(at.0, at.1);
         camera.go_to(Vec2::new(centre[0], centre[1]));
-        tiles.said = format!("flew to {}, {}", at.0, at.1);
+        tiles.said = format!("moved the camera to tile {}, {}", at.0, at.1);
         session.status = tiles.said.clone();
         return;
     }
@@ -916,7 +916,7 @@ pub fn run_asked(
     let mut chosen: Vec<(u32, u32)> = view.selection.iter().copied().collect();
     chosen.sort_unstable();
     if chosen.is_empty() {
-        tiles.said = "nothing is selected".into();
+        tiles.said = "no tiles selected".into();
         return;
     }
 
@@ -959,7 +959,7 @@ pub fn run_asked(
             _ => Kind::Blends,
         };
         let mut dialog = rfd::FileDialog::new()
-            .add_filter("PNG picture", &["png"])
+            .add_filter("PNG image", &["png"])
             .set_file_name(images::suggested_name(&session.map, &chosen, kind));
         if let Some(dir) = &tiles.image_dir {
             dialog = dialog.set_directory(dir);
@@ -975,7 +975,7 @@ pub fn run_asked(
         return;
     }
     if asked == Asked::ChooseImport {
-        let mut dialog = rfd::FileDialog::new().add_filter("PNG picture", &["png"]);
+        let mut dialog = rfd::FileDialog::new().add_filter("PNG image", &["png"]);
         if let Some(dir) = &tiles.image_dir {
             dialog = dialog.set_directory(dir);
         }
@@ -1020,8 +1020,8 @@ pub fn run_asked(
                 .collect();
             view.clipboard = taken.clone();
             match taken.len() {
-                0 => "none of the selection exists".into(),
-                1 => format!("copied {}, {}", taken[0].0, taken[0].1),
+                0 => "none of the selected tiles exists".into(),
+                1 => format!("copied tile {}, {}", taken[0].0, taken[0].1),
                 n => format!("copied {n} tiles"),
             }
         }
@@ -1050,8 +1050,8 @@ pub fn run_asked(
                 }
             }
             match failed {
-                Some(why) => format!("made {made}, then stopped: {why}"),
-                None => format!("made {made} tiles"),
+                Some(why) => format!("created {made} tiles, then stopped: {why}"),
+                None => format!("created {made} tiles"),
             }
         }
         Asked::Delete => {
@@ -1067,7 +1067,7 @@ pub fn run_asked(
                     gone += 1;
                 }
             }
-            format!("unclaimed {gone} tiles; their ADTs are still in the project")
+            format!("removed {gone} tiles from the WDT; their ADT files stay in the project")
         }
         Asked::Paste => {
             // One tile fills, several move as a block — see
@@ -1108,11 +1108,11 @@ pub fn run_asked(
                 }
             };
             if moves.is_empty() {
-                "nothing to paste".into()
+                "no tiles to paste".into()
             } else {
                 let (pasted, failed) = paste_into(&mut session, &assets, &moves);
                 match failed {
-                    Some(why) => format!("pasted {pasted}, then stopped: {why}"),
+                    Some(why) => format!("pasted {pasted} tiles, then stopped: {why}"),
                     None => format!("pasted {pasted} tiles"),
                 }
             }
@@ -1151,7 +1151,7 @@ pub fn run_derive(
         chosen.retain(|&at| session.wdt_claims(at));
         chosen.sort_unstable();
         if chosen.is_empty() {
-            tiles.said = "no tile to draw: select tiles that exist".into();
+            tiles.said = "no minimap to draw: none of the selected tiles exists".into();
             return;
         }
         tiles.stop.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -1197,7 +1197,7 @@ pub fn run_derive(
         }
     }
     tiles.said = match (what, done) {
-        (Derived::Shadows, n) => format!("{n} bakes started on background threads"),
+        (Derived::Shadows, n) => format!("started {n} shadow rebakes in the background"),
         (_, 1) => last,
         (_, n) => format!("{n} tiles done; {last}"),
     };
@@ -1242,7 +1242,7 @@ pub fn paste(
     let mut wdt = load_wdt(session, assets)?;
     let raw = session
         .tile_bytes(assets, from)
-        .ok_or_else(|| format!("{}, {} has no file to copy", from.0, from.1))?;
+        .ok_or_else(|| format!("tile {}, {} has no ADT to copy", from.0, from.1))?;
     let source = AdtFile::parse(&raw).map_err(|e| e.to_string())?;
     let said = paste_one(session, &source, from, to, &mut wdt)?;
     save_wdt(session, &wdt)?;
@@ -1273,7 +1273,7 @@ pub fn paste_into(
     for &(from, to) in moves {
         if !sources.contains_key(&from) {
             let Some(raw) = session.tile_bytes(assets, from) else {
-                failed = Some(format!("{}, {} has no file to copy", from.0, from.1));
+                failed = Some(format!("tile {}, {} has no ADT to copy", from.0, from.1));
                 break;
             };
             match AdtFile::parse(&raw) {

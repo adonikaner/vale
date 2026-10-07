@@ -376,8 +376,8 @@ fn stroke(
         let carried = carry(session, std::mem::take(&mut held.standing));
         if carried > 0 {
             session.status = match carried {
-                1 => "1 object followed the ground".to_string(),
-                n => format!("{n} objects followed the ground"),
+                1 => "1 doodad/WMO placement moved with the ground".to_string(),
+                n => format!("{n} doodad/WMO placements moved with the ground"),
             };
         }
         session.history.end();

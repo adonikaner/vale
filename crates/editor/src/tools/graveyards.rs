@@ -220,7 +220,7 @@ pub fn add_link(session: &mut EditSession, graveyards: &Graveyards, id: u32, zon
     let shown = graveyards.links_of(&session.server_edits, id);
     let existing = shown.iter().find(|shown| shown.link.zone == zone);
     if existing.is_some_and(|shown| shown.life != Life::Delete) {
-        return Err(format!("safe place {id} already serves {}", graveyards.zone_name(zone)));
+        return Err(format!("graveyard {id} is already linked to {}", graveyards.zone_name(zone)));
     }
     let link = existing.map(|shown| shown.link.clone()).unwrap_or_else(|| Link::new(id, zone));
     let key = link.key();
@@ -228,7 +228,7 @@ pub fn add_link(session: &mut EditSession, graveyards: &Graveyards, id: u32, zon
     let gesture = Gesture { label: "Link graveyard", subject: &label, now };
     let held = existing.is_some_and(|shown| shown.in_database.is_some());
     create_row(session, graveyard::ZONE, &key, held, &link.assignments(), gesture);
-    Ok(format!("safe place {id} serves {} ({zone})", graveyards.zone_name(zone)))
+    Ok(format!("graveyard {id} linked to {} ({zone})", graveyards.zone_name(zone)))
 }
 
 pub fn remove_link(session: &mut EditSession, shown: &ShownLink, now: f64) {
@@ -286,7 +286,7 @@ pub fn new_place(session: &mut EditSession, graveyards: &mut Graveyards, at: Vec
             super::flightpaths::record(session, "Add graveyard", done);
             graveyards.stale();
             graveyards.selected = made;
-            format!("safe place {} made; link it to a zone for the server to use it", made.unwrap_or(0))
+            format!("graveyard {} made; link it to a zone for the server to use it", made.unwrap_or(0))
         }
         Err(e) => e.to_string(),
     }
@@ -316,7 +316,7 @@ pub fn remove_place(session: &mut EditSession, graveyards: &mut Graveyards, id: 
     graveyards.selected = None;
     graveyards.confirm_remove = None;
     graveyards.stale();
-    format!("safe place {id} removed")
+    format!("graveyard {id} removed")
 }
 
 /// The area id of the chunk under a point, where its tile is open.
@@ -626,7 +626,7 @@ fn keys(
     };
     if graveyards.is_shipped(id) && graveyards.confirm_remove != Some(id) {
         graveyards.confirm_remove = Some(id);
-        session.status = format!("safe place {id} is one of the game's own: confirm the removal in the panel");
+        session.status = format!("graveyard {id} is a shipped graveyard: confirm the removal in the panel");
         return;
     }
     let line = remove_place(session, &mut graveyards, id, time.elapsed_secs_f64());

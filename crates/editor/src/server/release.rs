@@ -276,7 +276,7 @@ pub fn migrate(session: &mut EditSession, assets: &GameAssets) -> String {
     super::behaviour::save(session);
     super::places::save(session);
     let Some(into) = session.project.path_for(migration::MIGRATIONS_DIR) else {
-        return format!("{} leaves the project", migration::MIGRATIONS_DIR);
+        return format!("{}: path is outside the project folder", migration::MIGRATIONS_DIR);
     };
     match write_migration(session, assets, &into) {
         Ok(written) => {

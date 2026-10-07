@@ -152,7 +152,7 @@ impl ServerQueue {
             let rows = db
                 .row("SELECT COUNT(*) AS n FROM `spell_template`")?
                 .and_then(|row| row.get("n").cloned().flatten())
-                .ok_or_else(|| "connected, but there is no spell_template in it".to_string())?;
+                .ok_or_else(|| "connected, but the database has no spell_template table".to_string())?;
             Ok(format!("{rows} rows in spell_template"))
         }));
     }
@@ -255,9 +255,9 @@ mod tests {
         assert!(!queue.busy());
         let nothing = || -> Work { Box::new(|| -> Finish { Box::new(|_, _| {}) }) };
         queue.push("applying items", nothing());
-        queue.push("putting back quests", nothing());
+        queue.push("restoring quests", nothing());
         assert!(queue.busy());
-        assert_eq!(queue.labels(), vec!["applying items", "putting back quests"]);
+        assert_eq!(queue.labels(), vec!["applying items", "restoring quests"]);
     }
 
     /// A write keeps the live-editing state it was queued under, whatever the

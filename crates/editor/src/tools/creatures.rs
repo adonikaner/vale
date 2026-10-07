@@ -1023,7 +1023,7 @@ impl Creatures {
             &key,
             wanted.as_ref(),
             Some(crate::session::Gesture {
-                label: "Keep spawn",
+                label: "Cancel spawn removal",
                 subject: &subject,
                 now,
             }),
@@ -1471,12 +1471,12 @@ pub fn plan_template_move(
     }
     if to > creature::MAX_ENTRY {
         return Err(format!(
-            "{to} is past {}, which is all `entry` can hold",
+            "{to} is above {}, the largest value `entry` can hold",
             creature::MAX_ENTRY
         ));
     }
     if taken && to != subject.read_entry {
-        return Err(format!("entry {to} is already a creature"));
+        return Err(format!("creature_template entry {to} already exists"));
     }
     Ok(Some((
         subject.key(),
@@ -2207,7 +2207,7 @@ fn place_one(
     // The surface and not the ground, so that clicking a bridge, a dock or an
     // inn's upper floor stands the creature on it. See [`crate::pick`].
     let Some(ground) = cursor.surface else {
-        session.status = "nothing under the pointer — nothing placed".into();
+        session.status = "no surface under the pointer; nothing placed".into();
         return;
     };
     // The ghost's own facing, so the row written matches the model that was

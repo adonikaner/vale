@@ -144,7 +144,7 @@ pub const FLAGS: [Bit; 7] = [
     Bit { bit: 0x01, name: "IN_USE", about: "disables interaction while animated" },
     Bit { bit: 0x02, name: "LOCKED", about: "needs a key, a spell or an event; the tooltip says Locked" },
     Bit { bit: 0x04, name: "INTERACT_COND", about: "cannot be interacted with until a condition is met" },
-    Bit { bit: 0x08, name: "TRANSPORT", about: "carries what stands on it: an elevator, a boat" },
+    Bit { bit: 0x08, name: "TRANSPORT", about: "carries units standing on it, such as an elevator or a boat" },
     Bit { bit: 0x10, name: "NO_INTERACT", about: "players cannot interact with it" },
     Bit { bit: 0x20, name: "NODESPAWN", about: "never despawns; a door only changes state" },
     Bit { bit: 0x40, name: "TRIGGERED", about: "summoned, or set off by a spell or an event" },
@@ -175,40 +175,40 @@ pub use crate::schema::NO_YES;
 /// and a trap's `autoCloseTime` are read as `int32`.
 pub const TEMPLATE_COLUMNS: [Column; 35] = [
     Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the game object id" },
-    Column { name: "type", kind: Kind::Choice(&TYPES), group: Group::Identity, about: "what it is, and with it what the 24 data columns mean" },
-    Column { name: "displayId", kind: Kind::Ref("GameObjectDisplayInfo"), group: Group::Appearance, about: "the model it is drawn as" },
-    Column { name: "name", kind: Kind::Text, group: Group::Identity, about: "what the tooltip says" },
-    Column { name: "icon", kind: Kind::Text, group: Group::Identity, about: "the query response's fifth string; empty on all but the two that say PVP" },
-    Column { name: "faction", kind: Kind::Ref("FactionTemplate"), group: Group::Identity, about: "FactionTemplate.dbc id: who may use it" },
-    Column { name: "flags", kind: Kind::Flags(&FLAGS), group: Group::Behaviour, about: "locked, no interaction, never despawns" },
+    Column { name: "type", kind: Kind::Choice(&TYPES), group: Group::Identity, about: "the game object type; it decides what the 24 data columns mean" },
+    Column { name: "displayId", kind: Kind::Ref("GameObjectDisplayInfo"), group: Group::Appearance, about: "GameObjectDisplayInfo.dbc id of its model" },
+    Column { name: "name", kind: Kind::Text, group: Group::Identity, about: "the name shown in the tooltip" },
+    Column { name: "icon", kind: Kind::Text, group: Group::Identity, about: "the fifth string of the query response; empty for every object except the two that show PVP" },
+    Column { name: "faction", kind: Kind::Ref("FactionTemplate"), group: Group::Identity, about: "FactionTemplate.dbc id; decides who may use it" },
+    Column { name: "flags", kind: Kind::Flags(&FLAGS), group: Group::Behaviour, about: "flags: locked, no interaction, never despawns, and others" },
     Column { name: "size", kind: Kind::Float, group: Group::Appearance, about: "size multiplier for the model" },
-    Column { name: "data0", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data1", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data2", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data3", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data4", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data5", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data6", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data7", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data8", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data9", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data10", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data11", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data12", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data13", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data14", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data15", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data16", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data17", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data18", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data19", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data20", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data21", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data22", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "data23", kind: Kind::Signed, group: Group::Stats, about: "named by the type" },
-    Column { name: "mingold", kind: Kind::Money, group: Group::Loot, about: "least copper a chest holds" },
-    Column { name: "maxgold", kind: Kind::Money, group: Group::Loot, about: "most copper a chest holds" },
-    Column { name: "script_name", kind: Kind::Text, group: Group::Advanced, about: "a compiled script, or empty" },
+    Column { name: "data0", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data1", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data2", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data3", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data4", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data5", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data6", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data7", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data8", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data9", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data10", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data11", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data12", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data13", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data14", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data15", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data16", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data17", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data18", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data19", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data20", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data21", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data22", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "data23", kind: Kind::Signed, group: Group::Stats, about: "its meaning depends on the type" },
+    Column { name: "mingold", kind: Kind::Money, group: Group::Loot, about: "the least copper a chest holds" },
+    Column { name: "maxgold", kind: Kind::Money, group: Group::Loot, about: "the most copper a chest holds" },
+    Column { name: "script_name", kind: Kind::Text, group: Group::Advanced, about: "the name of a C++ script the server registers, or empty" },
 ];
 
 /// How many `data` columns a template has.
@@ -257,7 +257,7 @@ const NUMBER: Kind = Kind::Unsigned;
 
 const LOCK_ABOUT: &str = "Lock.dbc id: what opens it, a key item or a skill at a rank";
 const TRAP_ABOUT: &str = "gameobject_template entry of a trap set off when this is used";
-const AUTO_CLOSE: &str = "65536ths of a second before it resets; 0 never";
+const AUTO_CLOSE: &str = "time before it resets, in 65536ths of a second; 0 never resets";
 const OPEN_TEXT: &str = "broadcast text shown on the cast bar while opening";
 const CLOSE_TEXT: &str = "broadcast text shown on the cast bar while closing";
 const LOS_OK: &str = "usable without line of sight";
@@ -292,7 +292,7 @@ const QUESTGIVER: [DataField; 10] = [
     field("lockId", LOCK, LOCK_ABOUT),
     field("questList", NUMBER, "not read by the server: the quests are the two relation tables"),
     field("pageMaterial", NUMBER, "PageTextMaterial.dbc id: parchment, stone, bronze"),
-    field("gossipID", NUMBER, "gossip_menu id: what it says"),
+    field("gossipID", NUMBER, "gossip_menu entry shown when it is used"),
     field("customAnim", NUMBER, "which of the model's custom animations plays on use, 1 to 4"),
     field("noDamageImmune", SWITCH, NO_DAMAGE),
     field("openTextID", NUMBER, OPEN_TEXT),
@@ -303,11 +303,11 @@ const QUESTGIVER: [DataField; 10] = [
 
 const CHEST: [DataField; 16] = [
     field("lockId", LOCK, "Lock.dbc id: what opens it. Mining or Herbalism at a rank makes it a gathering node"),
-    field("lootId", Kind::Ref("gameobject_loot_template"), "gameobject_loot_template entry: what it holds"),
+    field("lootId", Kind::Ref("gameobject_loot_template"), "gameobject_loot_template entry of the loot it holds"),
     field("chestRestockTime", Kind::Seconds, "seconds before a partly looted chest refills"),
     field("consumable", SWITCH, "despawns when it has been looted"),
     field("minSuccessOpens", NUMBER, "least times a vein can be mined before it is spent"),
-    field("maxSuccessOpens", NUMBER, "most times"),
+    field("maxSuccessOpens", NUMBER, "most times a vein can be mined before it is spent"),
     field("eventId", NUMBER, "event_scripts id run when it is looted"),
     field("linkedTrapId", TRAP, TRAP_ABOUT),
     field("questId", QUEST, "the quest a player must have for it to be usable"),
@@ -332,9 +332,9 @@ const GENERIC: [DataField; 6] = [
 const TRAP_FIELDS: [DataField; 14] = [
     field("lockId", LOCK, LOCK_ABOUT),
     field("level", NUMBER, "the level its spell is cast at"),
-    field("radius", NUMBER, "yards within which a unit sets it off; 0 is only when linked"),
+    field("radius", NUMBER, "yards within which a unit sets it off; 0 fires only when another object links to it"),
     field("spellId", SPELL, "the spell it casts"),
-    field("charges", NUMBER, "0 never spent, 1 despawns after firing once"),
+    field("charges", NUMBER, "0 is never spent, 1 despawns after firing once"),
     field("cooldown", Kind::Seconds, "seconds between firings"),
     field("autoCloseTime", Kind::Signed, AUTO_CLOSE),
     field("startDelay", Kind::Seconds, "seconds after spawning before it is armed"),
@@ -347,7 +347,7 @@ const TRAP_FIELDS: [DataField; 14] = [
 ];
 
 const CHAIR: [DataField; 3] = [
-    field("slots", NUMBER, "how many can sit on it"),
+    field("slots", NUMBER, "how many players can sit on it"),
     field("height", NUMBER, "which sitting pose: 0 low, 1 medium, 2 high"),
     field("onlyCreatorUse", SWITCH, "only whoever summoned it may sit"),
 ];
@@ -388,7 +388,7 @@ const GOOBER: [DataField; 20] = [
     field("losOK", SWITCH, LOS_OK),
     field("allowMounted", SWITCH, MOUNTED),
     field("floatingTooltip", SWITCH, "the name is drawn over it rather than on the pointer"),
-    field("gossipID", NUMBER, "gossip_menu id: what it says"),
+    field("gossipID", NUMBER, "gossip_menu entry shown when it is used"),
 ];
 
 const TRANSPORT: [DataField; 3] = [
@@ -401,8 +401,8 @@ const AREA_DAMAGE: [DataField; 8] = [
     field("lockId", LOCK, LOCK_ABOUT),
     field("radius", NUMBER, "yards it reaches"),
     field("damageMin", NUMBER, "least damage a tick"),
-    field("damageMax", NUMBER, "most"),
-    field("damageSchool", NUMBER, "0 physical, 1 holy, 2 fire…"),
+    field("damageMax", NUMBER, "most damage a tick"),
+    field("damageSchool", NUMBER, "damage school: 0 physical, 1 holy, 2 fire, and so on"),
     field("autoCloseTime", NUMBER, AUTO_CLOSE),
     field("openTextID", NUMBER, OPEN_TEXT),
     field("closeTextID", NUMBER, CLOSE_TEXT),
@@ -417,22 +417,22 @@ const CAMERA: [DataField; 4] = [
 
 const MO_TRANSPORT: [DataField; 7] = [
     field("taxiPathId", Kind::Ref("TaxiPath"), "TaxiPath.dbc id: the route a boat or zeppelin sails"),
-    field("moveSpeed", NUMBER, "yards a second"),
-    field("accelRate", NUMBER, "yards a second, per second"),
+    field("moveSpeed", NUMBER, "movement speed, in yards a second"),
+    field("accelRate", NUMBER, "acceleration, in yards a second per second"),
     field("startEventID", NUMBER, "event_scripts id run when it leaves a dock"),
     field("stopEventID", NUMBER, "event_scripts id run when it arrives"),
-    field("transportPhysics", NUMBER, "TransportPhysics.dbc id: how it rocks"),
+    field("transportPhysics", NUMBER, "TransportPhysics.dbc id of its rocking motion"),
     field("mapID", Kind::Ref("Map"), "Map.dbc id of the transport's own map"),
 ];
 
 const FISHING_NODE: [DataField; 2] = [
-    field("data0", NUMBER, "not read"),
+    field("data0", NUMBER, "not read by the server"),
     field("lootId", Kind::Ref("gameobject_loot_template"), "not read: a bobber's catch is fishing_loot_template by zone"),
 ];
 
 const RITUAL: [DataField; 8] = [
     field("reqParticipants", NUMBER, "how many players must click it"),
-    field("spellId", SPELL, "the spell cast when enough have"),
+    field("spellId", SPELL, "the spell cast when reqParticipants players have clicked it"),
     field("animSpell", SPELL, "the spell each participant channels"),
     field("ritualPersistent", SWITCH, "stays after the ritual completes"),
     field("casterTargetSpell", SPELL, "a spell cast on the summoner"),
@@ -460,7 +460,7 @@ const SPELL_CASTER: [DataField; 6] = [
 
 const MEETING_STONE: [DataField; 3] = [
     field("minLevel", NUMBER, "lowest level it will queue"),
-    field("maxLevel", NUMBER, "highest"),
+    field("maxLevel", NUMBER, "highest level it will queue"),
     field("areaID", Kind::Ref("AreaTable"), "AreaTable.dbc id of the dungeon it is for"),
 ];
 
@@ -479,7 +479,7 @@ const FISHING_HOLE: [DataField; 5] = [
     field("radius", NUMBER, "yards within which a bobber counts as in the pool"),
     field("lootId", Kind::Ref("gameobject_loot_template"), "gameobject_loot_template entry: what the pool holds"),
     field("minSuccessOpens", NUMBER, "least catches before the pool is spent"),
-    field("maxSuccessOpens", NUMBER, "most"),
+    field("maxSuccessOpens", NUMBER, "most catches before the pool is spent"),
     field("lockId", LOCK, "Lock.dbc id, keyed on Fishing"),
 ];
 
@@ -491,27 +491,27 @@ const FLAG_DROP: [DataField; 5] = [
     field("openTextID", NUMBER, OPEN_TEXT),
 ];
 
-const MINI_GAME: [DataField; 1] = [field("gameType", NUMBER, "which mini game")];
+const MINI_GAME: [DataField; 1] = [field("gameType", NUMBER, "the mini game type")];
 
 const CAPTURE_POINT: [DataField; 20] = [
     field("radius", NUMBER, "yards within which a player counts"),
-    field("spell", SPELL, "not read"),
+    field("spell", SPELL, "not read by the server"),
     field("worldState1", NUMBER, "world state that shows the slider"),
     field("worldstate2", NUMBER, "world state holding the slider's position"),
     field("winEventID1", NUMBER, "event run when the Alliance wins it"),
-    field("winEventID2", NUMBER, "…when the Horde does"),
+    field("winEventID2", NUMBER, "event run when the Horde wins it"),
     field("contestedEventID1", NUMBER, "event run when the Alliance contests it"),
-    field("contestedEventID2", NUMBER, "…when the Horde does"),
+    field("contestedEventID2", NUMBER, "event run when the Horde contests it"),
     field("progressEventID1", NUMBER, "event run when the Alliance takes the lead"),
-    field("progressEventID2", NUMBER, "…when the Horde does"),
+    field("progressEventID2", NUMBER, "event run when the Horde takes the lead"),
     field("neutralEventID1", NUMBER, "event run when it goes neutral from the Alliance"),
-    field("neutralEventID2", NUMBER, "…from the Horde"),
+    field("neutralEventID2", NUMBER, "event run when it goes neutral from the Horde"),
     field("neutralPercent", NUMBER, "width of the neutral band, in percent"),
     field("worldstate3", NUMBER, "world state holding the neutral band's width"),
-    field("minSuperiority", NUMBER, "fewest more players for the slider to move"),
-    field("maxSuperiority", NUMBER, "how many more players move it fastest"),
+    field("minSuperiority", NUMBER, "the smallest player advantage that moves the slider"),
+    field("maxSuperiority", NUMBER, "the player advantage at which the slider moves fastest"),
     field("minTime", Kind::Seconds, "seconds to capture at the greatest superiority"),
-    field("maxTime", Kind::Seconds, "seconds at the least"),
+    field("maxTime", Kind::Seconds, "seconds to capture at the least superiority"),
     field("large", SWITCH, LARGE),
     field("highlight", SWITCH, "glows under the pointer"),
 ];
@@ -519,10 +519,10 @@ const CAPTURE_POINT: [DataField; 20] = [
 const AURA_GENERATOR: [DataField; 6] = [
     field("startOpen", SWITCH, "whether it starts switched on"),
     field("radius", NUMBER, "yards it reaches"),
-    field("auraID1", SPELL, "the aura it gives"),
-    field("conditionID1", NUMBER, "conditions id a player must meet for it"),
-    field("auraID2", SPELL, "a second aura"),
-    field("conditionID2", NUMBER, "…and its condition"),
+    field("auraID1", SPELL, "the first aura it gives"),
+    field("conditionID1", NUMBER, "conditions id a player must meet for the first aura"),
+    field("auraID2", SPELL, "the second aura it gives"),
+    field("conditionID2", NUMBER, "conditions id a player must meet for the second aura"),
 ];
 
 /// What a type's `data` columns are, in column order: `data_fields(3)[0]`
@@ -600,25 +600,25 @@ pub fn loot_column(kind: u32) -> Option<usize> {
 /// is also the order `GameObject::SaveToDB` writes them in
 /// (`GameObject.cpp:926`).
 pub const SPAWN_COLUMNS: [Column; 19] = [
-    Column { name: "guid", kind: Kind::Key, group: Group::Identity, about: "this spawn's own id" },
-    Column { name: "id", kind: Kind::Ref(TEMPLATE), group: Group::Identity, about: "which game object stands here" },
-    Column { name: "map", kind: Kind::Ref("Map"), group: Group::Place, about: "Map.dbc id" },
-    Column { name: "position_x", kind: Kind::Float, group: Group::Place, about: "north, in the world's own axes" },
-    Column { name: "position_y", kind: Kind::Float, group: Group::Place, about: "west" },
-    Column { name: "position_z", kind: Kind::Float, group: Group::Place, about: "up" },
-    Column { name: "orientation", kind: Kind::Float, group: Group::Place, about: "radians it faces, anticlockwise from north. Writes rotation2 and rotation3 with it" },
+    Column { name: "guid", kind: Kind::Key, group: Group::Identity, about: "the spawn's guid" },
+    Column { name: "id", kind: Kind::Ref(TEMPLATE), group: Group::Identity, about: "the gameobject_template entry spawned here" },
+    Column { name: "map", kind: Kind::Ref("Map"), group: Group::Place, about: "Map.dbc id of the map it spawns on" },
+    Column { name: "position_x", kind: Kind::Float, group: Group::Place, about: "x position: north, in world coordinates" },
+    Column { name: "position_y", kind: Kind::Float, group: Group::Place, about: "y position: west, in world coordinates" },
+    Column { name: "position_z", kind: Kind::Float, group: Group::Place, about: "z position: height, in world coordinates" },
+    Column { name: "orientation", kind: Kind::Float, group: Group::Place, about: "radians it faces, anticlockwise from north; editing it also writes rotation2 and rotation3" },
     Column { name: "rotation0", kind: Kind::Float, group: Group::Place, about: "the rotation quaternion's x: a tilt, 0 for an upright object" },
-    Column { name: "rotation1", kind: Kind::Float, group: Group::Place, about: "…its y: the other tilt" },
-    Column { name: "rotation2", kind: Kind::Float, group: Group::Place, about: "…its z: sin(orientation / 2) for an upright object" },
-    Column { name: "rotation3", kind: Kind::Float, group: Group::Place, about: "…its w: cos(orientation / 2)" },
-    Column { name: "spawntimesecsmin", kind: Kind::Signed, group: Group::Respawn, about: "least seconds before it comes back. Negative: not spawned until something spawns it" },
-    Column { name: "spawntimesecsmax", kind: Kind::Signed, group: Group::Respawn, about: "most seconds before it comes back" },
-    Column { name: "animprogress", kind: Kind::Unsigned, group: Group::Respawn, about: "0 to 255; 100 is what .gobject add writes" },
-    Column { name: "state", kind: Kind::Choice(&STATES), group: Group::Respawn, about: "what the client draws it as: a door open or shut" },
-    Column { name: "spawn_flags", kind: Kind::Flags(&SPAWN_FLAGS), group: Group::Respawn, about: "how this one spawn behaves" },
-    Column { name: "visibility_mod", kind: Kind::Float, group: Group::Respawn, about: "yards added to how far it is seen" },
+    Column { name: "rotation1", kind: Kind::Float, group: Group::Place, about: "the rotation quaternion's y: a tilt, 0 for an upright object" },
+    Column { name: "rotation2", kind: Kind::Float, group: Group::Place, about: "the rotation quaternion's z: sin(orientation / 2) for an upright object" },
+    Column { name: "rotation3", kind: Kind::Float, group: Group::Place, about: "the rotation quaternion's w: cos(orientation / 2) for an upright object" },
+    Column { name: "spawntimesecsmin", kind: Kind::Signed, group: Group::Respawn, about: "the least seconds before it respawns; negative: not spawned until a script or event spawns it" },
+    Column { name: "spawntimesecsmax", kind: Kind::Signed, group: Group::Respawn, about: "the most seconds before it respawns" },
+    Column { name: "animprogress", kind: Kind::Unsigned, group: Group::Respawn, about: "animation progress, 0 to 255; .gobject add writes 100" },
+    Column { name: "state", kind: Kind::Choice(&STATES), group: Group::Respawn, about: "the state the client draws, such as a door open or closed" },
+    Column { name: "spawn_flags", kind: Kind::Flags(&SPAWN_FLAGS), group: Group::Respawn, about: "flags for this spawn only" },
+    Column { name: "visibility_mod", kind: Kind::Float, group: Group::Respawn, about: "yards added to the distance it is seen from" },
     Column { name: "patch_min", kind: Kind::Unsigned, group: Group::Respawn, about: "lowest content patch this spawn exists in" },
-    Column { name: "patch_max", kind: Kind::Unsigned, group: Group::Respawn, about: "highest" },
+    Column { name: "patch_max", kind: Kind::Unsigned, group: Group::Respawn, about: "highest content patch this spawn exists in" },
 ];
 
 /// The `rotation2` and `rotation3` of an upright object facing that way:

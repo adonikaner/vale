@@ -105,7 +105,7 @@ impl Reconciled {
     pub fn taken_back_words(&self) -> String {
         match self.taken_back {
             0 => String::new(),
-            n => format!(" — {n} row(s) the project no longer claims put back"),
+            n => format!(" — restored {n} row(s) the project no longer changes"),
         }
     }
 }
@@ -127,7 +127,7 @@ pub fn apply(
     let had = Undo::open_at(project, vpath)?;
     if !had.entries.is_empty() {
         db.run(&had.put_back()).map_err(|e| {
-            format!("putting back what this project applied before did not finish: {e}")
+            format!("could not restore the rows this project applied earlier: {e}")
         })?;
         remove(project, vpath)?;
     }
@@ -149,11 +149,11 @@ pub fn apply(
             Err(e) => {
                 let before = match (index, had.entries.is_empty()) {
                     (0, true) => "Nothing has been applied.".to_string(),
-                    (0, false) => "What this project had applied before has been put back, \
-                                   so the database holds none of it now."
+                    (0, false) => "The rows this project applied earlier were restored; \
+                                   the database holds none of this project's rows."
                         .to_string(),
                     (n, _) => format!(
-                        "{n} of {} row(s) were written before this; Put back returns them.",
+                        "{n} of {} row(s) were written before the failure; Restore reverts them.",
                         steps.len()
                     ),
                 };
@@ -247,8 +247,8 @@ pub fn refuse_a_taken_id(
             .unwrap_or(0);
         if named > 0 {
             return Err(format!(
-                "{named} row(s) of {}.{} already name {id}, which has no row of its own; \
-                 a row moved onto it could not be told from them when it is put back.",
+                "{named} row(s) of {}.{} already reference {id}, which has no row; \
+                 putting back a move to {id} would also change those rows.",
                 reference.table, reference.column
             ));
         }
@@ -277,9 +277,9 @@ pub fn undo_of_an_update(
     let undo = vale_mangos::row::undo_move_statements(table, at, key, changes, references, now);
     if undo.is_none() && at != key {
         return Err(format!(
-            "{table} {} is not in the database, so it cannot be moved to {}: the other \
-             content patches and every reference to it would move with nothing to put \
-             them back. Discard the move, or restore the row.",
+            "{table} {} is not in the database, so it cannot be moved to {}: its other \
+             content patches and every reference to it would be renumbered with no \
+             statement to restore them. Discard the move, or restore the row.",
             at.text(),
             key.text()
         ));
@@ -309,7 +309,7 @@ fn remove(project: &Project, vpath: &str) -> Result<(), String> {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(format!(
-            "{vpath} has been put back but could not be removed: {e}. Remove it by hand \
+            "{vpath} has been run but could not be removed: {e}. Remove it by hand \
              before the next Apply."
         )),
     }

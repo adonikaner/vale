@@ -877,7 +877,7 @@ impl Items {
         }
         if known.read_entry != known.entry {
             return Err(format!(
-                "this project moves item {} to {}; move it back before removing it",
+                "this project changes item {}'s entry to {}; change it back before removing the item",
                 known.read_entry, known.entry
             ));
         }
@@ -1256,21 +1256,21 @@ pub fn plan_move(known: &Known, to: u32, taken: bool) -> Result<Option<(Key, Key
     // A removed item is not moved: the claim is a `Delete` row, which
     // carries no columns and names the entry it removes.
     if known.claim == Life::Delete {
-        return Err("this project removes that item; keep it first".to_string());
+        return Err("this project removes this item; press Keep before changing its entry".to_string());
     }
     if to == 0 {
         return Err("0 is not an item entry".to_string());
     }
     if to > item::MAX_ENTRY {
         return Err(format!(
-            "{to} is past {}, which is all `entry` can hold",
+            "{to} is above {}, the largest value `entry` can hold",
             item::MAX_ENTRY
         ));
     }
     // Moving a row back to where the database has it is always allowed: the
     // entry is taken, and by this row.
     if taken && to != known.read_entry {
-        return Err(format!("entry {to} is already an item"));
+        return Err(format!("item_template entry {to} already exists"));
     }
     Ok(Some((known.key(), item::template_key(to, known.patch))))
 }

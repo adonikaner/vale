@@ -123,63 +123,63 @@ pub fn flag_for(option_type: u32) -> u32 {
 
 /// `gossip_menu`, in table order.
 pub const MENU_COLUMNS: [Column; 4] = [
-    Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the menu's id, which creature_template.gossip_menu_id names" },
-    Column { name: "text_id", kind: Kind::Key, group: Group::Text, about: "the npc_text row this text is" },
+    Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the menu id; creature_template.gossip_menu_id references it" },
+    Column { name: "text_id", kind: Kind::Key, group: Group::Text, about: "the npc_text row shown as this text" },
     Column { name: "script_id", kind: Kind::Unsigned, group: Group::Behaviour, about: "a gossip_scripts id run when the menu opens with this text, or 0" },
     Column { name: "condition_id", kind: Kind::Unsigned, group: Group::Requirements, about: "a row of `conditions` the player must meet for this text, or 0" },
 ];
 
 /// `gossip_menu_option`, in table order.
 pub const OPTION_COLUMNS: [Column; 15] = [
-    Column { name: "menu_id", kind: Kind::Key, group: Group::Identity, about: "the menu the option is in" },
-    Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "its place in the menu, from 0" },
-    Column { name: "option_icon", kind: Kind::Choice(&ICONS), group: Group::Appearance, about: "the picture beside the line" },
-    Column { name: "option_text", kind: Kind::Text, group: Group::Text, about: "the line, when option_broadcast_text is 0" },
-    Column { name: "option_broadcast_text", kind: Kind::Unsigned, group: Group::Text, about: "a broadcast_text row the line is, or 0" },
-    Column { name: "option_id", kind: Kind::Choice(&OPTION_TYPES), group: Group::Behaviour, about: "what clicking it opens" },
+    Column { name: "menu_id", kind: Kind::Key, group: Group::Identity, about: "the gossip_menu entry the option belongs to" },
+    Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the option's position in the menu, from 0" },
+    Column { name: "option_icon", kind: Kind::Choice(&ICONS), group: Group::Appearance, about: "the icon shown beside the option" },
+    Column { name: "option_text", kind: Kind::Text, group: Group::Text, about: "the option's text, used when option_broadcast_text is 0" },
+    Column { name: "option_broadcast_text", kind: Kind::Unsigned, group: Group::Text, about: "the broadcast_text row of the option's text, or 0" },
+    Column { name: "option_id", kind: Kind::Choice(&OPTION_TYPES), group: Group::Behaviour, about: "the option type: what clicking it opens" },
     Column { name: "npc_option_npcflag", kind: Kind::Flags(&crate::creature::NPC_FLAGS), group: Group::Requirements, about: "the npc flag the creature needs for the option to be shown" },
-    Column { name: "action_menu_id", kind: Kind::Signed, group: Group::Behaviour, about: "the menu it leads to: 0 none, -1 close" },
-    Column { name: "action_poi_id", kind: Kind::Unsigned, group: Group::Behaviour, about: "a points_of_interest row marked on the map, or 0" },
+    Column { name: "action_menu_id", kind: Kind::Signed, group: Group::Behaviour, about: "the gossip_menu entry it opens: 0 none, -1 closes the window" },
+    Column { name: "action_poi_id", kind: Kind::Unsigned, group: Group::Behaviour, about: "a points_of_interest row marked on the map when the option is clicked, or 0" },
     Column { name: "action_script_id", kind: Kind::Unsigned, group: Group::Behaviour, about: "a gossip_scripts id run when it is clicked, or 0" },
-    Column { name: "box_coded", kind: Kind::Unsigned, group: Group::Advanced, about: "1 asks the player to type a code" },
-    Column { name: "box_money", kind: Kind::Money, group: Group::Economy, about: "what the confirmation box says it costs" },
+    Column { name: "box_coded", kind: Kind::Unsigned, group: Group::Advanced, about: "1: the confirmation box asks the player to type a code" },
+    Column { name: "box_money", kind: Kind::Money, group: Group::Economy, about: "the cost in copper that the confirmation box shows" },
     Column { name: "box_text", kind: Kind::Text, group: Group::Text, about: "the confirmation box's text, when box_broadcast_text is 0" },
-    Column { name: "box_broadcast_text", kind: Kind::Unsigned, group: Group::Text, about: "a broadcast_text row the box text is, or 0" },
+    Column { name: "box_broadcast_text", kind: Kind::Unsigned, group: Group::Text, about: "the broadcast_text row of the confirmation box's text, or 0" },
     Column { name: "condition_id", kind: Kind::Unsigned, group: Group::Requirements, about: "a row of `conditions` the player must meet to see it, or 0" },
 ];
 
 /// `npc_text`, in table order: the id, then eight pairs of a broadcast text
 /// and its chance.
 pub const NPC_TEXT_COLUMNS: [Column; 17] = [
-    Column { name: "ID", kind: Kind::Key, group: Group::Identity, about: "the id a gossip menu's text_id names" },
-    Column { name: "BroadcastTextID0", kind: Kind::Unsigned, group: Group::Text, about: "line 1" },
-    Column { name: "Probability0", kind: Kind::Float, group: Group::Text, about: "the chance of line 1" },
-    Column { name: "BroadcastTextID1", kind: Kind::Unsigned, group: Group::Text, about: "line 2" },
-    Column { name: "Probability1", kind: Kind::Float, group: Group::Text, about: "the chance of line 2" },
-    Column { name: "BroadcastTextID2", kind: Kind::Unsigned, group: Group::Text, about: "line 3" },
-    Column { name: "Probability2", kind: Kind::Float, group: Group::Text, about: "the chance of line 3" },
-    Column { name: "BroadcastTextID3", kind: Kind::Unsigned, group: Group::Text, about: "line 4" },
-    Column { name: "Probability3", kind: Kind::Float, group: Group::Text, about: "the chance of line 4" },
-    Column { name: "BroadcastTextID4", kind: Kind::Unsigned, group: Group::Text, about: "line 5" },
-    Column { name: "Probability4", kind: Kind::Float, group: Group::Text, about: "the chance of line 5" },
-    Column { name: "BroadcastTextID5", kind: Kind::Unsigned, group: Group::Text, about: "line 6" },
-    Column { name: "Probability5", kind: Kind::Float, group: Group::Text, about: "the chance of line 6" },
-    Column { name: "BroadcastTextID6", kind: Kind::Unsigned, group: Group::Text, about: "line 7" },
-    Column { name: "Probability6", kind: Kind::Float, group: Group::Text, about: "the chance of line 7" },
-    Column { name: "BroadcastTextID7", kind: Kind::Unsigned, group: Group::Text, about: "line 8" },
-    Column { name: "Probability7", kind: Kind::Float, group: Group::Text, about: "the chance of line 8" },
+    Column { name: "ID", kind: Kind::Key, group: Group::Identity, about: "the npc_text id; gossip_menu.text_id references it" },
+    Column { name: "BroadcastTextID0", kind: Kind::Unsigned, group: Group::Text, about: "broadcast_text id of line 1, or 0" },
+    Column { name: "Probability0", kind: Kind::Float, group: Group::Text, about: "the chance that line 1 is chosen" },
+    Column { name: "BroadcastTextID1", kind: Kind::Unsigned, group: Group::Text, about: "broadcast_text id of line 2, or 0" },
+    Column { name: "Probability1", kind: Kind::Float, group: Group::Text, about: "the chance that line 2 is chosen" },
+    Column { name: "BroadcastTextID2", kind: Kind::Unsigned, group: Group::Text, about: "broadcast_text id of line 3, or 0" },
+    Column { name: "Probability2", kind: Kind::Float, group: Group::Text, about: "the chance that line 3 is chosen" },
+    Column { name: "BroadcastTextID3", kind: Kind::Unsigned, group: Group::Text, about: "broadcast_text id of line 4, or 0" },
+    Column { name: "Probability3", kind: Kind::Float, group: Group::Text, about: "the chance that line 4 is chosen" },
+    Column { name: "BroadcastTextID4", kind: Kind::Unsigned, group: Group::Text, about: "broadcast_text id of line 5, or 0" },
+    Column { name: "Probability4", kind: Kind::Float, group: Group::Text, about: "the chance that line 5 is chosen" },
+    Column { name: "BroadcastTextID5", kind: Kind::Unsigned, group: Group::Text, about: "broadcast_text id of line 6, or 0" },
+    Column { name: "Probability5", kind: Kind::Float, group: Group::Text, about: "the chance that line 6 is chosen" },
+    Column { name: "BroadcastTextID6", kind: Kind::Unsigned, group: Group::Text, about: "broadcast_text id of line 7, or 0" },
+    Column { name: "Probability6", kind: Kind::Float, group: Group::Text, about: "the chance that line 7 is chosen" },
+    Column { name: "BroadcastTextID7", kind: Kind::Unsigned, group: Group::Text, about: "broadcast_text id of line 8, or 0" },
+    Column { name: "Probability7", kind: Kind::Float, group: Group::Text, about: "the chance that line 8 is chosen" },
 ];
 
 /// `points_of_interest`, in table order (`ObjectMgr::LoadPointsOfInterest`,
 /// `ObjectMgr.cpp:9081`).
 pub const POI_COLUMNS: [Column; 7] = [
-    Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the id an option's action_poi_id names" },
-    Column { name: "x", kind: Kind::Float, group: Group::Place, about: "world x of the place marked" },
-    Column { name: "y", kind: Kind::Float, group: Group::Place, about: "world y of the place marked" },
-    Column { name: "icon", kind: Kind::Unsigned, group: Group::Appearance, about: "the icon drawn there; every shipped row uses 6" },
-    Column { name: "flags", kind: Kind::Unsigned, group: Group::Advanced, about: "sent to the client as they are; every shipped row uses 99" },
-    Column { name: "data", kind: Kind::Unsigned, group: Group::Advanced, about: "sent to the client as it is; every shipped row uses 0" },
-    Column { name: "icon_name", kind: Kind::Text, group: Group::Text, about: "the name shown with the mark" },
+    Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the point id; gossip_menu_option.action_poi_id references it" },
+    Column { name: "x", kind: Kind::Float, group: Group::Place, about: "world x of the marked point" },
+    Column { name: "y", kind: Kind::Float, group: Group::Place, about: "world y of the marked point" },
+    Column { name: "icon", kind: Kind::Unsigned, group: Group::Appearance, about: "the icon drawn at the point; every shipped row uses 6" },
+    Column { name: "flags", kind: Kind::Unsigned, group: Group::Advanced, about: "flags sent to the client unchanged; every shipped row uses 99" },
+    Column { name: "data", kind: Kind::Unsigned, group: Group::Advanced, about: "data sent to the client unchanged; every shipped row uses 0" },
+    Column { name: "icon_name", kind: Kind::Text, group: Group::Text, about: "the name shown with the marker" },
 ];
 
 /// Every column of one of [`TABLES`].
@@ -275,7 +275,7 @@ impl Point {
     pub fn check(&self) -> Vec<String> {
         match self.x.abs() <= MAP_HALF_SIZE && self.y.abs() <= MAP_HALF_SIZE {
             true => Vec::new(),
-            false => vec![format!("{}, {} is off the map; the server skips the point", self.x, self.y)],
+            false => vec![format!("point {}, {} is outside the map; the server skips it", self.x, self.y)],
         }
     }
 }
@@ -316,10 +316,10 @@ impl MenuText {
     pub fn check(&self) -> Vec<String> {
         let mut out = Vec::new();
         if self.entry > MAX_MENU {
-            out.push(format!("menu {} is past {MAX_MENU}, the largest gossip_menu.entry holds", self.entry));
+            out.push(format!("menu {} is above {MAX_MENU}, the largest value gossip_menu.entry holds", self.entry));
         }
         if self.text_id == 0 {
-            out.push("the text names no npc_text row".to_string());
+            out.push("text_id is 0, so the row names no npc_text row".to_string());
         }
         out
     }
@@ -465,7 +465,7 @@ impl NpcText {
     pub fn check(&self) -> Vec<String> {
         match self.lines.iter().any(|(text, _)| *text != 0) {
             true => Vec::new(),
-            false => vec!["the text has no line".to_string()],
+            false => vec!["every BroadcastTextID is 0, so the text has no line".to_string()],
         }
     }
 }

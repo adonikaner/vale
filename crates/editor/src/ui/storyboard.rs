@@ -150,19 +150,19 @@ const LANES: [(&str, usize, &str); 5] = [
     (
         "Precast",
         fields::PRECAST_KIT,
-        "the wind-up, while the cast bar fills",
+        "plays while the cast bar fills",
     ),
-    ("Cast", fields::CAST_KIT, "the release"),
-    ("Impact", fields::IMPACT_KIT, "on the victim, when it lands"),
+    ("Cast", fields::CAST_KIT, "plays when the cast completes"),
+    ("Impact", fields::IMPACT_KIT, "plays on the target when the spell hits"),
     (
         "Channel",
         fields::CHANNEL_KIT,
-        "held for the duration of a channel",
+        "plays for the duration of a channel",
     ),
     (
         "State",
         fields::STATE_KIT,
-        "worn while the aura is on the unit",
+        "plays while the aura is on the unit",
     ),
 ];
 
@@ -205,13 +205,13 @@ pub fn sound_name(session: &EditSession, assets: &GameAssets, id: u32) -> String
             .and_then(|row| {
                 sounds.string_at(row, vale_assets::tables::sound::fields::entry::NAME)
             })
-            .unwrap_or_else(|| format!("sound {id} is not a row"));
+            .unwrap_or_else(|| format!("SoundEntries {id} does not exist"));
     }
     assets
         .sounds()
         .entry(id)
         .map(|entry| entry.name.clone())
-        .unwrap_or_else(|| format!("sound {id} is not a row"))
+        .unwrap_or_else(|| format!("SoundEntries {id} does not exist"))
 }
 
 impl Storyboard {
@@ -243,7 +243,7 @@ impl Storyboard {
             session.table("SpellVisualEffectName"),
         ) else {
             self.notes
-                .push("the visual tables are still opening".into());
+                .push("the visual tables are still loading".into());
             // Built for nothing: ask again next frame.
             self.built = None;
             return;
@@ -254,12 +254,12 @@ impl Storyboard {
         self.visual = visual_id;
         if visual_id == 0 {
             self.notes
-                .push("this spell names no SpellVisual: nothing is drawn for it".into());
+                .push("this spell has no SpellVisual: nothing is drawn for it".into());
             return;
         }
         let Some(row) = visuals.row_of(visual_id) else {
             self.notes
-                .push(format!("SpellVisual {visual_id} is not a row of the table"));
+                .push(format!("SpellVisual {visual_id} does not exist"));
             return;
         };
         self.visual_row = Some(row);
@@ -324,7 +324,7 @@ impl Storyboard {
     ) -> Phase {
         let Some(row) = kits.row_of(kit_id) else {
             self.notes
-                .push(format!("{name}: SpellVisualKit {kit_id} is not a row"));
+                .push(format!("{name}: SpellVisualKit {kit_id} does not exist"));
             return Phase {
                 name,
                 about,
@@ -384,7 +384,7 @@ impl Storyboard {
                 p if fields::CHAR_PROC_CHAIN.contains(&p) => "chain effect",
                 p if p == fields::CHAR_PROC_MODEL_COLOUR => "model colour",
                 p if p == fields::CHAR_PROC_MODEL_GLOW => "model glow",
-                _ => "unread procedural",
+                _ => "unknown procedural",
             };
             procedurals.push(format!("{what} ({proc}) {zero}, {one}"));
         }
@@ -419,7 +419,7 @@ impl Storyboard {
         }
         let Some(row) = names.row_of(id) else {
             self.notes.push(format!(
-                "{where_it_hangs}: SpellVisualEffectName {id} is not a row"
+                "{where_it_hangs}: SpellVisualEffectName {id} does not exist"
             ));
             return None;
         };
@@ -506,7 +506,7 @@ pub fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Storyboard,
                                 .strong()
                                 .color(theme::ACCENT),
                         ))
-                        .on_hover_text("open the visual row")
+                        .on_hover_text("open the SpellVisual row")
                         .clicked()
                     {
                         super::data::follow_reference(work, "SpellVisual", board.visual);
@@ -533,7 +533,7 @@ pub fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Storyboard,
             ui.horizontal_wrapped(|ui| {
                 if ui
                     .small_button("choose\u{2026}")
-                    .on_hover_text("Choose a SpellVisual row, each one playing as it is pressed.")
+                    .on_hover_text("Choose a SpellVisual row from a list. Clicking a row previews it.")
                     .clicked()
                 {
                     work.browser.modal = Some(Modal::Pick {
@@ -546,7 +546,7 @@ pub fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Storyboard,
                     work.browser.pick_focus = true;
                 }
                 if ui
-                    .small_button("like a spell\u{2026}")
+                    .small_button("from spell\u{2026}")
                     .on_hover_text(tables::command_about(Command::LookLike))
                     .clicked()
                 {
@@ -557,17 +557,17 @@ pub fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Storyboard,
                     make_new = ui
                         .small_button("+ new")
                         .on_hover_text(
-                            "Make a blank SpellVisual row and point this spell at it. Its five \
-                             lanes are then empty cards, each with its own buttons.",
+                            "Create a blank SpellVisual row and assign it to this spell. Its five \
+                             kit lanes start empty.",
                         )
                         .clicked();
                 }
                 if shared > 1 {
                     make_own = ui
-                        .small_button("own copy")
+                        .small_button("copy visual")
                         .on_hover_text(
-                            "Copy this visual with every kit and effect it names and point \
-                             this spell at the copy, so an edit here changes this spell alone.",
+                            "Copy this visual with every kit and effect it references and assign \
+                             the copy to this spell, so edits here change only this spell.",
                         )
                         .clicked();
                 }
@@ -588,7 +588,7 @@ pub fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Storyboard,
         ) {
             let copy = done.new_id("SpellVisual", visual).unwrap_or(0);
             work.session.status = format!(
-                "visual {visual} copied to {copy} and assigned: {} kits, {} effects",
+                "SpellVisual {visual} copied to {copy} and assigned to this spell: {} kits, {} effects",
                 done.count("SpellVisualKit"),
                 done.count("SpellVisualEffectName")
             );
@@ -640,10 +640,10 @@ pub fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Storyboard,
                 theme::row(ui, "path", |ui| {
                     ui.label(theme::number(match path_type {
                         0 => "straight".to_string(),
-                        other => format!("type {other}, flown straight"),
+                        other => format!("type {other}, previewed as straight"),
                     }));
                 });
-                theme::row(ui, "lands on", |ui| {
+                theme::row(ui, "destination", |ui| {
                     ui.label(theme::number(attachment_name(destination)));
                 });
                 sound_row(ui, work, sound, &sound_name);
@@ -662,7 +662,7 @@ pub fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Storyboard,
             work,
             |ui, work| {
                 ui.label(
-                    egui::RichText::new("stood on the ground at the victim's feet on impact")
+                    egui::RichText::new("placed on the ground at the target's feet on impact")
                         .small()
                         .color(theme::INK_FAINT),
                 );
@@ -715,7 +715,7 @@ fn sound_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, sound: u32, name: &str
         {
             open = true;
         }
-        play = ui.small_button("▶").on_hover_text("play it").clicked();
+        play = ui.small_button("▶").on_hover_text("play sound").clicked();
     });
     if play {
         work.browser.audition.push(sound);
@@ -780,7 +780,7 @@ fn lane_buttons(
     ui.horizontal_wrapped(|ui| {
         if ui
             .small_button("choose\u{2026}")
-            .on_hover_text("Choose a kit for this lane, each one playing as it is pressed.")
+            .on_hover_text("Choose a SpellVisualKit for this lane from a list. Clicking a row previews it.")
             .clicked()
         {
             work.browser.modal = Some(Modal::Pick {
@@ -796,7 +796,7 @@ fn lane_buttons(
             None => {
                 if ui
                     .small_button("+ new")
-                    .on_hover_text("Make a blank kit and put it in this lane.")
+                    .on_hover_text("Create a blank SpellVisualKit and assign it to this lane.")
                     .clicked()
                 {
                     tables::link_new(work.session, "SpellVisual", visual_row, field, "SpellVisualKit");
@@ -806,8 +806,8 @@ fn lane_buttons(
                 if ui
                     .small_button("copy")
                     .on_hover_text(
-                        "Copy this kit and put the copy in this lane, leaving the original \
-                         to whatever else names it.",
+                        "Copy this kit and assign the copy to this lane. The original stays \
+                         assigned wherever else it is used.",
                     )
                     .clicked()
                 {
@@ -815,7 +815,7 @@ fn lane_buttons(
                 }
                 if ui
                     .small_button("clear")
-                    .on_hover_text("Empty this lane. The kit's row is kept.")
+                    .on_hover_text("Remove the kit from this lane. The SpellVisualKit row is not deleted.")
                     .clicked()
                 {
                     tables::set_field(
@@ -870,7 +870,7 @@ fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, phase: &Phase, visual_row: 
                 .add(egui::Link::new(
                     egui::RichText::new(format!("#{kit}")).size(12.0),
                 ))
-                .on_hover_text("open the kit row")
+                .on_hover_text("open the SpellVisualKit row")
                 .clicked();
         });
         if open_kit {
@@ -1112,7 +1112,7 @@ pub fn stage_pane(
             .iter()
             .position(|segment| stage.at < segment.to)
             .unwrap_or(segments.len().saturating_sub(1));
-        if ui.button("◀").on_hover_text("the phase before").clicked() {
+        if ui.button("◀").on_hover_text("Previous phase").clicked() {
             let back = match segments.get(here) {
                 // Inside a phase by more than a beat: its own start.
                 Some(segment) if stage.at - segment.from > 0.15 => segment.from,
@@ -1120,7 +1120,7 @@ pub fn stage_pane(
             };
             stage.seek(back);
         }
-        if ui.button("▶").on_hover_text("the phase after").clicked() {
+        if ui.button("▶").on_hover_text("Next phase").clicked() {
             if let Some(next) = segments.get(here + 1) {
                 stage.seek(next.from);
             }

@@ -83,7 +83,7 @@ pub fn cell(ui: &mut egui::Ui, reply: egui::Id, column: &str, entry: u32, width:
     }
     if ui
         .small_button("choose\u{2026}")
-        .on_hover_text("Search the conditions in the condition window, and use one in this column.")
+        .on_hover_text("Open the condition window\'s list and choose a condition for this column.")
         .clicked()
     {
         conditions::ask(ui.ctx(), Request { entry, list: true, asker: asker.clone() });
@@ -91,7 +91,7 @@ pub fn cell(ui: &mut egui::Ui, reply: egui::Id, column: &str, entry: u32, width:
     if entry == 0
         && ui
             .small_button("+ new")
-            .on_hover_text("Make a condition in the condition window. Its entry is written into this column.")
+            .on_hover_text("Create a condition in the condition window and write its entry to this column.")
             .clicked()
     {
         conditions::ask(ui.ctx(), Request { entry: 0, list: false, asker });
@@ -101,7 +101,7 @@ pub fn cell(ui: &mut egui::Ui, reply: egui::Id, column: &str, entry: u32, width:
 
 /// The line a cell draws for `entry`: its text, its colour and its hover.
 fn line(board: &Board, entry: u32) -> (String, egui::Color32, String) {
-    let open = "Click to open it in the condition window.";
+    let open = "Click to open the condition in the condition window.";
     if entry == 0 {
         return ("none".to_string(), theme::INK_FAINT, "0: no condition.".to_string());
     }
@@ -119,7 +119,7 @@ fn line(board: &Board, entry: u32) -> (String, egui::Color32, String) {
         Some(Told::Tests { line, faults }) => (
             line.clone(),
             theme::WARN,
-            format!("Condition {entry}: {line}\nThe server would skip it: {}\n{open}", faults.join("; ")),
+            format!("Condition {entry}: {line}\nThe server skips this condition: {}\n{open}", faults.join("; ")),
         ),
         Some(Told::Missing) => (
             format!("no condition {entry}"),
@@ -129,7 +129,7 @@ fn line(board: &Board, entry: u32) -> (String, egui::Color32, String) {
         Some(Told::Removed) => (
             format!("condition {entry}, removed"),
             theme::BAD,
-            format!("This project removes condition {entry}, and this column still names it.\n{open}"),
+            format!("This project removes condition {entry}, but this column still refers to it.\n{open}"),
         ),
         None => (format!("condition {entry}"), theme::INK_DIM, format!("Reading the conditions.\n{open}")),
     }
@@ -227,7 +227,7 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
             let typed = subject.conditions.typed;
             subject.conditions.show(Some(typed));
         }
-        if ui.button("New\u{2026}").on_hover_text("Make a new condition.").clicked() {
+        if ui.button("New\u{2026}").on_hover_text("Create a new condition.").clicked() {
             subject.conditions.show(None);
         }
         if ui.button("List").on_hover_text("Search every condition by entry, value or type.").clicked() {
@@ -257,7 +257,7 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     })
     .response
     .on_hover_text(
-        "Tests shows the condition as the tests it is made of, and Save writes new rows. Rows          shows this one row of conditions, whose columns are changed where they are.",
+        "Tests shows the condition as the tests it is made of; Save writes new rows. Rows shows this one conditions row and edits its columns in place.",
     );
     ui.add_space(4.0);
     if !subject.conditions.rows_view {
@@ -285,7 +285,7 @@ fn asker_line(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         };
         ui.add(
             egui::Label::new(
-                egui::RichText::new(format!("For {}, which holds {holds}", asker.column))
+                egui::RichText::new(format!("Writes to {}, which holds {holds}", asker.column))
                     .small()
                     .color(theme::INK_DIM),
             )
@@ -293,7 +293,7 @@ fn asker_line(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         );
         if ui
             .small_button("\u{d7}")
-            .on_hover_text("Stop answering this column: Use and Make no longer write into it.")
+            .on_hover_text("Detach this column: Use and Save no longer write to it.")
             .clicked()
         {
             subject.conditions.asker = None;
@@ -378,7 +378,7 @@ fn condition_page(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: Shown) {
     let condition = shown.condition.clone();
     let now = subject.now;
     match shown.life {
-        Life::Insert => theme::note(ui, "Made by this project."),
+        Life::Insert => theme::note(ui, "Created by this project."),
         Life::Delete => theme::note(ui, "Removed by this project."),
         Life::Update => {}
     }
@@ -446,14 +446,15 @@ fn condition_page(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: Shown) {
         if ui
             .button("Combine with AND\u{2026}")
             .on_hover_text(
-                "Make an AND over this condition and a new one, entered above both. When the \
-                 column the window was opened from holds this condition, it is set to the AND.",
+                "Create a new empty condition and an AND condition over it and this one, then \
+                 open the new condition. If the column the window was opened from holds this \
+                 condition, the column is set to the AND.",
             )
             .clicked()
         {
             combine(ui.ctx(), subject, condition.entry, -1);
         }
-        if ui.button("Combine with OR\u{2026}").on_hover_text("The same, with OR.").clicked() {
+        if ui.button("Combine with OR\u{2026}").on_hover_text("As Combine with AND, with an OR condition.").clicked() {
             combine(ui.ctx(), subject, condition.entry, -2);
         }
         let label = match shown.life {
@@ -462,7 +463,7 @@ fn condition_page(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: Shown) {
         };
         if ui
             .button(label)
-            .on_hover_text("Other tables that name the condition keep its number; check them first.")
+            .on_hover_text("Rows in other tables that refer to this condition keep its entry; check them first.")
             .clicked()
         {
             match shown.life {
@@ -498,7 +499,7 @@ fn combine(ctx: &egui::Context, subject: &mut Subject<'_>, entry: u32, kind: i32
                 format!("condition {parent} combines {entry} with the new condition {child}; {} set to {parent}", asker.column)
             }
             None => format!(
-                "condition {parent} combines {entry} with the new condition {child}; name {parent} where {entry} was named"
+                "condition {parent} combines {entry} with the new condition {child}; replace references to {entry} with {parent}"
             ),
         };
     }
@@ -669,14 +670,14 @@ fn save_bar(ui: &mut egui::Ui, subject: &mut Subject<'_>, draft: &Draft) {
         save = ui
             .add_enabled(matches!(plan, Some(Ok(_))), egui::Button::new("Save"))
             .on_hover_text(
-                "Write the tests as rows of conditions. A part that a row already tests names \
-                 that row; the rest are new rows. No row that exists is changed. The column the \
-                 window was opened from is set to the result.",
+                "Write the tests as conditions rows. A part that an existing row already tests \
+                 reuses that row; the rest become new rows. Existing rows are not changed. The \
+                 column the window was opened from is set to the resulting entry.",
             )
             .clicked();
         revert = ui
             .add_enabled(changed, egui::Button::new("Revert"))
-            .on_hover_text("Go back to the tests as they were read.")
+            .on_hover_text("Discard the draft and restore the tests as they were read.")
             .clicked();
         if !changed && draft.from != 0 && offers_use(subject, draft.from) {
             if ui
@@ -691,11 +692,11 @@ fn save_bar(ui: &mut egui::Ui, subject: &mut Subject<'_>, draft: &Draft) {
             None if draft.from == 0 => meaning(ui, "Add a test, then Save."),
             None => meaning(ui, "No changes."),
             Some(Ok(built)) if built.created.is_empty() => {
-                meaning(ui, format!("Save names condition {}, which already tests this.", built.root))
+                meaning(ui, format!("Save uses condition {}, which already tests this.", built.root))
             }
             Some(Ok(built)) => meaning(
                 ui,
-                format!("Save writes {} new row(s) and names condition {}.", built.created.len(), built.root),
+                format!("Save writes {} new row(s); the result is condition {}.", built.created.len(), built.root),
             ),
             Some(Err(why)) => {
                 ui.label(egui::RichText::new(why).small().color(theme::WARN));
@@ -706,9 +707,9 @@ fn save_bar(ui: &mut egui::Ui, subject: &mut Subject<'_>, draft: &Draft) {
         theme::note(
             ui,
             format!(
-                "No column opened this window, so Save opens the condition it makes and \
-                 nothing names it yet. Condition {} and everything that names it stay as they \
-                 are. The Rows view changes one row where it is.",
+                "No column opened this window, so Save only creates and opens the new condition; \
+                 nothing refers to it yet. Condition {} and everything that refers to it are not \
+                 changed. To edit one row in place, use the Rows view.",
                 draft.from
             ),
         );
@@ -727,9 +728,9 @@ fn save_bar(ui: &mut egui::Ui, subject: &mut Subject<'_>, draft: &Draft) {
                     true => use_for_column(ui.ctx(), subject, root),
                     false => {
                         subject.session.status = match (from, root == from) {
-                            (0, _) => format!("condition {root} made"),
+                            (0, _) => format!("condition {root} created"),
                             (_, true) => format!("condition {root} already tests this"),
-                            (_, false) => format!("saved as condition {root}; name {root} where condition {from} was named"),
+                            (_, false) => format!("saved as condition {root}; replace references to condition {from} with {root}"),
                         }
                     }
                 }
@@ -797,7 +798,7 @@ fn group_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, draft: &Draft, path:
             changes.push(Change::Remove(path.to_vec()));
         }
         if flags & 0x2 != 0 {
-            meaning(ui, "target and source swapped for every test in it");
+            meaning(ui, "target and source swapped for every test in this group");
         }
         if members.is_empty() {
             meaning(ui, "No tests yet. Add one below.");
@@ -825,7 +826,7 @@ fn group_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, draft: &Draft, path:
                 }
             })
             .response
-            .on_hover_text("A group inside this one, for a test such as \"A, and either B or C\".");
+            .on_hover_text("Add a nested group, for a condition such as \"A, and either B or C\".");
         });
     });
 }
@@ -899,7 +900,7 @@ fn test_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, draft: &Draft, path: 
             let a = ui.checkbox(&mut reverse, "not").on_hover_text("Reverse the result: the test holds when this is false.").changed();
             let b = ui
                 .checkbox(&mut swap, "swap target and source")
-                .on_hover_text("Make the test with the target and the source the other way round.")
+                .on_hover_text("Swap the target and the source for this test.")
                 .changed();
             if a || b {
                 changes.push(replace(kind, values, u8::from(reverse) | (u8::from(swap) << 1)));
@@ -922,7 +923,7 @@ fn missing_card(ui: &mut egui::Ui, entry: u32, path: &[usize], changes: &mut Vec
                     .color(theme::BAD),
                 );
             },
-            |ui| ui.small_button("\u{d7}").on_hover_text("Remove it from the group.").clicked(),
+            |ui| ui.small_button("\u{d7}").on_hover_text("Remove this entry from the group.").clicked(),
         );
         if removed {
             changes.push(Change::Remove(path.to_vec()));

@@ -786,10 +786,10 @@ pub(crate) fn what_changed(was: &Building, now: &Building) -> (&'static str, &'s
         return ("Turn WMO", "rotation");
     }
     if was.doodad_set != now.doodad_set {
-        return ("Set WMO doodads", "doodadset");
+        return ("Set WMO doodad set", "doodadset");
     }
     if was.name_set != now.name_set {
-        return ("Set WMO names", "nameset");
+        return ("Set WMO name set", "nameset");
     }
     ("Edit WMO", "record")
 }

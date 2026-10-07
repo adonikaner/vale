@@ -259,7 +259,7 @@ pub fn save(session: &mut EditSession) {
         Ok(rows) => session.status = format!("{rows} loot change(s) written to {SQL_VPATH}"),
         Err(e) => {
             warn!("loot: {e}");
-            session.status = format!("saved, but {SQL_VPATH} did not: {e}");
+            session.status = format!("saved, but writing {SQL_VPATH} failed: {e}");
         }
     }
 }
@@ -491,14 +491,14 @@ pub fn revert_step(
     let Some(job) = prepare_revert(session, server)? else {
         return Ok(None);
     };
-    Ok(Some(super::stack::Step::new("putting back loot", move || {
+    Ok(Some(super::stack::Step::new("restoring loot", move || {
         let done = job.run();
         let ok = done.is_ok();
         let finish: super::queue::Finish = Box::new(move |session: &mut EditSession, reloads: &mut super::reload::Reloads| {
             session.status = match done {
                 Ok(rows) => {
                     finish_revert(session, reloads);
-                    format!("{rows} loot row(s) put back")
+                    format!("{rows} loot row(s) restored")
                 }
                 Err(e) => format!("loot: {e}"),
             };

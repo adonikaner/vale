@@ -403,7 +403,7 @@ pub fn work(
                 let skipped = total - index - 1;
                 if skipped > 0 {
                     line.push_str(&format!(
-                        " \u{2014} stopped there; {skipped} later step(s) did not run"
+                        " \u{2014} stopped at the failed step; {skipped} later step(s) did not run"
                     ));
                 }
             }

@@ -42,7 +42,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
         }
     }
 
-    theme::note(ui, format!("{} safe places on this map", graveyards.list.len()));
+    theme::note(ui, format!("{} graveyards on this map", graveyards.list.len()));
     ui.add_space(4.0);
     controls(ui, graveyards);
 
@@ -53,16 +53,16 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
             match graveyards.selected.and_then(|id| graveyards.place(id).cloned()) {
                 Some(place) => {
                     ui.add_space(4.0);
-                    theme::heading(ui, &format!("Safe place {}", place.id));
+                    theme::heading(ui, &format!("Graveyard {}", place.id));
                     place_block(ui, session, graveyards, &place, now);
                     ui.add_space(6.0);
-                    theme::heading(ui, "On the server");
+                    theme::heading(ui, "Server rows");
                     server_half(ui, session, graveyards, &place, now);
                 }
                 None => theme::note(
                     ui,
-                    "Click a safe place in the world. Grey ones are linked to no zone, so \
-                     the server never sends a spirit there.",
+                    "Click a graveyard in the world. Grey graveyards are linked to no zone, \
+                     so the server never sends a ghost there.",
                 ),
             }
             ui.add_space(6.0);
@@ -92,8 +92,8 @@ fn controls(ui: &mut egui::Ui, graveyards: &mut Graveyards) {
     ui.horizontal_wrapped(|ui| {
         let armed = graveyards.armed == Armed::NewPlace;
         if ui
-            .selectable_label(armed, "New place")
-            .on_hover_text("Armed, a click on the ground makes a safe place there.")
+            .selectable_label(armed, "New graveyard")
+            .on_hover_text("Armed, a click on the ground makes a graveyard there.")
             .clicked()
         {
             graveyards.armed = match armed {
@@ -108,10 +108,10 @@ fn controls(ui: &mut egui::Ui, graveyards: &mut Graveyards) {
         );
         if link
             .on_hover_text(
-                "Armed, a click on the ground links the selected place to the zone the \
-                 click lands in, for both sides.",
+                "Armed, a click on the ground links the selected graveyard to the zone \
+                 under the click, for both factions.",
             )
-            .on_disabled_hover_text("Select a place, with the server's rows read.")
+            .on_disabled_hover_text("Select a graveyard. Available once the server's rows are read.")
             .clicked()
         {
             graveyards.armed = match linking {
@@ -123,7 +123,7 @@ fn controls(ui: &mut egui::Ui, graveyards: &mut Graveyards) {
     if graveyards.armed == Armed::LinkZone {
         let under = match graveyards.pointed_zone {
             Some(zone) => format!("Under the pointer: {} ({zone}).", graveyards.zone_name(zone)),
-            None => "The pointer is over no open ground.".to_string(),
+            None => "The pointer is not over open ground.".to_string(),
         };
         theme::note(ui, under);
     }
@@ -138,7 +138,7 @@ fn place_block(ui: &mut egui::Ui, session: &mut EditSession, graveyards: &mut Gr
     theme::row(ui, "name", |ui| {
         if ui
             .text_edit_singleline(&mut name)
-            .on_hover_text("The name the client's files carry. The game does not show it.")
+            .on_hover_text("WorldSafeLocs.dbc name column. The game does not show it.")
             .changed()
         {
             tables::set_text(session, places::SAFE_LOCS, place.record, sf::NAME, &name, "Rename graveyard", now);
@@ -161,8 +161,8 @@ fn place_block(ui: &mut egui::Ui, session: &mut EditSession, graveyards: &mut Gr
             graveyards.fly_to(place.at);
         }
         if ui
-            .button("Drop to the ground")
-            .on_hover_text("Set z to the ground under the place, where the ground is open.")
+            .button("Snap to ground")
+            .on_hover_text("Sets z to the ground under the graveyard, where the ground is open.")
             .clicked()
         {
             if let Some(ground) = crate::tools::doodads::ground_height(session, at[0], at[1]) {
@@ -194,18 +194,18 @@ fn place_block(ui: &mut egui::Ui, session: &mut EditSession, graveyards: &mut Gr
     if graveyards.confirm_remove == Some(place.id) {
         ui.label(
             egui::RichText::new(
-                "This is one of the game's own safe places. Every zone it serves sends its \
-                 spirits to the next nearest place instead, or nowhere.",
+                "This is a shipped graveyard. Each zone linked to it then sends ghosts to \
+                 its next nearest linked graveyard, or to none.",
             )
             .size(theme::SMALL)
             .color(theme::WARN),
         );
         ui.horizontal(|ui| {
-            if ui.button("Remove it").clicked() {
+            if ui.button("Remove graveyard").clicked() {
                 let line = graveyards::remove_place(session, graveyards, place.id, now);
                 session.status = line;
             }
-            if ui.button("Keep it").clicked() {
+            if ui.button("Cancel").clicked() {
                 graveyards.confirm_remove = None;
             }
         });
@@ -230,7 +230,7 @@ fn server_half(ui: &mut egui::Ui, session: &mut EditSession, graveyards: &mut Gr
         if ui
             .add(egui::DragValue::new(&mut degrees).speed(1.0).suffix("\u{b0}"))
             .on_hover_text(
-                "world_safe_locs_facing: the way a spirit faces on appearing. The row holds \
+                "world_safe_locs_facing: the facing of a ghost on arrival. The row stores \
                  it in radians. Read at startup only.",
             )
             .changed()
@@ -239,15 +239,15 @@ fn server_half(ui: &mut egui::Ui, session: &mut EditSession, graveyards: &mut Gr
         }
     });
     if facing.is_none() {
-        theme::note(ui, "No facing row: a spirit faces north.");
+        theme::note(ui, "No world_safe_locs_facing row: a ghost faces north.");
     }
 
     ui.add_space(4.0);
     let links = graveyards.links_of(&edits, id);
     let serving = links.iter().filter(|shown| shown.life != Life::Delete).count();
-    theme::heading(ui, &format!("Serves ({serving})"));
+    theme::heading(ui, &format!("Linked zones ({serving})"));
     if links.is_empty() {
-        theme::note(ui, "No zone: the server never sends a spirit here. Link zone adds one.");
+        theme::note(ui, "No linked zone: the server never sends a ghost here. Link zone adds one.");
     }
     for shown in &links {
         let removed = shown.life == Life::Delete;
@@ -262,10 +262,10 @@ fn server_half(ui: &mut egui::Ui, session: &mut EditSession, graveyards: &mut Gr
                 false => text,
             });
             if removed {
-                if ui.small_button("Keep").clicked() {
+                if ui.small_button("Cancel removal").clicked() {
                     let key = shown.link.key();
                     let label = format!("{} {}", vale_mangos::graveyard::ZONE, key.text());
-                    let gesture = crate::session::Gesture { label: "Keep graveyard link", subject: &label, now };
+                    let gesture = crate::session::Gesture { label: "Cancel graveyard link removal", subject: &label, now };
                     session.set_server_row(vale_mangos::graveyard::ZONE, &key, None, Some(gesture));
                 }
                 return;

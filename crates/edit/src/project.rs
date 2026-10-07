@@ -233,7 +233,7 @@ pub const DEFAULT: &str = "default";
 pub fn delete(install: impl AsRef<Path>, name: &str) -> Result<usize, EditError> {
     if name.trim() == DEFAULT {
         return Err(EditError::Refused(format!(
-            "{DEFAULT} is where edits go when nobody has said otherwise, so it cannot be              deleted; its files can be cleared instead"
+            "{DEFAULT} is the default project and cannot be deleted; clear its files instead"
         )));
     }
     let root = folder(install, name)?;
@@ -289,11 +289,11 @@ pub fn clear(install: impl AsRef<Path>, name: &str) -> Result<usize, EditError> 
     if left > 0 {
         let why = match trouble {
             Some(e) => e.to_string(),
-            None => "no reason the filesystem gave".to_string(),
+            None => "the filesystem gave no reason".to_string(),
         };
         return Err(EditError::Refused(format!(
-            "{name}: {} of {held} file(s) thrown away, {left} could not be removed ({why}). \
-             Something still has them open",
+            "{name}: {} of {held} file(s) permanently deleted; {left} could not be deleted ({why}). \
+             Another process may have them open",
             held - left
         )));
     }
@@ -306,7 +306,7 @@ pub fn clear(install: impl AsRef<Path>, name: &str) -> Result<usize, EditError> 
 /// check that it cannot climb out of `Edit\` is made once.
 fn folder(install: impl AsRef<Path>, name: &str) -> Result<PathBuf, EditError> {
     if !is_a_name(name) {
-        return Err(EditError::Refused(format!("{name:?} is not a project's name")));
+        return Err(EditError::Refused(format!("{name:?} is not a valid project name")));
     }
     Ok(install.as_ref().join(PROJECTS_DIR).join(name.trim()))
 }
@@ -399,7 +399,7 @@ impl Project {
     pub fn write(&self, vpath: &str, bytes: &[u8]) -> Result<PathBuf, EditError> {
         let path = self
             .path_for(vpath)
-            .ok_or_else(|| EditError::malformed("path", format!("{vpath} leaves the project")))?;
+            .ok_or_else(|| EditError::malformed("path", format!("{vpath}: path is outside the project folder")))?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -627,7 +627,7 @@ impl Project {
                 let Some(name) = next_patch_name(data_dir) else {
                     let _ = std::fs::remove_file(&temporary);
                     return Err(EditError::Archive(
-                        "every patch letter up to Z is taken in this Data folder".into(),
+                        "no free patch letter: this Data folder already has Patch-Z.MPQ".into(),
                     ));
                 };
                 if let Err(e) = std::fs::rename(&temporary, data_dir.join(&name)) {

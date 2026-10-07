@@ -139,8 +139,8 @@ fn reading(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui::Rect>
         .show(ctx, |ui| {
             theme::note(
                 ui,
-                "Reading this creature's path. The spawn's own is looked for first and its \
-                 template's after, which is the order the server resolves them in.",
+                "Reading this creature's path: creature_movement for the spawn first, then \
+                 creature_movement_template, the order the server resolves them in.",
             );
         });
     if !open {
@@ -163,7 +163,7 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &Path) {
         }
         Which::Template => theme::note(
             ui,
-            "This spawn has no path of its own, so it walks its template's — which is what the server does when `creature_movement` has no row for the guid. Editing these points moves EVERY spawn of this creature that has none of its own.",
+            "This spawn has no `creature_movement` rows, so the server uses its template's path from `creature_movement_template`. Editing these points changes the path of every spawn of this creature that has no `creature_movement` rows.",
         ),
     }
 
@@ -174,9 +174,9 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &Path) {
     match walk {
         Walk::Never => theme::note(
             ui,
-            "This creature's movement_type never walks a path. Editing these points is \
-             allowed and will change nothing in the game until movement_type is 2 \
-             (waypoint) or 3 (cyclic) — both are on the creature's own form.",
+            "This creature's movement_type does not use a path. Edits to these points \
+             have no effect in the game until movement_type is 2 (waypoint) or 3 \
+             (cyclic), set on the creature's form.",
         ),
         _ => {
             ui.label(
@@ -196,8 +196,8 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &Path) {
         theme::note(
             ui,
             format!(
-                "{} point(s). This generator refuses a path shorter than {}, so the creature \
-                 stands still.",
+                "{} point(s). This movement generator needs at least {} points, so the \
+                 creature stands still.",
                 path.nodes.len(),
                 walk.needs_nodes()
             ),
@@ -207,7 +207,7 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &Path) {
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!(
-                "{} point(s) · {:.0} yards round · {} ms waited",
+                "{} point(s) · {:.0} yd loop · {} ms total wait",
                 path.nodes.len(),
                 path.loop_length(),
                 path.total_wait()
@@ -218,7 +218,7 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &Path) {
 
     if subject.waypoints.trouble.is_some() {
         let why = subject.waypoints.trouble.clone().unwrap_or_default();
-        theme::note(ui, format!("The database did not answer: {why}"));
+        theme::note(ui, format!("The database query failed: {why}"));
     }
 }
 
@@ -231,15 +231,15 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
         if ui
             .selectable_label(armed, "Add points")
             .on_hover_text(
-                "While this is on, a click on the ground adds a point there — after the \
-                 selected one, or at the end when none is selected. It takes the pointer, \
-                 so another creature cannot be clicked until it is off.",
+                "While on, a click on the ground adds a point there: after the selected \
+                 point, or at the end when none is selected. Clicks do not select other \
+                 creatures until it is off.",
             )
             .clicked()
         {
             subject.waypoints.adding = !armed;
         }
-        ui.checkbox(&mut subject.waypoints.follow_ground, "On the ground")
+        ui.checkbox(&mut subject.waypoints.follow_ground, "Snap to ground")
             .on_hover_text(
                 "A point added or dragged takes the height of the terrain under the pointer. \
                  Turn it off for a creature that flies, or one walking on a building's floor: \
@@ -251,7 +251,7 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
         let chosen = subject.waypoints.selected;
         if ui
             .add_enabled(chosen.is_some(), egui::Button::new("Remove point"))
-            .on_hover_text("Take the selected point out. The rest are renumbered.")
+            .on_hover_text("Removes the selected point. Later points are renumbered.")
             .clicked()
         {
             if let Some(index) = chosen {
@@ -270,9 +270,7 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
         if ui
             .add_enabled(can_rise, egui::Button::new("Earlier"))
             .on_hover_text(
-                "Move the selected point one place earlier in the walk. It was an up \
-                 arrow and the interface's font has no glyph for one, so it drew as an \
-                 empty box.",
+                "Moves the selected point one place earlier in the path.",
             )
             .clicked()
         {
@@ -285,7 +283,7 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
         let can_fall = chosen.is_some_and(|index| index + 1 < path.nodes.len());
         if ui
             .add_enabled(can_fall, egui::Button::new("Later"))
-            .on_hover_text("Move the selected point one place later in the walk.")
+            .on_hover_text("Moves the selected point one place later in the path.")
             .clicked()
         {
             if let Some(index) = chosen {
@@ -305,9 +303,9 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
         let guid = subject.waypoints.subject.map(|open| open.guid);
         if let Some(guid) = guid {
             if ui
-                .button("Give this spawn its own path")
+                .button("Copy path to spawn")
                 .on_hover_text(
-                    "Copy these points into `creature_movement` under this guid. The template is left as it is, and the server prefers a spawn's own path over its template's, so only this one creature changes.",
+                    "Copies these points into `creature_movement` under this guid. `creature_movement_template` is not changed. The server uses a spawn's `creature_movement` rows before its template's, so only this spawn changes.",
                 )
                 .clicked()
             {
@@ -336,10 +334,10 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
         // project's claim on the path; the other empties the path, which is an
         // edit that deletes every row.
         if ui
-            .add_enabled(edited, egui::Button::new("Put this path back"))
+            .add_enabled(edited, egui::Button::new("Discard path edits"))
             .on_hover_text(
-                "Stop changing this path. The project gives up its claim and what is drawn \
-                 goes back to what the database holds. It does not touch the database.",
+                "Discards this project's edits to the path. The window and the world show \
+                 the database's rows again. The database is not changed.",
             )
             .clicked()
         {
@@ -350,22 +348,22 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
                 owner,
                 None,
                 Some(Gesture {
-                    label: "Put path back",
+                    label: "Discard path edits",
                     subject: &subject_name,
                     now: subject.now,
                 }),
             );
             subject.waypoints.selected = None;
-            subject.session.status = "this project no longer changes that path".to_string();
+            subject.session.status = "path edits discarded; the database's rows are shown".to_string();
         }
         if ui
             .add_enabled(
                 !path.nodes.is_empty(),
-                egui::Button::new("Clear every point"),
+                egui::Button::new("Clear all points"),
             )
             .on_hover_text(
-                "Empty the path. That is an edit: it writes a DELETE and no INSERTs, so the \
-                 creature stops walking once it is applied.",
+                "Removes every point. This is an edit: Apply writes a DELETE and no INSERTs, \
+                 so the creature stops walking once it is applied.",
             )
             .clicked()
         {
@@ -404,8 +402,9 @@ fn list(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
     if path.nodes.is_empty() {
         theme::note(
             ui,
-            "This creature has no path in either movement table. Turn on Add points and click \
-             the ground to build one; it will be this spawn's own, not its template's.",
+            "This creature has no rows in creature_movement or creature_movement_template. \
+             Turn on Add points and click the ground to create a path; it is written to \
+             creature_movement for this spawn.",
         );
         return;
     }
@@ -463,7 +462,7 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
                 (
                     "position_x",
                     &mut edited.x,
-                    "where it stands, in the world's own axes",
+                    "the point's position, in world coordinates",
                 ),
                 ("position_y", &mut edited.y, ""),
                 ("position_z", &mut edited.z, ""),
@@ -476,9 +475,8 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
 
             ui.label(egui::RichText::new("waittime").color(theme::INK_DIM))
                 .on_hover_text(
-                    "How long it stands here, in milliseconds. It is also what makes a facing \
-                     happen at all: the server applies an orientation only at a point the \
-                     creature stops at.",
+                    "How long the creature waits here, in milliseconds. The server applies \
+                     the point's orientation only at a point with a waittime.",
                 );
             changed |= ui
                 .add(egui::DragValue::new(&mut edited.waittime).speed(100.0))
@@ -486,7 +484,7 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
             ui.end_row();
 
             ui.label(egui::RichText::new("wander_distance").color(theme::INK_DIM))
-                .on_hover_text("How far it may stray from the point while it waits.");
+                .on_hover_text("How far the creature may wander from the point while it waits.");
             changed |= ui
                 .add(egui::DragValue::new(&mut edited.wander_distance).speed(0.1))
                 .changed();
@@ -494,9 +492,9 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
 
             ui.label(egui::RichText::new("script_id").color(theme::INK_DIM))
                 .on_hover_text(
-                    "A creature_movement_scripts id, or 0. An id that table does not have \
-                     costs this one point at load, silently — the path comes up short and \
-                     nothing says why.",
+                    "A creature_movement_scripts id, or 0. If that table has no such id, the \
+                     server drops this point at load without an error message, and the path \
+                     is one point shorter.",
                 );
             changed |= ui
                 .add(egui::DragValue::new(&mut edited.script_id).speed(1.0))
@@ -543,8 +541,8 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
     if edited.has_orientation() && !edited.faces() {
         theme::note(
             ui,
-            "This facing will never happen: the server applies one only at a point with a \
-             waittime, and this point has none.",
+            "This facing has no effect: the server applies a facing only at a point with a \
+             waittime, and this point's waittime is 0.",
         );
     }
 
@@ -563,8 +561,7 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
         if ui
             .button("Insert after")
             .on_hover_text(
-                "A new point half way to the next one, which is the cheapest way to \
-                            put a corner into a straight leg.",
+                "Inserts a new point half way to the next point.",
             )
             .clicked()
         {

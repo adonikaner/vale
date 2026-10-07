@@ -787,9 +787,9 @@ fn table_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         if ui
             .add_enabled(unsaved, egui::Button::new("Discard").min_size(size))
             .on_hover_text(format!(
-                "drop every unsaved change to {table_name}: read the file again and forget its \
-                 entries on the undo stack. The rows and fields go back to what the project \
-                 folder, or the archives, hold."
+                "discard every unsaved change to {table_name}: reload the file and remove its \
+                 entries from the undo stack. The rows return to the project folder's copy, or \
+                 to the archives' copy when the project has none."
             ))
             .on_disabled_hover_text("nothing has changed since the last save")
             .clicked()
@@ -1031,7 +1031,7 @@ fn form(
             });
         // A dialog that plays its own rows has the stage while it is up.
         match dialog_previews(work) {
-            true => empty_pane(ui, "the preview is in the dialog"),
+            true => empty_pane(ui, "the preview is shown in the open dialog"),
             false => {
                 let title = match spell {
                     Some(id) => format!("Preview — spell {id}"),
@@ -1157,14 +1157,14 @@ fn form(
             });
         ui.data_mut(|data| data.insert_temp(width_id, shown.response.rect.width()));
         match dialog_previews(work) {
-            true => empty_pane(ui, "the preview is in the dialog"),
+            true => empty_pane(ui, "the preview is shown in the open dialog"),
             false => match chain_show(work, &table_name, id) {
                 Some((show, title)) => {
                     super::storyboard::stage_pane(ui, stage, Some(show), &title, &[], None)
                 }
                 None => {
                     stage.close();
-                    empty_pane(ui, "nothing to play");
+                    empty_pane(ui, "no preview for this row");
                 }
             },
         }
@@ -1254,10 +1254,10 @@ fn area_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
     };
     theme::note(
         ui,
-        "An area is on the map where chunks carry its id: Paint it on the map puts it on \
-         the Areas tool's brush. The server reads the id, map, parent, explore bit, flags, \
-         level, name, team and liquid type from area_template, after a restart; the sound \
-         columns and the other locales are the client's alone.",
+        "An area covers the map chunks that carry its id. Paint on map puts the area on \
+         the Areas tool's brush. After a restart the server reads the id, map, parent, \
+         explore bit, flags, level, name, team and liquid type from area_template; only \
+         the client reads the sound columns and the other locales.",
     );
     ui.add_space(4.0);
     if parent != 0 {
@@ -1275,8 +1275,8 @@ fn area_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
             if rows.is_empty() {
                 theme::note(
                     ui,
-                    "No area names this zone as its parent. The zone's own name is then \
-                     shown everywhere inside it.",
+                    "No area has this zone as its parent, so the client shows the zone's \
+                     name everywhere inside it.",
                 );
             }
             let mut follow: Option<u32> = None;
@@ -1455,9 +1455,9 @@ fn skill_lines_of(ui: &mut egui::Ui, work: &mut Workspace<'_>, spell: u32) {
     if rows.is_empty() {
         theme::note(
             ui,
-            "In no skill line, as most spells are. The spellbook files such a spell under \
-             General, and the client leaves a class trainer's service for it out of the \
-             training window.",
+            "No SkillLineAbility row names this spell (most spells have none). The spellbook \
+             lists the spell under General, and the training window omits a class trainer's \
+             service for it.",
         );
     }
     let mut remove: Option<usize> = None;
@@ -1522,8 +1522,9 @@ fn taught_by(ui: &mut egui::Ui, work: &mut Workspace<'_>, spell: u32) {
     if teachers.is_empty() {
         theme::note(
             ui,
-            "No teaching spell, as most spells have none. A trainer's list names a teaching \
-             spell: one whose first effect is Learn Spell and which names this spell.",
+            "No teaching spell (most spells have none). A trainer's list names a teaching \
+             spell: a spell whose first effect is Learn Spell and whose EffectTriggerSpell 1 \
+             is this spell.",
         );
     }
     let mut follow: Option<u32> = None;
@@ -1599,7 +1600,7 @@ fn skill_line_members(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize
     else {
         return;
     };
-    egui::CollapsingHeader::new(egui::RichText::new("Who has it").size(14.0).strong())
+    egui::CollapsingHeader::new(egui::RichText::new("Races and classes").size(14.0).strong())
         .default_open(true)
         .show(ui, |ui| {
             if !work.session.open_table(work.assets, race_class::TABLE) {
@@ -1610,8 +1611,8 @@ fn skill_line_members(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize
             if rows.is_empty() {
                 theme::note(
                     ui,
-                    "No race or class has this line: no SkillRaceClassInfo row names it. \
-                     Its spells then go on the spellbook's General tab.",
+                    "No SkillRaceClassInfo row names this skill line, so no race or class \
+                     has it. Its spells appear on the spellbook's General tab.",
                 );
             }
             let mut remove: Option<usize> = None;
@@ -1636,7 +1637,7 @@ fn skill_line_members(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize
                 }
             }
             if ui
-                .button("+ Give it to races and classes")
+                .button("+ Add race/class row")
                 .on_hover_text(tables::command_about(Command::GiveToRacesAndClasses))
                 .clicked()
             {
@@ -1648,7 +1649,7 @@ fn skill_line_members(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize
             }
         });
 
-    egui::CollapsingHeader::new(egui::RichText::new("Spells in it").size(14.0).strong())
+    egui::CollapsingHeader::new(egui::RichText::new("Spells in skill line").size(14.0).strong())
         .default_open(true)
         .show(ui, |ui| {
             if !work.session.open_table(work.assets, ability::TABLE) {
@@ -1667,11 +1668,11 @@ fn skill_line_members(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize
                 if count > 0
                     && ui
                         .add(egui::Link::new(
-                            egui::RichText::new("list them").color(theme::ACCENT),
+                            egui::RichText::new("show in Abilities").color(theme::ACCENT),
                         ))
                         .on_hover_text(
-                            "Open the Abilities tab searched by this line's name. A spell is \
-                             added to the line from the spell's own form.",
+                            "Open the Abilities tab filtered by this skill line's name. To add a \
+                             spell to the skill line, use the spell's own form.",
                         )
                         .clicked()
                 {
@@ -1727,8 +1728,8 @@ pub fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
         theme::note(
             ui,
             "Click a light in the world to edit it. Every light near the camera \
-             is marked; the one you pick gets its falloff drawn and its numbers \
-             here.",
+             is marked; the selected light has its falloff spheres drawn in the \
+             world and its fields listed here.",
         );
         modals(ui, &mut work, None);
         return;
@@ -1836,9 +1837,9 @@ fn new_light_buttons(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         if ui
             .selectable_label(lights.armed, "New light")
             .on_hover_text(
-                "Armed, a click on the ground makes a light there, 50 yards at full \
-                 strength and faded out by 120, lit like the chosen light or the map's \
-                 default. Escape or a second press disarms.",
+                "While on, a click on the ground places a light there: full strength to \
+                 50 yards, faded out at 120 yards, with the LightParams of the selected \
+                 light or the map's default light. Escape or a second click turns it off.",
             )
             .clicked()
         {
@@ -1849,9 +1850,10 @@ fn new_light_buttons(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             if ui
                 .button("New default light")
                 .on_hover_text(
-                    "This map has no default light, which is the one that lights every \
-                     place no other light covers. Makes one, lit like the chosen light or \
-                     Eastern Kingdoms' default.",
+                    "This map has no default light (the light that applies wherever no \
+                     other light covers). Creates one with the LightParams of the selected \
+                     light, another light on this map, or light 1 (the Eastern Kingdoms \
+                     default).",
                 )
                 .clicked()
             {
@@ -1883,7 +1885,7 @@ fn browse_button(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             egui::vec2(ui.available_width(), 24.0),
             egui::Button::new(format!("Browse all {count} lights…")),
         )
-        .on_hover_text("For a light that is not on screen. Pick one and the camera goes to it.")
+        .on_hover_text("Choose a light from a list, including lights not on screen. The camera moves to the chosen light.")
         .clicked()
     {
         work.browser.modal = Some(Modal::Rows { table: "Light" });
@@ -1968,24 +1970,24 @@ fn sphere_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
                 ui,
                 "z",
                 &mut z,
-                "The world's z. Stored as InternalY, in 1/36 of a yard, and \
-                 the one coordinate a drag in the world does not move — a \
-                 pointer aims at two.",
+                "The world's z. Stored as InternalY, in 1/36 of a yard. A \
+                 drag in the world moves x and y only, so z changes only \
+                 here.",
             );
             ui.add_space(4.0);
             row(
                 ui,
                 "FalloffStart",
                 &mut start,
-                "Within this radius the light applies at full strength. The \
-                 inner sphere in the world, and it can be dragged there. \
-                 Stored in 1/36 of a yard.",
+                "The radius within which the light applies at full strength. \
+                 Drawn as the inner sphere in the world, where it can be \
+                 dragged. Stored in 1/36 of a yard.",
             );
             row(
                 ui,
                 "FalloffEnd",
                 &mut end,
-                "…and by this radius it has faded to nothing. Zero makes this \
+                "The radius at which the light has faded out completely. Zero makes this \
                  the map's default light, which applies everywhere and whose \
                  position is not read. Stored in 1/36 of a yard.",
             );
@@ -2061,14 +2063,14 @@ fn place_strip(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
             // The default light applies everywhere and its coordinates are not
             // read, so there is no position to fly to.
             ui.label(
-                egui::RichText::new("the whole map")
+                egui::RichText::new("default light (whole map)")
                     .size(13.0)
                     .color(theme::INK_DIM),
             );
         } else {
             if ui
                 .button("Fly to")
-                .on_hover_text("Put the camera on this light. The height is the row's own.")
+                .on_hover_text("Move the camera to this light's position, at the row's stored height.")
                 .clicked()
             {
                 lights.fly_to(&mark);
@@ -2089,8 +2091,9 @@ fn place_strip(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.checkbox(&mut lights.show_falloff, "falloff")
                 .on_hover_text(
-                    "Draw this light's two spheres, or only its marker. Every \
-                     light near the camera is marked either way.",
+                    "On: draw this light's FalloffStart and FalloffEnd spheres. \
+                     Off: draw only its marker. Every light near the camera is \
+                     marked either way.",
                 );
         });
     });
@@ -2142,9 +2145,10 @@ fn head(
                         open_lab = ui
                             .button("Position on character…")
                             .on_hover_text(
-                                "Stand this model on a body at a real attachment point, move it, \
-                                 and bake the offset into a copy of the model. 1.12 has no offset \
-                                 fields: the position lives in the file.",
+                                "Attach this model to a character model at an attachment point, \
+                                 position it, and bake the offset into a copy of the model. \
+                                 SpellVisualEffectName has no offset columns in 1.12, so the \
+                                 position is stored in the model file.",
                             )
                             .clicked();
                     }
@@ -2214,7 +2218,7 @@ fn head(
 fn used_by_line(ui: &mut egui::Ui, work: &mut Workspace<'_>, table_name: &str, id: u32) {
     let uses = work.browser.used_by(work.session, table_name, id);
     if uses.is_empty() {
-        theme::note(ui, "Nothing open points at this row.");
+        theme::note(ui, "No row of an open table references this row.");
         return;
     }
     let mut follow: Option<(String, usize)> = None;
@@ -2431,7 +2435,7 @@ fn field_in(
                             egui::Button::new(egui::RichText::new("…").size(13.0))
                                 .min_size(egui::vec2(24.0, 22.0)),
                         )
-                        .on_hover_text(format!("tick the bits of {}", column.name))
+                        .on_hover_text(format!("set or clear the named bits of {}", column.name))
                         .clicked()
                 {
                     work.browser.modal = Some(Modal::Bits {
@@ -2597,7 +2601,7 @@ fn field_in(
                     presence(ui, work.model_present(id));
                     if ui
                         .small_button("browse…")
-                        .on_hover_text("every model in the archives, by name")
+                        .on_hover_text("search every model in the archives by path")
                         .clicked()
                     {
                         work.browser.modal = Some(Modal::Models {
@@ -2640,7 +2644,7 @@ fn item_cell(
     let Some(quests) = work.quests.as_deref_mut() else {
         ui.label(egui::RichText::new("item").small().color(theme::INK_FAINT))
             .on_hover_text(
-                "An item_template entry. There is no world database to read its name from.",
+                "An item_template entry. No world database is connected, so its name cannot be read.",
             );
         return;
     };
@@ -2689,20 +2693,20 @@ fn item_cell(
     if found.set_id != set && !pending {
         ui.label(
             egui::RichText::new(match found.set_id {
-                0 => "its set_id is 0".to_string(),
-                other => format!("its set_id is {other}"),
+                0 => "item set_id is 0".to_string(),
+                other => format!("item set_id is {other}"),
             })
             .small()
             .color(theme::WARN),
         )
         .on_hover_text(
-            "The set lists this item, and the item's own row does not name the set. The \
-             server counts set pieces by item_template.set_id, so the item does not count \
-             towards the bonuses until it does.",
+            "This set lists the item, but the item's item_template.set_id does not name this \
+             set. The server counts set pieces by item_template.set_id, so the item does not \
+             count towards the set bonuses until set_id matches.",
         );
         if ui
-            .small_button("join")
-            .on_hover_text(format!("Write set_id {set} on this item's row. One undo entry."))
+            .small_button("write set_id")
+            .on_hover_text(format!("Write set_id {set} on this item's item_template row. One undo entry."))
             .clicked()
         {
             quests.set_follows.push(SetFollow {
@@ -2745,7 +2749,7 @@ fn reference(
             egui::Button::new(egui::RichText::new("…").size(13.0)).min_size(egui::vec2(24.0, 22.0)),
         )
         .on_hover_text(match previews(points_at) {
-            true => format!("choose a {points_at} row, each one playing as it is pressed"),
+            true => format!("choose a {points_at} row; clicking a row previews it"),
             false => format!("choose a {points_at} row by name"),
         })
         .clicked()
@@ -2762,7 +2766,7 @@ fn reference(
     if table_name == "Spell"
         && points_at == "SpellVisual"
         && ui
-            .small_button("like a spell\u{2026}")
+            .small_button("from spell\u{2026}")
             .on_hover_text(tables::command_about(Command::LookLike))
             .clicked()
     {
@@ -2795,7 +2799,7 @@ fn reference(
             && ui
                 .small_button("+ new")
                 .on_hover_text(format!(
-                    "make a blank {points_at} row and point this field at it"
+                    "create a blank {points_at} row and set this field to its id"
                 ))
                 .clicked()
         {
@@ -2857,7 +2861,7 @@ fn reference(
         }
         None => {
             ui.label(
-                egui::RichText::new(format!("not a row of {points_at}"))
+                egui::RichText::new(format!("no {points_at} row has this id"))
                     .small()
                     .color(theme::BAD),
             );
@@ -2870,8 +2874,8 @@ fn reference(
         && ui
             .small_button("copy")
             .on_hover_text(
-                "copy the row this points at and point this field at the copy, leaving \
-                 the original to whatever else names it",
+                "copy the referenced row and set this field to the copy's id; other rows \
+                 that reference the original keep it",
             )
             .clicked()
     {
@@ -2886,9 +2890,8 @@ fn reference(
         && ui
             .small_button("clone chain")
             .on_hover_text(
-                "copy this visual with every kit and effect it names, and point this field \
-                 at the copy: this row then names the copy and every other spell keeps \
-                 the original",
+                "copy this visual with every kit and effect it references, and set this \
+                 field to the copy's id; every other spell keeps the original",
             )
             .clicked()
     {
@@ -2897,7 +2900,7 @@ fn reference(
         {
             let copy = done.new_id("SpellVisual", raw).unwrap_or(0);
             work.session.status = format!(
-                "visual {raw} copied to {copy} and assigned: {} kits, {} effects",
+                "SpellVisual {raw} copied to {copy} with {} kits and {} effects; this field now references {copy}",
                 done.count("SpellVisualKit"),
                 done.count("SpellVisualEffectName")
             );
@@ -2908,8 +2911,8 @@ fn reference(
 /// A dot saying whether the archives hold a model, with the reason on hover.
 fn presence(ui: &mut egui::Ui, present: Option<bool>) {
     let (colour, why) = match present {
-        Some(true) => (theme::GOOD, "the archives hold this model"),
-        Some(false) => (theme::BAD, "not in the archives: this effect draws nothing"),
+        Some(true) => (theme::GOOD, "model file found in the archives"),
+        Some(false) => (theme::BAD, "no such model file in the archives; this effect draws nothing"),
         None => (theme::INK_FAINT, "SpellVisualEffectName is not open yet"),
     };
     let (rect, response) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
@@ -3127,7 +3130,7 @@ fn preview_of(
 ) {
     let Some(id) = selected else {
         stage.close();
-        empty_pane(ui, "press a row to play it");
+        empty_pane(ui, "click a row to preview it");
         return;
     };
     // An effect is a model and not a cast, so it is shown as the Effects tab
@@ -3143,7 +3146,7 @@ fn preview_of(
             }
             None => {
                 stage.close();
-                empty_pane(ui, "not a row of SpellVisualEffectName");
+                empty_pane(ui, "no SpellVisualEffectName row has this id");
             }
         }
         return;
@@ -3154,7 +3157,7 @@ fn preview_of(
         }
         None => {
             stage.close();
-            empty_pane(ui, "nothing to play");
+            empty_pane(ui, "no preview for this row");
         }
     }
 }
@@ -3212,7 +3215,7 @@ fn pick_previewing(
                     ui.set_width(PICKER_WIDTH);
                     let box_ = ui.add(
                         egui::TextEdit::singleline(&mut work.browser.pick_query)
-                            .hint_text("name, id, or a model's name")
+                            .hint_text("name, id, or model name")
                             .desired_width(PICKER_WIDTH),
                     );
                     if work.browser.pick_focus {
@@ -3259,8 +3262,8 @@ fn pick_previewing(
                 let selected = work.browser.pick_selected;
                 if ui
                     .add_enabled(selected.is_some(), egui::Button::new("Use"))
-                    .on_hover_text("Write the selected row to the field.")
-                    .on_disabled_hover_text("Press a row first.")
+                    .on_hover_text("Set the field to the selected row's id.")
+                    .on_disabled_hover_text("Select a row first.")
                     .clicked()
                 {
                     chosen = selected;
@@ -3270,7 +3273,7 @@ fn pick_previewing(
                 }
                 ui.label(
                     egui::RichText::new(
-                        "a press plays the row · a double press, Enter or Use chooses it · \
+                        "click previews the row · double-click, Enter or Use chooses it · \
                          Esc closes",
                     )
                     .small()
@@ -3331,7 +3334,7 @@ fn looks_like(
         .show(ui.ctx(), |ui| {
             ui.set_width(PICKER_WIDTH + DIALOG_PREVIEW.x + 16.0);
             ui.label(
-                egui::RichText::new(format!("Make spell {own} look like another spell"))
+                egui::RichText::new(format!("Visual for spell {own} from another spell"))
                     .strong()
                     .size(14.0),
             );
@@ -3340,7 +3343,7 @@ fn looks_like(
                     ui.set_width(PICKER_WIDTH);
                     let box_ = ui.add(
                         egui::TextEdit::singleline(&mut work.browser.pick_query)
-                            .hint_text("a spell's name or id")
+                            .hint_text("spell name or id")
                             .desired_width(PICKER_WIDTH),
                     );
                     if work.browser.pick_focus {
@@ -3398,7 +3401,7 @@ fn looks_like(
                     ),
                     None => {
                         stage.close();
-                        empty_pane(&mut pane, "press a spell to play it");
+                        empty_pane(&mut pane, "click a spell to preview it");
                     }
                 }
             });
@@ -3411,23 +3414,24 @@ fn looks_like(
                         .filter(|visual| *visual != 0 && *visual != u32::MAX)
                 });
                 if ui
-                    .add_enabled(visual.is_some(), egui::Button::new("Use its visual"))
+                    .add_enabled(visual.is_some(), egui::Button::new("Share visual"))
                     .on_hover_text(
-                        "Name the same SpellVisual row. The two spells then share it, and an \
-                         edit to its kits changes both.",
+                        "Set this spell's SpellVisual to the selected spell's visual. The two \
+                         spells then share the row, and an edit to its kits changes both.",
                     )
-                    .on_disabled_hover_text("Press a spell first.")
+                    .on_disabled_hover_text("Select a spell first.")
                     .clicked()
                 {
                     taken = visual.map(|visual| (visual, false));
                 }
                 if ui
-                    .add_enabled(visual.is_some(), egui::Button::new("Clone its visual"))
+                    .add_enabled(visual.is_some(), egui::Button::new("Clone visual"))
                     .on_hover_text(
-                        "Copy that visual with every kit and effect it names, and name the \
-                         copy. This spell's look then starts the same and is its own to change.",
+                        "Copy the selected spell's visual with every kit and effect it \
+                         references, and set this spell's SpellVisual to the copy. Edits to \
+                         the copy change only this spell.",
                     )
-                    .on_disabled_hover_text("Press a spell first.")
+                    .on_disabled_hover_text("Select a spell first.")
                     .clicked()
                 {
                     taken = visual.map(|visual| (visual, true));
@@ -3436,7 +3440,7 @@ fn looks_like(
                     close = true;
                 }
                 ui.label(
-                    egui::RichText::new("a press plays the spell · Esc closes")
+                    egui::RichText::new("click previews the spell · Esc closes")
                         .small()
                         .color(theme::INK_FAINT),
                 );
@@ -3453,7 +3457,7 @@ fn looks_like(
                 "Edit SpellVisual",
                 work.now,
             );
-            work.session.status = format!("spell {own} names visual {visual}");
+            work.session.status = format!("spell {own} now uses SpellVisual {visual}");
             close = true;
         }
         Some((visual, true)) => {
@@ -3462,7 +3466,7 @@ fn looks_like(
             {
                 let copy = done.new_id("SpellVisual", visual).unwrap_or(0);
                 work.session.status = format!(
-                    "visual {visual} copied to {copy} for spell {own}: {} kits, {} effects",
+                    "SpellVisual {visual} copied to {copy} with {} kits and {} effects; spell {own} now uses {copy}",
                     done.count("SpellVisualKit"),
                     done.count("SpellVisualEffectName")
                 );
@@ -3523,8 +3527,8 @@ pub(super) fn run_command(
         }
         Command::CreateTeachingSpell => {
             work.session.status = match tables::add_teaching_spell(work.session, id) {
-                Some(made) => format!("spell {made} teaches spell {id}"),
-                None => "the teaching spell was not made".to_string(),
+                Some(made) => format!("created teaching spell {made} for spell {id}"),
+                None => "teaching spell not created".to_string(),
             };
             show(work);
         }
@@ -3538,7 +3542,7 @@ pub(super) fn run_command(
             if let Some(done) = tables::clone_chain(work.session, id, None) {
                 let copy = done.new_id("SpellVisual", id).unwrap_or(0);
                 work.session.status = format!(
-                    "visual {id} copied to {copy}: {} kits, {} effects",
+                    "SpellVisual {id} copied to {copy} with {} kits and {} effects",
                     done.count("SpellVisualKit"),
                     done.count("SpellVisualEffectName")
                 );
@@ -3554,7 +3558,7 @@ pub(super) fn run_command(
         }
         Command::AddSubArea => {
             if let Some(at) = tables::add_sub_area(work.session, id) {
-                work.session.status = "a sub-area was added: name it".to_string();
+                work.session.status = "sub-area added; enter its name".to_string();
                 if here {
                     work.browser.open_row(at);
                 }
@@ -3922,7 +3926,7 @@ fn modals(
                 ui.label(egui::RichText::new(table).strong().size(14.0));
                 let box_ = ui.add(
                     egui::TextEdit::singleline(&mut work.browser.pick_query)
-                        .hint_text("name, id, or where it is")
+                        .hint_text("map, position, or id")
                         .desired_width(PICKER_WIDTH),
                 );
                 if work.browser.pick_focus {
@@ -4013,7 +4017,7 @@ fn modals(
                 });
                 theme::note(
                     ui,
-                    "The names follow vmangos: 1.12 ships no table that names a mask's bits.",
+                    "Bit names are from vmangos; the 1.12 client data has no table of bit names.",
                 );
                 ui.add_space(6.0);
                 egui::ScrollArea::vertical()
@@ -4131,7 +4135,7 @@ fn modals(
                     });
                     let box_ = ui.add(
                         egui::TextEdit::singleline(&mut work.browser.model_query)
-                            .hint_text("words from the path")
+                            .hint_text("words in the model path")
                             .desired_width(ui.available_width()),
                     );
                     if box_.changed() {
@@ -4174,8 +4178,8 @@ fn modals(
                         theme::note(
                             ui,
                             match work.browser.model_folder {
-                                STARRED_FOLDER => "nothing starred yet: press the star on a row",
-                                RECENT_FOLDER => "nothing used yet: a model taken with Use lands here",
+                                STARRED_FOLDER => "no starred models: click the star on a row to add one",
+                                RECENT_FOLDER => "no recent models: models chosen with Use are listed here",
                                 _ => "no models under this folder",
                             },
                         );
@@ -4230,7 +4234,7 @@ fn modals(
                                 ))
                                 .fill(theme::ACCENT),
                             )
-                            .on_hover_text("point this effect's Model at the row being previewed")
+                            .on_hover_text("set this effect's Model to the previewed model's path")
                             .clicked()
                         {
                             picked = chosen;
@@ -4240,7 +4244,7 @@ fn modals(
                         }
                         ui.label(
                             egui::RichText::new(
-                                "a press previews the model on the stage; a double press, or Use, takes it",
+                                "click previews the model on the stage · double-click or Use chooses it",
                             )
                             .small()
                             .color(theme::INK_FAINT),
@@ -4350,8 +4354,8 @@ pub(super) fn model_row(
     );
     let on = favourites.is_starred(kind, path);
     let hint = match on {
-        true => "Take this model off the starred list.",
-        false => "Star this model, so it is one click away under Starred.",
+        true => "Remove this model from Starred.",
+        false => "Add this model to Starred.",
     };
     hit.starred = theme::star_button(ui, ui.id().with(("star", path)), star, on, hint);
     if !hit.starred {
@@ -4641,14 +4645,14 @@ fn write(work: &mut Workspace<'_>, table_name: &str, record: usize, column: &Col
 pub fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let table_name = work.browser.table.clone();
     let Some(record) = work.browser.open else {
-        theme::note(ui, "Choose a row to see what it points at.");
+        theme::note(ui, "Select a row to see its references.");
         return;
     };
     let Some(schema) = schema::for_table(&table_name) else {
         return;
     };
 
-    theme::heading(ui, "Points at");
+    theme::heading(ui, "References");
     let mut drawn = 0;
     let mut follow: Option<(&'static str, u32)> = None;
     for column in schema.columns.iter() {
@@ -4703,7 +4707,7 @@ pub fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         .unwrap_or(0);
     let uses = work.browser.used_by(work.session, &table_name, id);
     if uses.is_empty() {
-        theme::note(ui, "Nothing open points at this row.");
+        theme::note(ui, "No row of an open table references this row.");
         return;
     }
     let mut sources: Vec<String> = uses.iter().map(|at| at.table.clone()).collect();

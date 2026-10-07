@@ -413,8 +413,8 @@ fn contents(
         if ui
             .add_enabled(exist > 0, egui::Button::new(format!("Copy {exist}")))
             .on_hover_text(
-                "Takes every selected tile that exists. One pastes into every slot; several \
-                 paste as a block, keeping their layout.",
+                "Copies every selected tile that exists. One copied tile pastes into every \
+                 selected slot; several paste as a block, keeping their layout.",
             )
             .clicked()
         {
@@ -427,8 +427,8 @@ fn contents(
                 egui::Button::new("Paste"),
             )
             .on_hover_text(
-                "Rewrites each copied tile to sit where it is going. Its ground, its \
-                 doodads and its buildings all move with it.",
+                "Writes each copied tile into the selected slot, rewriting its positions \
+                 for the new place. Its terrain, doodads and buildings move with it.",
             )
             .clicked()
         {
@@ -438,14 +438,14 @@ fn contents(
             0 => {}
             1 => {
                 let at = view.clipboard[0];
-                theme::note(ui, format!("holding {}, {}", at.0, at.1));
+                theme::note(ui, format!("copied: {}, {}", at.0, at.1));
             }
-            n => theme::note(ui, format!("holding {n} tiles")),
+            n => theme::note(ui, format!("copied: {n} tiles")),
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .add_enabled(!view.selection.is_empty(), egui::Button::new("Clear"))
-                .on_hover_text("Selects nothing.")
+                .on_hover_text("Clears the selection.")
                 .clicked()
             {
                 view.selection.clear();
@@ -747,10 +747,10 @@ fn foot_panel(
         match (&tiles.building, whole) {
             (Some(path), _) => {
                 let leaf = path.rsplit(['\\', '/']).next().unwrap_or(path);
-                ui.label(format!("one building: {leaf}")).on_hover_text(path.clone());
+                ui.label(format!("single-WMO map: {leaf}")).on_hover_text(path.clone());
                 if ui
-                    .button("Make it terrain")
-                    .on_hover_text("Remove the building. The map then has no ground until tiles are made.")
+                    .button("Convert to terrain")
+                    .on_hover_text("Removes the WMO from the WDT. The map has no terrain until tiles are created.")
                     .clicked()
                 {
                     asked = Some(Asked::MakeTerrain);
@@ -764,9 +764,9 @@ fn foot_panel(
                 );
                 let ready = tiles.building_path.trim().to_ascii_lowercase().ends_with(".wmo");
                 if ui
-                    .add_enabled(ready, egui::Button::new("Make it one building"))
-                    .on_hover_text("The map becomes this building, as a dungeon is.")
-                    .on_disabled_hover_text("Type the path of a .wmo file.")
+                    .add_enabled(ready, egui::Button::new("Convert to single-WMO map"))
+                    .on_hover_text("Writes this WMO into the WDT as the whole map, with no terrain tiles. Most dungeons are built this way.")
+                    .on_disabled_hover_text("Enter the path of a .wmo file.")
                     .clicked()
                 {
                     asked = Some(Asked::MakeBuilding);
@@ -789,7 +789,7 @@ fn foot_panel(
                     .suffix(" yd")
                     .prefix("height "),
             )
-            .on_hover_text("How high the flat ground of a new tile sits.");
+            .on_hover_text("Height of a new tile's flat ground.");
             ui.add(
                 egui::DragValue::new(&mut tiles.area)
                     .speed(1.0)
@@ -801,7 +801,7 @@ fn foot_panel(
                     .desired_width(220.0)
                     .hint_text("Tileset\\…"),
             )
-            .on_hover_text("The one texture a new tile is painted with.");
+            .on_hover_text("The single texture a new tile is painted with.");
         });
         if absent == 0 {
             theme::note(ui, "every selected tile exists");
@@ -823,8 +823,8 @@ fn foot_panel(
         if ui
             .add_enabled(open > 0, egui::Button::new(format!("Rebake ({open})")))
             .on_hover_text(format!(
-                "Recompute the baked shadow of each open selected tile from what stands on \
-                 it. About {} s a tile, in the background.",
+                "Recomputes the baked shadow of each open selected tile from the objects on \
+                 it, in the background. About {} s per tile.",
                 tool::REBAKE_SECONDS
             ))
             .on_disabled_hover_text("None of the selection is open: fly to it first.")
@@ -832,13 +832,13 @@ fn foot_panel(
         {
             asked = Some(Asked::Rebake);
         }
-        ui.checkbox(&mut tiles.cast_from_ground, "also from the ground")
+        ui.checkbox(&mut tiles.cast_from_ground, "include terrain shadow")
             .on_hover_text(
-                "Also cast shadow from the terrain onto itself. Off by default: \
-                 measured against two shipped tiles, hull-cast shadow matches \
-                 their MCSH at 1.2-1.4x the base rate and terrain-cast shadow at \
-                 0.4-0.9x, which is chance or worse, so the shipped bakes do not \
-                 appear to include it.",
+                "Also bakes shadow cast by the terrain onto itself. Off by default, \
+                 because the shipped bakes do not appear to include it: against two \
+                 shipped tiles, hull-cast shadow matches their MCSH at 1.2-1.4x the \
+                 base rate and terrain-cast shadow at 0.4-0.9x, which is chance or \
+                 worse.",
             );
     });
 
@@ -855,7 +855,7 @@ fn foot_panel(
         if tiles.drawing {
             if ui
                 .button("Stop minimaps")
-                .on_hover_text("Stop after the tile being drawn. What is drawn is kept.")
+                .on_hover_text("Stops after the tile being drawn. Tiles already drawn are kept.")
                 .clicked()
             {
                 tiles.stop.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -919,7 +919,7 @@ fn foot_panel(
         }
         if ui
             .add_enabled(open > 0, egui::Button::new("Import…"))
-            .on_hover_text("Choose a PNG to put on the selection: a height map or a blend map, any size.")
+            .on_hover_text("Choose a PNG to import onto the selection: a height map or a blend map, any size.")
             .on_disabled_hover_text("None of the selection is open: fly to it first.")
             .clicked()
         {
@@ -1046,13 +1046,13 @@ fn new_map_dialog(
         if form.is_instance() {
             instance_rows(ui, session, form, camera_at);
         }
-        ui.checkbox(&mut form.zone, "Make a zone on it")
+        ui.checkbox(&mut form.zone, "Create zone")
             .on_hover_text(
                 "An AreaTable zone named after the map, which the map's row names as its \
                  area. Paint it onto the ground with the Areas tool.",
             );
-        ui.checkbox(&mut form.open_it, "Open it")
-            .on_hover_text("Switch the editor to the new map once it is made, saving what is open.");
+        ui.checkbox(&mut form.open_it, "Open after creating")
+            .on_hover_text("Switches the editor to the new map once it is created, saving the open map first.");
         let problem = form.problem(&session.maps);
         if let Some(why) = &problem {
             ui.label(egui::RichText::new(why).size(theme::SMALL).color(theme::WARN));
@@ -1064,7 +1064,7 @@ fn new_map_dialog(
         );
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            if ui.add_enabled(problem.is_none(), egui::Button::new("Make")).clicked() {
+            if ui.add_enabled(problem.is_none(), egui::Button::new("Create")).clicked() {
                 asked = Some(Asked::NewMap);
             }
             if ui.button("Cancel").clicked() {
@@ -1094,10 +1094,10 @@ fn instance_rows(ui: &mut egui::Ui, session: &EditSession, form: &mut crate::too
                          A character who dies inside cannot release back into the dungeon. \
                          Their ghost is sent to the graveyard nearest this point, the corpse \
                          arrow points here, and walking into the portal brings them back to \
-                         life inside. Without it a ghost has nowhere to run back to.\n\n\
-                         Only a continent can hold it. Set the camera over the portal and \
-                         press Camera's place, or type the point below.";
-    const PARENT: &str = "Only for a dungeon whose way in is inside another dungeon, rather \
+                         life inside. Without it, a ghost has no entrance to return to.\n\n\
+                         It must be on a continent. Set the camera over the portal and \
+                         press Use camera position, or enter the point below.";
+    const PARENT: &str = "Only for a dungeon whose entrance is inside another dungeon, rather \
                           than out in the world: name that outer dungeon here.\n\n\
                           A character whose corpse lies in the outer dungeon may then walk \
                           their ghost into this one. Leave it at none for a dungeon entered \
@@ -1124,9 +1124,9 @@ fn instance_rows(ui: &mut egui::Ui, session: &EditSession, form: &mut crate::too
             .on_hover_text(GHOST);
         let here = CONTINENTS.contains(&session.map_id);
         if ui
-            .add_enabled(here, egui::Button::new("Camera's place"))
+            .add_enabled(here, egui::Button::new("Use camera position"))
             .on_hover_text(
-                "Use the point the camera is over on the open map. Open the continent and \
+                "Uses the point the camera is over on the open map. Open the continent and \
                  fly to the portal first.",
             )
             .on_disabled_hover_text("The open map is not a continent.")
@@ -1288,7 +1288,7 @@ fn import_dialog(
                 if open < selected.len() {
                     theme::note(
                         ui,
-                        format!("{open} of the {} selected tiles are open; the rest are left", selected.len()),
+                        format!("{open} of the {} selected tiles are open; the rest are not changed", selected.len()),
                     );
                 }
             }
@@ -1311,11 +1311,11 @@ fn import_dialog(
                 theme::note(
                     ui,
                     match pending.range_in_file {
-                        true => "from the file",
-                        false => "the selected tiles' lowest and highest ground now",
+                        true => "range read from the file",
+                        false => "range: the selected tiles' current lowest and highest ground",
                     },
                 );
-                ui.checkbox(&mut tiles.objects_follow, "Objects follow the ground");
+                ui.checkbox(&mut tiles.objects_follow, "Doodads and WMOs follow the ground");
             }
             Kind::Blends => {
                 theme::note(ui, "changes how each chunk's textures blend; adds no texture");

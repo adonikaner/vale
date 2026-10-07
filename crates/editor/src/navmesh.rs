@@ -152,7 +152,7 @@ impl Navmesh {
     /// Why the overlay cannot be drawn, or `None` when it can.
     pub fn unavailable(&self) -> Option<&str> {
         match &self.data_dir {
-            None => Some("the server's DataDir has not been looked up yet"),
+            None => Some("the server's DataDir has not been read from mangosd.conf yet"),
             Some(Err(why)) => Some(why),
             Some(Ok(_)) => None,
         }
@@ -175,7 +175,7 @@ impl Navmesh {
             line.push_str(&format!("; {missing} tiles have no .mmtile"));
         }
         if !self.loading.is_empty() {
-            line.push_str(&format!("; {} reading", self.loading.len()));
+            line.push_str(&format!("; {} loading", self.loading.len()));
         }
         if let Some(error) = self.resident.values().find_map(|r| r.error.as_deref()) {
             line.push_str(&format!("\nfailed: {error}"));
@@ -188,7 +188,7 @@ impl Navmesh {
         Surface::ALL
             .iter()
             .map(|&surface| format!("{}: {} ({})", colour_name(surface), surface.name(), surface.flags()))
-            .chain(std::iter::once("white: outline, an edge with no polygon beyond it".to_string()))
+            .chain(std::iter::once("white: outline, a polygon edge with no neighbouring polygon".to_string()))
             .collect::<Vec<_>>()
             .join("\n")
     }

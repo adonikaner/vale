@@ -172,7 +172,7 @@ pub fn draw(
                     None => field(
                         ui,
                         "pointer",
-                        egui::RichText::new("over nothing")
+                        egui::RichText::new("no surface")
                             .size(theme::SMALL)
                             .color(theme::INK_FAINT),
                     ),
@@ -214,7 +214,7 @@ pub fn draw(
         for (kind, label, fraction) in working {
             ui.add_space(4.0);
             theme::progress(ui, *fraction, kind, label, 320.0).on_hover_text(format!(
-                "{kind}: {label}, {:.0}%. Slow work, on a background thread. The editor \
+                "{kind}: {label}, {:.0}%. Runs on a background thread; the editor \
                  stays usable while it runs.",
                 fraction * 100.0
             ));

@@ -218,7 +218,7 @@ fn set_head(ui: &mut egui::Ui, subject: &mut Subject<'_>, set: Set, fix: Option<
     if set.entry == 0 {
         ui.label(
             egui::RichText::new(format!(
-                "{} is 0, so the server takes nothing from this table for it.",
+                "{} is 0, so the server reads no loot from this table for the selection.",
                 table.keyed_by
             ))
             .small()
@@ -257,8 +257,8 @@ fn reference_head(ui: &mut egui::Ui, subject: &mut Subject<'_>, reference: u32) 
                 .color(theme::INK_DIM),
         )
         .on_hover_text(
-            "A set shared between loot tables: any row whose mincountOrRef is this entry \
-             negated rolls it. Editing it changes every set that names it.",
+            "A set shared between loot tables: a row whose mincountOrRef is this entry, \
+             negated, rolls it. Editing it changes every set that references it.",
         );
     });
 }
@@ -360,16 +360,17 @@ fn percent(value: f32) -> String {
 fn group_heading(ui: &mut egui::Ui, group: u32, odds: crate::tools::loot::Odds) {
     let (title, meaning) = match group {
         0 => (
-            "Rolls alone".to_string(),
+            "No group".to_string(),
             "Each row rolls its own chance, so any number of these can drop together."
                 .to_string(),
         ),
         n => {
-            let title = format!("Group {n} \u{2014} one of these per roll");
+            let title = format!("Group {n} \u{2014} at most one row drops per roll");
             let meaning = match (odds.stated > 100.0, odds.stated > 0.0, odds.equal) {
                 (true, _, _) => format!(
-                    "The stated chances sum to {}%, over 100: a row whose chance starts past \
-                     100 is never reached, and the server logs the group at start.",
+                    "The stated chances sum to {}%, over 100: a row whose running total \
+                     starts above 100% is never reached, and the server logs an error for \
+                     the group at start.",
                     percent(odds.stated)
                 ),
                 (false, false, 0) => "No row has a chance, so nothing drops.".to_string(),
@@ -487,9 +488,9 @@ fn row(
         let switched = ui
             .checkbox(&mut quest, egui::RichText::new("quest").small())
             .on_hover_text(
-                "Offered only to a player on a quest that asks for the item: the chance \
-                 stored negative. On a reference the server reads it as an ordinary \
-                 chance and says so at load.",
+                "Quest drop: dropped only for a player whose active quest requires the \
+                 item. Stored as a negative chance. On a reference row the server treats \
+                 it as an ordinary chance and logs it at load.",
             )
             .changed();
         if (dragged.changed() && chance != shown.entry.chance) || switched {
@@ -567,7 +568,7 @@ fn row(
         let mut chosen: Option<u32> = None;
         let next = groups.iter().copied().max().unwrap_or(0) + 1;
         let word = |group: u32| match group {
-            0 => "Alone".to_string(),
+            0 => "No group".to_string(),
             n => format!("Group {n}"),
         };
         ui.add_enabled_ui(shown.life != Life::Delete, |ui| {
@@ -595,11 +596,11 @@ fn row(
                 })
                 .response
                 .on_hover_text(
-                    "groupid. Alone rolls this row's own chance; in a group, one row of the \
-                     group drops per roll. It is part of the row's key, so a change removes \
+                    "groupid. With no group, the row rolls its own chance; in a group, at \
+                     most one row of the group drops per roll. It is part of the row's key, so a change removes \
                      the row and creates it again in the new group, as one undo entry.",
                 )
-                .on_disabled_hover_text("Keep the row before moving it.");
+                .on_disabled_hover_text("Clear the removal mark with keep before changing the group.");
         });
         if let Some(group) = chosen.filter(|group| *group != shown.entry.group) {
             subject.loot.regroup(subject.session, set, shown, group, now);
@@ -728,7 +729,7 @@ fn reference_link(ui: &mut egui::Ui, subject: &mut Subject<'_>, reference: u32) 
     ));
     if link
         .on_hover_text(format!(
-            "Rolls {} {reference}, a set shared with every other row that names it. Open it.",
+            "Rolls {} {reference}, a set shared by every row that references it. Click to open it.",
             loot::REFERENCE
         ))
         .clicked()
@@ -744,7 +745,7 @@ fn adders(ui: &mut egui::Ui, subject: &mut Subject<'_>, set: Set) {
         if ui
             .small_button("+ item\u{2026}")
             .on_hover_text(format!(
-                "Add a row to {} {}: one of the item, at 100%, in no group.",
+                "Add a row to {} {}: a count of 1 of the chosen item, at 100%, in no group.",
                 set.table, set.entry
             ))
             .clicked()

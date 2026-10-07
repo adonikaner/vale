@@ -123,15 +123,15 @@ impl Answer {
     /// are any.
     pub fn line(&self, command: &str) -> String {
         match self {
-            Answer::Queued => format!("{command}: waiting to go out"),
+            Answer::Queued => format!("{command}: queued"),
             Answer::Waiting => format!("{command}: sent"),
             Answer::Answered(said) => format!("{command}: {said}"),
             Answer::NotACommand => format!(
-                "{command}: the server said it back instead of running it — \
+                "{command}: the server returned it as chat instead of running it — \
                  this account has no GM level"
             ),
-            Answer::Silent => format!("{command}: no answer in {PATIENCE:.0}s"),
-            Answer::Nowhere => format!("{command}: no playtest to send it on"),
+            Answer::Silent => format!("{command}: no reply in {PATIENCE:.0}s"),
+            Answer::Nowhere => format!("{command}: not sent: no playtest is connected"),
         }
     }
 }

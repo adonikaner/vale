@@ -292,7 +292,7 @@ fn events_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
             page_spacing(ui);
             ui.label(
                 egui::RichText::new(format!(
-                    "creature_ai_events for creature_template {}: every spawn of it, on every map.",
+                    "creature_ai_events for creature_template {}. They apply to every spawn of the creature on every map.",
                     about.entry
                 ))
                 .small()
@@ -340,8 +340,8 @@ fn events_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                     if cards.is_empty() {
                         theme::note(
                             ui,
-                            "No events. The creature reacts to nothing beyond its AI class. \
-                             + New event starts one; + Existing event copies one from any creature.",
+                            "No events. The creature runs only its AI class's default behaviour. \
+                             + New event creates one; + Existing event copies one from any creature.",
                         );
                     }
                     for event in &cards {
@@ -362,7 +362,7 @@ fn events_toolbar(ui: &mut egui::Ui, subject: &mut Subject<'_>, creature: u32, e
     ui.horizontal(|ui| {
         ui.menu_button("+ New event", |ui| {
             ui.set_min_width(220.0);
-            ui.label(egui::RichText::new("When it\u{2026}").small().color(theme::INK_FAINT));
+            ui.label(egui::RichText::new("Trigger").small().color(theme::INK_FAINT));
             for value in COMMON_TRIGGERS {
                 let Some(kind) = eventai::event_type(value) else { continue };
                 if ui.button(kind.name).on_hover_text(kind.about).clicked() {
@@ -386,15 +386,15 @@ fn events_toolbar(ui: &mut egui::Ui, subject: &mut Subject<'_>, creature: u32, e
         })
         .response
         .on_hover_text(
-            "A new event of this creature on the trigger chosen, with no script yet. Numbered \
-             creature entry times 100 plus the next free slot, the reference database's own \
-             convention.",
+            "Creates an event for this creature with the chosen trigger and no scripts. Its id \
+             is the creature entry times 100 plus the next free slot, as in the reference \
+             database.",
         );
         if ui
             .button("+ Existing event\u{2026}")
             .on_hover_text(
-                "Search every creature's events by comment, id or creature id, and copy one to \
-                 this creature: with copies of its scripts, or naming the same scripts.",
+                "Searches all creature_ai_events by comment, id or creature id, and copies one to \
+                 this creature, with copied scripts or with the same scripts shared.",
             )
             .clicked()
         {
@@ -426,7 +426,7 @@ fn ai_name_line(ui: &mut egui::Ui, subject: &mut Subject<'_>, template_key: &Key
         };
         ui.label(
             egui::RichText::new(format!(
-                "ai_name is {shown}, which never reads these events; only EventAI does."
+                "ai_name is {shown}. Only EventAI reads creature_ai_events, so these events never run."
             ))
             .small()
             .color(theme::BAD),
@@ -434,8 +434,8 @@ fn ai_name_line(ui: &mut egui::Ui, subject: &mut Subject<'_>, template_key: &Key
         if ui
             .small_button("Set ai_name to EventAI")
             .on_hover_text(
-                "Write EventAI into creature_template.ai_name. A guard or a pet keeps its own \
-                 class with the events on top (GuardEventAI, PetEventAI).",
+                "Writes EventAI to creature_template.ai_name. For a guard or a pet, use \
+                 GuardEventAI or PetEventAI instead; both also read the events.",
             )
             .clicked()
         {
@@ -496,10 +496,10 @@ fn event_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, card_of: &EventCard)
         then_lines(ui, subject, event.random_action(), &card_of.scripts);
         match shown.life {
             Life::Insert => {
-                ui.label(egui::RichText::new("new: Apply writes it").small().color(theme::WARN));
+                ui.label(egui::RichText::new("new: Apply inserts this event").small().color(theme::WARN));
             }
             Life::Delete => {
-                ui.label(egui::RichText::new("marked for removal: Apply deletes it").small().color(theme::BAD));
+                ui.label(egui::RichText::new("marked for removal: Apply deletes this event").small().color(theme::BAD));
             }
             Life::Update => {}
         }
@@ -590,7 +590,7 @@ fn event_details(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &ShownEven
         theme::heading(ui, "Note");
         let changed = subject.session.server_edits.get(eventai::TABLE, &shown.event.key(), "comment").is_some();
         let id = ui.make_persistent_id(("event", shown.event.id));
-        if let Some(written) = page_row(ui, "comment", "for the person; the server never reads it", changed, |ui| {
+        if let Some(written) = page_row(ui, "comment", "not read by the server", changed, |ui| {
             text_cell(ui, id.with("comment"), &vale_mangos::sql::text(&shown.event.comment))
         }) {
             let now = subject.now;
@@ -599,9 +599,9 @@ fn event_details(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &ShownEven
     });
     ui.horizontal(|ui| {
         let (label, about) = match shown.life {
-            Life::Delete => ("keep", "Take the removal mark off this event."),
-            Life::Insert => ("discard", "Give up this event; nothing in the database is touched."),
-            Life::Update => ("remove", "Mark the event for removal. Apply deletes it."),
+            Life::Delete => ("keep", "Clears the removal mark on this event."),
+            Life::Insert => ("discard", "Drops this unapplied event. The database is not changed."),
+            Life::Update => ("remove", "Marks the event for removal. Apply deletes the row."),
         };
         if small(ui, label, about) {
             let now = subject.now;
@@ -610,7 +610,7 @@ fn event_details(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &ShownEven
                 _ => subject.behaviour.remove_event(subject.session, shown, now),
             }
         }
-        if small(ui, "copy", "A copy of this event on this creature, naming the same scripts.") {
+        if small(ui, "copy", "Adds a copy of this event to this creature. The copy shares the same scripts.") {
             let about = subject.behaviour.about.clone();
             if let Some(about) = about {
                 let now = subject.now;
@@ -647,7 +647,7 @@ fn trigger_fields(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &ShownEve
         .collect();
     let edited = |column: &str| changed.contains(&column);
 
-    let written = page_row(ui, "event_type", "what fires it", edited("event_type"), |ui| {
+    let written = page_row(ui, "event_type", "the trigger type", edited("event_type"), |ui| {
         let written = choice_cell(ui, &event.get("event_type"), &eventai::EVENT_TYPE_VALUES, id.with("type"));
         if let Some(kind) = kind {
             meaning(ui, kind.about);
@@ -696,13 +696,13 @@ fn trigger_fields(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &ShownEve
     if let Some(written) = written {
         set(subject, "event_flags", written);
     }
-    let written = page_row(ui, "event_inverse_phase_mask", "the phases it does not fire in", edited("event_inverse_phase_mask"), |ui| {
+    let written = page_row(ui, "event_inverse_phase_mask", "phases in which the event does not fire", edited("event_inverse_phase_mask"), |ui| {
         flags_cell(ui, &event.get("event_inverse_phase_mask"), &eventai::PHASES, id.with("phases"))
     });
     if let Some(written) = written {
         set(subject, "event_inverse_phase_mask", written);
     }
-    let written = page_row(ui, "condition_id", "a row of conditions, or 0", edited("condition_id"), |ui| {
+    let written = page_row(ui, "condition_id", "conditions entry that must be met, or 0", edited("condition_id"), |ui| {
         let showing = event.get("condition_id");
         let written = number_cell(ui, Kind::Unsigned, &showing);
         let column = format!("{} {} condition_id", eventai::TABLE, key.text());
@@ -724,9 +724,9 @@ fn action_fields(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &ShownEven
     let mut random = event.random_action();
     let was = random;
     let flags_edited = edited(subject, "event_flags");
-    page_row(ui, "runs", "event_flags' Random action bit", flags_edited, |ui| {
+    page_row(ui, "action scripts", "event_flags' Random action bit", flags_edited, |ui| {
         ui.allocate_ui(egui::vec2(280.0, FORM_ROW), |ui| {
-            theme::segmented(ui, &mut random, &[("every script, in turn", false), ("one, at random", true)], |a, b| a == b);
+            theme::segmented(ui, &mut random, &[("all, in order", false), ("one at random", true)], |a, b| a == b);
         });
     });
     if random != was {
@@ -826,10 +826,10 @@ pub(super) fn script_controls(
     let button = ui
         .add_enabled(next.is_some(), egui::Button::new(egui::RichText::new("+ new").size(12.0)).small())
         .on_hover_text(format!(
-            "A new {table} script, numbered {}. It opens in the script window with no steps.",
+            "Creates an empty {table} script with id {} and opens it in the script window.",
             next.map(|id| id.to_string()).unwrap_or_default()
         ))
-        .on_disabled_hover_text("Reading the table's highest id.");
+        .on_disabled_hover_text("Reading the highest script id in the table.");
     if button.clicked() {
         if let Some(id) = next {
             behaviour.set_script(session, &Script::empty(table, id), now);
@@ -837,7 +837,7 @@ pub(super) fn script_controls(
             out = Some(id.to_string());
         }
     }
-    if script != 0 && small(ui, "clear", "Write 0: the column runs no script. The script itself is not touched.") {
+    if script != 0 && small(ui, "clear", "Writes 0 to the column, so no script runs. The script's steps are not changed.") {
         out = Some("0".to_string());
     }
     out
@@ -927,8 +927,8 @@ fn spells_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
             let Some(list) = subject.behaviour.list_of(about.spell_list_id, &subject.session.server_edits) else {
                 ui.label(
                     egui::RichText::new(format!(
-                        "creature_spells has no row {}. The server logs the missing list at \
-                         start and the creature casts nothing.",
+                        "creature_spells has no entry {}. The server logs an error at start \
+                         and the creature casts no spells.",
                         about.spell_list_id
                     ))
                     .small()
@@ -937,7 +937,7 @@ fn spells_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                 ui.horizontal(|ui| {
                     if ui
                         .small_button(format!("+ create list {}", about.spell_list_id))
-                        .on_hover_text("A creature_spells row at that entry, with every slot empty.")
+                        .on_hover_text("Creates a creature_spells row with this entry and all slots empty.")
                         .clicked()
                     {
                         let now = subject.now;
@@ -961,20 +961,20 @@ fn spells_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
             });
             match (list.life, subject.behaviour.users_of(list.list.entry, &subject.session.server_edits)) {
                 (Life::Insert, _) => {
-                    ui.label(egui::RichText::new("New: this list is in no database yet. Apply writes it.").small().color(theme::WARN));
+                    ui.label(egui::RichText::new("New: this list is not in the database yet. Apply inserts it.").small().color(theme::WARN));
                 }
                 (_, Some(users)) if users > 1 => {
                     ui.label(
                         egui::RichText::new(format!(
-                            "{users} creatures name this list, and an edit changes every one of them. \
-                             Copy into a new list to change this creature alone."
+                            "{users} creatures use this list; an edit changes all of them. \
+                             Use Copy into a new list to change this creature only."
                         ))
                         .small()
                         .color(theme::WARN),
                     );
                 }
                 (_, Some(_)) => {
-                    ui.label(egui::RichText::new("Only this creature names the list.").small().color(theme::INK_DIM));
+                    ui.label(egui::RichText::new("Only this creature uses this list.").small().color(theme::INK_DIM));
                 }
                 (_, None) => {}
             }
@@ -996,7 +996,7 @@ fn list_toolbar(ui: &mut egui::Ui, subject: &mut Subject<'_>, template_key: &Key
     ui.horizontal(|ui| {
         if ui
             .button("Use another list\u{2026}")
-            .on_hover_text("Search creature_spells by name or entry and point spell_list_id at the list chosen.")
+            .on_hover_text("Searches creature_spells by name or entry, and sets spell_list_id to the chosen list.")
             .clicked()
         {
             subject.behaviour.chooser = Some(Chooser::List(Search::default()));
@@ -1005,11 +1005,11 @@ fn list_toolbar(ui: &mut egui::Ui, subject: &mut Subject<'_>, template_key: &Key
             let copy = ui
                 .add_enabled(next.is_some(), egui::Button::new("Copy into a new list"))
                 .on_hover_text(format!(
-                    "A new creature_spells row at entry {} with this list's eight slots, and \
-                     spell_list_id pointed at it, so an edit changes this creature alone.",
+                    "Creates creature_spells entry {} with this list's eight slots and sets \
+                     spell_list_id to it, so later edits change this creature only.",
                     next.map(|n| n.to_string()).unwrap_or_default()
                 ))
-                .on_disabled_hover_text("Reading the table's highest entry.");
+                .on_disabled_hover_text("Reading the highest entry in creature_spells.");
             if copy.clicked() {
                 if let Some(entry) = next {
                     let now = subject.now;
@@ -1022,11 +1022,11 @@ fn list_toolbar(ui: &mut egui::Ui, subject: &mut Subject<'_>, template_key: &Key
         let empty = ui
             .add_enabled(next.is_some(), egui::Button::new("+ New empty list"))
             .on_hover_text(format!(
-                "A creature_spells row at entry {}, with every slot empty, and spell_list_id \
-                 pointed at it.",
+                "Creates creature_spells entry {} with all slots empty and sets spell_list_id \
+                 to it.",
                 next.map(|n| n.to_string()).unwrap_or_default()
             ))
-            .on_disabled_hover_text("Reading the table's highest entry.");
+            .on_disabled_hover_text("Reading the highest entry in creature_spells.");
         if empty.clicked() {
             if let Some(entry) = next {
                 let now = subject.now;
@@ -1049,7 +1049,7 @@ fn list_fields(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &ShownList) 
         .filter(|column| subject.session.server_edits.get(creaturespells::TABLE, &key, column).is_some())
         .collect();
     let edited = |column: &str| changed.contains(&column);
-    let written = page_row(ui, "name", "for the person; the server never reads it", edited("name"), |ui| {
+    let written = page_row(ui, "name", "not read by the server", edited("name"), |ui| {
         text_cell(ui, id.with("name"), &vale_mangos::sql::text(&list.name))
     });
     if let Some(written) = written {
@@ -1171,23 +1171,23 @@ fn script_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
             let table_info = scripts::table(table);
             ui.label(
                 egui::RichText::new(format!(
-                    "Named by {}. The steps run in this order, each after the wait before it.",
+                    "Referenced by {}. The steps run in this order, each after the wait shown above it.",
                     table_info.map(|t| t.keyed_by).unwrap_or("")
                 ))
                 .small()
                 .color(theme::INK_DIM),
             );
             match table_info.and_then(|t| t.reload) {
-                Some(reload) => theme::note(ui, format!("Live on `.reload {reload}`, which an apply made during a playtest sends.")),
+                Some(reload) => theme::note(ui, format!("Reloaded by `.reload {reload}`, which Apply sends during a playtest.")),
                 None => theme::note(ui, "Read at server start: an applied change needs a restart."),
             }
             if !scripts::waits(table) {
                 theme::note(
                     ui,
-                    "An event runs every step of a creature_ai_scripts script at once; the \
-                     server does not honour a delay here. For steps with waits between them, \
+                    "An event runs every step of a creature_ai_scripts script immediately; the \
+                     server ignores delay in this table. For steps with waits between them, \
                      add a Start script step and put the steps in the generic script it \
-                     starts, where the waits are seconds.",
+                     starts, where delay is in seconds.",
                 );
             }
             if let Some(trouble) = subject.behaviour.trouble.clone() {
@@ -1202,13 +1202,13 @@ fn script_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
             let in_database = subject.behaviour.script_in_database(table, id);
             match (claimed, in_database, script.rows.is_empty()) {
                 (true, true, true) => {
-                    ui.label(egui::RichText::new("Removed: Apply deletes every step under the id.").small().color(theme::BAD));
+                    ui.label(egui::RichText::new("Removed: Apply deletes every step with this id.").small().color(theme::BAD));
                 }
                 (true, false, _) => {
-                    ui.label(egui::RichText::new("New: this script is in no database yet. Apply writes it.").small().color(theme::WARN));
+                    ui.label(egui::RichText::new("New: this script is not in the database yet. Apply inserts its steps.").small().color(theme::WARN));
                 }
                 (true, true, false) => {
-                    ui.label(egui::RichText::new("Changed: Apply replaces every step under the id.").small().color(theme::WARN));
+                    ui.label(egui::RichText::new("Changed: Apply replaces every step with this id.").small().color(theme::WARN));
                 }
                 _ => {}
             }
@@ -1217,7 +1217,7 @@ fn script_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                 if claimed
                     && ui
                         .small_button("discard changes")
-                        .on_hover_text("Give up this project's claim on the script; the database's steps stand.")
+                        .on_hover_text("Drops this project's edits to the script. The database's steps stay as they are.")
                         .clicked()
                 {
                     let now = subject.now;
@@ -1250,7 +1250,7 @@ fn script_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                 .show(ui, |ui| {
                     ui.label(egui::RichText::new("START").size(theme::SMALL).strong().color(theme::INK_FAINT));
                     if script.rows.is_empty() {
-                        theme::note(ui, "No steps. A script with no steps does nothing; applied, it deletes the steps the database holds.");
+                        theme::note(ui, "No steps. An empty script does nothing; Apply deletes the steps the database holds for this id.");
                     }
                     let sorted = script.sorted();
                     for (at, row) in sorted.iter().enumerate() {
@@ -1260,7 +1260,7 @@ fn script_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                     if !script.rows.is_empty() {
                         ui.horizontal(|ui| {
                             ui.add_space(18.0);
-                            step_menu(ui, subject, &script, script.rows.len(), "+ then\u{2026}");
+                            step_menu(ui, subject, &script, script.rows.len(), "+ Step\u{2026}");
                         });
                         ui.label(egui::RichText::new("END").size(theme::SMALL).strong().color(theme::INK_FAINT));
                     }
@@ -1303,7 +1303,7 @@ fn wait_line(ui: &mut egui::Ui, subject: &mut Subject<'_>, script: &Script, at: 
             }
         } else if wait > 0 {
             ui.label(
-                egui::RichText::new(format!("delay {wait} s, which the server does not honour here"))
+                egui::RichText::new(format!("delay {wait} s, ignored by the server in this table"))
                     .small()
                     .color(theme::BAD),
             );
@@ -1339,7 +1339,7 @@ fn step_menu(ui: &mut egui::Ui, subject: &mut Subject<'_>, script: &Script, at: 
         });
     })
     .response
-    .on_hover_text("Put a step in here, run straight after the step before it.");
+    .on_hover_text("Inserts a step here, with the same delay as the step before it.");
     if let Some(command) = chosen {
         let next = script.with_step_inserted(at, ScriptRow::new(command));
         let now = subject.now;
@@ -1376,7 +1376,7 @@ fn step_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, script: &Script, at: 
                         }),
                     ));
                 }
-                if small(ui, "copy", "A copy of this step straight after it.") {
+                if small(ui, "copy", "Inserts a copy of this step directly after it.") {
                     change = Some((script.with_step_copied(at), Box::new(move |n| Some(if n > at { n + 1 } else { n }))));
                 }
                 if ui.add_enabled(at + 1 < count, egui::Button::new("down").small()).on_hover_text("Swap with the step after; the waits stay where they are.").clicked() {
@@ -1479,7 +1479,7 @@ fn step_fields(ui: &mut egui::Ui, subject: &mut Subject<'_>, script: &Script, at
             _ if showing == "0" => continue,
             _ => column,
         };
-        if let Some(written) = page_row(ui, name, "named by the target type", false, |ui| number(ui, Kind::Unsigned, &showing)) {
+        if let Some(written) = page_row(ui, name, "meaning set by target_type", false, |ui| number(ui, Kind::Unsigned, &showing)) {
             write(subject, column, &written);
         }
     }
@@ -1491,12 +1491,12 @@ fn step_fields(ui: &mut egui::Ui, subject: &mut Subject<'_>, script: &Script, at
     let coords = command.is_some_and(|c| c.coords) || row.x != 0.0 || row.y != 0.0 || row.z != 0.0 || row.o != 0.0;
     if coords {
         for column in ["x", "y", "z", "o"] {
-            if let Some(written) = page_row(ui, column, "read by the commands that move or place", false, |ui| number(ui, Kind::Float, &row.get(column))) {
+            if let Some(written) = page_row(ui, column, "read by commands that move or spawn", false, |ui| number(ui, Kind::Float, &row.get(column))) {
                 write(subject, column, &written);
             }
         }
     }
-    if let Some(written) = page_row(ui, "condition_id", "a row of conditions the step is skipped without, or 0", false, |ui| {
+    if let Some(written) = page_row(ui, "condition_id", "conditions entry that must be met for the step to run, or 0", false, |ui| {
         let showing = row.get("condition_id");
         let written = number(ui, Kind::Unsigned, &showing);
         let column = format!("{} {} step {} condition_id", script.table, script.id, at + 1);
@@ -1515,10 +1515,10 @@ fn step_fields(ui: &mut egui::Ui, subject: &mut Subject<'_>, script: &Script, at
     }) {
         write(subject, "delay", &written);
     }
-    if let Some(written) = page_row(ui, "priority", "order among steps with one delay", false, |ui| number(ui, Kind::Unsigned, &row.get("priority"))) {
+    if let Some(written) = page_row(ui, "priority", "order among steps with the same delay", false, |ui| number(ui, Kind::Unsigned, &row.get("priority"))) {
         write(subject, "priority", &written);
     }
-    if let Some(written) = page_row(ui, "comments", "for the person; the server never reads it", false, |ui| {
+    if let Some(written) = page_row(ui, "comments", "not read by the server", false, |ui| {
         text_cell(ui, id.with("comments"), &vale_mangos::sql::text(&row.comments))
     }) {
         write(subject, "comments", &unquote(&written));
@@ -1610,7 +1610,7 @@ fn text_buttons(ui: &mut egui::Ui, subject: &mut Subject<'_>, showing: &str, cel
                 );
             }
             None if subject.behaviour.text_read(entry) => {
-                ui.label(egui::RichText::new("no such text").small().color(theme::BAD));
+                ui.label(egui::RichText::new("no broadcast_text row").small().color(theme::BAD));
             }
             None => meaning(ui, "\u{2026}"),
         },
@@ -1627,7 +1627,7 @@ fn text_buttons(ui: &mut egui::Ui, subject: &mut Subject<'_>, showing: &str, cel
     let button = ui
         .add_enabled(next.is_some(), egui::Button::new(egui::RichText::new("+ new").size(12.0)).small())
         .on_hover_text(format!(
-            "A new broadcast_text row at entry {}, to be written in the form under this step.",
+            "Creates broadcast_text entry {}. Edit its text in the form under this step.",
             next.map(|n| n.to_string()).unwrap_or_default()
         ))
         .on_disabled_hover_text("Reading broadcast_text's highest entry.");
@@ -1647,7 +1647,7 @@ fn text_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, entry: u32) {
     let Some(shown) = subject.behaviour.text_of(entry, &subject.session.server_edits) else {
         if subject.behaviour.text_read(entry) {
             ui.label(
-                egui::RichText::new(format!("broadcast_text has no row {entry}; the step says nothing."))
+                egui::RichText::new(format!("broadcast_text has no entry {entry}; the step sends no text."))
                     .small()
                     .color(theme::BAD),
             );
@@ -1672,7 +1672,7 @@ fn text_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, entry: u32) {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(format!("broadcast_text {entry}")).strong().size(12.5));
             let note = match shown.life {
-                Life::Insert => "new: Apply writes it",
+                Life::Insert => "new: Apply inserts the row",
                 Life::Delete => "marked for removal",
                 Life::Update => "read at server start; an applied change needs a restart",
             };
@@ -1764,12 +1764,12 @@ fn search_box<T>(ui: &mut egui::Ui, search: &mut Search<T>, hint: &str) {
     } else if let Some((text, hits)) = &search.found {
         let line = match hits.len() {
             0 => format!("nothing matches \u{201c}{text}\u{201d}"),
-            n if n >= crate::tools::behaviour::SEARCH_LIMIT => format!("the first {n}; type more to narrow it"),
+            n if n >= crate::tools::behaviour::SEARCH_LIMIT => format!("first {n} matches; type more to narrow the search"),
             n => format!("{n} match(es)"),
         };
         ui.label(egui::RichText::new(line).small().color(theme::INK_FAINT));
     } else {
-        ui.label(egui::RichText::new("Type three characters or a number.").small().color(theme::INK_FAINT));
+        ui.label(egui::RichText::new("Type at least three characters or a number.").small().color(theme::INK_FAINT));
     }
 }
 
@@ -1785,9 +1785,9 @@ fn events_chooser(ui: &mut egui::Ui, subject: &mut Subject<'_>, search: &mut Sea
     ui.label(egui::RichText::new(format!("Add an existing event to {}", about.label)).strong().size(14.0));
     theme::note(
         ui,
-        "Searches creature_ai_events by comment, id and creature id. The reference database \
-         starts a comment with the creature's name, so a creature's name finds its events and \
-         \u{201c}Flee\u{201d} finds every creature that flees.",
+        "Searches creature_ai_events by comment, id and creature id. Comments in the reference \
+         database start with the creature's name, so a creature name finds that creature's \
+         events and \u{201c}Flee\u{201d} finds every flee event.",
     );
     search_box(ui, search, "Flee at 15% HP, Shadow Bolt, Hogger, 3160\u{2026}");
     let hits: Vec<Event> = search.hits().to_vec();
@@ -1835,7 +1835,7 @@ fn events_chooser(ui: &mut egui::Ui, subject: &mut Subject<'_>, search: &mut Sea
                     badge(ui, if event.random_action() { "ONE OF" } else { "THEN" }, theme::GOOD);
                     ui.vertical(|ui| {
                         if steps.is_empty() {
-                            ui.label(egui::RichText::new("nothing").color(theme::INK_FAINT));
+                            ui.label(egui::RichText::new("no scripts").color(theme::INK_FAINT));
                         }
                         for script in steps {
                             match script {
@@ -1857,15 +1857,15 @@ fn events_chooser(ui: &mut egui::Ui, subject: &mut Subject<'_>, search: &mut Sea
                 ui.horizontal(|ui| {
                     let ready = steps.iter().all(Option::is_some);
                     let copy = ui
-                        .add_enabled(ready, egui::Button::new("Add a copy"))
+                        .add_enabled(ready, egui::Button::new("Add with copied scripts"))
                         .on_hover_text(
-                            "A new event of this creature with the same trigger, and a copy of each \
-                             script under a new id, so an edit to it changes nothing else.",
+                            "Adds an event with the same trigger to this creature, with each script \
+                             copied to a new id. Edits to the copies change no other event.",
                         )
-                        .on_disabled_hover_text("Reading its scripts.");
-                    let share = ui.button("Add, sharing its scripts").on_hover_text(
-                        "A new event of this creature with the same trigger, naming the same \
-                         scripts. An edit to one of them changes every event that runs it.",
+                        .on_disabled_hover_text("Reading the event's scripts.");
+                    let share = ui.button("Add with shared scripts").on_hover_text(
+                        "Adds an event with the same trigger to this creature, with the same script \
+                         ids. An edit to a shared script changes every event that runs it.",
                     );
                     let how = match (copy.clicked(), share.clicked()) {
                         (true, _) => Some(CopyScripts::Copy),
@@ -1936,7 +1936,7 @@ fn script_chooser(ui: &mut egui::Ui, subject: &mut Subject<'_>, table: &'static 
                     ui.label(egui::RichText::new(format!("script {id}")).strong());
                     ui.add(egui::Label::new(egui::RichText::new(comment).small().color(theme::INK_DIM)).truncate());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Use this").clicked() {
+                        if ui.button("Use script").clicked() {
                             chosen = Some(*id);
                         }
                     });
@@ -1985,8 +1985,8 @@ fn list_chooser(ui: &mut egui::Ui, subject: &mut Subject<'_>, search: &mut Searc
     ui.label(egui::RichText::new(format!("Choose a spell list for {}", about.label)).strong().size(14.0));
     theme::note(
         ui,
-        "Searches creature_spells by name and entry. The list chosen is shared with every \
-         creature that names it; Copy into a new list, after, gives this creature its own.",
+        "Searches creature_spells by name and entry. The chosen list is shared with every \
+         creature that uses it; Copy into a new list then gives this creature its own copy.",
     );
     search_box(ui, search, "a name, or an entry");
     let lists: Vec<List> = search
@@ -2010,7 +2010,7 @@ fn list_chooser(ui: &mut egui::Ui, subject: &mut Subject<'_>, search: &mut Searc
                     ui.label(egui::RichText::new(format!("{} \u{b7} {}", list.entry, list.name)).strong());
                     ui.label(egui::RichText::new(format!("{} spell(s)", list.filled())).small().color(theme::INK_DIM));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Use this list").clicked() {
+                        if ui.button("Use list").clicked() {
                             chosen = Some(list.entry);
                         }
                     });
@@ -2033,13 +2033,13 @@ fn list_chooser(ui: &mut egui::Ui, subject: &mut Subject<'_>, search: &mut Searc
 
 /// Choose an existing text for a Talk step. Answers whether to close.
 fn text_chooser(ui: &mut egui::Ui, subject: &mut Subject<'_>, answer: &ScriptAnswer, search: &mut Search<u32>) -> bool {
-    ui.label(egui::RichText::new("Choose a text").strong().size(14.0));
+    ui.label(egui::RichText::new("Choose a broadcast_text entry").strong().size(14.0));
     theme::note(
         ui,
-        "Searches broadcast_text by what is said and by entry. A text can be said by any \
-         number of steps; an edit to it changes every one of them.",
+        "Searches broadcast_text by text and entry. Any number of steps can use one \
+         text; an edit to it changes every step that uses it.",
     );
-    search_box(ui, search, "words it says, or an entry");
+    search_box(ui, search, "text, or an entry");
     let texts: Vec<ShownText> = search
         .hits()
         .iter()
@@ -2059,7 +2059,7 @@ fn text_chooser(ui: &mut egui::Ui, subject: &mut Subject<'_>, answer: &ScriptAns
                             .color(theme::INK_FAINT),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Use this text").clicked() {
+                        if ui.button("Use text").clicked() {
                             chosen = Some(text.entry);
                         }
                     });

@@ -36,18 +36,18 @@ pub fn table_named(name: &str) -> Option<&'static str> {
 
 /// The twelve columns, in the loader's `SELECT` order.
 pub const COLUMNS: [Column; 12] = [
-    Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the text's own id, which a Talk step names" },
-    Column { name: "male_text", kind: Kind::Text, group: Group::Identity, about: "what is said" },
-    Column { name: "female_text", kind: Kind::Text, group: Group::Identity, about: "said instead by a female speaker, or empty" },
-    Column { name: "chat_type", kind: Kind::Choice(&crate::scripts::CHAT_TYPES), group: Group::Behaviour, about: "the kind of line; the Talk step's own chat_type decides how it is sent" },
-    Column { name: "sound_id", kind: Kind::Ref("SoundEntries"), group: Group::Behaviour, about: "played with the line, or 0" },
-    Column { name: "language_id", kind: Kind::Ref("Languages"), group: Group::Behaviour, about: "the language it is spoken in; 0 is understood by everyone" },
-    Column { name: "emote_id1", kind: Kind::Ref("Emotes"), group: Group::Behaviour, about: "played after emote_delay1, or 0" },
-    Column { name: "emote_id2", kind: Kind::Ref("Emotes"), group: Group::Behaviour, about: "played after emote_delay2, or 0" },
-    Column { name: "emote_id3", kind: Kind::Ref("Emotes"), group: Group::Behaviour, about: "played after emote_delay3, or 0" },
-    Column { name: "emote_delay1", kind: Kind::Millis, group: Group::Behaviour, about: "milliseconds after the line" },
-    Column { name: "emote_delay2", kind: Kind::Millis, group: Group::Behaviour, about: "" },
-    Column { name: "emote_delay3", kind: Kind::Millis, group: Group::Behaviour, about: "" },
+    Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the broadcast_text id; a Talk script step names the text by this id" },
+    Column { name: "male_text", kind: Kind::Text, group: Group::Identity, about: "the text that is said" },
+    Column { name: "female_text", kind: Kind::Text, group: Group::Identity, about: "the text said instead by a female speaker; empty uses male_text" },
+    Column { name: "chat_type", kind: Kind::Choice(&crate::scripts::CHAT_TYPES), group: Group::Behaviour, about: "the chat type of the line; the Talk step's own chat_type decides how it is sent" },
+    Column { name: "sound_id", kind: Kind::Ref("SoundEntries"), group: Group::Behaviour, about: "SoundEntries.dbc id of the sound played with the line, or 0" },
+    Column { name: "language_id", kind: Kind::Ref("Languages"), group: Group::Behaviour, about: "the language the line is spoken in; 0 is understood by everyone" },
+    Column { name: "emote_id1", kind: Kind::Ref("Emotes"), group: Group::Behaviour, about: "Emotes.dbc id of the emote played after emote_delay1, or 0" },
+    Column { name: "emote_id2", kind: Kind::Ref("Emotes"), group: Group::Behaviour, about: "Emotes.dbc id of the emote played after emote_delay2, or 0" },
+    Column { name: "emote_id3", kind: Kind::Ref("Emotes"), group: Group::Behaviour, about: "Emotes.dbc id of the emote played after emote_delay3, or 0" },
+    Column { name: "emote_delay1", kind: Kind::Millis, group: Group::Behaviour, about: "milliseconds after the line before emote_id1 plays" },
+    Column { name: "emote_delay2", kind: Kind::Millis, group: Group::Behaviour, about: "milliseconds after the line before emote_id2 plays" },
+    Column { name: "emote_delay3", kind: Kind::Millis, group: Group::Behaviour, about: "milliseconds after the line before emote_id3 plays" },
 ];
 
 /// One column, by name.

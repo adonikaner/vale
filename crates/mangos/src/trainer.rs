@@ -87,14 +87,14 @@ pub fn keyed_by(table: &str) -> &'static str {
 /// The columns of both tables, in `LoadTrainers`' `SELECT` order with the two
 /// build columns its `WHERE` filters on after them.
 pub const COLUMNS: [Column; 8] = [
-    Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the list: a creature entry, or a trainer_id for the template table" },
+    Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the training list: a creature entry, or a trainer_id in the template table" },
     Column { name: "spell", kind: Kind::Key, group: Group::Identity, about: "the teaching spell: its first effect is LEARN_SPELL, and it teaches its EffectTriggerSpell" },
     Column { name: "spellcost", kind: Kind::Money, group: Group::Services, about: "what training costs, in copper" },
     Column { name: "reqskill", kind: Kind::Ref("SkillLine"), group: Group::Requirements, about: "a SkillLine.dbc id the player must have, or 0" },
     Column { name: "reqskillvalue", kind: Kind::Unsigned, group: Group::Requirements, about: "the rank in reqskill the player needs" },
     Column { name: "reqlevel", kind: Kind::Unsigned, group: Group::Requirements, about: "the level the player needs; 0 is the teaching spell's own spellLevel" },
     Column { name: "build_min", kind: Kind::Key, group: Group::Identity, about: "the first client build the row is loaded at" },
-    Column { name: "build_max", kind: Kind::Key, group: Group::Identity, about: "…and the last" },
+    Column { name: "build_max", kind: Kind::Key, group: Group::Identity, about: "the last client build the row is loaded at" },
 ];
 
 /// One column, by name, of either table.
@@ -219,7 +219,7 @@ impl Lesson {
         }
         if !self.loaded() {
             out.push(format!(
-                "builds {}..{} leave out {BUILD}, so the server does not load it",
+                "build range {}..{} excludes {BUILD}, so the server does not load the row",
                 self.build_min, self.build_max
             ));
         }
@@ -265,7 +265,7 @@ pub fn spell_faults(taught: Option<Taught>, teacher: Option<u32>) -> Vec<String>
         });
     }
     if taught.talent {
-        out.push("a talent, which the server does not train".to_string());
+        out.push("the spell is a talent rank, and the server does not train talents".to_string());
     }
     out
 }
@@ -276,7 +276,7 @@ pub fn who_words(trainer_type: u32, class: u32, race: u32, spell: &str) -> Strin
     match trainer_type {
         0 => match class_word(class) {
             Some(class) => format!("A class trainer: it trains {class}s only."),
-            None => format!("A class trainer for class {class}, which is no 1.12 class, so it trains nobody."),
+            None => format!("A class trainer for class {class}, which is not a 1.12 class, so it trains nobody."),
         },
         1 => match race_word(race) {
             Some(race) => format!("A mount trainer: it trains {race}s, and anyone exalted with its faction."),
@@ -388,7 +388,7 @@ mod tests {
     fn a_row_outside_the_build_is_not_loaded() {
         assert!(Lesson::new(328, 1173).check().is_empty());
         let old = Lesson { build_max: 4878, ..Lesson::new(328, 1173) };
-        assert!(old.check()[0].contains("leave out 5875"), "{:?}", old.check());
+        assert!(old.check()[0].contains("excludes 5875"), "{:?}", old.check());
         let wide = Lesson { spell: 70_000, ..Lesson::new(328, 1173) };
         assert!(wide.check()[0].contains("does not fit"));
     }

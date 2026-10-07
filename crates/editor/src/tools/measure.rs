@@ -204,7 +204,7 @@ pub fn go_command(at: Vec3, map: u32) -> String {
 /// One line for the status bar about the span, set on the second click.
 pub fn said(span: &Span) -> String {
     format!(
-        "measured {:.1} yd ({:.1} yd across, {:+.1} yd up)",
+        "distance {:.1} yd ({:.1} yd horizontal, {:+.1} yd vertical)",
         span.distance, span.horizontal, span.rise
     )
 }

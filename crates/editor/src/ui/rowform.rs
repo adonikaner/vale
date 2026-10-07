@@ -516,11 +516,11 @@ pub fn flags_cell(
             }
         });
         let hover = match room {
-            true => "tick as many of the named bits as you like; the list stays open until \
-                     you click away"
+            true => "tick any number of the named bits; the list stays open until you \
+                     click outside it"
                 .to_string(),
-            false => format!("{words}\n\ntick as many of the named bits as you like; the list \
-                              stays open until you click away"),
+            false => format!("{words}\n\ntick any number of the named bits; the list stays \
+                              open until you click outside it"),
         };
         button.on_hover_text(hover);
     });
@@ -544,8 +544,8 @@ pub fn flags_cell(
 pub fn revert_button(ui: &mut egui::Ui, in_database: Option<&str>) -> bool {
     ui.small_button("\u{21ba}")
         .on_hover_text(match in_database {
-            Some(was) => format!("Put it back to {was}, which is what the database holds."),
-            None => "Put it back to what the database holds.".to_string(),
+            Some(was) => format!("Revert to {was}, the value the database holds."),
+            None => "Revert to the value the database holds.".to_string(),
         })
         .clicked()
 }
@@ -566,9 +566,9 @@ pub enum RowAct {
 pub fn remove_label(word: &str, claim: vale_mangos::row::Life) -> String {
     use vale_mangos::row::Life;
     match claim {
-        Life::Delete => "Keep: take the removal mark off".to_string(),
-        Life::Insert => format!("Remove: give this new {word} up"),
-        Life::Update => "Remove: mark it, and Apply deletes it".to_string(),
+        Life::Delete => "Keep: clear the removal mark".to_string(),
+        Life::Insert => format!("Remove: discard this new {word}"),
+        Life::Update => "Remove: mark for removal; Apply deletes the row".to_string(),
     }
 }
 
@@ -829,11 +829,11 @@ mod tests {
     #[test]
     fn a_removal_is_named_with_what_it_comes_to() {
         use vale_mangos::row::Life;
-        assert_eq!(remove_label("item", Life::Delete), "Keep: take the removal mark off");
-        assert_eq!(remove_label("quest", Life::Insert), "Remove: give this new quest up");
+        assert_eq!(remove_label("item", Life::Delete), "Keep: clear the removal mark");
+        assert_eq!(remove_label("quest", Life::Insert), "Remove: discard this new quest");
         assert_eq!(
             remove_label("item", Life::Update),
-            "Remove: mark it, and Apply deletes it"
+            "Remove: mark for removal; Apply deletes the row"
         );
     }
 }

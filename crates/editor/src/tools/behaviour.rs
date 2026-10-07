@@ -356,7 +356,7 @@ impl Behaviour {
                     continue;
                 }
                 let Some(rows) = self.script_of(scripts::CREATURE_AI, *script, session) else {
-                    return Err(format!("reading script {script}\u{2026}"));
+                    return Err(format!("reading creature_ai_scripts {script}\u{2026}"));
                 };
                 let preferred = (slot == 0).then_some(id);
                 let new_id = self

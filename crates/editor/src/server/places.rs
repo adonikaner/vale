@@ -439,7 +439,7 @@ pub fn save_group(session: &mut EditSession, group: Group) {
         }
         Err(e) => {
             warn!("{}: {e}", group.subject());
-            session.status = format!("saved, but {} did not: {e}", group.sql_vpath());
+            session.status = format!("saved, but writing {} failed: {e}", group.sql_vpath());
         }
     }
 }
@@ -668,14 +668,14 @@ pub fn revert_step(
     let Some(job) = prepare_revert(session, server, group)? else {
         return Ok(None);
     };
-    Ok(Some(super::stack::Step::new(format!("putting back {}", group.subject()), move || {
+    Ok(Some(super::stack::Step::new(format!("restoring {}", group.subject()), move || {
         let done = job.run();
         let ok = done.is_ok();
         let finish: super::queue::Finish = Box::new(move |session: &mut EditSession, reloads: &mut super::reload::Reloads| {
             session.status = match done {
                 Ok(rows) => {
                     finish_revert(session, reloads, group);
-                    format!("{rows} {} row(s) put back", group.noun())
+                    format!("{rows} {} row(s) restored", group.noun())
                 }
                 Err(e) => format!("{}: {e}", group.subject()),
             };

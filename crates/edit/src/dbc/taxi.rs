@@ -256,14 +256,14 @@ impl std::fmt::Display for Refused {
             Refused::NoSuchPoint(id) => write!(f, "TaxiPathNode has no point {id}"),
             Refused::SameNode => write!(f, "a path cannot start and end at the same node"),
             Refused::AlreadyConnected { from, to, path } => {
-                write!(f, "path {path} already flies from node {from} to node {to}")
+                write!(f, "path {path} already connects node {from} to node {to}")
             }
             Refused::TooFewPoints => write!(f, "a path needs at least two points"),
             Refused::NodeIdsExhausted => write!(
                 f,
                 "node ids stop at {MAX_NODE_ID}: the taxi mask has no bit for a higher one"
             ),
-            Refused::WrongWidth(table) => write!(f, "{table}.dbc is not the width 1.12 ships"),
+            Refused::WrongWidth(table) => write!(f, "{table}.dbc does not have the 1.12 record size"),
         }
     }
 }
@@ -592,18 +592,18 @@ impl std::fmt::Display for Finding {
                 highest,
             } => write!(
                 f,
-                "point {point} names path {path}, past the largest path id {highest}"
+                "point {point} names path {path}, above the largest path id {highest}"
             ),
             Finding::Dangling { path, node } => {
                 write!(f, "path {path} names node {node}, which does not exist")
             }
-            Finding::Short { path, points } => write!(f, "flight {path} has {points} point(s)"),
+            Finding::Short { path, points } => write!(f, "path {path} has {points} point(s); a flight needs at least two"),
             Finding::NodeTooHigh { node } => {
-                write!(f, "node {node} is past {MAX_NODE_ID} and cannot be flown to")
+                write!(f, "node {node} is above {MAX_NODE_ID}; the taxi mask has no bit for it")
             }
             Finding::Duplicate { from, to, paths } => write!(
                 f,
-                "paths {} and {} both fly from node {from} to node {to}",
+                "paths {} and {} both connect node {from} to node {to}",
                 paths[0], paths[1]
             ),
         }

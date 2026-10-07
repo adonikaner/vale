@@ -86,12 +86,12 @@ pub const FLAGS: [Bit; 2] = [
 /// The columns of both tables: `LoadVendors`' `SELECT`, with `slot` after
 /// `entry`, where the table has it.
 pub const COLUMNS: [Column; 7] = [
-    Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the list: a creature entry, or a vendor_id for the template table" },
-    Column { name: "slot", kind: Kind::Unsigned, group: Group::Services, about: "the place in the list the client is sent, lowest first" },
+    Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the vendor list: a creature entry, or a vendor_id in the template table" },
+    Column { name: "slot", kind: Kind::Unsigned, group: Group::Services, about: "the item's position in the list sent to the client, lowest first" },
     Column { name: "item", kind: Kind::Key, group: Group::Identity, about: "the item_template entry sold" },
-    Column { name: "maxcount", kind: Kind::Unsigned, group: Group::Services, about: "how many the vendor holds, 0 for no limit; up to 255" },
-    Column { name: "incrtime", kind: Kind::Seconds, group: Group::Services, about: "seconds before one more is restocked; set exactly when maxcount is" },
-    Column { name: "itemflags", kind: Kind::Flags(&FLAGS), group: Group::Services, about: "how the restock delay varies" },
+    Column { name: "maxcount", kind: Kind::Unsigned, group: Group::Services, about: "how many the vendor holds; 0 is no limit; up to 255" },
+    Column { name: "incrtime", kind: Kind::Seconds, group: Group::Services, about: "seconds before one more is restocked; set it exactly when maxcount is set" },
+    Column { name: "itemflags", kind: Kind::Flags(&FLAGS), group: Group::Services, about: "flags: how the restock delay varies" },
     Column { name: "condition_id", kind: Kind::Unsigned, group: Group::Services, about: "a row of `conditions` the player must meet to see the item, or 0" },
 ];
 

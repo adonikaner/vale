@@ -357,7 +357,7 @@ pub(super) fn target_of(table: &'static str) -> Option<Target> {
 fn either_words(column: &str) -> (&'static str, &'static str) {
     match column {
         "ZoneOrSort" => ("An area", "A quest sort"),
-        "PrevQuestId" | "NextQuestId" => ("Rewarded first", "Active at the time"),
+        "PrevQuestId" | "NextQuestId" => ("Rewarded", "Active"),
         _ => ("A creature", "A game object"),
     }
 }
@@ -379,16 +379,16 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>) {
     })
     .response
     .on_hover_text(
-        "quest_template, as the server would load it: one row per quest, at the highest \
-         content patch at or below the server's own.",
+        "quest_template as the server loads it: one row per quest, at the highest \
+         content patch at or below the server's patch.",
     );
 
     if let Some(trouble) = work.quests.trouble.clone() {
         ui.label(egui::RichText::new(trouble).small().color(theme::BAD));
         theme::note(
             ui,
-            "These are rows in vmangos' database rather than files. Server\u{2026} on the \
-             top bar is where this machine's is set, or VALE_MANGOSD.",
+            "Quests are rows in the vmangos world database, not files. Set the database \
+             in Server\u{2026} on the top bar, or with VALE_MANGOSD.",
         );
         return;
     }
@@ -403,7 +403,7 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>) {
     let width = ui.available_width();
     ui.add(
         egui::TextEdit::singleline(&mut work.quests.query)
-            .hint_text("title, entry, zone, or what kind of quest")
+            .hint_text("title, entry, zone, or quest type")
             .desired_width(width),
     );
     ui.add_space(4.0);
@@ -507,14 +507,14 @@ fn narrowing(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>)
                     .size(12.5),
             )
             .on_hover_text(format!(
-                "{} template entry {id}. The list is the quests it gives or takes, this \
-                 project's relations included.",
+                "{} template entry {id}. The list shows only the quests it gives or takes, \
+                 including relations added in this project.",
                 holder.word()
             ));
             ui.horizontal(|ui| {
                 if ui
-                    .small_button("show every quest")
-                    .on_hover_text("Stop narrowing the list to one creature's quests.")
+                    .small_button("show all quests")
+                    .on_hover_text("Clear the filter and list every quest.")
                     .clicked()
                 {
                     work.quests.of_holder = None;
@@ -523,7 +523,7 @@ fn narrowing(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>)
                 if holder == Holder::Creature
                     && ui
                         .small_button("back to Creatures")
-                        .on_hover_text("Switch to the creature tool, with its selection as it was.")
+                        .on_hover_text("Switch to the Creatures tool, with its previous selection.")
                         .clicked()
                 {
                     *shell.switch_to = Some(Tool::Creatures);
@@ -546,9 +546,9 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_
         if ui
             .add(egui::Button::new("+ New").min_size(size))
             .on_hover_text(
-                "A new quest_template row, numbered above anything upstream will reach: an \
-                 ordinary level 1 quest with no objectives, which the server loads. Nobody \
-                 gives it until a giver is added on the right.",
+                "Create a quest_template row in the reserved entry range, above the entries \
+                 upstream vmangos uses: a level 1 quest with no objectives. No creature or \
+                 game object gives it until a giver is added on the right.",
             )
             .clicked()
         {
@@ -558,8 +558,8 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_
         if ui
             .add_enabled(open.is_some(), egui::Button::new("Copy").min_size(size))
             .on_hover_text(
-                "A copy of this quest under a new entry, with every column as it is drawn. \
-                 Its givers and takers are not copied.",
+                "Copy this quest to a new entry, with every column as shown. Its givers \
+                 and takers are not copied.",
             )
             .on_disabled_hover_text("Open a quest first.")
             .clicked()
@@ -584,8 +584,8 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_
                     "Mark this quest for removal. Apply deletes every content-patch version \
                      of it and its rows in the four relation tables, \
                      areatrigger_involvedrelation and locales_quest, after writing the \
-                     statements that restore them. A quest this project created is given \
-                     up instead."
+                     statements that restore them. A quest this project created is \
+                     discarded instead."
                 }
             })
             .on_disabled_hover_text("Open a quest first.")
@@ -649,8 +649,8 @@ fn form(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>, open
                         theme::heading(ui, "No quest open");
                         theme::note(
                             ui,
-                            "Choose one on the left, or make one. Nothing reaches the \
-                             database until Apply, which is on the bar's Server\u{2026}.",
+                            "Select a quest on the left, or create one with + New. Edits \
+                             reach the database only on Apply, in Server\u{2026} on the top bar.",
                         );
                     }
                     Some(_) => {
@@ -689,11 +689,10 @@ fn edits_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_
         if ui
             .button("Server\u{2026}")
             .on_hover_text(
-                "Apply these rows, put them back, or give them up \u{2014} every server \
-                 operation is on one panel. A quest change applied with the panels open \
-                 over a playtest is live on a reload of quest_template and of each \
-                 relation table written; applied at any other time, it is live after a \
-                 restart.",
+                "Open the server panel, where these rows are applied, restored or \
+                 discarded. A quest change applied during a playtest takes effect on a \
+                 reload of quest_template and of each relation table written; applied at \
+                 any other time, it takes effect after a server restart.",
             )
             .clicked()
         {
@@ -888,7 +887,7 @@ fn entry_cell(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open, id: egui
     let trouble_id = id.with("trouble");
     if let Some(text) = finished(ui, id, &response, text) {
         let trouble = match text.trim().parse::<u32>() {
-            Err(_) => Some(format!("{text:?} is not an entry")),
+            Err(_) => Some(format!("{text:?} is not a valid entry number")),
             Ok(wanted) => {
                 let now = work.now;
                 work.quests.rekey(work.session, known, wanted, now).err()
@@ -911,25 +910,25 @@ fn entry_cell(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open, id: egui
         (Life::Insert, _) => ("renumbers this new quest".to_string(), theme::INK_FAINT),
         (_, true) => (
             format!(
-                "the database has it at {} until this is applied",
+                "the database row stays at entry {} until applied",
                 known.read_entry
             ),
             theme::WARN,
         ),
         _ => (
-            "moves the row, and what names it in the world database follows".to_string(),
+            "moves the row and every world database reference to it".to_string(),
             theme::INK_FAINT,
         ),
     };
     ui.label(egui::RichText::new(word).small().color(colour))
         .on_hover_text(format!(
-            "vmangos has no foreign keys, so the apply writes the cascade itself: every \
+            "vmangos has no foreign keys, so Apply updates every reference itself: every \
              content-patch version of the row, and the {} columns of the world database \
              that name a quest by entry: the four relation tables, \
              areatrigger_involvedrelation, locales_quest, game_event_quest, the chain \
-             columns of other quests, item_template.start_quest. Put back returns all of \
-             it.\n\nNot reached: character_queststatus in the characters database, so a \
-             character part way through the quest loses it.",
+             columns of other quests, item_template.start_quest. Restore reverts all of \
+             it.\n\nNot updated: character_queststatus in the characters database, so a \
+             character with the quest in progress loses it.",
             quest::REFERENCES.len()
         ));
 }
@@ -1333,7 +1332,7 @@ fn objective_lines(
 ) {
     run_heading(
         ui,
-        "Kill, use or cast on",
+        "Creatures and game objects",
         "ReqCreatureOrGOId, ReqCreatureOrGOCount, ReqSpellCast and ObjectiveText, a line per \
          objective. The id is a creature, or a game object when it is negative.",
     );
@@ -1380,7 +1379,7 @@ fn objective_lines(
 
     run_heading(
         ui,
-        "Bring",
+        "Required items",
         "ReqItemId and ReqItemCount: items handed over with the quest.",
     );
     pair_run(
@@ -1415,8 +1414,9 @@ fn objective_lines(
 
     run_heading(
         ui,
-        "On accepting",
-        "What is handed over or cast when the quest is taken.",
+        "On accept",
+        "SrcItemId and SrcItemCount: the item given to the player when the quest is \
+         accepted.",
     );
     if let (Some(item), Some(count)) = (
         quest::column(quest::TEMPLATE, "SrcItemId"),
@@ -1424,7 +1424,12 @@ fn objective_lines(
     ) {
         pair_row(ui, work, open, "Given item", item, "\u{d7}", count, drawn);
     }
-    run_heading(ui, "Also", "A reputation to reach, and a time limit.");
+    run_heading(
+        ui,
+        "Other objectives",
+        "RepObjectiveFaction and RepObjectiveValue (a reputation to reach), LimitTime (a time \
+         limit) and SrcSpell (a spell cast on the character on accept).",
+    );
     if let (Some(faction), Some(value)) = (
         quest::column(quest::TEMPLATE, "RepObjectiveFaction"),
         quest::column(quest::TEMPLATE, "RepObjectiveValue"),
@@ -1451,8 +1456,8 @@ fn reward_lines(
 ) {
     run_heading(
         ui,
-        "One of",
-        "RewChoiceItemId and RewChoiceItemCount: the player takes one.",
+        "Choice of one",
+        "RewChoiceItemId and RewChoiceItemCount: the player chooses one.",
     );
     pair_run(
         ui,
@@ -1467,7 +1472,7 @@ fn reward_lines(
     );
     run_heading(
         ui,
-        "Always",
+        "Always given",
         "RewItemId and RewItemCount: every one of these is given.",
     );
     pair_run(
@@ -1497,7 +1502,7 @@ fn reward_lines(
         5,
         drawn,
     );
-    run_heading(ui, "And", "Money, experience, a spell and a letter.");
+    run_heading(ui, "Other rewards", "Money, experience, spells and mail.");
 }
 
 /// Who may take it: the three id-and-value pairs, then the rest.
@@ -1538,7 +1543,7 @@ fn emote_lines(
     open: &Open,
     drawn: &mut Vec<&'static str>,
 ) {
-    run_heading(ui, "While offering", "DetailsEmote and DetailsEmoteDelay.");
+    run_heading(ui, "Details emotes", "DetailsEmote and DetailsEmoteDelay.");
     pair_run(
         ui,
         work,
@@ -1552,7 +1557,7 @@ fn emote_lines(
     );
     run_heading(
         ui,
-        "While rewarding",
+        "Reward emotes",
         "OfferRewardEmote and OfferRewardEmoteDelay.",
     );
     pair_run(
@@ -1566,7 +1571,7 @@ fn emote_lines(
         4,
         drawn,
     );
-    run_heading(ui, "While handing in", "IncompleteEmote and CompleteEmote.");
+    run_heading(ui, "Hand-in emotes", "IncompleteEmote and CompleteEmote.");
 }
 
 // ---------------------------------------------------------------------------
@@ -1579,7 +1584,7 @@ pub fn inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
     let open = open_now(&work);
     let work = &mut work;
     let Some(open) = open.as_ref() else {
-        theme::heading(ui, "In the log");
+        theme::heading(ui, "Quest log preview");
         match work.quests.open {
             None => theme::note(ui, "No quest open."),
             Some(_) => theme::waiting(ui, "reading the row\u{2026}"),
@@ -1630,7 +1635,7 @@ pub fn preview_text(text: &str) -> String {
 
 /// The log entry, composed from the row with this project's edits over it.
 fn log_entry(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
-    theme::heading(ui, "In the log");
+    theme::heading(ui, "Quest log preview");
     let session = &*work.session;
     let title = text_of(session, open, "Title");
     ui.label(
@@ -1845,10 +1850,10 @@ fn relations(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
                 ui,
                 match role {
                     Role::Gives => {
-                        "Nobody. It can still be started by an item's start_quest, by \
-                         another quest's NextQuestInChain, or by a script."
+                        "No creature or game object. The quest can still be started by an \
+                         item's start_quest, another quest's NextQuestInChain, or a script."
                     }
-                    Role::Takes => "Nobody. A quest nobody takes cannot be handed in.",
+                    Role::Takes => "No creature or game object. The quest cannot be handed in.",
                 },
             );
         }
@@ -1860,8 +1865,8 @@ fn relations(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
                 if ui
                     .small_button(format!("+ {}\u{2026}", holder.word()))
                     .on_hover_text(format!(
-                        "Add a row to {}: a {} that {} this quest. It names a template \
-                         entry, so every spawn of it does.",
+                        "Add a row to {}: a {} that {} this quest. The row names a template \
+                         entry, so it applies to every spawn of that template.",
                         crate::tools::quests::table_of(holder, role),
                         holder.word(),
                         role.word()
@@ -1895,7 +1900,7 @@ fn relation_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, relation: Relation,
             .unwrap_or_else(|| format!("{} {}", relation.holder.word(), relation.id));
         if ui
             .add(egui::Link::new(egui::RichText::new(name).color(colour)))
-            .on_hover_text("narrow the list to the quests this one gives or takes")
+            .on_hover_text("narrow the quest list to the quests this creature or game object gives or takes")
             .clicked()
         {
             work.quests.show_quests_of(relation.holder, relation.id);
@@ -1925,7 +1930,7 @@ fn relation_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, relation: Relation,
             Life::Delete => ("keep", "Take the removal mark off this row."),
             Life::Insert => (
                 "\u{d7}",
-                "Give up this relation, which is in no database yet.",
+                "Discard this relation. It is not in the database yet.",
             ),
             Life::Update => (
                 "\u{d7}",
@@ -1961,14 +1966,14 @@ fn chain(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
     if prev != 0 {
         any = true;
         let word = match prev > 0 {
-            true => "after",
-            false => "while active:",
+            true => "requires rewarded",
+            false => "requires active",
         };
         line(ui, work, word, prev.unsigned_abs() as u32);
     }
     for (column, word) in [
         ("NextQuestId", "unlocks"),
-        ("NextQuestInChain", "offers next"),
+        ("NextQuestInChain", "next in chain"),
     ] {
         let next = number_of(work.session, open, column);
         if next != 0 {
@@ -1989,7 +1994,7 @@ fn chain(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
             } else if other.next.abs() == entry {
                 Some((other.entry, "unlocked by"))
             } else if other.next_in_chain as i32 == entry {
-                Some((other.entry, "offered after"))
+                Some((other.entry, "previous in chain"))
             } else {
                 None
             }
@@ -2001,7 +2006,7 @@ fn chain(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
         line(ui, work, word, other);
     }
     if !any {
-        theme::note(ui, "It stands alone: no quest names it and it names none.");
+        theme::note(ui, "Not in a chain: no other quest references this quest, and it references none.");
     }
 }
 
@@ -2201,7 +2206,7 @@ pub(super) fn picker(
                     role.word()
                 )
             }
-            PickFor::QuestOf { role, .. } => format!("Choose a quest it {}", role.word()),
+            PickFor::QuestOf { role, .. } => format!("Choose a quest the selection {}", role.word()),
             PickFor::ServerColumn(target) => format!("Choose {}", target.column),
             PickFor::LootItem { table, entry } => format!("Choose an item for {table} {entry}"),
             PickFor::VendorItem { table, entry } => format!("Choose an item for {table} {entry}"),
@@ -2239,7 +2244,7 @@ pub(super) fn picker(
 
         let hint = match picker.target {
             Target::Item | Target::Creature | Target::Object => "part of a name, or an entry",
-            Target::List(_) => "a creature that uses it, what it holds, or an id",
+            Target::List(_) => "name of a creature, object or item using it, its contents, or an id",
             _ => "name, or an id",
         };
         let search = ui.add(
@@ -2281,7 +2286,7 @@ pub(super) fn picker(
         if picker.hits.len() >= PICK_LIMIT {
             theme::note(
                 ui,
-                format!("The first {PICK_LIMIT}. Type more to narrow it."),
+                format!("Showing the first {PICK_LIMIT} matches. Type more to narrow the search."),
             );
         }
         ui.add_space(4.0);
@@ -2489,7 +2494,7 @@ pub fn holder_window(ctx: &egui::Context, mut subject: HolderQuests<'_>) -> Opti
         .show(ctx, |ui| {
             ui.label(
                 egui::RichText::new(format!(
-                    "{template} entry {entry}: every spawn of it gives and takes these."
+                    "{template} entry {entry}: these relations apply to every spawn of this template."
                 ))
                 .small()
                 .color(theme::WARN),
@@ -2556,8 +2561,8 @@ pub fn holder_window(ctx: &egui::Context, mut subject: HolderQuests<'_>) -> Opti
             if ui
                 .button("Open in the quest workspace")
                 .on_hover_text(format!(
-                    "Switch to Quests with the list narrowed to this {noun}'s quests, \
-                     where each one's text, objectives and rewards are edited.",
+                    "Switch to the Quests tool with the list narrowed to this {noun}'s \
+                     quests, to edit their text, objectives and rewards.",
                 ))
                 .clicked()
             {

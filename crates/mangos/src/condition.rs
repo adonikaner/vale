@@ -65,12 +65,12 @@ pub const REVERSE: u8 = 0x1;
 
 /// `conditions`, in table order.
 pub const COLUMNS: [Column; 7] = [
-    Column { name: "condition_entry", kind: Kind::Key, group: Group::Identity, about: "the id other tables name it by" },
-    Column { name: "type", kind: Kind::Signed, group: Group::Identity, about: "what is tested" },
-    Column { name: "value1", kind: Kind::Signed, group: Group::Requirements, about: "the first value; the type says what it is" },
-    Column { name: "value2", kind: Kind::Signed, group: Group::Requirements, about: "the second value" },
-    Column { name: "value3", kind: Kind::Signed, group: Group::Requirements, about: "the third value" },
-    Column { name: "value4", kind: Kind::Signed, group: Group::Requirements, about: "the fourth value" },
+    Column { name: "condition_entry", kind: Kind::Key, group: Group::Identity, about: "the condition id that other tables reference" },
+    Column { name: "type", kind: Kind::Signed, group: Group::Identity, about: "the condition type: what is tested" },
+    Column { name: "value1", kind: Kind::Signed, group: Group::Requirements, about: "the first value; its meaning depends on the type" },
+    Column { name: "value2", kind: Kind::Signed, group: Group::Requirements, about: "the second value; its meaning depends on the type" },
+    Column { name: "value3", kind: Kind::Signed, group: Group::Requirements, about: "the third value; its meaning depends on the type" },
+    Column { name: "value4", kind: Kind::Signed, group: Group::Requirements, about: "the fourth value; its meaning depends on the type" },
     Column { name: "flags", kind: Kind::Flags(&FLAGS), group: Group::Requirements, about: "reverse the result, or swap target and source" },
 ];
 
@@ -331,7 +331,7 @@ pub fn check_tree(condition: &Condition, exists: impl Fn(u32) -> bool) -> Vec<St
         .children()
         .into_iter()
         .filter(|child| !exists(*child))
-        .map(|child| format!("condition {child}, which it names, does not exist"))
+        .map(|child| format!("names condition {child}, which does not exist"))
         .collect()
 }
 
@@ -764,7 +764,7 @@ mod tests {
         let empty = Condition { values: [4, 0, 0, 0], ..and.clone() };
         assert_eq!(empty.check().len(), 1, "an AND needs two");
         let missing = check_tree(&and, |entry| entry == 4);
-        assert_eq!(missing, vec!["condition 7, which it names, does not exist".to_string()]);
+        assert_eq!(missing, vec!["names condition 7, which does not exist".to_string()]);
     }
 
     #[test]

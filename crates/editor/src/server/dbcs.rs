@@ -97,7 +97,7 @@ fn write_absent(project: &Project, names: &[String]) -> Result<(), String> {
     }
     let mut text = String::from(
         "# The server's DataDir\\5875\\dbc had no file by these names before this project\n\
-         # copied one there. Put back deletes them.\n",
+         # copied one there. Restore deletes them.\n",
     );
     for name in names {
         text.push_str(name);
@@ -142,7 +142,7 @@ impl Standing {
         };
         if !self.stale.is_empty() {
             line.push_str(&format!(
-                "; {} to put back, no longer changed",
+                "; {} no longer changed, restored on the next apply",
                 self.stale.len()
             ));
         }
@@ -192,7 +192,7 @@ impl Synced {
             parts.push(format!("{} copied into DataDir\\5875\\dbc", self.written.join(", ")));
         }
         if !self.restored.is_empty() {
-            parts.push(format!("{} put back", self.restored.join(", ")));
+            parts.push(format!("{} restored", self.restored.join(", ")));
         }
         match parts.is_empty() {
             true => "the server DBC files were already current".to_string(),
@@ -228,7 +228,7 @@ pub fn apply_at(project: &Project, dbc_dir: &Path) -> Result<Synced, String> {
             Ok(bytes) => {
                 project
                     .write(&format!("{BEFORE_DIR}\\{name}"), &bytes)
-                    .map_err(|e| format!("saving the server's {name}: {e}"))?;
+                    .map_err(|e| format!("saving the server's original {name}: {e}"))?;
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => missing.push(name.clone()),
             Err(e) => return Err(format!("{}: {e}", dbc_dir.join(name).display())),

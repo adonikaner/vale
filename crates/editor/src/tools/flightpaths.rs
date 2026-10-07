@@ -1181,7 +1181,7 @@ fn make_path(
                 record(session, label, done);
                 flights.stale();
                 flights.path = there;
-                return format!("path {} made; the path back was not: {e}", there.unwrap_or(0));
+                return format!("path {} made; creating the return path failed: {e}", there.unwrap_or(0));
             }
         }
     }

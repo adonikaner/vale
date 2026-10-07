@@ -283,8 +283,8 @@ fn settle(
         session.stale.insert(*coord);
     }
     session.status = match rows.len() {
-        1 => format!("moved to tile {},{}", home.0, home.1),
-        n => format!("{n} rows collapsed into one, in tile {},{}", home.0, home.1),
+        1 => format!("moved the placement to tile {},{}", home.0, home.1),
+        n => format!("merged {n} copies of the placement into one, in tile {},{}", home.0, home.1),
     };
     Some((home, landed))
 }

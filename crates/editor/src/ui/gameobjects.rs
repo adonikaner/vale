@@ -217,8 +217,8 @@ fn panel(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     let Some(spawn) = subject.objects.chosen_edited(Some(&subject.session.server_edits)) else {
         theme::note(
             ui,
-            "Click a game object in the viewport to open it. The nearest ones are drawn as \
-             models; everything further out is a square on the ground.",
+            "Click a game object in the viewport to select it. The nearest spawns are drawn \
+             as models; the rest are drawn as squares on the ground.",
         );
         return;
     };
@@ -252,7 +252,7 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(match (subject.objects.reading(), mine) {
-                (true, _) => "reading the map…".to_string(),
+                (true, _) => "reading the map's spawns…".to_string(),
                 (false, 0) => format!("{spawns} spawn(s) on this map, {near} near"),
                 // Kept short: the Reload button shares the line, and egui
                 // clips text that does not fit.
@@ -273,8 +273,8 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     });
     ui.horizontal(|ui| {
         ui.checkbox(&mut subject.objects.show_models, "Models").on_hover_text(
-            "Draw the nearest spawns as the objects they are. Off leaves the squares, which \
-             are what everything past the budget gets anyway.",
+            "Draws the nearest spawns with their models. Off, every spawn is drawn as a \
+             square; spawns past the model limit are always squares.",
         );
         ui.add(
             egui::DragValue::new(&mut subject.objects.model_budget)
@@ -282,7 +282,7 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
                 .range(0..=3000)
                 .prefix("at most "),
         )
-        .on_hover_text("How many models at once, nearest first.");
+        .on_hover_text("Maximum number of spawns drawn as models, nearest first.");
     });
 }
 
@@ -294,15 +294,15 @@ fn nothing_to_show(ui: &mut egui::Ui, subject: &Subject<'_>) {
             ui.label(egui::RichText::new(trouble).small().color(theme::WARN));
             theme::note(
                 ui,
-                "Game objects are rows in vmangos' database rather than files in the \
-                 archives, so this tool needs a connection. Server… on the top bar is where \
-                 it is set.",
+                "Game objects are rows in the vmangos world database, not files in the \
+                 archives, so this tool needs a database connection. Set it in Server… on \
+                 the top bar.",
             );
         }
         None if subject.objects.reading() => {
             theme::waiting(ui, "reading\u{2026}");
         }
-        None => theme::note(ui, "No game object stands on this map."),
+        None => theme::note(ui, "This map has no game object spawns."),
     }
 }
 
@@ -344,19 +344,19 @@ fn edits_block(
     match (undoable, outstanding, plan.is_empty()) {
         (0, _, false) => theme::note(
             ui,
-            "Not applied. The database still holds what it did; what is drawn here is this \
-             project's own.",
+            "Not applied. The database holds its original values; the editor draws this \
+             project's values.",
         ),
         (n, 0, false) => {
             let line = match on_server.current() {
                 true => format!(
-                    "Applied — all {n} row(s) are in the database. Restart the server to see \
-                     them; Put back undoes it."
+                    "Applied — all {n} row(s) are in the database. Restart the server to load \
+                     them; Restore reverts them."
                 ),
                 false => format!(
-                    "Applied — all {n} row(s) are in the database, though not necessarily at \
-                     the values shown: something has been edited since, or this is a later \
-                     session. Apply again to be sure."
+                    "Applied — all {n} row(s) are in the database, but their values may differ \
+                     from the values shown: a row was edited after the apply, or the apply was \
+                     made in an earlier session. Apply again to write the values shown."
                 ),
             };
             ui.label(egui::RichText::new(line).small().color(theme::INK_DIM));
@@ -364,7 +364,7 @@ fn edits_block(
         (n, out, false) => {
             ui.label(
                 egui::RichText::new(format!(
-                    "{out} not applied yet; {n} row(s) are in the database and undoable"
+                    "{out} row(s) not applied; {n} applied row(s) can be restored"
                 ))
                 .small()
                 .color(theme::WARN),
@@ -373,7 +373,7 @@ fn edits_block(
         (n, _, true) => {
             ui.label(
                 egui::RichText::new(format!(
-                    "{n} row(s) applied and undoable, and this project now changes none of them"
+                    "{n} applied row(s) can be restored; this project no longer changes any of them"
                 ))
                 .small()
                 .color(theme::WARN),
@@ -383,8 +383,8 @@ fn edits_block(
     if ui
         .button("Server\u{2026}")
         .on_hover_text(format!(
-            "Apply these rows, put them back, or give them up — every server operation is on \
-             one panel. {REVERT} is what puts them back.",
+            "Opens the Server panel, which applies, restores or discards these rows. \
+             Restore runs {REVERT}.",
         ))
         .clicked()
     {
@@ -392,8 +392,8 @@ fn edits_block(
     }
     theme::note(
         ui,
-        "Applying writes the rows and nothing else — the server reads its game objects once, \
-         at startup, so restart it to see them.",
+        "Apply writes the rows only. The server reads game objects once, at startup; restart \
+         it to load them.",
     );
     ui.separator();
 }
@@ -431,10 +431,10 @@ fn picker(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
             }
             theme::note(
                 ui,
-                "Click the ground to place it. Escape puts it down; every column of \
-                 the row can be edited afterwards in Select.",
+                "Click the ground to place it. Escape clears the chosen object. Every \
+                 column of the new row can be edited afterwards in Select.",
             );
-            theme::note(ui, ", and . turn it \u{b7} shift is three times \u{b7} alt + mouse turns it");
+            theme::note(ui, ", and . turn it \u{b7} shift turns three times as far \u{b7} alt + mouse turns it");
             theme::note(ui, "ctrl with alt snaps the turn to 15\u{b0}");
             // The window's toggle, here as well as under a selected spawn, so
             // an object can be edited before any spawn of it exists.
@@ -442,8 +442,8 @@ fn picker(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
             if ui
                 .selectable_label(open, "Edit object…")
                 .on_hover_text(
-                    "Open gameobject_template's columns in a window of their own. The window \
-                     follows the chosen object.",
+                    "Opens the gameobject_template columns in a separate window. The window \
+                     shows the chosen object.",
                 )
                 .clicked()
             {
@@ -456,16 +456,16 @@ fn picker(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
                 }
                 None => theme::note(
                     ui,
-                    "Display id 0, or one GameObjectDisplayInfo does not hold: it is placed \
-                     and drawn as a mark with no model, which is what a trap and a spell \
-                     focus usually are.",
+                    "displayId is 0 or has no GameObjectDisplayInfo.dbc row. The object is \
+                     placed and drawn as a marker with no model. Traps and spell focus objects \
+                     usually have no model.",
                 ),
             }
         }
         None => theme::note(
             ui,
-            "No object chosen. Find one below by name or entry, or list a type; the next \
-             click on the ground puts it there.",
+            "No object chosen. Search below by name or entry, or choose a type, then click \
+             the ground to place the chosen object.",
         ),
     }
 
@@ -501,9 +501,9 @@ fn picker(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
             })
             .response
             .on_hover_text(
-                "Narrow the matches to one gameobject_template.type. With a type chosen the \
-                 list fills without anything typed. A vein, a herb and a treasure chest are \
-                 all Chest.",
+                "Filters the matches by gameobject_template.type. With a type chosen, the \
+                 list shows matches without search text. Mining veins, herbs and treasure \
+                 chests are all type Chest.",
             );
     });
     if let Some(trouble) = subject.objects.new_spawn.trouble.clone() {
@@ -521,7 +521,7 @@ fn picker(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     let matches = subject.objects.new_spawn.matches.clone();
     if matches.is_empty() {
         ui.label(
-            egui::RichText::new("no game object of that name")
+            egui::RichText::new("no matching game object")
                 .small()
                 .color(theme::INK_DIM),
         );
@@ -545,7 +545,7 @@ fn picker(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
             }
         });
     if matches.len() >= 50 {
-        theme::note(ui, "The first 50. Type more of the name to narrow it.");
+        theme::note(ui, "Showing the first 50 matches. Type more of the name to narrow the list.");
     }
 }
 
@@ -569,10 +569,10 @@ fn template_actions(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         if ui
             .add(egui::Button::new("+ New").min_size(size))
             .on_hover_text(
-                "A new gameobject_template row, numbered above anything upstream will \
-                 reach. It starts as a generic object of size 1 with no model: a row the \
-                 server loads, drawn as a mark until displayId is chosen. The window opens \
-                 on it.",
+                "Creates a gameobject_template row with an entry from 2,000,000 up, clear of \
+                 upstream vmangos entries. It starts as a Generic object of size 1 with no \
+                 model, drawn as a marker until displayId is set. Opens the template window \
+                 on the new row.",
             )
             .clicked()
         {
@@ -583,9 +583,9 @@ fn template_actions(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         if ui
             .add_enabled(row_read, egui::Button::new("Copy").min_size(size))
             .on_hover_text(
-                "A copy of the chosen object under a new entry, with every column as it \
-                 is shown: the database's value where this project has not changed it \
-                 and the project's where it has.",
+                "Creates a copy of the chosen gameobject_template row under a new entry. \
+                 Each column takes the value shown: this project's edit where there is one, \
+                 otherwise the database value.",
             )
             .on_disabled_hover_text("Choose an object first.")
             .clicked()
@@ -601,8 +601,8 @@ fn template_actions(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         if ui
             .add_enabled(created, egui::Button::new("Discard").min_size(size))
             .on_hover_text(
-                "Give up the template this project was going to create. Nothing in the \
-                 database is touched. A template the database holds cannot be removed: \
+                "Discards the gameobject_template row this project creates. The database is \
+                 not changed. A row already in the database cannot be removed: \
                  .reload gameobject_template never drops an entry it has read.",
             )
             .on_disabled_hover_text("Only an object this project created can be discarded.")
@@ -694,8 +694,8 @@ fn claim(
             egui::RichText::new(match written {
                 false => "New — this project creates it. There is no row in the database yet.",
                 true => {
-                    "New — created by this project and applied. The database holds the row; \
-                     the server has to be restarted to see it in the world."
+                    "New — created by this project and applied. The row is in the database; \
+                     restart the server to load it."
                 }
             })
             .small()
@@ -706,12 +706,12 @@ fn claim(
         ui.label(
             egui::RichText::new(match written {
                 false => {
-                    "Marked for removal. Applying deletes the row, and with it the spawn's \
-                     game-event and battleground rows."
+                    "Marked for removal. Apply deletes the gameobject row and the spawn's \
+                     game_event_gameobject and gameobject_battleground rows."
                 }
                 true => {
-                    "Removed, and applied. The row and its two dependent tables are gone from \
-                     the database; Put back restores all three."
+                    "Removed and applied. The gameobject row and its game_event_gameobject and \
+                     gameobject_battleground rows are deleted; Restore reverts them."
                 }
             })
             .small()
@@ -721,15 +721,15 @@ fn claim(
     ui.horizontal(|ui| match spawn.is_removed() {
         true => {
             if ui
-                .button("Keep it")
+                .button("Cancel removal")
                 .on_hover_text(
-                    "Take the removal back. Any columns this project had changed on it are \
-                     still changed.",
+                    "Unmarks the spawn for removal. This project's column edits to it are \
+                     kept.",
                 )
                 .clicked()
             {
                 GameObjects::keep(subject.session, spawn.guid, now);
-                subject.session.status = format!("game object {} is kept", spawn.guid);
+                subject.session.status = format!("game object {} removal cancelled", spawn.guid);
             }
         }
         false => {
@@ -741,17 +741,16 @@ fn claim(
                 .button(egui::RichText::new(word).color(theme::BAD))
                 .on_hover_text(match (spawn.is_new(), written) {
                     (true, true) => {
-                        "Give up this project's claim on the spawn. The row is already in \
-                         the database and stays there — Put back is what removes it."
+                        "Discards the spawn from this project. The row is already in the \
+                         database and stays there; Restore removes it."
                     }
                     (true, false) => {
-                        "Give up the spawn this project was going to create. Nothing in the \
-                         database is touched."
+                        "Discards the spawn this project creates. The database is not changed."
                     }
                     (false, _) => {
-                        "Mark the row for deletion. Nothing happens until Apply, and then the \
-                         server has to be restarted — .reload gameobject never erases a spawn \
-                         it has already read."
+                        "Marks the gameobject row for deletion. Apply deletes it; then restart \
+                         the server, because .reload gameobject never removes a spawn it has \
+                         already read."
                     }
                 })
                 .clicked()
@@ -788,7 +787,7 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         }
     }
     ui.horizontal(|ui| {
-        if ui.small_button("Go to").on_hover_text("Put the camera on it.").clicked() {
+        if ui.small_button("Go to").on_hover_text("Moves the camera to this spawn.").clicked() {
             subject.objects.fly_to(spawn.at);
         }
         let has_row = subject
@@ -799,8 +798,8 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         if ui
             .add_enabled(has_row, egui::Button::new("Duplicate"))
             .on_hover_text(
-                "Another spawn of this object two yards north, carrying every column this \
-                 one has — including the ones this project has changed.",
+                "Creates a spawn of this object two yards north, with every column copied \
+                 from this spawn, including this project's edits.",
             )
             .on_disabled_hover_text("Still reading this spawn's row.")
             .clicked()
@@ -818,7 +817,7 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
             .filter(|other| other.entry == spawn.entry)
             .count();
         ui.label(
-            egui::RichText::new(format!("{others} of this object on this map"))
+            egui::RichText::new(format!("{others} spawn(s) of this object on this map"))
                 .small()
                 .color(theme::INK_FAINT),
         );
@@ -830,15 +829,16 @@ fn spawn_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
     theme::heading(ui, "This spawn");
     theme::note(
         ui,
-        "One object, at one place. Click it in the viewport to open it, then drag the one \
-         that is open to move it; a drag keeps its height above the ground.",
+        "The gameobject row: one placed instance of the object. Drag the selected spawn in \
+         the viewport to move it; dragging keeps its height above the ground.",
     );
     if spawn.tilted {
         ui.label(
             egui::RichText::new(
-                "Tilted: rotation0 or rotation1 is not 0, so the quaternion is not a function \
-                 of the facing. Editing orientation leaves rotation2 and rotation3 alone here. \
-                 The editor and this client both draw it upright.",
+                "Tilted: rotation0 or rotation1 is not 0, so the rotation quaternion is not \
+                 derived from orientation alone. Editing orientation does not change \
+                 rotation2 and rotation3 on this spawn. The editor and the client draw it \
+                 upright.",
             )
             .small()
             .color(theme::WARN),
@@ -882,7 +882,7 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         }),
     );
     ui.label(
-        egui::RichText::new("Every one of these in the world, on every map.")
+        egui::RichText::new("Template edits change every spawn of this entry, on every map.")
             .small()
             .color(theme::INK_FAINT),
     );
@@ -890,7 +890,7 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         ui.label(
             egui::RichText::new(
                 "No gameobject_template row at this content patch. The server skips this \
-                 spawn at start and says so in its log.",
+                 spawn at startup and logs an error.",
             )
             .small()
             .color(theme::BAD),
@@ -941,8 +941,8 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         if ui
             .selectable_label(open, "Edit object…")
             .on_hover_text(
-                "Open gameobject_template's 34 columns in a window of their own, the 24 data \
-                 columns under the names this object's type gives them.",
+                "Opens the 34 gameobject_template columns in a separate window. The 24 data \
+                 columns are labelled with the field names of this object's type.",
             )
             .clicked()
         {
@@ -956,10 +956,10 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         if ui
             .selectable_label(quests_open, "Quests")
             .on_hover_text(
-                "What it gives and what it takes: gameobject_questrelation and \
-                 gameobject_involvedrelation, listed, added to and removed from. Each quest \
-                 opens in the quest workspace. The rows name this gameobject_template entry, \
-                 so they are about every spawn of it.",
+                "Lists, adds and removes the quests this object starts and ends: \
+                 gameobject_questrelation and gameobject_involvedrelation. Each quest opens in \
+                 the quest workspace. The rows are keyed by gameobject_template entry, so they \
+                 apply to every spawn of it.",
             )
             .clicked()
         {
@@ -975,9 +975,9 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         if ui
             .selectable_label(subject.loot.open, "Loot")
             .on_hover_text(
-                "What a chest, a vein, a herb or a fishing pool holds: \
-                 gameobject_loot_template, keyed by the lootId data column. The rows name \
-                 a loot id, so they are about every object that shares it.",
+                "The loot of a chest, vein, herb or fishing pool: gameobject_loot_template, \
+                 keyed by the lootId data column. Every object with the same loot id shares \
+                 these rows.",
             )
             .clicked()
         {
@@ -1056,8 +1056,8 @@ fn template_head(
         Life::Insert => {
             ui.label(
                 egui::RichText::new(
-                    "New: this row is in no database yet. Apply writes it, and the server \
-                     has to be restarted for a spawn of it to stand.",
+                    "New: this row is not in the database yet. Apply writes it; restart the \
+                     server to load spawns of it.",
                 )
                 .small()
                 .color(theme::ACCENT),
@@ -1066,7 +1066,7 @@ fn template_head(
         _ => {
             ui.label(
                 egui::RichText::new(format!(
-                    "Every one of these in the world, on every map — {} on this one",
+                    "Edits change every spawn of this entry, on every map — {} on this map",
                     subject
                         .objects
                         .spawns
@@ -1111,7 +1111,7 @@ fn entry_field(
     let trouble_id = id.with("trouble");
     if let Some(text) = finished(ui, id, &response, text) {
         let trouble = match text.trim().parse::<u32>() {
-            Err(_) => Some(format!("{text:?} is not an entry")),
+            Err(_) => Some(format!("{text:?} is not a valid entry number")),
             Ok(wanted) => {
                 let now = subject.now;
                 match subject.objects.rekey_template(subject.session, shown, wanted, now) {
@@ -1134,24 +1134,24 @@ fn entry_field(
         return;
     }
     let (word, colour) = match (shown.is_new(), shown.read_entry != shown.entry) {
-        (true, _) => ("renumbers this new object".to_string(), theme::INK_FAINT),
+        (true, _) => ("changes this new object's entry".to_string(), theme::INK_FAINT),
         (_, true) => (
-            format!("the database has it at {} until this is applied", shown.read_entry),
+            format!("the database row is entry {} until applied", shown.read_entry),
             theme::WARN,
         ),
         _ => (
-            "moves the row, and what names it in the world database follows".to_string(),
+            "changes the row's entry and every world database reference to it".to_string(),
             theme::INK_FAINT,
         ),
     };
     ui.label(egui::RichText::new(word).small().color(colour)).on_hover_text(format!(
-        "vmangos has no foreign keys, so the apply writes the cascade itself: the row, \
-         and the {} columns of the world database that name a game object by entry: \
-         every spawn's id, the quest relations, the pool and locale rows, the spell \
-         script targets and quest_template's objectives, which name an object as the \
-         negative of its entry. Put back returns all of it.\n\nNot reached: a template's \
-         own linkedTrapId data column, gameobject_loot_template, which is named by data1 \
-         and not by the entry, a script's datalong, and the C++ scripts.",
+        "vmangos has no foreign keys, so Apply updates the references itself: the row, \
+         and the {} world database columns that refer to a game object by entry: every \
+         spawn's id, the quest relations, the pool and locale rows, the spell script \
+         targets, and quest_template's objectives, which store an object as the negative \
+         of its entry. Restore reverts all of it.\n\nNot updated: a template's \
+         linkedTrapId data column, gameobject_loot_template (keyed by data1, not by \
+         entry), script datalong values, and the C++ scripts.",
         vale_mangos::gameobject::TEMPLATE_REFERENCES.len()
     ));
 }
@@ -1489,8 +1489,8 @@ fn display_cell(
     if ui
         .small_button("choose\u{2026}")
         .on_hover_text(
-            "Every row of GameObjectDisplayInfo.dbc that names a model, as pictures, \
-             searched by the model's path.",
+            "Opens a picker of every GameObjectDisplayInfo.dbc row that has a model, \
+             shown as thumbnails and searchable by model path.",
         )
         .clicked()
     {
@@ -1500,12 +1500,12 @@ fn display_cell(
         Some(path) => meaning_truncated(ui, path),
         None if id != 0 => {
             ui.label(
-                egui::RichText::new("no such display row")
+                egui::RichText::new("not in GameObjectDisplayInfo.dbc")
                     .small()
                     .color(theme::BAD),
             );
         }
-        None => meaning(ui, "none: placed and drawn as a mark"),
+        None => meaning(ui, "none: drawn as a marker"),
     }
     written
 }

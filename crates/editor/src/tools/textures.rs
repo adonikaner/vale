@@ -297,7 +297,7 @@ fn stroke(
         return;
     }
     if textures.brush.texture.is_empty() {
-        session.status = "pick a texture first".into();
+        session.status = "select a texture first".into();
         return;
     }
     let Some(at) = cursor.ground else { return };
@@ -387,11 +387,11 @@ fn stroke(
         (1, ..) => "1 chunk is full: four textures is the limit".to_string(),
         (n @ 2.., ..) => format!("{n} chunks are full: four textures is the limit"),
         (0, n @ 1.., ..) => format!(
-            "{} has it as its base, which cannot be erased: swap it in the Chunk list",
+            "cannot erase the base texture of {}: replace the base in the Chunk list",
             chunks(n)
         ),
         (0, 0, n @ 1.., _) => format!(
-            "{} under the brush do not carry {}: existing layers only is on",
+            "no {1} layer on {0} under the brush: \"Paint existing layers only\" is on",
             chunks(n),
             leaf(&brush.texture)
         ),
@@ -751,7 +751,7 @@ pub fn set_layer_effect(
         after: Box::new(vale_edit::ops::ChunkPaint::capture(tile, chunk)),
     };
     session.history.begin_gesture(
-        format!("Grow effect {effect_id} on layer {layer}"),
+        format!("Set ground effect {effect_id} on layer {layer}"),
         format!("effect {} {chunk} {layer}", key.vpath()),
         now,
     );
@@ -759,7 +759,7 @@ pub fn set_layer_effect(
     session.history.end();
     session.publish(coord);
     session.stale.insert(coord);
-    session.status = format!("layer {layer} of chunk {chunk} now grows effect {effect_id}");
+    session.status = format!("layer {layer} of chunk {chunk} now uses ground effect {effect_id}");
 }
 
 /// Change how one layer's texture moves. This is `MCLY`'s texture animation,
@@ -804,7 +804,7 @@ pub fn set_layer_animation(
         after: Box::new(vale_edit::ops::ChunkPaint::capture(tile, chunk)),
     };
     session.history.begin_gesture(
-        format!("Animate layer {layer}"),
+        format!("Set texture animation on layer {layer}"),
         format!("animate {} {chunk} {layer}", key.vpath()),
         now,
     );
@@ -814,10 +814,10 @@ pub fn set_layer_animation(
     session.stale.insert(coord);
     session.status = match on {
         true => format!(
-            "layer {layer} of chunk {chunk} crawls {}° at speed {rate}",
+            "layer {layer} of chunk {chunk} scrolls toward {}°, speed {rate}",
             turn * 45
         ),
-        false => format!("layer {layer} of chunk {chunk} is still"),
+        false => format!("texture animation off on layer {layer} of chunk {chunk}"),
     };
 }
 
@@ -910,12 +910,12 @@ pub fn swap_layer(
     };
     session
         .history
-        .begin(format!("Swap layer {layer} to {}", leaf(path)));
+        .begin(format!("Replace layer {layer} texture with {}", leaf(path)));
     session.history.record(&key, [edit]);
     session.history.end();
     session.publish(coord);
     session.stale.insert(coord);
-    session.status = format!("layer {layer} of chunk {chunk} now draws {}", leaf(path));
+    session.status = format!("layer {layer} of chunk {chunk} now uses {}", leaf(path));
 }
 
 /// Replace the texture a chunk is painted with underneath every layer.
@@ -959,7 +959,7 @@ pub fn set_base(session: &mut EditSession, coord: (u32, u32), chunk: usize, path
         before: Box::new(before),
         after: Box::new(vale_edit::ops::ChunkPaint::capture(tile, chunk)),
     };
-    session.history.begin(format!("Base {}", leaf(path)));
+    session.history.begin(format!("Set base texture {}", leaf(path)));
     session.history.record(&key, [edit]);
     session.history.end();
     session.publish(coord);
@@ -1035,7 +1035,7 @@ pub fn set_tile_base(session: &mut EditSession, coord: (u32, u32), path: &str) -
     if changed == 0 {
         return 0;
     }
-    session.history.begin(format!("Tile base {}", leaf(path)));
+    session.history.begin(format!("Set tile base texture {}", leaf(path)));
     session.history.record(&key, edits);
     session.history.end();
     session.publish(coord);

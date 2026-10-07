@@ -151,11 +151,11 @@ impl Contents {
             parts.push(format!("{} row(s)", self.changed.len()));
         }
         if !self.dropped.is_empty() {
-            parts.push(format!("{} put back", self.dropped.len()));
+            parts.push(format!("{} restored", self.dropped.len()));
         }
         if !self.unknown.is_empty() {
             parts.push(format!(
-                "{} dropped with no put-back known",
+                "{} dropped without a known restore",
                 self.unknown.len()
             ));
         }
@@ -558,7 +558,7 @@ mod tests {
         assert_eq!(next.unknown.len(), 1);
         assert_eq!(next.unknown[0].key, Key::one("entry", 2));
         assert_eq!(next.statements(), 3);
-        assert_eq!(next.line(), "2 row(s), 1 put back, 1 dropped with no put-back known");
+        assert_eq!(next.line(), "2 row(s), 1 restored, 1 dropped without a known restore");
         let after = released_after("20260922120001", &next);
         assert_eq!(after.entries.len(), 4, "the dropped rows stay in the record");
         assert_eq!(after.entries[0].undo, Some(vec!["UPDATE a0;".to_string()]));

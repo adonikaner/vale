@@ -300,15 +300,15 @@ fn the_patch(
         ui,
         match server.copy_archive {
             false => {
-                "One folder under the project's publish\\, holding everything a server and \
-                 its players need with a README saying where each file goes. Nothing is \
+                "Writes one folder under the project's publish\\ with the client archive, the \
+                 server files and a README listing where each file goes. Nothing is \
                  applied to this machine's install, server or database."
             }
             true => {
-                "One folder under the project's publish\\, holding everything a server and \
-                 its players need with a README saying where each file goes. The client \
-                 archive is also written into this install's Data folder (the switch \
-                 below); the server and the database are not touched."
+                "Writes one folder under the project's publish\\ with the client archive, the \
+                 server files and a README listing where each file goes. The client \
+                 archive is also copied into this install's Data folder (the checkbox \
+                 below); the server and the database are not changed."
             }
         },
     );
@@ -321,7 +321,7 @@ fn the_patch(
                 .desired_width(240.0)
                 .hint_text(patch::default_name()),
         )
-        .on_hover_text("A folder name. Empty for the UTC stamp.");
+        .on_hover_text("The patch's folder name. Leave empty to use the UTC timestamp.");
     });
     let chosen = match name.trim().is_empty() {
         true => None,
@@ -329,33 +329,33 @@ fn the_patch(
     };
     let valid = chosen.as_deref().is_none_or(patch::is_a_name);
     if !valid {
-        ui.label(egui::RichText::new("not a folder name").small().color(theme::BAD));
+        ui.label(egui::RichText::new("invalid folder name").small().color(theme::BAD));
     }
     let exists = chosen
         .as_deref()
         .and_then(|n| session.project.path_for(&format!("{}\\{n}", patch::DIR)))
         .is_some_and(|p| p.is_dir());
     if exists {
-        theme::note(ui, "A patch of this name exists and will be rewritten.");
+        theme::note(ui, "A patch with this name exists and will be overwritten.");
     }
     match &last {
         Some(last) => theme::note(
             ui,
             format!("Server tiles unchanged since patch {last} are taken from it rather than rebuilt."),
         ),
-        None => theme::note(ui, "The first patch: every tile the project carries is built."),
+        None => theme::note(ui, "No previous patch: every tile in the project is built."),
     }
     // The two switches that change what a publish does, kept per project.
     ui.add_space(6.0);
-    theme::heading(ui, "What a publish does");
+    theme::heading(ui, "Publish options");
     if ui
         .checkbox(&mut server.regenerate_tiles, "Regenerate the server's tiles")
         .on_hover_text(
             "Publish runs the four map tools over every tile this project changed since the \
              last publish and writes the results into the server's maps, vmaps and mmaps. \
-             A terrain edit is a second of extraction and a navmesh build for the tile and \
-             its four neighbours; a moved building adds the vmap half of the whole map. Off \
-             for a publish that is about the client alone.",
+             A terrain edit costs about a second of extraction plus a navmesh build for the tile \
+             and its four neighbours; a moved building also re-extracts the vmaps of the whole \
+             map. Turn off for a client-only publish.",
         )
         .changed()
     {
@@ -368,10 +368,10 @@ fn the_patch(
     if ui
         .checkbox(&mut server.copy_archive, "Copy the client archive into Data")
         .on_hover_text(
-            "A publish, and a regeneration of the server's tiles, also write this \
-             project's Patch-<X>.MPQ into this install's Data folder, replacing the one \
-             the project wrote before. Off, they build it where the tools can read it \
-             and leave Data alone.",
+            "Publish and server tile regeneration also write this project's \
+             Patch-<X>.MPQ into this install's Data folder, replacing the copy written \
+             before. When off, the archive is built in a staging folder for the map tools \
+             and Data is not changed.",
         )
         .changed()
     {
@@ -386,21 +386,21 @@ fn the_patch(
             .on_hover_text(
                 "Save everything, then write client\\Patch-<X>.MPQ, server\\dbc, \
                  server\\sql\\<stamp>_world.sql, and the server's maps, vmaps and mmaps \
-                 for every tile changed since the last patch. The tiles take minutes; \
-                 the bar says which step is running, and the README and manifest are \
-                 written when they finish.",
+                 for every tile changed since the last patch. Tile regeneration takes \
+                 minutes; the status line shows the current step. The README and \
+                 manifest are written last.",
             )
             .on_disabled_hover_text(match (playing, busy) {
                 (true, _) => "Not while a playtest is running.",
                 (_, true) => "A server write is still running.",
-                _ => "Type a folder name, or clear the box for the stamp.",
+                _ => "Enter a valid folder name, or leave the field empty to use the UTC timestamp.",
             })
             .clicked()
         {
             let chosen = chosen.clone().unwrap_or_else(patch::default_name);
             session.status = match patch::publish(session, assets, server, queue, step, &chosen) {
                 Ok(said) => said,
-                Err(e) => format!("publish: {e}"),
+                Err(e) => format!("publish failed: {e}"),
             };
             bevy::prelude::info!("publish: {}", session.status);
             close = true;
@@ -419,7 +419,7 @@ fn the_patch(
     let had = patch::patches(&session.project);
     if !had.is_empty() {
         ui.add_space(4.0);
-        theme::note(ui, format!("patches so far: {}", had.join(", ")));
+        theme::note(ui, format!("published patches: {}", had.join(", ")));
     }
     close
 }
@@ -474,19 +474,19 @@ fn the_server(
 ) {
     ui.set_width(540.0);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("The server").strong().size(14.0));
+        ui.label(egui::RichText::new("Server").strong().size(14.0));
         match server.resolve() {
             Some((at, source)) => {
                 ui.label(
-                    egui::RichText::new(format!("connected to {}", at.line()))
+                    egui::RichText::new(format!("world database {}", at.line()))
                         .small()
                         .color(theme::GOOD),
                 )
-                .on_hover_text(format!("From {}.", source.line()));
+                .on_hover_text(format!("Connection settings read {}.", source.line()));
             }
             None => {
                 ui.label(
-                    egui::RichText::new("no database: a save writes sql\\ and applies nothing")
+                    egui::RichText::new("no world database: saving writes sql\\ files and applies nothing")
                         .small()
                         .color(theme::WARN),
                 );
@@ -568,14 +568,14 @@ fn this_project(
                 egui::Button::new(format!("Regenerate changed tiles ({count})")),
             )
             .on_hover_text(
-                "Rebuild this project's archive, then regenerate the server's files for \
-                 every tile changed since the last regeneration. What Publish does for the \
-                 tiles, and nothing else. Minutes; the bar says which step is running. \
+                "Rebuild this project's archive, then regenerate the server's map files for \
+                 every tile changed since the last regeneration. This runs only the tile \
+                 step of Publish. Takes minutes; the status line shows the current step. \
                  Restart the server afterwards.",
             )
             .on_disabled_hover_text(match (playing, busy) {
-                (true, _) => "Not while a playtest is running: it rewrites the archive the \
-                              running game has open.",
+                (true, _) => "Not while a playtest is running: regeneration rewrites the \
+                              archive the client has open.",
                 (_, true) => "A server write is still running.",
                 _ => "No tile has changed since the last regeneration.",
             })
@@ -596,9 +596,8 @@ fn this_project(
     });
     theme::note(
         ui,
-        "maps, vmaps and mmaps under the server's DataDir, built by the four map tools set \
-         under Setup. One tile at a time is the map window's Server files button, on Edit \
-         Map.",
+        "Writes maps, vmaps and mmaps under the server's DataDir with the four map tools \
+         set under Setup. To regenerate selected tiles only, use Server files in Edit Map.",
     );
 
     // What a publish hands over as rows.
@@ -617,9 +616,9 @@ fn this_project(
             .button("Write migration")
             .on_hover_text(
                 "Save every subject's rows, then write publish\\migrations\\<stamp>_world.sql in \
-                 vmangos' own add_migration form, holding the change since this project's last \
-                 migration. What Publish does for the rows, and nothing else. Nothing is \
-                 written when nothing changed. Apply it with the mysql client.",
+                 vmangos' add_migration format, containing the changes since this project's \
+                 last migration. This runs only the row step of Publish. Nothing is written \
+                 when no row changed. Apply the file with the mysql client.",
             )
             .clicked()
         {
@@ -641,9 +640,9 @@ fn setup(
 
     theme::note(
         ui,
-        "vmangos reads its world from a database, not from the archives, so an edit to a \
-         spell is a file for the client and a row for the server. These two settings are \
-         this machine's and are kept in Edit\\server.txt, not in the project.",
+        "vmangos reads world data from a database, not from the archives, so a spell edit \
+         changes a file for the client and a row for the server. These two settings belong \
+         to this machine and are stored in Edit\\server.txt, not in the project.",
     );
 
     // ---- the world database.
@@ -667,8 +666,8 @@ fn setup(
         }
         if ui
             .add_enabled(found.is_some() && !queue.testing(), egui::Button::new("Test"))
-            .on_hover_text("Connect, count the rows, and change nothing.")
-            .on_disabled_hover_text("There is nowhere to connect to.")
+            .on_hover_text("Connect to the world database and count its rows. Changes nothing.")
+            .on_disabled_hover_text("No world database is set.")
             .clicked()
         {
             // The test runs on a worker, so a server that is not answering
@@ -681,8 +680,9 @@ fn setup(
     });
     theme::note(
         ui,
-        "The folder or the file. Its WorldDatabase.Info line is the connection, so the \
-         password stays in the server's own conf and not in this editor.",
+        "The vmangos folder or its mangosd.conf. The connection is read from the \
+         WorldDatabase.Info line, so the password stays in mangosd.conf and is not \
+         stored by this editor.",
     );
     match &found {
         Some((at, source)) => {
@@ -694,7 +694,7 @@ fn setup(
         }
         None => {
             ui.label(
-                egui::RichText::new("no database: nothing is applied, only written to sql\\")
+                egui::RichText::new("no world database: changes are written to sql\\ and not applied")
                     .small()
                     .color(theme::WARN),
             );
@@ -705,8 +705,8 @@ fn setup(
     if from_env {
         theme::note(
             ui,
-            "The environment is set and wins over this box, so the box is held. Unset \
-             VALE_WORLDDB and VALE_MANGOSD to use it.",
+            "VALE_WORLDDB or VALE_MANGOSD is set and overrides this field, so the field \
+             is disabled. Unset both to use the field.",
         );
     }
     if let Some(done) = queue.tested() {
@@ -744,13 +744,13 @@ fn setup(
     theme::note(
         ui,
         "The folder holding mapextractor, vmapextractor, VMapAssembler and \
-         MoveMapGenerator, a patched build. A Release build: the \
-         navmesh generator is minutes a tile optimised and unusable otherwise.",
+         MoveMapGenerator from a patched build. Use a Release build: the navmesh \
+         generator takes minutes per tile when optimised and is too slow otherwise.",
     );
     if tools_from_env {
         theme::note(
             ui,
-            "VALE_VMANGOS_TOOLS is set and wins over this box, so the box is held.",
+            "VALE_VMANGOS_TOOLS is set and overrides this field, so the field is disabled.",
         );
     }
     // The tools folder is checked once per folder, not once per frame: the
@@ -859,8 +859,8 @@ fn which_project(
     ui.label(egui::RichText::new("Projects").strong().size(14.0));
     theme::note(
         ui,
-        "The open project is what the editor draws and what a playtest plays. Its files \
-         shadow the archives; Publish packs them into the next patch archive.",
+        "The editor shows and playtests the open project. Its files overlay the \
+         archives; Publish packs them into the next patch archive.",
     );
     ui.add_space(8.0);
 
@@ -900,8 +900,8 @@ fn which_project(
             if ui
                 .button("Clear files")
                 .on_hover_text(
-                    "Throw away every file in this project. Nothing is saved first — what a \
-                     save would write is what is being thrown away — and it cannot be undone.",
+                    "Delete every file in this project and keep the empty folder. Unsaved \
+                     changes are discarded, not saved first. This cannot be undone.",
                 )
                 .clicked()
             {
@@ -930,7 +930,7 @@ fn which_project(
     theme::heading(ui, "Other projects");
     let mut switch: Option<String> = None;
     if others.is_empty() {
-        theme::note(ui, "There are no others. The name below makes one.");
+        theme::note(ui, "No other projects. Enter a name below to create one.");
     } else {
         egui::ScrollArea::vertical()
             .max_height(220.0)
@@ -956,7 +956,7 @@ fn which_project(
                                 if ui
                                     .button("Open")
                                     .on_hover_text(format!(
-                                        "Save what is unsaved, then edit and playtest {name} instead."
+                                        "Save unsaved changes, then switch to {name}."
                                     ))
                                     .clicked()
                                 {
@@ -981,9 +981,9 @@ fn which_project(
                                         "Delete {name} and everything in it. This cannot be undone."
                                     ))
                                     .on_disabled_hover_text(
-                                        "The default project is where edits go when nobody has \
-                                         said otherwise, so it cannot be deleted. Open it and \
-                                         clear its files instead.",
+                                        "The default project receives edits when no other project \
+                                         is chosen, so it cannot be deleted. Open it and use \
+                                         Clear files instead.",
                                     );
                                 if doom.clicked() {
                                     let held = vale_edit::project::Project::open(&assets.root, name)
@@ -1017,16 +1017,16 @@ fn which_project(
             .map(|(_, summary)| summary.clone())
             .unwrap_or_default();
         let what = match holds.total() {
-            0 => "It is empty".to_string(),
-            1 => "It holds 1 file".to_string(),
-            n => format!("It holds {n} files: {}", holds.line()),
+            0 => "The project is empty".to_string(),
+            1 => "The project holds 1 file".to_string(),
+            n => format!("The project holds {n} files: {}", holds.line()),
         };
         let mut decided = false;
         let response = egui::Modal::new(egui::Id::new("projects-doom")).show(ui.ctx(), |ui| {
             ui.set_width(460.0);
             ui.label(
                 egui::RichText::new(match doomed.clear {
-                    true => format!("Throw away every file in {}?", doomed.name),
+                    true => format!("Permanently delete every file in {}?", doomed.name),
                     false => format!("Delete {} and everything in it?", doomed.name),
                 })
                 .strong()
@@ -1041,8 +1041,8 @@ fn which_project(
                 ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new(
-                        "It has applied to the server, and this folder holds the only \
-                         record of what to put back:",
+                        "This project has applied changes to the server, and its folder \
+                         holds the only record of how to restore them:",
                     )
                     .color(theme::BAD),
                 );
@@ -1058,16 +1058,17 @@ fn which_project(
                     ui,
                     match doomed.name == here {
                         true => {
-                            "Put back first, from Server\u{2026} on the top bar. To proceed \
-                             without putting back, type the project's name: the database \
-                             keeps the rows and the server keeps the files, with nothing \
-                             left that knows."
+                            "Restore first, from Server\u{2026} on the top bar. To proceed \
+                             without restoring, type the project's name: the database \
+                             keeps the applied rows and the server keeps the applied files, \
+                             with no record left to revert them."
                         }
                         false => {
-                            "Open the project and put back first, from Server\u{2026} on \
-                             the top bar. To proceed without putting back, type the \
-                             project's name: the database keeps the rows and the server \
-                             keeps the files, with nothing left that knows."
+                            "Open the project and restore first, from Server\u{2026} on \
+                             the top bar. To proceed without restoring, type the \
+                             project's name: the database keeps the applied rows and the \
+                             server keeps the applied files, with no record left to \
+                             revert them."
                         }
                     },
                 );
@@ -1085,10 +1086,10 @@ fn which_project(
             ui.horizontal(|ui| {
                 if !doomed.held.is_empty() && doomed.name == here {
                     if ui
-                        .button("Put back first")
+                        .button("Restore first")
                         .on_hover_text(
-                            "Closes this and opens the Server panel. Put back on every block \
-                             that has applied rows, then come back here.",
+                            "Close this dialog and open the Server panel. Press Restore on \
+                             every subject with applied rows, then return here.",
                         )
                         .clicked()
                     {
@@ -1101,15 +1102,15 @@ fn which_project(
                         doomed.may_proceed(),
                         egui::Button::new(
                             egui::RichText::new(match doomed.clear {
-                                true => "Throw them away",
-                                false => "Delete it",
+                                true => "Permanently delete",
+                                false => "Delete project",
                             })
                             .color(egui::Color32::from_rgb(0x0C, 0x16, 0x1E)),
                         )
                         .fill(theme::BAD),
                     )
                     .on_disabled_hover_text(
-                        "Type the project's name above to proceed without putting back.",
+                        "Type the project's name above to proceed without restoring.",
                     )
                     .clicked()
                 {
@@ -1121,7 +1122,7 @@ fn which_project(
                         }
                         true => match vale_edit::project::clear(&assets.root, &doomed.name) {
                             Ok(went) => {
-                                session.status = format!("{}: {went} files thrown away", doomed.name)
+                                session.status = format!("{}: {went} files permanently deleted", doomed.name)
                             }
                             Err(e) => {
                                 session.status = format!("could not clear {}: {e}", doomed.name)
@@ -1129,7 +1130,7 @@ fn which_project(
                         },
                         false => match vale_edit::project::delete(&assets.root, &doomed.name) {
                             Ok(went) => {
-                                session.status = format!("{} deleted, with {went} files", doomed.name)
+                                session.status = format!("{} deleted ({went} files)", doomed.name)
                             }
                             Err(e) => {
                                 session.status = format!("could not delete {}: {e}", doomed.name)
@@ -1139,7 +1140,7 @@ fn which_project(
                     projects.listed = false;
                     decided = true;
                 }
-                if ui.button("Keep it").clicked() {
+                if ui.button("Cancel").clicked() {
                     decided = true;
                 }
             });
@@ -1185,13 +1186,13 @@ fn which_project(
     theme::note(
         ui,
         match tiles + tables {
-            0 => "Switching empties the undo stack: an entry holds bytes belonging to the \
-                  folder it was made in."
+            0 => "Switching projects clears the undo stack, because each entry refers to \
+                  files in the current project's folder."
                 .to_string(),
             _ => format!(
-                "Switching writes down what is unsaved first ({tiles} tiles, {tables} tables) \
-                 and empties the undo stack: an entry holds bytes belonging to the folder it \
-                 was made in."
+                "Switching projects saves unsaved changes first ({tiles} tiles, {tables} tables) \
+                 and clears the undo stack, because each entry refers to files in the \
+                 current project's folder."
             ),
         },
     );
@@ -1316,11 +1317,11 @@ fn keep_this_view(
         let field = ui.add(
             egui::TextEdit::singleline(&mut go_to.bookmark)
                 .desired_width(160.0)
-                .hint_text("name this view"),
+                .hint_text("bookmark name"),
         );
         let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         let name = go_to.bookmark.trim().to_string();
-        if (entered || ui.small_button("Keep").clicked()) && !name.is_empty() {
+        if (entered || ui.small_button("Add").clicked()) && !name.is_empty() {
             bookmarks.add(crate::bookmarks::Bookmark {
                 name,
                 map: session.map.clone(),
@@ -1363,7 +1364,7 @@ fn go_somewhere(
     // bookmark…; see [`keep_this_view`].
     theme::heading(ui, "Bookmarks");
     if bookmarks.list.is_empty() {
-        theme::note(ui, "none yet: Bookmarks \u{2192} Add bookmark\u{2026} keeps one");
+        theme::note(ui, "no bookmarks: add one with Map \u{2192} Bookmarks \u{2192} Add bookmark\u{2026}");
     }
     let mut jump: Option<crate::bookmarks::Bookmark> = None;
     let mut forget: Option<String> = None;
@@ -1383,7 +1384,7 @@ fn go_somewhere(
                     mark.target[2],
                     mark.map,
                     match elsewhere {
-                        true => " — opens that map first, saving what is open",
+                        true => " — saves the open map, then opens that map",
                         false => "",
                     }
                 ))
@@ -1394,7 +1395,7 @@ fn go_somewhere(
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .small_button("×")
-                    .on_hover_text("Forget this bookmark.")
+                    .on_hover_text("Delete this bookmark.")
                     .clicked()
                 {
                     forget = Some(mark.name.clone());
@@ -1446,7 +1447,7 @@ fn go_somewhere(
         // Every instance, and any map with no `WorldMapArea` rows. A note is
         // shown rather than an empty list, which reads as a list that has not
         // loaded yet.
-        theme::note(ui, "this map has no zones on the world map");
+        theme::note(ui, "this map has no WorldMapArea zones");
         return;
     }
     egui::ScrollArea::vertical()
@@ -1516,14 +1517,14 @@ fn who(
     if !possible {
         theme::note(
             ui,
-            "skipping it needs both an account and a password; VALE_PASSWORD \
-             fills the password in at startup",
+            "skipping the login screen needs an account and a password; \
+             VALE_PASSWORD sets the password at startup",
         );
     }
     theme::note(
         ui,
-        "neither is written down here: the account comes from Config.wtf and \
-         the password is not stored at all",
+        "these fields are not saved: the account is read from Config.wtf and \
+         the password is not stored",
     );
 
     // The query cache is a switch of the playtest's client, not of the
@@ -1536,8 +1537,8 @@ fn who(
         .on_hover_text(
             "The client writes every query answer to WDB\\ and reads them back at the \
              next login, so an edited creature, item or quest keeps its old name and its \
-             old stats. With caching off, a playtest starts with none of them and asks \
-             the server for everything it meets.",
+             old stats. With caching disabled, a playtest starts with an empty cache and \
+             queries the server for every creature, item and quest it encounters.",
         )
         .changed()
     {
@@ -1545,8 +1546,8 @@ fn who(
     }
     theme::note(
         ui,
-        "With caching disabled, each thing the character meets costs one query, and a \
-         row edited here shows up in the next playtest.",
+        "With caching disabled, each creature, item or quest the character encounters \
+         costs one query, and an edited row appears in the next playtest.",
     );
 }
 

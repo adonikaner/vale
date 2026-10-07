@@ -680,7 +680,7 @@ pub fn set_inn(session: &mut EditSession, triggers: &Triggers, id: u32, inn: boo
     let label = format!("{} {}", trigger::TAVERN, key.text());
     match inn {
         true => {
-            let gesture = Gesture { label: "Make inn", subject: &label, now };
+            let gesture = Gesture { label: "Add inn", subject: &label, now };
             create_row(session, trigger::TAVERN, &key, held, &tavern_assignments("", 0), gesture);
         }
         false => {
@@ -1333,7 +1333,7 @@ fn keys(
     // A shipped trigger is asked about in the panel first.
     if triggers.is_shipped(id) && triggers.confirm_remove != Some(id) {
         triggers.confirm_remove = Some(id);
-        session.status = format!("trigger {id} is one of the game's own: confirm the removal in the panel");
+        session.status = format!("trigger {id} is a shipped trigger: confirm the removal in the panel");
         return;
     }
     let line = remove_trigger(session, &mut triggers, id, time.elapsed_secs_f64());

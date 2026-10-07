@@ -120,7 +120,7 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     ui.horizontal(|ui| {
         if ui
             .add_enabled(!subject.gossip.trail.is_empty() || subject.gossip.menu.is_some(), egui::Button::new("Back"))
-            .on_hover_text("The menu shown before, or the creature's own.")
+            .on_hover_text("Show the previous menu, or the selected creature's menu.")
             .clicked()
         {
             subject.gossip.back();
@@ -132,7 +132,7 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         }
         if ui
             .button("New menu")
-            .on_hover_text("A new menu with one text, opened here. Nothing names it until a creature, an object or an option does.")
+            .on_hover_text("Create a gossip menu with one new text and open it here. It is unused until a creature template, a game object or an option references it.")
             .clicked()
         {
             ask(subject.session, subject.gossip, NewMenu::Open);
@@ -144,11 +144,11 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
                 ui.label(egui::RichText::new(format!("{} has no gossip menu.", about.label)).color(theme::INK));
             }
             menu => {
-                theme::note(ui, format!("{}'s menu is {menu}.", about.label));
+                theme::note(ui, format!("{}'s gossip_menu_id is {menu}.", about.label));
                 if about.npc_flags & 0x1 == 0 {
                     ui.label(
                         egui::RichText::new(
-                            "Its npc_flags lack the gossip flag (1), so the server does not offer \
+                            "The template's npc_flags lack the gossip flag (1), so the server does not offer \
                              the menu.",
                         )
                         .size(theme::SMALL)
@@ -159,15 +159,15 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         }
         ui.horizontal_wrapped(|ui| {
             let label = match about.gossip_menu_id {
-                0 => "Make a menu for it",
-                _ => "New menu for it",
+                0 => "Create gossip menu",
+                _ => "Replace with new menu",
             };
             if ui
                 .button(label)
                 .on_hover_text(
-                    "A new menu with one text, named in the template's gossip_menu_id, and \
-                     the gossip flag added to its npc_flags so the server offers it. A menu \
-                     it named before is left as it is, for whatever else names it.",
+                    "Create a gossip menu with one new text, write its entry to the template's \
+                     gossip_menu_id, and add the gossip flag (1) to npc_flags so the server offers \
+                     it. The previous menu is not changed or deleted.",
                 )
                 .clicked()
             {
@@ -180,8 +180,8 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
             }
             if let Some(shown) = subject.gossip.showing().filter(|shown| *shown != about.gossip_menu_id) {
                 if ui
-                    .button(format!("Use menu {shown} for it"))
-                    .on_hover_text("Name the menu shown here in the template's gossip_menu_id, and add the gossip flag.")
+                    .button(format!("Assign menu {shown}"))
+                    .on_hover_text("Write the shown menu's entry to the template's gossip_menu_id and add the gossip flag (1) to npc_flags.")
                     .clicked()
                 {
                     name_menu(subject.session, &about.template_key, about.npc_flags, shown, now);
@@ -204,7 +204,7 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         return;
     }
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        theme::heading(ui, "What it says");
+        theme::heading(ui, "Texts");
         let texts = subject.gossip.texts_of(&subject.session.server_edits, menu);
         if texts.is_empty() {
             theme::note(ui, "No text: the server shows the default greeting.");
@@ -220,7 +220,7 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
             && subject.gossip.next_npc_text(&subject.session.server_edits).is_some();
         if ui
             .add_enabled(ready, egui::Button::new("Add text"))
-            .on_hover_text("A new npc_text of one new line, added to this menu.")
+            .on_hover_text("Create an npc_text with one new line and add it to this menu.")
             .on_disabled_hover_text("Reading the highest text ids\u{2026}")
             .clicked()
         {
@@ -233,8 +233,8 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
             let taken = texts.iter().any(|text| text.row.text_id == subject.gossip.existing_text);
             if ui
                 .add_enabled(subject.gossip.existing_text != 0 && !taken, egui::Button::new("Add existing text"))
-                .on_hover_text("Put the npc_text row with this id into the menu; other menus may show it too.")
-                .on_disabled_hover_text("Type the id of an npc_text row this menu does not show yet.")
+                .on_hover_text("Add the npc_text with this id to this menu. Other menus can use the same npc_text.")
+                .on_disabled_hover_text("Enter the id of an npc_text that is not in this menu.")
                 .clicked()
             {
                 let id = subject.gossip.existing_text;
@@ -245,13 +245,13 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         theme::heading(ui, "Options");
         let options = subject.gossip.options_of(&subject.session.server_edits, menu);
         if options.is_empty() {
-            theme::note(ui, "No option.");
+            theme::note(ui, "No options.");
         }
         for option in &options {
             card(option.life).show(ui, |ui| option_card(ui, subject, menu, option));
             ui.add_space(4.0);
         }
-        if ui.button("Add option").on_hover_text("A gossip line at the end of the menu, leading nowhere yet.").clicked() {
+        if ui.button("Add option").on_hover_text("Add an option at the end of the menu. It opens no menu until one is set.").clicked() {
             subject.gossip.add_option(subject.session, menu, "Tell me more.", now);
         }
     });
@@ -317,7 +317,7 @@ fn new_menu(session: &mut EditSession, gossip: &mut Gossip, behaviour: &mut Beha
 fn name_menu(session: &mut EditSession, template_key: &vale_mangos::row::Key, npc_flags: u32, menu: u32, now: f64) {
     let table = vale_mangos::creature::TEMPLATE;
     let label = format!("{table} {} gossip", template_key.text());
-    let gesture = || crate::session::Gesture { label: "Name gossip menu", subject: &label, now };
+    let gesture = || crate::session::Gesture { label: "Assign gossip menu", subject: &label, now };
     session.set_server_edit(table, template_key, "gossip_menu_id", Some(menu.to_string()), Some(gesture()));
     if npc_flags & 0x1 == 0 {
         let flags = npc_flags | 0x1;
@@ -346,8 +346,8 @@ pub fn menu_buttons(
     if ui
         .small_button("+ new")
         .on_hover_text(
-            "A new menu with one text, named here, with the gossip flag added to npc_flags, and \
-             opened in the gossip window. A menu named here before is left as it is.",
+            "Create a gossip menu with one new text, write its entry here, add the gossip flag (1) \
+             to npc_flags, and open it in the gossip window. The previous menu is not changed.",
         )
         .clicked()
     {
@@ -446,7 +446,7 @@ fn lines(ui: &mut egui::Ui, subject: &mut Subject<'_>, npc_text: &Shown<NpcText>
         let ready = subject.behaviour.next_text_entry(subject.session).is_some();
         if ui
             .add_enabled(ready, egui::Button::new("Add line").small())
-            .on_hover_text("Another line for the server to choose between, by chance.")
+            .on_hover_text("Add a line. The server shows one line at random, weighted by each line's chance.")
             .clicked()
         {
             if let Some(line) = subject.behaviour.create_text(subject.session, NEW_TEXT, 0, now) {
@@ -481,7 +481,7 @@ fn broadcast_line(ui: &mut egui::Ui, subject: &mut Subject<'_>, entry: u32, salt
 fn text_chooser_button(ui: &mut egui::Ui, behaviour: &mut Behaviour, answer: ScriptAnswer) {
     if ui
         .small_button("choose\u{2026}")
-        .on_hover_text("Search broadcast_text by what is said or by entry, and use an existing text.")
+        .on_hover_text("Search broadcast_text by text or entry and use an existing row.")
         .clicked()
     {
         behaviour.chooser = Some(Chooser::Text { answer, search: Search::default() });
@@ -531,7 +531,7 @@ fn line_or_text(
             let ready = subject.behaviour.next_text_entry(subject.session).is_some();
             if ui
                 .add_enabled(ready, egui::Button::new("+ new").small())
-                .on_hover_text("A new broadcast_text saying what is typed here, named in this column.")
+                .on_hover_text("Create a broadcast_text with the typed text and write its entry to this column.")
                 .on_disabled_hover_text("Reading broadcast_text's highest entry.")
                 .clicked()
             {
@@ -545,8 +545,8 @@ fn line_or_text(
             ui.allocate_ui(egui::vec2(width, ui.spacing().interact_size.y), |ui| broadcast_line(ui, subject, text, salt));
             text_chooser_button(ui, subject.behaviour, answer);
             if ui
-                .small_button("typed")
-                .on_hover_text("Write 0 here and use the typed text instead. The broadcast_text row is not touched.")
+                .small_button("typed text")
+                .on_hover_text("Write 0 to this column so the option uses its typed text. The broadcast_text row is not changed.")
                 .clicked()
             {
                 written = Some((text_column, "0".to_string()));
@@ -568,7 +568,7 @@ fn point_row(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: &S
     let written = row(ui, "point of interest", |ui| {
         let typed = ui
             .add(egui::DragValue::new(&mut poi).speed(1.0))
-            .on_hover_text("A points_of_interest row marked on the player's map when it is clicked, or 0.")
+            .on_hover_text("A points_of_interest entry marked on the player's map when the option is clicked, or 0.")
             .changed();
         let mut out = typed.then_some(poi);
         if ui.small_button("choose\u{2026}").on_hover_text("Search the points of interest by name or entry.").clicked() {
@@ -580,8 +580,8 @@ fn point_row(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: &S
             && ui
                 .add_enabled(ready, egui::Button::new("+ new").small())
                 .on_hover_text(
-                    "A new point of interest where the selected creature stands, named after the \
-                     option's line, and named here.",
+                    "Create a points_of_interest row at the selected creature's position, named \
+                     after the option's text, and write its entry here.",
                 )
                 .on_disabled_hover_text("Reading points_of_interest.")
                 .clicked()
@@ -593,7 +593,7 @@ fn point_row(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: &S
             };
             out = subject.gossip.new_point(subject.session, x, y, name, now);
         }
-        if o.action_poi != 0 && ui.small_button("clear").on_hover_text("Write 0: the option marks nothing.").clicked() {
+        if o.action_poi != 0 && ui.small_button("clear").on_hover_text("Write 0: the option marks no point of interest.").clicked() {
             out = Some(0);
         }
         out
@@ -634,7 +634,7 @@ fn point_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, point: &Shown<Point>
             writes.push(("icon_name", vale_mangos::sql::text(&name)));
         }
     });
-    row(ui, "  at", |ui| {
+    row(ui, "  position", |ui| {
         let (mut x, mut y) = (p.x, p.y);
         if ui.add(egui::DragValue::new(&mut x).speed(1.0).prefix("x ")).changed() {
             writes.push(("x", vale_mangos::sql::float(x)));
@@ -644,7 +644,7 @@ fn point_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, point: &Shown<Point>
         }
         if let Some([cx, cy]) = subject.gossip.about.as_ref().and_then(|about| about.at) {
             if ui
-                .small_button("at the creature")
+                .small_button("creature position")
                 .on_hover_text("Move the point to where the selected creature stands.")
                 .clicked()
             {
@@ -655,9 +655,9 @@ fn point_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, point: &Shown<Point>
     });
     row(ui, "  icon, flags, data", |ui| {
         for (column, value, about) in [
-            ("icon", p.icon, "The icon drawn at the place; every shipped row uses 6."),
-            ("flags", p.flags, "Sent to the client as they are; every shipped row uses 99."),
-            ("data", p.data, "Sent to the client as it is; every shipped row uses 0."),
+            ("icon", p.icon, "The icon drawn at the point. Every shipped row uses 6."),
+            ("flags", p.flags, "Sent to the client unchanged. Every shipped row uses 99."),
+            ("data", p.data, "Sent to the client unchanged. Every shipped row uses 0."),
         ] {
             let mut value = value;
             if ui.add(egui::DragValue::new(&mut value).speed(1.0)).on_hover_text(about).changed() {
@@ -761,12 +761,12 @@ fn option_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: 
             }
         }
     });
-    row(ui, "line", |ui| {
+    row(ui, "text", |ui| {
         let salt = format!("gossip-option-line-{menu}-{}", o.id);
-        let hover = "option_text: the line, when option_broadcast_text is 0.";
+        let hover = "option_text: the option's text, used when option_broadcast_text is 0.";
         line_or_text(ui, subject, option, "option_text", "option_broadcast_text", &o.text, o.broadcast_text, &salt, hover);
     });
-    row(ui, "opens", |ui| {
+    row(ui, "type", |ui| {
         if let Some(kind) = choice_cell(ui, &o.option_type.to_string(), &gossip::OPTION_TYPES, egui::Id::new(("gossip-type", menu, o.id))) {
             let kind: u32 = kind.parse().unwrap_or(0);
             let subject_line = format!("{} {} type", gossip::OPTION, key.text());
@@ -776,7 +776,7 @@ fn option_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: 
             });
         }
     });
-    row(ui, "needs flag", |ui| {
+    row(ui, "npc flag", |ui| {
         if let Some(flags) = flags_cell(ui, &o.npc_flag.to_string(), &vale_mangos::creature::NPC_FLAGS, egui::Id::new(("gossip-flag", menu, o.id))) {
             set(subject, "npc_option_npcflag", flags);
         }
@@ -785,7 +785,7 @@ fn option_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: 
         if o.npc_flag != 0 && about.npc_flags & o.npc_flag == 0 {
             ui.label(
                 egui::RichText::new(format!(
-                    "{}'s npc_flags lack this flag, so it does not see this option.",
+                    "{}'s npc_flags lack this flag, so the server does not show this option.",
                     about.label
                 ))
                 .size(theme::SMALL)
@@ -793,18 +793,18 @@ fn option_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: 
             );
         }
     }
-    row(ui, "leads to menu", |ui| {
+    row(ui, "action menu", |ui| {
         let mut next = o.action_menu as i64;
         if ui
             .add(egui::DragValue::new(&mut next).range(-1..=i64::from(gossip::MAX_MENU)))
-            .on_hover_text("The menu it opens: 0 none, -1 closes the window.")
+            .on_hover_text("The gossip menu this option opens: 0 none, -1 closes the window.")
             .changed()
         {
             set(subject, "action_menu_id", next.to_string());
         }
         match o.action_menu {
             0 => {
-                if ui.small_button("New menu").on_hover_text("A new menu with one text, which this option opens.").clicked() {
+                if ui.small_button("New menu").on_hover_text("Create a gossip menu with one new text and write its entry to this option's action_menu_id.").clicked() {
                     ask(subject.session, subject.gossip, NewMenu::Lead(option.clone()));
                 }
             }
@@ -819,7 +819,7 @@ fn option_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: 
         if let Some(kind) = super::quests::target_of(gossip::MENU) {
             if ui
                 .small_button("choose\u{2026}")
-                .on_hover_text("Search the gossip menus by what they say or who offers them.")
+                .on_hover_text("Search gossip menus by text or by the creatures and objects that use them.")
                 .clicked()
             {
                 let column = target(
@@ -844,7 +844,7 @@ fn option_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: 
         let mut script = o.action_script;
         let typed = ui
             .add(egui::DragValue::new(&mut script).speed(1.0))
-            .on_hover_text("A gossip_scripts id run when it is clicked, or 0.")
+            .on_hover_text("A gossip_scripts id run when the option is clicked, or 0.")
             .changed();
         let table = vale_mangos::scripts::GOSSIP;
         let made = super::behaviour::script_controls(ui, subject.session, subject.behaviour, table, o.action_script, None, answer, now);
@@ -856,14 +856,14 @@ fn option_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: 
     point_row(ui, subject, menu, option);
     row(ui, "box", |ui| {
         let mut coded = o.box_coded != 0;
-        if ui.checkbox(&mut coded, "asks for a code").changed() {
+        if ui.checkbox(&mut coded, "code input").changed() {
             set(subject, "box_coded", u8::from(coded).to_string());
         }
         let mut money = o.box_money;
-        ui.label(egui::RichText::new("costs").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("cost").color(theme::INK_DIM));
         if ui
             .add(egui::DragValue::new(&mut money).speed(10.0).suffix(" c"))
-            .on_hover_text("What the confirmation box says it costs, in copper.")
+            .on_hover_text("box_money: the cost shown in the confirmation box, in copper.")
             .changed()
         {
             set(subject, "box_money", money.to_string());
@@ -871,7 +871,7 @@ fn option_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: 
     });
     row(ui, "box text", |ui| {
         let salt = format!("gossip-box-line-{menu}-{}", o.id);
-        let hover = "box_text: a confirmation box asked before the option acts. Empty for none.";
+        let hover = "box_text: the confirmation box shown before the option runs. Empty for none.";
         line_or_text(ui, subject, option, "box_text", "box_broadcast_text", &o.box_text, o.box_broadcast_text, &salt, hover);
     });
     let mut condition = o.condition_id;

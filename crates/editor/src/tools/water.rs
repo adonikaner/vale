@@ -271,7 +271,7 @@ pub fn flag_words(flags: u8) -> String {
         (true, true) => "fishable, deep water".to_string(),
         (true, false) => "fishable".to_string(),
         (false, true) => "deep water".to_string(),
-        (false, false) => "neither fishable nor deep".to_string(),
+        (false, false) => "not fishable, not deep water".to_string(),
     }
 }
 
@@ -387,7 +387,7 @@ fn stroke(
             session.history.begin(match action {
                 WaterAction::Flood => "Add water".to_string(),
                 WaterAction::Drain => "Remove water".to_string(),
-                WaterAction::Mark => "Mark water".to_string(),
+                WaterAction::Mark => "Set water flags".to_string(),
                 WaterAction::Depth => "Update water depth".to_string(),
             });
         }
@@ -408,7 +408,7 @@ fn stroke(
         session.status = match action {
             WaterAction::Flood => format!("flooded {cells} cell(s) at {level:.1}"),
             WaterAction::Drain => format!("drained {cells} cell(s)"),
-            WaterAction::Mark => format!("marked {cells} cell(s) {}", flag_words(brush.cell_flags)),
+            WaterAction::Mark => format!("set flags on {cells} cell(s): {}", flag_words(brush.cell_flags)),
             WaterAction::Depth => format!("updated the depth of {cells} cell(s)"),
         };
     }

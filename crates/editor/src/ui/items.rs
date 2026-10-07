@@ -269,14 +269,14 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         ui.label(theme::number(format!("{} rows", work.items.count())));
     })
     .response
-    .on_hover_text("item_template, as the server would load it: one row per item, at the highest content patch at or below the server's own.");
+    .on_hover_text("item_template as the server loads it: one row per item, at the highest content patch at or below the server's patch.");
 
     if let Some(trouble) = work.items.trouble.clone() {
         ui.label(egui::RichText::new(trouble).small().color(theme::BAD));
         theme::note(
             ui,
-            "These are rows in vmangos' database rather than files. Server\u{2026} on \
-             the top bar is where this machine's is set, or VALE_MANGOSD.",
+            "Items are rows in the vmangos world database, not files. Set the database \
+             connection in Server\u{2026} on the top bar, or with VALE_MANGOSD.",
         );
         return;
     }
@@ -289,7 +289,7 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let width = ui.available_width();
     ui.add(
         egui::TextEdit::singleline(&mut work.items.query)
-            .hint_text("name, entry, or what kind of thing it is")
+            .hint_text("name, entry, class, slot or level")
             .desired_width(width),
     );
     ui.add_space(4.0);
@@ -390,10 +390,9 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         if ui
             .add(egui::Button::new("+ New").min_size(size))
             .on_hover_text(
-                "A new item_template row, numbered above anything upstream will \
-                 reach. It starts as a piece of junk of common quality that stacks \
-                 to one — a row the server loads and the client draws — rather than \
-                 a row of zeros.",
+                "Creates an item_template row with an entry from 2,000,000 up, clear of \
+                 upstream vmangos entries. It starts as a common-quality Junk item with a \
+                 stack size of 1, so the server loads it and the client draws it.",
             )
             .clicked()
         {
@@ -404,9 +403,9 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         if ui
             .add_enabled(open.is_some(), egui::Button::new("Copy").min_size(size))
             .on_hover_text(
-                "A copy of this item under a new entry, with every column as it is \
-                 drawn — the database's value where this project has not changed it \
-                 and the project's where it has.",
+                "Creates a copy of this item under a new entry. Each column takes the \
+                 value shown: this project's edit where there is one, otherwise the \
+                 database value.",
             )
             .on_disabled_hover_text("Open an item first.")
             .clicked()
@@ -426,16 +425,14 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         if ui
             .add_enabled(open.is_some(), egui::Button::new(label).min_size(size))
             .on_hover_text(match removed {
-                true => "Take the removal mark off this item.",
+                true => "Unmarks this item for removal.",
                 false => {
-                    "Mark this item for removal. Apply deletes every content-patch \
-                     version of it, and the rows that describe it or hand it out: its \
-                     loot and vendor lines, its locale text, the auction bot's line and \
-                     the starting and premade items. Quests, spells and creature \
-                     equipment that name it are left as they are. The server has to be \
-                     restarted afterwards, and on that start it deletes the item from \
-                     every character who carries it. An item this project created is \
-                     given up instead."
+                    "Marks this item for removal. Apply deletes every content-patch \
+                     version of it and the rows that reference it: loot, vendor, locale, \
+                     auction bot, and starting and premade item rows. Quests, spells and \
+                     creature equipment that name it are not changed. Restart the server \
+                     afterwards; on startup it deletes the item from every character \
+                     that carries it. An item this project created is discarded instead."
                 }
             })
             .on_disabled_hover_text("Open an item first.")
@@ -535,9 +532,9 @@ fn form(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 theme::heading(ui, "No item open");
                 theme::note(
                     ui,
-                    "Choose one on the left, or make one. Every column of the row is \
-                     edited here; nothing reaches the database until Apply, which is on \
-                     the bar's Server\u{2026}.",
+                    "Choose an item on the left, or create one with + New. Every column \
+                     of the row is edited here; nothing is written to the database until \
+                     Apply, in Server\u{2026} on the top bar.",
                 );
                 return;
             };
@@ -565,9 +562,9 @@ fn form(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             if row.is_empty() && known.claim != Life::Insert {
                 theme::note(
                     ui,
-                    "The database holds no row at this entry. A removal that has been \
-                     applied is listed until the project stops claiming it: Keep puts it \
-                     back at the next Apply.",
+                    "The database has no row at this entry. An applied removal stays in \
+                     the list while the project holds it; Keep restores the row at the \
+                     next Apply.",
                 );
                 return;
             }
@@ -610,11 +607,11 @@ fn edits_block(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         if ui
             .button("Server\u{2026}")
             .on_hover_text(
-                "Apply these rows, put them back, or give them up \u{2014} every server \
-                 operation is on one panel, with the spells and the creatures. An item \
-                 applied with the panels open over a playtest is live on a `.reload \
-                 item_template`, for every copy of it already in the world; applied at \
-                 any other time, it is live after a restart.",
+                "Opens the Server panel, which applies, restores or discards these rows \
+                 together with the spell and creature rows. An item applied during a \
+                 playtest takes effect through `.reload item_template`, including copies \
+                 already in the world; applied at any other time, it takes effect after a \
+                 server restart.",
             )
             .clicked()
         {
@@ -668,7 +665,7 @@ fn head(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known) {
                 ui.label(theme::number(format!("entry {}", known.entry)));
                 if ui
                     .small_button("copy")
-                    .on_hover_text("Put the entry on the clipboard.")
+                    .on_hover_text("Copies the entry to the clipboard.")
                     .clicked()
                 {
                     let ctx = ui.ctx().clone();
@@ -682,8 +679,8 @@ fn head(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known) {
                 .on_hover_text(
                     "`item_template` is keyed by entry and patch together. The server \
                      loads the highest patch at or below its own WowPatch, and this is \
-                     that row — an edit naming only the entry would change versions of \
-                     the item the server is not using.",
+                     that row. An edit keyed by entry alone would also change versions \
+                     of the item the server does not load.",
                 );
                 ui.label(
                     egui::RichText::new(known.sub())
@@ -695,9 +692,9 @@ fn head(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known) {
                 if ui
                     .selectable_label(work.loot.open, "Loot")
                     .on_hover_text(
-                        "What opening this item gives, out of item_loot_template keyed by \
-                         its entry, and what disenchanting it gives, out of \
-                         disenchant_loot_template keyed by disenchant_id.",
+                        "The loot from opening this item (item_loot_template, keyed by \
+                         entry) and from disenchanting it (disenchant_loot_template, keyed \
+                         by disenchant_id).",
                     )
                     .clicked()
                 {
@@ -709,7 +706,7 @@ fn head(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known) {
     match known.claim {
         Life::Insert => {
             ui.label(
-                egui::RichText::new("New: this row is in no database yet. Apply writes it.")
+                egui::RichText::new("New: this row is not in the database yet. Apply writes it.")
                     .small()
                     .color(theme::WARN),
             );
@@ -717,9 +714,8 @@ fn head(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known) {
         Life::Delete => {
             ui.label(
                 egui::RichText::new(
-                    "Marked for removal. Apply deletes it with its loot and vendor rows, and \
-                     the server has to be restarted for it to go; Keep, under the search \
-                     box, takes the mark off.",
+                    "Marked for removal. Apply deletes it with its loot and vendor rows; \
+                     restart the server afterwards. Keep, under the search box, unmarks it.",
                 )
                 .small()
                 .color(theme::BAD),
@@ -925,7 +921,7 @@ fn entry_field(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, id: e
     let trouble_id = id.with("trouble");
     if let Some(text) = finished(ui, id, &response, text) {
         let trouble = match text.trim().parse::<u32>() {
-            Err(_) => Some(format!("{text:?} is not an entry")),
+            Err(_) => Some(format!("{text:?} is not a valid entry number")),
             Ok(wanted) => {
                 let now = work.now;
                 match work.items.rekey(work.session, known, wanted, now) {
@@ -949,29 +945,29 @@ fn entry_field(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, id: e
     }
     // …and what pressing Enter would do.
     let (word, colour) = match (known.claim, known.read_entry != known.entry) {
-        (Life::Insert, _) => ("renumbers this new item".to_string(), theme::INK_FAINT),
+        (Life::Insert, _) => ("changes this new item's entry".to_string(), theme::INK_FAINT),
         (_, true) => (
             format!(
-                "the database has it at {} until this is applied",
+                "the database row is entry {} until applied",
                 known.read_entry
             ),
             theme::WARN,
         ),
         _ => (
-            "moves the row, and what names it in the world database follows".to_string(),
+            "changes the row's entry and every world database reference to it".to_string(),
             theme::INK_FAINT,
         ),
     };
     ui.label(egui::RichText::new(word).small().color(colour))
         .on_hover_text(format!(
-            "vmangos has no foreign keys, so the apply writes the cascade itself: every \
-             content-patch version of the row, and the {} columns of the world database \
-             that name an item by entry: the loot tables, npc_vendor, \
+            "vmangos has no foreign keys, so Apply updates the references itself: every \
+             content-patch version of the row, and the {} world database columns that \
+             refer to an item by entry: the loot tables, npc_vendor, \
              creature_equip_template, quest_template's item columns, playercreateinfo_item, \
-             spell_template's reagents. Put back returns all of it.\n\n\
-             Not reached: the characters database, so a copy a character already carries \
-             has no prototype after the move; and Spell.dbc's reagent and created-item \
-             fields, which are a client file.",
+             spell_template's reagents. Restore reverts all of it.\n\n\
+             Not updated: the characters database, so a copy a character already carries \
+             has no item_template row after the change; and Spell.dbc's reagent and \
+             created-item fields, which are in a client file.",
             vale_mangos::item::REFERENCES.len()
         ));
 }
@@ -1002,10 +998,9 @@ fn display_field(
     if ui
         .small_button("choose\u{2026}")
         .on_hover_text(
-            "Every appearance in ItemDisplayInfo.dbc, as pictures. A row that hangs \
-             geometry on the wearer is drawn as its model; one that paints the \
-             wearer's own skin is drawn as its icon, which is the only picture of it \
-             that exists outside a dressed character.",
+            "Opens a picker of every ItemDisplayInfo.dbc row, shown as thumbnails. A row \
+             with a model is shown as its model; a row that only textures the wearer's \
+             body is shown as its icon.",
         )
         .clicked()
     {
@@ -1028,7 +1023,7 @@ fn display_field(
         }
         None if id != 0 => {
             ui.label(
-                egui::RichText::new("no such display row")
+                egui::RichText::new("not in ItemDisplayInfo.dbc")
                     .small()
                     .color(theme::BAD),
             );
@@ -1214,17 +1209,17 @@ fn set_membership(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, se
     let mut moves: Vec<(u32, u32)> = Vec::new();
     if unlisted {
         ui.label(
-            egui::RichText::new("not among the set's items")
+            egui::RichText::new("not in the set's item list")
                 .small()
                 .color(theme::WARN),
         )
         .on_hover_text(
-            "The item names the set, and the set's own list in ItemSet.dbc does not \
-             name the item. The client lists a set's pieces from that list.",
+            "This item's set_id names the set, but the set's item columns in ItemSet.dbc \
+             do not list this item. The client lists a set's pieces from those columns.",
         );
         if ui
             .small_button("add")
-            .on_hover_text("Put the item in the set's first empty item column. One undo entry.")
+            .on_hover_text("Writes the item into the set's first empty item column. One undo entry.")
             .clicked()
         {
             moves.push((0, set));
@@ -1237,12 +1232,12 @@ fn set_membership(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, se
                 .color(theme::WARN),
         )
         .on_hover_text(
-            "Another set's list in ItemSet.dbc names this item, and the item does not \
-             name that set.",
+            "Another set's item columns in ItemSet.dbc list this item, but this item's \
+             set_id does not name that set.",
         );
         if ui
-            .small_button("take out")
-            .on_hover_text(format!("Take the item out of set {other}'s items. One undo entry."))
+            .small_button("remove")
+            .on_hover_text(format!("Removes the item from set {other}'s item columns. One undo entry."))
             .clicked()
         {
             moves.push((other, 0));
@@ -1492,8 +1487,8 @@ fn appearance(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
             ui,
             match display_id {
                 0 => {
-                    "This item names no appearance. It draws the empty-slot icon and \
-                      paints nothing on a wearer."
+                    "display_id is 0. The client draws the empty-slot icon and draws \
+                      nothing on a wearer."
                 }
                 _ => {
                     "ItemDisplayInfo.dbc has no row with that id. The client draws \
@@ -1528,7 +1523,7 @@ fn appearance(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
             if look.models.len() > 1 {
                 ui.label(
                     egui::RichText::new(format!(
-                        "and {} more \u{2014} the left shoulder is drawn",
+                        "{} more model(s) \u{2014} the preview shows the left shoulder",
                         look.models.len() - 1
                     ))
                     .small()
@@ -1560,9 +1555,8 @@ fn appearance(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
                     super::inspector::preview_pane_at(ui, work.portraits, &key, side);
                     theme::note(
                         ui,
-                        "This appearance carries no model of its own: it paints the \
-                         wearer's skin, so it is drawn on a body. The body stands in its \
-                         bind pose \u{2014} a picture has no skeleton to pose.",
+                        "This appearance has no model: it textures the wearer's body, so \
+                         the preview draws it on a body in its bind pose.",
                     );
                     true
                 }
@@ -1577,14 +1571,12 @@ fn appearance(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
                         ui,
                         match (worn.is_some(), wearable) {
                             (_, false) => {
-                                "This appearance is an icon and nothing else: no model, no \
-                                 texture on a wearer and no geoset of one. It is what a \
-                                 bag shows and what the game shows."
+                                "This appearance is an icon only: no model, no body texture \
+                                 and no geoset change on a wearer."
                             }
                             (false, true) => {
-                                "This appearance paints a wearer, but no body could be \
-                                 dressed in it \u{2014} the tables resolve no model for \
-                                 the race chosen below."
+                                "This appearance textures the wearer's body, but the \
+                                 tables resolve no body model for the race chosen below."
                             }
                             _ => unreachable!("the wearable case is drawn above"),
                         },
@@ -1686,9 +1678,9 @@ fn body_picker(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known, on_a_bo
     })
     .response
     .on_hover_text(
-        "Which body the preview is drawn on. It changes nothing about the row. A helmet \
-         is cut for the head it sits on \u{2014} the display row names one file and the \
-         archive holds sixteen \u{2014} and a garment is painted into whichever body \
+        "Race and gender of the preview body. Does not change the row. A helmet has one \
+         model per race and gender \u{2014} the display row names one file and the \
+         archive holds sixteen \u{2014} and a garment is painted onto the body that \
          wears it.",
     );
 }
@@ -1745,9 +1737,8 @@ fn look_detail(ui: &mut egui::Ui, look: &Look) {
             .color(theme::INK_DIM),
         )
         .on_hover_text(
-            "geosetGroup[3]: which geometry variant the wearer switches to — a cuff, \
-             a bootleg, the skirt of a robe. 0 is the default, which is the bare \
-             body.",
+            "geosetGroup[3]: the geoset variant the wearer switches to, such as a cuff, \
+             a boot leg or a robe skirt. 0 is the default, the bare body.",
         );
     }
     if look.helmet_hides.iter().any(|id| *id != 0) {
@@ -1760,9 +1751,9 @@ fn look_detail(ui: &mut egui::Ui, look: &Look) {
             .color(theme::INK_DIM),
         )
         .on_hover_text(
-            "helmetGeosetVis, per gender: a HelmetGeosetVisData.dbc row saying which \
-             of the wearer's own geosets this helmet hides — hair, facial hair, ears \
-             — per race.",
+            "helmetGeosetVis, per gender: a HelmetGeosetVisData.dbc row that lists, per \
+             race, which of the wearer's geosets (hair, facial hair, ears) this helmet \
+             hides.",
         );
     }
 }
@@ -1793,7 +1784,7 @@ fn picker(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         ui.horizontal(|ui| {
             let box_ = ui.add(
                 egui::TextEdit::singleline(&mut work.items.display_query)
-                    .hint_text("icon name, or an id")
+                    .hint_text("icon name or display id")
                     .desired_width(PICKER_WIDTH - 260.0),
             );
             if work.items.display_focus {
@@ -1825,9 +1816,9 @@ fn picker(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         if total == 0 {
             theme::note(
                 ui,
-                "Nothing matches. The only text a display row carries is its icon \
-                 name, so that is what a word is matched against — and the filter \
-                 above may be narrower than this item's slot allows.",
+                "No matches. Search text is matched against the display row's icon \
+                 name, its only text. The filter above may also exclude appearances \
+                 this item's slot allows.",
             );
         }
         let range = pager(ui, &mut work.items.display_page, total, DISPLAY_PAGE);
@@ -2007,7 +1998,7 @@ fn preview(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, id: u32) 
                 }
                 None => {
                     ui.label(
-                        egui::RichText::new("no such display row")
+                        egui::RichText::new("not in ItemDisplayInfo.dbc")
                             .small()
                             .color(theme::BAD),
                     );
@@ -2016,8 +2007,8 @@ fn preview(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, id: u32) 
             // The same answer a click on the cell gives. The column is
             // written in one place, by [`picker`]; this only says which id.
             used = ui
-                .button("Use this one")
-                .on_hover_text("Write this display id into the item, and close.")
+                .button("Use this display")
+                .on_hover_text("Writes this display id into the item's display_id and closes the picker.")
                 .clicked();
         });
     });
