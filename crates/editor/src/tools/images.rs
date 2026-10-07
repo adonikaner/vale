@@ -343,7 +343,7 @@ pub fn import(
         let Some(tile) = session.tiles.get_mut(&at) else {
             continue;
         };
-        let edits = match pending.kind {
+        let mut edits = match pending.kind {
             Kind::Heights => {
                 let at_pixel = (
                     (at.0 - origin.0) as usize * (HEIGHT_SIDE - 1),
@@ -373,6 +373,7 @@ pub fn import(
                 image::import_blend(tile, &rgb)
             }
         };
+        session.hold_locked(at, &mut edits);
         if edits.is_empty() {
             continue;
         }

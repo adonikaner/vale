@@ -364,6 +364,11 @@ pub struct EditSession {
     /// The check for tiles the project folder already holds unchanged,
     /// started when a project is opened. See [`drop_unchanged_tiles`].
     unchanged: Option<Task<Vec<Unchanged>>>,
+    /// The locked vertices of each tile of the open map that has been asked
+    /// about, read from the project on first use. See [`Self::locked`]. A tile
+    /// with no entry has not been read yet; an empty set is a tile with no
+    /// locks.
+    locks: HashMap<(u32, u32), vale_edit::ops::vertices::Selected>,
 }
 
 /// What undo entry a server-row edit goes on, and what folds into it.
@@ -438,6 +443,7 @@ impl EditSession {
             one_gesture: None,
             shipped: None,
             unchanged: None,
+            locks: HashMap::default(),
         }
     }
 
@@ -471,6 +477,76 @@ impl EditSession {
                 false
             }
         }
+    }
+
+    /// Where a tile's locked vertices are stored in the project, outside the
+    /// game data: `editor\locks\<Map>_<x>_<y>.txt`.
+    /// `editor` is one of `Project::NOT_GAME_DATA`, so a publish never packs
+    /// it.
+    fn locks_vpath(&self, coord: (u32, u32)) -> String {
+        format!(r"editor\locks\{}_{}_{}.txt", self.map, coord.0, coord.1)
+    }
+
+    /// A tile's locked vertices: the ones no height operation may move. Read
+    /// from the project the first time a tile is asked about. A file that
+    /// cannot be read as locks is reported in the status line and treated as
+    /// no locks.
+    pub fn locked(&mut self, coord: (u32, u32)) -> &vale_edit::ops::vertices::Selected {
+        if !self.locks.contains_key(&coord) {
+            let vpath = self.locks_vpath(coord);
+            let set = match self.project.read(&vpath) {
+                None => Default::default(),
+                Some(bytes) => {
+                    match vale_edit::ops::vertices::Selected::from_text(&String::from_utf8_lossy(&bytes)) {
+                        Ok(set) => set,
+                        Err(e) => {
+                            self.status = format!("{vpath}: {e}; the tile is treated as having no locked vertices");
+                            Default::default()
+                        }
+                    }
+                }
+            };
+            self.locks.insert(coord, set);
+        }
+        &self.locks[&coord]
+    }
+
+    /// A tile's locked vertices if they have been read, for a reader that
+    /// cannot take the session mutably. The terrain tool reads every open
+    /// tile's locks through [`Self::locked`] each frame it is chosen.
+    pub fn locks_if_read(&self, coord: (u32, u32)) -> Option<&vale_edit::ops::vertices::Selected> {
+        self.locks.get(&coord)
+    }
+
+    /// Replace a tile's locked vertices, and write them to the project at once.
+    /// An empty set removes the file. Locks are not on the undo history: a
+    /// lock changes no file the game reads.
+    pub fn set_locked(&mut self, coord: (u32, u32), set: vale_edit::ops::vertices::Selected) {
+        let vpath = self.locks_vpath(coord);
+        let written = match set.is_empty() {
+            true => self.project.revert(&vpath).map(|_| ()),
+            false => self.project.write(&vpath, set.to_text().as_bytes()).map(|_| ()),
+        };
+        if let Err(e) = written {
+            self.status = format!("{vpath}: the locked vertices were not saved: {e}");
+        }
+        self.locks.insert(coord, set);
+    }
+
+    /// Put a tile's locked vertices back where `edits` found them. Every
+    /// operation that moves a tile's heights calls this after writing them and
+    /// before recording the edits, so a lock holds against all of them. See
+    /// `vale_edit::ops::vertices::Selected::hold`. Returns how many entries
+    /// were held.
+    pub fn hold_locked(&mut self, coord: (u32, u32), edits: &mut Vec<vale_edit::ops::Edit>) -> usize {
+        if !edits.iter().any(|edit| matches!(edit, vale_edit::ops::Edit::Heights { .. })) {
+            return 0;
+        }
+        self.locked(coord);
+        let (Some(locks), Some(tile)) = (self.locks.get(&coord), self.tiles.get_mut(&coord)) else {
+            return 0;
+        };
+        locks.hold(tile, edits)
     }
 
     /// Let go of an open tile, so that a session that has flown across a
@@ -579,6 +655,8 @@ impl EditSession {
         assets.set_overlay(Some(overlay_over(&project, &self.edited)));
         self.project = project;
         self.tiles.clear();
+        // The locks are the project's, read from its folder.
+        self.locks.clear();
         self.tables.clear();
         self.unsaved.clear();
         self.unsaved_tables.clear();
@@ -736,6 +814,9 @@ impl EditSession {
         }
         self.save_all();
         self.tiles.clear();
+        // Keyed by tile coordinate, which names a different tile on the next
+        // map.
+        self.locks.clear();
         self.stale.clear();
         self.map = name;
         self.map_id = id;
@@ -2176,6 +2257,7 @@ fn open(
         one_gesture: None,
         shipped: Some(shipped),
         unchanged,
+        locks: HashMap::default(),
     });
 }
 

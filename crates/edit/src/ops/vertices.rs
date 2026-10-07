@@ -12,6 +12,12 @@
 //! where it is, or moves nothing else ([`Mask`], and
 //! [`super::Brush::stroke_masked`]).
 //!
+//! A set is also the editor's record of **locked** vertices: the ones no
+//! operation may move. [`Selected::hold`] takes the edits any operation has
+//! made and puts every locked vertex back, so the lock does not depend on
+//! each operation knowing about it. [`Selected::to_text`] and
+//! [`Selected::from_text`] are the form a project stores a tile's locks in.
+//!
 //! ## A vertex two chunks share is in the set twice
 //!
 //! A chunk has 145 vertices, and the outer ones on its edge are also the next
@@ -200,6 +206,242 @@ impl Selected {
             }
         })
     }
+
+    /// Put every entry of `other` into the set. Returns how many were not
+    /// already in it.
+    pub fn add(&mut self, other: &Selected) -> usize {
+        let mut added = 0;
+        for (&index, flags) in &other.chunks {
+            let mine = self
+                .chunks
+                .entry(index)
+                .or_insert_with(|| vec![false; heights::VERTICES]);
+            for (vertex, &on) in flags.iter().enumerate() {
+                if on && !mine[vertex] {
+                    mine[vertex] = true;
+                    added += 1;
+                }
+            }
+        }
+        added
+    }
+
+    /// Take every entry of `other` out of the set. Returns how many were in it.
+    pub fn take(&mut self, other: &Selected) -> usize {
+        let mut taken = 0;
+        for (&index, flags) in &other.chunks {
+            let Some(mine) = self.chunks.get_mut(&index) else {
+                continue;
+            };
+            for (vertex, &on) in flags.iter().enumerate() {
+                if on && mine[vertex] {
+                    mine[vertex] = false;
+                    taken += 1;
+                }
+            }
+            if !mine.contains(&true) {
+                self.chunks.remove(&index);
+            }
+        }
+        taken
+    }
+
+    /// The vertices on the tile's four sides: the outer vertices of the edge
+    /// chunks that lie on the tile's boundary. Each is also a vertex of the
+    /// tile beside it, so a set holding these keeps the ground at the seam
+    /// where it is.
+    ///
+    /// Found by world position rather than by chunk and row number, so it does
+    /// not depend on which way the chunk grid runs.
+    pub fn tile_sides(tile: &AdtFile) -> Selected {
+        const EPSILON: f32 = 0.01;
+        let origins: Vec<(usize, [f32; 3])> = (0..tile.chunks.len())
+            .filter_map(|index| tile.chunk(index).map(|chunk| (index, chunk.head().position())))
+            .collect();
+        let mut set = Selected::default();
+        let (Some(top_x), Some(top_y)) = (
+            origins.iter().map(|(_, at)| at[0]).reduce(f32::max),
+            origins.iter().map(|(_, at)| at[1]).reduce(f32::max),
+        ) else {
+            return set;
+        };
+        let side = 16.0 * CHUNK_SIZE;
+        let (low_x, low_y) = (top_x - side, top_y - side);
+        let on_side = |p: f32, top: f32, low: f32| (p - top).abs() < EPSILON || (p - low).abs() < EPSILON;
+        for (index, origin) in origins {
+            for row in 0..9 {
+                for col in 0..9 {
+                    let Some(vertex) = heights::outer(row, col) else {
+                        continue;
+                    };
+                    let (dx, dy) = heights::vertex_offset(vertex);
+                    let (x, y) = (origin[0] - dx, origin[1] - dy);
+                    if on_side(x, top_x, low_x) || on_side(y, top_y, low_y) {
+                        set.chunks
+                            .entry(index)
+                            .or_insert_with(|| vec![false; heights::VERTICES])[vertex] = true;
+                    }
+                }
+            }
+        }
+        set
+    }
+
+    /// Put every vertex in the set back at the height it had before `edits`,
+    /// which have already been written into `tile`. This is how a set of locked
+    /// vertices is kept: every operation that moves the ground passes its edits
+    /// through here before they are recorded, so the lock holds whatever the
+    /// operation was.
+    ///
+    /// A height edit left with nothing changed is removed. The normals of the
+    /// chunks round a held vertex are worked out again from the held heights,
+    /// and each normals edit keeps the `before` the operation recorded, so an
+    /// undo still restores the shading it found. Returns how many entries were
+    /// held.
+    pub fn hold(&self, tile: &mut AdtFile, edits: &mut Vec<Edit>) -> usize {
+        if self.is_empty() {
+            return 0;
+        }
+        let mut held = 0;
+        let mut written: Vec<(usize, Vec<f32>)> = Vec::new();
+        for edit in edits.iter_mut() {
+            let Edit::Heights { chunk, before, after } = edit else {
+                continue;
+            };
+            let Some(flags) = self.chunks.get(chunk) else {
+                continue;
+            };
+            let mut changed = false;
+            for (vertex, &locked) in flags.iter().enumerate() {
+                if !locked {
+                    continue;
+                }
+                if let (Some(was), Some(now)) = (before.get(vertex), after.get_mut(vertex)) {
+                    if now != was {
+                        *now = *was;
+                        held += 1;
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                written.push((*chunk, after.clone()));
+            }
+        }
+        if held == 0 {
+            return 0;
+        }
+        for (chunk, after) in &written {
+            if let Some(mesh) = tile.chunk_mut(*chunk) {
+                heights::set_heights(mesh, after);
+            }
+        }
+        edits.retain(|edit| !matches!(edit, Edit::Heights { before, after, .. } if before == after));
+
+        // The normals, again. The first `before` recorded for a chunk is the
+        // shading the operation found; later ones are its own intermediate
+        // states.
+        let mut found: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
+        edits.retain(|edit| match edit {
+            Edit::Normals { chunk, before, .. } => {
+                found.entry(*chunk).or_insert_with(|| before.clone());
+                false
+            }
+            _ => true,
+        });
+        let mut shade: std::collections::BTreeSet<usize> = found.keys().copied().collect();
+        for (chunk, _) in &written {
+            shade.extend(super::with_neighbours(*chunk));
+        }
+        for index in shade {
+            let Some(now) = super::normals_of(tile, index) else {
+                continue;
+            };
+            let before = found.remove(&index).unwrap_or(now);
+            heights::recompute_normals(tile, index);
+            let after = super::normals_of(tile, index).unwrap_or_default();
+            if after != before {
+                edits.push(Edit::Normals {
+                    chunk: index,
+                    before,
+                    after,
+                });
+            }
+        }
+        held
+    }
+
+    /// The set as text: one line per chunk, the chunk's index and then its
+    /// vertex indices, with a run of consecutive indices written `first-last`.
+    /// See [`Self::from_text`].
+    pub fn to_text(&self) -> String {
+        let mut text = String::from(
+            "# Locked terrain vertices of one tile, written by the world editor.\n\
+             # Each line: a chunk index (0-255), then vertex indices (0-144) or ranges.\n",
+        );
+        for (&index, flags) in &self.chunks {
+            let mut line = index.to_string();
+            let mut vertex = 0;
+            while vertex < flags.len() {
+                if !flags[vertex] {
+                    vertex += 1;
+                    continue;
+                }
+                let first = vertex;
+                while vertex + 1 < flags.len() && flags[vertex + 1] {
+                    vertex += 1;
+                }
+                match first == vertex {
+                    true => line.push_str(&format!(" {first}")),
+                    false => line.push_str(&format!(" {first}-{vertex}")),
+                }
+                vertex += 1;
+            }
+            text.push_str(&line);
+            text.push('\n');
+        }
+        text
+    }
+
+    /// Read [`Self::to_text`]'s form back. Blank lines and lines starting with
+    /// `#` are skipped. A chunk index past 255 or a vertex index past 144 is an
+    /// error naming the line.
+    pub fn from_text(text: &str) -> Result<Selected, String> {
+        let mut set = Selected::default();
+        for (number, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let bad = || format!("line {}: {line:?} is not a chunk and its vertices", number + 1);
+            let mut words = line.split_whitespace();
+            let index: usize = words.next().and_then(|w| w.parse().ok()).ok_or_else(bad)?;
+            if index >= 256 {
+                return Err(bad());
+            }
+            let flags = set
+                .chunks
+                .entry(index)
+                .or_insert_with(|| vec![false; heights::VERTICES]);
+            for word in words {
+                let (first, last) = match word.split_once('-') {
+                    Some((a, b)) => (a.parse::<usize>(), b.parse::<usize>()),
+                    None => (word.parse::<usize>(), word.parse::<usize>()),
+                };
+                let (Ok(first), Ok(last)) = (first, last) else {
+                    return Err(bad());
+                };
+                if first > last || last >= heights::VERTICES {
+                    return Err(bad());
+                }
+                for vertex in first..=last {
+                    flags[vertex] = true;
+                }
+            }
+        }
+        set.chunks.retain(|_, flags| flags.contains(&true));
+        Ok(set)
+    }
 }
 
 /// The height of a plane at a position: the plane through `pivot` that rises
@@ -259,5 +501,51 @@ impl Mask {
             Mask::Protect => !selected.holds(chunk, vertex),
             Mask::Confine => selected.holds(chunk, vertex),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The stored form reads back as the same set, with runs written as
+    /// ranges, and a line that does not parse is refused with its number.
+    #[test]
+    fn a_set_survives_its_text_form() {
+        let mut set = Selected::default();
+        set.chunks.insert(17, {
+            let mut flags = vec![false; heights::VERTICES];
+            for vertex in [0, 1, 2, 3, 40, 144] {
+                flags[vertex] = true;
+            }
+            flags
+        });
+        set.chunks.insert(255, {
+            let mut flags = vec![false; heights::VERTICES];
+            flags[9] = true;
+            flags
+        });
+        let text = set.to_text();
+        assert!(text.contains("\n17 0-3 40 144\n"), "{text}");
+        assert!(text.contains("\n255 9\n"), "{text}");
+        assert_eq!(Selected::from_text(&text).unwrap(), set);
+        assert_eq!(Selected::from_text("").unwrap(), Selected::default());
+        assert!(Selected::from_text("3 0-145").unwrap_err().starts_with("line 1:"));
+        assert!(Selected::from_text("# x\n256 0").unwrap_err().starts_with("line 2:"));
+    }
+
+    /// Adding and taking are set union and difference, and taking the last
+    /// entry of a chunk drops the chunk.
+    #[test]
+    fn sets_add_and_take() {
+        let one = Selected::from_text("5 0-4").unwrap();
+        let two = Selected::from_text("5 3-8\n6 1").unwrap();
+        let mut both = one.clone();
+        assert_eq!(both.add(&two), 5);
+        assert_eq!(both, Selected::from_text("5 0-8\n6 1").unwrap());
+        assert_eq!(both.take(&two), 7);
+        assert_eq!(both, Selected::from_text("5 0-2").unwrap());
+        assert_eq!(both.take(&one), 3);
+        assert!(both.is_empty());
     }
 }

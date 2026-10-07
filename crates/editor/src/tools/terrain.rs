@@ -26,9 +26,13 @@
 //!                or only filling, or only cutting; level, or a plane tilted
 //!                toward a compass bearing through where the stroke began
 //! select         the left button chooses vertices in place of sculpting;
-//!                the panel then moves, levels, tilts or smooths them, and
-//!                can keep strokes out of them or inside them
-//!                ([`Terrain::vertices`], [`Terrain::mask`])
+//!                the panel then moves, levels, tilts or smooths them, or
+//!                keeps strokes inside them ([`Terrain::vertices`],
+//!                [`Terrain::only_inside`])
+//! lock           the selection, or a tile's four sides, is added to the
+//!                tile's locked vertices, which no height operation moves.
+//!                Stored in the project; see `EditSession::locked` and
+//!                `EditSession::hold_locked`
 //! tilt           a tilted flatten, and a selection with a tilt set, draw
 //!                the plane's slope: a level line, the plane's line and an
 //!                arrow uphill ([`draw_tilt`])
@@ -166,11 +170,15 @@ pub struct Terrain {
     /// [`Self::vertices`].
     pub selecting: bool,
     /// The selected vertices, per open tile. Chosen by painting over them
-    /// while [`Self::selecting`] is on, then changed from the panel, or used
-    /// to mask the brush by [`Self::mask`]. See `vale_edit::ops::vertices`.
+    /// while [`Self::selecting`] is on, then changed from the panel, used to
+    /// keep strokes inside them by [`Self::only_inside`], or added to the
+    /// tile's locks. See `vale_edit::ops::vertices`.
     pub vertices: bevy::platform::collections::HashMap<(u32, u32), Selected>,
-    /// How a brush stroke treats the selection: `None` ignores it.
-    pub mask: Option<Mask>,
+    /// Whether a brush stroke moves only the selected vertices.
+    pub only_inside: bool,
+    /// How many locked vertex entries the open tiles hold, for the panel.
+    /// Written by [`vertex_asks`] each frame the tool is chosen.
+    pub locked: usize,
     /// What the panel asks to be done with the selection, taken by
     /// [`vertex_asks`]. The panel holds no session.
     pub ask: Option<VertexAsk>,
@@ -216,6 +224,15 @@ pub enum VertexAsk {
     Smooth,
     /// Select nothing.
     Clear,
+    /// Add the selection to its tiles' locked vertices.
+    Lock,
+    /// Take the selection out of its tiles' locked vertices.
+    Unlock,
+    /// Lock the vertices on all four sides of each tile that holds part of
+    /// the selection.
+    LockSides,
+    /// Unlock every vertex of every open tile.
+    UnlockAll,
 }
 
 /// How far one Smooth moves a selected vertex toward its neighbours' mean.
@@ -232,7 +249,8 @@ impl Default for Terrain {
             tilt_toward: 0.0,
             selecting: false,
             vertices: Default::default(),
-            mask: None,
+            only_inside: false,
+            locked: 0,
             ask: None,
             selected: 0,
             selected_mean: 0.0,
@@ -498,14 +516,16 @@ fn stroke(
             held.standing
                 .insert(coord, vale_edit::ops::follow::standing(tile));
         }
-        // The selection masks the stroke. A stroke kept inside it does
-        // nothing on a tile with none of it.
-        let mask = match (terrain.mask, terrain.vertices.get(&coord)) {
-            (Some(Mask::Confine), None) => continue,
-            (Some(mask), Some(set)) => Some((set, mask)),
-            _ => None,
+        // A stroke kept inside the selection does nothing on a tile with
+        // none of it. Locked vertices are put back afterwards, by
+        // `hold_locked`, as they are for every height operation.
+        let mask = match (terrain.only_inside, terrain.vertices.get(&coord)) {
+            (true, None) => continue,
+            (true, Some(set)) => Some((set, Mask::Confine)),
+            (false, _) => None,
         };
-        let edits = brush.stroke_masked(tile, [at.x, at.y], seconds, level, mask);
+        let mut edits = brush.stroke_masked(tile, [at.x, at.y], seconds, level, mask);
+        session.hold_locked(coord, &mut edits);
         if edits.is_empty() {
             continue;
         }
@@ -618,6 +638,9 @@ fn vertex_asks(
     if let Some(ask) = asked {
         match ask {
             VertexAsk::Clear => terrain.vertices.clear(),
+            VertexAsk::Lock | VertexAsk::Unlock | VertexAsk::LockSides | VertexAsk::UnlockAll => {
+                session.status = change_locks(session, &terrain, ask);
+            }
             _ if count == 0 => {}
             _ => {
                 match ask {
@@ -691,7 +714,8 @@ fn vertex_asks(
                     if terrain.objects_follow {
                         standing.push((coord, vale_edit::ops::follow::standing(tile)));
                     }
-                    let edits = plan.write(tile);
+                    let mut edits = plan.write(tile);
+                    session.hold_locked(coord, &mut edits);
                     if edits.is_empty() {
                         continue;
                     }
@@ -730,6 +754,14 @@ fn vertex_asks(
         terrain.tilt_applied = [0.0; 2];
         terrain.tilt_pivot = None;
     }
+    // The locked entries across the open tiles. Reading a tile's locks the
+    // first time is a file read; after that it is a count over the chunks
+    // that have any.
+    let open: Vec<(u32, u32)> = session.tiles.keys().copied().collect();
+    let locked: usize = open.into_iter().map(|coord| session.locked(coord).count()).sum();
+    if terrain.locked != locked {
+        terrain.locked = locked;
+    }
     if terrain.selected != count || terrain.selected_mean != centre[2] {
         terrain.selected = count;
         terrain.selected_mean = centre[2];
@@ -741,6 +773,44 @@ fn vertex_asks(
         for coord in std::mem::take(&mut *unpublished) {
             session.publish(coord);
         }
+    }
+}
+
+/// Carry out one of the four lock requests, and say what it did for the
+/// status line. Locks are written to the project at once and are not on the
+/// undo history; see `EditSession::set_locked`.
+fn change_locks(session: &mut EditSession, terrain: &Terrain, ask: VertexAsk) -> String {
+    let mut changed = 0usize;
+    if ask == VertexAsk::UnlockAll {
+        let open: Vec<(u32, u32)> = session.tiles.keys().copied().collect();
+        for coord in open {
+            let had = session.locked(coord).count();
+            if had > 0 {
+                changed += had;
+                session.set_locked(coord, Selected::default());
+            }
+        }
+        return format!("unlocked {changed} vertex entries on the open tiles");
+    }
+    for (&coord, set) in &terrain.vertices {
+        let Some(tile) = session.tiles.get(&coord) else {
+            continue;
+        };
+        let sides = (ask == VertexAsk::LockSides).then(|| Selected::tile_sides(tile));
+        let mut locks = session.locked(coord).clone();
+        changed += match (ask, &sides) {
+            (VertexAsk::Unlock, _) => locks.take(set),
+            (_, Some(sides)) => locks.add(sides),
+            _ => locks.add(set),
+        };
+        session.set_locked(coord, locks);
+    }
+    match ask {
+        VertexAsk::Unlock => format!("unlocked {changed} selected vertex entries"),
+        VertexAsk::LockSides => {
+            format!("locked {changed} vertex entries on the sides of the selected tiles")
+        }
+        _ => format!("locked {changed} selected vertex entries"),
     }
 }
 
@@ -822,16 +892,42 @@ fn draw_vertices(
     terrain: Res<Terrain>,
     focus: Res<vale_client::render::focus::WorldFocus>,
 ) {
-    if !state.editing() || *tool != Tool::Terrain || terrain.vertices.is_empty() {
+    if !state.editing() || *tool != Tool::Terrain {
+        return;
+    }
+    if terrain.vertices.is_empty() && terrain.locked == 0 {
         return;
     }
     let Some(session) = session else { return };
-    // Yellow while the selection is only a selection, red while strokes are
-    // kept out of it and green while they are kept inside it.
-    let colour = match terrain.mask {
-        None => Color::srgb(1.0, 0.9, 0.35),
-        Some(Mask::Protect) => Color::srgb(1.0, 0.45, 0.4),
-        Some(Mask::Confine) => Color::srgb(0.45, 1.0, 0.5),
+    // Locked vertices first, as a short red post with a crossbar, so a
+    // selected vertex drawn after them is still seen where the two coincide.
+    let world = |point: Vec3| vale_client::render::axes::to_bevy(point.to_array());
+    let mut drawn = 0;
+    if terrain.locked > 0 {
+        for (coord, tile) in &session.tiles {
+            let Some(locks) = session.locks_if_read(*coord) else {
+                continue;
+            };
+            for position in locks.positions(tile) {
+                let at = Vec3::from(position);
+                if at.distance(focus.position) > VERTEX_MARK_RANGE {
+                    continue;
+                }
+                if drawn >= VERTEX_MARKS {
+                    break;
+                }
+                drawn += 1;
+                let top = at + Vec3::Z * 1.2;
+                gizmos.line(world(at), world(top), LOCK_COLOUR);
+                gizmos.line(world(top - Vec3::X * 0.4), world(top + Vec3::X * 0.4), LOCK_COLOUR);
+            }
+        }
+    }
+    // Yellow while the selection is only a selection, green while strokes
+    // are kept inside it.
+    let colour = match terrain.only_inside {
+        false => Color::srgb(1.0, 0.9, 0.35),
+        true => Color::srgb(0.45, 1.0, 0.5),
     };
     // While selecting with a tilt set, the plane a Tilt would put the
     // selection on, through its centre.
@@ -846,7 +942,6 @@ fn draw_vertices(
             TILT_COLOUR,
         );
     }
-    let mut drawn = 0;
     for (coord, set) in &terrain.vertices {
         let Some(tile) = session.tiles.get(coord) else {
             continue;
@@ -868,6 +963,9 @@ fn draw_vertices(
         }
     }
 }
+
+/// The colour of a locked vertex's mark.
+const LOCK_COLOUR: Color = Color::srgb(1.0, 0.45, 0.4);
 
 /// The colour of [`draw_tilt`]'s lines.
 const TILT_COLOUR: Color = Color::srgb(0.35, 0.95, 1.0);

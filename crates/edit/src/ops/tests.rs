@@ -1539,6 +1539,73 @@ fn a_selection_of_vertices_moves_together_and_can_be_kept_from_a_brush() {
     assert_eq!(tile.write(), bytes);
 }
 
+/// Locked vertices stay where they are whatever moved the ground, the rest of
+/// the stroke stands, and the edits that remain still undo to the original
+/// bytes.
+#[test]
+fn locked_vertices_are_held_through_any_edit() {
+    use crate::adt::heights;
+    use crate::ops::vertices::Selected;
+    let Some(mut tile) = tile() else { return };
+    let bytes = tile.write();
+    let origin = tile.chunk(17).unwrap().head().position();
+    let at = [origin[0], origin[1]];
+    let mut locked = Selected::default();
+    locked.mark(&tile, at, 6.0, Shape::Circle, true);
+    let corner = |tile: &AdtFile, chunk: usize, row: usize, column: usize| {
+        heights::heights(tile.chunk(chunk).unwrap())[heights::outer(row, column).unwrap()]
+    };
+    let was = corner(&tile, 17, 0, 0);
+    let beside = corner(&tile, 17, 4, 4);
+
+    let brush = Brush {
+        radius: 30.0,
+        strength: 20.0,
+        ..Brush::default()
+    };
+    let mut edits = brush.stroke(&mut tile, at, 0.5, None);
+    assert!(locked.hold(&mut tile, &mut edits) > 0);
+    assert_eq!(corner(&tile, 17, 0, 0), was, "the locked vertex did not move");
+    assert_eq!(corner(&tile, 0, 8, 8), was, "nor did its copy in the next chunk");
+    assert!(corner(&tile, 17, 4, 4) > beside + 1.0, "the unlocked ground rose");
+    // Each remaining height edit agrees with the tile, and the normals were
+    // worked out from the held heights.
+    for edit in &edits {
+        if let Edit::Heights { chunk, after, .. } = edit {
+            assert_eq!(&heights::heights(tile.chunk(*chunk).unwrap()), after);
+        }
+    }
+    let shaded = tile.write();
+    for edit in &edits {
+        if let Edit::Normals { chunk, .. } = edit {
+            heights::recompute_normals(&mut tile, *chunk);
+        }
+    }
+    assert_eq!(tile.write(), shaded, "the normals match the held heights");
+
+    for edit in edits.iter().rev() {
+        edit.revert(&mut tile);
+    }
+    assert_eq!(tile.write(), bytes);
+
+    // A tile's sides are found by position: every vertex the set names lies
+    // on the tile's boundary, and it names some on all four.
+    let sides = Selected::tile_sides(&tile);
+    let positions = sides.positions(&tile);
+    let side = 16.0 * vale_assets::world::adt::CHUNK_SIZE;
+    let top_x = positions.iter().map(|p| p[0]).fold(f32::MIN, f32::max);
+    let top_y = positions.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
+    let near = |a: f32, b: f32| (a - b).abs() < 0.01;
+    assert!(positions
+        .iter()
+        .all(|p| near(p[0], top_x) || near(p[0], top_x - side) || near(p[1], top_y) || near(p[1], top_y - side)));
+    assert!(positions.iter().any(|p| near(p[0], top_x - side)));
+    assert!(positions.iter().any(|p| near(p[1], top_y - side)));
+    // 16 chunks a side, 9 outer vertices each, 4 sides; the corner chunk's
+    // corner vertex is on two sides and is one entry.
+    assert_eq!(sides.count(), 16 * 9 * 4 - 4);
+}
+
 /// A selection tilts onto a plane through its centre, smooths toward its
 /// neighbours, and a brush confined to it moves nothing outside it.
 #[test]

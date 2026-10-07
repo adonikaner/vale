@@ -146,7 +146,8 @@ pub fn apply(session: &mut EditSession, grading: &Grading) -> usize {
         // restated**, which is the rule this file used to break: the heights on
         // both sides of `set_heights` are world heights, and the copy here took
         // the chunk's own base off them a second time.
-        let edits = grade.write_into(tile);
+        let mut edits = grade.write_into(tile);
+        session.hold_locked(coord, &mut edits);
         if edits.is_empty() {
             continue;
         }

@@ -772,7 +772,16 @@ fn stitch_in(session: &mut EditSession, cells: &BTreeSet<Cell>, how: Stitch) -> 
         });
         moved.insert(cell);
     }
-    let changed = moved.len();
+    // Locked vertices are put back before the shading is worked out, so the
+    // shading across the tiles' sides reads the heights that stay.
+    for (coord, list) in edits.iter_mut() {
+        session.hold_locked(*coord, list);
+    }
+    let changed = edits
+        .values()
+        .flatten()
+        .filter(|edit| matches!(edit, Edit::Heights { .. }))
+        .count();
     reshade_across(session, &moved, &mut edits);
     commit(session, edits, false);
     changed
@@ -1541,6 +1550,11 @@ fn paste_in(
                 written.push(cell);
             }
         }
+    }
+    // Locked vertices are put back before the shading is worked out, as in
+    // `stitch_in`.
+    for (coord, list) in edits.iter_mut() {
+        session.hold_locked(*coord, list);
     }
     reshade_across(session, &moved, &mut edits);
     commit(session, edits, true);

@@ -2971,12 +2971,20 @@ fn brush(ui: &mut egui::Ui, terrain: &mut Terrain) {
     theme::heading(ui, "Objects");
     objects_follow(ui, &mut terrain.objects_follow);
 
-    // The selection, while there is one: how a stroke treats it. The rest
-    // of what is done with it is on the Select vertices half.
-    if terrain.selected > 0 {
+    // The selection, while there is one, and the locks, while there are any.
+    // What is done with either is on the Select vertices half.
+    if terrain.selected > 0 || terrain.locked > 0 {
         ui.add_space(4.0);
-        theme::heading(ui, "Selected vertices");
-        vertex_mask(ui, terrain);
+        theme::heading(ui, "Vertices");
+        if terrain.selected > 0 {
+            only_inside(ui, terrain);
+        }
+        if terrain.locked > 0 {
+            theme::note(
+                ui,
+                format!("{} locked on the open tiles; strokes leave them in place", terrain.locked),
+            );
+        }
     }
 
     ui.add_space(6.0);
@@ -3068,27 +3076,75 @@ fn compass(bearing: f32) -> &'static str {
     POINTS[((bearing.rem_euclid(360.0) / 45.0).round() as usize) % 8]
 }
 
-/// How brush strokes treat the selection.
-fn vertex_mask(ui: &mut egui::Ui, terrain: &mut Terrain) {
-    use vale_edit::ops::vertices::Mask;
-    ui.label(egui::RichText::new("Brush strokes").color(theme::INK_DIM));
-    theme::segmented(
-        ui,
-        &mut terrain.mask,
-        &[
-            ("Anywhere", None),
-            ("Outside", Some(Mask::Protect)),
-            ("Inside", Some(Mask::Confine)),
-        ],
-        |a, b| a == b,
+/// Whether brush strokes move only the selected vertices.
+fn only_inside(ui: &mut egui::Ui, terrain: &mut Terrain) {
+    ui.checkbox(&mut terrain.only_inside, "Only inside the selection").on_hover_text(
+        "On: a brush stroke moves the selected vertices and nothing else, and the \
+         selection is drawn green. Off: strokes move any vertex under the brush that \
+         is not locked. To keep vertices from moving, lock them.",
     );
+}
+
+/// The locked vertices: how many the open tiles hold, and the four ways to
+/// change them.
+fn vertex_locks(ui: &mut egui::Ui, terrain: &mut Terrain) {
+    use crate::tools::terrain::VertexAsk;
+    let any = terrain.selected > 0;
     theme::note(
         ui,
-        match terrain.mask {
-            None => "strokes ignore the selection",
-            Some(Mask::Protect) => "strokes do not move the selection (red)",
-            Some(Mask::Confine) => "strokes only move the selection (green)",
+        match terrain.locked {
+            0 => "none on the open tiles".to_string(),
+            n => format!("{n} on the open tiles, drawn red"),
         },
+    );
+    ui.horizontal_wrapped(|ui| {
+        for (label, ask, about, enabled) in [
+            (
+                "Lock selection",
+                VertexAsk::Lock,
+                "Add the selected vertices to their tiles' locked vertices.",
+                any,
+            ),
+            (
+                "Unlock selection",
+                VertexAsk::Unlock,
+                "Remove the selected vertices from their tiles' locked vertices.",
+                any,
+            ),
+            (
+                "Lock tile sides",
+                VertexAsk::LockSides,
+                "Lock the vertices on all four sides of each tile that holds part of the \
+                 selection. A tile's side is shared with the tile beside it, so this keeps \
+                 the ground at the seam level with a tile that is not being edited.",
+                any,
+            ),
+            (
+                "Unlock all",
+                VertexAsk::UnlockAll,
+                "Unlock every vertex of every open tile.",
+                terrain.locked > 0,
+            ),
+        ] {
+            let disabled_why = match ask {
+                VertexAsk::UnlockAll => "No vertex on the open tiles is locked.",
+                _ => "Select some vertices first.",
+            };
+            if ui
+                .add_enabled(enabled, egui::Button::new(label))
+                .on_hover_text(about)
+                .on_disabled_hover_text(disabled_why)
+                .clicked()
+            {
+                terrain.ask = Some(ask);
+            }
+        }
+    });
+    theme::note(
+        ui,
+        "no height operation moves a locked vertex: brush strokes, Grade, Stitch, \
+         chunk paste, height import, and Level, Smooth, Tilt and height here. Locks \
+         are saved in the project at once and are not on the undo history.",
     );
 }
 
@@ -3186,8 +3242,12 @@ fn vertex_panel(ui: &mut egui::Ui, terrain: &mut Terrain) {
     );
 
     ui.add_space(4.0);
+    theme::heading(ui, "Locked vertices");
+    vertex_locks(ui, terrain);
+
+    ui.add_space(4.0);
     theme::heading(ui, "Brush");
-    vertex_mask(ui, terrain);
+    only_inside(ui, terrain);
     objects_follow(ui, &mut terrain.objects_follow);
 
     ui.add_space(6.0);

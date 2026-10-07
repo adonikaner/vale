@@ -440,9 +440,12 @@ impl Project {
     /// changes. Neither is a path the client would ever ask for, and an archive
     /// carrying them ships a project's working notes to whoever opens it.
     ///
+    /// `editor` holds the editor's own state for the project's tiles, such as
+    /// the locked vertices of each tile (`editor\locks\`).
+    ///
     /// Matched on the first path component, case-insensitively, so a file
     /// anywhere under one of these is excluded.
-    pub const NOT_GAME_DATA: [&'static str; 3] = ["sql", "server", "publish"];
+    pub const NOT_GAME_DATA: [&'static str; 4] = ["sql", "server", "publish", "editor"];
 
     /// Whether a virtual path is one [`Self::publish`] packs.
     pub fn is_game_data(vpath: &str) -> bool {
