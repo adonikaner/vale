@@ -79,8 +79,8 @@ pub enum UnitId {
     /// the vendor or the quest page's NPC. It is set by
     /// [`crate::interface::gossip::point_the_token`] from whichever window is
     /// open. `"questnpc"` parses to this variant too; the 1.12.1 client treats
-    /// the two differently only for the trainer, which this client does not
-    /// have.
+    /// the two differently only for the trainer, and this client does not
+    /// make that distinction.
     Npc,
     /// `"party1"`..`"party4"`, one-based. This is the one token here whose unit
     /// may not be in the world.
@@ -1560,7 +1560,7 @@ pub fn cooldown_of(
 
 /// What the client knows about the spell a slot would cast. This is the data
 /// for `GameTooltip:SetAction`, which composes it into lines with the game's
-/// format strings (see `lua::tooltip`).
+/// format strings (see `lua::widgets::tooltip`).
 ///
 /// It is data and not text because the formats (`MANA_COST`, `SPELL_RANGE`)
 /// are in the Lua environment that `GlobalStrings.lua` filled. The composition
@@ -1604,7 +1604,7 @@ pub struct SpellTip {
     /// [`vale_assets::tables::spelltext`]. Empty for a spell whose row carries
     /// none, which is most of them.
     ///
-    /// Substituted here and not in `lua::tooltip` because it needs the
+    /// Substituted here and not in `lua::widgets::tooltip` because it needs the
     /// caster's level and the spell catalog, which the interface side does not
     /// hold. It is also a decision about text that needs no window, and this
     /// project puts such decisions on this side of the split.
@@ -1827,6 +1827,7 @@ pub struct ItemSpellLine {
     pub sentence: String,
     /// The charges line under the sentence, for a spell whose prototype has
     /// charges: the count of the copy in hand, or the prototype's with none.
+    /// `None` for a count of -1, which the 1.12.1 client does not print.
     pub charges: Option<i32>,
     /// A recipe's teaching spell, whose taught spell creates an item: drawn
     /// in white rather than green.
@@ -2106,11 +2107,18 @@ pub fn item_tip(
             .map(|(index, s)| ItemSpellLine {
                 trigger: s.trigger,
                 sentence: item_spell_text(s.spell_id, context),
-                charges: (s.charges != 0).then(|| {
-                    carried.map_or(s.charges, |c| {
-                        c.spell_charges.get(index).copied().unwrap_or(s.charges)
+                // The carried copy's count, or the prototype's with none. A
+                // prototype with no charges has no line, and neither does a
+                // count of -1: a potion or a meal's one use, and the last
+                // charge of an item used up by its charges. Every other count
+                // prints, as its absolute value.
+                charges: (s.charges != 0)
+                    .then(|| {
+                        carried.map_or(s.charges, |c| {
+                            c.spell_charges.get(index).copied().unwrap_or(s.charges)
+                        })
                     })
-                }),
+                    .filter(|&count| count != -1),
                 recipe: taught_creation(s.spell_id, context).is_some(),
                 product: (index == 0)
                     .then(|| recipe_product(s.spell_id, tables, context, wearer))
@@ -2666,8 +2674,8 @@ impl Surroundings<'_> {
 ///   naming a spell.
 ///
 /// Both are tested as "is this slot's spell that spell" and never as "is any
-/// cast in progress". An earlier version tested the second, lit the correct
-/// button and several others, and was reverted.
+/// cast in progress". Testing the second lights the correct button and
+/// several others.
 /// [`crate::lua::panels::spellbook`] answers the same question for a spellbook
 /// button (`spell_is_current_cast`), and the two must agree.
 ///
@@ -2675,7 +2683,9 @@ impl Surroundings<'_> {
 /// checked border, and pairs it with [`is_auto_repeat_action`], the same
 /// question for a ranged auto-repeat. The 1.12.1 client has one more case, a
 /// shapeshift button that is current for the active form. It is not
-/// implemented here, because there are no stance buttons for it to answer.
+/// implemented here. The stance bar marks the active form through
+/// `GetShapeshiftFormInfo`'s `isActive` instead; see
+/// [`crate::lua::panels::shapeshift`].
 pub fn is_current_action(
     bar: &ActionBar,
     slot: u8,

@@ -1,12 +1,12 @@
-//! **Which skill line a spell belongs to**, and what that line is called.
+//! Which skill line a spell belongs to, and what that line is called; also the
+//! skills panel's list ([`SkillList`]).
 //!
-//! One question, asked by exactly one thing: the spellbook panel's tabs. A
-//! character's spells are not a list, they are a set of *pages* — General,
-//! Fire, Frost, Arcane — and nothing in the protocol says which page a spell
-//! goes on. `SMSG_INITIAL_SPELLS` is a bag of ids; the grouping is entirely the
-//! client's, out of two tables in the archives.
+//! The spellbook panel's tabs ask the first question. The spellbook shows a
+//! character's spells on pages (General, Fire, Frost, Arcane), and nothing in
+//! the protocol says which page a spell goes on. `SMSG_INITIAL_SPELLS` is a
+//! list of ids; the client does the grouping, from two tables in the archives.
 //!
-//! [`crate::tables::book`] is what does the grouping. This module only answers the two
+//! [`crate::tables::book`] does the grouping. This module answers the two
 //! lookups it needs.
 //!
 //! ## The tables
@@ -22,34 +22,30 @@
 //! ```
 //!
 //! All three layouts are vmangos's `DBCStructure.h` (`SkillLineEntry`,
-//! `SkillLineAbilityEntry`, `SkillRaceClassInfoEntry`) and all three are
-//! corroborated by the client's own code: `GetSpellTabInfo` loads
-//! the name at `SkillLineRec + 0xc + locale*4` (field 3) and the icon at `+0x54`
-//! (field 21) before resolving it through `SpellIcon.dbc`'s own second field,
-//! and the tab lookup below reads the third at its own four offsets. The icon
-//! path column is the same one [`crate::tables::spellbook`] already reads for a spell.
+//! `SkillLineAbilityEntry`, `SkillRaceClassInfoEntry`). The 1.12.1 client
+//! takes a tab's name from `SkillLine` field 3 and its icon from field 21,
+//! which it resolves through `SpellIcon.dbc` field 1. That icon path column is
+//! the same one [`crate::tables::spellbook`] reads for a spell.
 //!
-//! ## The rule, and its two masked halves
+//! ## How a spell's skill line is found
 //!
-//! **A spell's skill line is the `SkillLineAbility` row that matches it *and*
-//! the character's race and class** — the client passes the player's race and
-//! class into the lookup before taking `skillId` off the row it finds. The
-//! masks matter: `Shoot Bow` is one spell with rows against several classes,
-//! and a client that takes the first row puts a hunter's ability on a warrior's
-//! page.
+//! A spell's skill line is the `SkillLineAbility` row that matches the spell
+//! and the character's race and class. The client matches race and class
+//! before it takes `skillId` from the row. The masks matter: `Shoot Bow` is one
+//! spell with rows for several classes, and taking the first row puts a
+//! hunter's ability on a warrior's page.
 //!
-//! **A spell with no matching row is skill line 0**, which is the General tab —
-//! the result starts at zero and every failure path leaves it
-//! untouched. That is not a fallback this client invented: skill line 0 is
-//! a real value with real behaviour one layer up, where [`crate::tables::book`] sorts
-//! it first and names it out of `GlobalStrings.lua`.
+//! A spell with no matching row is skill line 0, which is the General tab.
+//! The client does not treat this as an error: skill line 0 is a real value,
+//! and [`crate::tables::book`] sorts it first and takes its name from
+//! `GlobalStrings.lua`.
 //!
-//! ### …and then `SkillRaceClassInfo` decides whether that line is a *tab*
+//! ### How `SkillRaceClassInfo` decides whether that line is a tab
 //!
-//! The guard is not on the `SkillLineAbility` record. It is
+//! The `SkillLineAbility` record does not decide it. The gate is
 //! `DBFilesClient\SkillRaceClassInfo.dbc`: 201 rows of eight fields, keyed by
-//! **`skillId`** (field 1), matched on fields 2 and 3 the same way an ability
-//! is, and the guard is field 4 — `flags`:
+//! `skillId` (field 1), matched on fields 2 and 3 the same way an ability is,
+//! and tested on field 4, `flags`:
 //!
 //! ```text
 //! SkillRaceClassInfo for (skillId, race, class)
@@ -58,19 +54,20 @@
 //!   otherwise       -> the tab is this skill line
 //! ```
 //!
-//! So **[`NO_SPELLBOOK_TAB`] (0x80) is what keeps a page out of the book**, and
-//! in 5875's data it is set on every line except the three class specialisations
-//! of each class, `Survival` and `Riding`. A warrior's `SkillRaceClassInfo` rows
-//! read `Arms`, `Fury` and `Protection` at `0x410` and `Bows`, `Guns`,
-//! `Crossbows`, `Thrown`, `Defense`, `Dual Wield`, `Unarmed`, every weapon skill,
-//! every language, every profession and every riding line at `0x80` or above —
-//! which is why the real 1.12 spellbook is four tabs and this client's was nine,
-//! with `Shoot Bow` and `Parry` each on a page of their own.
+//! [`NO_SPELLBOOK_TAB`] (0x80) keeps a page out of the book. In 5875's data it
+//! is set on every line except the three class specialisations of each class,
+//! `Survival` and `Riding`. A warrior's `SkillRaceClassInfo` rows give `Arms`,
+//! `Fury` and `Protection` flags of `0x410`, and give `Bows`, `Guns`,
+//! `Crossbows`, `Thrown`, `Defense`, `Dual Wield`, `Unarmed`, every weapon
+//! skill, every language, every profession and every riding line flags of
+//! `0x80` or above. This is why the 1.12 spellbook has four tabs. Without the
+//! gate, this client drew nine, with `Shoot Bow` and `Parry` each on a page of
+//! its own.
 //!
-//! The excludes are the other half of why this is a *second* mask test rather
-//! than a filter on the ability: the client passes the row's fields 2 and 3 into
-//! the same comparison the abilities use with both exclude arguments **zero**,
-//! so a `SkillRaceClassInfo` row narrows by race and class and by nothing else.
+//! The client matches a `SkillRaceClassInfo` row's fields 2 and 3 with the same
+//! comparison it uses for an ability's masks, with no exclude masks. A row
+//! therefore narrows by race and class and by nothing else, which is why the
+//! gate is a second mask test and not a filter on the ability.
 
 use crate::tables::dbc::Dbc;
 use std::collections::HashMap;
@@ -83,69 +80,65 @@ mod ability_fields {
     pub const CLASS_MASK: usize = 4;
 }
 
-/// `SkillLine.dbc` — likewise.
+/// `SkillLine.dbc`; see the module comment.
 mod line_fields {
     pub const CATEGORY_ID: usize = 1;
     pub const NAME: usize = 3;
-    /// Nine fields after the name — eight locales and a flag word — which is
-    /// what the client's `[record + locale*4 + 0xc]` for the name and the panel's
-    /// own description read are on either side of.
+    /// Nine fields after the name: the name's eight locale columns and its flag
+    /// word come between them. The skills panel's detail pane reads it.
     pub const DESCRIPTION: usize = 12;
     pub const ICON_ID: usize = 21;
 }
 
-/// `SkillLine.dbc`'s category for a **class** skill line — the three
-/// specialisations. See [`SkillLine::category`], which says why this is a
-/// cross-check rather than the rule.
+/// `SkillLine.dbc`'s category for a class skill line: the three
+/// specialisations. [`SkillLine::category`] says why this is a cross-check and
+/// not the rule.
 pub const CATEGORY_CLASS: u32 = 7;
 
-/// `SkillRaceClassInfo.dbc` — the tab gate. See the module comment.
+/// `SkillRaceClassInfo.dbc`, the tab gate. See the module comment.
 mod race_class_fields {
     pub const SKILL_ID: usize = 1;
     pub const RACE_MASK: usize = 2;
     pub const CLASS_MASK: usize = 3;
     pub const FLAGS: usize = 4;
-    /// `[info + 0x14]` — the level a line the character has not
-    /// started is shown at.
+    /// The level at which a line the character has not started is shown.
     pub const MIN_LEVEL: usize = 5;
 }
 
-/// **The `SkillRaceClassInfo` flag that keeps a skill line out of the spellbook**
-/// — bit 7, tested as a *signed byte* test on the low byte
-/// of `flags`. A line carrying it, or one with no row for
-/// this character at all, sends its spells to [`GENERAL`] instead of opening a
-/// tab of its own.
+/// The `SkillRaceClassInfo` flag that keeps a skill line out of the spellbook:
+/// bit 7 of `flags`. A line carrying it, or one with no row for this character
+/// at all, sends its spells to [`GENERAL`] instead of opening a tab of its own.
 pub const NO_SPELLBOOK_TAB: u32 = 0x80;
 
-/// **The three `SkillRaceClassInfo` flags the *panel* reads** in the list
-/// builder.
+/// The three `SkillRaceClassInfo` flags the skills panel reads when it builds
+/// its list, and the proficiency flag.
 ///
-/// They are the same column [`NO_SPELLBOOK_TAB`] comes out of and a different
-/// set of bits: the book asks "does this open a tab" and the panel asks "is this
-/// a line the character is shown at all", and the answers differ. A warrior's
-/// `Defense` is not a spellbook tab and is very much on the skills panel.
+/// They come from the same column as [`NO_SPELLBOOK_TAB`] and are different
+/// bits. The book asks whether a line opens a tab; the panel asks whether the
+/// character is shown the line at all, and the answers differ. A warrior's
+/// `Defense` is not a spellbook tab and is on the skills panel.
 pub mod panel_flags {
-    /// Bit 0 — listed whether or not the character has any value in it.
+    /// Bit 0: listed whether or not the character has any value in it.
     pub const ALWAYS: u32 = 0x01;
-    /// Bit 1 — **never listed**, whatever the value. It is tested first, so it
-    /// beats [`Self::ALWAYS`].
+    /// Bit 1: never listed, whatever the value. It is tested first, so it
+    /// overrides [`Self::ALWAYS`].
     pub const NEVER: u32 = 0x02;
-    /// Bit 2 — listed once the character is at least the row's own
+    /// Bit 2: listed once the character's level is at least the row's
     /// `minLevel`, even with no value.
     pub const AT_LEVEL: u32 = 0x04;
-    /// Bit 10 — **a proficiency**: rank and max are both clamped to 1, which is
-    /// what makes `SkillFrame_SetStatusBar` draw a grey full bar with no number
-    /// rather than `1/1`. Tested on the flags' *second* byte.
+    /// Bit 10: a proficiency. Rank and max are both clamped to 1, which makes
+    /// `SkillFrame_SetStatusBar` draw a grey full bar with no number rather
+    /// than `1/1`.
     pub const PROFICIENCY: u32 = 0x400;
 }
 
-/// `SpellIcon.dbc`: id, **path**. Two fields and nothing else — the same column
-/// [`crate::tables::spellbook`] reads.
+/// `SpellIcon.dbc` has two fields, id and path. This is the path, the same
+/// column [`crate::tables::spellbook`] reads.
 const ICON_PATH: usize = 1;
 
-/// **The General tab.** Not a table row: the id a spell with no
-/// `SkillLineAbility` of its own falls to, and the one the client special-cases
-/// by name and by icon. See [`crate::tables::book`].
+/// The General tab. It is not a table row: it is the id a spell with no
+/// `SkillLineAbility` row of its own falls to, and the client gives it a fixed
+/// name and icon. See [`crate::tables::book`].
 pub const GENERAL: u32 = 0;
 
 /// One skill line, as a tab needs it.
@@ -159,35 +152,31 @@ pub struct SkillLine {
     /// icon id is absent from that table, which draws as no texture at all
     /// rather than as a placeholder.
     pub icon: Option<String>,
-    /// `SkillLine.dbc`'s own `categoryId` — 6 weapon skill, 7 class skill, 8
+    /// `SkillLine.dbc`'s `categoryId`: 6 weapon skill, 7 class skill, 8
     /// armour proficiency, 9 secondary, 10 language, 11 primary profession,
     /// 12 generic.
     ///
-    /// **Nothing in this client decides anything with it**, and that is
-    /// deliberate: the tab gate is `SkillRaceClassInfo`'s flags and not this
-    /// column, because that is what the client reads. It is carried so
-    /// `vale book` can cross-check the gate against a column the gate does
-    /// not come from — the two agree on 5875's data, and an agreement between
-    /// two independent columns is worth more than either alone.
+    /// The spellbook does not use it. The tab gate is `SkillRaceClassInfo`'s
+    /// flags and not this column, because the client reads the flags. It is
+    /// carried so `vale book` can cross-check the gate against a column the
+    /// gate does not come from. The two agree on 5875's data.
     ///
-    /// **The skills panel is the one place it decides something**, and there it
-    /// decides everything: it is the heading a line goes under. See
-    /// [`Skills::list`].
+    /// The skills panel does use it: it is the heading a line goes under. See
+    /// [`SkillList::build`].
     pub category: u32,
-    /// `SkillLine.dbc` field 12 — what the panel's detail pane prints under the
-    /// bar. Empty for most lines, which draws as the sentence's own frame with
-    /// nothing in it, exactly as the reference does.
+    /// `SkillLine.dbc` field 12: what the panel's detail pane prints under the
+    /// bar. Empty for most lines, which draws the text frame with nothing in
+    /// it, as the 1.12.1 client does.
     pub description: String,
 }
 
-/// **A zero mask means "everybody"**, which is the convention every mask column
-/// in this game's tables uses and the reason a lookup cannot simply test the
-/// bit. `race` and `class` are the one-based ids the server sends; the mask bit
-/// is `1 << (id - 1)`.
+/// A zero mask means "everybody". Every mask column in this game's tables uses
+/// that convention, so a lookup cannot only test the bit. `race` and `class`
+/// are the one-based ids the server sends; the mask bit is `1 << (id - 1)`.
 ///
-/// One function for both tables, because the client passes a
-/// `SkillRaceClassInfo` row's two masks into the *same* comparison
-/// the abilities go through, with both exclude arguments zero.
+/// One function serves both tables, because the client matches a
+/// `SkillRaceClassInfo` row's two masks with the same comparison it uses for
+/// the abilities, with no exclude masks.
 fn covers(race_mask: u32, class_mask: u32, race: u8, class: u8) -> bool {
     let bit = |id: u8| if id == 0 { 0 } else { 1u32 << (id - 1) };
     (race_mask == 0 || race_mask & bit(race) != 0)
@@ -208,15 +197,15 @@ impl Ability {
     }
 }
 
-/// One `SkillRaceClassInfo` row — the same two masks, and the flags the tab gate
+/// One `SkillRaceClassInfo` row: the same two masks, and the flags the tab gate
 /// tests. See [`NO_SPELLBOOK_TAB`].
 #[derive(Debug, Clone, Copy)]
 struct RaceClass {
     race_mask: u32,
     class_mask: u32,
     flags: u32,
-    /// `SkillRaceClassInfo` field 5 — the level at which a line the character
-    /// has *not started* is nonetheless listed. See [`SKILL_FLAG_AT_LEVEL`].
+    /// `SkillRaceClassInfo` field 5: the level at which a line the character
+    /// has not started is listed. See [`panel_flags::AT_LEVEL`].
     min_level: u32,
 }
 
@@ -226,17 +215,16 @@ impl RaceClass {
     }
 }
 
-/// `SkillLineCategory.dbc` — **the panel's headings**, and the only thing that
-/// decides their order.
+/// `SkillLineCategory.dbc`: the skills panel's headings, and the only thing
+/// that decides their order.
 ///
 /// Eight rows and eleven fields: `0 id`, `1..10` the localised name, `10` a
-/// sort index. The client sorts the headings by that last column alone
-/// (`[record + 0x28]`, ascending) — *not* by name and not by id —
-/// which is what puts Class Skills above Professions above Secondary Skills
-/// above Weapon Skills whatever their ids happen to be.
+/// sort index. The client sorts the headings by that last column alone,
+/// ascending, and not by name or id. That puts Class Skills above Professions
+/// above Secondary Skills above Weapon Skills whatever their ids are.
 mod category_fields {
     pub const NAME: usize = 1;
-    /// `[record + 0x28]` — the comparator's whole key.
+    /// The only sort key for the headings.
     pub const SORT: usize = 10;
 }
 
@@ -249,20 +237,20 @@ pub struct Category {
     pub sort: i32,
 }
 
-/// The two tables, parsed.
+/// The skill tables, parsed.
 #[derive(Debug, Default, Clone)]
 pub struct Skills {
     /// Every `SkillLineAbility` row for a spell, in file order. A `Vec` rather
-    /// than one row because the masks are the whole point: `Shoot Bow` has
-    /// several and only one of them is this character's.
+    /// than one row because the masks decide which row applies: `Shoot Bow`
+    /// has several and only one of them is this character's.
     abilities: HashMap<u32, Vec<Ability>>,
     lines: HashMap<u32, SkillLine>,
-    /// `SkillLineCategory.dbc`, by id — the panel's headings. Empty when the
-    /// table is absent, which draws a list with no headings on it rather than a
-    /// wrong one: [`Skills::list`] drops a line whose category has no row,
-    /// which is the client's own guard.
+    /// `SkillLineCategory.dbc`, by id: the panel's headings. Empty when the
+    /// table is absent, which draws an empty list rather than a wrong one:
+    /// [`SkillList::build`] drops a line whose category has no row, as the
+    /// client does.
     categories: HashMap<u32, Category>,
-    /// `SkillRaceClassInfo`, keyed by skill line — the tab gate, and `None` when
+    /// `SkillRaceClassInfo`, keyed by skill line: the tab gate, and `None` when
     /// the table is absent. See [`Skills::parse`].
     race_class: Option<HashMap<u32, Vec<RaceClass>>>,
 }
@@ -271,21 +259,20 @@ impl Skills {
     /// Parse both tables, plus `SpellIcon.dbc` for the tab art and
     /// `SkillRaceClassInfo.dbc` for the tab gate.
     ///
-    /// **Either of the first two absent is `None`**, rather than a half-built
+    /// Either of the first two absent is `None`, rather than a half-built
     /// answer. A `Skills` with lines and no abilities would put every spell the
-    /// character knows in General and look exactly like a correctly-read table
-    /// for a character who happens to have one page — which is the class of
-    /// failure this project keeps paying for elsewhere.
+    /// character knows in General, and the result would look the same as a
+    /// correctly read table for a character who has one page.
     ///
-    /// The other two are optional on their own terms and degrade in opposite
-    /// directions. No icons is a tab with no art, which is a visible gap rather
-    /// than a wrong answer. **No `SkillRaceClassInfo` is no gate at all** — every
-    /// line that has a spell opens a tab, which is what this client did before
-    /// the gate was read: the book is over-tabbed rather than collapsed. The
-    /// client's own answer to a missing row is [`GENERAL`], but that is a missing
-    /// *row* in a table it has; applying it to a table that failed to parse would
-    /// silently turn the whole book into one page, and one long General tab is
-    /// exactly the shape a correctly-read book has for a level-1 character.
+    /// The other two are optional and degrade in opposite directions. No icons
+    /// gives a tab with no art, which is a visible gap rather than a wrong
+    /// answer. No `SkillRaceClassInfo` gives no gate: every line that has a
+    /// spell opens a tab, so the book has too many tabs rather than too few.
+    /// The client's answer to a missing row is [`GENERAL`], but that applies to
+    /// a missing row in a table it has. Applying it to a table that failed to
+    /// parse would turn the whole book into one page without any sign of the
+    /// failure, because one long General tab is also what a correctly read
+    /// book looks like for a level-1 character.
     pub fn parse(
         ability_dbc: &[u8],
         line_dbc: &[u8],
@@ -367,15 +354,14 @@ impl Skills {
         })
     }
 
-    /// **Attach `SkillLineCategory.dbc`**, which only the skills panel needs.
+    /// Attach `SkillLineCategory.dbc`, which only the skills panel needs.
     ///
-    /// Separate from [`Skills::parse`] and optional, on
-    /// [`crate::tables::faction::Factions::with_groups`]' own terms: without it
-    /// the spellbook is unaffected and only the panel loses its headings — and
-    /// it loses them by drawing *nothing*, because a line whose category has no
-    /// row is dropped by the client too. Said rather than papered
-    /// over: an empty skills panel with no `SkillLineCategory.dbc` is this
-    /// client agreeing with the reference.
+    /// Separate from [`Skills::parse`] and optional, in the same way as
+    /// [`crate::tables::faction::Factions::with_groups`]. Without it the
+    /// spellbook is unaffected and the skills panel draws no rows at all,
+    /// because the 1.12.1 client also drops a line whose category has no row.
+    /// An empty skills panel with no `SkillLineCategory.dbc` matches the
+    /// client.
     pub fn with_categories(mut self, raw: &[u8]) -> Skills {
         let Ok(table) = Dbc::parse(raw) else {
             return self;
@@ -398,11 +384,11 @@ impl Skills {
         self
     }
 
-    /// **Which page `spell` goes on for this character**, or [`GENERAL`].
+    /// Which page `spell` goes on for this character, or [`GENERAL`].
     ///
     /// See the module comment: the race and class masks decide which skill line
     /// the spell is on, `SkillRaceClassInfo` then decides whether that line is a
-    /// tab at all, and either question answered "no" is skill line 0 rather than
+    /// tab at all, and a "no" to either question gives skill line 0 rather than
     /// an error.
     pub fn line_of(&self, spell: u32, race: u8, class: u8) -> u32 {
         let line = self.ability_line(spell, race, class);
@@ -413,18 +399,17 @@ impl Skills {
         }
     }
 
-    /// **The same lookup without the tab gate** — `SkillLineAbility` filtered by
+    /// The same lookup without the tab gate: `SkillLineAbility` filtered by
     /// race and class and nothing else, or [`GENERAL`] for a spell no row
     /// covers.
     ///
-    /// This is the raw half of [`Skills::line_of`], and it exists because the
-    /// **trainer** groups its rows by a skill line that the spellbook would
-    /// refuse. The client reads the character's race and class off the unit and
-    /// calls the same masked lookup the book does, and then
-    /// returns the row's skill id outright — there is no
-    /// `SkillRaceClassInfo` consultation anywhere on that path. Applying the
-    /// gate here would send every service to line 0, and line 0 is exactly what
-    /// `crate::tables::trainer` **drops**: the whole window would come up empty.
+    /// This is the first half of [`Skills::line_of`]. It exists because the
+    /// trainer groups its rows by skill lines that the spellbook gate would
+    /// refuse. The 1.12.1 client groups trainer services by the character's
+    /// race and class through the same masked `SkillLineAbility` lookup the
+    /// book uses, and does not consult `SkillRaceClassInfo`. Applying the gate
+    /// here would send every service to line 0, which `crate::tables::trainer`
+    /// drops, and the trainer window would be empty.
     pub fn ability_line(&self, spell: u32, race: u8, class: u8) -> u32 {
         self.abilities
             .get(&spell)
@@ -432,14 +417,14 @@ impl Skills {
             .map_or(GENERAL, |row| row.skill)
     }
 
-    /// **Whether `line` opens a tab for this character**, or sends its spells to
-    /// [`GENERAL`] — see [`NO_SPELLBOOK_TAB`].
+    /// Whether `line` opens a tab for this character, or sends its spells to
+    /// [`GENERAL`]. See [`NO_SPELLBOOK_TAB`].
     ///
     /// A character's weapon skills, languages, professions, armour
     /// proficiencies and riding lines all fail this; the three class
     /// specialisations pass it.
     fn has_tab(&self, line: u32, race: u8, class: u8) -> bool {
-        // No table is no gate — see `parse`, where that choice is argued.
+        // No table means no gate. `parse` explains why.
         let Some(by_line) = self.race_class.as_ref() else {
             return true;
         };
@@ -449,13 +434,12 @@ impl Skills {
             .is_some_and(|row| row.flags & NO_SPELLBOOK_TAB == 0)
     }
 
-    /// **The `SkillRaceClassInfo` row this character matches**, or `None`.
+    /// The `SkillRaceClassInfo` row this character matches, or `None`.
     ///
-    /// The row the *panel* reads — its flags and its `minLevel` are what decide
-    /// whether a line is listed at all (the builder treats the row as a hard
-    /// requirement). `None` covers
-    /// both "no row for this race and class" and "no table", and the caller
-    /// drops the line either way, which is the client's own behaviour.
+    /// The skills panel reads this row: its flags and its `minLevel` decide
+    /// whether a line is listed, and a line with no row is never listed.
+    /// `None` covers both "no row for this race and class" and "no table", and
+    /// the caller drops the line either way, as the client does.
     fn race_class_row(&self, line: u32, race: u8, class: u8) -> Option<&RaceClass> {
         self.race_class
             .as_ref()?
@@ -464,10 +448,10 @@ impl Skills {
             .find(|row| row.covers(race, class))
     }
 
-    /// **The `minLevel` of this character's `SkillRaceClassInfo` row for
-    /// `line`**, or `None` for no row. The craft window's required-level read
-    /// takes the larger of this and the spell's own `spellLevel`
-    /// when the row exists, and the `spellLevel` alone when it does not.
+    /// The `minLevel` of this character's `SkillRaceClassInfo` row for `line`,
+    /// or `None` for no row. The craft window's required level is the larger
+    /// of this and the spell's `spellLevel` when the row exists, and the
+    /// `spellLevel` alone when it does not.
     pub fn race_class_min_level(&self, line: u32, race: u8, class: u8) -> Option<u32> {
         self.race_class_row(line, race, class).map(|row| row.min_level)
     }
@@ -480,8 +464,8 @@ impl Skills {
         out
     }
 
-    /// The eight headings in the order the panel puts them — see
-    /// [`category_fields`], whose sort column is the whole key.
+    /// The eight headings in the order the panel shows them, sorted by the
+    /// sort column alone. See [`category_fields`].
     pub fn categories_in_order(&self) -> Vec<&Category> {
         let mut out: Vec<&Category> = self.categories.values().collect();
         out.sort_by_key(|category| category.sort);
@@ -504,27 +488,25 @@ impl Skills {
         counts
     }
 
-    /// What a skill line is called and what it wears. `None` for [`GENERAL`],
-    /// which has no row of its own — see [`crate::tables::book`], which is where its
-    /// name and icon come from.
+    /// A skill line's name and icon. `None` for [`GENERAL`], which has no row
+    /// of its own; [`crate::tables::book`] supplies its name and icon.
     pub fn line(&self, id: u32) -> Option<&SkillLine> {
         self.lines.get(&id)
     }
 
-    /// **Every spell whose own row names this class**, ascending — the class's
+    /// Every spell whose own row names this class, ascending: the class's
     /// abilities, without the professions and weapon skills everybody shares.
     ///
-    /// The narrowing is `class_mask != 0`, and it is worth being precise about
-    /// what that does and does not mean. Most rows in the table carry **no**
-    /// class mask at all: Cooking, Blacksmithing and every weapon skill are open
-    /// to everyone, and what keeps them out of a warrior's spellbook is not the
-    /// table but the fact that the character has not *learned* them. So this is
-    /// not a rule the client applies — the client filters by what the server
-    /// sent — it is a **stand-in for a character**, so that `vale book` can
-    /// print something shaped like a real spellbook with no session.
+    /// The filter is `class_mask != 0`. Most rows in the table carry no class
+    /// mask: Cooking, Blacksmithing and every weapon skill are open to
+    /// everyone, and they stay out of a warrior's spellbook only because the
+    /// character has not learned them. So this is not a rule the client
+    /// applies; the client filters by the spells the server sent. It stands in
+    /// for a character, so that `vale book` can print a spellbook with no
+    /// session.
     ///
-    /// Nothing in `crates/client` calls it. See [`crate::tables::book`], which is the
-    /// rule this exists to check.
+    /// Nothing in `crates/client` calls it. It exists to check the rule in
+    /// [`crate::tables::book`].
     pub fn class_abilities(&self, race: u8, class: u8) -> Vec<u32> {
         let mut ids: Vec<u32> = self
             .abilities
@@ -549,10 +531,10 @@ impl Skills {
         self.abilities.len()
     }
 
-    /// How many lines the gate has an opinion about, and how many of those may
-    /// open a tab for *somebody* — `None` when `SkillRaceClassInfo` is absent,
-    /// which is the case `vale book` has to report rather than paper over,
-    /// since without it the book is over-tabbed and every count below is a lie.
+    /// How many lines the gate has rows for, and how many of those may open a
+    /// tab for some character. `None` when `SkillRaceClassInfo` is absent;
+    /// `vale book` reports that case, because without the table the book has
+    /// too many tabs and its counts are wrong.
     pub fn tab_counts(&self) -> Option<(usize, usize)> {
         let by_line = self.race_class.as_ref()?;
         let open = by_line
@@ -572,59 +554,58 @@ impl std::fmt::Display for SkillLine {
 /// One line of the skills panel: a heading or a bar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillRow {
-    /// `SkillLine.dbc`'s id, or `0` for a heading — which is exactly how the
-    /// client tells the two apart.
+    /// `SkillLine.dbc`'s id, or `0` for a heading, which is how the client
+    /// tells the two apart.
     pub line: u32,
-    /// The heading this row is under, or its own id if it *is* one.
+    /// The heading this row is under, or its own id if it is a heading.
     pub category: u32,
     /// What the panel prints: the line's name, or the category's for a heading.
     pub name: String,
-    /// …and what its detail pane prints. Empty for a heading.
+    /// What the detail pane prints. Empty for a heading.
     pub description: String,
     pub rank: i32,
     pub max_rank: i32,
     /// The temporary bonus, drawn in green or red beside the rank.
     pub modifier: i32,
-    /// Whether the character has any value in this line at all — the client's
-    /// own `(value == 0)`, kept because it is what
-    /// distinguishes a line listed by [`panel_flags::AT_LEVEL`] from one the
-    /// character has actually used.
+    /// True when the character has no value in this line (the raw value is
+    /// 0). It distinguishes a line listed by [`panel_flags::AT_LEVEL`] from
+    /// one the character has used.
     pub unstarted: bool,
-    /// **Whether the panel offers an Unlearn button** — which is two
-    /// conditions and not one: the slot's *step* word must be non-zero **and**
-    /// the `SkillRaceClassInfo` row must carry bit 5.
+    /// Whether the panel offers an Unlearn button. Two conditions must hold:
+    /// the slot's step word is non-zero, and the `SkillRaceClassInfo` row
+    /// carries bit 5.
     ///
-    /// The step is what makes it a profession in practice — a weapon skill's is
-    /// zero — so a reading that took only the flag would put an Unlearn button
+    /// A non-zero step is what marks a profession in practice; a weapon
+    /// skill's step is zero. Testing only the flag would put an Unlearn button
     /// on Defense.
     pub abandonable: bool,
     pub is_header: bool,
     pub is_collapsed: bool,
 }
 
-/// **The skills panel's whole list**, built the way the client builds it.
+/// The skills panel's whole list, built as the 1.12.1 client builds it.
 ///
-/// The same shape [`crate::tables::reputation::Reputation`] has and for the same
-/// reason: nothing about it crosses the wire. The server sends 128 `(id, value,
-/// max, bonus)` triplets in whatever order it wrote them; which of them are
-/// listed, what they are called, what heading they go under and what order any
-/// of it is in are the client's own:
+/// It has the same shape as [`crate::tables::reputation::Reputation`], for the
+/// same reason: none of it crosses the wire. The server sends 128 `(id, value,
+/// max, bonus)` slots in whatever order it wrote them. The client decides which
+/// of them are listed, what they are called, what heading they go under and
+/// the order of all of it:
 ///
 /// ```text
-/// the builder: the 128-slot walk, the three flags, the heading
-/// the recount: what is displayed, and the two sorts
-///   …the heading comparator, and the row comparator
-/// GetSkillLineInfo — the twelve returns, in order
+/// build:            walk the 128 slots, apply the three flags, add the heading
+/// recount:          the displayed count, and the two sorts
+///                   (headings by category sort index, then rows)
+/// GetSkillLineInfo: the twelve return values, in order
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct SkillList {
     rows: Vec<SkillRow>,
     /// The headings in display order, and whether each is collapsed.
     headings: Vec<(u32, bool)>,
-    /// How many rows `GetNumSkillLines` reports — the visible prefix, exactly
-    /// as the reputation panel's is.
+    /// How many rows `GetNumSkillLines` reports: the visible prefix, as in
+    /// the reputation panel.
     displayed: usize,
-    /// `GetSelectedSkill`, a **one-based display index** and `0` for none.
+    /// `GetSelectedSkill`, a one-based display index, and `0` for none.
     selected: usize,
 }
 
@@ -643,7 +624,7 @@ impl SkillList {
         self.rows.get(index.checked_sub(1)?)
     }
 
-    /// Every row including the ones under a collapsed heading — for
+    /// Every row, including the ones under a collapsed heading. For
     /// `vale skills` and the tests, not for the panel.
     pub fn rows(&self) -> &[SkillRow] {
         &self.rows
@@ -653,17 +634,17 @@ impl SkillList {
         self.selected
     }
 
-    /// `SetSelectedSkill(index)`. **Not range-checked**, because the interface
-    /// passes 0 to mean "nothing" and `SkillFrame_OnLoad` does exactly that.
+    /// `SetSelectedSkill(index)`. Not range-checked, because the interface
+    /// passes 0 to mean "nothing", and `SkillFrame_OnLoad` does so.
     pub fn select(&mut self, index: usize) {
         self.selected = index;
     }
 
     /// `CollapseSkillHeader(index)` / `ExpandSkillHeader(index)`, one-based.
     ///
-    /// **`-1` is "all of them"**, which is what `SkillFrameCollapseAllButton`
-    /// passes — the client's own argument check, and the reason this takes an
-    /// `i32` where the reputation panel's twin takes a `usize`.
+    /// The client treats an index of `-1` as every heading, and
+    /// `SkillFrameCollapseAllButton` passes it. That is why this takes an
+    /// `i32` where the reputation panel's equivalent takes a `usize`.
     pub fn set_collapsed(&mut self, index: i32, collapsed: bool) {
         if index < 0 {
             for heading in &mut self.headings {
@@ -686,23 +667,23 @@ impl SkillList {
         self.recount();
     }
 
-    /// Whether every heading is open — what `SkillFrame_UpdateSkills` decides
-    /// the collapse-all button's art from, and which it works out by walking
-    /// the list itself.
+    /// Whether every heading is open. `SkillFrame_UpdateSkills` chooses the
+    /// collapse-all button's art from this, and works it out by walking the
+    /// list itself.
     pub fn all_expanded(&self) -> bool {
         self.headings.iter().all(|(_, collapsed)| !collapsed)
     }
 
-    /// **Build the list**.
+    /// Build the list.
     ///
-    /// `have` is the character's own block ([`crate::tables::skills`] does not
-    /// depend on `vale-protocol`, so it arrives as `(id, rank, max,
-    /// modifier, value)` tuples rather than as that crate's type).
+    /// `have` is the character's own block. [`crate::tables::skills`] does not
+    /// depend on `vale-protocol`, so the block arrives as [`SkillEntry`]
+    /// values rather than as that crate's type.
     ///
-    /// The walk is over the *server's slots* rather than over `SkillLine.dbc`,
-    /// which is the client's own order and matters: a line the character does
-    /// not have is only listed if one of the two flags below says so, and then
-    /// it has no slot to be found at.
+    /// The walk is over the server's slots rather than over `SkillLine.dbc`,
+    /// which is the order the client uses. A line is listed only if the
+    /// character's block has a slot for it, and a slot with no value is listed
+    /// only if one of the two flags below says so.
     pub fn build(
         &mut self,
         skills: &Skills,
@@ -724,15 +705,15 @@ impl SkillList {
             let Some(info) = skills.race_class_row(entry.id, race, class) else {
                 continue;
             };
-            // **A category with no row is dropped**, not defaulted.
+            // A line whose category has no row is dropped, not defaulted.
             let Some(category) = skills.categories.get(&line.category) else {
                 continue;
             };
             if info.flags & panel_flags::NEVER != 0 {
                 continue;
             }
-            // …and a line the character has never touched is listed only if it
-            // says "always", or if it says "at level" and the level is reached.
+            // A line with no value is listed only if its row says "always", or
+            // says "at level" and the character has reached that level.
             if info.flags & panel_flags::ALWAYS == 0 && entry.value == 0 {
                 if info.flags & panel_flags::AT_LEVEL == 0 || level < info.min_level {
                     continue;
@@ -740,8 +721,7 @@ impl SkillList {
             }
             let proficiency = info.flags & panel_flags::PROFICIENCY != 0;
             let (rank, max_rank) = if proficiency {
-                // Both clamped to 1, and the rank only when it is
-                // already above it.
+                // Both clamped to 1; the rank changes only when it is above 1.
                 (entry.rank.min(1), 1)
             } else {
                 (entry.rank, entry.max_rank)
@@ -759,9 +739,8 @@ impl SkillList {
                 is_header: false,
                 is_collapsed: false,
             });
-            // **The heading goes in immediately after the first line under it**,
-            // which is the builder's own order and is why the sort
-            // afterwards is not optional.
+            // The heading row is added immediately after the first line under
+            // it, as the client adds it, so the rows must be sorted afterwards.
             if self.headings.iter().any(|(id, _)| *id == category.id) {
                 continue;
             }
@@ -794,15 +773,28 @@ impl SkillList {
         self.headings.sort_by_key(|(id, _)| {
             skills.categories.get(id).map_or(i32::MAX, |c| c.sort)
         });
+        self.recount();
+    }
+
+    /// The row order and the displayed count, over the headings' current
+    /// order: used directly by the collapse verbs, which change which rows are
+    /// hidden and not the order of the headings.
+    ///
+    /// The rows are sorted in full every time. Sorting only by whether a row
+    /// is hidden moved a collapsed heading's rows to the end and, being a
+    /// stable sort, left them there when the heading was expanded again, so
+    /// they reappeared at the bottom of the list rather than under their
+    /// heading.
+    fn recount(&mut self) {
         let order: Vec<u32> = self.headings.iter().map(|(id, _)| *id).collect();
         let collapsed: Vec<bool> = self.headings.iter().map(|(_, c)| *c).collect();
         let slot = |category: u32| order.iter().position(|id| *id == category).unwrap_or(order.len());
         for row in &mut self.rows {
             row.is_collapsed = collapsed.get(slot(row.category)).copied().unwrap_or(false);
         }
-        // A hidden row last, then by heading slot, then the heading
-        // itself before its own lines, then by name — the same comparator shape
-        // the reputation panel's rows have.
+        // A hidden row last, then by heading slot, then the heading itself
+        // before its own lines, then by name: the same comparator shape the
+        // reputation panel's rows have.
         self.rows.sort_by(|a, b| {
             let hidden = |row: &SkillRow| !row.is_header && row.is_collapsed;
             match (hidden(a), hidden(b)) {
@@ -821,40 +813,24 @@ impl SkillList {
             .filter(|row| row.is_header || !row.is_collapsed)
             .count();
     }
-
-    /// The same, when the tables are not to hand — used by the collapse verbs,
-    /// which cannot change the *order* and only move the prefix.
-    fn recount(&mut self) {
-        let collapsed: std::collections::HashMap<u32, bool> =
-            self.headings.iter().copied().collect();
-        for row in &mut self.rows {
-            row.is_collapsed = collapsed.get(&row.category).copied().unwrap_or(false);
-        }
-        self.rows.sort_by_key(|row| !row.is_header && row.is_collapsed);
-        self.displayed = self
-            .rows
-            .iter()
-            .filter(|row| row.is_header || !row.is_collapsed)
-            .count();
-    }
 }
 
-/// The `SkillRaceClassInfo` flag behind [`SkillRow::abandonable`] — bit 5,
+/// The `SkillRaceClassInfo` flag behind [`SkillRow::abandonable`]: bit 5,
 /// `flags & 0x20`.
 pub const CAN_UNLEARN: u32 = 0x20;
 
-/// One slot of the character's own block, as [`SkillList::build`] wants it.
+/// One slot of the character's own block, as [`SkillList::build`] takes it.
 ///
 /// A plain struct rather than `vale_protocol`'s type because this crate does
-/// not depend on that one — the same boundary every other rule here keeps.
+/// not depend on that one, the same boundary every other table module keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SkillEntry {
     pub id: u32,
-    /// The high half of the block's first dword. Nothing here reads it except
-    /// [`SkillRow::abandonable`], which is the one thing that needs it.
+    /// The high half of the block's first dword. Only
+    /// [`SkillRow::abandonable`] reads it.
     pub step: u16,
-    /// The raw field value, which is what the three flags are tested against —
-    /// **not** [`Self::rank`], which has the permanent bonus in it.
+    /// The raw field value, which the three flags are tested against. It is
+    /// not [`Self::rank`], which includes the permanent bonus.
     pub value: u16,
     pub rank: i32,
     pub max_rank: i32,
@@ -866,7 +842,7 @@ mod tests {
     use super::*;
     use crate::tables::dbc::testing::dbc;
 
-    /// `\0Fire\0Frost\0` — offsets 1 and 6.
+    /// `\0Fire\0Frost\0`: the names are at offsets 1 and 6.
     const NAMES: &[u8] = b"\0Fire\0Frost\0";
 
     fn ability(id: u32, skill: u32, spell: u32, race: u32, class: u32) -> Vec<u32> {
@@ -901,8 +877,8 @@ mod tests {
     const ABILITIES: [[u32; 5]; 3] = [
         // Fireball: mage only (class 8 -> bit 7), any race.
         [1, 8, 133, 0, 1 << 7],
-        // Shoot Bow: the same spell against two classes, which is the whole
-        // reason the masks are read.
+        // Shoot Bow: the same spell against two classes, which is why the
+        // masks are read.
         [2, 45, 2480, 0, 1 << 2],
         [3, 46, 2480, 0, 1 << 3],
     ];
@@ -918,9 +894,8 @@ mod tests {
         ])
     }
 
-    /// The same two tables against whatever gate rows are handed in — an empty
-    /// slice is a table with no row for any line, which is not the same thing as
-    /// no table at all.
+    /// The same two tables with the given gate rows. An empty slice is a table
+    /// with no row for any line, which is not the same as no table.
     fn gated(rows: &[Vec<u32>]) -> Skills {
         let abilities: Vec<Vec<u32>> = ABILITIES
             .iter()
@@ -937,8 +912,8 @@ mod tests {
         .expect("both tables parse")
     }
 
-    /// The two required tables and **no** gate at all — the documented
-    /// degradation, where every line keeps its tab.
+    /// The two required tables and no gate: the documented degradation, where
+    /// every line keeps its tab.
     fn ungated() -> Skills {
         let abilities: Vec<Vec<u32>> = ABILITIES
             .iter()
@@ -958,12 +933,11 @@ mod tests {
         assert_eq!(skills.line_of(133, 1, 1), GENERAL);
     }
 
-    /// **The masks are the point, not decoration.** One spell, two rows, two
-    /// classes — taking the first row would put a hunter's ability on the
-    /// rogue's page.
+    /// The masks decide the row. One spell, two rows, two classes: taking the
+    /// first row would put a hunter's ability on the rogue's page.
     ///
-    /// Through the ungated tables, because the question here is which
-    /// *ability* row wins and 5875 gates both of those lines out of the book.
+    /// This uses the ungated tables, because the question here is which
+    /// ability row wins, and 5875 gates both of those lines out of the book.
     #[test]
     fn one_spell_with_two_class_rows_resolves_per_class() {
         let skills = ungated();
@@ -971,7 +945,7 @@ mod tests {
         assert_eq!(skills.line_of(2480, 1, 4), 46);
     }
 
-    /// A zero mask is "everybody" — see [`covers`].
+    /// A zero mask is "everybody". See [`covers`].
     #[test]
     fn a_zero_mask_matches_every_race() {
         let skills = skills();
@@ -980,8 +954,8 @@ mod tests {
         }
     }
 
-    /// **A spell nothing claims is General**, which is a real answer rather than
-    /// a missing one.
+    /// A spell with no `SkillLineAbility` row is General, which is a real
+    /// answer rather than a missing one.
     #[test]
     fn a_spell_with_no_ability_row_is_general() {
         assert_eq!(skills().line_of(999_999, 1, 1), GENERAL);
@@ -994,38 +968,36 @@ mod tests {
         let fire = skills.line(8).expect("the line");
         assert_eq!(fire.name, "Fire");
         assert_eq!(fire.icon.as_deref(), Some("Interface\\Icons\\A"));
-        // …and a line whose icon id is not in `SpellIcon.dbc` draws nothing
-        // rather than a placeholder.
+        // A line whose icon id is not in `SpellIcon.dbc` draws nothing rather
+        // than a placeholder.
         assert_eq!(skills.line(46).expect("the line").icon, None);
     }
 
-    /// Either *required* table absent is `None` — see [`Skills::parse`], where
-    /// the argument for that, and for the other two being optional, is written
-    /// out.
+    /// Either required table absent is `None`. [`Skills::parse`] says why, and
+    /// why the other two are optional.
     #[test]
     fn a_half_built_table_is_no_table() {
         assert!(Skills::parse(&[], &dbc(&[], 22, NAMES), &[], &[]).is_none());
         assert!(Skills::parse(&dbc(&[], 15, NAMES), &[], &[], &[]).is_none());
     }
 
-    /// **A weapon skill is not a page** — the client's sign test, which is the
-    /// whole of the difference between the real 1.12 spellbook's four tabs and
-    /// the nine this client drew: `Shoot Bow` falls to General while the class
-    /// page beside it keeps its own.
+    /// A weapon skill is not a page. The [`NO_SPELLBOOK_TAB`] bit is the
+    /// difference between the 1.12 spellbook's four tabs and the nine this
+    /// client drew without the gate: `Shoot Bow` falls to General while the
+    /// class page keeps its own.
     #[test]
     fn a_line_the_gate_refuses_sends_its_spells_to_general() {
         let skills = skills();
         assert_eq!(skills.line_of(133, 1, 8), 8, "a class page opens");
         assert_eq!(skills.line_of(2480, 1, 3), GENERAL, "a weapon skill does not");
-        // …and the gate is the *bit*, not the word: a row carrying every other
-        // flag and not this one still opens.
+        // The gate tests the bit, not the whole word: a row carrying every
+        // other flag and not this one still opens.
         let open = gated(&[race_class(1, 45, 0, 0, !NO_SPELLBOOK_TAB)]);
         assert_eq!(open.line_of(2480, 1, 3), 45);
     }
 
-    /// **A line with no row of its own is General too** — the `je` two
-    /// instructions above the sign test, and the reason the gate cannot be
-    /// modelled as a filter on the flags alone.
+    /// A line with no `SkillRaceClassInfo` row of its own is General too, so
+    /// the gate cannot be modelled as a filter on the flags alone.
     #[test]
     fn a_line_the_gate_has_never_heard_of_is_general() {
         let skills = gated(&[race_class(1, 8, 0, 0, 0x410)]);
@@ -1033,9 +1005,9 @@ mod tests {
         assert_eq!(skills.line_of(2480, 1, 3), GENERAL);
     }
 
-    /// …and the gate takes the **character's** race and class, which is why it
-    /// is a second lookup rather than a column on the line. `Swords` is the
-    /// shipped example: two rows, two race sets, and 5875 happens to gate both.
+    /// The gate takes the character's race and class, which is why it is a
+    /// second lookup rather than a column on the line. `Swords` is the shipped
+    /// example: two rows for two sets of races, and 5875 gates both.
     #[test]
     fn the_gate_is_asked_per_character() {
         let skills = gated(&[
@@ -1046,7 +1018,7 @@ mod tests {
         assert_eq!(skills.line_of(2480, 2, 3), GENERAL, "race 2's does not");
     }
 
-    /// **No table is no gate**, not a book of one page — see [`Skills::parse`].
+    /// No table means no gate, not a book of one page. See [`Skills::parse`].
     #[test]
     fn an_absent_gate_leaves_every_line_a_tab() {
         let skills = ungated();

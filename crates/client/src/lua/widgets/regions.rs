@@ -128,6 +128,13 @@ pub(in crate::lua) const TEXT_REGION_KEY: &str = "__textRegion";
 const LAYER_KEY: &str = "__layer";
 const BLEND_KEY: &str = "__blend";
 const COLOUR_KEY: &str = "__colour";
+/// A `Texture`'s vertex colour, set by `SetVertexColor` and kept apart from
+/// its own colour (`<Color>` or `SetTexture(r, g, b, a)`). The client
+/// multiplies the two, so `SkillFrame`'s bar background, a white `<Color>` at
+/// alpha 0.2 tinted with `SetVertexColor(0, 0, 0.75, 0.5)`, draws at alpha
+/// 0.1. When the vertex colour replaced the texture's colour, that background
+/// drew at alpha 0.5 across the whole bar and every skill bar looked full.
+const VERTEX_COLOUR_KEY: &str = "__vertexColour";
 /// Whether a script has set this string's colour with `SetTextColor`. While it
 /// is set, applying a font object leaves the colour alone, as in 1.12. See
 /// [`apply_font_style`], the reason it exists.
@@ -197,13 +204,13 @@ pub(in crate::lua) fn capture_font_style(
 /// set with `SetTextColor` survives a later `SetFontObject`: applying a font
 /// object does not change a colour the script set.
 ///
-/// This client keeps one set of keys for both, so without [`COLOUR_SET_KEY`] a
-/// button switching to its `<HighlightFont>` on hover would erase the colour
-/// the interface had just written on its label. `QuestLogTitleButtonTemplate`
-/// declares all three faces and `QuestLog_Update` calls `SetTextColor` on the
-/// button itself for the quest's difficulty, so every row in the log switched
-/// between its difficulty colour and `GameFontNormal`'s gold as the pointer
-/// crossed it.
+/// This client keeps the script's colour and the font's colour in the same
+/// key, so [`COLOUR_SET_KEY`] records that a script set it.
+///
+/// `SetTextColor` on a button does not set [`COLOUR_SET_KEY`]. It colours the
+/// normal face only, and the highlight and disabled faces keep their font's
+/// colour, so a hovered quest log title turns white; see
+/// [`super::button::set_text_colour`].
 pub(in crate::lua) fn apply_font_style(
     lua: &mlua::Lua,
     region: &mlua::Table,
@@ -692,8 +699,10 @@ pub struct Paint {
     pub texture: Option<String>,
     /// The text of a `FontString`, already stringified the way 1.12 does it.
     pub text: Option<String>,
-    /// A tint on a texture, or the colour of a font string. `[1, 1, 1, 1]` when
-    /// nothing set one — which for a texture is "as painted".
+    /// For a texture, its own colour (`<Color>` or `SetTexture(r, g, b, a)`)
+    /// multiplied by its vertex colour (`SetVertexColor`); for a font string,
+    /// its text colour. `[1, 1, 1, 1]` when nothing set one, which for a
+    /// texture is "as painted".
     pub colour: [f32; 4],
     /// `ADD`, `BLEND`, `ALPHAKEY`, `MOD`, `DISABLE` — one of [`BLENDS`], and a
     /// `&'static str` for the reason [`FONT_STRING`] gives.
@@ -785,13 +794,23 @@ pub fn paint(object: &mlua::Table) -> Option<Paint> {
         Some(kind) if kind == TEXTURE => false,
         _ => return None,
     };
-    let colour = floats(object, COLOUR_KEY).map_or([1.0; 4], |(values, count)| match count {
-        // Three components is the shape of `<Color r g b/>`, which appears 73
-        // times, and it means opaque.
-        3 => [values[0], values[1], values[2], 1.0],
-        4 => values,
-        _ => [1.0; 4],
-    });
+    let rgba = |key: &str| {
+        floats(object, key).map_or([1.0; 4], |(values, count)| match count {
+            // Three components is the shape of `<Color r g b/>`, which appears
+            // 73 times, and it means opaque.
+            3 => [values[0], values[1], values[2], 1.0],
+            4 => values,
+            _ => [1.0; 4],
+        })
+    };
+    let mut colour = rgba(COLOUR_KEY);
+    // A texture's vertex colour multiplies its own; see [`VERTEX_COLOUR_KEY`].
+    if !is_font {
+        let vertex = rgba(VERTEX_COLOUR_KEY);
+        for (channel, tint) in colour.iter_mut().zip(vertex) {
+            *channel *= tint;
+        }
+    }
     // A region reads only the fields its own kind can carry, the rule the
     // `shadow` line below already follows, applied to the other ten. This
     // function runs once per drawn object per frame (376 of them with the bags
@@ -953,6 +972,15 @@ fn word_index<const N: usize>(
 ) -> Option<usize> {
     let found = object.raw_get::<Option<mlua::String>>(key).ok().flatten()?;
     vocabulary.into_iter().position(|known| found == known.as_bytes())
+}
+
+/// The key `SetVertexColor` writes: [`VERTEX_COLOUR_KEY`] on a `Texture`,
+/// [`COLOUR_KEY`] on anything else.
+fn vertex_key(object: &mlua::Table) -> &'static str {
+    match object.raw_get::<Option<mlua::String>>(widget::KIND_KEY) {
+        Ok(Some(kind)) if kind == TEXTURE => VERTEX_COLOUR_KEY,
+        _ => COLOUR_KEY,
+    }
 }
 
 /// A short run of numbers out of a Lua array, read in place.
@@ -1161,11 +1189,13 @@ fn register_methods(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> 
         Ok(held)
     });
 
+    // A `Texture` keeps its vertex colour apart from its own colour, which
+    // `paint` multiplies in; a `FontString`'s vertex colour is its text colour.
     method!("SetVertexColor", mlua::Variadic<f64>, |lua, this, rgba| store_numbers(
-        lua, &this, COLOUR_KEY, &rgba
+        lua, &this, vertex_key(&this), &rgba
     ));
     method!("GetVertexColor", |_lua, this| {
-        let rgba: Vec<f64> = this.raw_get::<Option<Vec<f64>>>(COLOUR_KEY)?.unwrap_or_default();
+        let rgba: Vec<f64> = this.raw_get::<Option<Vec<f64>>>(vertex_key(&this))?.unwrap_or_default();
         Ok((
             rgba.first().copied().unwrap_or(1.0),
             rgba.get(1).copied().unwrap_or(1.0),
@@ -1178,7 +1208,7 @@ fn register_methods(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> 
     method!("SetGradientAlpha", mlua::MultiValue, |_lua, _this, _args| Ok(()));
     // A colour set by `SetTextColor` persists and one set by `SetVertexColor`
     // does not: only the first marks the string as carrying its own colour,
-    // so only the first survives a button changing face. See
+    // so only the first survives a later `SetFontObject`. See
     // [`apply_font_style`].
     method!("SetTextColor", mlua::Variadic<f64>, |lua, this, rgba| {
         store_numbers(lua, &this, COLOUR_KEY, &rgba)?;
@@ -1604,16 +1634,11 @@ pub(in crate::lua) fn set_colour(lua: &mlua::Lua, region: &mlua::Table, rgba: [f
 /// Set a colour that persists through face changes, which is what
 /// `SetTextColor` writes.
 ///
-/// The difference from [`set_colour`] is [`COLOUR_SET_KEY`].
-/// `Button:SetTextColor` forwards to the button's own font string, and a
-/// button with a `<HighlightFont>` applies a face again every time the pointer
-/// crosses it. Without the flag, the forwarded colour is erased on the enter
-/// and again on the leave: a trainer's green spells and a quest log's
-/// difficulty colours change to `GameFontHighlight`'s white and then to
-/// `GameFontNormal`'s gold under the pointer.
-///
-/// [`apply_font_style`] reads the flag. The two setters differ because in 1.12
-/// a colour set with `SetTextColor` survives a change of font object.
+/// The difference from [`set_colour`] is [`COLOUR_SET_KEY`], which
+/// [`apply_font_style`] reads: in 1.12 a colour set with `SetTextColor` survives
+/// a change of font object. `SetTextColor` on a frame that is not a button
+/// forwards here. On a button it colours the normal face only, which
+/// [`super::button::set_text_colour`] handles.
 pub(super) fn set_text_colour(lua: &mlua::Lua, region: &mlua::Table, rgba: [f64; 4]) -> mlua::Result<()> {
     set_colour(lua, region, rgba)?;
     widget::set_paint(lua, region, COLOUR_SET_KEY, true)
@@ -2040,6 +2065,31 @@ mod tests {
         );
         lua.load("t:SetTexture(nil)").exec().expect("runs");
         assert_eq!(eval(&lua, "return t:GetTexture()"), "Nil");
+    }
+
+    /// A texture's vertex colour multiplies its own colour rather than
+    /// replacing it. `SkillFrame`'s bar background is a white `<Color>` at 0.2
+    /// tinted `(0, 0, 0.75, 0.5)`, and must come out at alpha 0.1.
+    #[test]
+    fn a_vertex_colour_multiplies_a_textures_own_colour() {
+        let lua = lua();
+        lua.load(
+            r#"
+            f = CreateFrame("Frame");
+            t = f:CreateTexture();
+            t:SetTexture(1, 1, 1, 0.2);
+            t:SetVertexColor(0, 0, 0.75, 0.5);
+            "#,
+        )
+        .exec()
+        .expect("loads");
+        let texture: mlua::Table = lua.globals().get("t").expect("the texture");
+        let colour = paint(&texture).expect("a region").colour;
+        assert_eq!(colour, [0.0, 0.0, 0.75, 0.1]);
+        assert_eq!(eval(&lua, "return select(4, t:GetVertexColor())"), "Number(0.5)");
+        // A new path keeps the tint.
+        lua.load(r#"t:SetTexture("Interface\Buttons\UI-QuickslotRed")"#).exec().expect("runs");
+        assert_eq!(paint(&texture).expect("a region").colour, [0.0, 0.0, 0.75, 0.5]);
     }
 
     /// `SetText` is often given numbers (`count:SetText(charges)`), and 1.12

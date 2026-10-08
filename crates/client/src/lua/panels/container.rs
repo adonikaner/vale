@@ -23,7 +23,7 @@
 //! GetItemInfo(id or link)            nine values about an item
 //! GetItemCount(entry)                how many are carried
 //! GetMoney()                         the backpack's money frame
-//! GameTooltip:SetBagItem / SetInventoryItem / SetHyperlink   in `lua::tooltip`
+//! GameTooltip:SetBagItem / SetInventoryItem / SetHyperlink   in `lua::widgets::tooltip`
 //!
 //! PickupContainerItem(bag, slot)     pick up an item, or drop the held item on it
 //! PickupInventoryItem(slot)          the same for a worn slot; PickupBagFromSlot too
@@ -62,9 +62,9 @@
 //! `UseContainerItem` and `UseInventoryItem` stay in
 //! [`super::super::api::verbs`], because a right click needs no return value.
 //!
-//! Some drag functions need a return value. `PutItemInBag(id)` returns whether the cursor held
-//! anything (`BagSlotButton_OnClick` opens the bag only when it did), so it is
-//! a read and a write in one call. That is why this module's `install` takes
+//! Some drag functions need a return value. `PutItemInBag(id)` returns whether
+//! the cursor held anything (`BagSlotButton_OnClick` opens the bag only when it
+//! did), so it is a read and a write in one call. That is why this module's `install` takes
 //! the verb queue as well as the world. The five that return nothing are kept
 //! beside it rather than in a second file with a different signature.
 //!
@@ -320,9 +320,10 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     // Four separate reads of one slot, matching the game's API:
     // `PaperDollItemSlotButton_Update` calls the texture, the count and the
     // broken test in three consecutive lines and the quality on a fourth. The
-    // unit token is read and only `player` returns data, because no packet
-    // this client reads carries another unit's bags or durability; the
-    // inspect packets are not read.
+    // unit token is read. `player` answers from the character's own slots.
+    // Another player answers with the item it wears, from its update fields,
+    // and nothing about the copy, because no packet this client reads carries
+    // another unit's bags or durability; the inspect packets are not read.
     macro_rules! worn {
         ($name:expr, |$item:ident| $body:expr, $absent:expr) => {{
             let f = scope.create_function(move |_, (token, id): (Option<String>, Option<i64>)| {
@@ -940,6 +941,13 @@ pub trait ContainerAnswers {
     fn cursor_has_spell(&self) -> bool;
     /// The tooltip contents for `GameTooltip:SetBagItem(bag, slot)`.
     fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<api::ItemTip>;
+    /// The sell price an item tooltip shows while a merchant window is open,
+    /// in copper: `Some(0)` for an item with no sell price ("No sell price"),
+    /// `None` when no line is shown. See [`SoldItem`].
+    fn sell_price(&self, item: SoldItem) -> Option<u32> {
+        let _ = item;
+        None
+    }
     /// The tooltip contents for `GameTooltip:SetInventoryItem(unit, id)`.
     fn inventory_item_tip(&self, token: &str, id: u32) -> Option<api::ItemTip>;
     /// The tooltip contents for `GameTooltip:SetHyperlink("item:…")`: the same
@@ -954,6 +962,24 @@ pub trait ContainerAnswers {
         self.item_tip(entry)
     }
 }
+
+/// A carried item a tooltip may show a sell price for.
+///
+/// The 1.12.1 client adds the price to a tooltip built over an item object
+/// (a bag square, an inventory slot, a buyback row) while a merchant window is
+/// open and the repair cursor is not up. It never adds one for a worn item or a
+/// worn bag: inventory slots 1 to 23. A merchant's own row, a loot row and a
+/// chat link have no item object and show no price.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SoldItem {
+    Bag { bag: i32, slot: usize },
+    Inventory(u32),
+    Buyback(usize),
+}
+
+/// The highest inventory slot id that never shows a sell price: the nineteen
+/// worn items and the four worn bags.
+const LAST_WORN_SLOT: u32 = 23;
 
 impl ContainerAnswers for super::super::api::Live<'_, '_, '_> {
 
@@ -1092,6 +1118,54 @@ impl ContainerAnswers for super::super::api::Live<'_, '_, '_> {
     fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<api::ItemTip> {
         let item = self.inventory.carried.container_item(bag, slot)?;
         self.tip_from(item.entry, Some(item))
+    }
+
+    fn sell_price(&self, item: SoldItem) -> Option<u32> {
+        if !self.merchant.is_open() || self.merchant.repairs().mode {
+            return None;
+        }
+        let carried = &self.inventory.carried;
+        let copy = match item {
+            SoldItem::Bag { bag, slot } => carried.container_item(bag, slot)?,
+            SoldItem::Inventory(id) if id <= LAST_WORN_SLOT => return None,
+            SoldItem::Inventory(id) => carried.inventory_slot(id)?,
+            SoldItem::Buyback(row) => &carried.buyback.get(row.checked_sub(1)?)?.item,
+        };
+        let queried;
+        let template = match self.inventory.template(copy.entry) {
+            Some(template) => template,
+            None => {
+                queried = self.session_template(copy.entry)?;
+                &queried
+            }
+        };
+        // `ITEM_FLAG` 0x8 is an item that is never repaired, and neither is
+        // one that cannot wear out; both cost nothing.
+        let repair = if copy.flags & 0x8 != 0 {
+            0
+        } else {
+            self.tables
+                .as_deref()
+                .and_then(|tables| {
+                    tables.repair().cost(
+                        vale_assets::tables::repair::Worn {
+                            durability: copy.durability,
+                            max_durability: copy.max_durability,
+                            item_level: template.item_level,
+                            quality: template.quality,
+                            class: template.class,
+                            subclass: template.subclass,
+                        },
+                        vale_assets::tables::repair::NO_DISCOUNT,
+                    )
+                })
+                .unwrap_or(0)
+        };
+        let charges = (
+            copy.spell_charges.first().copied().unwrap_or(0),
+            template.spells.first().map_or(0, |spell| spell.charges),
+        );
+        Some(vale_assets::tables::repair::sell_price(template.sell_price, charges, repair, copy.count))
     }
 
     fn inventory_item_tip(&self, token: &str, id: u32) -> Option<api::ItemTip> {

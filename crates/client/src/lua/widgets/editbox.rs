@@ -15,7 +15,7 @@
 //!   -> editBox:Show()  -> OnShow -> ChatEdit_OnShow -> this:SetFocus()
 //!   … typing …             lua::keyboard, the strokes -> this file
 //!   -> Enter -> OnEnterPressed -> ChatEdit_SendText   ChatFrame.lua:1940
-//!   -> ChatEdit_ParseText decides the kind from SLASH_* and SlashCmdList
+//!   -> ChatEdit_ParseText decides the chat type from SLASH_* and SlashCmdList
 //!   -> SendChatMessage(text, "SAY")      lua::verbs, a registered closure
 //! ```
 //!
@@ -33,15 +33,15 @@
 //! the history. [`text_was_set`] is the hook that makes the shared `SetText`
 //! fire `OnTextSet` on an edit box, the only kind that has that script.
 //!
-//! ## Focus is a single registry slot, hiding drops it, and a hidden box
-//! ## cannot take it
+//! ## Keyboard focus
 //!
 //! There is one keyboard focus in the client, so it is one registry key rather
 //! than a flag per frame, the same shape [`super::super::api::mouse`] uses for
 //! the pointer. `Hide()` clears the focus if the hidden box held it.
 //! `ChatEdit_OnEscapePressed` ends with `editBox:Hide()` and nothing else, so
 //! without this every keystroke after the first message would go to an
-//! invisible box.
+//! invisible box. A hidden box cannot take the focus; see `SetFocus` in
+//! [`install`].
 //!
 //! ## Selection rules
 //!
@@ -377,8 +377,8 @@ pub(super) fn hidden(lua: &mlua::Lua, frame: &mlua::Table) -> mlua::Result<()> {
 /// After `SetText` on an edit box: move the caret to the end, clear the
 /// selection and fire `OnTextSet` and `OnTextChanged`, as the game does.
 ///
-/// Called from the shared `SetText` in [`super::button`], where the forwarding
-/// lives; for every other kind it is a no-op costing one table read.
+/// Called from [`super::regions::set_frame_text`], the body behind the shared
+/// `SetText`; for every other kind it is a no-op costing one table read.
 /// `OnTextSet` runs `ChatEdit_ParseText`, which turns a typed `/s hello` into a
 /// `SAY` with the command cut off, so the chat line needs this hook.
 ///
@@ -921,10 +921,12 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
         methods.set(name, set)?;
     }
 
-    // `SetTextColor` has two meanings. On an edit box it sets the typed text's
-    // colour, which tints the chat line by the chat type. On any other frame
-    // it sets the frame's own font string's colour, which is how a button
-    // greys its label.
+    // `SetTextColor` on a frame has three meanings. On a frame with no font
+    // string of its own, which includes an edit box, it sets the colour of
+    // the text the frame draws itself; this tints the chat line by the chat
+    // type. On a button it sets the normal face's colour, which is how a
+    // button greys its label. On any other frame it sets the frame's own font
+    // string's colour.
     let set_colour = lua.create_function(
         |lua, (this, r, g, b, a): (mlua::Table, Option<f64>, Option<f64>, Option<f64>, Option<f64>)| {
             let rgba = vec![
@@ -933,10 +935,18 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
                 b.unwrap_or(1.0),
                 a.unwrap_or(1.0),
             ];
-            // The forwarded colour marks the string as carrying its own
-            // colour; otherwise the next face the button switches to would
-            // erase it. See [`super::regions::set_text_colour`].
+            // On a button the colour is the normal face's and the other faces
+            // keep their own; see [`super::button::set_text_colour`]. On any
+            // other frame it marks the string as carrying its own colour, so a
+            // later face change does not erase it; see
+            // [`super::regions::set_text_colour`].
             match super::regions::text_region(&this) {
+                Some(region) if super::button::is_button(&this) => super::button::set_text_colour(
+                    lua,
+                    &this,
+                    &region,
+                    [rgba[0], rgba[1], rgba[2], rgba[3]],
+                ),
                 Some(region) => super::regions::set_text_colour(
                     lua,
                     &region,

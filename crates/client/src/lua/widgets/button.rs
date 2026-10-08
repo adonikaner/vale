@@ -103,9 +103,8 @@ const CLICKS_KEY: &str = "__buttonClicks";
 /// ([`super::regions::capture_font_style`]) and the chosen one is written back.
 ///
 /// [`APPLIED_FONT_KEY`] records which face is applied, so the write happens
-/// only when the choice changes rather than every frame. A script that calls
-/// `SetTextColor` on a button's own label keeps that colour until the button's
-/// state changes, which matches the 1.12.1 client.
+/// only when the choice changes rather than every frame. `Button:SetTextColor`
+/// sets the colour of the normal face only; see [`NORMAL_COLOUR_KEY`].
 const NORMAL_FONT_KEY: &str = "__fontNormal";
 const HIGHLIGHT_FONT_KEY: &str = "__fontHighlight";
 const DISABLED_FONT_KEY: &str = "__fontDisabled";
@@ -115,6 +114,44 @@ const FONT_KEYS: [(&str, &str); 3] = [
     ("DisabledFont", DISABLED_FONT_KEY),
 ];
 const APPLIED_FONT_KEY: &str = "__buttonFontApplied";
+
+/// The colour `Button:SetTextColor` gave the normal face.
+///
+/// In the 1.12.1 client the colour belongs to the normal state: the highlight
+/// and disabled faces keep their own font's colour. `QuestLog_Update` colours
+/// each title by difficulty with `SetTextColor`, and a hovered or selected
+/// title turns `GameFontHighlight`'s white; `QuestLogTitleButton_OnEnter` and
+/// the selected-row code recolour only the `Tag` string themselves, because the
+/// title changes with the face. Trainer and profession rows behave the same way.
+/// The colour is kept here and applied each time the normal face is worn.
+const NORMAL_COLOUR_KEY: &str = "__buttonNormalColour";
+
+/// `Button:SetTextColor(r, g, b, a)`: the normal face's colour.
+///
+/// Applied to the label at once when the normal face is the one worn (or none
+/// has been chosen yet), and kept for the next time it is otherwise.
+pub(in crate::lua) fn set_text_colour(
+    lua: &mlua::Lua,
+    frame: &mlua::Table,
+    region: &mlua::Table,
+    rgba: [f64; 4],
+) -> mlua::Result<()> {
+    frame.raw_set(NORMAL_COLOUR_KEY, rgba.to_vec())?;
+    let applied = frame.raw_get::<Option<String>>(APPLIED_FONT_KEY)?;
+    if applied.is_none() || applied.as_deref() == Some(NORMAL_FONT_KEY) {
+        super::regions::set_colour(lua, region, rgba)?;
+    }
+    Ok(())
+}
+
+/// Whether a frame is a `Button` or a `CheckButton`, the two kinds whose
+/// `SetTextColor` colours the normal face only.
+pub(in crate::lua) fn is_button(frame: &mlua::Table) -> bool {
+    matches!(
+        frame.raw_get::<Option<String>>(super::widget::KIND_KEY).ok().flatten().as_deref(),
+        Some("Button" | "CheckButton")
+    )
+}
 
 /// Record a `<NormalFont>` / `<HighlightFont>` / `<DisabledFont>` declaration.
 ///
@@ -307,8 +344,8 @@ fn slots(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
 /// There are 664 call sites over the directory, and most are on a `FontString`
 /// or an `EditBox`, which [`super::regions`] already handles. This covers the
 /// button, where `<ButtonText>` made a font string in the `Text` slot and 1.12
-/// forwards the call to it. A button with no text region drops the call, as
-/// the game does.
+/// forwards the call to it. A button with no text region keeps the string on
+/// itself until one is attached; the comment in the body gives the reason.
 fn text(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
     // A button's text belongs to its font string. A button that has no font
     // string yet stores the text itself. 1.12's `SetText` does nothing in that
@@ -497,15 +534,11 @@ impl Slots {
 /// where no `<NormalFont>` element is read. "Normal" then means whatever the
 /// loader left on the label.
 ///
-/// A button that declares no face for the state it is entering is left
-/// unchanged, rather than having the normal face applied again. This differs
-/// from the 1.12.1 widget on purpose: 1.12 keeps the per-string colour
-/// `SetTextColor` writes separately from the font object, so the two do not
-/// overwrite each other, while this client keeps one set of keys for both.
-/// `MoneyFrame_UpdateMoney` colours its three buttons red that way, and they
-/// declare only a `<NormalFont>`, so reapplying it on hover would turn the
-/// money white again. Nothing in either directory both declares a second face
-/// and recolours its own label.
+/// A state the button declares no face for wears the normal face, and the
+/// normal face is followed by the colour `Button:SetTextColor` gave it (see
+/// [`NORMAL_COLOUR_KEY`]). `MoneyFrame_UpdateMoney` colours its three buttons
+/// red that way and they declare only a `<NormalFont>`, so they stay red under
+/// the pointer; a quest log title declares a `<HighlightFont>` and turns white.
 fn wear_font(lua: &mlua::Lua, frame: &mlua::Table, state: &str) -> mlua::Result<()> {
     let Some(region) = super::regions::text_region(frame) else {
         return Ok(());
@@ -529,6 +562,13 @@ fn wear_font(lua: &mlua::Lua, frame: &mlua::Table, state: &str) -> mlua::Result<
     };
     if let Some(style) = style {
         super::regions::apply_font_style(lua, &region, &style)?;
+        if worn == NORMAL_FONT_KEY {
+            if let Some(rgba) = frame.raw_get::<Option<Vec<f64>>>(NORMAL_COLOUR_KEY)? {
+                if let [r, g, b, a] = rgba[..] {
+                    super::regions::set_colour(lua, &region, [r, g, b, a])?;
+                }
+            }
+        }
         frame.set(APPLIED_FONT_KEY, worn)?;
     }
     Ok(())

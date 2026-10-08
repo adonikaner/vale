@@ -58,9 +58,10 @@
 //!   the client's to provide, and 24 are provided, so most `OnLoad` bodies raise
 //!   partway through. This is expected: the errors are collected, deduplicated
 //!   and counted, and the count measures the remaining API work.
-//! * Five element kinds are still skipped: `<Shadow>` (6), `<BarColor>` (14),
-//!   `<PushedTextOffset>` (8), `<ResizeBounds>` (1) and `<AbsInset>` inside a
-//!   `<TitleRegion>` (2). Each is small, and each shows in one place.
+//! * Three element types are still skipped: `<PushedTextOffset>` (8),
+//!   `<ResizeBounds>` (1) and `<AbsInset>` inside a `<TitleRegion>` (2). Each
+//!   is small, and each shows in one place. `<Shadow>` (6) and `<BarColor>`
+//!   (14) are read; see [`Loader::contents`].
 //! * `movable="true"` is recorded and `StartMoving` tests it. Dragging is in
 //!   [`super::api::mouse`], which also lists what is still missing for the
 //!   pointer (the wheel).
@@ -2026,11 +2027,9 @@ mod tests {
         lua.load("StaticPopup1Button1:Disable()").exec().expect("runs");
         assert_eq!(face(&lua, &button).0, [0.5, 0.5, 0.5, 1.0]);
 
-        // A button that declares only a normal face never has its label
-        // rewritten, so a script's own `SetTextColor` survives a hover. See
-        // [`wear_font`]: this is this client's one deliberate difference from
-        // the 1.12.1 client's font selection, made for
-        // `MoneyFrame_UpdateMoney`'s red.
+        // A colour set on the label itself, with the font string's own
+        // `SetTextColor`, survives a hover on a button that declares only a
+        // normal face. `MoneyFrame_UpdateMoney` colours its coins red this way.
         lua.load(
             r#"
             money = CreateFrame("Button", "MoneyGold");
@@ -2047,28 +2046,34 @@ mod tests {
         crate::lua::widgets::button::selected_slots(&lua, &money);
         assert_eq!(regions::paint(&coins).map(|p| p.colour), Some([1.0, 0.1, 0.1, 1.0]));
 
-        // A button that declares all three faces also keeps a colour a script
-        // set on it. The paragraph above does not cover this case, and every
-        // list row in the game is this case. `SetTextColor` on the button
-        // forwards to its label and marks the string as carrying its own
-        // colour, and a face applied afterwards does not change it
-        // (`SetFontObject` writes a different field).
-        //
-        // Without that flag the trainer's green spells and the quest log's
-        // difficulty colours change to `GameFontHighlight`'s white under the
-        // pointer and to `GameFontNormal`'s gold when it leaves (reported as
-        // "the spell text colours change randomly when you hover over them").
-        lua.load("StaticPopup1Button1:SetTextColor(0, 1.0, 0)")
+        // A colour set on a button with `SetTextColor` belongs to its normal
+        // face. The highlight and disabled faces keep their own font's colour,
+        // and the normal colour comes back when the normal face does. This is
+        // every list row in the game: a quest log title is its difficulty
+        // colour, white under the pointer and while selected, and its
+        // difficulty colour again when the pointer leaves.
+        crate::lua::api::mouse::set_over(&button, false).expect("the pointer leaves");
+        lua.load("StaticPopup1Button1:Enable(); StaticPopup1Button1:SetTextColor(0, 1.0, 0)")
             .exec()
             .expect("runs");
         let green = [0.0, 1.0, 0.0, 1.0];
-        assert_eq!(face(&lua, &button).0, green, "the script's colour, not the face's");
+        assert_eq!(face(&lua, &button).0, green, "the script's colour on the normal face");
         crate::lua::api::mouse::set_over(&button, true).expect("the pointer arrives");
-        assert_eq!(face(&lua, &button).0, green, "…and the hover does not erase it");
+        assert_eq!(face(&lua, &button).0, [1.0, 1.0, 1.0, 1.0], "the highlight face's white");
         crate::lua::api::mouse::set_over(&button, false).expect("and leaves");
-        assert_eq!(face(&lua, &button).0, green, "…nor does the leave");
-        // The typeface still follows the state, which distinguishes this from
-        // not applying the face at all.
+        assert_eq!(face(&lua, &button).0, green, "the script's colour again, not the font's gold");
+        lua.load("StaticPopup1Button1:Disable()").exec().expect("runs");
+        assert_eq!(face(&lua, &button).0, [0.5, 0.5, 0.5, 1.0], "the disabled face's grey");
+        lua.load("StaticPopup1Button1:Enable()").exec().expect("runs");
+        assert_eq!(face(&lua, &button).0, green);
+        // A colour set while another face is worn waits for the normal face.
+        lua.load("StaticPopup1Button1:LockHighlight(); StaticPopup1Button1:SetTextColor(0, 0, 1.0)")
+            .exec()
+            .expect("runs");
+        assert_eq!(face(&lua, &button).0, [1.0, 1.0, 1.0, 1.0], "still white while locked");
+        lua.load("StaticPopup1Button1:UnlockHighlight()").exec().expect("runs");
+        assert_eq!(face(&lua, &button).0, [0.0, 0.0, 1.0, 1.0]);
+        // The typeface still follows the state.
         assert_eq!(face(&lua, &button).1, Some(r"Fonts\FRIZQT__.TTF".to_string()));
     }
 

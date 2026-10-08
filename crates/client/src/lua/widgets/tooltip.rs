@@ -80,8 +80,9 @@
 //! description in green, the one colour on the plate that is not gold or
 //! white.
 //!
-//! The population methods with no state behind them (bags, buffs, merchant)
-//! are in [`super::super::api::stubs`] and are counted separately. An empty
+//! The population methods with no state behind them (`SetMerchantCompareItem`,
+//! `SetShapeshift`, `SetTrackingSpell`) are in [`super::super::api::stubs`]
+//! and are counted separately. An empty
 //! population hides the tooltip and keeps the owner, so a refresh loop keeps
 //! its ownership check; only `Hide` clears the owner.
 //!
@@ -1385,9 +1386,10 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
     // ```
     //
     // The two return different shapes; this matches the game's FrameXML.
-    // `repairCost` is 0 rather than nil: `ContainerFrame_Update` compares it
-    // with `>` two lines later, and a nil is an error there. This client has
-    // no repair, so 0 is also the correct value.
+    // `repairCost` is always 0 rather than nil: `ContainerFrame_Update`
+    // compares it with `>` two lines later, and a nil is an error there. The
+    // plate does not compute a repair cost; repairs are priced by
+    // [`vale_assets::tables::repair`] for the merchant's repair buttons.
     let set_bag_item = scope.create_function(
         move |lua, (this, bag, slot): (mlua::Table, Option<i64>, Option<i64>)| {
             let tip = slot
@@ -1397,6 +1399,11 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
                 Some(tip) => {
                     clear(lua, &this)?;
                     item_lines(lua, &this, &tip)?;
+                    let sold = super::super::panels::container::SoldItem::Bag {
+                        bag: bag.unwrap_or(0) as i32,
+                        slot: slot.unwrap_or(0) as usize,
+                    };
+                    sell_price_line(lua, &this, answers.sell_price(sold))?;
                     set_shown(&this, true)?;
                     // `hasCooldown` is nil, because `GetContainerItemCooldown`
                     // still returns a constant zero (see
@@ -1428,6 +1435,12 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
                 Some(tip) => {
                     clear(lua, &this)?;
                     item_lines(lua, &this, &tip)?;
+                    if token.eq_ignore_ascii_case("player") {
+                        let sold = super::super::panels::container::SoldItem::Inventory(
+                            id.unwrap_or(0) as u32,
+                        );
+                        sell_price_line(lua, &this, answers.sell_price(sold))?;
+                    }
                     set_shown(&this, true)?;
                     Ok((one_or_nil(true), mlua::Value::Nil, mlua::Value::Integer(0)))
                 }
@@ -1656,11 +1669,14 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
     // `GetBuybackItemLink`, unlike the vendor and loot lists.
     let set_buyback_item =
         scope.create_function(move |lua, (this, row): (mlua::Table, Option<i64>)| {
-            let entry = usize::try_from(row.unwrap_or(0))
-                .ok()
-                .filter(|i| *i > 0)
-                .and_then(|row| answers.buyback_entry(row));
-            item_plate(lua, &this, entry)
+            let row = usize::try_from(row.unwrap_or(0)).ok().filter(|i| *i > 0);
+            let entry = row.and_then(|row| answers.buyback_entry(row));
+            let shown = item_plate(lua, &this, entry)?;
+            if let (Some(row), true) = (row, entry.is_some()) {
+                let sold = super::super::panels::container::SoldItem::Buyback(row);
+                sell_price_line(lua, &this, answers.sell_price(sold))?;
+            }
+            Ok(shown)
         })?;
     methods.set("SetBuybackItem", set_buyback_item)?;
 
@@ -1793,8 +1809,7 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
 /// The unit tooltip's lines, as the 1.12.1 client's `GameTooltip:SetUnit`
 /// composes them.
 ///
-/// Unlike the item plate's order, which this file states is a reconstruction,
-/// this order matches the client exactly:
+/// The order matches the client:
 ///
 /// ```text
 /// 1  the name                              gold, the engine default; a
@@ -1830,8 +1845,8 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
 ///
 /// Not drawn, because the state behind them does not exist in this client:
 /// `RESURRECTABLE`, `PLAYER_OFFLINE`, the faction name, and the `Civilian`
-/// prefix and line of a non-combatant NPC. Each depends on a missing subsystem, so the line is omitted rather
-/// than filled with a guess; [`super::super::api::stubs`]' first paragraph
+/// prefix and line of a non-combatant NPC. Each depends on a missing
+/// subsystem, so the line is omitted rather than filled with a guess; [`super::super::api::stubs`]' first paragraph
 /// gives the same reasoning.
 fn unit_lines(lua: &mlua::Lua, this: &mlua::Table, tip: &crate::interface::api::UnitTip) -> mlua::Result<()> {
     // The name takes the plate's default colour rather than a specific one:
@@ -2020,6 +2035,30 @@ fn spell_lines(lua: &mlua::Lua, this: &mlua::Table, tip: &SpellTip) -> mlua::Res
         append(lua, this, (text(lua, &tip.description)?, GOLD), None, true)?;
     }
     Ok(())
+}
+
+/// The sell price under an item's plate while a merchant window is open.
+///
+/// A price fires the tooltip's `OnTooltipAddMoney` with the copper as `arg1`,
+/// which `GameTooltipTemplate` answers with `SetTooltipMoney(this, arg1)`: a
+/// blank line with the coins beside it. An item with no sell price is the
+/// `ITEM_UNSELLABLE` line ("No sell price") instead. `None` adds nothing.
+fn sell_price_line(lua: &mlua::Lua, this: &mlua::Table, price: Option<u32>) -> mlua::Result<()> {
+    match price {
+        None => Ok(()),
+        Some(0) => {
+            let Some(line) = lua.globals().get::<Option<String>>("ITEM_UNSELLABLE")? else {
+                return Ok(());
+            };
+            append(lua, this, (text(lua, &line)?, [1.0, 1.0, 1.0, 1.0]), None, false)
+        }
+        Some(copper) => frames::run_script(
+            lua,
+            this,
+            "OnTooltipAddMoney",
+            &[crate::interface::events::EventArg::Number(f64::from(copper))],
+        ),
+    }
 }
 
 /// An item's plate, drawn from [`crate::interface::plate::item_plate`].
