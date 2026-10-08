@@ -85,6 +85,11 @@ const GROUPS: [(&str, &[Subject]); 3] = [
                  end, set the width, then apply.",
             ),
             s(
+                "Road",
+                Tool::Road,
+                "Builds a road along a run of points: grades the ground along it                  and paints a surface texture and a verge texture. Click to add                  points, then apply.",
+            ),
+            s(
                 "Shading",
                 Tool::Shading,
                 "Paints MCCV, the per-vertex colour of the ground. Each value is a \

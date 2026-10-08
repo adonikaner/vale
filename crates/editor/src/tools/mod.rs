@@ -165,6 +165,7 @@ pub mod measure;
 pub mod place;
 pub mod quests;
 pub mod rehome;
+pub mod road;
 pub mod services;
 pub mod shading;
 pub mod spawn;
@@ -201,6 +202,9 @@ pub enum Tool {
     /// A ramp between two points, which the height brush cannot make — see
     /// [`grade`]. Two clicks and a button rather than a stroke.
     Grade,
+    /// A road along a run of points: the ground graded along it and its
+    /// textures painted — see [`road`].
+    Road,
     /// The shading brush: the colour painted onto the terrain's vertices —
     /// see [`shading`].
     Shading,
@@ -355,7 +359,7 @@ pub enum Surface {
 /// [`Tool::at`] enforces the list: an exhaustive `match` that does not compile
 /// until a new variant has an index, plus a test that this list is exactly
 /// those indices in order.
-pub const ALL: [Tool; 25] = [
+pub const ALL: [Tool; 26] = [
     Tool::Select,
     Tool::Terrain,
     Tool::Grade,
@@ -381,6 +385,7 @@ pub const ALL: [Tool; 25] = [
     Tool::Zones,
     Tool::Triggers,
     Tool::Graveyards,
+    Tool::Road,
 ];
 
 impl Tool {
@@ -418,6 +423,7 @@ impl Tool {
             Tool::Zones => 22,
             Tool::Triggers => 23,
             Tool::Graveyards => 24,
+            Tool::Road => 25,
         }
     }
 
@@ -604,6 +610,7 @@ impl Tool {
             Tool::Select => "Select",
             Tool::Terrain => "Terrain",
             Tool::Grade => "Grade",
+            Tool::Road => "Road",
             Tool::Shading => "Shading",
             Tool::Textures => "Textures",
             Tool::Holes => "Holes",
@@ -756,7 +763,9 @@ impl Plugin for ToolPlugin {
             place::PlaceToolPlugin,
             sweep::SweepPlugin,
             gizmo::GizmoToolPlugin,
-            grade::GradeToolPlugin,
+            // The two point-and-apply terrain tools as one entry, which keeps
+            // the tuple within what `add_plugins` accepts.
+            (grade::GradeToolPlugin, road::RoadToolPlugin),
             tables::TableToolPlugin,
             tiles::TilePlugin,
         ));
@@ -1200,6 +1209,7 @@ fn modes(
         // item, quest and flight path tools: the number row picks a brush
         // mode, and a row of a table has none.
         Tool::Grade
+        | Tool::Road
         | Tool::Creatures
         | Tool::GameObjects
         | Tool::Items

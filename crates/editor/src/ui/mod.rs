@@ -353,6 +353,7 @@ pub struct Playing<'w> {
 pub struct Editing<'w> {
     pub(crate) terrain: ResMut<'w, Terrain>,
     pub(crate) grading: ResMut<'w, crate::tools::grade::Grading>,
+    pub(crate) road: ResMut<'w, crate::tools::road::RoadTool>,
     pub(crate) measuring: ResMut<'w, crate::tools::measure::Measuring>,
     pub(crate) shading: ResMut<'w, crate::tools::shading::Shading>,
     pub(crate) textures: ResMut<'w, Textures>,

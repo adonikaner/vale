@@ -1989,13 +1989,40 @@ impl PaintBrush {
         at: [f32; 2],
         seconds: f32,
     ) -> Painted {
+        // The brush's own footprint: its shape, its falloff curve and its
+        // core, around the point.
+        let weight = |x: f32, y: f32| {
+            let distance = self.shape.distance(x - at[0], y - at[1]);
+            self.falloff.over(distance / self.radius, self.core)
+        };
+        let chunks = self.chunks_under(tile, at);
+        self.paint_where(tile, working, &chunks, seconds, weight)
+    }
+
+    /// **Paint with a footprint the caller describes**: `weight` gives each
+    /// point in world x and y a share of the stroke, 0 to 1, and `chunks` are
+    /// the chunks it can be above 0 in. [`Self::stroke`] is this with the
+    /// brush's own circle; a road is this with the distance from its centre
+    /// line. The radius, shape, falloff and core are not read here.
+    ///
+    /// With `seconds` at 1 and a strength of 1, one call moves every texel
+    /// all the way to its weight's share of the opacity, which is a footprint
+    /// written once rather than rubbed in.
+    pub fn paint_where(
+        &self,
+        tile: &mut AdtFile,
+        working: &mut Working,
+        chunks: &[usize],
+        seconds: f32,
+        weight: impl Fn(f32, f32) -> f32,
+    ) -> Painted {
         let mut painted = Painted::default();
         if self.texture.is_empty() {
             return painted;
         }
-        for index in self.chunks_under(tile, at) {
+        for &index in chunks {
             let before = ChunkPaint::capture(tile, index);
-            match self.paint_chunk(tile, working, index, at, seconds) {
+            match self.paint_chunk(tile, working, index, seconds, &weight) {
                 Step::Painted => {}
                 Step::Nothing => continue,
                 Step::Based => painted.based.push(index),
@@ -2032,13 +2059,25 @@ impl PaintBrush {
         tile: &mut AdtFile,
         working: &mut Working,
         index: usize,
-        at: [f32; 2],
         seconds: f32,
+        weight: &dyn Fn(f32, f32) -> f32,
     ) -> Step {
         let Some(chunk) = tile.chunk(index) else {
             return Step::Nothing;
         };
         let origin = chunk.head().position();
+        // Each texel's share of the step, worked out first: a chunk the
+        // footprint does not reach at all is left before anything below
+        // gives it a layer, makes the texture its base or reports it full.
+        let weights: Vec<f32> = (0..ALPHA_LEN)
+            .map(|texel| {
+                let [x, y] = alpha::texel_position(origin, texel % ALPHA_SIDE, texel / ALPHA_SIDE);
+                weight(x, y).clamp(0.0, 1.0)
+            })
+            .collect();
+        if weights.iter().all(|&w| w == 0.0) {
+            return Step::Nothing;
+        }
         let mut paint = alpha::paint(chunk);
 
         // **A chunk with no `MCLY` at all takes this texture as its base.**
@@ -2148,11 +2187,10 @@ impl PaintBrush {
         for texel in 0..ALPHA_LEN {
             let (tx, ty) = (texel % ALPHA_SIDE, texel / ALPHA_SIDE);
             let [x, y] = alpha::texel_position(origin, tx, ty);
-            // **In the brush's own shape** — see [`Shape`]. A texel is 0.52
-            // yards, so a square brush here has a genuinely straight edge
-            // rather than a stepped one.
-            let distance = self.shape.distance(x - at[0], y - at[1]);
-            let weight = self.falloff.over(distance / self.radius, self.core);
+            // **In the footprint's own shape.** A texel is 0.52 yards, so a
+            // square brush here has a genuinely straight edge rather than a
+            // stepped one.
+            let weight = weights[texel];
             if weight == 0.0 {
                 continue;
             }
@@ -2352,6 +2390,10 @@ fn with_neighbours(index: usize) -> Vec<usize> {
 
 /// A ramp between two points — the one shape a round brush cannot make.
 pub mod grade;
+
+/// A road along a run of points: the ground graded along it and its
+/// textures painted.
+pub mod road;
 
 /// Carrying the placements that stand on ground an edit moved.
 pub mod follow;

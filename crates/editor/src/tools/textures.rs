@@ -197,7 +197,7 @@ struct Held {
 /// of nineteen archives, and a session that never opens this tool should not
 /// pay for it.
 fn read_catalogue(mut textures: ResMut<Textures>, tool: Res<Tool>, assets: Res<GameAssets>) {
-    if !matches!(*tool, Tool::Textures | Tool::Chunks) || !textures.catalogue.is_empty() {
+    if !matches!(*tool, Tool::Textures | Tool::Chunks | Tool::Road) || !textures.catalogue.is_empty() {
         return;
     }
     let found = assets.with_archive(|chain| Ok(chain.list_prefix("Tileset\\")));

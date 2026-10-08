@@ -109,6 +109,7 @@ fn items(
         (Tool::Areas, Target::Ground { tile, chunk, .. }) => areas(ui, session, editing, tile, chunk),
         (Tool::Holes, Target::Ground { tile, chunk, .. }) => holes(ui, session, tile, chunk),
         (Tool::Grade, Target::Ground { .. }) => grade(ui, session, editing),
+        (Tool::Road, Target::Ground { at, .. }) => road(ui, session, editing, at),
         _ => false,
     };
     // What every menu ends with: the clicked point, and the history.
@@ -769,6 +770,50 @@ fn grade(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing) ->
     }
     if item(ui, "Clear points", true, "Forget both points.", "") {
         editing.grading.clear();
+        chosen = true;
+    }
+    chosen
+}
+
+fn road(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing, at: Option<Vec3>) -> bool {
+    let mut chosen = false;
+    let road = &mut editing.road;
+    let ready = road.is_ready();
+    if item(ui, "Apply road", ready, "Enter. Grade the ground along the road and paint it.", "Place at least two points first.") {
+        crate::tools::road::apply_and_report(session, road);
+        chosen = true;
+    }
+    ui.separator();
+    caption(ui, "Points");
+    let near = at.and_then(|at| road.point_near(at.x, at.y));
+    if let Some(at) = at {
+        if item(ui, "Add point here", true, "Add a point at the end of the road.", "") {
+            road.push([at.x, at.y], at.z);
+            chosen = true;
+        }
+        if item(
+            ui,
+            "Insert point here",
+            road.points.len() >= 2,
+            "Put a point into the segment nearest the click.",
+            "Place at least two points first.",
+        ) {
+            road.insert([at.x, at.y], at.z);
+            chosen = true;
+        }
+    }
+    if item(ui, "Remove this point", near.is_some(), "Shift+click. Remove the point under the click.", "The click was not on a point.") {
+        if let Some(i) = near {
+            road.remove(i);
+        }
+        chosen = true;
+    }
+    if item(ui, "Remove last point", !road.points.is_empty(), "Backspace.", "There are no points.") {
+        road.points.pop();
+        chosen = true;
+    }
+    if item(ui, "Clear points", !road.points.is_empty(), "Remove every point.", "There are no points.") {
+        road.clear();
         chosen = true;
     }
     chosen
