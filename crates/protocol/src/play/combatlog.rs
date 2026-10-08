@@ -1,44 +1,47 @@
-//! **The nine packets a fight is *narrated* by**, as opposed to fought with.
+//! The thirteen packets whose only consumer is the combat log.
 //!
 //! `SMSG_ATTACKERSTATEUPDATE`, `SMSG_SPELLNONMELEEDAMAGELOG` and
 //! `SMSG_SPELLHEALLOG` are in [`super::action`], because each of them also
-//! moves something on screen — a swing, a flinch, a floating number. What is
-//! here is the rest of the log: the packets whose *only* consumer is a line of
-//! text, which is why they had no reader at all until the combat log did.
+//! moves something on screen: a swing, a flinch, a floating number. This
+//! module reads the rest of the log, the packets whose only consumer is a line
+//! of text.
 //!
 //! The rule that turns any of these into a sentence is
-//! `vale_assets::interface::combatlog`; this module is bytes and nothing
-//! else.
+//! `vale_assets::interface::combatlog`; this module only reads bytes.
 //!
-//! ## Packed and unpacked guids sit side by side here, and it matters
+//! ## Which packets write a guid packed and which write it raw
 //!
-//! Most of this protocol writes a guid packed. **Four of these nine do not.**
-//! `SMSG_PARTYKILLLOG`, `SMSG_ENVIRONMENTALDAMAGELOG`, `SMSG_SPELLDAMAGESHIELD`
-//! and `SMSG_SPELLLOGMISS` write a raw `uint64` — vmangos' `buffer << guid`
-//! with no `WriteAsPacked` on it — while `SMSG_SPELLENERGIZELOG` and
-//! `SMSG_PERIODICAURALOG` write packed. There is no pattern to it and no build
-//! guard on most of them; it is simply what each `AppendBodyTo` does. A reader
-//! that assumes one form reads the next field as part of a guid and produces a
-//! plausible number for the wrong unit, which in a combat log is a line nobody
-//! can tell is wrong.
+//! Most of this protocol writes a guid packed. Nine of these thirteen do not:
+//! `SMSG_LOG_XPGAIN`, `SMSG_PARTYKILLLOG`, `SMSG_ENVIRONMENTALDAMAGELOG`,
+//! `SMSG_SPELLDAMAGESHIELD`, `SMSG_SPELLLOGMISS`, `SMSG_SPELLORDAMAGE_IMMUNE`,
+//! `SMSG_PROCRESIST`, `SMSG_DISPEL_FAILED` and `SMSG_SPELLINSTAKILLLOG` write a
+//! raw `uint64` (vmangos' `buffer << guid` with no `WriteAsPacked` on it).
+//! `SMSG_SPELLENERGIZELOG`, `SMSG_PERIODICAURALOG` and `SMSG_SPELLDISPELLOG`
+//! write packed guids. `SMSG_SPELLLOGEXECUTE` writes its caster packed and
+//! every target raw. There is no pattern to it and no build guard on most of
+//! them; each vmangos writer, such as an `AppendBodyTo`, chooses its own form.
+//! A reader that assumes the wrong form reads the next field as part of a guid
+//! and produces a plausible number for the wrong unit, and the resulting combat
+//! log line does not look wrong.
 //!
 //! Source: vmangos `Server/Packets/Combat.cpp`, `Server/Packets/Spell.cpp`,
-//! `Server/Packets/Misc.cpp` and `Objects/Unit.cpp`
+//! `Server/Packets/Misc.cpp`, `Spells/SpellEffects.cpp` and `Objects/Unit.cpp`
 //! (`SendPeriodicAuraLog`).
 
 use crate::bytes::Reader;
 
-/// **One thing that happened in a fight, on its way to a line of text.**
+/// One combat event, queued to become a line of text.
 ///
-/// The queue this travels on is [`crate::state::objects::ObjectManager::note_combat`],
-/// and it exists because a combat log line is an *event*: two swings for the
-/// same damage on the same creature are two lines, and nothing that latches the
-/// last value on an entity can produce the second one.
+/// The queue is [`crate::state::objects::ObjectManager::note_combat`]. It is a
+/// queue because a combat log line is an event: two swings for the same damage
+/// on the same creature are two lines, and state that keeps only the last value
+/// on an entity cannot produce the second one.
 ///
-/// Three of the ten come from [`super::action`] rather than from this module,
-/// because those packets move something on screen as well; carrying them here
-/// is what lets one drain compose every kind of line in arrival order, which is
-/// the order a player reads them in.
+/// `Swing`, `SpellDamage` and `SpellHeal` carry packets read in
+/// [`super::action`], because those packets also move something on screen, and
+/// `Enchantment` carries one read in [`super::items`]. Carrying them here lets
+/// one drain compose every line in arrival order, which is the order a player
+/// reads them in.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CombatEvent {
     /// `SMSG_ATTACKERSTATEUPDATE` — the weapon swing, landed or not.
@@ -47,8 +50,8 @@ pub enum CombatEvent {
     SpellDamage(super::action::SpellDamage),
     /// `SMSG_SPELLHEALLOG`.
     SpellHeal(super::action::SpellHeal),
-    /// One target of a `SMSG_SPELLLOGMISS`. **Fanned out at the handler**: the
-    /// packet is one cast and a list, and the log is one line per target.
+    /// One target of a `SMSG_SPELLLOGMISS`. The handler fans the packet out:
+    /// the packet is one cast and a list, and the log has one line per target.
     SpellMissed {
         spell_id: u32,
         caster: u64,
@@ -61,19 +64,20 @@ pub enum CombatEvent {
     PartyKill(PartyKill),
     XpGain(XpGain),
     PeriodicAura(PeriodicAuraLog),
-    /// `SMSG_SPELLLOGEXECUTE`'s `SPELL_EFFECT_ADD_EXTRA_ATTACKS`. **Fanned out
-    /// at the handler**, like [`CombatEvent::SpellMissed`]: one packet is a list
-    /// of effects and each entry of each list is its own line.
+    /// One `SPELL_EFFECT_ADD_EXTRA_ATTACKS` entry of a `SMSG_SPELLLOGEXECUTE`.
+    /// The handler fans the packet out, like [`CombatEvent::SpellMissed`]: one
+    /// packet is a list of effects and each entry of each list is its own line.
     ExtraAttacks { target: u64, spell_id: u32, count: u32 },
-    /// …its `SPELL_EFFECT_INTERRUPT_CAST`. `spell_id` is the spell that was
-    /// **interrupted**, which is what the sentence names — the interrupting
-    /// spell does not appear in `SPELLINTERRUPT*` at all.
+    /// One `SPELL_EFFECT_INTERRUPT_CAST` entry of a `SMSG_SPELLLOGEXECUTE`.
+    /// `spell_id` is the spell that was interrupted, which is what the sentence
+    /// names; the interrupting spell does not appear in `SPELLINTERRUPT*`.
     Interrupt { caster: u64, target: u64, spell_id: u32 },
-    /// …its `SPELL_EFFECT_FEED_PET`, whose two keys name no unit at all and
-    /// carry an *item* rather than a spell.
+    /// One `SPELL_EFFECT_FEED_PET` entry of a `SMSG_SPELLLOGEXECUTE`. Its two
+    /// keys name no unit and carry an item rather than a spell.
     FeedPet { caster: u64, item: u32 },
-    /// …and its `SPELL_EFFECT_DURABILITY_DAMAGE`. A negative `item` is **every**
-    /// item, which is the `…ALL…` half of the four keys.
+    /// One `SPELL_EFFECT_DURABILITY_DAMAGE` entry of a `SMSG_SPELLLOGEXECUTE`.
+    /// A negative `item` means every item, which selects the `…ALL…` half of
+    /// the four keys.
     DurabilityDamage {
         caster: u64,
         target: u64,
@@ -83,28 +87,39 @@ pub enum CombatEvent {
     /// `SMSG_SPELLDISPELLOG`, fanned out the same way: one cast, one line per
     /// aura it took off.
     Dispel { victim: u64, spell_id: u32 },
-    /// `SMSG_ENCHANTMENTLOG` — an enchant applied to an item, or one fading off
-    /// it. See [`super::items::EnchantmentLog`], whose note is that a zero
-    /// caster is the fade rather than a bad packet.
+    /// `SMSG_ENCHANTMENTLOG`: an enchant applied to an item, or one fading off
+    /// it. See [`super::items::EnchantmentLog`]: a zero caster is the fade,
+    /// not a bad packet.
     ///
-    /// **A combat event rather than a player one**, which is where the reference
-    /// puts it too: the line goes to `CHAT_MSG_SPELL_ITEM_ENCHANTMENTS`, one of
-    /// the six windows the combat log routes through, and its four
+    /// It is a combat event rather than a player event, as in the 1.12.1
+    /// client: the line goes to `CHAT_MSG_SPELL_ITEM_ENCHANTMENTS`, one of the
+    /// six windows the combat log routes through, and its four
     /// `ITEMENCHANTMENTADD*` keys are the same perspective set every other
     /// family here takes.
     Enchantment(super::items::EnchantmentLog),
+    /// `SMSG_SPELLORDAMAGE_IMMUNE`: a periodic tick or a damage shield that
+    /// did nothing because `target` is immune. For a damage shield, `caster`
+    /// is the shield's wearer and `target` the unit that struck it.
+    Immune { caster: u64, target: u64, spell_id: u32 },
+    /// `SMSG_PROCRESIST`: a proc's damage that `target` resisted.
+    ProcResist { caster: u64, target: u64, spell_id: u32 },
+    /// One aura of a `SMSG_DISPEL_FAILED`, fanned out at the handler like
+    /// [`CombatEvent::Dispel`]: one line per aura that stayed.
+    DispelFailed { caster: u64, victim: u64, spell_id: u32 },
+    /// `SMSG_SPELLINSTAKILLLOG`: `victim` was killed outright by a spell. The
+    /// packet names no caster.
+    InstaKill { victim: u64, spell_id: u32 },
 }
 
-/// **The spell effects `SMSG_SPELLLOGEXECUTE` is written against**, by the
-/// numbers `Spell.dbc`'s `Effect` column carries.
+/// The spell effects `SMSG_SPELLLOGEXECUTE` is written against, by the numbers
+/// in `Spell.dbc`'s `Effect` column.
 ///
-/// Only the ones the packet's own `switch` names, and they are here rather than
-/// in a general effect enum because that switch is the whole of what this
-/// module needs to know about effects: **the width of each entry is decided by
-/// it**, so an id this list does not carry is a packet that cannot be walked
-/// past that point. vmangos' own `default:` arm is `return` — it abandons the
-/// packet mid-write rather than sending a body it cannot describe — so stopping
-/// at an unknown id loses nothing that was ever sent.
+/// Only the effects named by the `switch` in vmangos' `Spell::SendLogExecute`
+/// are listed. They are kept here rather than in a general effect enum because
+/// that switch decides the width of each entry, so an id this list does not
+/// carry is a packet that cannot be read past that point. vmangos' `default:`
+/// arm is `return`: it abandons the packet mid-write rather than send a body it
+/// cannot describe, so stopping at an unknown id loses nothing that was sent.
 pub mod spell_effects {
     pub const POWER_DRAIN: u32 = 8;
     pub const HEAL: u32 = 10;
@@ -117,11 +132,11 @@ pub mod spell_effects {
     pub const DURABILITY_DAMAGE: u32 = 111;
 }
 
-/// **One entry of one effect's list in `SMSG_SPELLLOGEXECUTE`.**
+/// One entry of one effect's list in `SMSG_SPELLLOGEXECUTE`.
 ///
 /// The packet is `caster, spell, effectCount` and then, per effect, the effect
-/// id, a count, and that many entries — and each entry's width depends on the
-/// effect id, which is what makes this a parser rather than a cast.
+/// id, a count, and that many entries. Each entry's width depends on the effect
+/// id, so the body is parsed entry by entry rather than read as a fixed layout.
 /// vmangos' `Spell::SendLogExecute` is the authority for every one of them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ExecuteEntry {
@@ -139,8 +154,8 @@ pub enum ExecuteEntry {
     Targeted { effect: u32, target: u64 },
 }
 
-/// `SMSG_SPELLLOGEXECUTE` — **what a cast's effects actually did**, per effect
-/// and per target.
+/// `SMSG_SPELLLOGEXECUTE`: what a cast's effects did, per effect and per
+/// target.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpellExecuteLog {
     pub caster: u64,
@@ -148,16 +163,17 @@ pub struct SpellExecuteLog {
     pub entries: Vec<ExecuteEntry>,
 }
 
-/// The caster is **packed**; every `targetGuid` inside is **raw**.
+/// The caster is packed; every `targetGuid` inside is raw.
 ///
-/// `data << m_caster->GetPackGUID()` against `data << info.targetGuid`, whose
-/// `ObjectGuid` operator writes eight plain bytes. The two forms sit four lines
-/// apart in one function, which is what this module's header is about.
+/// vmangos writes `data << m_caster->GetPackGUID()` for the caster and
+/// `data << info.targetGuid` for each target, whose `ObjectGuid` operator
+/// writes eight plain bytes. The two forms are four lines apart in one
+/// function; the module header lists the form each packet uses.
 ///
-/// **A truncated tail ends the walk rather than failing the packet.** Everything
-/// read up to that point is real, and an entry that ran off the end is one this
-/// reader does not understand — the same answer `default:` gives on the writing
-/// side.
+/// A truncated tail ends the walk rather than failing the packet. Everything
+/// read up to that point is valid, and an entry that ran off the end is one
+/// this reader does not understand, which is the same outcome as `default:` on
+/// the writing side.
 pub fn parse_spell_execute_log(body: &[u8]) -> Option<SpellExecuteLog> {
     let mut r = Reader::new(body);
     if !r.has(1) {
@@ -184,7 +200,7 @@ pub fn parse_spell_execute_log(body: &[u8]) -> Option<SpellExecuteLog> {
                     power: r.u32(),
                     multiplier: r.f32(),
                 },
-                // **The critical flag is one byte, not four.** vmangos'
+                // The critical flag is one byte, not four. vmangos'
                 // `heal.critical` is a `uint8` and `ByteBuffer` writes it at its
                 // own width; reading four would swallow the next entry's guid.
                 spell_effects::HEAL | spell_effects::HEAL_MAX_HEALTH if r.has(13) => {
@@ -203,8 +219,9 @@ pub fn parse_spell_execute_log(body: &[u8]) -> Option<SpellExecuteLog> {
                     target: r.u64(),
                     count: r.u32(),
                 },
-                // …and these two carry **no guid at all**, which is the other
-                // way a fixed-width reader loses the rest of a packet.
+                // These two carry no guid. A reader that expects a guid in every
+                // entry loses the rest of the packet here, as one that reads
+                // `critical` as four bytes does above.
                 spell_effects::CREATE_ITEM if r.has(4) => {
                     ExecuteEntry::CreateItem { item: r.u32() }
                 }
@@ -248,10 +265,10 @@ pub fn parse_spell_execute_log(body: &[u8]) -> Option<SpellExecuteLog> {
     })
 }
 
-/// `SMSG_SPELLDISPELLOG` — **what a dispel took off, and off whom.**
+/// `SMSG_SPELLDISPELLOG`: what a dispel took off, and off whom.
 ///
-/// One line per aura removed (`AURADISPELSELF`/`…OTHER`), which is why the list
-/// is here and the fan-out is at the handler.
+/// The log has one line per aura removed (`AURADISPELSELF`/`…OTHER`), so the
+/// list is kept here and the handler fans it out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpellDispelLog {
     pub victim: u64,
@@ -260,12 +277,12 @@ pub struct SpellDispelLog {
     pub spells: Vec<u32>,
 }
 
-/// **Both guids are packed and the victim comes first** — which is the reverse
-/// of `SMSG_DISPEL_FAILED` beside it, where both are raw and the caster leads.
-/// vmangos writes the two packets twenty lines apart in one function.
+/// Both guids are packed and the victim comes first. `SMSG_DISPEL_FAILED` is
+/// the reverse: both guids are raw and the caster comes first. vmangos writes
+/// the two packets twenty lines apart in one function.
 ///
-/// The caster is read and named by no line this client composes: `AURADISPEL*`
-/// is a one-unit family that says only whose aura went.
+/// The caster is read, but no line this client composes names it:
+/// `AURADISPEL*` is a one-unit family that says only whose aura went.
 pub fn parse_spell_dispel_log(body: &[u8]) -> Option<SpellDispelLog> {
     let mut r = Reader::new(body);
     if !r.has(2) {
@@ -291,17 +308,86 @@ pub fn parse_spell_dispel_log(body: &[u8]) -> Option<SpellDispelLog> {
     })
 }
 
-/// `SMSG_LOG_XPGAIN` — **experience, and where it came from.**
+/// `SMSG_SPELLORDAMAGE_IMMUNE` and `SMSG_PROCRESIST`, which share one layout:
+/// two raw guids, a spell and a byte.
 ///
-/// The one packet behind `COMBAT_XP_GAIN`, and it is the reason a client that
-/// does not read it has no "Kobold Vermin dies, you gain 42 experience." line
-/// at all — the level and the experience *field* both move in an update block,
-/// but neither says who died or how much of it was rest.
+/// ```text
+/// u64 caster, u64 target, u32 spell, u8 flag
+/// ```
+///
+/// vmangos writes the byte as 0 in both (`Server/Packets/Spell.cpp`). In
+/// `SMSG_SPELLORDAMAGE_IMMUNE` the 1.12.1 client reads it as "this was a
+/// periodic tick" and then drops the line when the `CombatLogPeriodicSpells`
+/// CVar is 0, which a 0 byte never reaches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpellNotTaken {
+    pub caster: u64,
+    pub target: u64,
+    pub spell_id: u32,
+    pub flag: u8,
+}
+
+/// Reads [`SpellNotTaken`]: 21 bytes.
+pub fn parse_spell_not_taken(body: &[u8]) -> Option<SpellNotTaken> {
+    if body.len() < 21 {
+        return None;
+    }
+    let mut r = Reader::new(body);
+    Some(SpellNotTaken {
+        caster: r.u64(),
+        target: r.u64(),
+        spell_id: r.u32(),
+        flag: r.u8(),
+    })
+}
+
+/// `SMSG_DISPEL_FAILED`: a dispel that left these auras on the victim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DispelFailed {
+    pub caster: u64,
+    pub victim: u64,
+    /// The auras that stayed, named by the spell that applied them.
+    pub spells: Vec<u32>,
+}
+
+/// Two raw guids, caster first, then spell ids to the end of the body with no
+/// count (`Spell::EffectDispel` in vmangos' `Spells/SpellEffects.cpp`). A
+/// trailing part of a spell id is dropped.
+pub fn parse_dispel_failed(body: &[u8]) -> Option<DispelFailed> {
+    if body.len() < 16 {
+        return None;
+    }
+    let mut r = Reader::new(body);
+    let caster = r.u64();
+    let victim = r.u64();
+    let mut spells = Vec::with_capacity(r.remaining() / 4);
+    while r.has(4) {
+        spells.push(r.u32());
+    }
+    Some(DispelFailed { caster, victim, spells })
+}
+
+/// `SMSG_SPELLINSTAKILLLOG`: a raw victim guid and the spell, and no caster
+/// (`Spell::EffectInstaKill`). vmangos sends it only to clients after 1.11.2.
+pub fn parse_instakill_log(body: &[u8]) -> Option<(u64, u32)> {
+    if body.len() < 12 {
+        return None;
+    }
+    let mut r = Reader::new(body);
+    Some((r.u64(), r.u32()))
+}
+
+/// `SMSG_LOG_XPGAIN`: experience, and where it came from.
+///
+/// The only packet behind `COMBAT_XP_GAIN`. A client that does not read it has
+/// no "Kobold Vermin dies, you gain 42 experience." line: the level and the
+/// experience field both change in an update block, but neither says who died
+/// or how much of the gain was rest.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct XpGain {
-    /// Who died. **Zero for experience that was not a kill** — a quest hand-in,
-    /// an exploration bonus — which is what `kind` says in its own right and
-    /// what the `…_UNNAMED` keys are for.
+    /// Who died. Zero for experience that was not a kill (a quest hand-in, an
+    /// exploration bonus); `kind` also states this, and the `…_UNNAMED` keys
+    /// are for this case.
     pub victim: u64,
     /// Everything gained, rested bonus included.
     pub total: u32,
@@ -310,14 +396,14 @@ pub struct XpGain {
     /// What the kill was worth before rest. Only present for a kill, and equal
     /// to `total` when there was no bonus.
     pub base: u32,
-    /// The group factor, where **1.0 means no group bonus** — vmangos' own
-    /// comment is "1=none 0=100% group bonus output", and it writes 1.0
-    /// unconditionally, so the group and raid variants of the key are
-    /// unreachable against this server.
+    /// The group factor, where 1.0 means no group bonus. vmangos' comment is
+    /// "1=none 0=100% group bonus output", and it writes 1.0 unconditionally,
+    /// so the group and raid variants of the key are unreachable against this
+    /// server.
     pub group_bonus: f32,
 }
 
-/// `victimGuid` is a **raw** `uint64`, and the tail is present only for a kill.
+/// `victimGuid` is a raw `uint64`, and the tail is present only for a kill.
 pub fn parse_xp_gain(body: &[u8]) -> Option<XpGain> {
     let mut r = Reader::new(body);
     if !r.has(13) {
@@ -340,10 +426,10 @@ pub fn parse_xp_gain(body: &[u8]) -> Option<XpGain> {
     Some(gain)
 }
 
-/// `SMSG_PARTYKILLLOG` — **somebody in the group landed the killing blow.**
+/// `SMSG_PARTYKILLLOG`: a group member landed the killing blow.
 ///
 /// Two raw guids and nothing else. It is the only statement the protocol makes
-/// about *who* killed a unit; the death itself is a health field reaching zero,
+/// about who killed a unit; the death itself is a health field reaching zero,
 /// which every observer sees and which names nobody.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PartyKill {
@@ -362,10 +448,10 @@ pub fn parse_party_kill(body: &[u8]) -> Option<PartyKill> {
     })
 }
 
-/// `SMSG_ENVIRONMENTALDAMAGELOG` — **the world hurt somebody**, with no
+/// `SMSG_ENVIRONMENTALDAMAGELOG`: damage from the environment, with no
 /// attacker to name.
 ///
-/// Falling, drowning, fatigue, lava, slime and fire, in that order — the
+/// Fatigue, drowning, falling, lava, slime and fire, in that order: the
 /// `EnvironmentalDamageType` values 0..5. vmangos rewrites its own seventh
 /// value (`DAMAGE_FALL_TO_VOID`, a fall with no durability loss) to
 /// `DAMAGE_FALL` before sending, so nothing above 5 should arrive.
@@ -379,9 +465,9 @@ pub struct EnvironmentalDamage {
     pub resisted: i32,
 }
 
-/// The victim is a **raw** guid; the absorb and resist tail is 1.7.0 and later,
-/// which 1.12 is, but it is read defensively for the same reason every other
-/// tail here is.
+/// The victim is a raw guid. The absorb and resist tail exists in 1.7.0 and
+/// later, which includes 1.12, but it is read defensively for the same reason
+/// as every other tail here.
 pub fn parse_environmental_damage(body: &[u8]) -> Option<EnvironmentalDamage> {
     let mut r = Reader::new(body);
     if !r.has(13) {
@@ -403,18 +489,19 @@ pub fn parse_environmental_damage(body: &[u8]) -> Option<EnvironmentalDamage> {
     Some(log)
 }
 
-/// `SMSG_SPELLDAMAGESHIELD` — **the blow answered itself.**
+/// `SMSG_SPELLDAMAGESHIELD`: a damage shield dealt damage to the unit that
+/// struck it.
 ///
-/// Thorns, Fire Shield, a Retribution Aura. Both guids raw, and note the order:
-/// the **shield's wearer comes first** and the unit that hit them second, which
-/// is the opposite of the way the sentence reads
-/// (`"%s reflects %d %s damage to %s."` names the wearer first as the
-/// *attacker* of this line, because they are the one dealing the damage).
+/// Thorns, Fire Shield, a Retribution Aura. Both guids are raw. The shield's
+/// wearer comes first and the unit that hit them second, the reverse of the
+/// blow that triggered it. The sentence (`"%s reflects %d %s damage to %s."`)
+/// names the wearer first, as the attacker of this line, because the wearer
+/// deals the damage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DamageShield {
-    /// The unit wearing the shield — the one the line is *about*.
+    /// The unit wearing the shield, which the line is about.
     pub wearer: u64,
-    /// …and the one that struck them, who takes the damage.
+    /// The unit that struck the wearer, which takes the damage.
     pub struck_by: u64,
     pub damage: u32,
     pub school: u32,
@@ -433,11 +520,11 @@ pub fn parse_damage_shield(body: &[u8]) -> Option<DamageShield> {
     })
 }
 
-/// How a spell failed to land, on `SMSG_SPELLLOGMISS`'s own byte.
+/// How a spell failed to land: the miss byte of `SMSG_SPELLLOGMISS`.
 ///
-/// `SpellMissInfo` (`SpellDefines.h`). `NONE` never arrives on this packet —
-/// a spell that landed is `SMSG_SPELLNONMELEEDAMAGELOG` — so it is here only
-/// so the numbering is the enum's.
+/// `SpellMissInfo` (`SpellDefines.h`). `NONE` never arrives on this packet (a
+/// spell that landed is `SMSG_SPELLNONMELEEDAMAGELOG`); it is listed so the
+/// numbering matches the enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SpellMiss {
@@ -474,10 +561,10 @@ impl SpellMiss {
 
     /// The `GlobalStrings` stem this failure takes.
     ///
-    /// **Not a mechanical upper-casing of the name**, which is why it is a
-    /// table: a miss is `SPELLMISS`, a dodge is `SPELLDODGED` with a D, an
-    /// immunity is `IMMUNESPELL` with the words the other way round, and an
-    /// absorb is `SPELLLOGABSORB`. Four different shapes in eleven values.
+    /// The stem is not the upper-cased variant name, so it is a table: a miss
+    /// is `SPELLMISS`, a dodge is `SPELLDODGED` with a D, an immunity is
+    /// `IMMUNESPELL` with the words the other way round, and an absorb is
+    /// `SPELLLOGABSORB`. There are four different shapes in eleven values.
     pub fn stem(self) -> Option<&'static str> {
         Some(match self {
             SpellMiss::None => return None,
@@ -495,10 +582,11 @@ impl SpellMiss {
     }
 }
 
-/// `SMSG_SPELLLOGMISS` — **one cast, and everybody it did not land on.**
+/// `SMSG_SPELLLOGMISS`: one cast, and every target it did not land on.
 ///
 /// A list rather than a packet per target, because an area spell resisted by
-/// four of six is one cast: the caster is named once and the targets follow.
+/// four of six targets is one cast: the caster is named once and the targets
+/// follow.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpellMissLog {
     pub spell_id: u32,
@@ -506,10 +594,10 @@ pub struct SpellMissLog {
     pub targets: Vec<(u64, SpellMiss)>,
 }
 
-/// The caster and every target guid are **raw**, and the `useExtendedInfo`
-/// byte is written `false` by the server with vmangos' own note that it "seems
-/// unused in client" — so the two floats behind it never appear and this
-/// reader refuses the packet rather than guessing at them if it is ever set.
+/// The caster and every target guid are raw. The server writes the
+/// `useExtendedInfo` byte as `false`, with vmangos' note that it "seems unused
+/// in client", so the two floats behind it never appear. If the byte is ever
+/// set, this reader refuses the packet rather than guess at them.
 pub fn parse_spell_miss_log(body: &[u8]) -> Option<SpellMissLog> {
     let mut r = Reader::new(body);
     if !r.has(17) {
@@ -540,10 +628,10 @@ pub fn parse_spell_miss_log(body: &[u8]) -> Option<SpellMissLog> {
     })
 }
 
-/// `SMSG_SPELLENERGIZELOG` — **a spell gave somebody power back.**
+/// `SMSG_SPELLENERGIZELOG`: a spell restored power to a unit.
 ///
-/// Evocation, a mana potion's own spell, Innervate. Both guids **packed**,
-/// unlike the four above.
+/// Evocation, a mana potion's own spell, Innervate. Both guids are packed,
+/// unlike the raw-guid packets above.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnergizeLog {
     pub target: u64,
@@ -570,12 +658,12 @@ pub fn parse_energize_log(body: &[u8]) -> Option<EnergizeLog> {
     })
 }
 
-/// What a periodic tick *did*, which decides the rest of
+/// What a periodic tick did, which decides the rest of
 /// `SMSG_PERIODICAURALOG`'s body.
 ///
-/// `AuraType` (`SpellAuraDefines.h`), and only the six vmangos will send on
-/// this opcode are named — `SendPeriodicAuraLog` has a `default:` arm that logs
-/// an error and sends nothing at all.
+/// Keyed by `AuraType` (`SpellAuraDefines.h`). Only the seven aura types
+/// vmangos sends on this opcode are handled: `SendPeriodicAuraLog` has a
+/// `default:` arm that logs an error and sends nothing.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PeriodicEffect {
     /// A damage-over-time tick: damage, school, absorb, resist.
@@ -597,13 +685,13 @@ pub enum PeriodicEffect {
     },
 }
 
-/// `SMSG_PERIODICAURALOG` — **one tick of an aura.**
+/// `SMSG_PERIODICAURALOG`: one tick of an aura.
 ///
-/// Distinct from a damage-over-time's *damage*, which arrives on
-/// `SMSG_SPELLNONMELEEDAMAGELOG` with `periodicLog` set and is what the
-/// floating number is drawn from. This is the aura's own bookkeeping and it is
-/// what the `SPELL_PERIODIC_*` windows are fed by — which is why the two
-/// periodic routing families exist at all.
+/// A damage-over-time spell's damage arrives separately, on
+/// `SMSG_SPELLNONMELEEDAMAGELOG` with `periodicLog` set, and the floating
+/// number is drawn from that. This packet is the aura's own record of the tick
+/// and feeds the `SPELL_PERIODIC_*` windows, which is why there are two
+/// periodic routing families.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PeriodicAuraLog {
     pub target: u64,
@@ -615,7 +703,7 @@ pub struct PeriodicAuraLog {
     pub effect: PeriodicEffect,
 }
 
-/// The six `AuraType` values `SendPeriodicAuraLog` will write.
+/// The seven `AuraType` values `SendPeriodicAuraLog` writes.
 pub mod aura_type {
     pub const PERIODIC_DAMAGE: u32 = 3;
     pub const PERIODIC_HEAL: u32 = 8;
@@ -626,8 +714,8 @@ pub mod aura_type {
     pub const PERIODIC_DAMAGE_PERCENT: u32 = 89;
 }
 
-/// Both guids **packed**. The `count` word after the spell is written as a
-/// literal 1 and is not a length — the body that follows is one effect, not
+/// Both guids are packed. The `count` word after the spell is written as a
+/// literal 1 and is not a length: the body that follows is one effect, not
 /// `count` of them, and reading it as a length walks off the end of every
 /// packet.
 pub fn parse_periodic_aura_log(body: &[u8]) -> Option<PeriodicAuraLog> {
@@ -684,8 +772,8 @@ pub fn parse_periodic_aura_log(body: &[u8]) -> Option<PeriodicAuraLog> {
                 multiplier: r.f32(),
             }
         }
-        // `SendPeriodicAuraLog`'s own `default:` sends nothing, so an arm this
-        // does not know is a packet nobody wrote rather than a reader gap.
+        // `SendPeriodicAuraLog`'s `default:` sends nothing, so an unknown aura
+        // type is a packet vmangos never writes, not a gap in this reader.
         _ => return None,
     };
     Some(PeriodicAuraLog {
@@ -700,6 +788,37 @@ pub fn parse_periodic_aura_log(body: &[u8]) -> Option<PeriodicAuraLog> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn immune_and_proc_resist_are_two_raw_guids_a_spell_and_a_byte() {
+        let mut w = crate::bytes::Writer::new();
+        w.u64(0xF130_0000_0000_0001).u64(5).u32(133).u8(0);
+        assert_eq!(
+            parse_spell_not_taken(&w.buf),
+            Some(SpellNotTaken { caster: 0xF130_0000_0000_0001, target: 5, spell_id: 133, flag: 0 })
+        );
+        assert_eq!(parse_spell_not_taken(&w.buf[..20]), None);
+    }
+
+    /// The spell list has no count; it runs to the end of the body.
+    #[test]
+    fn a_failed_dispel_lists_its_spells_to_the_end() {
+        let mut w = crate::bytes::Writer::new();
+        w.u64(7).u64(9).u32(10).u32(11).u8(1);
+        assert_eq!(
+            parse_dispel_failed(&w.buf),
+            Some(DispelFailed { caster: 7, victim: 9, spells: vec![10, 11] })
+        );
+        assert_eq!(parse_dispel_failed(&w.buf[..15]), None);
+    }
+
+    #[test]
+    fn an_instakill_is_the_victim_and_the_spell() {
+        let mut w = crate::bytes::Writer::new();
+        w.u64(9).u32(5);
+        assert_eq!(parse_instakill_log(&w.buf), Some((9, 5)));
+        assert_eq!(parse_instakill_log(&w.buf[..11]), None);
+    }
     use crate::bytes::Writer;
 
     #[test]
@@ -747,8 +866,8 @@ mod tests {
         assert_eq!((short.absorbed, short.resisted), (0, 0));
     }
 
-    /// The wearer comes first, which is the field order a reader is most
-    /// likely to get backwards — and the two are indistinguishable in a line.
+    /// The wearer comes first. A reader that swaps the two guids produces a
+    /// line that looks just as valid.
     #[test]
     fn a_damage_shield_names_its_wearer_first() {
         let mut w = Writer::new();
@@ -785,8 +904,8 @@ mod tests {
         assert_eq!(parse_spell_miss_log(&w.buf).unwrap().targets.len(), 1);
     }
 
-    /// The stems are four different shapes over eleven values, and the two that
-    /// break the pattern are the ones worth pinning.
+    /// The stems have four different shapes over eleven values. This test pins
+    /// the ones that do not follow the common shape.
     #[test]
     fn the_miss_stems_are_not_a_upper_casing() {
         assert_eq!(SpellMiss::Dodge.stem(), Some("SPELLDODGED"));
@@ -812,13 +931,13 @@ mod tests {
         );
     }
 
-    /// **Each effect's entry is a different width, and the packet cannot be
-    /// walked without knowing them.**
+    /// Each effect's entry has its own width, and the packet cannot be walked
+    /// without knowing them.
     ///
-    /// The three in this packet are the three that catch a fixed-width reader:
-    /// a heal, whose `critical` is **one byte** and not four; a feed-pet, which
-    /// carries **no guid at all**; and an extra-attacks entry after both of
-    /// them, which only lands in the right place if the first two did.
+    /// The three entries in this packet are the three that break a fixed-width
+    /// reader: a heal, whose `critical` is one byte and not four; a feed-pet,
+    /// which carries no guid; and an extra-attacks entry after both, which is
+    /// read from the right offset only if the first two were.
     #[test]
     fn a_spell_execute_log_is_walked_by_its_effect_widths() {
         use spell_effects::{ADD_EXTRA_ATTACKS, FEED_PET, HEAL};
@@ -849,18 +968,17 @@ mod tests {
         );
     }
 
-    /// **A truncated tail ends the walk and keeps what was read.**
+    /// A truncated tail ends the walk and keeps what was read.
     ///
-    /// vmangos' own `default:` arm abandons the packet mid-write rather than
-    /// sending a body it cannot describe, so there is never anything after the
-    /// point a reader stops — dropping the whole packet would lose entries that
-    /// really did arrive.
+    /// vmangos' `default:` arm abandons the packet mid-write rather than send a
+    /// body it cannot describe, so nothing follows the point where a reader
+    /// stops. Dropping the whole packet would lose entries that did arrive.
     #[test]
     fn a_short_spell_execute_log_keeps_what_it_read() {
         let mut w = Writer::new();
         w.packed_guid(0xAA).u32(7000).u32(2);
         w.u32(spell_effects::ADD_EXTRA_ATTACKS).u32(2).u64(0xC2).u32(3);
-        // …and the second entry of that same run is four bytes short.
+        // The second entry of the same run is four bytes short.
         w.u64(0xC3);
 
         let log = parse_spell_execute_log(&w.buf).expect("the packet reads");
@@ -873,9 +991,9 @@ mod tests {
         );
     }
 
-    /// **The dispel log's two guids are packed and the victim leads**, which is
-    /// the reverse of `SMSG_DISPEL_FAILED` twenty lines away in the same
-    /// vmangos function.
+    /// The dispel log's two guids are packed and the victim comes first, the
+    /// reverse of `SMSG_DISPEL_FAILED` twenty lines away in the same vmangos
+    /// function.
     #[test]
     fn a_dispel_log_names_the_victim_first_and_lists_every_aura() {
         let mut w = Writer::new();

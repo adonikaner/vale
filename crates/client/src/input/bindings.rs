@@ -54,32 +54,28 @@
 //! body calls `ActionButtonDown` / `ActionButtonUp`, which this project does not
 //! register: they are twenty lines of `ActionButton.lua`, and they call
 //! `UseAction`, which this project does register. Registering the middle of
-//! that chain as well broke casting for two rounds once `Interface\FrameXML\`
-//! began loading; see [`crate::lua::api::verbs`].
+//! that chain as well breaks casting once `Interface\FrameXML\` loads; see
+//! [`crate::lua::api::verbs`].
 //!
-//! Nothing outside `input/` may read a `KeyCode` for a bindable action. Before
-//! this module existed, `action::press_buttons` read `Digit1..Equal` and sent a
-//! cast in the same function, and `target::tab_target` read `Tab` and
-//! `ShiftLeft` in the middle of its scan.
+//! Nothing outside `input/` may read a `KeyCode` for a bindable action. A
+//! system that reads a key directly acts on it whatever the key is bound to.
+//! `action::press_buttons` once read `Digit1..Equal` and sent a cast in the
+//! same function, and `target::tab_target` read `Tab` and `ShiftLeft` in the
+//! middle of its scan.
 //!
-//! For two rounds the eight movement controls were exempt from that rule in
-//! practice: no key could be rebound, so no binding collided with them. The
-//! key-bindings panel changed that. `A` is `TURNLEFT` in the shipped defaults,
-//! and binding it to `ACTIONBUTTON3` cast a spell and also turned the
-//! character, because `world::session::send_input` still read `KeyCode::KeyA`.
+//! The rule covers the movement controls too. `A` is `TURNLEFT` in the shipped
+//! defaults. While `world::session::send_input` read `KeyCode::KeyA`, binding
+//! `A` to `ACTIONBUTTON3` cast a spell and also turned the character.
 //! [`crate::input::controls`] applies the rule to the controls, through the nine
 //! pairs of [`Control`]. The only device still read directly is the mouse,
 //! which cannot collide with a key.
 //!
 //! ## Binding names and default keys come from the game files
 //!
-//! This module used to carry a hand-written "conventional 1.12 layout", with a
-//! note saying it was convention rather than measurement and that 1.12 ships no
-//! defaults file. The note was wrong and the table has been removed.
 //! `WTF\DefaultBindings.wtf` is in the archives, with 152 `bind KEY COMMAND`
-//! lines, and set 0 is loaded from it. *Reset To Default* in the key-bindings
-//! panel therefore resets to the 1.12.1 client's shipped defaults, not to
-//! twenty hand-typed lines. See
+//! lines, and set 0 is loaded from it. This module carries no hand-written
+//! default layout. The Reset To Default button in the key-bindings panel
+//! therefore resets to the 1.12.1 client's shipped defaults. See
 //! [`vale_assets::interface::bindings::DEFAULT_BINDINGS_WTF`], and
 //! [`crate::settings::keybindings`] for the two files loaded over it.
 //!
@@ -96,7 +92,7 @@
 //! `QuestLog_OnShow` selects a quest before `QuestLog_Update` has coloured the
 //! title buttons, which in a session `QUEST_LOG_UPDATE` has already done.
 //!
-//! The same change made every panel key the game ships work, because those
+//! Every panel key the game ships works through this path, because those
 //! bodies are Lua in the interface directory, not functions built into the
 //! client: `TOGGLEWORLDMAP`, `TOGGLEQUESTLOG`, `TOGGLESOCIAL`, `TOGGLETALENTS`, all six
 //! `TOGGLECHARACTER*`, the four bag keys and `TOGGLEGAMEMENU`.
@@ -213,9 +209,10 @@ pub enum Binding {
     /// `TARGETSELF` -> `TargetUnit("player")`.
     ///
     /// The shipped body checks `UnitIsUnit("player", "target")` first and
-    /// targets the pet when the player is already targeted. This client has no
-    /// pet, so it targets the player unconditionally. This is a deliberate
-    /// simplification of a two-line body.
+    /// calls `TargetUnit("pet")` when the player is already targeted. The
+    /// interface's Lua runs that body as written (see
+    /// [`crate::lua::api::verbs`]), and this variant is its `"player"` branch.
+    /// `TargetUnit("pet")` produces no variant.
     TargetSelf,
     /// `TargetUnit("party1")`: select the unit a token names. A click on a
     /// party frame does this.
@@ -278,7 +275,7 @@ pub enum Binding {
     /// This is the only action in the game that draws a weapon on purpose, so
     /// it is a binding rather than a side effect: `CMSG_SETSHEATHED` has no
     /// other sender, and without a verb behind this name only combat would
-    /// put a sword in a character's hand. See [`vale_assets::look::sheath`].
+    /// draw the weapon. See [`vale_assets::look::sheath`].
     ToggleSheath,
     /// `ChangeActionBarPage()`: the bar now shows a different set of twelve.
     ///
@@ -389,6 +386,24 @@ pub enum Binding {
     ConfirmSummon,
     /// `RequestTimePlayed()`: `/played`. See [`crate::interface::played`].
     RequestTimePlayed,
+    /// `RandomRoll(min, max)`: `/roll`. See [`crate::interface::randomroll`].
+    RandomRoll { min: u32, max: u32 },
+    /// `SetRaidTarget(unit, index)`: place icon `index` (1 to 8) on the unit,
+    /// or clear its icon with any other index. See
+    /// [`crate::interface::raidtarget`].
+    SetRaidTarget { unit: crate::interface::api::UnitId, index: i64 },
+    /// `QuestLogPushQuest()`: the quest log's Share Quest button. See
+    /// [`crate::interface::questshare`].
+    QuestLogPushQuest,
+    /// `ConfirmAcceptQuest()`: the `QUEST_ACCEPT` box's Yes. See
+    /// [`crate::interface::questshare`].
+    ConfirmAcceptQuest,
+    /// `FlagTutorial(id)`: a tutorial tip was clicked through. See
+    /// [`crate::interface::tutorial`].
+    FlagTutorial(u32),
+    /// `ClearTutorials()` and `ResetTutorials()`: tips off and on.
+    ClearTutorials,
+    ResetTutorials,
     /// `ShowHelm(show)` and `ShowCloak(show)`: the interface options panel's
     /// two checkboxes that are not CVars. Each carries the state wanted, and
     /// [`crate::interface::uioptions`] sends a toggle only when the
@@ -493,13 +508,12 @@ pub enum Binding {
     /// way, because the removal packet was sent at the pick-up.
     ClearCursor,
 
-    // --- The character's controls. These were raw `KeyCode` reads until the
-    // key-bindings panel was added. ---
+    // --- The character's controls ---
     //
-    // Everything below this line used to be `keys.pressed(KeyCode::KeyW)` in
-    // `world::session::send_input`, so a key bound to an action button also
-    // moved the character: binding `A` to `ACTIONBUTTON3` cast a spell and
-    // turned left. See [`Control`].
+    // These are bindings and not `keys.pressed(KeyCode::KeyW)` reads in
+    // `world::session::send_input`. A direct read moves the character on a
+    // key that is bound to something else: binding `A` to `ACTIONBUTTON3`
+    // cast a spell and turned left. See [`Control`].
     /// One of the eight held controls, and which edge: `MOVEFORWARD`'s
     /// `MoveForwardStart()` / `MoveForwardStop()` pair and its seven siblings.
     Control(Control, bool),
@@ -510,10 +524,10 @@ pub enum Binding {
     SitOrStand,
     /// `TOGGLEAUTORUN` -> `ToggleAutoRun()`.
     ToggleAutoRun,
-    /// `TOGGLERUN` -> `ToggleRun()`: a latch, not a held modifier. This client
-    /// used to read Shift for it, but Shift is not a control in 1.12: it is the
-    /// modifier in `SHIFT-TAB`, so holding it to walk made every shifted
-    /// binding in the game also slow the character to a walk.
+    /// `TOGGLERUN` -> `ToggleRun()`: a latch, not a held modifier. Shift is
+    /// not a control in 1.12: it is the modifier in `SHIFT-TAB`. Reading a held
+    /// Shift as walk makes every shifted binding in the game also slow the
+    /// character to a walk.
     ToggleRun,
     /// `FOLLOWTARGET` -> `FollowUnit("target")`.
     FollowUnit(crate::interface::api::UnitId),
@@ -526,8 +540,9 @@ pub enum Binding {
     /// one step is `100`.
     CameraZoom(i32),
 
-    // --- The three Escape verbs. These used to be `just_pressed(Escape)`
-    // reads in two other files. ---
+    // --- The three Escape verbs ---
+    //
+    // These replace `just_pressed(Escape)` reads that were in two other files.
     //
     // 1.12 binds no key to any of these. They are built-in API functions that
     // `ToggleGameMenu`'s seven-branch `elseif` chain calls before it opens the
@@ -551,14 +566,13 @@ pub enum Binding {
     /// `SCREENSHOT` -> `TakeScreenshot()`, a Lua function in `WorldFrame.lua`
     /// that hides the `ScreenshotStatus` frame before calling `Screenshot()`.
     /// `Screenshot()` is the client verb, and it is the name this client
-    /// registers. This client used to register `TakeScreenshot`, which the
-    /// interface directory then overwrote on every login; `lua::api::verbs`
-    /// explains the collision.
+    /// registers. A registration under `TakeScreenshot` is overwritten by the
+    /// interface directory on every login; `lua::api::verbs` explains the
+    /// collision.
     ///
-    ///
-    /// The key used to be `F12` here, but `F12` is `TOGGLEBACKPACK` in the
-    /// shipped defaults, so one press did two things. The game's key for this
-    /// is `PRINTSCREEN`.
+    /// The game's key for this is `PRINTSCREEN`. `F12` is `TOGGLEBACKPACK` in
+    /// the shipped defaults, so a screenshot on `F12` as well made one press do
+    /// two things.
     Screenshot,
 }
 
@@ -700,6 +714,15 @@ impl Binding {
             Binding::ConfirmPetUnlearn => "ConfirmPetUnlearn()".to_string(),
             Binding::ConfirmSummon => "ConfirmSummon()".to_string(),
             Binding::RequestTimePlayed => "RequestTimePlayed()".to_string(),
+            Binding::RandomRoll { min, max } => format!("RandomRoll({min}, {max})"),
+            Binding::SetRaidTarget { unit, index } => {
+                format!("SetRaidTarget(\"{}\", {index})", unit.token())
+            }
+            Binding::QuestLogPushQuest => "QuestLogPushQuest()".to_string(),
+            Binding::ConfirmAcceptQuest => "ConfirmAcceptQuest()".to_string(),
+            Binding::FlagTutorial(id) => format!("FlagTutorial({id})"),
+            Binding::ClearTutorials => "ClearTutorials()".to_string(),
+            Binding::ResetTutorials => "ResetTutorials()".to_string(),
             Binding::ShowHelm(show) => format!("ShowHelm({})", u8::from(*show)),
             Binding::ShowCloak(show) => format!("ShowCloak({})", u8::from(*show)),
             // Nor these two: a right-click on a bag slot or a paper-doll slot.
@@ -837,7 +860,7 @@ impl Binding {
 /// and `MouseWheel`), and this client's camera and steering read those
 /// directly, as the movement code read `KeyW` before this module. A mouse
 /// binding is therefore stored and listed by the panel but never delivered.
-/// This is stated here rather than hidden behind a fake `KeyCode`.
+/// No substitute `KeyCode` stands in for it.
 pub fn key_name(key: KeyCode) -> Option<&'static str> {
     Some(match key {
         // The letters, which the game names by the letter itself.
@@ -1015,7 +1038,7 @@ impl KeyEdge {
 /// Every binding whose key changed this frame, and in which direction: the join
 /// between the keyboard and [`crate::lua::panels::keybindings::Table`].
 ///
-/// Reports both edges; an earlier version reported only presses. A hundred of
+/// Reports both edges, presses and releases. A hundred of
 /// the game's 234 bodies are `runOnUp`, and the release half does half of
 /// their work: `MOVEFORWARD`'s whole `else` branch is `MoveForwardStop()`.
 /// [`crate::lua`] decides whether the up half is run, since only the
@@ -1026,9 +1049,9 @@ impl KeyEdge {
 /// of new keys and the table has 152 rows), but the main reason is that it
 /// makes the modifier match exact: the string built from the held modifiers is
 /// `ALT-1` or `1`, never both, so the two bindings on that key cannot fire
-/// together. The version that scanned the table needed an explicit "exactly
-/// this modifier and no other" test to get the same result, and that test
-/// could not express `CTRL-SHIFT-`, which the shipped defaults use.
+/// together. Scanning the table instead needs an explicit "exactly this
+/// modifier and no other" test to get the same result, and the version that
+/// did so could not express `CTRL-SHIFT-`, which the shipped defaults use.
 ///
 /// A release goes to the binding the press resolved to. `held` records that,
 /// which is why this is not two independent lookups. `1` and `ALT-1` are two
@@ -1118,10 +1141,9 @@ fn dispatch(
 ) {
     let Some(mut host) = host else { return };
     if typing.active {
-        // Skip the frame, and keep `held`. Both are required. An earlier
-        // version cleared `held` here, on the assumption that a binding held
-        // when the chat line opened would then see its release. Clearing has
-        // the opposite effect: the key is no longer in `held`, so when the
+        // Skip the frame, and keep `held`. Both are required. Clearing `held`
+        // here does not give a binding held when the chat line opened its
+        // release; it removes it. The key is no longer in `held`, so when the
         // player releases it there is no entry to fire a release for, and the
         // binding's up body never runs.
         //
@@ -1131,13 +1153,13 @@ fn dispatch(
         // `MOVEFORWARD` whose `MoveForwardStop()` never ran walks forward for
         // the rest of the session.
         //
-        // One frame with the keyboard taken by something else is enough.
-        // The reported case is pressing `Tab` during a playtest: egui takes the
-        // key for its own focus-next, `ui::debug::claim_input` reports
+        // One frame with the keyboard taken by something else is enough. In
+        // the reported case, `Tab` was pressed during a playtest: egui takes
+        // the key for its own focus-next, `ui::debug::claim_input` reports
         // `wants_any_keyboard_input`, and that is OR'd into this flag, so one
         // frame of a focus ring on a button left `W` held down permanently.
         //
-        // Keeping the list fixes it and satisfies both requirements: nothing
+        // Keeping the list satisfies both requirements: nothing
         // fires while the keyboard is elsewhere, so a held key stays held and
         // the character keeps walking; and when the keyboard returns, the
         // `retain` in [`edges`] sees that the key is no longer down and fires
@@ -1153,9 +1175,8 @@ fn dispatch(
     // The table is borrowed, and the borrow is dropped before anything is
     // fired. A binding's body may call `SetBinding` (the key-bindings panel
     // does so after one keypress), and a `RefCell` still borrowed here would
-    // panic instead of rebinding. Cloning the live table to avoid the borrow,
-    // as an earlier version did, copies 152 `String` pairs on every frame
-    // with key activity. The `Rc` is taken out of the host because `fire`
+    // panic instead of rebinding. Cloning the live table to avoid the borrow
+    // would copy 152 `String` pairs on every frame with key activity. The `Rc` is taken out of the host because `fire`
     // takes `&mut self`.
     let board = std::rc::Rc::clone(host.keybindings());
     let edges = {
@@ -1217,8 +1238,7 @@ mod tests {
     ///
     /// `dispatch` relies on this when it skips a frame: `held` is kept across
     /// the gap, so the release is still pending rather than lost. Clearing it
-    /// instead, as an earlier version did, leaves a `MOVEFORWARD` whose stop
-    /// body never runs, and `send_input` never zeroes the controls, so the
+    /// instead leaves a `MOVEFORWARD` whose stop body never runs, and `send_input` never zeroes the controls, so the
     /// character walks forward for the rest of the session. One frame of egui
     /// holding a focus ring was enough to cause it.
     #[test]
@@ -1316,9 +1336,8 @@ mod tests {
     #[test]
     fn a_name_with_no_verb_behind_it_is_refused() {
         // Real bindings, all declared in the archives' `Bindings.xml`, none
-        // implemented here. `MOVEFORWARD` was on this list until the movement
-        // keys moved from `KeyCode` reads to bindings. A name is removed from
-        // this list only when its verb is implemented.
+        // parsed here. A name is removed from this list only when its verb is
+        // implemented.
         assert_eq!(Binding::parse("TOGGLESPELLBOOK"), None);
         assert_eq!(Binding::parse("PETATTACK"), None);
         // Out-of-range button numbers, which the game does not declare.

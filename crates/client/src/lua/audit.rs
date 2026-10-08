@@ -937,6 +937,10 @@ impl super::panels::mail::MailAnswers for Login {
 
 impl super::panels::trade::TradeAnswers for Login {}
 impl super::panels::summon::SummonAnswers for Login {}
+impl super::panels::worldstate::WorldStateAnswers for Login {}
+impl super::panels::tutorial::TutorialAnswers for Login {}
+impl super::panels::raidtarget::RaidTargetAnswers for Login {}
+impl super::panels::questshare::QuestShareAnswers for Login {}
 impl super::panels::uioptions::OptionsAnswers for Login {}
 impl super::panels::inspect::InspectAnswers for Login {}
 /// The double is the guild master of the guild `seed` puts on the board.
@@ -1820,9 +1824,8 @@ impl super::api::ActionAnswers for Login {
     /// `SHOW_MULTI_ACTIONBAR_n` and calls `MultiActionBar_Update()`, so
     /// `MultiBarBottomLeft`, `MultiBarBottomRight` and `MultiBarRight` appeared
     /// during the walk and 36 of their buttons were clicked. `MultiBarLeft`,
-    /// which also needs bar 3 on, never appeared. That count came from a client
-    /// that could not show an extra bar at login, so it did not show that the
-    /// bars worked.
+    /// which also needs bar 3 on, never appeared. Those clicks did not show
+    /// that the bars work, because none of the four was shown at login.
     fn action_bar_toggles(&self) -> u8 {
         vale_protocol::play::spells::multi_bar::ALL
     }
@@ -2180,10 +2183,10 @@ impl Login {
 
 /// What to do to the interface once it has loaded. Every field is optional.
 ///
-/// A struct rather than positional arguments. The call was
-/// `run(&dir, script, draw, spin, events)`, and the next addition would have
-/// been another `bool` in a row, the pattern that caused the `CharSections`
-/// and `geosetGroup` field-index bugs in `vale-assets`.
+/// A struct rather than positional arguments such as the earlier
+/// `run(&dir, script, draw, spin, events)`. A row of `bool` arguments is easy
+/// to pass in the wrong order, the pattern that caused the `CharSections` and
+/// `geosetGroup` field-index bugs in `vale-assets`.
 #[derive(Default)]
 pub struct Probe {
     /// One Lua chunk, run the way `--script` runs one at a real login.
@@ -2221,7 +2224,8 @@ pub struct Probe {
     pub glue: bool,
 }
 
-/// Load `Interface\FrameXML\` out of `gamedata_dir` and print what happened.
+/// Load `Interface\FrameXML\` (or `Interface\GlueXML\` when `probe.glue` is
+/// set) out of `gamedata_dir` and print what happened.
 ///
 /// `script` runs after the load, as `--script` would run it at a real login, so
 /// a panel can be opened or a population simulated headlessly. `draw` dumps
@@ -2834,7 +2838,7 @@ const PANEL_PREREQUISITES: [(&str, &str); 2] = [
 /// and no list. `FriendsFrame_OnShow` calls `FriendsFrame_Update`, whose first
 /// line inside the friends branch is `ShowFriends()`, a name this client did
 /// not register, so the body aborted there and the seven lines after it,
-/// including the title, never ran. Every other check passed.
+/// including the title, never ran. No other probe reported it.
 ///
 /// The list of panels is the game's own. `UIPanelWindows` in `UIParent.lua` is
 /// the table the interface uses to decide what a panel is (which side of the
@@ -2906,8 +2910,9 @@ fn open_every_panel(host: &mut LuaHost) {
         // 1.12 builds a panel at load and fills it from an event; opening one
         // that has received no event exercises a state no session is in.
         // `LootFrame.page` is nil until `LOOT_OPENED`, and `QuestLogFrame`'s
-        // rows have no colour until `QUEST_LOG_UPDATE`. While those two
-        // failures were treated as the probe's own, they hid a real bug:
+        // rows have no colour until `QUEST_LOG_UPDATE`. Without the events
+        // those two failures look like faults of the probe, and they hid a
+        // real bug:
         // `QuestLog_SetSelection` aborts at the colour, before
         // `QuestLog_UpdateQuestDetails`, so three globals that panel needs
         // (`IsCurrentQuestFailed` among them) stayed unregistered and no probe
@@ -2932,7 +2937,7 @@ fn open_every_panel(host: &mut LuaHost) {
         // `ShowUIPanel` is the game's own entry point: it places the frame,
         // hides whatever it displaces, and calls `Show()`, which fires the
         // `OnShow` handlers. The frame is then asked whether it is visible,
-        // because a refusal raises nothing: not raising does not mean opened.
+        // because `ShowUIPanel` raises no error when it refuses a panel.
         let chunk = format!("ShowUIPanel(getglobal({name:?}))");
         let raised = host.script(&chunk, &Login).err();
         let visible = host
@@ -2968,7 +2973,7 @@ fn open_every_panel(host: &mut LuaHost) {
         // `WorldMapFrameAreaLabel`'s shipped placeholder, the literal text
         // "BLAH!", for the whole session: `WorldMapButton_OnUpdate`'s first
         // line called a global this client did not register, and the body
-        // aborted before it reached the label. Every other check passed.
+        // aborted before it reached the label. No other probe reported it.
         host.fire_updates(1.0 / 60.0, &Login);
         let mut failures: Vec<String> = host.missing().difference(&before).cloned().collect();
         failures.extend(raised);
@@ -3034,11 +3039,9 @@ fn open_every_panel(host: &mut LuaHost) {
 /// them runs a `<Binding>` body, of which there are 234 chunks of Lua, and
 /// those are the only bodies a keystroke reaches.
 ///
-/// When the client bound twenty keys of its own choosing, all to names it
-/// registered, this gap did not show. It now binds the game's own 152 default
-/// lines, so what a key press does is defined by the game's files, and about
-/// a third of them end in a C function this client has not implemented, the
-/// movement functions first among them.
+/// The client binds the game's own 152 default lines, so what a key press does
+/// is defined by the game's files. About a third of them end in a C function
+/// this client has not implemented, the movement functions first among them.
 ///
 /// For every distinct command in the live key table, this runs its
 /// declaration through [`LuaHost::fire`] on the press and, where the
@@ -3221,9 +3224,9 @@ const MAX_TABS: usize = 8;
 /// player triggers most in a session.
 ///
 /// It is also the only way to reach most of the interface, because the tabs
-/// are behind it: `CharacterFrame` has four sub-frames and `FriendsFrame`
-/// four, and opening a panel shows one. Everything on the other three is built
-/// but never shown or checked.
+/// are behind it: `CharacterFrame` has five sub-frames and `FriendsFrame`
+/// four, and opening a panel shows one. Everything on the others is built but
+/// never shown or checked.
 ///
 /// ## What it clicks, and why it repeats until nothing is new
 ///
@@ -3751,6 +3754,22 @@ fn fire_everything(host: &mut LuaHost) {
     // `ChatFrame_TimeBreakDown` divides.
     push(&crate::interface::events::DuelRequested("Bram".to_string()));
     push(&crate::interface::events::TimePlayedMsg { total: 90_061, level: 3_600 });
+    // A tutorial tip, which `TutorialFrame_NewTutorial` indexes the
+    // `TUTORIAL_TITLE<n>` strings with, and the party quest popup, which
+    // formats both arguments into `QUEST_ACCEPT`.
+    push(&crate::interface::events::TutorialTrigger { id: 42 });
+    // The guild invitation, which `UIParent_OnEvent` formats into
+    // `GUILD_INVITE`, "%s invites you to join %s". This probe used to fill
+    // every popup slot before reaching it, so the dialog was cancelled before
+    // it was formatted and the missing sample went unnoticed.
+    push(&crate::interface::events::GuildInviteRequest {
+        inviter: "Bram".to_string(),
+        guild: "The Wardens".to_string(),
+    });
+    push(&crate::interface::events::QuestAcceptConfirm {
+        name: "Bram".to_string(),
+        title: "The Defias Brotherhood".to_string(),
+    });
     // The pet trainer's confirmation, the same case a fourth time, failing
     // in a different file. `UIParent_OnEvent` follows its
     // `StaticPopup_Show("CONFIRM_PET_UNLEARN")` with
@@ -3783,9 +3802,8 @@ fn fire_everything(host: &mut LuaHost) {
     // and then compared: `CharacterSelect_OnEvent` writes
     // `CharacterSelect.selectedIndex = arg1` and `UpdateCharacterSelection`
     // begins `if ( index > 0 )`, so firing without an argument fails comparing
-    // a number with nil. Zero, not one: the stub world holds no characters
-    // here, and the 1.12.1 client raises the event with 0 for an empty
-    // account.
+    // a number with nil. Zero is the value the 1.12.1 client raises for an
+    // empty account.
     push(&crate::interface::events::UpdateSelectedCharacter(0));
     // The breath bar's six arguments, each used somewhere: `MirrorTimer_Show`
     // divides `arg2` and `arg3` by 1000, compares `arg5` against zero, indexes
@@ -4011,6 +4029,20 @@ fn fire_everything(host: &mut LuaHost) {
         host.fire_event(name, &args, &Login);
         RAID.store(raid_was, std::sync::atomic::Ordering::Relaxed);
         fired += 1;
+        // Close the popups the event opened. `StaticPopup_Show` has three
+        // dialogs, and when every one is shown it calls the new dialog's
+        // `OnCancel`, which most dialogs do not define, so popups left open by
+        // earlier names made later ones fail. A real session does not show a
+        // dozen popups at once; the click probe closes them the same way.
+        if let Err(e) = host.run(&Login, |lua| {
+            lua.load(
+                "for i = 1, STATICPOPUP_NUMDIALOGS do local f = getglobal(\"StaticPopup\"..i); \
+                 if ( f ) then f:Hide(); end end",
+            )
+            .exec()
+        }) {
+            println!("  the popups could not be closed after {name}: {e}");
+        }
         // The item-delete event's second branch, which is a different dialog.
         // `arg2 >= 3` opens `DELETE_GOOD_ITEM` instead, the dialog with an
         // edit box the player must type "DELETE" into, so the sample above
@@ -4501,6 +4533,10 @@ impl super::panels::mail::MailAnswers for Ticking {
 
 impl super::panels::trade::TradeAnswers for Ticking {}
 impl super::panels::summon::SummonAnswers for Ticking {}
+impl super::panels::worldstate::WorldStateAnswers for Ticking {}
+impl super::panels::tutorial::TutorialAnswers for Ticking {}
+impl super::panels::raidtarget::RaidTargetAnswers for Ticking {}
+impl super::panels::questshare::QuestShareAnswers for Ticking {}
 impl super::panels::uioptions::OptionsAnswers for Ticking {}
 impl super::panels::inspect::InspectAnswers for Ticking {}
 impl super::panels::guild::GuildAnswers for Ticking {
@@ -5633,8 +5669,8 @@ fn dump_object(lua: &mlua::Lua, this: &mlua::Table, depth: usize) {
     // The same two exclusions the draw walk makes, or this dump lists objects
     // that are not on the screen. A button's unselected state textures and a
     // bar's own `<BarTexture>` are children that never draw as themselves.
-    // Listing them once sent a debugging session after a white bar that the
-    // draw pass had already stopped emitting.
+    // Without the exclusions the dump listed a white bar that the draw pass
+    // no longer emitted.
     let slots = (super::widgets::widget::class(this) == super::widgets::widget::Class::Button)
         .then(|| super::widgets::button::selected_slots(lua, this));
     let fill = super::widgets::statusbar::read(this).and_then(|_| super::widgets::statusbar::fill_region(this));

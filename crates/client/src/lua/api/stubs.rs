@@ -19,37 +19,45 @@
 //! where it is the fifth line.
 //!
 //! A stub is correct when the constant is the true answer today: this client
-//! has no party, so `GetNumPartyMembers()` is 0. A stub is wrong when it hides
-//! a decision. A stub must never give a plausible answer to a question this
-//! client could answer from its state; those functions go in
+//! has no cinematic player, so `InCinematic()` is nil. A stub is wrong when it
+//! hides a decision. A stub must never give a plausible answer to a question
+//! this client could answer from its state; those functions go in
 //! [`super::super::api`], which reads the live world.
 //!
-//! ## The groups and what each needs
+//! ## The groups and what is left of each
 //!
-//! * Sound: `crates/client/src/sound/` is empty. `PlaySound` has 198 call
-//!   sites.
-//! * The cursor's contents: picking a spell or an item up onto the pointer.
-//!   The client holds no state for it. It is the drag half of the widget tree.
-//! * The action bar's other two kinds: an item or a macro in an action slot.
-//!   `SMSG_ACTION_BUTTONS` carries all three kinds and only `SPELL` is read.
-//! * The group: party, raid, loot method. No packets are read for any of it.
-//! * Money, bags and items: `Item.dbc` is not in the 1.12 archives and an
-//!   item's name comes back from `CMSG_ITEM_QUERY_SINGLE`.
-//! * Buffs and debuffs: the aura fields are parsed for the renderer and
-//!   nothing exposes them to the interface.
-//! * The zone and the clock: the server's clock is read (`protocol::time`)
-//!   and is not connected here. The zone text needs `AreaTable.dbc`.
+//! Most of each group has moved out of this file into a module that answers
+//! from state. Each group's comment in [`install`] names where.
+//!
+//! * Sound: registered by [`super::sound`]. Nothing is stubbed here.
+//! * The cursor's contents: the cursor carries spells and items (see
+//!   [`super::super::panels::container`]). Only `CursorHasMoney` and
+//!   `GetCursorMoney` are stubbed, because nothing picks up money.
+//! * The action bar's item and macro slots: all reads are in
+//!   [`super::super::api`]. Nothing is stubbed here.
+//! * The group: party, raid and raid target icons are answered in their
+//!   panels. `SetLootMethod`, `GetMasterLootCandidate`, `IsUnitOnQuest`,
+//!   `UnitPlayerOrPetInParty` and the ready check stay here.
+//! * Money, bags and items: answered in [`super::super::panels::container`].
+//!   The keyring, the relic slot and the off-hand question stay here.
+//! * Buffs and debuffs: answered in [`super::super::panels::auras`]. Weapon
+//!   enchants and the tracking texture stay here.
+//! * The zone and the clock: answered in [`super::super::panels::worldmap`]
+//!   and `super::UnitAnswers::game_time`. `GetZonePVPInfo` stays here.
 //! * The chat settings: the windows, their channels and their colours. These
-//!   belong to `SavedVariables`.
+//!   belong to `SavedVariables`, which `chat-cache.txt` holds and this client
+//!   does not read.
 //! * The video options: resolutions, multisampling, gamma. The renderer has
 //!   its own switches on the HUD, which are separate from these.
+//! * Battlegrounds, PvP ranks and the GM ticket: no packets are read for any
+//!   of them.
 //!
 //! ## Functions registered here that are not stubs
 //!
 //! [`install`] also registers a few functions that answer from real state,
 //! because the state was already available: the screen size, the three
-//! modifier keys, the CVar store, the `GetItemQualityColor` table and the two
-//! frame-level helpers. They are listed in [`ANSWERED`] and not in
+//! modifier keys, the frame rate, the `GetItemQualityColor` table and
+//! `GetChatWindowMessages`. They are listed in [`ANSWERED`] and not in
 //! [`REGISTERED`], so the stub count excludes them.
 
 use super::super::api::one_or_nil;
@@ -57,12 +65,11 @@ use super::super::api::one_or_nil;
 /// Every name this module registers with nothing behind it. Sorted.
 ///
 /// This count is not a measure of progress. See the module comment.
-pub const REGISTERED: [&str; 106] = [
+pub const REGISTERED: [&str; 100] = [
     "AcceptAreaSpiritHeal",
     "CanJoinBattlefieldAsGroup",
     "CanMerchantRepair",
     "CheckReadyCheckTime",
-    "ClearTutorials",
     "ConsoleExec",
     "CursorHasMoney",
     "GetAreaSpiritHealerTime",
@@ -98,7 +105,6 @@ pub const REGISTERED: [&str; 106] = [
     "GetNumLaguages",
     "GetNumLanguages",
     "GetNumMapLandmarks",
-    "GetNumWorldStateUI",
     "GetPVPLastWeekStats",
     "GetPVPLifetimeStats",
     "GetPVPRankInfo",
@@ -107,10 +113,8 @@ pub const REGISTERED: [&str; 106] = [
     "GetPVPThisWeekStats",
     "GetPVPYesterdayStats",
     "GetQuestBackgroundMaterial",
-    "GetQuestLogPushable",
     "GetQuestLogTitle",
     "GetQuestTimers",
-    "GetRaidTargetIndex",
     "GetRefreshRates",
     "GetRepairAllCost",
     "GetRestState",
@@ -139,7 +143,6 @@ pub const REGISTERED: [&str; 106] = [
     "RequestBattlefieldPositions",
     "RequestBattlefieldScoreData",
     "RequestRaidInfo",
-    "ResetTutorials",
     "SendAddonMessage",
     "SetBattlefieldScoreFaction",
     "SetChatWindowDocked",
@@ -151,7 +154,6 @@ pub const REGISTERED: [&str; 106] = [
     "ShowFriendNameplates",
     "ShowNameplates",
     "ToggleSpellAutocast",
-    "TutorialsEnabled",
     "UnitHasRelicSlot",
     "UnitIsCivilian",
     "UnitIsCorpse",
@@ -336,13 +338,14 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // A missing name aborted `BagSlotButton_OnClick` before `ToggleBag`, and
     // `BackpackButton_OnClick` before `ToggleBackpack`.
 
-    // --- the pet, which this client does not model ---
+    // --- the spellbook's autocast reads ---
     //
     // `SpellButton_UpdateButton` calls `GetSpellAutocast` for every spell, not
     // only a pet's. It reads the two nils as "no autocast ring, no spinning
-    // overlay", which is correct for every spell a player casts.
-    // `HasPetSpells` answering nil keeps the pet book out of reach; see
-    // [`super::super::panels::spellbook`], which holds the `bookType` rule.
+    // overlay", which is correct for every spell a player casts. The pet bar
+    // is answered in [`super::super::panels::pet`], `HasPetSpells` included.
+    // [`super::super::panels::spellbook`] holds the `bookType` rule and
+    // refuses the pet book.
     no!("GetSpellAutocast");
     nothing!("ToggleSpellAutocast");
 
@@ -359,29 +362,15 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     //   `SMSG_CANCEL_AUTO_REPEAT` are read.
     // * `IsActionInRange` and `ActionHasRange`: `nil` means "do not tint" and
     //   not "out of range". A stub that gives the safe one of three answers
-    //   cannot be told from a working function, and these two stayed stubs
-    //   for six rounds. The real answer needs a distance, and the distance
-    //   needs a `Transform` in `interface::api::Units`.
+    //   cannot be told from a working function. The real answer needs a
+    //   distance, and the distance needs a `Transform` in
+    //   `interface::api::Units`.
 
     // --- the group: party, raid, loot ---
     //
     // The party's seven names are answered in [`super::super::panels::party`]
-    // and the raid's eight in [`super::super::panels::raid`]. The one raid
-    // subject this client reads no packet for is the target markers.
-    //
-    // `GetRaidTargetIndex(unit)` answers a unit's raid target marker. The
-    // 1.12.1 client answers `nil` for an unmarked unit.
-    //
-    // The missing name became visible when `TargetFrame_OnLoad` started to
-    // complete. The `PLAYER_TARGET_CHANGED` arm makes three calls in a row:
-    // `TargetFrame_Update`, `TargetFrame_UpdateRaidTargetIcon`,
-    // `TargetofTarget_Update`. The middle call raised, so the target of
-    // target frame was not updated on any target change, while the target
-    // frame itself looked correct. Nothing here reads
-    // `SMSG_RAID_TARGET_UPDATE`, so this client has no markers. The write
-    // half, `SetRaidTarget`, stays unregistered, by the rule this file states
-    // for writes.
-    no!("GetRaidTargetIndex");
+    // and the raid's eight in [`super::super::panels::raid`]. The raid target
+    // icons are answered in [`super::super::panels::raidtarget`].
     // `SetLootMethod` does nothing. It is a write into a subsystem this client
     // does not have (`CMSG_LOOT_METHOD` is not sent), and a no-op that
     // swallows the dropdown's click reports success. `GetLootMethod` is a
@@ -480,8 +469,9 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
         "GetWeaponEnchantInfo",
         // The tracking aura stays in the buff bar. The 1.12.1 client does not
         // show a tracking effect (Find Minerals, Track Beasts) among the
-        // buffs; it shows it on the minimap. This client has no minimap, so
-        // it leaves the aura in the bar and answers nil here.
+        // buffs; it shows it on the minimap's tracking button. This client
+        // does not model tracking, so it leaves the aura in the bar and
+        // answers nil here.
         // `MiniMapTrackingFrame:OnEvent` reads nil as "nothing is being
         // tracked" and hides the button. Found by `--audit --events` when
         // `PLAYER_AURAS_CHANGED` was first raised.
@@ -491,10 +481,10 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // === the ten names `--audit --events` found, each answered according to
     // its call site ===
     //
-    // Each of these is called from an `OnEvent` body. The load report said
-    // "1 failure" for two rounds while these ten bodies failed on
-    // `PLAYER_ENTERING_WORLD`, the first event of every session. One of the
-    // failures was visible in a screenshot and its cause was not known.
+    // Each of these is called from an `OnEvent` body that runs on
+    // `PLAYER_ENTERING_WORLD`, the first event of every session. The load
+    // report does not run event bodies, so it reported one failure while all
+    // ten of these bodies failed.
 
     // `DurabilityFrame` is the floating armour figure at the right of the
     // screen. Its `OnEvent` walks the eight slots, counts the alerts and calls
@@ -655,7 +645,7 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // failed while the name was missing.
     nothing!("SetupFullscreenScale");
 
-    // --- the pet, the world map, and the rest of the audit's list ---
+    // --- the rest of the same audit's list ---
     no!("GetMasterLootCandidate", "GetQuestLogTitle");
     // The names the next audit pass found. Each is the first line of a body
     // that now runs.
@@ -695,10 +685,10 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // art and none of its contents, and the three earlier audit modes could
     // not detect it. See [`super::super::audit::open_every_panel`].
     //
-    // They are constants because the subsystems behind them do not exist in
-    // this client, not because the answers are unknown. There is no friends
-    // list, no loot, no quest log, no battleground and no GM ticket here, and
-    // a client with none of those answers "none" to all five.
+    // The ones still here are constants because the subsystems behind them do
+    // not exist in this client, not because the answers are unknown. There is
+    // no battleground and no GM ticket here, and a client with neither
+    // answers "none".
     nothing!(
         // The GM ticket status. `UPDATE_GM_STATUS` follows in the 1.12.1
         // client.
@@ -717,7 +707,7 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // The second pass of `--audit --panels`. Each name is the next line of a
     // body the first pass unblocked. Answering a name exposes the one after
     // it, as with `--events`, so the audit is rerun until it finds nothing.
-    no!("GetBattlefieldWinner", "TutorialsEnabled");
+    no!("GetBattlefieldWinner");
     answers!("GetNumBattlefields", 0);
     // `(repairAllCost, canRepair)`. A nil second value greys out the anvil.
     answers!("GetRepairAllCost", 0, mlua::Value::Nil);
@@ -749,24 +739,19 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // `GetNumQuestWatches` and `GetQuestIndexForWatch`, over the five-word
     // array behind them.
     //
-    // `IsUnitOnQuest(index, unit)` answers nil: nobody else is on the quest.
-    // That is true of every quest in a client with no party.
-    // `QuestLog_Update` asks it only inside
-    // `for j = 1, GetNumPartyMembers()`, and that count is 0 here, so the
-    // question is currently never asked. It is registered because the loop
-    // runs as soon as `GetNumPartyMembers` answers more than 0, and a missing
-    // name there stops the whole quest list.
+    // `IsUnitOnQuest(index, unit)` answers nil: the party member is not on
+    // the quest. `QuestLog_Update` asks it only inside
+    // `for j = 1, GetNumPartyMembers()`. `GetNumPartyMembers` is answered in
+    // [`super::super::panels::party`], so in a party the question is asked
+    // once per member. This client does not know which quests other members
+    // have, so the answer is always nil. It must be registered, because a
+    // missing name inside that loop stops the whole quest list.
     no!("IsUnitOnQuest");
     // `QuestFrame_GetMaterial` in the shipped Lua falls back to "Parchment" on
     // a nil, so nil here gives the ordinary quest panel and is not a gap. A
     // real material would come from a `QuestInfo.dbc` column, which nothing
     // in this client reads.
     no!("GetQuestBackgroundMaterial");
-    // `GetQuestLogPushable()` answers whether the quest can be shared with a
-    // party. Nil means "no", which is true of every quest in a client with no
-    // party: sharing needs `QUEST_FLAGS_SHARABLE` and somebody to share with,
-    // and this client has no subsystem for the second.
-    no!("GetQuestLogPushable");
     // The four names the world map's `OnUpdate` reaches once the label works.
     // Each belongs to a subsystem this client does not have: a battleground's
     // team positions, its flags and a corpse. `0` means "nothing to draw",
@@ -779,16 +764,17 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // outside a battleground records nothing.
     nothing!("RequestBattlefieldPositions", "RequestBattlefieldScoreData");
     // `UIParent`'s `OnUpdate` calls this every frame. It was the second
-    // permanent per-frame failure the panel probe's tick found. A ready check
-    // is a party mechanic this client does not have, and the body is a
-    // countdown that expires. An expired countdown does nothing.
+    // permanent per-frame failure the panel probe's tick found. The ready
+    // check itself is raised (see [`crate::interface::events::ReadyCheck`]),
+    // but its countdown is not modelled. The body is a countdown that
+    // expires, and an expired countdown does nothing.
     nothing!("CheckReadyCheckTime");
     // The taxi map's four names are answered in
     // [`super::super::panels::taxi`]. `NumTaxiNodes()` answering 0 describes a
     // client that has never spoken to a flight master, which stops being true
     // when a flight master is opened.
     //
-    // Trading is a packet family this client does not read either, and
+    // Trading is answered in [`super::super::panels::trade`].
     // `TradeFrame_UpdateMoney` is called from the panel's `OnShow`.
     //
     // `GetNetStats` is not a battleground function.
@@ -822,7 +808,6 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     answers!("GetNumMapLandmarks", 0);
     answers!("GetSendMailPrice", 0);
     answers!("GetCursorMoney", 0);
-    answers!("GetNumWorldStateUI", 0);
     // `GetChatTypeIndex("SAY")` answers the position of the chat type in the
     // 1.12.1 client's list of chat types. 0 is "the default channel", which
     // is where an unrouted line goes.
@@ -842,9 +827,9 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // The six faction questions are answered in [`super::super::api`], against
     // the live world and through the same `assets::faction` call that
     // Tab-targeting makes. As stubs they answered nil, and `UnitReaction`
-    // answered a constant `4`. The stated effect was that a target frame drew
-    // no attackable border. The full effect was larger:
-    // `TargetDebuffButton_Update` places the aura rows according to
+    // answered a constant `4`. A target frame drew no attackable border, and
+    // there were two further effects. `TargetDebuffButton_Update` places the
+    // aura rows according to
     // `UnitIsFriend("player", "target")`, so every friendly target had its
     // buffs drawn two rows below the frame, and the constant `4` coloured
     // every name plate neutral yellow. This is another example of the problem
@@ -880,12 +865,11 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // `ChatFrameBackground` is a white sheet, so a flat stub here left it
     // untinted: an opaque white box over the bottom-left of the screen.
     //
-    // There are two windows and the second is the combat log. An earlier
-    // version answered one window, because `chat-cache.txt` is not read and
-    // a guess at Blizzard's default could not be checked. Once
-    // `interface::log` produced combat lines, every swing was printed in
-    // General among the conversation. The split is now the 1.12.1 client's
-    // default; see `vale_assets::interface::chattype::DEFAULT_WINDOWS`.
+    // There are two windows and the second is the combat log. This is the
+    // 1.12.1 client's default split; see
+    // `vale_assets::interface::chattype::DEFAULT_WINDOWS`. With one window,
+    // every combat line from `interface::log` is printed in General among
+    // the conversation.
     //
     // `docked` makes the second window a tab. It is a position and not a
     // flag: `FloatingChatFrame_Update` passes this ninth return to
@@ -954,15 +938,12 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // name in it. When this function answers nothing, the chat frame is
     // built, laid out and coloured correctly and receives no messages.
     //
-    // The 1.12.1 client decides which groups each window gets. An earlier
-    // version gave every group to window 1, because the client reads the
-    // split from `WTF\…\chat-cache.txt`, which is not read here, and a guess
-    // at Blizzard's default could not be checked. Two things changed that.
-    // When `interface::log` started producing lines, every swing was printed
-    // in General among the conversation. And the default is not in
-    // `chat-cache.txt`: that file holds what a player has changed since. The
-    // client's default gives window 0 every group and window 1 a subset of
-    // the chat types.
+    // The 1.12.1 client decides which groups each window gets. The default
+    // split is not in `WTF\…\chat-cache.txt`: that file holds what a player
+    // has changed since. The client's default gives window 0 every group and
+    // window 1 a subset of the chat types. Giving every group to one window
+    // prints every combat line from `interface::log` in General among the
+    // conversation.
     //
     // The answer comes from `vale_assets::interface::chattype`, in that
     // module's order. It is not sorted: the order is the 1.12.1 client's, and
@@ -994,10 +975,9 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // `Data\`. The interface is localised by which `GlobalStrings.lua` was
     // extracted, not by a string this client chooses. It has two call sites
     // and both are branches for another locale: `GetBindingText`'s `deDE`
-    // rewrite of `CTRL` to `STRG`, and `GetGuildBankMoneyString`'s. It was
-    // found while building the key bindings panel and not by a probe: it is
-    // reached only when a key has a binding to draw, and every earlier run
-    // had an empty table.
+    // rewrite of `CTRL` to `STRG`, and `GetGuildBankMoneyString`'s. It is
+    // reached only when a key has a binding to draw, so the audit runs made
+    // with an empty key table did not reach it.
     answers!("GetLocale", "enUS");
     // `IsMacClient` is two lines further into the same body and was found by
     // the same run. `nil` is the true answer, because this is not a Mac. It
@@ -1018,13 +998,14 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // > A read this client can truthfully answer "none" to gets a stub. A
     // > write into a subsystem this client does not have stays absent.
     //
-    // By that rule `GetNumWhoResults` is 0 (there is no who list, and a client
-    // with none has zero results) and `PickupContainerItem` is not here,
-    // although it is 24 buttons on the report: a no-op would swallow a
-    // player's click on a bag slot and report success, where the absence
-    // names the missing subsystem. The bank, the trade window, gossip, the
-    // stable, mail and the petitions are all in that second group and stay
-    // in it until the packets behind them are read.
+    // By that rule a read such as `GetNumWhoResults` could answer 0 while
+    // there was no who list, and a write such as `PickupContainerItem` was
+    // not registered here, although it is 24 buttons on the report: a no-op
+    // would swallow a player's click on a bag slot and report success, where
+    // the absence names the missing subsystem. Both are now answered from
+    // state, in [`super::super::panels::social`] and
+    // [`super::super::panels::container`]. A write stays absent until the
+    // packets behind it are read.
     //
     // Each of these was the first line of a body a click ran into. Several of
     // them open a tab, which no earlier audit mode could reach.
@@ -1062,26 +1043,19 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // next line of the body it was stopping.
     //
     // `GetNumFriends`, `GetSelectedFriend` and `GetSelectedIgnore` are
-    // answered from the real list in [`super::super::panels::social`]. A
-    // comment above `ShowFriends` said for a round that `GetNumFriends`
-    // "already answers 0", when it had never been registered.
-    // `FriendsList_Update` is one line below the call that comment was about,
-    // and no audit mode could detect the missing name until a click ran the
-    // body past line 143.
+    // answered from the real list in [`super::super::panels::social`].
+    // `FriendsList_Update` calls `GetNumFriends`, and no audit mode reached
+    // that call until a click ran the body past line 143.
     //
     // `InCinematic` answers nil, which is the true answer: this client has no
     // cinematic player, so no cinematic is ever playing.
     no!("InCinematic");
-    // The tutorials are client-side state and this client keeps none, so
-    // clearing or resetting them is a no-op. `UIOptionsFrame`'s Okay and
-    // Defaults buttons each call one.
-    nothing!("ClearTutorials", "ResetTutorials");
     // `ConsoleExec("cmd")` runs a console line, mostly `SetCVar` and the
     // graphics commands. This client has no console, and the CVars are set
     // through their own functions. An addon's call does nothing.
     nothing!("ConsoleExec");
     // `SendAddonMessage(prefix, text, type)` sends nothing. It is a chat send
-    // of kind `ADDON`, which `crate::interface::chat` does not route. Two
+    // of type `ADDON`, which `crate::interface::chat` does not route. Two
     // addons call it on `PARTY_MEMBERS_CHANGED` to announce their version.
     nothing!("SendAddonMessage");
     // `GetKeyRingSize()` is 0 because this client has no keyring slots; an
@@ -1198,9 +1172,11 @@ pub(in crate::lua) fn install_methods(lua: &mlua::Lua, methods: &mlua::Table) ->
     //
     // `SetShapeshift` and `SetTrackingSpell` are the two of these a player
     // can reach: the stance bar's buttons and the minimap's tracking button.
-    // They were not registered at all, so each hover raised. A stub is
-    // correct for both: neither `GetShapeshiftFormInfo` nor a tracking spell
-    // is modelled here, so there is nothing to put in the tooltip.
+    // Unregistered, each hover raised. A stub is correct for
+    // `SetTrackingSpell`: no tracking spell is modelled, so there is nothing
+    // to put in the tooltip. `GetShapeshiftFormInfo` is answered in
+    // [`super::super::panels::shapeshift`], but `SetShapeshift` does not yet
+    // fill the tooltip from it.
     //
     // `SetInboxItem` is implemented in [`super::super::widgets::tooltip`], on
     // the same terms as the bag and corpse tooltips: the parcel in a letter
@@ -1215,9 +1191,8 @@ pub(in crate::lua) fn install_methods(lua: &mlua::Lua, methods: &mlua::Table) ->
     // --- the `Model` widget ---
     //
     // `SetModel`, `SetSequence` and `SetSequenceTime` are implemented in
-    // [`super::super::widgets::model`]. They answered nothing for nine rounds,
-    // and the model they did not draw was the entire background of the login
-    // screen:
+    // [`super::super::widgets::model`]. As stubs they answered nothing, which
+    // left the login screen without its background, which is a model:
     // `<ModelFFX name="AccountLogin" file="…UI_MainMenu.mdx" setAllPoints>`.
     // No count distinguished that from a widget that worked. This is the
     // second example of the problem the module comment describes.
@@ -1234,7 +1209,7 @@ pub(in crate::lua) fn install_methods(lua: &mlua::Lua, methods: &mlua::Table) ->
     // `SetAlphaGradient(start, length)` is the quest panel's fade.
     // `QuestFrame_SetTitleTextColor` calls it on the details text to fade out
     // the bottom of a long text. This client draws the whole string at one
-    // alpha: the gradient is lost and no words are.
+    // alpha: all of the text is shown, without the fade.
     nothing!("SetAlphaGradient");
 
     // `GetZoom` is implemented in [`super::super::widgets::minimap`]. As a
@@ -1290,7 +1265,7 @@ pub(in crate::lua) fn install_methods(lua: &mlua::Lua, methods: &mlua::Table) ->
 
     // `IsObjectType` is in [`super::super::widgets::frames`] beside
     // `GetObjectType` and `IsFrameType`. It was never a stub: it reads the
-    // kind off the object and compares it. All three answer over the type
+    // widget type off the object and compares it. All three answer over the type
     // tree and not by equality; see
     // [`super::super::widgets::widget::derives_from`]. A real method counted
     // in this file's list would be reported as a gap.
@@ -1406,9 +1381,9 @@ mod tests {
 
         // The reverse direction, as a diff of the globals table across the
         // install and not a second hand-written list. `super::super::api`'s
-        // check has the same shape. There, one direction was checked for two
-        // rounds and the missing half went unnoticed, because a client that
-        // looks less complete than it is raises no error.
+        // check has the same shape. A check in one direction misses a name
+        // that is registered and not claimed, because a client that looks
+        // less complete than it is raises no error.
         let fresh = mlua::Lua::new();
         frames::install(&fresh).expect("the object model installs");
         let before = global_names(&fresh);

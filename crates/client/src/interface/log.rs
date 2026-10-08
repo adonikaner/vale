@@ -1,46 +1,44 @@
-//! **The combat log** — the fight, in the game's own words, in the game's own
-//! windows.
+//! The combat log: combat events written as `GlobalStrings.lua` sentences into
+//! the combat chat windows.
 //!
 //! One system. It drains
 //! [`ObjectManager::take_combat`][vale_protocol::state::objects::ObjectManager::take_combat],
 //! turns each entry into a sentence through
 //! [`vale_assets::interface::combatlog`], and writes one
-//! [`ChatMessageReceived`] per line — from which it is `ChatFrame.lua`'s
-//! problem, exactly as an ordinary `/say` is.
+//! [`ChatMessageReceived`] per line. From there `ChatFrame.lua` handles the
+//! line as it handles an ordinary `/say`.
 //!
-//! ## Why the composition is here and not in `assets`, and the rule is
+//! ## Why the composition is split between this module and `assets`
 //!
-//! The rule — which key, which window, whose name in which slot — is in
-//! `assets` and has eighteen tests that need no world. What is *here* is
-//! everything that needs one: resolving a guid to a name, deciding whether a
-//! unit is your pet or a stranger's, and looking up the spell that did it. That
-//! is the same line `assets::look::dress` sits on, and it is what lets
+//! The rule (which key, which window, whose name in which slot) is in
+//! `assets` and has eighteen tests that need no world. This module holds
+//! everything that needs the world: resolving a guid to a name, deciding
+//! whether a unit is your pet or a stranger's, and looking up the spell that
+//! did it. `assets::look::dress` is split the same way. The split lets
 //! `vale combatlog` check every key this client can produce against the
 //! archives without a server.
 //!
-//! ## Ten kinds, and the interesting decisions are three
+//! ## How a swing, a spell and a death choose their keys
 //!
-//! * **A swing takes one of four keys**, chosen by two bits: the critical flag,
-//!   and whether the damage had a school other than physical. Then the victim
-//!   state overrides all four — a dodge is `VSDODGE`, not `COMBATHIT` with a
-//!   zero — which is the client's own cascade.
-//! * **A spell takes one of four the same way** and then names itself, which is
-//!   the slot order difference the rule module is mostly about.
-//! * **A death is a category test and nothing else** — friendly up to 5,
-//!   hostile from 6.
+//! * A swing takes one of four keys, chosen by two bits: the critical flag,
+//!   and whether the damage had a school other than physical. The victim
+//!   state is tested first and overrides all four: a dodge is `VSDODGE`, not
+//!   `COMBATHIT` with a zero. This is the 1.12.1 client's order.
+//! * A spell takes one of four keys the same way, and its name fills a slot
+//!   between the two units. That slot order is the main difference the rule
+//!   module handles.
+//! * A death is a category test, friendly up to 5 and hostile from 6, plus
+//!   the "dies" or "is destroyed" choice in `death_line`.
 //!
-//! ## What is not done, and is stated where it is made
+//! ## The range filter is not applied
 //!
-//! The **range filter** is not applied. The reference drops a line whose either
-//! end is further away than that category's `CombatLogRange*` CVar, and this
-//! client says everything it hears — which is more than the reference would
-//! have said in a crowded zone, and is the direction that loses nothing. The
-//! CVars and their defaults are in the rule module; what is missing is a
-//! position for both ends at the instant the packet arrived.
-//!
-//! And `UNITDESTROYEDOTHER` is never chosen: a construct "is destroyed" where a
-//! living thing "dies", off a creature-type lookup through a byte table that
-//! is not yet mapped.
+//! The 1.12.1 client drops a line when either unit is further away than that
+//! category's `CombatLogRange*` CVar. This client logs every line it
+//! receives, which in a crowded zone is more than the 1.12.1 client would
+//! show, but loses nothing. The CVars and their defaults are in the rule
+//! module. What is missing is a position for both units at the instant the
+//! packet arrived. Four lines are dropped when their second unit is not in
+//! the object manager; see `compose`.
 
 use vale_assets::interface::chattype;
 use vale_assets::interface::combatlog::{
@@ -59,17 +57,17 @@ use super::party::Party;
 use crate::assets::GameAssets;
 use crate::world::session::Session;
 
-/// **Experience was gained, and where.**
+/// Experience was gained.
 ///
 /// Raised beside the chat line rather than instead of it, because 1.12 draws
 /// both: the log says "Kobold Vermin dies, you gain 50 experience." and a
-/// violet `XP: 50` floats where the player was standing. `ui::worldtext` is the
-/// reader — the same split `interface::messages::MessageSound` makes, where `interface/`
-/// decides *that* something happened and the drawing half owns the door.
+/// violet `XP: 50` floats where the player was standing. `ui::worldtext` reads
+/// it. `interface::messages::MessageSound` is split the same way: `interface/`
+/// decides that something happened, and the drawing code decides how it looks.
 ///
-/// It carries no position. The reference hangs the text
-/// on the **local player's** own text host rather than on the victim, so the
-/// reader takes the position from the player it already has in hand.
+/// It carries no position. The 1.12.1 client shows the text over the local
+/// player rather than over the victim, so the reader takes the position from
+/// the player it already has.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct ExperienceGained {
     pub amount: u32,
@@ -97,8 +95,8 @@ struct Scene<'a> {
 }
 
 impl Scene<'_> {
-    /// **Who this guid is to the local player** — the six facts
-    /// [`rule::categorise`] wants, read off the world.
+    /// Who this guid is to the local player: the six facts
+    /// [`rule::categorise`] needs, read from the world.
     fn standing(&self, guid: u64) -> Category {
         let Some(entity) = self.world.get(guid) else {
             // Not an error: a creature that has left sight, or one that was
@@ -114,9 +112,9 @@ impl Scene<'_> {
             None => Some(entity),
         };
         let Some(owner) = owner else {
-            // A pet whose master is out of sight. The reference answers 8 here
-            // rather than 9 because the *pet* resolved even
-            // though its owner did not.
+            // A pet whose master is out of sight. The 1.12.1 client answers 8
+            // here rather than 9 because the pet resolved even though its owner
+            // did not.
             return Category::Creature;
         };
         let owner_is_player = owner.object_type == Some(ObjectType::Player);
@@ -131,7 +129,7 @@ impl Scene<'_> {
         })
     }
 
-    /// **Mutual** hostility: two reaction checks rather than one.
+    /// Mutual hostility: two reaction checks rather than one.
     ///
     /// A player you are flagged against but who is not flagged against you is
     /// not a hostile-player line. `FactionTemplate.dbc`'s own relation is
@@ -154,14 +152,14 @@ impl Scene<'_> {
         }
     }
 
-    /// **An item's name, or `None` while the server has not said it yet.**
+    /// An item's name, or `None` while the server has not sent it yet.
     ///
-    /// Item templates arrive by `CMSG_ITEM_QUERY_SINGLE` and a combat line is an
-    /// event: nothing re-runs it when the answer lands, so a miss here is a
-    /// sentence with a hole in it. The reference has the same hole — its
-    /// item cache answers an empty string on a miss and the line is
-    /// already said — and this client says nothing instead, which is the
-    /// "give up rather than guess" rule the rest of this module follows.
+    /// Item templates arrive by `CMSG_ITEM_QUERY_SINGLE`, and a combat line is
+    /// an event: nothing re-runs it when the answer arrives, so a miss here
+    /// would be a sentence with an empty slot. The 1.12.1 client prints the
+    /// line with an empty item name in this case. This client prints nothing
+    /// instead, following the rule the rest of this module follows: drop the
+    /// line rather than guess.
     ///
     /// In practice a miss is nearly unreachable for the two lines that use it:
     /// the item a hunter feeds a pet came out of their own bags, and the item a
@@ -178,6 +176,20 @@ impl Scene<'_> {
             .unwrap_or_else(|| format!("spell {spell_id}"))
     }
 
+    /// The spell a line names, for the four lines that the 1.12.1 client
+    /// drops for a spell it would not log: one outside `Spell.dbc`, one whose
+    /// `Attributes` carry `0x180` (hidden on the client, or hidden in the
+    /// combat log), and one with no name. `None` drops the line.
+    fn logged_spell(&self, spell_id: u32) -> Option<(String, vale_assets::tables::spellbook::SpellInfo)> {
+        let book = self.tables.and_then(|t| t.spellbook())?;
+        let info = book.info(spell_id)?;
+        if info.attributes & 0x180 != 0 {
+            return None;
+        }
+        let name = book.name(spell_id).filter(|name| !name.is_empty())?;
+        Some((name, info))
+    }
+
     fn school_name(&self, school: u32) -> Option<String> {
         self.tables
             .map(|t| t.resistances())
@@ -192,15 +204,15 @@ impl Scene<'_> {
         self.strings.get(key).unwrap_or_default().to_string()
     }
 
-    /// **What to *print* for an amount of power**, which is not the number on
-    /// the wire.
+    /// The text to print for an amount of power, which is not always the
+    /// number on the wire.
     ///
     /// `UNIT_FIELD_POWER2` and every rage figure the server sends are in
-    /// **tenths** — vmangos multiplies openly (`ModifyPower(POWER_RAGE, addRage
-    /// * 10)`) and nothing on the wire says so. The power bar has divided by
-    /// ten since it was written; the combat log did not, and reported "210
-    /// Rage" for a swing that generated 21 — against a maximum of 100, which is
-    /// what made it obvious. Mana, focus and energy are one for one.
+    /// tenths: vmangos multiplies by ten (`ModifyPower(POWER_RAGE, addRage
+    /// * 10)`) and nothing on the wire says so. Printed raw, a swing that
+    /// generated 21 rage reads "210 Rage", against a maximum of 100. The power
+    /// bar divides by ten through the same function. Mana, focus and energy
+    /// are one for one.
     fn power_amount(&self, power: u32, amount: u32) -> String {
         power_type::display(power as u8, amount).to_string()
     }
@@ -245,9 +257,8 @@ fn poll(
         party: &party,
     };
     for event in events {
-        // **The floating number is raised beside the line, not instead of it.**
-        // Both are the reference's: it draws the world text and composes the
-        // chat line from the same packet.
+        // The floating number is raised beside the line, not instead of it.
+        // The 1.12.1 client shows both from the same packet.
         if let CombatEvent::XpGain(gain) = event {
             experience.write(ExperienceGained { amount: gain.total });
         }
@@ -258,10 +269,10 @@ fn poll(
             chat.write(ChatMessageReceived {
                 event: event_name,
                 text: line.text,
-                // **Nine arguments and none of them may be nil** — see
+                // Nine arguments, and none of them may be nil; see
                 // [`ChatMessageReceived`]. A combat line has no author, no flag
-                // and no channel, and the empty string is the real client's own
-                // answer for each.
+                // and no channel, and the 1.12.1 client passes an empty string
+                // for each.
                 author: String::new(),
                 flag: "",
                 channel: String::new(),
@@ -271,7 +282,7 @@ fn poll(
     }
 }
 
-/// One entry, composed — or `None` where the reference would have said nothing.
+/// One entry, composed, or `None` where the 1.12.1 client would print no line.
 fn compose(scene: &Scene, event: &CombatEvent) -> Option<Line> {
     match event {
         CombatEvent::Swing(swing) => swing_line(scene, swing),
@@ -297,7 +308,8 @@ fn compose(scene: &Scene, event: &CombatEvent) -> Option<Line> {
             miss,
         } => {
             let stem = miss.stem()?;
-            // `IMMUNESPELL` is the one of the eleven with the victim first.
+            // `IMMUNESPELL` is the one of the ten miss stems with the victim
+            // first.
             let order = if *miss == SpellMiss::Immune {
                 parts::IMMUNE
             } else {
@@ -317,8 +329,8 @@ fn compose(scene: &Scene, event: &CombatEvent) -> Option<Line> {
                 Trailers::default(),
             )
         }
-        // **`SMSG_SPELLLOGEXECUTE`'s four sentences**, one per entry — the
-        // fan-out is at the handler, like `SMSG_SPELLLOGMISS`'s.
+        // `SMSG_SPELLLOGEXECUTE`'s four sentences, one per entry. The packet
+        // is split into entries in the handler, as `SMSG_SPELLLOGMISS` is.
         CombatEvent::ExtraAttacks {
             target,
             spell_id,
@@ -346,7 +358,7 @@ fn compose(scene: &Scene, event: &CombatEvent) -> Option<Line> {
             spell_id,
             item,
         } => {
-            // **A negative entry is every item**, which is a different stem
+            // A negative entry means every item, which is a different stem
             // rather than a different argument: "all items damaged."
             let all = *item < 0;
             let mut extras = vec![scene.spell_name(*spell_id)];
@@ -397,8 +409,8 @@ fn compose(scene: &Scene, event: &CombatEvent) -> Option<Line> {
             "DAMAGESHIELD",
             false,
             parts::DAMAGE_SHIELD,
-            // The wearer is the *attacker* of this line: they are the one
-            // dealing the damage.
+            // The wearer is the attacker of this line, because the wearer
+            // deals the damage.
             log.wearer,
             log.struck_by,
             &[
@@ -412,29 +424,93 @@ fn compose(scene: &Scene, event: &CombatEvent) -> Option<Line> {
         CombatEvent::XpGain(gain) => xp_line(scene, gain),
         CombatEvent::PeriodicAura(log) => periodic_line(scene, log),
         CombatEvent::Enchantment(log) => enchantment_line(scene, log),
+        // The four lines below are dropped when the second unit is not in the
+        // object manager, as the 1.12.1 client's range filter drops them, and
+        // when the spell is one the client does not log; see
+        // [`Scene::logged_spell`].
+        CombatEvent::Immune { caster, target, spell_id } => {
+            scene.world.get(*target)?;
+            let (name, _) = scene.logged_spell(*spell_id)?;
+            two(
+                scene,
+                Family::SpellDamage,
+                "IMMUNESPELL",
+                true,
+                parts::IMMUNE,
+                *caster,
+                *target,
+                &[name],
+                Trailers::default(),
+            )
+        }
+        CombatEvent::ProcResist { caster, target, spell_id } => {
+            scene.world.get(*target)?;
+            let (name, info) = scene.logged_spell(*spell_id)?;
+            two(
+                scene,
+                rule::spell_window(&info),
+                "PROCRESIST",
+                true,
+                parts::IMMUNE,
+                *caster,
+                *target,
+                &[name],
+                Trailers::default(),
+            )
+        }
+        CombatEvent::DispelFailed { caster, victim, spell_id } => {
+            scene.world.get(*victim)?;
+            let (name, info) = scene.logged_spell(*spell_id)?;
+            two(
+                scene,
+                rule::spell_window(&info),
+                "DISPELFAILED",
+                true,
+                parts::INTERRUPT,
+                *caster,
+                *victim,
+                &[name],
+                Trailers::default(),
+            )
+        }
+        // A one-unit line, `INSTAKILLSELF` or `INSTAKILLOTHER`, in the spell
+        // damage window chosen with the victim on both sides.
+        CombatEvent::InstaKill { victim, spell_id } => {
+            scene.world.get(*victim)?;
+            let (name, _) = scene.logged_spell(*spell_id)?;
+            let standing = scene.standing(*victim);
+            solo(
+                scene,
+                "INSTAKILL",
+                *victim,
+                &[name],
+                rule::chat_type(Family::SpellDamage, standing, standing),
+            )
+        }
     }
 }
 
 
-/// **"You cast Enchant Weapon - Crusader on Bram's Bloodrazor."**
+/// An enchantment line: "You cast Enchant Weapon - Crusader on Bram's
+/// Bloodrazor."
 ///
-/// `SMSG_ENCHANTMENTLOG`, and it is the one family in the log whose second unit
-/// is an item's *owner* rather than a victim — see
+/// `SMSG_ENCHANTMENTLOG`. It is the one family in the log whose second unit
+/// is an item's owner rather than a victim; see
 /// [`vale_assets::interface::combatlog::parts::ENCHANT`].
 ///
-/// **Two key sets, told apart by a zero caster.** An application takes the four
-/// `ITEMENCHANTMENTADD*` keys through the ordinary perspective machinery; a fade
-/// takes `ITEMENCHANTMENTREMOVE{SELF,OTHER}`, which is a [`Subject`] pair whose
-/// name sits **second** rather than first — "%s has faded from %s's %s." — so it
+/// There are two key sets, told apart by a zero caster. An application takes
+/// the four `ITEMENCHANTMENTADD*` keys through the ordinary perspective rule.
+/// A fade takes `ITEMENCHANTMENTREMOVE{SELF,OTHER}`, a [`Subject`] pair whose
+/// name is second rather than first ("%s has faded from %s's %s."), so it
 /// cannot go through [`solo`], which puts the name first.
 ///
-/// **The window is `SPELL_ITEM_ENCHANTMENTS` either way**, and it is not one of
-/// the six routing families: who the two people are does not move the line, so
-/// there is no `chat_type(family, ..)` call here.
+/// The window is `SPELL_ITEM_ENCHANTMENTS` in both cases, and it is not one of
+/// the six routing families: the two units' categories do not change the
+/// window, so there is no `chat_type(family, ..)` call here.
 ///
-/// A line whose item template has not landed yet is dropped rather than drawn
-/// with a hole in it — the handler asks for it as the packet arrives
-/// (`want_item`), and the reference has the same round trip.
+/// A line whose item template has not arrived yet is dropped rather than
+/// printed with an empty slot. The handler requests the template when the
+/// packet arrives (`want_item`); the 1.12.1 client makes the same request.
 fn enchantment_line(
     scene: &Scene,
     log: &vale_protocol::play::items::EnchantmentLog,
@@ -481,7 +557,7 @@ fn enchantment_line(
     })
 }
 
-/// The shared tail of every two-unit kind.
+/// The shared end of every two-unit line.
 #[allow(clippy::too_many_arguments)]
 fn two(
     scene: &Scene,
@@ -508,7 +584,7 @@ fn two(
     )
 }
 
-/// **A weapon swing** — the client's cascade, which tries the refusals first.
+/// A weapon swing. The 1.12.1 client's order tests the failures first.
 fn swing_line(
     scene: &Scene,
     swing: &vale_protocol::play::action::AttackUpdate,
@@ -520,19 +596,19 @@ fn swing_line(
         blocked: swing.blocked,
         absorbed: swing.absorbed,
     };
-    // **The client's own cascade, in its own order**, which is worth stating
-    // because two of its tests are not the ones the field names suggest.
+    // The 1.12.1 client's tests, in its order. Two of them are not the tests
+    // the field names suggest.
     //
     // ```text
     // hitInfo & HITINFO_MISS  -> MISSED
     // victimState == BLOCKS   -> VSBLOCK      (the state)
     // hitInfo & 0x20          -> VSABSORB     (the FLAG)
     // hitInfo & 0x40          -> VSRESIST     (the FLAG)
-    // victimState == NORMAL   -> the damage composer
+    // victimState == NORMAL   -> a hit: COMBATHIT and its variants
     // anything else           -> dodge, parry, evade, immune, deflect
     // ```
     //
-    // The absorb and resist arms are **flags rather than arithmetic**. The
+    // The absorb and resist arms test flags rather than amounts. The
     // obvious reading is "damage is zero and something was absorbed", which is
     // true in the ordinary case and wrong in two others: a blow fully absorbed
     // by a shield that also blocked, and a partial absorb that still let damage
@@ -555,9 +631,8 @@ fn swing_line(
             victim_state::EVADES => Some("VSEVADE"),
             victim_state::IS_IMMUNE => Some("VSIMMUNE"),
             victim_state::DEFLECTS => Some("VSDEFLECT"),
-            // `INTERRUPT` and `UNAFFECTED` have no key in the family, and a
-            // swing that reaches here says nothing — which is the reference's
-            // own outcome, since its last composer returns false for them.
+            // `INTERRUPT` and `UNAFFECTED` have no key in the family, so a
+            // swing that reaches here prints no line, as in the 1.12.1 client.
             _ => return None,
         }
     };
@@ -571,9 +646,9 @@ fn swing_line(
             swing.attacker,
             swing.victim,
             &[],
-            // **No trailers on a refusal.** Nothing got through, so there is
-            // nothing to have been absorbed or blocked, and the no-number
-            // composer does not call the trailer function at all.
+            // No trailers on a failed swing. Nothing got through, so nothing
+            // was absorbed or blocked, and the 1.12.1 client prints no trailers
+            // on these lines.
             Trailers::default(),
         );
     }
@@ -602,7 +677,8 @@ fn swing_line(
     )
 }
 
-/// **A spell that landed** — the same two bits, over the spell slot order.
+/// A spell that landed: the same two bits as a swing, with the spell slot
+/// order.
 fn spell_damage_line(
     scene: &Scene,
     log: &vale_protocol::play::action::SpellDamage,
@@ -637,8 +713,8 @@ fn spell_damage_line(
     extras.extend(school);
     two(
         scene,
-        // **A tick routes to the periodic family**, which is the whole reason
-        // there are six routing tables rather than four: the same packet with
+        // A tick routes to the periodic family. This is why there are six
+        // routing families rather than four: the same packet with
         // `periodicLog` set belongs in a different window.
         if log.periodic {
             Family::PeriodicDamage
@@ -660,17 +736,17 @@ fn spell_damage_line(
     )
 }
 
-/// **A tick of an aura**, which is the aura's own bookkeeping rather than the
-/// number that floats.
+/// A tick of an aura, from `SMSG_PERIODICAURALOG`.
 fn periodic_line(
     scene: &Scene,
     log: &vale_protocol::play::combatlog::PeriodicAuraLog,
 ) -> Option<Line> {
     let spell = scene.spell_name(log.spell_id);
     match log.effect {
-        // The damage arm is drawn from `SMSG_SPELLNONMELEEDAMAGELOG` instead —
-        // the same tick arrives on both opcodes and the reference logs the one
-        // with the school in it. Saying both would double every line.
+        // The damage line is composed from `SMSG_SPELLNONMELEEDAMAGELOG`
+        // instead. The same tick arrives on both opcodes, and the 1.12.1 client
+        // logs the one that carries the school. Logging both would print every
+        // line twice.
         PeriodicEffect::Damage { .. } => None,
         PeriodicEffect::Heal { amount } => two(
             scene,
@@ -708,8 +784,8 @@ fn periodic_line(
     }
 }
 
-/// **The world hurt somebody** — one unit, and the type is an infix rather than
-/// a stem.
+/// Environmental damage: one unit, and the damage type is an infix in the key
+/// rather than a stem.
 fn environmental_line(
     scene: &Scene,
     log: &vale_protocol::play::combatlog::EnvironmentalDamage,
@@ -733,19 +809,20 @@ fn environmental_line(
         ..Default::default()
     }
     .append(scene.strings, &mut text);
-    // **The window is the melee-miss family's**, because there is no attacker:
-    // the client routes it as a blow the victim took from nobody, which lands
-    // in whichever `…_HITS` window the victim's own category names.
+    // The window comes from the melee-hit family with the victim on both
+    // sides, because there is no attacker: the client routes it as a blow the
+    // victim took from nobody, which lands in the `…_HITS` window the victim's
+    // own category names.
     let chat_type = rule::chat_type(Family::MeleeHit, who, who);
     (chat_type < chattype::NONE).then_some(Line { chat_type, text })
 }
 
-/// **A one-unit line**: `<stem>SELF` or `<stem>OTHER`, with the subject's name
-/// pushed only into the key that mentions it.
+/// A one-unit line: `<stem>SELF` or `<stem>OTHER`, with the subject's name
+/// passed only to the key that mentions it.
 ///
-/// Three families share this shape — a death, a dispel and an extra-attacks
-/// gain — and the difference between them is only which extras follow the name.
-/// See [`rule::SoloKind`], which is the catalogue `vale combatlog` checks.
+/// Three families use this function: a death, a dispel and an instant kill.
+/// They differ only in which extras follow the name. See [`rule::SoloKind`],
+/// which is the catalogue `vale combatlog` checks.
 fn solo(
     scene: &Scene,
     stem: &str,
@@ -767,11 +844,11 @@ fn solo(
     })
 }
 
-/// **"You gain 3 extra attacks through Thrash."**
+/// An extra-attacks line: "You gain 3 extra attacks through Thrash."
 ///
-/// The one stem in the log with a `_SINGULAR` twin, and it is the file's own
-/// rule rather than a plural-`s` heuristic: `SPELLEXTRAATTACKSSELF_SINGULAR`
-/// and `…OTHER_SINGULAR` are two more keys, taking the same arguments.
+/// The one stem in the log with a `_SINGULAR` variant. The singular is two
+/// keys in the file, not a plural-`s` rule: `SPELLEXTRAATTACKSSELF_SINGULAR`
+/// and `…OTHER_SINGULAR`, taking the same arguments.
 fn extra_attacks_line(scene: &Scene, target: u64, spell_id: u32, count: u32) -> Option<Line> {
     let subject = Subject::of(scene.standing(target));
     let mut key = subject.key("SPELLEXTRAATTACKS");
@@ -789,17 +866,17 @@ fn extra_attacks_line(scene: &Scene, target: u64, spell_id: u32, count: u32) -> 
     arguments.push(&count);
     arguments.push(&spell);
     Some(Line {
-        // A gain, and it lands in whichever `…_HITS` window the unit's own
-        // category names — the same routing `POWERGAIN` takes.
+        // A gain. It goes to the `…_BUFF` window the unit's own category
+        // names, the same routing `POWERGAIN` takes.
         chat_type: rule::chat_type(Family::SpellBuff, scene.standing(target), scene.standing(target)),
         text: vale_assets::interface::strings::substitute_all(format, &arguments),
     })
 }
 
-/// **"Your pet begins eating the Roasted Boar Meat."**
+/// A feed-pet line: "Your pet begins eating the Roasted Boar Meat."
 ///
 /// Not a stem plus a subject: the two keys are `FEEDPET_LOG_FIRSTPERSON` and
-/// `_THIRDPERSON`, and the third person names the *owner* rather than the pet.
+/// `_THIRDPERSON`, and the third person names the owner rather than the pet.
 /// So this is written out here rather than going through [`solo`], the same way
 /// `COMBATLOG_XPGAIN_*` is.
 fn feed_pet_line(scene: &Scene, caster: u64, item: u32) -> Option<Line> {
@@ -822,19 +899,18 @@ fn feed_pet_line(scene: &Scene, caster: u64, item: u32) -> Option<Line> {
     })
 }
 
-/// **A death**, which is a one-unit line, a category test — and a second test
-/// that decides whether the unit *dies* or *is destroyed*.
+/// A death: a one-unit line, a category test, and a second test that decides
+/// whether the unit "dies" or "is destroyed".
 ///
-/// `UNITDESTROYEDOTHER` had been in `GlobalStrings.lua` with nothing choosing
-/// it. What chooses it is the unit's `UNIT_FIELD_CREATED_BY_SPELL`,
-/// looked up in `Spell.dbc`, reduced to its `Effect[0]`, against a table whose
-/// ten true entries are a portal and the nine totem and object summons. So a
-/// shaman's totem and a warlock's ritual portal are destroyed and everything
-/// else dies. See [`rule::is_destroyed`].
+/// `UNITDESTROYEDOTHER` is chosen by the unit's `UNIT_FIELD_CREATED_BY_SPELL`,
+/// looked up in `Spell.dbc` and reduced to its `Effect[0]`, against ten
+/// effects: a portal and nine totem and object summons. So a shaman's totem
+/// and a warlock's ritual portal are destroyed and everything else dies. See
+/// [`rule::is_destroyed`].
 ///
-/// **There is no `UNITDESTROYEDSELF`**, and there is no need for one: a summoned
-/// object is never the local player, so the `…SELF` branch below can only be
-/// reached by `UNITDIES`.
+/// There is no `UNITDESTROYEDSELF`, and none is needed: a summoned object is
+/// never the local player, so the `…SELF` branch below can only be reached by
+/// `UNITDIES`.
 fn death_line(scene: &Scene, victim: u64) -> Option<Line> {
     let who = scene.standing(victim);
     let effect = scene
@@ -852,7 +928,7 @@ fn death_line(scene: &Scene, victim: u64) -> Option<Line> {
     solo(scene, stem, victim, &[], rule::death_chat_type(who))
 }
 
-/// **Experience**, whose key depends on whether anything died for it.
+/// Experience, whose key depends on whether a kill gave it.
 fn xp_line(
     scene: &Scene,
     gain: &vale_protocol::play::combatlog::XpGain,
@@ -889,40 +965,37 @@ mod tests {
     use super::*;
     use vale_assets::interface::combatlog::Kind;
 
-    /// The id this file hard-codes is the row the table calls it, which is the
-    /// one thing here a change to the table could move underneath us.
+    /// The id this file hard-codes is the row the table names
+    /// `COMBAT_XP_GAIN`. A change to the table could move it.
     #[test]
     fn the_experience_window_is_the_row_it_names() {
         assert_eq!(chattype::TYPES[XP_GAIN as usize].name, "COMBAT_XP_GAIN");
     }
 
-    /// **Rage is in tenths on the wire and the log has to say so.**
+    /// Rage is in tenths on the wire, and the log prints it in points.
     ///
-    /// Reported as "210 Rage" for a swing that generated 21 — against a
-    /// maximum of 100, which is what made it visible. The power bar had divided
-    /// by ten since it was written; this pass passed the field through raw.
-    /// Asserted against `power_type::display` rather than against `/ 10` so
-    /// the two cannot come apart.
+    /// Printed raw, a swing that generated 21 rage reads "210 Rage", against a
+    /// maximum of 100. Asserted against `power_type::display`, which the power
+    /// bar also uses, rather than against `/ 10`, so the two cannot disagree.
     #[test]
     fn rage_is_printed_in_points_and_the_others_are_not() {
         assert_eq!(power_type::display(power_type::RAGE as u8, 210), 21);
         for power in [power_type::MANA, power_type::FOCUS, power_type::ENERGY] {
             assert_eq!(power_type::display(power as u8, 210), 210, "{power}");
         }
-        // …and the names come from the same table the bar uses.
+        // The names come from the same table the bar uses.
         assert_eq!(power_type::key(power_type::RAGE as u8), "RAGE");
         assert_eq!(power_type::key(power_type::MANA as u8), "MANA");
     }
 
-    /// **Every window this pass can route a line to is a name the client
-    /// admits to raising.**
+    /// Every window the combat log can route a line to is listed in `FIRED`.
     ///
     /// `FIRED` is what `vale framexml` and `--audit --events` count the
     /// interface's expectations against, so a `CHAT_MSG_*` missing from it
-    /// reads as "no frame asked for this" when the truth is the opposite. The
-    /// list in `events.rs` is written out and the routing tables are computed,
-    /// so this is what keeps the two from drifting — the same check
-    /// `session::chat` makes for the twenty-six social names.
+    /// would be reported as "no frame asked for this" when frames do ask for
+    /// it. The list in `events.rs` is written out and the routing is computed,
+    /// so this test keeps the two in step. `session::chat` makes the same
+    /// check for the twenty-six social names.
     #[test]
     fn every_window_the_combat_log_can_route_to_is_listed_as_fired() {
         use super::super::events::FIRED;
@@ -945,7 +1018,7 @@ mod tests {
                 }
             }
         }
-        // …and the three this pass reaches without going through a table.
+        // The three windows reached without the family routing.
         for who in Category::ALL {
             let id = rule::death_chat_type(who);
             if !ids.contains(&id) {
@@ -991,11 +1064,14 @@ mod tests {
             "POWERGAIN",
             "SPELLPOWERDRAIN",
             "DAMAGESHIELD",
+            "IMMUNESPELL",
+            "PROCRESIST",
+            "DISPELFAILED",
         ];
         for stem in reached {
             assert!(catalogued.contains(&stem), "{stem} is not catalogued");
         }
-        // …and the eleven the miss table can produce.
+        // The ten stems the miss table can produce (codes 1 to 10).
         for code in 1..=10u8 {
             let miss = SpellMiss::from_code(code).unwrap();
             let stem = miss.stem().unwrap();
@@ -1003,9 +1079,9 @@ mod tests {
         }
     }
 
-    /// A stem the miss table names as blocked has no `…SELFSELF` key, and the
-    /// composer must be told so — this is the one place the two lists could
-    /// drift apart.
+    /// The stem the miss table gives a block has no `…SELFSELF` key, and
+    /// [`compose`] passes that explicitly. This test keeps the miss table and
+    /// the catalogue in agreement on it.
     #[test]
     fn the_blocked_stem_is_the_one_without_a_selfself_key() {
         let blocked = rule::KINDS
@@ -1014,7 +1090,7 @@ mod tests {
             .expect("catalogued");
         assert!(!blocked.self_self);
         assert_eq!(SpellMiss::Block.stem(), Some("SPELLBLOCKED"));
-        // …and every other one in the family does have it.
+        // Every other stem in the family has the key.
         for code in 1..=10u8 {
             let miss = SpellMiss::from_code(code).unwrap();
             if miss == SpellMiss::Block {

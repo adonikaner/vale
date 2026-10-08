@@ -1058,9 +1058,9 @@ impl WorldSession {
     /// `HandleSetSheathedOpcode` is the only code in vmangos that writes it for
     /// a `Player`. For the player's own character the update field is an echo
     /// of this packet, never its source. A client that waits for the server to
-    /// draw its weapon never draws it; this client did that once, and its
-    /// character fought unarmed. `vale_assets::look::sheath` decides the state
-    /// and when to send it.
+    /// draw its weapon never draws it, and its character fights unarmed; an
+    /// earlier version of this client had that fault. `vale_assets::look::sheath`
+    /// decides the state and when to send it.
     ///
     /// The body is `u32 sheathed`. vmangos drops the packet without a reply for
     /// any value at or above [`MAX_SHEATH_STATE`], so an out-of-range value is
@@ -1948,6 +1948,56 @@ impl WorldSession {
         )
     }
 
+    /// `/roll`: `MSG_RANDOM_ROLL` with the range. See [`crate::play::randomroll`].
+    pub fn random_roll(&mut self, min: u32, max: u32) -> io::Result<()> {
+        self.send(Opcode::MSG_RANDOM_ROLL, &crate::play::randomroll::random_roll_body(min, max))
+    }
+
+    /// A click on the minimap: `MSG_MINIMAP_PING` with the world position. See [`crate::play::minimap`].
+    pub fn minimap_ping(&mut self, x: f32, y: f32) -> io::Result<()> {
+        self.send(Opcode::MSG_MINIMAP_PING, &crate::play::minimap::minimap_ping_body(x, y))
+    }
+
+    /// Place raid target icon `icon` (0..8) on `guid`, or clear it with guid 0: `MSG_RAID_TARGET_UPDATE`. See [`crate::play::raidtarget`].
+    pub fn raid_target_set(&mut self, icon: u8, guid: u64) -> io::Result<()> {
+        self.send(Opcode::MSG_RAID_TARGET_UPDATE, &crate::play::raidtarget::set_icon_body(icon, guid))
+    }
+
+    /// Ask for the group's raid target icons: `MSG_RAID_TARGET_UPDATE` with `0xFF`.
+    pub fn raid_target_list(&mut self) -> io::Result<()> {
+        self.send(Opcode::MSG_RAID_TARGET_UPDATE, &crate::play::raidtarget::list_request_body())
+    }
+
+    /// Share a quest with the group: `CMSG_PUSHQUESTTOPARTY`. See [`crate::play::questshare`].
+    pub fn push_quest(&mut self, quest_id: u32) -> io::Result<()> {
+        self.send(Opcode::CMSG_PUSHQUESTTOPARTY, &crate::play::questshare::push_quest_body(quest_id))
+    }
+
+    /// Take the party quest another member accepted: `CMSG_QUEST_CONFIRM_ACCEPT`.
+    pub fn quest_confirm_accept(&mut self, quest_id: u32) -> io::Result<()> {
+        self.send(Opcode::CMSG_QUEST_CONFIRM_ACCEPT, &crate::play::questshare::confirm_accept_body(quest_id))
+    }
+
+    /// Answer a shared quest's page: `MSG_QUEST_PUSH_RESULT` to the sharer, which the client sends with `Declined` when the page is closed.
+    pub fn quest_push_result(&mut self, sharer: u64, result: crate::play::questshare::PushResult) -> io::Result<()> {
+        self.send(Opcode::MSG_QUEST_PUSH_RESULT, &crate::play::questshare::push_result_body(sharer, result))
+    }
+
+    /// Mark tutorial `id` (1-based) as seen: `CMSG_TUTORIAL_FLAG`. See [`crate::play::tutorial`].
+    pub fn tutorial_flag(&mut self, id: u32) -> io::Result<()> {
+        self.send(Opcode::CMSG_TUTORIAL_FLAG, &crate::play::tutorial::flag_tutorial_body(id))
+    }
+
+    /// Mark every tutorial as seen, turning the tips off: `CMSG_TUTORIAL_CLEAR`, with no body.
+    pub fn tutorial_clear(&mut self) -> io::Result<()> {
+        self.send(Opcode::CMSG_TUTORIAL_CLEAR, &[])
+    }
+
+    /// Mark no tutorial as seen, turning the tips on: `CMSG_TUTORIAL_RESET`, with no body.
+    pub fn tutorial_reset(&mut self) -> io::Result<()> {
+        self.send(Opcode::CMSG_TUTORIAL_RESET, &[])
+    }
+
     /// Ask for the played time: `CMSG_PLAYED_TIME`, with no body.
     pub fn request_played_time(&mut self) -> io::Result<()> {
         self.send(Opcode::CMSG_PLAYED_TIME, &[])
@@ -2019,9 +2069,9 @@ impl WorldSession {
 //
 // Every packet body this client sends is built by a free function, and the
 // `WorldSession` methods above are one-line wrappers over
-// `send(opcode, &body)`. There were once two conventions, bodies inlined into
-// eight methods with a `Writer` and four `*_body()` functions in `query.rs`,
-// and both were used inside a single loop in `resolve_names`.
+// `send(opcode, &body)`. This replaced two conventions that earlier code mixed,
+// in places within a single loop in `resolve_names`: bodies inlined into eight
+// methods with a `Writer`, and four `*_body()` functions in `query.rs`.
 //
 // A body built inside a socket method cannot be unit-tested, and the
 // acknowledgements cannot be built by a method at all: `crate::socket::handler`
@@ -2233,11 +2283,11 @@ const CHAR_ENUM_EQUIPMENT_SLOTS: usize = 20;
 /// Parse `SMSG_CHAR_ENUM`. Only the pet block is skipped, and it must still be
 /// consumed exactly or the next character is misread.
 ///
-/// The parser once skipped the appearance and the equipment too, and character
-/// select showed an empty model as a result: the five appearance bytes and the
-/// twenty `(display id, inventory type)` pairs are the only data about how a
-/// character on this screen looks. Reading them costs nothing extra, because
-/// the parser had to step over them anyway.
+/// The appearance and the equipment are read, not skipped: the five appearance
+/// bytes and the twenty `(display id, inventory type)` pairs are the only data
+/// about how a character on this screen looks. An earlier version skipped them,
+/// and character select showed an empty model. Reading them costs nothing
+/// extra, because the parser has to step over them anyway.
 fn parse_char_enum(body: &[u8]) -> Vec<CharListEntry> {
     let mut r = Reader::new(body);
     let count = r.u8();

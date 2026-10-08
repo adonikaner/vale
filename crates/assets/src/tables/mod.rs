@@ -50,6 +50,10 @@
 //! charcreate.rs what a character may be made of
 //! area.rs       where the character is, in the game's own words
 //! channels.rs   the six chat channels everybody is in, and which of them where
+//! defense.rs    which defense channels hear that a zone is under attack
+//! worldstate.rs which world states the frame above the minimap lists where,
+//!               and how a line's text names the values it shows
+//! servermessage.rs the sentence each SMSG_SERVER_MESSAGE type is shown as
 //! wmoarea.rs    where the character is when that is inside a building
 //! areatrigger.rs the 432 volumes a character is reported standing in
 //! safeloc.rs    WorldSafeLocs: the places a dead character's spirit appears
@@ -78,6 +82,7 @@ pub mod areatrigger;
 pub mod bank;
 pub mod book;
 pub mod channels;
+pub mod defense;
 pub mod charcreate;
 pub mod dbc;
 pub mod faction;
@@ -101,6 +106,7 @@ pub mod repair;
 pub mod shiptransport;
 pub mod resistances;
 pub mod safeloc;
+pub mod servermessage;
 pub mod skills;
 pub mod sound;
 pub mod schema;
@@ -119,3 +125,4 @@ pub mod tradeskill;
 pub mod trainer;
 pub mod wmoarea;
 pub mod worldmap;
+pub mod worldstate;

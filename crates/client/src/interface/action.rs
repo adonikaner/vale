@@ -296,21 +296,22 @@ pub struct Casting {
     /// writes a status byte on both paths and always sends, so every
     /// `CMSG_CAST_SPELL` that reaches `Spell::prepare` gets an acceptance or a
     /// refusal. The exception is `HandleCastSpellOpcode`'s "which he shouldn't
-    /// have" branch (a spell the character does not know, or a passive), which
-    /// returns without a reply. That branch was assumed unreachable: a passive
-    /// is refused here before the send, and this client casts only spells from
-    /// the character's own book. Leaving the world resets the whole resource
-    /// either way (see `forget`).
+    /// have" branch, which returns without a reply. A passive is refused here
+    /// before the send, so it never reaches that branch. Leaving the world
+    /// resets the whole resource either way (see `forget`).
     ///
-    /// The assumption is wrong. `HandleCastSpellOpcode` returns without a reply
-    /// on `!HasActiveSpell(spellId)`, which tests whether the spell is active,
-    /// not whether it is known. An action button holding a superseded rank
+    /// A spell from the character's own book can still reach that branch.
+    /// `HandleCastSpellOpcode` returns without a reply on
+    /// `!HasActiveSpell(spellId)`, which tests whether the spell is active, not
+    /// whether it is known, and an action button holding a superseded rank
     /// fails that test. The server sends `SMSG_SUPERCEDED_SPELL` when a higher
     /// rank is learned so the client can replace the id in the bar and the
-    /// book; this client does not read that opcode, and the old id stays in
-    /// `character_action` permanently. Measured on the reporting player's
-    /// warrior: button 73 holds Heroic Strike 11566 while `character_spell` has
-    /// only 11567, and button 75 holds Rend 11572 against 11573.
+    /// book. [`crate::world::incoming`] reads that opcode, and
+    /// [`super::supersede`] repairs ranks that went stale in
+    /// `character_action` before it was read. Measured on the reporting
+    /// player's warrior: button 73 held Heroic Strike 11566 while
+    /// `character_spell` had only 11567, and button 75 held Rend 11572 against
+    /// 11573.
     ///
     /// Without a deadline, one unanswered press blocked the character for the
     /// rest of the session: every later press of any spell met the gate in
@@ -685,11 +686,11 @@ const ASK_DEADLINE: Duration = Duration::from_secs(3);
 /// later press: the "another action is in progress, stuck on the character"
 /// report. See [`Casting::pending`] for the character it was measured on.
 ///
-/// The proper fix is in another module: reading `SMSG_SUPERCEDED_SPELL` so
-/// that the bar never holds an old rank. This function is the fallback for
-/// that case and for any other dropped reply, and is worth having on its own:
-/// without it, one unanswered packet disables casting for the rest of the
-/// session.
+/// [`crate::world::incoming`] reads `SMSG_SUPERCEDED_SPELL` and
+/// [`super::supersede`] repairs ranks already stale, so the bar should not
+/// hold an old rank. This function is the fallback for any reply that is
+/// still dropped: without it, one unanswered packet disables casting for the
+/// rest of the session.
 fn expire_the_ask(mut casting: ResMut<Casting>) {
     let Some(since) = casting.asked_at else { return };
     if since.elapsed() < ASK_DEADLINE {
@@ -840,6 +841,19 @@ impl Cooldowns {
         }
     }
 
+    /// Do what [`Self::set`] does, unless the spell's own cooldown already has
+    /// at least `ms` left. For a wait that must not shorten a longer one, which
+    /// is what an item's equip cooldown is beside the cooldown of its last use.
+    pub(crate) fn set_at_least(&mut self, spell_id: u32, ms: u32, spell: Option<&SpellInfo>) {
+        let wanted = Duration::from_millis(u64::from(ms));
+        let longer = self.0.get(&spell_id).and_then(|record| record.recovery).is_some_and(
+            |(start, length)| length.saturating_sub(start.elapsed()) >= wanted,
+        );
+        if !longer {
+            self.set(spell_id, ms, spell);
+        }
+    }
+
     /// Apply the server's statement of a cooldown, which overrides any
     /// computed value.
     ///
@@ -854,8 +868,7 @@ impl Cooldowns {
     /// inconsistently" report, and the one that lasted beyond the lockout.
     ///
     /// `spell` is `None` for a spell the catalogue does not carry. The timer is
-    /// still kept and only the grouping is lost, as before; that case is now
-    /// the exception.
+    /// still kept and only the grouping is lost.
     pub(crate) fn set(&mut self, spell_id: u32, ms: u32, spell: Option<&SpellInfo>) {
         let timer = Some((Instant::now(), Duration::from_millis(u64::from(ms))));
         let record = self.0.entry(spell_id).or_insert(Record {
@@ -1307,8 +1320,7 @@ fn follow_cast_state(
 /// Without this system a button keeps its old state until something else
 /// raises the event, which in combat is the next power tick. The fade would be
 /// correct most of the time and late the rest, which players report as
-/// "sometimes it works". The report that led to this change had that pattern,
-/// so the fix is a six-line system.
+/// "sometimes it works".
 ///
 /// A `Local` rather than change detection, because these fields live on a
 /// `WorldEntity` that the poll rewrites every tick: `Changed` fires every tick
@@ -1403,17 +1415,11 @@ fn rebuild_bar(
         })
         .collect();
 
-    // The empty slots of the visible page used to be filled from the
-    // character's spellbook (for six development rounds), because until a
-    // spell could be dragged onto the bar, a new character's empty bar could do
-    // nothing and could not be tested against the server. That deviation was
-    // recorded as one to delete, and it has been deleted: [`super::cursor`]
-    // carries a spell or an item onto a button and `CMSG_SET_ACTION_BUTTON`
-    // stores it.
-    //
-    // The bar now shows `SMSG_ACTION_BUTTONS` and nothing else: the server's
+    // The bar shows `SMSG_ACTION_BUTTONS` and nothing else: the server's
     // `playercreateinfo_action` for a new character, and whatever the last
-    // session left for an existing one. This matches the 1.12.1 client.
+    // session left for an existing one. This matches the 1.12.1 client. Empty
+    // slots stay empty; [`super::cursor`] carries a spell or an item onto a
+    // button and `CMSG_SET_ACTION_BUTTON` stores it.
 
     // One message for the whole bar rather than twelve, using `ActionButton.lua`'s
     // `arg1 == 0` convention; see `events::ActionbarSlotChanged`.
@@ -1421,13 +1427,12 @@ fn rebuild_bar(
 }
 
 
-// The cast bar used to be ended here by `finish_casts`, a system that polled
-// the player entity's release counter and then read `last_spell` to find which
-// spell had landed. Another release arriving in the same poll replaced that
-// value, which left the character unable to cast for the rest of the session.
-// The cast now ends in `crate::world::incoming`'s `PlayerEvent::CastReleased`
-// arm, which runs per packet and carries its own id; that arm documents the
-// failure.
+// The cast bar ends in `crate::world::incoming`'s `PlayerEvent::CastReleased`
+// arm, which runs per packet and carries its own spell id. It used to end
+// here, in `finish_casts`, a system that polled the player entity's release
+// counter and then read `last_spell` to find which spell had landed. A second
+// release in the same poll replaced that value, and the character could not
+// cast for the rest of the session. That arm documents the failure.
 
 /// Cancel the wind-up, the pending ask or the channel: the C side of
 /// `SpellStopCasting()`.
@@ -1772,6 +1777,16 @@ fn run_bindings(
             // `interface::played`.
             | Binding::ConfirmSummon
             | Binding::RequestTimePlayed
+            // `/roll`, the raid target icons, quest sharing and the tutorial
+            // tips belong to `interface::randomroll`, `interface::raidtarget`,
+            // `interface::questshare` and `interface::tutorial`.
+            | Binding::RandomRoll { .. }
+            | Binding::SetRaidTarget { .. }
+            | Binding::QuestLogPushQuest
+            | Binding::ConfirmAcceptQuest
+            | Binding::FlagTutorial(_)
+            | Binding::ClearTutorials
+            | Binding::ResetTutorials
             // The two options checkboxes belong to `interface::uioptions`.
             | Binding::ShowHelm(_)
             | Binding::ShowCloak(_)
@@ -2302,8 +2317,8 @@ fn cast_known_spell(
         });
     }
 
-    // An auto-repeat's press fires nothing. This is now true of every press;
-    // it used to be the exception. `Spell::update`'s `PREPARING` arm does not
+    // An auto-repeat's press fires nothing, like every other press.
+    // `Spell::update`'s `PREPARING` arm does not
     // `cast()` an auto-repeat when its timer runs out, so the first arrow leaves
     // on the ranged attack timer, which this client does not own and cannot
     // predict, and every later arrow is a new triggered cast. The only local
@@ -2365,8 +2380,7 @@ fn press_kind(info: &SpellInfo) -> PressKind {
 
 /// Send the cast request, start the global cooldown, and draw nothing.
 ///
-/// These are the three parts of a press in build 5875; this client used to get
-/// the third wrong. The 1.12.1 client runs its local refusals, records the
+/// These are the three parts of a press in build 5875. The 1.12.1 client runs its local refusals, records the
 /// spell and its targets as pending, starts the global cooldown as the cast is
 /// sent, and sends the packet. It starts no bar, plays no wind-up and changes
 /// no counter: it raises `SPELLCAST_START` only on receiving

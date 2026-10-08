@@ -1,11 +1,12 @@
 //! The C functions the interface may call, and the queue they write to.
 //!
-//! Every name here comes from `Interface\FrameXML\Bindings.xml`: these are the
-//! functions its binding bodies call, spelled as that file spells them. A Lua
-//! chunk looks a function up by its name, so a misspelling such as
-//! `ToggleSheathe` is not found. The set is kept small and is measured:
-//! `vale bindings` prints the file's whole call list against [`REGISTERED`],
-//! which gives the number of names still missing.
+//! Every name here is a function the interface's Lua calls and does not
+//! define: first the binding bodies of `Interface\FrameXML\Bindings.xml`, then
+//! the panels, popups and slash commands. Each is spelled as the calling file
+//! spells it. A Lua chunk looks a function up by its name, so a misspelling
+//! such as `ToggleSheathe` is not found. The set is measured: `vale bindings`
+//! prints `Bindings.xml`'s whole call list against [`REGISTERED`], which gives
+//! the number of names still missing.
 //!
 //! ## A verb records a request and does not act on it
 //!
@@ -23,14 +24,14 @@
 //!
 //! ## A function the interface defines in Lua must not be registered here
 //!
-//! `ActionButtonDown` and `ActionButtonUp` were registered in this file for two
-//! rounds. `Bindings.xml` calls them the same way it calls every verb, but
-//! `ActionButton.lua` defines both in about twenty lines of Lua. Loading the
-//! interface ran `function ActionButtonDown(id)` over the registered closure,
-//! the Lua definition replaced it, and casting stopped working once FrameXML
-//! loaded. No log reported it: the key resolved, the body ran, and the game's
-//! version called `button:GetButtonState()`, which this client did not
-//! implement at the time.
+//! `Bindings.xml` calls `ActionButtonDown` and `ActionButtonUp` the same way it
+//! calls every verb, but `ActionButton.lua` defines both in about twenty lines
+//! of Lua. When this file registered them, loading the interface ran
+//! `function ActionButtonDown(id)` over the registered closure, the Lua
+//! definition replaced it, and casting stopped working once FrameXML loaded.
+//! No log reported it: the key resolved, the body ran, and the game's version
+//! called `button:GetButtonState()`, which this client did not implement at
+//! the time.
 //!
 //! A verb belongs here only if the 1.12.1 client implements it in C. The test
 //! is whether `Interface\FrameXML\` defines the name, not whether
@@ -64,8 +65,8 @@ pub(in crate::lua) type Queue = Rc<RefCell<Vec<Binding>>>;
 
 /// A chat line the interface asked the client to send, on its own queue.
 ///
-/// [`Binding`] is `Copy` and carries no heap data. That suits the fifteen key
-/// verbs but not a verb whose argument is a sentence. This type has a separate
+/// [`Binding`] is `Copy` and carries no heap data. That suits the key verbs
+/// but not a verb whose argument is a sentence. This type has a separate
 /// queue instead of a wider `Binding` for two reasons: a different system
 /// drains it ([`crate::interface::chat::send`], the only system in the client
 /// that holds the socket for chat), and making the enum non-`Copy` would change
@@ -95,8 +96,8 @@ pub(in crate::lua) type EmoteQueue = Rc<RefCell<Vec<Emoted>>>;
 /// A new name for the pet, queued instead of turned into a [`Binding`].
 ///
 /// `Binding` is `Copy` because the key table hashes and compares it, so a verb
-/// that carries a heap allocation cannot be a `Binding`. `SendChatMessage` has
-/// its own queue for the same reason; this is the second such queue. The system
+/// that carries a heap allocation cannot be a `Binding`. `SendChatMessage` and
+/// `DoEmote` have their own queues for the same reason. The system
 /// that owns each subject drains its queue once per frame.
 pub(in crate::lua) type PetRenameQueue = Rc<RefCell<Vec<String>>>;
 
@@ -128,7 +129,7 @@ type BarToggleArgs = (
 /// `TARGETSELF`'s body calls `TargetUnit`, so nothing would call a verb named
 /// `TargetSelf`. `ActionButtonDown` and `ActionButtonUp` are absent because the
 /// interface defines them in Lua; see the module comment.
-pub const REGISTERED: [&str; 77] = [
+pub const REGISTERED: [&str; 84] = [
     "AcceptResurrect",
     "AcceptXPLoss",
     "AssistUnit",
@@ -144,10 +145,13 @@ pub const REGISTERED: [&str; 77] = [
     "CastSpell",
     "ChangeActionBarPage",
     "ClearCursor",
+    "ClearTutorials",
+    "ConfirmAcceptQuest",
     "ConfirmBinder",
     "ConfirmPetUnlearn",
     "ConfirmSummon",
     "DeclineResurrect",
+    "FlagTutorial",
     "FollowUnit",
     "ForceQuit",
     "Jump",
@@ -168,11 +172,14 @@ pub const REGISTERED: [&str; 77] = [
     "PitchUpStart",
     "PitchUpStop",
     "PlaceAction",
+    "QuestLogPushQuest",
     "Quit",
+    "RandomRoll",
     "ReloadUI",
     "RepopMe",
     "RequestTimePlayed",
     "ResetCursor",
+    "ResetTutorials",
     "RetrieveCorpse",
     "RunScript",
     "Screenshot",
@@ -180,6 +187,7 @@ pub const REGISTERED: [&str; 77] = [
     "SetActionBarToggles",
     "SetCursor",
     "SetPortraitToTexture",
+    "SetRaidTarget",
     "ShowCloak",
     "ShowHelm",
     "SitOrStand",
@@ -325,10 +333,10 @@ pub(in crate::lua) fn register(
         // nothing else in the file targets by token.
         other => match crate::interface::api::UnitId::parse(other) {
             Some(id @ crate::interface::api::UnitId::Party(_)) => Some(Binding::TargetToken(id)),
-            // A pet is not modelled. Targeting a pet that does not exist does
-            // nothing; it must not fall through to clearing the target,
-            // because `TARGETSELF` takes this branch when the player is
-            // already the target.
+            // Any other token, the pet included, queues nothing: targeting by
+            // the pet token is not implemented. It must not fall through to
+            // clearing the target, because `TARGETSELF` takes this branch
+            // when the player is already the target.
             _ => None,
         },
     });
@@ -346,11 +354,11 @@ pub(in crate::lua) fn register(
 
     // --- movement controls ---
     //
-    // Twenty-three names. Each was a raw `KeyCode` read in
-    // `world::session::send_input` until the key-bindings panel was added.
-    // Once keys could be rebound, that was wrong: `A` is `TURNLEFT` in the
-    // shipped defaults, so binding `A` to `ACTIONBUTTON3` cast a spell and
-    // also turned the character, and nothing showed that the key did both.
+    // Twenty-three names. They are verbs and not `KeyCode` reads in
+    // `world::session::send_input`, so a rebound key does only what it is
+    // bound to. `A` is `TURNLEFT` in the shipped defaults. While
+    // `send_input` read the key directly, binding `A` to `ACTIONBUTTON3` cast
+    // a spell and also turned the character.
     //
     // The nine held pairs are generated from [`Control::verbs`] rather than
     // written out, so the enum and the registration cannot drift apart, as a
@@ -385,10 +393,10 @@ pub(in crate::lua) fn register(
     verb!("Jump", (), |_ignored| Some(Binding::Jump));
     verb!("SitOrStand", (), |_ignored| Some(Binding::SitOrStand));
     verb!("ToggleAutoRun", (), |_ignored| Some(Binding::ToggleAutoRun));
-    // `ToggleRun` is a latch, and Shift is not a movement control. This client
-    // once walked while Shift was held, which 1.12 does not do. Shift is the
-    // modifier in `SHIFT-TAB` and many other bindings, so every shifted
-    // binding also slowed the character.
+    // `ToggleRun` is a latch, and Shift is not a movement control: 1.12 does
+    // not walk while Shift is held. Shift is the modifier in `SHIFT-TAB` and
+    // many other bindings, so walking on a held Shift slows the character on
+    // every shifted binding.
     verb!("ToggleRun", (), |_ignored| Some(Binding::ToggleRun));
     // `FOLLOWTARGET` is `FollowUnit("target")`. A token this client has no
     // state for is dropped, as in `TargetUnit` above.
@@ -411,10 +419,10 @@ pub(in crate::lua) fn register(
     // `TakeScreenshot` is a Lua function in `WorldFrame.lua`: it hides the
     // `ScreenshotStatus` frame if one is shown and then calls `Screenshot()`.
     // In the 1.12.1 client `TakeScreenshot` is not a C function; `Screenshot`
-    // is, and it queues the capture and returns nothing. For six rounds this
-    // client registered `TakeScreenshot`. The loader replaced it with the Lua
-    // definition at the first login, so the registration never ran, and
-    // `vale framexml` listed it under COLLISION, a count that must be zero.
+    // is, and it queues the capture and returns nothing. A closure registered
+    // as `TakeScreenshot` is replaced by the Lua definition at the first
+    // login, so it never runs, and `vale framexml` lists it under COLLISION,
+    // a count that must be zero.
     //
     // With the verb registered as `Screenshot`, the two parts work as in the
     // 1.12.1 client: the `SCREENSHOT` binding runs the directory's
@@ -484,6 +492,25 @@ pub(in crate::lua) fn register(
     verb!("ConfirmSummon", (), |_ignored| Some(Binding::ConfirmSummon));
     // `/played`: `SlashCmdList["PLAYED"]`. See [`crate::interface::played`].
     verb!("RequestTimePlayed", (), |_ignored| Some(Binding::RequestTimePlayed));
+    // `/roll`. `ChatFrame.lua` passes both bounds as strings; see
+    // [`crate::interface::randomroll::roll_bound`].
+    verb!("RandomRoll", (Option<mlua::Value>, Option<mlua::Value>), |bounds| Some(
+        Binding::RandomRoll {
+            min: crate::interface::randomroll::roll_bound(bounds.0.as_ref()),
+            max: crate::interface::randomroll::roll_bound(bounds.1.as_ref()),
+        }
+    ));
+    // `SetRaidTarget(unit, index)`. An index that is not a number clears, as
+    // 0 does.
+    verb!("SetRaidTarget", (String, Option<f64>), |args| crate::interface::api::UnitId::parse(&args.0)
+        .map(|unit| Binding::SetRaidTarget { unit, index: args.1.unwrap_or(0.0) as i64 }));
+    verb!("QuestLogPushQuest", (), |_ignored| Some(Binding::QuestLogPushQuest));
+    verb!("ConfirmAcceptQuest", (), |_ignored| Some(Binding::ConfirmAcceptQuest));
+    // The three tutorial requests. `FlagTutorial` takes the tutorial's id, 1
+    // to 50.
+    verb!("FlagTutorial", f64, |id| Some(Binding::FlagTutorial(id.max(0.0) as u32)));
+    verb!("ClearTutorials", (), |_ignored| Some(Binding::ClearTutorials));
+    verb!("ResetTutorials", (), |_ignored| Some(Binding::ResetTutorials));
     // `ShowHelm(value)` and `ShowCloak(value)`: `UIOptionsFrame_Save` passes
     // the checkbox as the string "1" or "0". The argument is read through
     // [`truthy`], where "0" is false, not through Lua's rule, where every
@@ -570,9 +597,9 @@ pub(in crate::lua) fn register(
     // button. A click calls it directly (`ActionButton_OnClick` is
     // `UseAction(ActionButton_GetPagedID(this), 0, 1)`), and a key reaches it
     // because `ActionButtonUp`'s body ends in the same call. This one C
-    // function is all an action bar needs from the client. The two verbs once
-    // registered above it reimplemented the game's Lua in Rust, and the game's
-    // Lua then replaced them.
+    // function is all an action bar needs from the client. `ActionButtonDown`
+    // and `ActionButtonUp` are the game's Lua and are not registered; see the
+    // module comment.
     //
     // The middle argument is `checkCursor`, and it is read.
     // `UseAction(slot, 1)` is the shipped `OnClick`'s call. With the flag set,
@@ -646,7 +673,7 @@ pub(in crate::lua) fn register(
     // `PickupSpell(id, bookType)` is called from `SpellButton_OnClick`'s drag
     // branch and its shift-click branch. The first argument is a spellbook row,
     // not a spell id (see [`super::super::panels::spellbook`]). `row` refuses
-    // the pet book, which this client does not have.
+    // the pet book, which this client does not implement.
     verb!("PickupSpell", (Option<usize>, Option<String>), |args| {
         let (index, book) = args;
         super::super::panels::spellbook::row(index, book)
@@ -669,13 +696,11 @@ pub(in crate::lua) fn register(
     // (use or equip, and which of the item template's five spell blocks fires)
     // needs the item templates in [`crate::interface::items`].
     //
-    // [`Binding::CancelPlayerBuff`] follows the same split. `container.rs`
-    // lists writes that are not registered; these two were on that list until
-    // `CMSG_USE_ITEM` had a sender behind them, which it now has.
+    // [`Binding::CancelPlayerBuff`] follows the same split. These two are
+    // registered because `CMSG_USE_ITEM` has a sender behind them.
     //
-    // `PickupContainerItem` and `SplitContainerItem` are still not registered,
-    // for the reason that list gives: the cursor cannot carry an item, so a
-    // no-op would swallow a left click and report success.
+    // `PickupContainerItem` and `SplitContainerItem` are registered in
+    // [`super::super::panels::container`], which reads the cursor.
     verb!("UseContainerItem", (Option<i64>, Option<i64>), |args| {
         let (bag, slot) = args;
         u8::try_from(slot.unwrap_or(0).max(0))
@@ -694,8 +719,8 @@ pub(in crate::lua) fn register(
     .map(Binding::UseInventoryItem));
 
     // `SendChatMessage(text, type, language, target)` is the last call on every
-    // path that sends a chat line. It was the most-called missing global (seven
-    // call sites, first in `vale framexml`'s list). Everything before it is the
+    // path that sends a chat line, with seven call sites in the directory.
+    // Everything before it is the
     // game's own Lua from the archive: `ChatEdit_SendText` reads the edit box,
     // `ChatEdit_ParseText` chooses the type from `SLASH_*` and `ChatTypeInfo`,
     // and the twenty or so `SlashCmdList` entries that call this directly are
@@ -743,9 +768,8 @@ pub(in crate::lua) fn register(
     // `RunScript(body)` implements `/script`, so this client does not parse
     // that command itself: `SlashCmdList["SCRIPT"]` is one line of
     // `ChatFrame.lua`, and it calls this function. `GlobalStrings.lua` also
-    // sets `SLASH_SCRIPT2 = "/run"`, so 1.12 ships the short form as well; an
-    // earlier, deleted parser in this client wrongly refused `/run` as a later
-    // client's command.
+    // sets `SLASH_SCRIPT2 = "/run"`, so 1.12 ships the short form as well.
+    // `/run` is not a later client's addition.
     //
     // It runs immediately rather than recording; it is the only function in
     // this file that does. A script exists for its side effects on the
@@ -794,11 +818,11 @@ fn slot_binding(slot: u8, on_self: bool) -> Option<Binding> {
 /// Converts a Lua argument to a boolean with the 1.12.1 client's rule, not
 /// Lua's. [`super::super::api::to_boolean`] implements that rule.
 ///
-/// This function once used a copy of Lua's rule, under which 0 is true, so
-/// `TargetNearestEnemy(0)` stepped backwards. The 1.12.1 client treats 0 as
-/// false for this argument, and `TargetNearestEnemy(0)` steps forwards. The
-/// same mistake in [`super::super::widgets::button`] drew a checked border on
-/// every action button.
+/// Under Lua's rule 0 is true, which makes `TargetNearestEnemy(0)` step
+/// backwards. The 1.12.1 client treats 0 as false for this argument, and
+/// `TargetNearestEnemy(0)` steps forwards. Lua's rule in
+/// [`super::super::widgets::button`] drew a checked border on every action
+/// button.
 ///
 /// The `true` default applies only to a table or a userdata, which no caller
 /// passes. The 1.12.1 client's widget setters also treat those as true.
@@ -926,7 +950,7 @@ mod tests {
             called("PickupSpell(4, 'spell');"),
             vec![Binding::PickupSpellbookRow(4)]
         );
-        // The pet book, which this client does not have, records nothing, as
+        // The pet book, which this client does not implement, records nothing, as
         // every other spellbook read refuses it.
         assert!(called("PickupSpell(4, 'pet');").is_empty());
         assert!(called("PickupSpell(0, 'spell');").is_empty());
@@ -985,10 +1009,10 @@ mod tests {
     /// `ActionButtonDown` and `ActionButtonUp` are not verbs, so they must not
     /// be defined after registration.
     ///
-    /// They were registered here for two rounds, and casting stopped working:
     /// `ActionButton.lua` defines both, and the loader runs after the host is
-    /// built, so the file's twenty-line version replaced the closure and every
-    /// action key raised an error inside `button:GetButtonState()`. A key
+    /// built, so a registration here is replaced by the file's twenty-line
+    /// version. While they were registered, every action key raised an error
+    /// inside `button:GetButtonState()` and casting stopped working. A key
     /// should run the game's own Lua body, which ends in `UseAction`. See the
     /// module comment, and `vale framexml`, which reports collisions.
     #[test]
@@ -1012,10 +1036,8 @@ mod tests {
 
     /// `TargetNearestEnemy(1)` steps backwards; the comment in `Bindings.xml`
     /// is `-- 1 (or "true") means reverse!`. The argument is converted with
-    /// the 1.12.1 client's rule, so `"true"` reverses and `0` does not.
-    ///
-    /// This test once asserted that 0 reversed, following Lua's rule. See
-    /// [`crate::lua::api::to_boolean`].
+    /// the 1.12.1 client's rule, so `"true"` reverses and `0` does not. Lua's
+    /// rule would make 0 reverse. See [`crate::lua::api::to_boolean`].
     #[test]
     fn the_reverse_flag_is_the_clients_own_coercion() {
         assert_eq!(
@@ -1104,8 +1126,8 @@ mod tests {
         );
         // A `.` command is sent as an ordinary say, so every GM command the
         // server has works without this client knowing any of them. The
-        // deleted egui chat pane followed the same rule; the game's own
-        // `ChatEdit_ParseText` now produces it instead of a parser here.
+        // game's own `ChatEdit_ParseText` produces the say; this client has
+        // no chat parser of its own.
         assert_eq!(spoken(r#"SendChatMessage(".tele tanaris", "SAY")"#)[0].kind, ChatType::Say);
         // An empty line is not sent, and neither is a chat type this client
         // does not know: `/g` with no guild must not be broadcast to the zone.
@@ -1134,9 +1156,9 @@ mod tests {
         assert!(lua.load(r#"RunScript("")"#).exec().is_ok());
     }
 
-    /// Targeting a pet that does not exist does nothing. It must not fall
-    /// through to clearing the target, because `TARGETSELF` takes that branch
-    /// when the player is already the target.
+    /// `TargetUnit("pet")` queues nothing. It must not fall through to
+    /// clearing the target, because `TARGETSELF` takes that branch when the
+    /// player is already the target.
     #[test]
     fn targeting_a_unit_this_client_has_no_state_for_is_a_no_op() {
         assert_eq!(called(r#"TargetUnit("player");"#), vec![Binding::TargetSelf]);
@@ -1183,8 +1205,8 @@ mod tests {
             vec![Binding::SpellTargetUnit(UnitId::Raid(7))]
         );
         assert!(called(r#"SpellTargetUnit("raidpet3");"#).is_empty());
-        // `SpellStopTargeting` is not asserted here. It moved to [`super`]
-        // when Escape became a binding, because it has to return whether it
-        // cancelled a spell cursor; see the comment in `register`.
+        // `SpellStopTargeting` is not asserted here. It is registered in
+        // [`super`], because it has to return whether it cancelled a spell
+        // cursor; see the comment in `register`.
     }
 }

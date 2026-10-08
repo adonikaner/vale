@@ -29,9 +29,14 @@
 //!                C functions over the key table the keyboard also reads
 //! taxi.rs        the flight map, whose background is painted from a table
 //! pagetext.rs    text read from an object: a sign, a plaque, or a book on a
-//!                stand; the one window no NPC owns
+//!                stand; like the mailbox, a window no NPC owns
 //! duel.rs        the four script functions a duel uses, all of them writes
 //! summon.rs      the summon popup's three reads
+//! worldstate.rs  the world state frame above the minimap: how many lines,
+//!                and what each says
+//! tutorial.rs    whether tutorial tips are on
+//! raidtarget.rs  which raid target icon a unit carries
+//! questshare.rs  whether the selected quest may be shared
 //! uioptions.rs   the options panel's ShowingHelm and ShowingCloak
 //! inspect.rs     the inspect window's reads: who may be inspected, and the
 //!                honor tab
@@ -84,6 +89,10 @@ pub mod mail;
 pub mod pagetext;
 pub mod duel;
 pub mod summon;
+pub mod worldstate;
+pub mod tutorial;
+pub mod raidtarget;
+pub mod questshare;
 pub mod uioptions;
 pub mod guild;
 pub mod inspect;

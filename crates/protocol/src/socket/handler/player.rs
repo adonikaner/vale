@@ -250,8 +250,7 @@ pub(super) fn pet_dismiss_sound(ctx: &mut Incoming, pkt: &Packet) {
 /// This is the only packet that answers an item right-click the server
 /// discarded. A potion whose level requirement is not met never reaches
 /// vmangos's `Spell::prepare`, so no `SMSG_CAST_RESULT` is sent. Without this
-/// packet the click looks the same as a click on empty ground, which is the
-/// reported problem this handler fixes.
+/// packet the click looks the same as a click on empty ground.
 ///
 /// `EQUIP_ERR_OK` also arrives here, as a one-byte body: several item actions
 /// end with one, and it is not a failure. It is passed on rather than dropped.
@@ -1111,6 +1110,15 @@ pub(super) fn spell_cooldown(ctx: &mut Incoming, pkt: &Packet) {
     }
 }
 
+/// `SMSG_ITEM_COOLDOWN`: the wait after equipping an item with a use. See
+/// [`spells::parse_item_cooldown`].
+pub(super) fn item_cooldown(ctx: &mut Incoming, pkt: &Packet) {
+    let Some((item, spell_id)) = read(ctx.stats, pkt, spells::parse_item_cooldown(&pkt.body)) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::ItemCooldown { item, spell_id });
+}
+
 /// `SMSG_CLEAR_COOLDOWN`: a cooldown ends now.
 ///
 /// The counterpart to [`spell_cooldown`] above. The server sends it when a
@@ -1826,8 +1834,8 @@ pub(super) fn forced_reactions(ctx: &mut Incoming, pkt: &Packet) {
 /// so without this packet the map changes with no notification. The interface
 /// re-reads the map overlays only on `WORLD_MAP_UPDATE`, so a zone map opened
 /// before the bit arrived keeps showing the unexplored map until something
-/// else changes the view. That is one of the two causes of the reported
-/// problem that the map did not update until relog.
+/// else changes the view. Not reading this packet is one of the two causes of
+/// a map that stays unexplored until the next login.
 pub(super) fn discovered(ctx: &mut Incoming, pkt: &Packet) {
     let parsed = {
         let mut r = crate::bytes::Reader::new(&pkt.body);
@@ -2002,4 +2010,98 @@ pub(super) fn quest_item(ctx: &mut Incoming, pkt: &Packet) {
     let have = crate::play::items::Inventory::read(ctx.world).count_of(entry);
     ctx.world
         .note_event(PlayerEvent::QuestItem { entry, added, have });
+}
+
+// --- The group's shared marks and quests ----------------------------------
+//
+// A minimap ping, the raid target icons and quest sharing. Each names another
+// group member by guid.
+
+/// `MSG_MINIMAP_PING`: a group member clicked their minimap. See
+/// [`crate::play::minimap`].
+pub(super) fn minimap_ping(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(ping) = read(ctx.stats, pkt, crate::play::minimap::parse_minimap_ping(&pkt.body)) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::MinimapPing(ping));
+}
+
+/// `MSG_RAID_TARGET_UPDATE`: one raid target icon changed, or the whole list.
+/// See [`crate::play::raidtarget`].
+pub(super) fn raid_targets(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(update) = read(
+        ctx.stats,
+        pkt,
+        crate::play::raidtarget::parse_raid_target_update(&pkt.body),
+    ) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::RaidTargets(update));
+}
+
+/// `MSG_QUEST_PUSH_RESULT`: what happened when the player shared a quest with
+/// one member. The line names that member and is shown only when the name is
+/// already known; the 1.12.1 client asks for no name here. See
+/// [`crate::play::questshare`].
+pub(super) fn quest_push_result(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(outcome) = read(ctx.stats, pkt, crate::play::questshare::parse_push_result(&pkt.body)) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::QuestPushResult(outcome));
+}
+
+/// `SMSG_QUEST_CONFIRM_ACCEPT`: a member accepted a party quest, and the
+/// player is asked whether to take it too. The popup names that member and,
+/// as with the push result, needs the name to be known already. See
+/// [`crate::play::questshare`].
+pub(super) fn quest_confirm_accept(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(offer) = read(ctx.stats, pkt, crate::play::questshare::parse_confirm_accept(&pkt.body)) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::QuestConfirmAccept(Box::new(offer)));
+}
+
+// --- World states, tutorials and the rest of the login burst --------------
+
+/// `SMSG_INIT_WORLD_STATES`: the zone's whole world state table. See
+/// [`crate::play::worldstate`].
+pub(super) fn init_world_states(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(init) = read(ctx.stats, pkt, crate::play::worldstate::parse_init_world_states(&pkt.body)) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::WorldStatesInit(Box::new(init)));
+}
+
+/// `SMSG_UPDATE_WORLD_STATE`: one world state changed.
+pub(super) fn update_world_state(ctx: &mut Incoming, pkt: &Packet) {
+    let Some((state, value)) = read(
+        ctx.stats,
+        pkt,
+        crate::play::worldstate::parse_update_world_state(&pkt.body),
+    ) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::WorldStateUpdate { state, value });
+}
+
+/// `SMSG_TUTORIAL_FLAGS`: the account's tutorial mask. Sent at login and again
+/// after every transfer. See [`crate::play::tutorial`].
+pub(super) fn tutorial_flags(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(flags) = read(ctx.stats, pkt, crate::play::tutorial::parse_tutorial_flags(&pkt.body)) else {
+        return;
+    };
+    ctx.world.note_event(PlayerEvent::TutorialFlags(flags));
+}
+
+/// `SMSG_ACCOUNT_DATA_MD5`: the server's digests of the stored settings files.
+/// Read so that a malformed body is reported; this client does not
+/// synchronise those files with the server. See [`crate::play::accountdata`].
+pub(super) fn account_data_md5(ctx: &mut Incoming, pkt: &Packet) {
+    let _ = read(ctx.stats, pkt, crate::play::accountdata::parse_account_data_md5(&pkt.body));
+}
+
+/// `SMSG_SET_REST_START`: read so that a malformed body is reported. No
+/// interface function reads the value. See [`crate::play::rest`].
+pub(super) fn set_rest_start(ctx: &mut Incoming, pkt: &Packet) {
+    let _ = read(ctx.stats, pkt, crate::play::rest::parse_set_rest_start(&pkt.body));
 }

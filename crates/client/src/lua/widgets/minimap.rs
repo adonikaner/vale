@@ -1,7 +1,6 @@
-//! The `<Minimap>` widget: the one frame kind in `Interface\FrameXML\` that
-//! shows the world rather than art, and the last of the four
-//! `vale_assets::interface::widgets::FRAME_KINDS` names that had no
-//! implementation.
+//! The `<Minimap>` widget: the one frame type in `Interface\FrameXML\` that
+//! shows the world rather than art. It was the last of the four
+//! `vale_assets::interface::widgets::FRAME_KINDS` names to be implemented.
 //!
 //! ```text
 //! Minimap:GetZoom()          current level of six         5 calls
@@ -15,8 +14,9 @@
 //! all 167 files of `Interface\FrameXML\` for `Minimap:`. The rest of the
 //! widget's behaviour belongs to the client. Where it looks, how far it sees
 //! and the shape it is cut to are in [`vale_assets::tables::minimap`]; what it
-//! draws is in `crate::ui::framexml`. This file holds only the state a script
-//! can read and write.
+//! draws is in `crate::ui::framexml`. This file holds the state a script can
+//! read and write, and the two systems that keep that state in step with the
+//! world: [`announce_inside`] and [`follow_pings`].
 //!
 //! ## Two zoom levels, indoor and outdoor, stored on the widget
 //!
@@ -32,6 +32,15 @@
 //! 1.12.1 client raises it, and when the world is first entered. Its handler
 //! in `Minimap.lua` re-reads `GetZoom` and enables or disables the two zoom
 //! buttons, which would otherwise keep the state of the level just left.
+//!
+//! ## Pings, held in world coordinates
+//!
+//! `PingLocation` records the click in yards east and north of the character.
+//! [`follow_pings`] converts it to a world position, sends it as
+//! `MSG_MINIMAP_PING` when the character is in a group, holds it, and raises
+//! `MINIMAP_PING`. A group member's ping is held and raised the same way.
+//! `GetPingPosition` answers the held ping's offset as fractions of the frame,
+//! which [`follow_pings`] recomputes every frame from the character's position.
 
 use bevy::prelude::*;
 use vale_assets::tables::minimap::{DEFAULT_ZOOM, ZOOM_LEVELS};
@@ -46,14 +55,19 @@ const INSIDE_ZOOM_KEY: &str = "__minimapInsideZoom";
 /// which chooses the zoom level `GetZoom` and `SetZoom` act on.
 const INSIDE_KEY: &str = "vale.minimap.inside";
 
-/// The key of the ping, stored as an offset from the widget's centre in the
-/// widget's units.
+/// The key of the ping on the widget's table: its offset from the character
+/// as fractions of the frame, east then north, which `GetPingPosition`
+/// answers. Written by [`follow_pings`] while a ping is held.
 const PING_KEY: &str = "__minimapPing";
 
+/// The registry key of a click `PingLocation` has made and [`follow_pings`]
+/// has not yet sent: yards east and north of the character.
+const PING_REQUEST_KEY: &str = "vale.minimap.pingRequest";
+
 /// The widget methods this file registers. Sorted, and counted by
-/// `vale framexml` as implemented rather than stubbed. `GetZoom` was
-/// previously in [`super::super::api::stubs::METHODS`] returning a constant
-/// `0`, which is a valid zoom level and so looked like a working
+/// `vale framexml` as implemented rather than stubbed. `GetZoom` used to be in
+/// [`super::super::api::stubs::METHODS`], returning a constant `0`. That is a
+/// valid zoom level, so the stub could not be told apart from a working
 /// implementation.
 pub const METHODS: [&str; 7] = [
     "GetPingPosition",
@@ -76,7 +90,7 @@ pub struct MinimapWidget {
     /// 0..[`ZOOM_LEVELS`): the outdoor zoom level, an index into the outdoor
     /// radius table in [`vale_assets::tables::minimap`].
     pub zoom: usize,
-    /// …and the indoor one, into the indoor table.
+    /// The indoor zoom level, an index into the indoor radius table.
     pub inside_zoom: usize,
 }
 
@@ -91,11 +105,12 @@ impl MinimapWidget {
     }
 }
 
-/// Install the five methods onto the shared frame method table.
+/// Install the seven methods in [`METHODS`] onto the shared frame method
+/// table.
 ///
 /// Called from [`super::frames::register_methods`] before
-/// [`super::super::api::stubs::install_methods`], so that `GetZoom` here takes
-/// precedence over the stub.
+/// [`super::super::api::stubs::install_methods`]. The stub list no longer
+/// holds `GetZoom`.
 pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {
     // `SetMaskTexture(file)` and `SetBlipTexture(file)`: the round mask that
     // shapes the map and the texture the tracking dots come from. Stored and
@@ -125,39 +140,44 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     let levels = lua.create_function(|_, _: mlua::MultiValue| Ok(ZOOM_LEVELS))?;
     methods.set("GetZoomLevels", levels)?;
 
-    // The ping is stored in the widget's units, not in world coordinates. This
-    // differs from 1.12, which fixes the ping to the ground, so the ping stays
-    // over the clicked place while the character walks away; here it stays
-    // where it was drawn. The ping is a five-second cosmetic marker that
-    // nothing else reads (`MINIMAP_PING` is a party member's ping, and this
-    // client raises no such event), and storing it in world coordinates would
-    // need a world borrow this method cannot take; see the module comment on
-    // where the world comes in.
-    //
-    // `Minimap_SetPing` multiplies the value it receives by the frame's width,
-    // so the read returns a fraction while the write takes units. That
-    // asymmetry comes from the FrameXML file, not from this client.
-    let ping = lua.create_function(|_, (this, x, y): (mlua::Table, Option<f32>, Option<f32>)| {
-        this.raw_set(PING_KEY, vec![x.unwrap_or(0.0), y.unwrap_or(0.0)])
-    })?;
-    methods.set("PingLocation", ping)?;
-
-    let ping_position = lua.create_function(|_, this: mlua::Table| {
-        let held: Option<Vec<f32>> = this.raw_get(PING_KEY).ok().flatten();
-        let held = held.unwrap_or_default();
-        let (x, y) = (
-            held.first().copied().unwrap_or(0.0),
-            held.get(1).copied().unwrap_or(0.0),
-        );
+    // `PingLocation(x, y)`: the click, as an offset from the frame's centre in
+    // the frame's units. The 1.12.1 client turns it into a world position with
+    // the radius of the zoom level that applies (east is `x / width` of the
+    // map's diameter, north is `y / height`), sends it when the character is
+    // in a group, and shows it on its own minimap whether or not it sent it.
+    // A value that is not a number counts as 0, which pings the character's
+    // own position. The method records the offset in yards and
+    // [`follow_pings`] does the rest, since a world position needs the
+    // character's, which a method has no borrow of. The client places a
+    // pending ground-targeted spell instead of pinging; this client does not.
+    let ping = lua.create_function(|lua, (this, x, y): (mlua::Table, mlua::Value, mlua::Value)| {
         let side = |key: &str| {
-            this.raw_get::<Option<f64>>(key)
-                .ok()
-                .flatten()
-                .unwrap_or(0.0) as f32
+            this.raw_get::<Option<f64>>(key).ok().flatten().unwrap_or(0.0) as f32
         };
         let width = side(super::widget::WIDTH_KEY).max(f32::EPSILON);
         let height = side(super::widget::HEIGHT_KEY).max(f32::EPSILON);
-        Ok((x / width, y / height))
+        let number = |value: &mlua::Value| match value {
+            mlua::Value::Integer(n) => *n as f32,
+            mlua::Value::Number(n) => *n as f32,
+            _ => 0.0,
+        };
+        let inside: Option<bool> = lua.named_registry_value(INSIDE_KEY).ok().flatten();
+        let level = zoom_of(&this, current_key(lua));
+        let across = 2.0 * vale_assets::tables::minimap::radius_yards(level, inside == Some(true));
+        lua.set_named_registry_value(
+            PING_REQUEST_KEY,
+            vec![number(&x) / width * across, number(&y) / height * across],
+        )
+    })?;
+    methods.set("PingLocation", ping)?;
+
+    // `GetPingPosition()`: the held ping's offset from the character as
+    // fractions of the frame, recomputed from where the character is now, so
+    // the ping stays over the place that was clicked. 0, 0 with no ping.
+    let ping_position = lua.create_function(|_, this: mlua::Table| {
+        let held: Option<Vec<f32>> = this.raw_get(PING_KEY).ok().flatten();
+        let held = held.unwrap_or_default();
+        Ok((held.first().copied().unwrap_or(0.0), held.get(1).copied().unwrap_or(0.0)))
     })?;
     methods.set("GetPingPosition", ping_position)?;
     Ok(())
@@ -183,7 +203,7 @@ fn zoom_of(frame: &mlua::Table, key: &str) -> usize {
     })
 }
 
-/// **Tell the interface which zoom level applies**, and raise
+/// Tell the interface which zoom level applies, and raise
 /// `MINIMAP_UPDATE_ZOOM` when that changes: on the first frame in the world
 /// and on every move between inside and outside a building, as the 1.12.1
 /// client does. Leaving the world forgets the last answer, so the next entry
@@ -214,9 +234,125 @@ pub fn announce_inside(
     }
 }
 
+/// A ping held in world coordinates: the place the last ping marked.
+#[derive(Default)]
+pub struct HeldPing(Option<(f32, f32)>);
+
+/// Send the player's pings, receive the group's, and keep the ping on the
+/// ground.
+///
+/// A click recorded by `PingLocation` becomes a world position from the
+/// character's: north is world `+x` and east is world `-y`. It is sent as
+/// `MSG_MINIMAP_PING` when the character is in a party or a raid, and is held
+/// and raised as `MINIMAP_PING` either way, since vmangos does not send a ping
+/// back to its sender. A group member's ping arrives as a world position and
+/// is held and raised the same way. The event's arguments are the pinger's
+/// unit token and the ping's offset from the character as fractions of the
+/// frame, east then north, using the radius of the zoom level that applies.
+/// The token is `player` for the character and for anyone not in the group,
+/// `party<n>` in a party and `raid<n>` in a raid; the 1.12.1 client answers
+/// `party<n>` for a raid member in the character's own subgroup, which this
+/// client does not. While a ping is held, the offset is recomputed every frame
+/// onto the `Minimap` frame, which is what `GetPingPosition` reads.
+#[allow(clippy::too_many_arguments)]
+pub fn follow_pings(
+    host: Option<NonSendMut<super::super::host::LuaHost>>,
+    world: super::super::api::LuaWorld,
+    view: Res<crate::interface::minimap::MinimapView>,
+    session: Res<crate::world::session::Session>,
+    mut incoming: MessageReader<crate::interface::minimap::PingAnswer>,
+    mut held: Local<HeldPing>,
+    mut pressed: MessageWriter<crate::input::bindings::BindingPressed>,
+) {
+    let Some(mut host) = host else { return };
+    if !view.in_world {
+        incoming.clear();
+        held.0 = None;
+        return;
+    }
+    let (here_x, here_y) = view.position;
+    let live = world.live();
+    // The radius of the level that applies, off the game's one `Minimap` frame.
+    let across = host
+        .run(&live, |lua| {
+            let frame: Option<mlua::Table> = lua.globals().get("Minimap").ok();
+            Ok(frame.as_ref().and_then(widget).map(|w| {
+                2.0 * vale_assets::tables::minimap::radius_yards(w.level(view.indoors), view.indoors)
+            }))
+        })
+        .ok()
+        .flatten()
+        .unwrap_or(2.0 * vale_assets::tables::minimap::radius_yards(DEFAULT_ZOOM, view.indoors));
+    let fractions = |(x, y): (f32, f32)| (-(y - here_y) / across, (x - here_x) / across);
+
+    let mut raised: Vec<(String, (f32, f32))> = Vec::new();
+    // The character's own click.
+    let request: Option<Vec<f32>> = host
+        .run(&live, |lua| {
+            let request: Option<Vec<f32>> = lua.named_registry_value(PING_REQUEST_KEY).ok().flatten();
+            if request.is_some() {
+                lua.set_named_registry_value(PING_REQUEST_KEY, mlua::Value::Nil)?;
+            }
+            Ok(request)
+        })
+        .ok()
+        .flatten();
+    if let Some(request) = request {
+        let east = request.first().copied().unwrap_or(0.0);
+        let north = request.get(1).copied().unwrap_or(0.0);
+        let ping = (here_x + north, here_y - east);
+        if world.party.count() > 0 {
+            if let Some(active) = session.active.as_ref() {
+                active.live.minimap_ping(ping.0, ping.1);
+            }
+        }
+        held.0 = Some(ping);
+        raised.push(("player".to_string(), fractions(ping)));
+    }
+    // The group's.
+    let own = live.units.guid(crate::interface::api::UnitId::Player);
+    for crate::interface::minimap::PingAnswer(ping) in incoming.read() {
+        let token = if world.party.raid {
+            world.party.raid_index_of(ping.pinger, own).map(|index| format!("raid{index}"))
+        } else {
+            world
+                .party
+                .members
+                .iter()
+                .position(|member| member.guid == ping.pinger)
+                .map(|index| format!("party{}", index + 1))
+        };
+        let at = (ping.x, ping.y);
+        held.0 = Some(at);
+        raised.push((token.unwrap_or_else(|| "player".to_string()), fractions(at)));
+    }
+    if let Some(at) = held.0 {
+        let (east, north) = fractions(at);
+        let written = host.run(&live, |lua| {
+            if let Ok(frame) = lua.globals().get::<mlua::Table>("Minimap") {
+                frame.raw_set(PING_KEY, vec![east, north])?;
+            }
+            Ok(())
+        });
+        if let Err(e) = written {
+            warn!("minimap: could not hold the ping: {e}");
+        }
+    }
+    for (token, (east, north)) in raised {
+        let args = [
+            crate::interface::events::EventArg::Text(token),
+            crate::interface::events::EventArg::Number(f64::from(east)),
+            crate::interface::events::EventArg::Number(f64::from(north)),
+        ];
+        for binding in host.fire_event("MINIMAP_PING", &args, &live) {
+            pressed.write(crate::input::bindings::BindingPressed(binding));
+        }
+    }
+}
+
 /// What a frame is showing, or `None` for a frame that is not a minimap.
 ///
-/// The test is the widget's kind (`CreateFrame("Minimap", …)`'s first
+/// The test is the widget's type (`CreateFrame("Minimap", …)`'s first
 /// argument, which the XML loader sets from the element name), not the frame's
 /// name, so this does not depend on the global `Minimap`. The game creates
 /// exactly one; an addon that creates a second gets a second world view

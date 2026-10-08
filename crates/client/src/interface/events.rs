@@ -10,11 +10,10 @@
 //! needs one write with N readers, each keeping its own cursor. That is what
 //! `bevy::ecs::message` provides, and a drained queue does not.
 //!
-//! The two channels that existed before this module,
-//! [`super::messages::Messages`] and `LiveSession::take_events`, both empty
-//! themselves for the first reader. A second frame that wants the same news
-//! gets nothing, and no error is reported. This module provides the fan-out
-//! before more subsystems are written against a poll.
+//! A drained queue such as `LiveSession::take_events` empties itself for the
+//! first reader. A second frame that wants the same news gets nothing, and no
+//! error is reported. This module provides the fan-out, so that subsystems read
+//! messages rather than poll a queue.
 //!
 //! ## Event names come from the FrameXML archives
 //!
@@ -101,7 +100,7 @@ pub struct UiErrorMessage(pub String);
 /// the other by name, so merging them would leave a name unmatched.
 ///
 /// Which of the two a given message uses is fixed per message by the 1.12.1
-/// client, not chosen here; see [`super::messages::UiErrors::info`]. "New
+/// client, not chosen here; see [`super::messages::UiInfo`]. "New
 /// flight path discovered!" is one of these.
 #[derive(Message, Debug, Clone)]
 pub struct UiInfoMessage(pub String);
@@ -363,8 +362,8 @@ pub struct ActionbarUpdateState;
 /// answers the question; this event makes a button ask it again.
 /// `ActionButton_Update` runs it once when a slot's contents change, and
 /// `PLAYER_TARGET_CHANGED`/`PLAYER_AURAS_CHANGED` re-run it on their own edges.
-/// Without this event a mage who spent their mana kept a bar of white icons
-/// until one of those other edges occurred.
+/// Without this event a mage who spends their mana keeps a bar of white icons
+/// until one of those other edges occurs.
 ///
 /// Carries nothing, like its two neighbours. One cast can make a dozen buttons
 /// unaffordable at once, so there is no single button to name and every button
@@ -601,6 +600,42 @@ pub struct TimePlayedMsg {
     pub total: u32,
     pub level: u32,
 }
+
+/// `UPDATE_WORLD_STATES`: the world state table or its list of lines changed.
+/// No arguments: `WorldStateFrame.lua` re-reads `GetNumWorldStateUI` and
+/// `GetWorldStateUIInfo`. See [`super::worldstate`].
+#[derive(Message, Debug, Clone, Copy)]
+pub struct UpdateWorldStates;
+
+/// `TUTORIAL_TRIGGER`: a tutorial tip should be offered. `arg1` is the
+/// tutorial's id, 1 to 50, which `TutorialFrame_NewTutorial` queues as an
+/// alert button. See [`super::tutorial`].
+#[derive(Message, Debug, Clone, Copy)]
+pub struct TutorialTrigger {
+    pub id: u32,
+}
+
+/// `QUEST_ACCEPT_CONFIRM`: a group member accepted a party quest. `arg1` is
+/// their name and `arg2` the quest's title; `UIParent.lua` shows them in the
+/// `QUEST_ACCEPT` popup. See [`super::questshare`].
+#[derive(Message, Debug, Clone)]
+pub struct QuestAcceptConfirm {
+    pub name: String,
+    pub title: String,
+}
+
+/// `RAID_TARGET_UPDATE`: a raid target icon was placed, moved or cleared. No
+/// arguments: `TargetFrame.lua` re-reads `GetRaidTargetIndex("target")`. See
+/// [`super::raidtarget`].
+#[derive(Message, Debug, Clone, Copy)]
+pub struct RaidTargetUpdated;
+
+/// `BAG_UPDATE_COOLDOWN`: an item's cooldown changed. No arguments: the bags
+/// re-read `GetContainerItemCooldown` and the character sheet
+/// `GetInventoryItemCooldown`. Raised beside the two cooldown events above when
+/// an `SMSG_ITEM_COOLDOWN` arrives.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct BagUpdateCooldown;
 
 /// `ITEM_TEXT_BEGIN`: the player started reading an item or object, and its
 /// title and material are known before any of its text has arrived.
@@ -1179,7 +1214,7 @@ pub struct PlayerLeaveCombat;
 /// `VARIABLES_LOADED`: the saved variables have been loaded, if there were
 /// any.
 ///
-/// This client has no `WTF` directory, and the event is still raised. 1.12
+/// The event is raised whether or not a saved file was found. 1.12
 /// raises it once at startup, after reading `SavedVariables` and before entering
 /// a world. FrameXML treats it as the point at which the option globals are
 /// final, not as a sign that a file was found; four frames use it to apply
@@ -1543,7 +1578,7 @@ pub struct UnitQuestLogChanged(pub super::api::UnitId);
 /// every visible bag, and `PaperDollItemSlotButton_OnEvent` with
 /// `PaperDollItemSlotButton_UpdateLock`.
 ///
-/// This event shows a drag in progress. Without it, a picked-up item stayed in
+/// This event shows a drag in progress. Without it, a picked-up item stays in
 /// its slot looking unchanged. The 1.12.1 client does not empty the slot:
 /// `ContainerFrame_Update` passes the third return value of
 /// [`crate::lua::panels::container::SlotContents`] to
@@ -2231,6 +2266,27 @@ impl GameEvent for TimePlayedMsg {
         ]
     }
 }
+impl GameEvent for UpdateWorldStates {
+    const EVENT: &'static str = "UPDATE_WORLD_STATES";
+}
+impl GameEvent for TutorialTrigger {
+    const EVENT: &'static str = "TUTORIAL_TRIGGER";
+    fn args(&self) -> Vec<EventArg> {
+        vec![EventArg::Number(f64::from(self.id))]
+    }
+}
+impl GameEvent for QuestAcceptConfirm {
+    const EVENT: &'static str = "QUEST_ACCEPT_CONFIRM";
+    fn args(&self) -> Vec<EventArg> {
+        vec![EventArg::Text(self.name.clone()), EventArg::Text(self.title.clone())]
+    }
+}
+impl GameEvent for RaidTargetUpdated {
+    const EVENT: &'static str = "RAID_TARGET_UPDATE";
+}
+impl GameEvent for BagUpdateCooldown {
+    const EVENT: &'static str = "BAG_UPDATE_COOLDOWN";
+}
 impl GameEvent for ItemTextBegin {
     const EVENT: &'static str = "ITEM_TEXT_BEGIN";
 }
@@ -2881,10 +2937,10 @@ impl GameEvent for UnitDisplaypowerChanged {
 /// adding an event changes one file.
 ///
 /// Each reader has its own cursor, so this can be held alongside any other
-/// consumer without either missing messages. No other system reads these
-/// messages now (`UIErrorsFrame` shows the error messages), but the property
-/// is kept so that a second consumer can be added. See
-/// `two_readers_each_see_every_message`.
+/// consumer without either missing messages. Other systems read some of these
+/// messages too: every module that resets its state on [`PlayerLeavingWorld`]
+/// has its own reader. The error messages have no other reader;
+/// `UIErrorsFrame` shows them. See `two_readers_each_see_every_message`.
 #[derive(SystemParam)]
 pub struct GameEventReaders<'w, 's> {
     ui_error: MessageReader<'w, 's, UiErrorMessage>,
@@ -2989,6 +3045,11 @@ pub struct GameEventReaders<'w, 's> {
     confirm_summon: MessageReader<'w, 's, ConfirmSummon>,
     inspect_honor: MessageReader<'w, 's, InspectHonorUpdate>,
     time_played: MessageReader<'w, 's, TimePlayedMsg>,
+    update_world_states: MessageReader<'w, 's, UpdateWorldStates>,
+    tutorial_trigger: MessageReader<'w, 's, TutorialTrigger>,
+    quest_accept_confirm: MessageReader<'w, 's, QuestAcceptConfirm>,
+    raid_target_update: MessageReader<'w, 's, RaidTargetUpdated>,
+    bag_update_cooldown: MessageReader<'w, 's, BagUpdateCooldown>,
     item_text_begin: MessageReader<'w, 's, ItemTextBegin>,
     item_text_ready: MessageReader<'w, 's, ItemTextReady>,
     item_text_closed: MessageReader<'w, 's, ItemTextClosed>,
@@ -3241,6 +3302,11 @@ impl GameEventReaders<'_, '_> {
         take!(confirm_summon, ConfirmSummon);
         take!(inspect_honor, InspectHonorUpdate);
         take!(time_played, TimePlayedMsg);
+        take!(update_world_states, UpdateWorldStates);
+        take!(tutorial_trigger, TutorialTrigger);
+        take!(quest_accept_confirm, QuestAcceptConfirm);
+        take!(raid_target_update, RaidTargetUpdated);
+        take!(bag_update_cooldown, BagUpdateCooldown);
         // The item text events: begin, then ready, then closed, the order the
         // panel expects. The first sets up the window, the second fills and
         // shows it, and the third hides it.
@@ -3454,7 +3520,7 @@ impl GameEventReaders<'_, '_> {
 /// A hand-written list rather than a derived one, like
 /// [`crate::lua::api::verbs::REGISTERED`], so that it can be compared with the
 /// set of names passed to `RegisterEvent`.
-pub const FIRED: [&str; 272] = [
+pub const FIRED: [&str; 277] = [
     PlayerDead::EVENT,
     PlayerAlive::EVENT,
     PlayerUnghost::EVENT,
@@ -3536,6 +3602,11 @@ pub const FIRED: [&str; 272] = [
     ConfirmSummon::EVENT,
     InspectHonorUpdate::EVENT,
     TimePlayedMsg::EVENT,
+    UpdateWorldStates::EVENT,
+    TutorialTrigger::EVENT,
+    QuestAcceptConfirm::EVENT,
+    RaidTargetUpdated::EVENT,
+    BagUpdateCooldown::EVENT,
     ItemTextBegin::EVENT,
     ItemTextReady::EVENT,
     ItemTextClosed::EVENT,
@@ -3835,6 +3906,11 @@ pub(crate) fn register(app: &mut App) {
         .add_message::<ConfirmSummon>()
         .add_message::<InspectHonorUpdate>()
         .add_message::<TimePlayedMsg>()
+        .add_message::<UpdateWorldStates>()
+        .add_message::<TutorialTrigger>()
+        .add_message::<QuestAcceptConfirm>()
+        .add_message::<RaidTargetUpdated>()
+        .add_message::<BagUpdateCooldown>()
         .add_message::<ItemTextBegin>()
         .add_message::<ItemTextReady>()
         .add_message::<ItemTextClosed>()

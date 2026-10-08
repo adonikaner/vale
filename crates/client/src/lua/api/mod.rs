@@ -125,6 +125,10 @@ pub trait Answers:
     + super::panels::pagetext::PageTextAnswers
     + super::panels::trade::TradeAnswers
     + super::panels::summon::SummonAnswers
+    + super::panels::worldstate::WorldStateAnswers
+    + super::panels::tutorial::TutorialAnswers
+    + super::panels::raidtarget::RaidTargetAnswers
+    + super::panels::questshare::QuestShareAnswers
     + super::panels::uioptions::OptionsAnswers
     + super::panels::inspect::InspectAnswers
     + super::panels::guild::GuildAnswers
@@ -160,6 +164,10 @@ impl<T> Answers for T where
     + super::panels::pagetext::PageTextAnswers
     + super::panels::trade::TradeAnswers
     + super::panels::summon::SummonAnswers
+    + super::panels::worldstate::WorldStateAnswers
+    + super::panels::tutorial::TutorialAnswers
+    + super::panels::raidtarget::RaidTargetAnswers
+    + super::panels::questshare::QuestShareAnswers
     + super::panels::uioptions::OptionsAnswers
     + super::panels::inspect::InspectAnswers
     + super::panels::guild::GuildAnswers
@@ -448,6 +456,13 @@ pub struct Live<'a, 'w, 's> {
     pub page: &'a crate::interface::pagetext::OpenBook,
     /// The pending summon, if any. See [`crate::interface::summon`].
     pub summon: &'a crate::interface::summon::Summon,
+    /// The world state table and its listed rows. See
+    /// [`crate::interface::worldstate`].
+    pub world_states: &'a crate::interface::worldstate::WorldStates,
+    /// The tutorial masks. See [`crate::interface::tutorial`].
+    pub tutorials: &'a crate::interface::tutorial::Tutorials,
+    /// The eight raid target icons. See [`crate::interface::raidtarget`].
+    pub raid_targets: &'a crate::interface::raidtarget::RaidTargets,
     /// Whom the character is inspecting. See [`crate::interface::inspect`].
     pub inspect: &'a crate::interface::inspect::Inspect,
     /// `GlobalStrings.lua`, for the one spellbook tab whose name is a string
@@ -597,6 +612,9 @@ pub struct LuaWorld<'w, 's> {
     pub dying: Res<'w, crate::interface::death::Dying>,
     pub page: Res<'w, crate::interface::pagetext::OpenBook>,
     pub summon: Res<'w, crate::interface::summon::Summon>,
+    pub world_states: Res<'w, crate::interface::worldstate::WorldStates>,
+    pub tutorials: Res<'w, crate::interface::tutorial::Tutorials>,
+    pub raid_targets: Res<'w, crate::interface::raidtarget::RaidTargets>,
     pub inspect: Res<'w, crate::interface::inspect::Inspect>,
     pub session: Res<'w, crate::world::session::Session>,
     pub strings: Res<'w, crate::interface::messages::UiStrings>,
@@ -693,6 +711,9 @@ impl LuaWorld<'_, '_> {
             .init_resource::<crate::interface::loot::LootWindow>()
             .init_resource::<crate::interface::pagetext::OpenBook>()
             .init_resource::<crate::interface::summon::Summon>()
+            .init_resource::<crate::interface::worldstate::WorldStates>()
+            .init_resource::<crate::interface::tutorial::Tutorials>()
+            .init_resource::<crate::interface::raidtarget::RaidTargets>()
             .init_resource::<crate::interface::inspect::Inspect>()
             .init_resource::<crate::interface::lootroll::LootRolls>()
             .init_resource::<crate::interface::quest::Quests>()
@@ -747,6 +768,9 @@ impl LuaWorld<'_, '_> {
             auras: &self.auras,
             dying: &self.dying,
             summon: &self.summon,
+            world_states: &self.world_states,
+            tutorials: &self.tutorials,
+            raid_targets: &self.raid_targets,
             inspect: &self.inspect,
             book: &self.book,
             strings: self.strings.get(),
@@ -981,9 +1005,10 @@ impl Live<'_, '_, '_> {
     /// Whether a token is `player`, the only unit with known bags and
     /// equipment.
     ///
-    /// No packet this client reads carries another unit's inventory or
-    /// durability (it does not handle inspect packets), so every equipped-slot
-    /// read answers the absent value for any other token. Answering with the
+    /// No packet this client reads carries another unit's bags or durability.
+    /// Another player's worn entries come only from the visible-item update
+    /// fields (see [`Self::worn_by_other`]), so every read that needs a carried
+    /// item answers the absent value for any other token. Answering with the
     /// local player's gear instead would look correct and be wrong.
     pub(super) fn is_player(token: &str) -> bool {
         Self::id(token) == Some(UnitId::Player)
@@ -1542,7 +1567,7 @@ impl UnitAnswers for Live<'_, '_, '_> {
     }
 
     fn unit_rank(&self, a: &str, b: &str) -> Option<vale_assets::tables::faction::Rank> {
-        // No tables, no answer. Before the archives are open every unit would
+        // With no tables this answers `None`. Before the archives are open every unit would
         // otherwise read Neutral, which is `Factions::template_rank`'s answer
         // for a missing table. A reaction that looks real but is not is the
         // kind of answer [`self::stubs`]' first line warns about.
@@ -2006,9 +2031,9 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     )?;
     unit!("UnitName", |t| answers.unit_name(t));
     // `UnitPVPName`: the name with the PvP rank title in front of it, as in
-    // "Sergeant Bram". This client models no honour rank (the `PLAYER_FIELD_*`
-    // rank fields are unread, and the rank titles are `PVP_RANK_*` in
-    // `GlobalStrings.lua`), so it answers the bare name. The 1.12.1 client
+    // "Sergeant Bram". This read does not look up the rank (the rank titles
+    // are `PVP_RANK_*` in `GlobalStrings.lua`), so it answers the bare name.
+    // The 1.12.1 client
     // answers the same for a character below rank 1, which is most
     // characters. This is a stated deviation, not an alias: once the rank is
     // read, this read must add the prefix.
@@ -2120,9 +2145,9 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     // the target frame, `TargetDebuffButton_Update` branches on
     // `UnitIsFriend("player", "target")` to decide where the aura rows go, so
     // with it nil every target took the hostile layout and a friendly target's
-    // buffs were drawn 46 units (two rows) below the frame. This is an example
-    // of this directory's first rule: a constant answer cannot be told apart
-    // from a working one.
+    // buffs were drawn 46 units (two rows) below the frame. The first line of
+    // [`self::stubs`] states the rule this shows: a constant answer cannot be
+    // told apart from a working one.
     macro_rules! pair {
         ($name:literal, |$a:ident, $b:ident| $body:expr) => {{
             let f = scope.create_function(move |_, (a, b): (Option<String>, Option<String>)| {
@@ -2170,8 +2195,9 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     ));
     // `UnitIsPlayer` answers the same as `UnitPlayerControlled` here. In the
     // 1.12.1 client they differ for a pet, which is player-controlled but not
-    // a player. This client has no pet; [`Units::player_controlled`] records
-    // that deviation. When pets are added, both reads must change together.
+    // a player. [`Units::player_controlled`] answers from the object type
+    // alone, so a pet answers false to both; that function records the
+    // deviation. When it reads the flag, both reads must change together.
     unit!("UnitIsPlayer", |t| one_or_nil(
         answers.unit_player_controlled(t)
     ));
@@ -2205,9 +2231,10 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     // "CAST_CURSOR" or "CAST_ERROR_CURSOR") end`: the interface chooses the
     // pointer over a unit frame. This client's world pick
     // (`interface::target::spell_cursor_validity`) answers the same question
-    // for the 3D scene. `SetCursor` is still a stub, so only the world pick
-    // changes the pointer on screen; the frames' answers are correct but
-    // unused.
+    // for the 3D scene. `SetCursor` is a verb, but `crate::ui::cursor` puts
+    // the targeting mode ahead of a cursor the interface asked for, so while
+    // a spell waits only the world pick changes the pointer on screen; the
+    // frames' answers are correct but do not reach it.
     let f = scope.create_function(|_, ()| Ok(one_or_nil(answers.spell_is_targeting())))?;
     globals.set("SpellIsTargeting", f)?;
 
@@ -2346,6 +2373,14 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     super::panels::pagetext::install(lua, scope, answers)?;
     // The summon popup's three reads. See [`super::panels::summon`].
     super::panels::summon::install(lua, scope, answers)?;
+    // The world state frame's two reads, the tips panel's one, the raid
+    // target icon's one and the quest log's sharing test. See
+    // [`super::panels::worldstate`], [`super::panels::tutorial`],
+    // [`super::panels::raidtarget`] and [`super::panels::questshare`].
+    super::panels::worldstate::install(lua, scope, answers)?;
+    super::panels::tutorial::install(lua, scope, answers)?;
+    super::panels::raidtarget::install(lua, scope, answers)?;
+    super::panels::questshare::install(lua, scope, answers)?;
     // The options panel's two reads that are not CVars. See
     // [`super::panels::uioptions`].
     super::panels::uioptions::install(lua, scope, answers)?;
@@ -3509,6 +3544,10 @@ pub(crate) mod tests {
     /// branches in one pass.
     impl crate::lua::panels::trade::TradeAnswers for Stub {}
     impl crate::lua::panels::summon::SummonAnswers for Stub {}
+    impl crate::lua::panels::worldstate::WorldStateAnswers for Stub {}
+    impl crate::lua::panels::tutorial::TutorialAnswers for Stub {}
+    impl crate::lua::panels::raidtarget::RaidTargetAnswers for Stub {}
+    impl crate::lua::panels::questshare::QuestShareAnswers for Stub {}
     impl crate::lua::panels::uioptions::OptionsAnswers for Stub {}
     impl crate::lua::panels::inspect::InspectAnswers for Stub {}
     impl crate::lua::panels::guild::GuildAnswers for Stub {}
@@ -4354,9 +4393,9 @@ pub(crate) mod tests {
         );
     }
 
-    /// `UnitReaction` is an index into `UnitReactionColor`. The three rows
-    /// this client can produce are the game's three colours: red at 2, yellow
-    /// at 4, green at 5. A unit that is not there answers `nil`, which
+    /// `UnitReaction` is an index into `UnitReactionColor`. The stub's three
+    /// standings give the game's three main colours: red at 2, yellow at 4,
+    /// green at 5. A unit that is not there answers `nil`, which
     /// `TargetFrame_CheckFaction` handles in a separate branch. The constant
     /// `4` this read used to answer could not produce `nil`.
     #[test]
@@ -4680,6 +4719,10 @@ pub(crate) mod tests {
             .chain(crate::lua::panels::pagetext::READS.iter())
             .chain(crate::lua::panels::trade::READS.iter())
             .chain(crate::lua::panels::summon::READS.iter())
+            .chain(crate::lua::panels::worldstate::READS.iter())
+            .chain(crate::lua::panels::tutorial::READS.iter())
+            .chain(crate::lua::panels::raidtarget::READS.iter())
+            .chain(crate::lua::panels::questshare::READS.iter())
             .chain(crate::lua::panels::uioptions::READS.iter())
             .chain(crate::lua::panels::inspect::READS.iter())
             .chain(crate::lua::panels::guild::READS.iter())

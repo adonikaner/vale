@@ -263,9 +263,9 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
 
         // ---- combat log only -----------------------------------------------
         //
-        // Nine opcodes that change nothing on screen. Each one is only a line
-        // in the combat log, so dropping one is silent: the fight looks the
-        // same and the combat log omits the event.
+        // Thirteen opcodes that change nothing on screen. Each one is only a
+        // line in the combat log, so dropping one is silent: the fight looks
+        // the same and the combat log omits the event.
         Opcode::SMSG_LOG_XPGAIN => world::xp_gain(ctx, pkt),
         Opcode::SMSG_PARTYKILLLOG => world::party_kill(ctx, pkt),
         Opcode::SMSG_ENVIRONMENTALDAMAGELOG => world::environmental_damage(ctx, pkt),
@@ -275,6 +275,10 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         Opcode::SMSG_PERIODICAURALOG => world::periodic_aura_log(ctx, pkt),
         Opcode::SMSG_SPELLLOGEXECUTE => world::spell_execute_log(ctx, pkt),
         Opcode::SMSG_SPELLDISPELLOG => world::spell_dispel_log(ctx, pkt),
+        Opcode::SMSG_SPELLORDAMAGE_IMMUNE => world::immune_log(ctx, pkt),
+        Opcode::SMSG_PROCRESIST => world::proc_resist_log(ctx, pkt),
+        Opcode::SMSG_DISPEL_FAILED => world::dispel_failed_log(ctx, pkt),
+        Opcode::SMSG_SPELLINSTAKILLLOG => world::instakill_log(ctx, pkt),
 
         // ---- pet, then the player's spells, casts, attacks and items -------
         //
@@ -302,6 +306,7 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         Opcode::SMSG_SPELL_COOLDOWN => player::spell_cooldown(ctx, pkt),
         Opcode::SMSG_COOLDOWN_EVENT => player::cooldown_event(ctx, pkt),
         Opcode::SMSG_CLEAR_COOLDOWN => player::clear_cooldown(ctx, pkt),
+        Opcode::SMSG_ITEM_COOLDOWN => player::item_cooldown(ctx, pkt),
         Opcode::SMSG_ATTACKSTART => player::attack_state(ctx, pkt, true),
         Opcode::SMSG_ATTACKSTOP => player::attack_state(ctx, pkt, false),
         Opcode::SMSG_CANCEL_AUTO_REPEAT => player::auto_repeat_cancelled(ctx),
@@ -410,6 +415,13 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
             player::party_member_stats(ctx, pkt)
         }
         Opcode::MSG_RAID_READY_CHECK => player::raid_ready_check(ctx, pkt),
+        // A minimap ping, the raid target icons and quest sharing: what the
+        // group marks for each other. See [`crate::play::minimap`],
+        // [`crate::play::raidtarget`] and [`crate::play::questshare`].
+        Opcode::MSG_MINIMAP_PING => player::minimap_ping(ctx, pkt),
+        Opcode::MSG_RAID_TARGET_UPDATE => player::raid_targets(ctx, pkt),
+        Opcode::MSG_QUEST_PUSH_RESULT => player::quest_push_result(ctx, pkt),
+        Opcode::SMSG_QUEST_CONFIRM_ACCEPT => player::quest_confirm_accept(ctx, pkt),
 
         // ---- friends, ignore and /who ----------------------------------------
         // The friends list, the ignore list and the /who search. Both lists
@@ -456,10 +468,9 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         // Two packets, and the second states both players' offers. See
         // [`crate::play::trade`].
         // ---- proficiencies, spell modifiers and enchantments ----------------
-        // Three kinds of packet that each state a value rather than report an
-        // event: a
-        // class's whole proficiency mask, a spell-modifier bit's running
-        // total, and an enchantment being applied or expiring.
+        // Three types of packet that each state a value rather than report an
+        // event: a class's whole proficiency mask, a spell-modifier bit's
+        // running total, and an enchantment being applied or expiring.
         Opcode::SMSG_SET_PROFICIENCY => player::proficiency(ctx, pkt),
         Opcode::SMSG_SET_FLAT_SPELL_MODIFIER => player::spell_modifier(ctx, pkt, false),
         Opcode::SMSG_SET_PCT_SPELL_MODIFIER => player::spell_modifier(ctx, pkt, true),
@@ -539,6 +550,13 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         Opcode::SMSG_CHANNEL_NOTIFY => chat::channel_notify(ctx, pkt),
         Opcode::SMSG_CHANNEL_LIST => chat::channel_list(ctx, pkt),
         Opcode::SMSG_TEXT_EMOTE => chat::text_emote(ctx, pkt),
+        // Four server statements shown as a line and kept nowhere. See
+        // [`crate::play::notices`].
+        Opcode::SMSG_CHAT_PLAYER_NOT_FOUND => chat::player_not_found(ctx, pkt),
+        Opcode::SMSG_SERVER_MESSAGE => chat::server_message(ctx, pkt),
+        Opcode::SMSG_ZONE_UNDER_ATTACK => chat::zone_under_attack(ctx, pkt),
+        Opcode::SMSG_DEFENSE_MESSAGE => chat::defense_message(ctx, pkt),
+        Opcode::MSG_RANDOM_ROLL => chat::random_roll(ctx, pkt),
 
         // ---- packets that must be answered --------------------------------
         Opcode::SMSG_PONG => acks::pong(ctx),
@@ -562,6 +580,18 @@ pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
         // so the loading screen is shown before the old world is torn down.
         // It is not answered; it is handled only to show the loading screen.
         Opcode::SMSG_TRANSFER_PENDING => player::transfer_pending(ctx, pkt),
+
+        // ---- world states, tutorials and the rest of the login burst -------
+        // The zone's world state table and its changes, which the frame above
+        // the minimap shows; the account's tutorial mask; and two packets read
+        // only so that a malformed body is reported. See
+        // [`crate::play::worldstate`], [`crate::play::tutorial`],
+        // [`crate::play::accountdata`] and [`crate::play::rest`].
+        Opcode::SMSG_INIT_WORLD_STATES => player::init_world_states(ctx, pkt),
+        Opcode::SMSG_UPDATE_WORLD_STATE => player::update_world_state(ctx, pkt),
+        Opcode::SMSG_TUTORIAL_FLAGS => player::tutorial_flags(ctx, pkt),
+        Opcode::SMSG_ACCOUNT_DATA_MD5 => player::account_data_md5(ctx, pkt),
+        Opcode::SMSG_SET_REST_START => player::set_rest_start(ctx, pkt),
 
         // ---- opcode families matched by a guard rather than a constant -----
         // Among them are the forced speed change and the forced movement flag

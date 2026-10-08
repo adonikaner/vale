@@ -416,6 +416,33 @@ pub fn parse_clear_cooldown(body: &[u8]) -> Option<(u32, u64)> {
     Some((spell_id, r.u64()))
 }
 
+/// `SMSG_ITEM_COOLDOWN`: an item's guid and one of its spells, with no
+/// duration.
+///
+/// ```text
+/// u64 item, u32 spell
+/// ```
+///
+/// vmangos sends it only from `Player::ApplyEquipCooldown`, once per on-use
+/// spell of an item just equipped, unless the item carries
+/// `ITEM_FLAG_NO_EQUIP_COOLDOWN`. It is the thirty-second wait before a trinket
+/// can be used after it is put on. The 1.12.1 client starts a cooldown of
+/// [`EQUIP_COOLDOWN_MS`] on that item's spell, with no category cooldown, and
+/// raises `ACTIONBAR_UPDATE_COOLDOWN`, `SPELL_UPDATE_COOLDOWN` and
+/// `BAG_UPDATE_COOLDOWN`.
+pub fn parse_item_cooldown(body: &[u8]) -> Option<(u64, u32)> {
+    if body.len() < 12 {
+        return None;
+    }
+    let mut r = Reader::new(body);
+    Some((r.u64(), r.u32()))
+}
+
+/// The cooldown an `SMSG_ITEM_COOLDOWN` starts: thirty seconds, the same value
+/// vmangos gives the spell on its side (`AddCooldown(..., 30 * IN_MILLISECONDS)`
+/// in `Player::ApplyEquipCooldown`).
+pub const EQUIP_COOLDOWN_MS: u32 = 30_000;
+
 // ---------------------------------------------------------------------------
 // The server's answers to a cast or a swing, and the player event queue
 // ---------------------------------------------------------------------------
@@ -565,10 +592,9 @@ pub fn parse_removed_spell(body: &[u8]) -> Option<u32> {
 /// `SMSG_SUPERCEDED_SPELL`: a higher rank replaced a lower one, as `{u16 old,
 /// u16 new}`.
 ///
-/// This packet keeps action bar buttons pointing at known spells, and this
-/// client did not read it before. The server's comment beside the send is "new
-/// spell replace old in action bars and spell book": the client performs the
-/// replacement. A client that ignores the packet leaves the superseded id in
+/// This packet keeps action bar buttons pointing at known spells. The server's
+/// comment beside the send is "new spell replace old in action bars and spell
+/// book": the client performs the replacement. A client that ignores the packet leaves the superseded id in
 /// `character_action` permanently, because no packet restates the bar (see
 /// [`parse_action_buttons`]).
 ///
@@ -754,6 +780,9 @@ pub enum PlayerEvent {
     CooldownStarted { spell_id: u32, ms: u32 },
     /// A parked cooldown was released (`SPELL_ATTR_COOLDOWN_ON_EVENT`).
     CooldownReleased { spell_id: u32 },
+    /// `SMSG_ITEM_COOLDOWN`: an item just equipped may not be used for
+    /// [`EQUIP_COOLDOWN_MS`]. See [`parse_item_cooldown`].
+    ItemCooldown { item: u64, spell_id: u32 },
     /// `SMSG_CLEAR_COOLDOWN`: this cooldown has ended, however long it had left.
     /// See [`parse_clear_cooldown`]. This is a removal, whereas
     /// [`Self::CooldownReleased`] is a start; the two names are similar and mean
@@ -1313,6 +1342,54 @@ pub enum PlayerEvent {
     /// running total; see [`SpellModifier`]: the values are totals, not
     /// deltas.
     SpellModifier(SpellModifier),
+
+    // ---- server notices ----
+    //
+    // See [`crate::play::notices`]. Each is shown as one line and changes no
+    // state.
+
+    /// `SMSG_CHAT_PLAYER_NOT_FOUND`: a whisper was addressed to this name and
+    /// nobody by that name is playing.
+    PlayerNotFound { name: String },
+    /// `SMSG_SERVER_MESSAGE`: a shutdown or restart countdown, its
+    /// cancellation, or a free text.
+    ServerMessage(crate::play::notices::ServerMessage),
+    /// `SMSG_ZONE_UNDER_ATTACK`: a guard or a PvP creature in this
+    /// `AreaTable.dbc` zone was killed by a player of the other team.
+    ZoneUnderAttack { area: u32 },
+    /// `SMSG_DEFENSE_MESSAGE`: an Eastern Plaguelands tower's announcement.
+    DefenseMessage(crate::play::notices::DefenseMessage),
+
+    // ---- the group: rolls, pings, raid target icons and shared quests ----
+
+    /// `MSG_RANDOM_ROLL`: somebody's `/roll`, the player's included. See
+    /// [`crate::play::randomroll`].
+    RandomRoll(crate::play::randomroll::RandomRoll),
+    /// `MSG_MINIMAP_PING`: a group member clicked their minimap. See
+    /// [`crate::play::minimap`].
+    MinimapPing(crate::play::minimap::MinimapPing),
+    /// `MSG_RAID_TARGET_UPDATE`: one icon changed, or the whole list. See
+    /// [`crate::play::raidtarget`].
+    RaidTargets(crate::play::raidtarget::RaidTargetUpdate),
+    /// `MSG_QUEST_PUSH_RESULT`: what happened when the player shared a quest
+    /// with one member. See [`crate::play::questshare`].
+    QuestPushResult(crate::play::questshare::PushOutcome),
+    /// `SMSG_QUEST_CONFIRM_ACCEPT`: a member accepted a party quest and the
+    /// player is offered it too. Boxed because the title makes it one of the
+    /// larger variants and it is rare.
+    QuestConfirmAccept(Box<crate::play::questshare::ConfirmAccept>),
+
+    // ---- world states and tutorials ----
+
+    /// `SMSG_INIT_WORLD_STATES`: the zone's whole table, replacing the one
+    /// held. Boxed because it carries about a hundred pairs. See
+    /// [`crate::play::worldstate`].
+    WorldStatesInit(Box<crate::play::worldstate::WorldStatesInit>),
+    /// `SMSG_UPDATE_WORLD_STATE`: one value of the table changed.
+    WorldStateUpdate { state: u32, value: i32 },
+    /// `SMSG_TUTORIAL_FLAGS`: the account's tutorial mask, replacing the one
+    /// held. See [`crate::play::tutorial`].
+    TutorialFlags(crate::play::tutorial::TutorialFlags),
 }
 
 /// Why a `CMSG_ATTACKSWING` was refused.

@@ -5,9 +5,9 @@
 //! module's comment for why the dispatch stays whole and only the bodies live
 //! out here.
 //!
-//! **`world` here is [`super`]'s child, not `crate::socket::world`.** The latter is the
-//! socket; this is the world it describes. They are one directory apart and the
-//! paths never mix, but the names are close enough to be worth saying once.
+//! This `world` module is a child of [`super`], not `crate::socket::world`. That
+//! module is the socket; this one applies the world state the socket's packets
+//! describe. The two are one directory apart and their paths never mix.
 
 use super::{read, Incoming};
 use crate::play::action;
@@ -45,26 +45,26 @@ pub(super) fn compressed_update(ctx: &mut Incoming, pkt: &Packet) {
     }
 }
 
-/// **`SMSG_COMPRESSED_MOVES`: a bag of movement packets, and the desync.**
+/// `SMSG_COMPRESSED_MOVES`: a bag of movement packets.
 ///
-/// The server does not send this until it has to. `WorldSession::SendMovementPacket`
-/// counts the movement packets it has sent this interval, and while that stays
-/// under `CONFIG_UINT32_COMPRESSION_MOVEMENT_COUNT` every one of them goes out
-/// on its own opcode; past it, they are **batched into this one instead**. So a
-/// quiet session never produces it and a busy zone produces nothing else —
-/// which is why a client that drops it works perfectly against a localhost
-/// server with one player on it and falls apart on a real realm.
+/// The server sends this only under load. `WorldSession::SendMovementPacket`
+/// counts the movement packets it has sent this interval. While that count
+/// stays under `CONFIG_UINT32_COMPRESSION_MOVEMENT_COUNT`, each one goes out on
+/// its own opcode; past it, they are batched into this one instead. A quiet
+/// session never produces it and a busy zone produces little else, so a client
+/// that drops it works against a localhost server with one player and fails on
+/// a populated realm.
 ///
-/// **Everything about movement goes through that door.** `MoveSplineInit::Launch`
-/// (`SMSG_MONSTER_MOVE` — every creature in the game), `MovementHandler`'s
-/// relays (`MSG_MOVE_*` — every other player), and `MovementPacketSender` (the
-/// speed changes, the flag changes, the knockbacks) all call
-/// `WorldObject::SendMovementMessageToSet`, which is `SendMovementPacket`. Drop
-/// this opcode and you lose all three at once, with no warning and no parse
-/// failure: the world simply stops moving and then snaps whenever something
-/// else happens to state a position. That is *"mobs appear to be standing far
-/// away but are actually attacking you"*, and it was measured before it was
-/// fixed — **428 packets and 35.7 KiB in one session**, off the `F4` net tab's
+/// All server movement passes through `SendMovementPacket`.
+/// `MoveSplineInit::Launch` (`SMSG_MONSTER_MOVE`, every creature),
+/// `MovementHandler`'s relays (`MSG_MOVE_*`, every other player) and
+/// `MovementPacketSender` (speed changes, flag changes, knockbacks) all call
+/// `WorldObject::SendMovementMessageToSet`, which is `SendMovementPacket`.
+/// Dropping this opcode loses all three at once, with no warning and no parse
+/// failure: the world stops moving and units jump whenever another packet
+/// states a position. The reported symptom was "mobs appear to be standing far
+/// away but are actually attacking you". Before this opcode was handled, one
+/// session showed 428 of these packets and 35.7 KiB on the `F4` net tab's
 /// unhandled list.
 ///
 /// ## The layout, from `MovementData` in vmangos' `Objects/UpdateData.cpp`
@@ -72,25 +72,24 @@ pub(super) fn compressed_update(ctx: &mut Incoming, pkt: &Packet) {
 /// ```text
 /// u32 uncompressedSize
 /// <zlib deflate of exactly that many bytes>, and inside it, repeated:
-///     u8  size        // the body's length **plus two**, for the opcode
+///     u8  size        // the body's length plus two, for the opcode
 ///     u16 opcode
 ///     ..  body        // size - 2 bytes
 /// ```
 ///
-/// The `+2` is `AddPacket`'s own arithmetic and the reason a sub-packet may
-/// never exceed 253 bytes of body: `CanAddPacket` refuses anything that would
-/// overflow the `u8`, with the comment *"Client crash else"*.
+/// `AddPacket` adds the 2. It is also why a sub-packet body may not exceed 253
+/// bytes: `CanAddPacket` refuses anything that would overflow the `u8`, with
+/// the comment "Client crash else".
 ///
-/// ## Each one goes back through the *one* dispatch
+/// ## Inner packets go back through `apply_packet`
 ///
-/// Rather than a second switch over the movement opcodes, which is the
-/// arrangement `handler`'s own module doc is about: an inner packet is an
-/// ordinary packet that happened to arrive in a bag, and every counter, every
-/// warning and every `traffic` row it should produce is the one
-/// [`crate::socket::handler::apply_packet`] already produces. **A nested bag is
-/// refused** — the server never puts one inside another (only movement packets
-/// reach the compressor) and unbounded recursion off the wire is not a thing to
-/// leave open.
+/// Each inner packet is passed to [`crate::socket::handler::apply_packet`]
+/// rather than to a second match over the movement opcodes; `handler`'s module
+/// comment explains why there is one dispatch. An inner packet is an ordinary
+/// packet that arrived in a bag, so it produces the same counters, warnings and
+/// `traffic` rows as one that arrived alone. A nested bag is refused: the
+/// server never puts one inside another (only movement packets reach the
+/// compressor), and received data must not control recursion depth.
 pub(super) fn compressed_moves(ctx: &mut Incoming, pkt: &Packet) {
     ctx.stats.bagged_moves = ctx.stats.bagged_moves.saturating_add(1);
     let raw = match inflate_update(&pkt.body) {
@@ -112,11 +111,11 @@ pub(super) fn compressed_moves(ctx: &mut Incoming, pkt: &Packet) {
 
 /// Cut an inflated `MovementData` buffer into the packets it was built from.
 ///
-/// **Collected rather than streamed**, because the dispatch takes `ctx` mutably
-/// and the walk needs `ctx` to report a damaged tail; the buffer is a few
-/// kilobytes and the packets inside it are tens of bytes.
+/// The packets are collected rather than streamed, because the dispatch takes
+/// `ctx` mutably and the walk needs `ctx` to report a damaged tail. The buffer
+/// is a few kilobytes and the packets inside it are tens of bytes.
 ///
-/// A truncated or nonsensical tail costs the rest of the bag and is *reported*,
+/// A truncated or invalid tail costs the rest of the bag and is reported,
 /// on the same rule every other reader in this crate follows: the packets
 /// already read are good and there is no way to resynchronise past a bad length
 /// byte.
@@ -142,9 +141,8 @@ fn unbag(ctx: &mut Incoming, raw: &[u8]) -> Vec<Packet> {
         let code = u16::from_le_bytes([raw[at + 1], raw[at + 2]]);
         let body = raw[at + 3..at + 1 + size].to_vec();
         at += 1 + size;
-        // See the doc above: a bag inside a bag is not something the server
-        // produces, and recursing on it is how a malformed stream becomes a
-        // stack overflow.
+        // See the doc above: the server never puts a bag inside a bag, and
+        // recursing on one would let a malformed stream overflow the stack.
         if u32::from(code) == Opcode::SMSG_COMPRESSED_MOVES.code() {
             ctx.stats
                 .warn("SMSG_COMPRESSED_MOVES: a nested bag, which the server does not send".into());
@@ -157,13 +155,13 @@ fn unbag(ctx: &mut Incoming, raw: &[u8]) -> Vec<Packet> {
 
 /// `SMSG_MONSTER_MOVE`: a server-driven unit along a spline.
 ///
-/// **And it may be *us*.** Warrior Charge moves the caster with the same
-/// `MoveSpline` machinery a patrolling creature is walked with, so the packet
-/// that arrives is this one with our own guid in it — and it is owed
-/// `CMSG_MOVE_SPLINE_DONE`, without which the server discards every movement
-/// packet this session sends for the rest of it. See
-/// [`crate::state::movement::Ride`](crate::state::movement::Mover::ride), which is where both
-/// halves of that live.
+/// The unit may be the local player. Warrior Charge moves the caster with the
+/// same `MoveSpline` code that walks a patrolling creature, so the packet that
+/// arrives is this one with the player's own guid in it. It must be answered
+/// with `CMSG_MOVE_SPLINE_DONE`; without that, the server discards every
+/// movement packet this session sends for the rest of the session. See
+/// [`crate::state::movement::Ride`](crate::state::movement::Mover::ride), which
+/// follows the spline and sends the answer.
 ///
 /// The world's copy is applied either way: it holds the entity the renderer
 /// draws, and a snapshot pump with no simulation of its own has nothing else.
@@ -171,20 +169,20 @@ pub(super) fn monster_move(ctx: &mut Incoming, pkt: &Packet) {
     monster_move_inner(ctx, pkt, false)
 }
 
-/// **`SMSG_MONSTER_MOVE_TRANSPORT`: the same move, on a moving floor.**
+/// `SMSG_MONSTER_MOVE_TRANSPORT`: the same move, for a unit on a transport.
 ///
-/// `MoveSplineInit::Launch` builds `SMSG_MONSTER_MOVE`, then — for a unit it is
-/// also boarding — changes the opcode and writes the transport's packed guid
-/// before everything else. So the two are one body with one extra guid, and a
-/// client that reads the second as the first takes that guid's bytes as the
-/// unit's start coordinates — parsing happily while it does, on any path long
-/// enough for the extra twelve bytes to be absorbed by the nodes.
+/// `MoveSplineInit::Launch` builds `SMSG_MONSTER_MOVE` and, for a unit that is
+/// on a transport, changes the opcode and writes the transport's packed guid
+/// before everything else. The two are one body with one extra guid. A client
+/// that reads the second as the first takes that guid's bytes as the unit's
+/// start coordinates, and the parse still succeeds on any path long enough for
+/// the extra twelve bytes to be absorbed by the nodes.
 ///
-/// **Every waypoint after it is in the transport's own frame**, which is what
-/// makes this worth more than a name: dropped into the world unconverted, a
-/// boat's crew walking three yards across the deck are placed three yards from
-/// the map's origin. See [`movement::Spline::in_world`], which is where the
-/// conversion is and where the "transport not loaded" case is answered.
+/// Every waypoint after the guid is in the transport's own frame. Placed in the
+/// world unconverted, a boat's crew walking three yards across the deck are
+/// placed three yards from the map's origin. See [`movement::Spline::in_world`],
+/// which does the conversion and handles the case where the transport is not
+/// loaded.
 pub(super) fn monster_move_transport(ctx: &mut Incoming, pkt: &Packet) {
     monster_move_inner(ctx, pkt, true)
 }
@@ -200,8 +198,8 @@ fn monster_move_inner(ctx: &mut Incoming, pkt: &Packet, on_transport: bool) {
     ctx.stats.monster_moves += 1;
     let is_us = ctx.world.player_guid == Some(mm.guid);
     // Resolved before the world is handed over, because only the object manager
-    // can look another unit up — a charge is sent with `SetFacingGUID(target)`
-    // and the mover has no way to find it.
+    // can look up another unit. A charge is sent with `SetFacingGUID(target)`,
+    // and the mover has no way to find that target.
     let facing_at = match mm.facing {
         movement::SplineFacing::Target(guid) => ctx
             .world
@@ -220,12 +218,11 @@ fn monster_move_inner(ctx: &mut Incoming, pkt: &Packet, on_transport: bool) {
     }
 }
 
-/// One melee swing.
+/// `SMSG_ATTACKERSTATEUPDATE`: one melee swing.
 ///
 /// The server never says "start attacking" and never names an animation, so
-/// this packet is the *only* statement that a blow happened — without it a
-/// fight is two creatures standing in their idle loops while the health bars
-/// empty.
+/// this packet is the only statement that a blow happened. Without it, a fight
+/// shows two creatures in their idle animations while the health bars empty.
 pub(super) fn attack(ctx: &mut Incoming, pkt: &Packet) {
     let Some(attack) = read(ctx.stats, pkt, action::parse_attack_update(&pkt.body)) else {
         return;
@@ -235,14 +232,13 @@ pub(super) fn attack(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.apply_attack(&attack);
 }
 
-/// **A spell landed on somebody** — or a damage-over-time ticked, which comes
-/// down the same opcode with `periodicLog` set.
+/// Spell damage on a unit, or a damage-over-time tick, which arrives on the
+/// same opcode with `periodicLog` set.
 ///
-/// The other half of what a fight is made of, and the half this client read
-/// nothing of for a long time: `SMSG_ATTACKERSTATEUPDATE` is the *weapon* and
-/// nothing else, so a client reading only that draws a number for every
-/// auto-attack and nothing at all for a Fireball. That is exactly what "spells
-/// are not triggering it" was.
+/// `SMSG_ATTACKERSTATEUPDATE` covers weapon swings only. A client that reads
+/// only that packet draws a number for every auto-attack and nothing for a
+/// Fireball. This client did that before this handler existed, and it was
+/// reported as "spells are not triggering it".
 pub(super) fn spell_damage(ctx: &mut Incoming, pkt: &Packet) {
     let Some(log) = read(ctx.stats, pkt, action::parse_spell_damage(&pkt.body)) else {
         return;
@@ -252,11 +248,12 @@ pub(super) fn spell_damage(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.apply_spell_damage(&log);
 }
 
-/// …and a heal, which is a number over a head like any other.
+/// `SMSG_SPELLHEALLOG`: a heal, drawn as a number over the target like spell
+/// damage.
 ///
-/// `SMSG_SPELLHEALLOG` is sent only for builds over 1.9.4, which 1.12 is — the
-/// older clients learned about a heal from the health field moving and nothing
-/// else.
+/// The server sends this packet only to builds after 1.9.4, which includes
+/// 1.12. Older clients learned about a heal only from the health field
+/// changing.
 pub(super) fn spell_heal(ctx: &mut Incoming, pkt: &Packet) {
     let Some(log) = read(ctx.stats, pkt, action::parse_spell_heal(&pkt.body)) else {
         return;
@@ -266,13 +263,15 @@ pub(super) fn spell_heal(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.apply_spell_heal(&log);
 }
 
-/// **The seven packets whose only consumer is a line of text.**
+/// `SMSG_LOG_XPGAIN`, the first of the thirteen combat-log packets whose only
+/// consumer is a line of text. The functions from here to
+/// [`periodic_aura_log`] handle the rest.
 ///
-/// Each one parses, and each one goes on the combat log's own queue for the
-/// renderer to compose. There is no state to apply: nothing here moves a unit,
-/// changes a field or answers the server. That is exactly why they were unread
-/// for so long — a client that drops all seven plays an identical-looking fight
-/// with an empty log.
+/// Each one is parsed and put on the combat log's queue for the renderer to
+/// compose. There is no state to apply: nothing here moves a unit, changes a
+/// field or answers the server. A client that drops all of them shows the same
+/// fight with an empty combat log, which is why they went unread for a long
+/// time.
 pub(super) fn xp_gain(ctx: &mut Incoming, pkt: &Packet) {
     let Some(gain) = read(ctx.stats, pkt, combatlog::parse_xp_gain(&pkt.body)) else {
         return;
@@ -305,7 +304,7 @@ pub(super) fn damage_shield(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_combat(CombatEvent::DamageShield(log));
 }
 
-/// **One packet, one line per target.**
+/// `SMSG_SPELLLOGMISS`: one line per target.
 ///
 /// An area spell resisted by four of six is one `SMSG_SPELLLOGMISS` and four
 /// lines, so the fan-out happens here rather than at the composer: the queue
@@ -324,17 +323,17 @@ pub(super) fn spell_miss_log(ctx: &mut Incoming, pkt: &Packet) {
     }
 }
 
-/// **One cast, one line per effect entry**, the same fan-out
+/// `SMSG_SPELLLOGEXECUTE`: one line per effect entry, the same fan-out
 /// [`spell_miss_log`] makes and for the same reason.
 ///
-/// `SMSG_SPELLLOGEXECUTE` is the one packet in the family that is a list of
-/// lists: an effect id, a count, and that many entries whose *width depends on
-/// the id*. Four of its nine effect kinds have a sentence —
-/// `SPELLEXTRAATTACKS`, `SPELLINTERRUPT`, `FEEDPET_LOG` and
-/// `SPELLDURABILITYDAMAGE` — and the rest are already said by packets of their
-/// own: a heal by `SMSG_SPELLHEALLOG`, a drain and an energize by
-/// `SMSG_PERIODICAURALOG` and `SMSG_SPELLENERGIZELOG`. Saying them twice would
-/// double every line a Life Tap or a Drain Mana produces.
+/// This is the one packet in the family that is a list of lists: an effect id,
+/// a count, and that many entries whose width depends on the id. Four of its
+/// nine effect types have a sentence: `SPELLEXTRAATTACKS`, `SPELLINTERRUPT`,
+/// `FEEDPET_LOG` and `SPELLDURABILITYDAMAGE`. The others are already reported
+/// by packets of their own: a heal by `SMSG_SPELLHEALLOG`, a drain and an
+/// energize by `SMSG_PERIODICAURALOG` and `SMSG_SPELLENERGIZELOG`. Reporting
+/// them here as well would double every line a Life Tap or a Drain Mana
+/// produces.
 pub(super) fn spell_execute_log(ctx: &mut Incoming, pkt: &Packet) {
     use crate::play::combatlog::ExecuteEntry;
     let Some(log) = read(ctx.stats, pkt, combatlog::parse_spell_execute_log(&pkt.body)) else {
@@ -353,8 +352,8 @@ pub(super) fn spell_execute_log(ctx: &mut Incoming, pkt: &Packet) {
                 ctx.world.note_combat(CombatEvent::Interrupt {
                     caster: log.caster,
                     target,
-                    // **The spell the sentence names is the one that was
-                    // stopped**, not the one that stopped it.
+                    // The sentence names the spell that was stopped, not the
+                    // one that stopped it.
                     spell_id,
                 });
             }
@@ -379,7 +378,7 @@ pub(super) fn spell_execute_log(ctx: &mut Incoming, pkt: &Packet) {
     }
 }
 
-/// …and one line per aura a dispel took off.
+/// `SMSG_SPELLDISPELLOG`: one line per aura a dispel removed.
 pub(super) fn spell_dispel_log(ctx: &mut Incoming, pkt: &Packet) {
     let Some(log) = read(ctx.stats, pkt, combatlog::parse_spell_dispel_log(&pkt.body)) else {
         return;
@@ -390,6 +389,53 @@ pub(super) fn spell_dispel_log(ctx: &mut Incoming, pkt: &Packet) {
             spell_id,
         });
     }
+}
+
+/// `SMSG_SPELLORDAMAGE_IMMUNE`: one line. See
+/// [`combatlog::parse_spell_not_taken`].
+pub(super) fn immune_log(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(log) = read(ctx.stats, pkt, combatlog::parse_spell_not_taken(&pkt.body)) else {
+        return;
+    };
+    ctx.world.note_combat(CombatEvent::Immune {
+        caster: log.caster,
+        target: log.target,
+        spell_id: log.spell_id,
+    });
+}
+
+/// `SMSG_PROCRESIST`: one line, on the same layout as the immunity.
+pub(super) fn proc_resist_log(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(log) = read(ctx.stats, pkt, combatlog::parse_spell_not_taken(&pkt.body)) else {
+        return;
+    };
+    ctx.world.note_combat(CombatEvent::ProcResist {
+        caster: log.caster,
+        target: log.target,
+        spell_id: log.spell_id,
+    });
+}
+
+/// `SMSG_DISPEL_FAILED`: one line per aura that stayed.
+pub(super) fn dispel_failed_log(ctx: &mut Incoming, pkt: &Packet) {
+    let Some(log) = read(ctx.stats, pkt, combatlog::parse_dispel_failed(&pkt.body)) else {
+        return;
+    };
+    for spell_id in log.spells {
+        ctx.world.note_combat(CombatEvent::DispelFailed {
+            caster: log.caster,
+            victim: log.victim,
+            spell_id,
+        });
+    }
+}
+
+/// `SMSG_SPELLINSTAKILLLOG`: one line.
+pub(super) fn instakill_log(ctx: &mut Incoming, pkt: &Packet) {
+    let Some((victim, spell_id)) = read(ctx.stats, pkt, combatlog::parse_instakill_log(&pkt.body)) else {
+        return;
+    };
+    ctx.world.note_combat(CombatEvent::InstaKill { victim, spell_id });
 }
 
 pub(super) fn energize_log(ctx: &mut Incoming, pkt: &Packet) {
@@ -410,14 +456,14 @@ pub(super) fn periodic_aura_log(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.note_combat(CombatEvent::PeriodicAura(log));
 }
 
-/// A creature has noticed you, or has decided to fight you.
+/// `SMSG_AI_REACTION`: a creature has noticed the player, or has decided to
+/// fight.
 ///
-/// **The only packet in the protocol whose whole purpose is a sound.** The
-/// client's handler branches on two of the five reactions, plays a
-/// voice for each and does nothing else — no animation, no message, no
-/// interface. So this arm records an event nobody but `sound::combat` reads,
-/// which is unusual enough to be worth saying out loud: dropping it is a world
-/// where nothing ever growls at you.
+/// This is the only packet in the protocol whose whole purpose is a sound. The
+/// 1.12.1 client plays a voice for two of the five reactions and does nothing
+/// else: no animation, no message, no interface change. This arm therefore
+/// records an event that only `sound::combat` reads. Dropping it leaves
+/// creatures silent when they aggro.
 pub(super) fn ai_reaction(ctx: &mut Incoming, pkt: &Packet) {
     let Some(reaction) = read(ctx.stats, pkt, action::parse_ai_reaction(&pkt.body)) else {
         return;
@@ -426,12 +472,12 @@ pub(super) fn ai_reaction(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.apply_ai_reaction(&reaction);
 }
 
-/// A one-shot emote.
+/// `SMSG_EMOTE`: a one-shot emote.
 ///
-/// **The closest the protocol comes to naming an animation** — the id is an
-/// `Emotes.dbc` row whose third column is the `AnimationData.dbc` id — but the
-/// join is a game-data lookup, so what is recorded here is the row and the
-/// renderer does the hop.
+/// This is the closest the protocol comes to naming an animation. The id is an
+/// `Emotes.dbc` row whose third column is the `AnimationData.dbc` id. That join
+/// is a game-data lookup, so this arm records the row and the renderer looks up
+/// the animation.
 pub(super) fn emote(ctx: &mut Incoming, pkt: &Packet) {
     let Some(emote) = read(ctx.stats, pkt, action::parse_emote(&pkt.body)) else {
         return;
@@ -440,17 +486,17 @@ pub(super) fn emote(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.apply_emote(&emote);
 }
 
-/// **The three packets whose whole content is a noise** — `SMSG_PLAY_SOUND`,
-/// `SMSG_PLAY_MUSIC`, `SMSG_PLAY_OBJECT_SOUND`.
+/// The three packets whose whole content is a sound: `SMSG_PLAY_SOUND`,
+/// `SMSG_PLAY_MUSIC` and `SMSG_PLAY_OBJECT_SOUND`.
 ///
-/// Pushed onto the player queue rather than folded into the world, because
-/// there is no state to fold: two arrivals are two noises. See
-/// [`crate::play::sound`] for the bodies and for the fact that the object one
-/// is laid out the opposite way round from the spell visuals below.
+/// Pushed onto the player queue rather than applied to the world, because
+/// there is no state to apply: two arrivals are two sounds. See
+/// [`crate::play::sound`] for the bodies, and for the field order of the
+/// object sound, which is the reverse of the spell visuals below.
 ///
-/// **Nothing else in the protocol reaches these sounds.** Every scripted event
-/// in the game — a boss line, a gate, `Map::PlayDirectSoundToMap` over a whole
-/// zone, the outdoor PvP banners — arrives here or is silent.
+/// No other packet plays these sounds. Every scripted sound in the game (a
+/// boss line, a gate, `Map::PlayDirectSoundToMap` over a whole zone, the
+/// outdoor PvP banners) arrives here or is not heard.
 pub(super) fn play_sound(ctx: &mut Incoming, pkt: &Packet, op: Opcode) {
     let cue = match op {
         Opcode::SMSG_PLAY_SOUND => {
@@ -474,19 +520,19 @@ pub(super) fn play_sound(ctx: &mut Incoming, pkt: &Packet, op: Opcode) {
     ctx.world.note_event(PlayerEvent::PlaySound(cue));
 }
 
-/// **A `SpellVisualKit` the server wants played on a unit** —
-/// `SMSG_PLAY_SPELL_VISUAL` about whoever is doing it,
-/// `SMSG_PLAY_SPELL_IMPACT` about whoever it happened to.
+/// A `SpellVisualKit` the server wants played on a unit:
+/// `SMSG_PLAY_SPELL_VISUAL` on the unit doing something,
+/// `SMSG_PLAY_SPELL_IMPACT` on the unit it was done to.
 ///
-/// Recorded on the entity rather than pushed on the queue, which is the
-/// opposite of [`play_sound`] one function up and is the difference between a
-/// noise and a picture: a noise is played at this client and is over, and a
-/// visual becomes true about a unit and stays true for as long as its models
-/// are up. It is also about *anybody*, where the queue is only ever about us.
+/// Recorded on the entity rather than pushed on the queue, the opposite of
+/// [`play_sound`] above. A sound is played at this client and is then over. A
+/// visual is a property of a unit and lasts as long as the unit's models are
+/// loaded. A visual can also be about any unit, where the queue is only about
+/// the player.
 ///
-/// **This is the only thing on the wire that says a character is eating.**
-/// vmangos sends kit 406 or 438 on every regeneration tick while one sits with
-/// food or drink, and both kits are `animID 61` (`EmoteEat`) plus a model.
+/// This is the only packet that says a character is eating. vmangos sends kit
+/// 406 or 438 on every regeneration tick while a character sits with food or
+/// drink, and both kits are `animID 61` (`EmoteEat`) plus a model.
 pub(super) fn play_spell_visual(ctx: &mut Incoming, pkt: &Packet, impact: bool) {
     let Some((guid, kit)) = read(ctx.stats, pkt, sound::parse_play_spell_visual(&pkt.body)) else {
         return;
@@ -498,15 +544,16 @@ pub(super) fn play_spell_visual(ctx: &mut Incoming, pkt: &Packet, impact: bool) 
 /// The two halves of a cast.
 ///
 /// `SMSG_SPELL_START` is the wind-up and carries how long the bar runs;
-/// `SMSG_SPELL_GO` is the release, and a **next-swing** ability sends only the
-/// second. Both are recorded against the **caster**, which is the second guid in
-/// the body and not the first.
+/// `SMSG_SPELL_GO` is the release, and a next-swing ability sends only the
+/// second. Both are recorded against the caster, which is the second guid in
+/// the body, not the first.
 ///
-/// **And both are news for our own casting state, which is the whole of why the
-/// interface half exists.** This client used to draw its own wind-up, release
-/// and cast bar at the *press* and take them back off when the server said no;
-/// 5875 does neither. See [`crate::play::spells::PlayerEvent::CastStarted`], which
-/// carries the two addresses and vmangos' own comment.
+/// When the caster is the player, each packet is also queued as a player event,
+/// because the interface's cast bar is driven by these packets. This client
+/// once drew its own wind-up, release and cast bar at the key press and removed
+/// them when the server refused; build 5875 does neither. See
+/// [`crate::play::spells::PlayerEvent::CastStarted`], which quotes vmangos'
+/// comment and states the 1.12.1 client's behaviour.
 pub(super) fn cast(ctx: &mut Incoming, pkt: &Packet, start: bool) {
     let Some(cast) = read(ctx.stats, pkt, action::parse_spell_cast(&pkt.body, start)) else {
         return;
@@ -542,9 +589,9 @@ pub(super) fn destroy(ctx: &mut Incoming, pkt: &Packet) {
 
 /// Another player moved.
 ///
-/// The server echoes their own `MSG_MOVE_*` packet to everyone nearby, and it
-/// is the **only** thing that moves a player — `SMSG_MONSTER_MOVE` covers
-/// server-driven units and a values update carries no position at all.
+/// The server relays that player's own `MSG_MOVE_*` packet to everyone nearby.
+/// It is the only packet that moves another player: `SMSG_MONSTER_MOVE` covers
+/// server-driven units, and a values update carries no position.
 pub(super) fn moved(ctx: &mut Incoming, pkt: &Packet) {
     let Some((guid, info)) = read(ctx.stats, pkt, movement::parse_movement_broadcast(&pkt.body))
     else {
@@ -554,14 +601,15 @@ pub(super) fn moved(ctx: &mut Incoming, pkt: &Packet) {
     ctx.world.apply_movement(guid, &info);
 }
 
-/// **Somebody else's speed changed**, on one of the two observer families —
-/// see [`movement::SpeedBroadcast`], which says why there are two.
+/// Another unit's speed changed, on one of the two observer families. See
+/// [`movement::SpeedBroadcast`], which says why there are two.
 ///
-/// This is not acknowledged and must not be: the ack belongs to whoever
-/// *controls* the unit, and both of these are sent to everybody except them
-/// (`SendMovementMessageToSet(..., mover)`). Answering one would be
-/// `OnWrongAckData`, three of which is a kick — the same reason
-/// [`super::acks::flag_change`] records a change about another unit in silence.
+/// This is not acknowledged and must not be. The acknowledgement belongs to
+/// the client that controls the unit, and both families are sent to everybody
+/// except that client (`SendMovementMessageToSet(..., mover)`). Answering one
+/// triggers `OnWrongAckData`, and three of those kick the player. For the same
+/// reason [`super::acks::flag_change`] records a change about another unit
+/// without answering.
 ///
 /// The speed is applied even when the block's position is refused, because they
 /// are separate claims and the speed is the one that lasts: a rejected
@@ -586,9 +634,9 @@ pub(super) fn speed_broadcast(ctx: &mut Incoming, pkt: &Packet, op: Opcode) {
     };
     ctx.stats.speed_broadcasts += 1;
 
-    // The block first, because it creates the entity a speed can be recorded
-    // on — and because `apply_movement` is the one place a broadcast position
-    // is vetted.
+    // The block first, because it creates the entity the speed is recorded
+    // on, and because `apply_movement` is the one place a broadcast position
+    // is checked.
     if let Some(info) = info {
         ctx.world.apply_movement(guid, &info);
     }
@@ -599,25 +647,24 @@ pub(super) fn speed_broadcast(ctx: &mut Incoming, pkt: &Packet, op: Opcode) {
     }
 }
 
-/// **A movement flag stated about a unit no player is moving** — one of the
-/// twelve `SMSG_SPLINE_MOVE_*`.
+/// A movement flag change about a unit no player is moving: one of the twelve
+/// `SMSG_SPLINE_MOVE_*` opcodes.
 ///
-/// The body is a packed guid and nothing else; the flag and its direction come
+/// The body is a packed guid and nothing else. The flag and its direction come
 /// from the opcode, through [`movement::SplineFlagChange`], which has the table
 /// and the reason there are three families rather than one.
 ///
-/// **Not acknowledged, and it must not be.** `SendMovementFlagChangeToAll` is
-/// the branch `Unit::SetRooted` takes when the unit is *not* moved by a player,
-/// so there is no pending change on the server to answer and nothing waiting
-/// for a counter. Replying would be `OnWrongAckData` — three of which is a
-/// kick — for exactly the reason [`speed_broadcast`] gives about its own
-/// family.
+/// This is not acknowledged and must not be. `SendMovementFlagChangeToAll` is
+/// the branch vmangos' `Unit::SetRooted` takes when no player moves the unit,
+/// so the server has no pending change to answer and is not waiting for a
+/// counter. Replying triggers `OnWrongAckData`, and three of those kick the
+/// player, for the reason [`speed_broadcast`] gives about its own family.
 ///
-/// What dropping it costs: a creature's movement flags arrive once, in its
-/// create block, and nothing else on the wire ever restates them. So a rooted
-/// creature goes on being reckoned and drawn as one that can move, a patrol
-/// told to walk is dead-reckoned at its run speed, and a hovering or
-/// water-walking unit is one this client never learns about at all.
+/// A creature's movement flags arrive once, in its create block, and no other
+/// packet restates them. If this family is dropped, a rooted creature is still
+/// reckoned and drawn as one that can move, a patrol told to walk is
+/// dead-reckoned at its run speed, and this client never learns that a unit is
+/// hovering or water walking.
 pub(super) fn spline_flag(ctx: &mut Incoming, pkt: &Packet, op: Opcode) {
     let Some(change) = movement::SplineFlagChange::of(op) else {
         return;
@@ -629,17 +676,18 @@ pub(super) fn spline_flag(ctx: &mut Incoming, pkt: &Packet, op: Opcode) {
     ctx.world.apply_spline_flag(guid, change);
 }
 
-/// **The intro cinematic, ended the frame it is offered.**
+/// `SMSG_TRIGGER_CINEMATIC`: the intro cinematic, ended as soon as it is
+/// offered.
 ///
 /// The body is one `u32`, the `ChrRaces.dbc` `CinematicSequence` of the
-/// character's race. This client has no cinematic player, so it answers
-/// `CMSG_COMPLETE_CINEMATIC` — an empty body — at once.
+/// character's race. This client has no cinematic player, so it answers at
+/// once with `CMSG_COMPLETE_CINEMATIC`, which has an empty body.
 ///
-/// **Not answering empties the world.** The packet is sent on exactly one login
-/// per character, the first (`HandlePlayerLogin`'s gate is total played time
-/// zero), and `Player::CinematicStart` then runs `UpdateCinematic` from
+/// Not answering empties the world. The packet is sent on one login per
+/// character, the first (`HandlePlayerLogin` sends it when total played time
+/// is zero). `Player::CinematicStart` then runs `UpdateCinematic` from
 /// `Player::Update` for as long as `m_currentCinematicEntry` is set. Once a
-/// second that summons a waypoint creature and calls `GetCamera().SetView` on
+/// second, that summons a waypoint creature and calls `GetCamera().SetView` on
 /// it, which recomputes the whole client-visible set from the waypoint:
 /// `VisibleNotifier` sends an out-of-range destroy for every unit, player and
 /// game object that was visible from the character, and create blocks for
@@ -648,10 +696,10 @@ pub(super) fn spline_flag(ctx: &mut Incoming, pkt: &Packet, op: Opcode) {
 /// with the player and the ground still in it.
 ///
 /// `CinematicEnd` is the only thing that clears the entry and calls
-/// `Camera::ResetView`, and `HandleCompleteCinematic` is its only caller. So
-/// the reply is not a courtesy: it is what gives the camera back. Logging out
-/// and back in cleared it because the second login sets played time above zero
-/// and the packet is never sent again.
+/// `Camera::ResetView`, and `HandleCompleteCinematic` is its only caller, so
+/// the reply is what restores the camera. Logging out and back in also cleared
+/// the state, because at the second login played time is above zero and the
+/// packet is not sent again.
 ///
 /// `CinematicEnd` also calls `CheckAreaExploreAndOutdoor`, so the reply is
 /// additionally what marks a new character's starting zone explored.
@@ -661,10 +709,11 @@ pub(super) fn cinematic(ctx: &mut Incoming, pkt: &Packet) {
     let _ = pkt;
 }
 
-/// The world's clock, stated once and never again — see [`crate::play::time`].
+/// `SMSG_LOGIN_SETTIMESPEED`: the world's clock, stated once at login and not
+/// restated. See [`crate::play::time`].
 ///
-/// Nothing is acknowledged and nothing else moves; the light tables are indexed
-/// by it and the renderer runs it forward itself.
+/// Nothing is acknowledged and nothing else changes. The light tables are
+/// indexed by the clock, and the renderer advances it itself.
 pub(super) fn game_time(ctx: &mut Incoming, pkt: &Packet) {
     if let Some(time) = read(
         ctx.stats,
@@ -675,14 +724,12 @@ pub(super) fn game_time(ctx: &mut Incoming, pkt: &Packet) {
     }
 }
 
-/// `u32 inflatedSize` + a zlib stream — the header
-/// `SMSG_COMPRESSED_UPDATE_OBJECT` and `SMSG_COMPRESSED_MOVES` share.
-/// **`SMSG_WEATHER`** — kept as state, like the clock, and counted.
+/// `SMSG_WEATHER`: kept as state, like the clock, and counted.
 ///
-/// A body that will not parse — short, or a type past 3 — is reported on the
-/// warnings channel by `read` and the sky is left as it was, which is what
-/// the reference does with a type it refuses.
-/// See [`crate::play::weather`], where the ramp and the density rule are.
+/// A body that will not parse (short, or a type past 3) is reported on the
+/// warnings channel by `read`, and the sky is left as it was. The 1.12.1 client
+/// also leaves the weather unchanged for a type it refuses. See
+/// [`crate::play::weather`] for the ramp and the density rule.
 pub(super) fn weather(ctx: &mut Incoming, pkt: &Packet) {
     if let Some(weather) = read(ctx.stats, pkt, crate::play::weather::parse_weather(&pkt.body)) {
         ctx.stats.weather += 1;
@@ -690,6 +737,8 @@ pub(super) fn weather(ctx: &mut Incoming, pkt: &Packet) {
     }
 }
 
+/// Inflate `u32 inflatedSize` + a zlib stream, the header
+/// `SMSG_COMPRESSED_UPDATE_OBJECT` and `SMSG_COMPRESSED_MOVES` share.
 fn inflate_update(body: &[u8]) -> io::Result<Vec<u8>> {
     if body.len() < 4 {
         return Err(io::Error::other("compressed update too short"));

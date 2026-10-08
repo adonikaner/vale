@@ -1,16 +1,16 @@
-//! **Where the little round map is looking** — the facts the painter needs
-//! and the widget cannot know.
+//! The minimap's view of the world: the position, map, building and dots the
+//! painter needs and the widget cannot know.
 //!
-//! `crate::lua::widgets::minimap` holds what a *script* can read and write: the zoom, and
-//! the ping. Everything else about the minimap is the world's answer, and the
-//! draw walk runs with no borrow of the world at all — so it comes across as a
-//! resource rather than through the widget.
+//! `crate::lua::widgets::minimap` holds what a script can read and write: the
+//! zoom and the ping. Everything else about the minimap comes from the world.
+//! The draw walk runs with no borrow of the world, so this module passes it
+//! across as a resource, [`MinimapView`], rather than through the widget.
 //!
 //! The position and the facing are the mover's own, already on
-//! [`WorldStatus`]; the map *directory* is the one `Map.dbc` name the session
+//! [`WorldStatus`]. The map directory is the one `Map.dbc` name the session
 //! resolved at login (`Azeroth`, `Kalimdor`), which is also the key
-//! `textures\Minimap\md5translate.trs` is written against; and the indoor flag
-//! and the building come from the floor under the feet, below.
+//! `textures\Minimap\md5translate.trs` is written against. The indoor flag and
+//! the building come from the floor under the feet, described below.
 //!
 //! ## Inside a building
 //!
@@ -21,14 +21,14 @@
 //! `minimapInsideZoom`. The rule for which pictures, where and in which order
 //! is [`vale_assets::tables::minimap::place_pictures`].
 //!
-//! The client decides "stands in a group" from the group its scene graph has
-//! linked the character's model into. This client decides it from the floor
+//! The 1.12.1 client decides "stands in a group" from the building group the
+//! character's model is placed in. This client decides it from the floor
 //! under the feet, the test [`super::worldmap::WorldMapState::outdoors`] also
 //! makes ([`vale_assets::world::wmo::building_under`]), and then finds the
 //! group among the placed buildings by its box and by the floor's flags
 //! ([`vale_assets::tables::minimap::InteriorModel::group_at`]). A floor that
-//! belongs to an `EXTERIOR` group does not count: the client's group walk
-//! refuses such a group, so it could only ever show an empty disc. Stormwind's
+//! belongs to an `EXTERIOR` group does not count: the 1.12.1 client draws no
+//! pictures for such a group, so it could only show an empty disc. Stormwind's
 //! streets are not `EXTERIOR` groups and carry pictures, so the city shows its
 //! own map from the street.
 //!
@@ -37,13 +37,14 @@
 //!
 //! ## The dots and the two arrows
 //!
-//! What the map draws over its tiles is the world's answer too, and it comes
-//! across the same way: [`MinimapView::blips`] is every unit and object the
-//! reference's classifier would list (`vale_assets::look::blips`), each as an offset in yards from the character, and
-//! [`MinimapView::markers`] is the two places the map points at — the flag a
-//! guard's directions put up, and the body a ghost is walking back to. The
-//! offsets are in yards rather than on the disc because the disc's radius is
-//! the *widget's* zoom, which lives on the Lua side; the painter projects.
+//! What the map draws over its tiles also comes from the world, on the same
+//! resource. [`MinimapView::blips`] is every unit and object the 1.12.1 client
+//! would show as a dot (the rule is `vale_assets::look::blips`), each as an
+//! offset in yards from the character. [`MinimapView::markers`] is the two
+//! places the map points at: the flag a guard's directions put up, and the
+//! body a ghost is walking back to. The offsets are in yards rather than on
+//! the disc because the disc's radius depends on the widget's zoom, which is
+//! held on the Lua side. The painter projects them onto the disc.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -96,10 +97,10 @@ pub struct MinimapView {
     pub directory: String,
     /// The character's world position: north (+x) and west (+y).
     pub position: (f32, f32),
-    /// …and which way they are looking, in the server's own radians.
+    /// The character's facing, in the server's radians.
     pub facing: f32,
-    /// …and the height of their feet, which the building pictures are chosen
-    /// and ordered by.
+    /// The height of the character's feet, which the building pictures are
+    /// chosen and ordered by.
     pub elevation: f32,
     /// Whether the character stands in a building group, which chooses the
     /// indoor radius table and zoom level and replaces the terrain with the
@@ -108,10 +109,10 @@ pub struct MinimapView {
     /// The building, once its headers are read; `None` outdoors, and while
     /// they load, when the map is an empty disc.
     pub interior: Option<InteriorView>,
-    /// The dots — see the module comment. Rebuilt every frame there is a world,
-    /// as the reference rebuilds its five lists on every update.
+    /// The dots; see the module comment. Rebuilt every frame there is a world,
+    /// as the 1.12.1 client rebuilds its dots on every update.
     pub blips: Vec<Blip>,
-    /// …and the two places the map points at.
+    /// The two places the map points at.
     pub markers: Vec<Marker>,
 }
 
@@ -190,18 +191,40 @@ impl InteriorModels {
     }
 }
 
+/// `MSG_MINIMAP_PING` from a group member, as a message for
+/// [`crate::lua::widgets::minimap::follow_pings`]. Written by
+/// [`crate::world::incoming`].
+#[derive(Message, Debug, Clone, Copy)]
+pub struct PingAnswer(pub vale_protocol::play::minimap::MinimapPing);
+
+/// The packet this module answers, for `incoming::drain_events`.
+pub fn answer_of(event: &vale_protocol::play::spells::PlayerEvent) -> Option<PingAnswer> {
+    match event {
+        vale_protocol::play::spells::PlayerEvent::MinimapPing(ping) => Some(PingAnswer(*ping)),
+        _ => None,
+    }
+}
+
 pub struct MinimapPlugin;
 
 impl Plugin for MinimapPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MinimapView>()
             .init_resource::<InteriorModels>()
+            .add_message::<PingAnswer>()
             .add_systems(Update, (track, collect).chain().in_set(super::GameSet))
             // After the indoor flag is known, so that the interface's zoom
-            // level and `MINIMAP_UPDATE_ZOOM` follow it on the same frame.
+            // level and `MINIMAP_UPDATE_ZOOM` follow it on the same frame. The
+            // pings follow, so a ping made on the frame the character steps
+            // indoors is measured with the indoor radius.
             .add_systems(
                 Update,
-                crate::lua::widgets::minimap::announce_inside.after(super::GameSet),
+                (
+                    crate::lua::widgets::minimap::announce_inside,
+                    crate::lua::widgets::minimap::follow_pings,
+                )
+                    .chain()
+                    .after(super::GameSet),
             );
     }
 }
@@ -212,11 +235,11 @@ const FLOOR_PROBE: f32 = 1.0;
 
 /// Copy the facts across, and find the building the character stands in.
 ///
-/// **Written unconditionally rather than on a change**, unlike every other
-/// resource in this directory: the position moves every frame a character
-/// walks, so a change test here would be a comparison that almost always
-/// says yes for the cost of a comparison. The `String` is only cloned when
-/// the map id moves.
+/// The view is written every frame rather than only on a change, unlike
+/// every other resource in this directory. The position moves every frame a
+/// character walks, so a change test would almost always pass and would only
+/// add the cost of the comparison. The `String` is only cloned when the map
+/// id changes.
 #[allow(clippy::too_many_arguments)]
 fn track(
     session: Res<Session>,
@@ -298,20 +321,20 @@ fn track(
 }
 
 /// A cap on the dots, so a city under Track Humanoids costs a bounded walk in
-/// the painter. The reference's lists grow without one; two hundred is more
-/// than fit on the disc.
+/// the painter. The 1.12.1 client has no cap; two hundred is more than fit
+/// on the disc.
 const MOST_BLIPS: usize = 200;
 
-/// **The dots and the markers**, off the world the frame is drawing.
+/// Build the dots and the markers from the world the frame is drawing.
 ///
-/// The reference's classifier is walked over every entity in view;
-/// the rule itself is [`vale_assets::look::blips`], and what is here is only
-/// the gathering of its inputs: the character's own tracking fields, each unit's
-/// flags and cached creature type, each object's lock, and the group roster.
+/// Every entity in view is classified. The rule is
+/// [`vale_assets::look::blips`]; this function only gathers its inputs: the
+/// character's own tracking fields, each unit's flags and cached creature
+/// type, each object's lock, and the group roster.
 ///
-/// **A group member's dot comes off the roster, not off the object** — the
-/// reference appends its party list separately and skips a grouped player in
-/// the object walk. Where the member is in view
+/// A group member's dot comes from the roster, not from the member's object.
+/// The 1.12.1 client places group members from the group list and does not
+/// also draw a grouped player as an ordinary unit. Where the member is in view
 /// their drawn position is used; where they are not,
 /// `SMSG_PARTY_MEMBER_STATS`' two `int16`s are, if the zone puts them on this
 /// map.

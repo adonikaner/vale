@@ -3,8 +3,8 @@
 //! `LiveSession` hands the renderer a queue of [`PlayerEvent`]s: everything
 //! the server said about this character that is an edge rather than a field.
 //! One system, [`drain_events`], drains the queue and forwards each event to
-//! the module that owns its subject. It has about sixty match arms and
-//! forwards to thirteen sibling modules.
+//! the module that owns its subject. It has about 120 match arms and
+//! forwards to more than forty modules.
 //!
 //! ## Why the drain is a module of its own
 //!
@@ -19,8 +19,7 @@
 //! counterpart of `vale_protocol::socket::handler`, whose note gives the
 //! reason for keeping a single dispatch: there is exactly one place an opcode
 //! becomes an action. The difference is that this file is about the fan-out,
-//! so the edit is on-subject. Moving the drain out made the action bar 450
-//! lines shorter.
+//! so the edit is on-subject.
 //!
 //! ## What stays in `action`
 //!
@@ -111,12 +110,35 @@ pub struct SubjectAnswers<'w> {
     /// The two statements the server makes about what the character can do. See
     /// [`CapabilityAnswers`].
     pub caps: CapabilityAnswers<'w>,
+    /// The server's notices, the group's shared marks, world states and
+    /// tutorials. See [`NoticeAnswers`].
+    pub notices: NoticeAnswers<'w>,
+}
+
+/// Seven subjects that arrived together: the server's notices, `/roll`, the
+/// minimap ping, the raid target icons, quest sharing, the world state table and
+/// the tutorial mask, plus the bags' cooldown event.
+///
+/// Nested in [`SubjectAnswers`] for the parameter-limit reason given there; the
+/// grouping makes no claim that the subjects belong together.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct NoticeAnswers<'w> {
+    pub notices: MessageWriter<'w, crate::interface::notices::NoticeAnswer>,
+    pub rolls: MessageWriter<'w, crate::interface::randomroll::RollAnswer>,
+    pub pings: MessageWriter<'w, crate::interface::minimap::PingAnswer>,
+    pub raid_targets: MessageWriter<'w, crate::interface::raidtarget::RaidTargetAnswer>,
+    pub quest_share: MessageWriter<'w, crate::interface::questshare::QuestShareAnswer>,
+    pub world_states: MessageWriter<'w, crate::interface::worldstate::WorldStateAnswer>,
+    pub tutorials: MessageWriter<'w, crate::interface::tutorial::TutorialAnswer>,
+    /// `BAG_UPDATE_COOLDOWN`, raised for `SMSG_ITEM_COOLDOWN` beside the two
+    /// events [`ActionEvents::cooldown_moved`] raises.
+    pub bag_cooldown: MessageWriter<'w, crate::interface::events::BagUpdateCooldown>,
 }
 
 /// What the character may equip, and what their talents do to their spells.
 ///
-/// Bundled because [`drain_events`] is at Bevy's sixteen-parameter limit. The
-/// limit applies to a system's arguments, so a new writer has to go inside an
+/// Bundled because [`drain_events`] is close to Bevy's sixteen-parameter
+/// limit. The limit applies to a system's arguments, so a new writer has to go inside an
 /// existing group rather than beside it. `SystemParam` structs have no such
 /// limit.
 ///
@@ -134,8 +156,8 @@ pub struct CapabilityAnswers<'w> {
     /// cooldown started locally when the player's own `SMSG_SPELL_GO` returns
     /// must include talent modifiers, or it is wrong for its whole duration.
     ///
-    /// This is a `Res` in a bundle of writers because [`drain_events`] is at
-    /// Bevy's sixteen-parameter limit and this bundle already has the subject. It
+    /// This is a `Res` in a bundle of writers because [`drain_events`] is close
+    /// to Bevy's sixteen-parameter limit and this bundle already has the subject. It
     /// reads the previous frame's value. The systems that fold the modifier
     /// messages into the resource run in the same `Update`, and a modifier
     /// arriving on the same frame as a cast release has no defined order relative
@@ -201,8 +223,8 @@ pub struct NpcAnswers<'w> {
 /// Drains the session's event queue and forwards each event to the module
 /// that owns its subject.
 ///
-/// The system has sixteen parameters, which is Bevy's limit, and three of
-/// them are bundles that exist because of the limit. The module comment
+/// The system has fifteen parameters, one below Bevy's limit of sixteen, and
+/// three of them are bundles that exist because of the limit. The module comment
 /// explains why the drain is a module rather than a function in another one.
 ///
 /// The queue has exactly one reader. An event drained here and not forwarded
@@ -223,7 +245,7 @@ pub(crate) fn drain_events(
     // failures are `SPELL_FAILED_*` keys and have no row in the message table.
     // All nine attack refusals have rows, and each says red frame with no sound
     // (checked with `vale messages ERR_BADATTACKPOS`). Using the table would
-    // change nothing here, and this system is already at Bevy's
+    // change nothing here, and this system is already close to Bevy's
     // sixteen-parameter limit.
     mut errors: UiErrors,
     mut events: ActionEvents,
@@ -434,8 +456,8 @@ pub(crate) fn drain_events(
             }
             // A pushback lengthens the cast rather than ending it, so it has its own
             // arm. `SMSG_SPELL_DELAYED` means the server's `m_timer` has moved. The
-            // client's bar was started at the key press from `Spell.dbc`'s base cast
-            // time, and no other packet restates the time. Without this arm, a Fireball
+            // bar's length was set from `SMSG_SPELL_START`, and no other packet
+            // restates the time. Without this arm, a Fireball
             // pushed back twice showed a full bar for a second while the server was
             // still casting, which was reported as "stuck casting a spell that was
             // interrupted".
@@ -587,6 +609,22 @@ pub(crate) fn drain_events(
                 cooldowns.set(spell_id, ms, catalog.and_then(|c| c.info(spell_id)).as_ref());
                 events.cooldown_moved();
             }
+            // The wait after equipping an item with a use. The 1.12.1 client keeps
+            // it as a thirty-second cooldown on the item's spell with no category
+            // cooldown, and raises the bags' cooldown event beside the two the bar
+            // and the spellbook read. This client keeps cooldowns by spell, so the
+            // wait shows on every reader of that spell, which for an item's own
+            // use spell is the item. A longer cooldown the spell already has is
+            // kept.
+            PlayerEvent::ItemCooldown { spell_id, .. } => {
+                cooldowns.set_at_least(
+                    spell_id,
+                    vale_protocol::play::spells::EQUIP_COOLDOWN_MS,
+                    catalog.and_then(|c| c.info(spell_id)).as_ref(),
+                );
+                events.cooldown_moved();
+                subjects.notices.bag_cooldown.write(crate::interface::events::BagUpdateCooldown);
+            }
             PlayerEvent::CooldownReleased { spell_id } => {
                 cooldowns.release(spell_id);
                 events.cooldown_moved();
@@ -716,8 +754,8 @@ pub(crate) fn drain_events(
             PlayerEvent::QuestKill(kill) => {
                 subjects.quest.write(crate::interface::quest::QuestAnswer::Kill(kill));
             }
-            // The item objective's own packet, which had a name but no dispatch before
-            // this arm. See [`crate::interface::quest::item_progress`].
+            // The item objective's packet. See
+            // [`crate::interface::quest::item_progress`].
             PlayerEvent::QuestItem { entry, added, have } => {
                 subjects
                     .quest
@@ -933,11 +971,12 @@ pub(crate) fn drain_events(
                     subjects.reputation.write(answer);
                 }
             }
-            // The social panel's four events are folded the same way, for the same
-            // reason; see [`crate::interface::social::answer_of`].
-            // The mailbox's five events are folded the same way; see
+            // The social panel's four events and the mailbox's five are folded the
+            // same way, for the same reason, in arms further below; see
+            // [`crate::interface::social::answer_of`] and
             // [`crate::interface::mail::answer_of`].
-            // The trade window's two events; see [`crate::interface::trade`].
+            // The trade window's two events (the second is further below); see
+            // [`crate::interface::trade`].
             PlayerEvent::TradeStatus(status) => {
                 npc.trade.write(crate::interface::trade::TradeAnswer::Status(status));
             }
@@ -1017,6 +1056,44 @@ pub(crate) fn drain_events(
             ref event @ PlayerEvent::TextEmote(_) => {
                 if let Some(answer) = crate::interface::emotetext::answer_of(event) {
                     subjects.emotes.write(answer);
+                }
+            }
+            ref event @ (PlayerEvent::PlayerNotFound { .. }
+            | PlayerEvent::ServerMessage(_)
+            | PlayerEvent::ZoneUnderAttack { .. }
+            | PlayerEvent::DefenseMessage(_)) => {
+                if let Some(answer) = crate::interface::notices::answer_of(event) {
+                    subjects.notices.notices.write(answer);
+                }
+            }
+            ref event @ PlayerEvent::RandomRoll(_) => {
+                if let Some(answer) = crate::interface::randomroll::answer_of(event) {
+                    subjects.notices.rolls.write(answer);
+                }
+            }
+            ref event @ PlayerEvent::MinimapPing(_) => {
+                if let Some(answer) = crate::interface::minimap::answer_of(event) {
+                    subjects.notices.pings.write(answer);
+                }
+            }
+            ref event @ PlayerEvent::RaidTargets(_) => {
+                if let Some(answer) = crate::interface::raidtarget::answer_of(event) {
+                    subjects.notices.raid_targets.write(answer);
+                }
+            }
+            ref event @ (PlayerEvent::QuestPushResult(_) | PlayerEvent::QuestConfirmAccept(_)) => {
+                if let Some(answer) = crate::interface::questshare::answer_of(event) {
+                    subjects.notices.quest_share.write(answer);
+                }
+            }
+            ref event @ (PlayerEvent::WorldStatesInit(_) | PlayerEvent::WorldStateUpdate { .. }) => {
+                if let Some(answer) = crate::interface::worldstate::answer_of(event) {
+                    subjects.notices.world_states.write(answer);
+                }
+            }
+            ref event @ PlayerEvent::TutorialFlags(_) => {
+                if let Some(answer) = crate::interface::tutorial::answer_of(event) {
+                    subjects.notices.tutorials.write(answer);
                 }
             }
             // Shows "Discovered: Stranglethorn Vale" in the game's own strings.

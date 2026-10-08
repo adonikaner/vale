@@ -1,8 +1,8 @@
 //! The client's side of the game's interface: the state behind each FrameXML
 //! panel, and the interface code the panels share.
 //!
-//! The 1.12.1 client keeps this code in one flat directory, one file per panel,
-//! and this directory has the same shape. The interpreter and the widget tree
+//! `Interface\FrameXML\` is one flat directory with one file per panel, and
+//! this directory has the same shape. The interpreter and the widget tree
 //! that run the panels' own Lua and XML are in `crate::lua`, and the painting is
 //! in `crate::ui`. Nothing here draws.
 //!
@@ -34,7 +34,14 @@
 //! lootroll.rs    group loot rolls
 //! mail.rs        the mailbox
 //! merchant.rs    the vendor window
-//! minimap.rs     where the minimap is looking
+//! minimap.rs     where the minimap is looking, and the group's pings on it
+//! notices.rs     the server's notices: an unknown whisper target, a shutdown
+//!                countdown, a zone under attack
+//! randomroll.rs  /roll
+//! raidtarget.rs  the eight raid target icons
+//! questshare.rs  sharing a quest with the group, and the party quest popup
+//! worldstate.rs  the world state table the frame above the minimap lists
+//! tutorial.rs    the tutorial tips mask and the tips it raises
 //! pagetext.rs    the text of signs, plaques and readable items
 //! party.rs       the party roster and its verbs
 //! pet.rs         the pet action bar
@@ -100,11 +107,11 @@
 //!
 //! The state here belongs to one session: the target is a guid on a map the
 //! player has left, the bar is the last character's, the cooldown clocks run
-//! against a `GetTime` that keeps ticking. A second login overwrites most of it
-//! within a second or two (`SMSG_ACTION_BUTTONS` refills the bar, the first
-//! `SMSG_UPDATE_OBJECT` resolves the units again), so it looked correct. In
-//! between, the screen showed the last character's state, and anything the
-//! server does not send again stayed.
+//! against a `GetTime` that keeps ticking. Without a reset, a second login
+//! overwrites most of it within a second or two (`SMSG_ACTION_BUTTONS` refills
+//! the bar, the first `SMSG_UPDATE_OBJECT` resolves the units again). Until
+//! then the screen shows the last character's state, and anything the server
+//! does not send again stays.
 //!
 //! Each module therefore resets its own resources when
 //! [`events::PlayerLeavingWorld`] arrives. [`leaving`] writes that message once,
@@ -142,6 +149,7 @@ pub mod mail;
 pub mod merchant;
 pub mod messages;
 pub mod minimap;
+pub mod notices;
 pub mod object;
 pub mod pagetext;
 pub mod party;
@@ -150,7 +158,10 @@ pub mod petition;
 pub mod plate;
 pub mod played;
 pub mod quest;
+pub mod questshare;
 pub mod raid;
+pub mod raidtarget;
+pub mod randomroll;
 pub mod received;
 pub mod reputation;
 pub mod shapeshift;
@@ -172,9 +183,11 @@ pub mod timers;
 pub mod trade;
 pub mod tradeskill;
 pub mod trainer;
+pub mod tutorial;
 pub mod untrainer;
 pub mod vitals;
 pub mod worldmap;
+pub mod worldstate;
 
 use bevy::prelude::*;
 
@@ -258,6 +271,14 @@ impl Plugin for InterfacePlugins {
                 logout::LogoutPlugin,
             ),
             (worldmap::WorldMapPlugin, minimap::MinimapPlugin),
+            (
+                notices::NoticesPlugin,
+                randomroll::RandomRollPlugin,
+                raidtarget::RaidTargetPlugin,
+                questshare::QuestSharePlugin,
+                worldstate::WorldStatePlugin,
+                tutorial::TutorialPlugin,
+            ),
         ))
         // First in the set, so every reader of the message, here and in
         // `crate::lua`, sees it in the frame the session ended rather than the

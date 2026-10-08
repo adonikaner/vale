@@ -30,8 +30,8 @@
 
 use super::strings::{substitute_all, Strings};
 
-/// What a unit is to the local player: the ten values the client's
-/// categoriser returns.
+/// What a unit is to the local player: the ten categories the 1.12.1 client
+/// sorts units into.
 ///
 /// They come in pairs: a unit and its pet are adjacent, with the low bit set
 /// for the pet, so the routing functions can treat `2` and `3` almost alike.
@@ -39,7 +39,7 @@ use super::strings::{substitute_all, Strings};
 ///
 /// The names come from the seven range CVars
 /// (`CombatLogRangeParty`, `CombatLogRangePartyPet`, …), one per category in
-/// this order; the client has no closer equivalent of a named enum.
+/// this order. The client exposes no other names for them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum Category {
@@ -55,7 +55,7 @@ pub enum Category {
     /// A creature owned by nobody, and anything whose owner resolves to one.
     Creature = 8,
     /// A guid the object manager cannot resolve. This is a valid category, not
-    /// an error: the categoriser returns 9 from four different branches, and the
+    /// an error: the 1.12.1 client assigns 9 in four different cases, and the
     /// routing treats it exactly as [`Category::Creature`].
     Unknown = 9,
 }
@@ -86,8 +86,7 @@ impl Category {
     /// Whether this is the local player.
     ///
     /// This is the only test [`Perspective`] makes. Your pet is therefore
-    /// "other": the game says "Your
-    /// Voidwalker hits X", not "You hit X".
+    /// "other": the game says "Your Voidwalker hits X", not "You hit X".
     pub fn is_you(self) -> bool {
         self == Category::You
     }
@@ -95,11 +94,10 @@ impl Category {
     /// The CVar that bounds how far away this category is still logged, and
     /// the value 5875 registers it with.
     ///
-    /// The client indexes the range CVars by the category and looks the name
-    /// up. You and your pet have no entry, so they get the "no limit"
-    /// constant (100000.0) and are always logged. So is
-    /// [`Category::Unknown`], which has no entry either: an unresolvable unit
-    /// is logged, not dropped.
+    /// The 1.12.1 client reads the range CVar for the category. You and your
+    /// pet have no range CVar, so they get the "no limit" value (100000.0) and
+    /// are always logged. So is [`Category::Unknown`], which has no range CVar
+    /// either: an unresolvable unit is logged, not dropped.
     pub fn range_cvar(self) -> Option<(&'static str, f32)> {
         match self {
             Category::You | Category::YourPet | Category::Unknown => None,
@@ -117,8 +115,8 @@ impl Category {
     ///
     /// [`NO_RANGE_LIMIT`] for the three with no CVar. The client tests both
     /// units of a blow, and either one out of range drops the whole line. A
-    /// fight where one unit is out of range is not logged at all; that is the
-    /// reference client's behaviour.
+    /// fight where one unit is out of range is not logged at all, as in the
+    /// 1.12.1 client.
     pub fn range_yards(self) -> f32 {
         self.range_cvar().map_or(NO_RANGE_LIMIT, |(_, yards)| yards)
     }
@@ -164,7 +162,7 @@ pub struct Standing {
 /// [`Category::Creature`], and a guid the client cannot resolve is
 /// [`Category::Unknown`], which the routing treats identically. An entity that
 /// has not streamed in yet therefore produces a line about a creature rather
-/// than no line, as in the reference client.
+/// than no line, as in the 1.12.1 client.
 pub fn categorise(standing: Standing) -> Category {
     // A pet is its master's category with the low bit set, which is why the
     // ten values are five pairs.
@@ -174,8 +172,8 @@ pub fn categorise(standing: Standing) -> Category {
         return Category::Unknown;
     }
     if standing.owner_is_you {
-        // `(typemask >> 5) & 1`: the only place the result comes from a bit
-        // rather than a branch.
+        // The 1.12.1 client tells your own unit from your pet by bit 5 of the
+        // unit's type mask, not by a separate ownership test.
         return pair(Category::You, Category::YourPet);
     }
     if !standing.owner_is_player {
@@ -192,10 +190,10 @@ pub fn categorise(standing: Standing) -> Category {
 
 /// Which of the six routing tables a line goes through.
 ///
-/// The client has six routing functions that are the same function with one
-/// constant changed: 27, 28, 46, 47, 70 and 71. The constant is the id of the
-/// `…_SELF_…` row, and every other arm is that row plus an even offset, so
-/// [`chat_type`] is one table rather than six.
+/// The six families route the same way and differ only in a base chat type
+/// id: 27, 28, 46, 47, 70 and 71. The base is the id of the `…_SELF_…` row,
+/// and every other arm is that row plus an even offset, so [`chat_type`] is
+/// one table rather than six.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
     /// A weapon swing that landed. `COMBAT_SELF_HITS` and its seven siblings.
@@ -231,21 +229,20 @@ impl Family {
     /// The periodic families route on the attacker alone, and have five arms
     /// where the others have eight.
     ///
-    /// The two periodic tables are a flat `[base, base, +2, +2, +4, +4, +6,
-    /// +6, +8, +8]` with no conditional: there is no
-    /// `SPELL_PERIODIC_CREATURE_VS_PARTY_DAMAGE` row to select. The difference
-    /// comes from the chat type table, which has no such rows.
+    /// The two periodic families map the attacker's category to `[base, base,
+    /// +2, +2, +4, +4, +6, +6, +8, +8]` whatever the victim is. There is no
+    /// `SPELL_PERIODIC_CREATURE_VS_PARTY_DAMAGE` row to select, because the
+    /// chat type table has no such rows.
     fn is_periodic(self) -> bool {
         matches!(self, Family::PeriodicDamage | Family::PeriodicBuff)
     }
 }
 
-/// The chat type a line about these two units goes to: the six routing
-/// functions, as one table.
+/// The chat type a line about these two units goes to: the six families'
+/// routing, as one table.
 ///
-/// Returns [`chattype::NONE`](super::chattype::NONE) for a pairing that has no
-/// window, which is what the client's `0x5e` means. It is not an error; the
-/// caller drops the line.
+/// Returns [`chattype::NONE`](super::chattype::NONE) (94) for a pairing that
+/// has no window. It is not an error; the caller drops the line.
 ///
 /// Two arms are conditional, and neither follows from the naming. A party
 /// member or a friendly player whose blow lands on you, your pet, or anyone
@@ -273,8 +270,8 @@ pub fn chat_type(family: Family, attacker: Category, victim: Category) -> u8 {
         Category::FriendlyPlayer => base + 6,
         Category::FriendlyPlayerPet => base + 6,
         Category::HostilePlayer | Category::HostilePlayerPet => base + 8,
-        // The creature arms route on the victim, through a byte table:
-        // `[0,0,1,1,2,2,2,2,2,2]`.
+        // The creature arms route on the victim's pair, `[0,0,1,1,2,2,2,2,2,2]`
+        // by victim category.
         Category::Creature | Category::Unknown => match victim {
             Category::You | Category::YourPet => base + 10,
             Category::Party | Category::PartyPet => base + 12,
@@ -285,17 +282,15 @@ pub fn chat_type(family: Family, attacker: Category, victim: Category) -> u8 {
 
 /// Which of a family's three or four keys applies, and how many names it takes.
 ///
-/// This is the client's key selector: two tests, producing a suffix and a
-/// number 0..3. The composer
-/// switches on the number to decide how many names to substitute, so the key
-/// and the argument list are one decision. A client that gets this wrong prints
-/// the victim's name where the attacker's belongs, and the sentence still reads
-/// correctly.
+/// Two tests produce a suffix and a number 0..3. The number decides how many
+/// names are substituted, so the key and the argument list are one decision.
+/// A client that gets this wrong prints the victim's name where the attacker's
+/// belongs, and the sentence still reads correctly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Perspective {
-    /// Both units are you. The selector writes 0 and returns null, so there is
-    /// no line unless the family has a `SELFSELF` key. A melee swing cannot
+    /// Both units are you. There is no line unless the family has a
+    /// `SELFSELF` key. A melee swing cannot
     /// reach this, since you cannot swing at yourself, but a spell can, and
     /// `SPELLLOGSELFSELF` exists for those.
     None = 0,
@@ -308,7 +303,7 @@ pub enum Perspective {
 }
 
 impl Perspective {
-    /// The selector's two tests.
+    /// The two tests: whether the attacker is you, and whether the victim is.
     pub fn of(attacker: Category, victim: Category) -> Perspective {
         match (attacker.is_you(), victim.is_you()) {
             (true, true) => Perspective::None,
@@ -334,8 +329,8 @@ impl Perspective {
     /// Whether the attacker is named in this perspective's key.
     ///
     /// A perspective is two bits, this and [`Self::names_victim`]: the key
-    /// mentions whichever unit is not you, and the composer pushes a name for
-    /// each unit it mentions.
+    /// mentions whichever unit is not you, and the line takes a name for each
+    /// unit the key mentions.
     pub fn names_attacker(self) -> bool {
         matches!(self, Perspective::OtherSelf | Perspective::OtherOther)
     }
@@ -457,8 +452,8 @@ impl Subject {
 /// the four totem slots and the four object slots. Each is a summoned object.
 /// Nothing else in the game "is destroyed".
 ///
-/// A unit that was not summoned by a spell reads 0 here and dies like any other
-/// unit, through the `< 0` / `!record` arms.
+/// A unit that was not summoned by a spell reads 0 here, has no `Spell.dbc`
+/// record to look up, and dies like any other unit.
 pub const DESTROYED_BY_EFFECT: [u32; 10] = [
     50,  // SPELL_EFFECT_TRANS_DOOR: a summoned portal or door
     74,  // SPELL_EFFECT_SUMMON_TOTEM
@@ -470,7 +465,7 @@ pub const DESTROYED_BY_EFFECT: [u32; 10] = [
 /// [`DESTROYED_BY_EFFECT`].
 ///
 /// `None` means a unit nothing summoned, or one whose summoning spell this
-/// client cannot resolve; the reference client returns false for both.
+/// client cannot resolve; the 1.12.1 client says "dies" for both.
 pub fn is_destroyed(created_by_effect: Option<u32>) -> bool {
     created_by_effect.is_some_and(|effect| DESTROYED_BY_EFFECT.contains(&effect))
 }
@@ -490,7 +485,7 @@ pub fn death_chat_type(who: Category) -> u8 {
     }
 }
 
-/// The six kinds of environmental damage, in the order
+/// The six types of environmental damage, in the order
 /// `EnvironmentalDamageType` numbers them, which is the value
 /// `SMSG_ENVIRONMENTALDAMAGELOG`'s type byte carries.
 ///
@@ -538,8 +533,8 @@ pub fn arrange<'a>(
 /// `has_self_self` cannot be derived from the stem: a melee swing has three
 /// keys (`COMBATHITSELFOTHER`, `…OTHERSELF`, `…OTHEROTHER`) and a spell has
 /// four, and only the file shows which. A family with no `SELFSELF` key
-/// returns `None` for [`Perspective::None`], matching the selector returning
-/// null and the composer stopping.
+/// returns `None` for [`Perspective::None`], and the 1.12.1 client prints no
+/// line in that case.
 pub fn key(stem: &str, perspective: Perspective, has_self_self: bool) -> Option<String> {
     if perspective == Perspective::None && !has_self_self {
         return None;
@@ -572,8 +567,7 @@ impl Trailers {
     /// Append every clause that applies, in the client's order.
     ///
     /// A key the shipped file does not carry contributes nothing, as in the
-    /// client: each clause is guarded by its lookup returning a non-empty
-    /// string.
+    /// 1.12.1 client: a clause whose string is missing or empty is skipped.
     pub fn append(&self, strings: &Strings, line: &mut String) {
         let mut plain = |key: &str| {
             if let Some(text) = strings.get(key).filter(|t| !t.is_empty()) {
@@ -647,8 +641,7 @@ pub struct Kind {
 /// The four melee stems come from one packet. A swing arrives as
 /// `SMSG_ATTACKERSTATEUPDATE`, and the stem is chosen from two facts in it:
 /// `HITINFO_CRITICALHIT`, and whether the damage had a school other than
-/// physical. Those are the client's two branches, and the four stems are
-/// listed separately because of them.
+/// physical. Each of the four combinations has its own stem.
 pub const KINDS: &[Kind] = &[
     // --- the weapon swing: `SMSG_ATTACKERSTATEUPDATE` ---
     Kind { label: "a swing", stem: "COMBATHIT", family: Family::MeleeHit, order: parts::MELEE, self_self: false },
@@ -700,7 +693,47 @@ pub const KINDS: &[Kind] = &[
     Kind { label: "an interrupted cast", stem: "SPELLINTERRUPT", family: Family::SpellDamage, order: parts::INTERRUPT, self_self: false },
     Kind { label: "durability damage", stem: "SPELLDURABILITYDAMAGE", family: Family::SpellDamage, order: parts::SPELL, self_self: false },
     Kind { label: "durability damage to everything", stem: "SPELLDURABILITYDAMAGEALL", family: Family::SpellDamage, order: parts::SPELL, self_self: false },
+    // --- a proc resisted, `SMSG_PROCRESIST`, and a dispel that failed,
+    // `SMSG_DISPEL_FAILED` ---
+    //
+    // The family listed is one of two: each line goes to the spell-damage or
+    // the spell-buff windows by [`spell_window`]. `SMSG_SPELLORDAMAGE_IMMUNE`
+    // composes `IMMUNESPELL`, listed above.
+    Kind { label: "a proc resisted", stem: "PROCRESIST", family: Family::SpellDamage, order: parts::IMMUNE, self_self: true },
+    Kind { label: "a dispel that failed", stem: "DISPELFAILED", family: Family::SpellDamage, order: parts::INTERRUPT, self_self: true },
 ];
+
+/// The implicit targets that make [`spell_window`] answer the damage windows.
+const HARMFUL_TARGETS: [u32; 8] = [2, 6, 15, 16, 24, 28, 53, 54];
+
+/// Which family a `PROCRESIST` or `DISPELFAILED` line goes to, chosen from the
+/// spell the line names. The 1.12.1 client classifies the spell, in order:
+///
+/// 1. `Targets` bit `0x100` makes it helpful, then bit `0x80` harmful;
+/// 2. any effect with an implicit target (A or B) in [`HARMFUL_TARGETS`]
+///    makes it harmful;
+/// 3. a further test sorts the rest into helpful and neither, by implicit
+///    targets and auras.
+///
+/// A harmful spell goes to [`Family::SpellDamage`]. A helpful one and one that
+/// is neither both go to [`Family::SpellBuff`], so the third test does not
+/// change the window and is not made here.
+pub fn spell_window(spell: &crate::tables::spellbook::SpellInfo) -> Family {
+    let harmful = if spell.targets & 0x100 != 0 {
+        false
+    } else if spell.targets & 0x80 != 0 {
+        true
+    } else {
+        spell.effects.iter().any(|effect| {
+            HARMFUL_TARGETS.contains(&effect.target_a) || HARMFUL_TARGETS.contains(&effect.target_b)
+        })
+    };
+    if harmful {
+        Family::SpellDamage
+    } else {
+        Family::SpellBuff
+    }
+}
 
 /// One one-unit kind: a stem, and which of its two subjects the file carries.
 ///
@@ -731,6 +764,7 @@ pub const SOLO_KINDS: &[SoloKind] = &[
     SoloKind { label: "a construct destroyed", stem: "UNITDESTROYED", has_self: false },
     SoloKind { label: "extra attacks", stem: "SPELLEXTRAATTACKS", has_self: true },
     SoloKind { label: "an aura dispelled", stem: "AURADISPEL", has_self: true },
+    SoloKind { label: "a spell that killed outright", stem: "INSTAKILL", has_self: true },
 ];
 
 /// A composed line, and the window it goes in.
@@ -745,11 +779,11 @@ pub struct Line {
 
 /// Compose one line.
 ///
-/// Applies the four decisions in the module comment, in the composer's order.
-/// Like the composer, it returns `None` instead of guessing: an unroutable
-/// pairing, a perspective with no key, or a key the shipped
-/// `GlobalStrings.lua` does not carry all produce `None`, and the reference
-/// client prints no line in those cases either.
+/// Applies the four decisions in the module comment, in the 1.12.1 client's
+/// order. It returns `None` instead of guessing: an unroutable pairing, a
+/// perspective with no key, or a key the shipped `GlobalStrings.lua` does not
+/// carry all produce `None`, and the 1.12.1 client prints no line in those
+/// cases either.
 ///
 /// `order` is the family's slot order (one of [`parts`]), and `extras` is what
 /// its [`Part::Extra`] slots take, in index order: a spell's name, the damage
@@ -815,8 +849,8 @@ CRUSHING_TRAILER = " (crushing)";
         )
     }
 
-    /// The eight arms of the melee-hit routing function, against the names the
-    /// chat-type table gives those ids. This is the table the client walks.
+    /// The eight arms of the melee-hit routing, against the names the
+    /// chat-type table gives those ids.
     #[test]
     fn melee_hit_routing_matches_the_client() {
         use Category::*;
@@ -963,7 +997,7 @@ CRUSHING_TRAILER = " (crushing)";
             "COMBAT_CREATURE_VS_SELF_HITS"
         );
 
-        // Attacker first, victim second: the order the composer pushes them.
+        // Attacker first, victim second: the order the key's slots take them.
         let line = compose(
             &s,
             Family::MeleeHit,
@@ -1169,13 +1203,15 @@ CRUSHING_TRAILER = " (crushing)";
                 }
             }
         }
-        // 35 stems: three keys for the eighteen with no `SELFSELF` and four for
-        // the seventeen that have one.
-        assert_eq!(KINDS.len(), 35);
+        // 37 stems: three keys for the eighteen with no `SELFSELF` and four for
+        // the nineteen that have one.
+        assert_eq!(KINDS.len(), 37);
         let with = KINDS.iter().filter(|k| k.self_self).count();
-        assert_eq!(with, 17);
+        assert_eq!(with, 19);
         assert_eq!(keys.len(), (KINDS.len() - with) * 3 + with * 4);
-        assert_eq!(keys.len(), 122);
+        assert_eq!(keys.len(), 130);
+        assert!(keys.contains(&"PROCRESISTSELFSELF".to_string()));
+        assert!(keys.contains(&"DISPELFAILEDOTHEROTHER".to_string()));
         assert!(keys.contains(&"COMBATHITCRITSCHOOLOTHEROTHER".to_string()));
         assert!(keys.contains(&"SPELLLOGSELFSELF".to_string()));
         assert!(!keys.contains(&"SPELLBLOCKEDSELFSELF".to_string()));
@@ -1223,8 +1259,8 @@ CRUSHING_TRAILER = " (crushing)";
         }
     }
 
-    /// Every branch of the client's cascade, and the pairing that makes ten
-    /// values out of five.
+    /// Every case of [`categorise`], in the order the 1.12.1 client tests
+    /// them, and the pairing that makes ten values out of five.
     #[test]
     fn the_categoriser_walks_the_clients_cascade() {
         let base = Standing {
@@ -1239,7 +1275,7 @@ CRUSHING_TRAILER = " (crushing)";
         assert_eq!(categorise(Standing { is_pet: true, ..you }), Category::YourPet);
 
         // A creature with no player behind it is 8 whether or not it is a
-        // pet; the client has no "creature's pet" arm.
+        // pet; the client has no "creature's pet" category.
         let mob = base;
         assert_eq!(categorise(mob), Category::Creature);
         assert_eq!(categorise(Standing { is_pet: true, ..mob }), Category::Creature);

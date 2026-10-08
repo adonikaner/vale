@@ -1097,6 +1097,26 @@ pub enum Command {
     SummonResponse { summoner: u64 },
     /// `/played`: `CMSG_PLAYED_TIME`, with no body.
     RequestPlayedTime,
+    /// `/roll`: `MSG_RANDOM_ROLL` with the range. See [`crate::play::randomroll`].
+    RandomRoll { min: u32, max: u32 },
+    /// A click on the minimap: `MSG_MINIMAP_PING` with the world position. See [`crate::play::minimap`].
+    MinimapPing { x: f32, y: f32 },
+    /// Place raid target icon `icon` (0..8) on `guid`, or clear it with guid 0: `MSG_RAID_TARGET_UPDATE`. See [`crate::play::raidtarget`].
+    RaidTargetSet { icon: u8, guid: u64 },
+    /// Ask for the group's raid target icons: `MSG_RAID_TARGET_UPDATE` with `0xFF`.
+    RaidTargetList,
+    /// Share a quest with the group: `CMSG_PUSHQUESTTOPARTY`. See [`crate::play::questshare`].
+    PushQuest { quest_id: u32 },
+    /// Take the party quest another member accepted: `CMSG_QUEST_CONFIRM_ACCEPT`.
+    QuestConfirmAccept { quest_id: u32 },
+    /// Answer a shared quest's page: `MSG_QUEST_PUSH_RESULT` to the sharer, which the client sends with `Declined` when the page is closed.
+    QuestPushResult { sharer: u64, result: crate::play::questshare::PushResult },
+    /// Mark tutorial `id` (1-based) as seen: `CMSG_TUTORIAL_FLAG`. See [`crate::play::tutorial`].
+    TutorialFlag { id: u32 },
+    /// Mark every tutorial as seen, turning the tips off: `CMSG_TUTORIAL_CLEAR`, with no body.
+    TutorialClear,
+    /// Mark no tutorial as seen, turning the tips on: `CMSG_TUTORIAL_RESET`, with no body.
+    TutorialReset,
     /// Flip `PLAYER_FLAGS_HIDE_HELM` (`helm`) or `PLAYER_FLAGS_HIDE_CLOAK`:
     /// `CMSG_TOGGLE_HELM` or `CMSG_TOGGLE_CLOAK`, with no body. The server
     /// toggles the bit (vmangos' `HandleShowingHelmOpcode`), so the caller
@@ -1957,6 +1977,56 @@ impl LiveSession {
         self.send(Command::RequestPlayedTime);
     }
 
+    /// See [`Command::RandomRoll`].
+    pub fn random_roll(&self, min: u32, max: u32) {
+        self.send(Command::RandomRoll { min, max });
+    }
+
+    /// See [`Command::MinimapPing`].
+    pub fn minimap_ping(&self, x: f32, y: f32) {
+        self.send(Command::MinimapPing { x, y });
+    }
+
+    /// See [`Command::RaidTargetSet`].
+    pub fn raid_target_set(&self, icon: u8, guid: u64) {
+        self.send(Command::RaidTargetSet { icon, guid });
+    }
+
+    /// See [`Command::RaidTargetList`].
+    pub fn raid_target_list(&self) {
+        self.send(Command::RaidTargetList);
+    }
+
+    /// See [`Command::PushQuest`].
+    pub fn push_quest(&self, quest_id: u32) {
+        self.send(Command::PushQuest { quest_id });
+    }
+
+    /// See [`Command::QuestConfirmAccept`].
+    pub fn quest_confirm_accept(&self, quest_id: u32) {
+        self.send(Command::QuestConfirmAccept { quest_id });
+    }
+
+    /// See [`Command::QuestPushResult`].
+    pub fn quest_push_result(&self, sharer: u64, result: crate::play::questshare::PushResult) {
+        self.send(Command::QuestPushResult { sharer, result });
+    }
+
+    /// See [`Command::TutorialFlag`].
+    pub fn tutorial_flag(&self, id: u32) {
+        self.send(Command::TutorialFlag { id });
+    }
+
+    /// See [`Command::TutorialClear`].
+    pub fn tutorial_clear(&self) {
+        self.send(Command::TutorialClear);
+    }
+
+    /// See [`Command::TutorialReset`].
+    pub fn tutorial_reset(&self) {
+        self.send(Command::TutorialReset);
+    }
+
     /// Flip the hide-helm or hide-cloak flag; see [`Command::ToggleWorn`].
     pub fn toggle_worn(&self, helm: bool) {
         self.send(Command::ToggleWorn { helm });
@@ -2815,6 +2885,56 @@ impl SessionLoop {
                         return Flow::Stop;
                     }
                 }
+                Ok(Command::RandomRoll { min, max }) => {
+                    if self.session.random_roll(min, max).is_err() {
+                        return Flow::Stop;
+                    }
+                }
+                Ok(Command::MinimapPing { x, y }) => {
+                    if self.session.minimap_ping(x, y).is_err() {
+                        return Flow::Stop;
+                    }
+                }
+                Ok(Command::RaidTargetSet { icon, guid }) => {
+                    if self.session.raid_target_set(icon, guid).is_err() {
+                        return Flow::Stop;
+                    }
+                }
+                Ok(Command::RaidTargetList) => {
+                    if self.session.raid_target_list().is_err() {
+                        return Flow::Stop;
+                    }
+                }
+                Ok(Command::PushQuest { quest_id }) => {
+                    if self.session.push_quest(quest_id).is_err() {
+                        return Flow::Stop;
+                    }
+                }
+                Ok(Command::QuestConfirmAccept { quest_id }) => {
+                    if self.session.quest_confirm_accept(quest_id).is_err() {
+                        return Flow::Stop;
+                    }
+                }
+                Ok(Command::QuestPushResult { sharer, result }) => {
+                    if self.session.quest_push_result(sharer, result).is_err() {
+                        return Flow::Stop;
+                    }
+                }
+                Ok(Command::TutorialFlag { id }) => {
+                    if self.session.tutorial_flag(id).is_err() {
+                        return Flow::Stop;
+                    }
+                }
+                Ok(Command::TutorialClear) => {
+                    if self.session.tutorial_clear().is_err() {
+                        return Flow::Stop;
+                    }
+                }
+                Ok(Command::TutorialReset) => {
+                    if self.session.tutorial_reset().is_err() {
+                        return Flow::Stop;
+                    }
+                }
                 Ok(Command::ToggleWorn { helm }) => {
                     if self.session.toggle_worn(helm).is_err() {
                         return Flow::Stop;
@@ -2918,15 +3038,16 @@ impl SessionLoop {
 
     /// Hand one packet to the dispatch, then send whatever it queued.
     ///
-    /// All dispatch is in [`crate::socket::handler`]. This function previously
-    /// held a second dispatch: seven opcodes were intercepted here and returned
-    /// early, because the shared `apply_packet` took only an `ObjectManager`
-    /// and could neither answer the server nor move the local player. That
-    /// split was undocumented, `SMSG_PONG` was handled in both places,
-    /// `stats.packets` was counted by hand in each branch, and a speed change
-    /// for another unit was acknowledged and then dropped. Two tasks remain
-    /// here: publishing to the status, and detecting that a packet relocated
-    /// the player.
+    /// All dispatch is in [`crate::socket::handler`]. This function does two
+    /// things: it publishes to the status, and it detects that a packet
+    /// relocated the player.
+    ///
+    /// An earlier version held a second dispatch here. It intercepted seven
+    /// opcodes and returned early, because the shared `apply_packet` took only
+    /// an `ObjectManager` and could neither answer the server nor move the
+    /// local player. With two dispatches, `SMSG_PONG` was handled in both
+    /// places, `stats.packets` was counted by hand in each branch, and a speed
+    /// change for another unit was acknowledged and then dropped.
     ///
     /// The replies are sent after the world lock is released, the same rule
     /// `resolve_names` follows: a socket write under that lock makes every
