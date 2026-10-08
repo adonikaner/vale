@@ -69,8 +69,10 @@ pub const BAD: Color32 = Color32::from_rgb(0xE0, 0x6C, 0x6C);
 /// in the next and a stack of settings reads as a form.
 pub const LABEL_WIDTH: f32 = 74.0;
 
-/// How wide the subject rail is.
-pub const RAIL_WIDTH: f32 = 132.0;
+/// How wide the subject rail is. Wide enough for the longest subject name,
+/// "Graveyards", on a half-width tile at the rail's font size; at 132 it was
+/// clipped at both ends.
+pub const RAIL_WIDTH: f32 = 148.0;
 
 /// The starting width of the inspector beside the viewport. The panel is
 /// resizable, so this is a default rather than a fixed size.

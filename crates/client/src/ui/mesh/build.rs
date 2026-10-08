@@ -742,6 +742,23 @@ fn label(
     // device ones: `size` spaces the line, `size * dpi` draws the glyphs.
     let raster = size * if painter.dpi.is_finite() && painter.dpi > 0.0 { painter.dpi } else { 1.0 };
 
+    // Whether the glyphs come from more than one atlas page. The passes below
+    // are one batch per page run, and every batch of an item has the same z,
+    // so the phase draws equal-z batches in whatever order it sorts them. On
+    // one page each pass merges into the same batch and the order inside a
+    // batch is the emission order, which is correct. Across pages, a page-1
+    // outline batch could draw after the page-1 glyph batch and cover the
+    // glyphs with their own black copies: zone text "Ironforge" with black
+    // shapes over the n, f and g, which had been rasterised on a second page.
+    // So a text that spans pages puts the shadow and the glyphs on layers of
+    // their own above the outline. A text on one page stays one batch.
+    let spans_pages = spans_pages(placed.iter().filter_map(|glyph| {
+        painter
+            .fonts
+            .glyph(painter.images, face, raster, glyph.ch)
+            .map(|sprite| sprite.page)
+    }));
+
     // The outline first, then the shadow, then the glyphs — the same ring of
     // eight offsets the egui painter draws, for the same reason.
     let radius = paint.outline.radius() * scale;
@@ -762,6 +779,9 @@ fn label(
         }
     }
     if let Some((offset, shadow_colour)) = paint.shadow {
+        if spans_pages {
+            emit.layer();
+        }
         glyphs(
             emit,
             painter,
@@ -779,7 +799,20 @@ fn label(
         .iter()
         .map(|p| p.colour.map(|c| tint(c, 1.0)))
         .collect();
+    if spans_pages {
+        emit.layer();
+    }
     glyphs_with(emit, painter, &placed, face, raster, [0.0, 0.0], colour, &run_tints, clip);
+}
+
+/// Whether a text's glyphs are on more than one atlas page. See the note in
+/// the text function where it is asked.
+fn spans_pages(pages: impl IntoIterator<Item = usize>) -> bool {
+    let mut pages = pages.into_iter();
+    let Some(first) = pages.next() else {
+        return false;
+    };
+    pages.any(|page| page != first)
 }
 
 /// One pass over the placed glyphs at one offset, in one colour.
@@ -1299,6 +1332,38 @@ mod tests {
 
     fn image() -> Handle<Image> {
         Handle::default()
+    }
+
+    /// A text whose glyphs span two atlas pages draws its glyphs above its
+    /// outline whatever order the phase puts equal-z batches in: the main pass
+    /// is a layer of its own, so every glyph batch has a higher z than every
+    /// outline batch. Without the layer, the page-2 outline and glyph batches
+    /// had the same z, and the outline could draw over the glyphs.
+    #[test]
+    fn a_text_on_two_pages_draws_its_glyphs_over_its_outline() {
+        assert!(!spans_pages([0, 0, 0]));
+        assert!(spans_pages([0, 1, 0]));
+        assert!(!spans_pages(std::iter::empty()));
+
+        let page_a = image();
+        let page_b = Handle::<Image>::Uuid(bevy::asset::uuid::Uuid::from_u128(7), std::marker::PhantomData);
+        let mut emit = Emitter::new();
+        emit.item(0);
+        let quad = |emit: &mut Emitter, page: &Handle<Image>| {
+            emit.quad(page, Blend::Alpha, [0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 1.0, 1.0], [1.0; 4], None);
+        };
+        // The outline pass over "In": I on page a, n on page b.
+        quad(&mut emit, &page_a);
+        quad(&mut emit, &page_b);
+        emit.layer();
+        // The glyph pass over the same two.
+        quad(&mut emit, &page_a);
+        quad(&mut emit, &page_b);
+        let batches = emit.into_batches();
+        assert_eq!(batches.len(), 4);
+        let outline = batches[0].z.max(batches[1].z);
+        let glyphs = batches[2].z.min(batches[3].z);
+        assert!(glyphs > outline, "every glyph batch sorts above every outline batch");
     }
 
     #[test]

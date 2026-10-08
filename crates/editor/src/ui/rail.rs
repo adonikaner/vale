@@ -440,7 +440,7 @@ fn tile(
                 egui::pos2(rect.center().x, rect.bottom() - 4.0),
                 egui::Align2::CENTER_BOTTOM,
                 subject.name,
-                egui::FontId::proportional(theme::SMALL),
+                fitted(ui, subject.name, theme::SMALL, rect.width()),
                 ink,
             );
         }
@@ -451,13 +451,31 @@ fn tile(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 subject.name,
-                egui::FontId::proportional(12.0),
+                fitted(ui, subject.name, 12.0, rect.width()),
                 ink,
             );
         }
     }
     let response = response.on_hover_text(tooltip(subject, held));
     held.is_none() && response.clicked()
+}
+
+/// The font a tile's name is drawn in: `size`, or smaller when the name at
+/// `size` is wider than the tile less a margin, so a long name is never
+/// clipped at the tile's edges.
+fn fitted(ui: &egui::Ui, name: &str, size: f32, width: f32) -> egui::FontId {
+    let font = egui::FontId::proportional(size);
+    let room = (width - 6.0).max(1.0);
+    let needed = ui.fonts_mut(|fonts| {
+        fonts
+            .layout_no_wrap(name.to_string(), font.clone(), egui::Color32::WHITE)
+            .size()
+            .x
+    });
+    match needed > room {
+        true => egui::FontId::proportional((size * room / needed).max(8.0)),
+        false => font,
+    }
 }
 
 /// The workspace control on the top bar: *World*, then each workspace that
