@@ -584,6 +584,19 @@ fn map(
                 *new_map = Some(crate::tools::maps::Form::default());
                 ui.close();
             }
+            if ui
+                .add_enabled(!playing, egui::Button::new("Map properties\u{2026}"))
+                .on_hover_text(
+                    "Edit the open map: its Map.dbc row (name, instance type, PvP, levels, \
+                     players, zone, descriptions, loading screen), the server's map_template \
+                     row, and whether it is terrain or a single WMO.",
+                )
+                .on_disabled_hover_text(HELD)
+                .clicked()
+            {
+                *new_map = Some(crate::tools::maps::Form::editing(session.map_id, &session.map));
+                ui.close();
+            }
             ui.add_enabled_ui(!playing, |ui| {
                 ui.menu_button("Open map", |ui| {
                     egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {

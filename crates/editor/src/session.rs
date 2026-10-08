@@ -2826,7 +2826,7 @@ fn claimed_tiles(
     }
 }
 
-/// `Map.dbc`'s id-to-directory table, sorted by name.
+/// `Map.dbc`'s id-to-directory table, in [`order_maps`]'s order.
 ///
 /// Read here rather than hardcoded for the reason
 /// `vale_assets::tables::dbc::map_directories` gives: a custom map is a row
@@ -2846,8 +2846,13 @@ pub(crate) fn map_directories(assets: &GameAssets) -> Vec<(u32, String)> {
             Vec::new()
         }
     };
-    maps.sort_by(|a, b| a.1.to_ascii_lowercase().cmp(&b.1.to_ascii_lowercase()));
+    order_maps(&mut maps);
     maps
+}
+
+/// The order every map list in the editor is shown in: by id, lowest first.
+pub(crate) fn order_maps(maps: &mut [(u32, String)]) {
+    maps.sort_by_key(|&(id, _)| id);
 }
 
 /// Drop the camera onto the ground it is over, once the ground arrives.

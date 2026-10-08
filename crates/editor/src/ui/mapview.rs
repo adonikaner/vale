@@ -226,10 +226,9 @@ pub enum Asked {
     /// Make the map the form in `Tiles::new_map` describes. See
     /// `crate::tools::maps`.
     NewMap,
-    /// Make the map one building, the WMO in `Tiles::building_path`.
-    MakeBuilding,
-    /// …or terrain again.
-    MakeTerrain,
+    /// Save the form's edits to the map it edits. See
+    /// `crate::tools::maps::save`.
+    SaveMap,
 }
 
 /// The tiles a zoom draws: the top-left tile, how many across and down, and
@@ -741,40 +740,23 @@ fn foot_panel(
         .count();
 
     // What the map is: terrain, or one building with no tiles (most
-    // dungeons). See `vale_edit::wdt::ONE_BUILDING`.
+    // dungeons). See `vale_edit::wdt::ONE_BUILDING`. It is changed in Map
+    // properties, which the button opens.
     ui.horizontal(|ui| {
         label(ui, "Map");
-        match (&tiles.building, whole) {
-            (Some(path), _) => {
+        match &tiles.building {
+            Some(path) => {
                 let leaf = path.rsplit(['\\', '/']).next().unwrap_or(path);
                 ui.label(format!("single-WMO map: {leaf}")).on_hover_text(path.clone());
-                if ui
-                    .button("Convert to terrain")
-                    .on_hover_text("Removes the WMO from the WDT. The map has no terrain until tiles are created.")
-                    .clicked()
-                {
-                    asked = Some(Asked::MakeTerrain);
-                }
             }
-            (None, 0) => {
-                ui.add(
-                    egui::TextEdit::singleline(&mut tiles.building_path)
-                        .desired_width(260.0)
-                        .hint_text(r"World\wmo\…\name.wmo"),
-                );
-                let ready = tiles.building_path.trim().to_ascii_lowercase().ends_with(".wmo");
-                if ui
-                    .add_enabled(ready, egui::Button::new("Convert to single-WMO map"))
-                    .on_hover_text("Writes this WMO into the WDT as the whole map, with no terrain tiles. Most dungeons are built this way.")
-                    .on_disabled_hover_text("Enter the path of a .wmo file.")
-                    .clicked()
-                {
-                    asked = Some(Asked::MakeBuilding);
-                }
-            }
-            (None, n) => {
-                theme::note(ui, format!("terrain, {n} tiles"));
-            }
+            None => theme::note(ui, format!("terrain, {whole} tiles")),
+        }
+        if ui
+            .button("Map properties\u{2026}")
+            .on_hover_text("Edit the map's rows and its layout: terrain or a single WMO.")
+            .clicked()
+        {
+            tiles.new_map = Some(crate::tools::maps::Form::editing(session.map_id, &session.map));
         }
     });
 
@@ -973,8 +955,19 @@ fn new_map_dialog(
     let mut close = false;
     let response = egui::Modal::new(egui::Id::new("map-new")).show(ctx, |ui| {
         ui.set_width(420.0);
-        ui.label(egui::RichText::new("New map").strong().size(14.0));
+        let title = match form.editing {
+            None => "New map".to_string(),
+            Some(id) => format!("Map properties \u{2014} {} ({id})", form.directory),
+        };
+        ui.label(egui::RichText::new(title).strong().size(14.0));
         ui.add_space(4.0);
+        if form.editing.is_some() && !form.loaded {
+            theme::note(ui, "reading the map's rows…");
+            if ui.button("Cancel").clicked() {
+                close = true;
+            }
+            return;
+        }
         const FOLDER: &str = "The map's folder, World\\Maps\\<folder>\\, which is also the start \
                               of every tile's file name. Letters, digits and underscores, \
                               starting with a letter. It cannot be changed afterwards without \
@@ -988,8 +981,14 @@ fn new_map_dialog(
                             battleground queue sends players to.";
         const PLAYERS: &str = "How many characters one copy of the instance holds: 5 for a \
                                dungeon, 10, 20 or 40 for a raid. 0 for no limit.";
-        theme::row_about(ui, "folder", FOLDER, |ui| {
-            ui.text_edit_singleline(&mut form.directory).on_hover_text(FOLDER);
+        theme::row_about(ui, "folder", FOLDER, |ui| match form.editing {
+            None => {
+                ui.text_edit_singleline(&mut form.directory).on_hover_text(FOLDER);
+            }
+            Some(_) => {
+                ui.label(egui::RichText::new(&form.directory).color(theme::INK))
+                    .on_hover_text(FOLDER);
+            }
         });
         theme::row_about(ui, "name", NAME, |ui| {
             ui.text_edit_singleline(&mut form.name).on_hover_text(NAME);
@@ -1043,29 +1042,41 @@ fn new_map_dialog(
                 form.choosing_screen = false;
             }
         }
+        edit_rows(ui, form);
         if form.is_instance() {
             instance_rows(ui, session, form, camera_at);
         }
-        ui.checkbox(&mut form.zone, "Create zone")
-            .on_hover_text(
-                "An AreaTable zone named after the map, which the map's row names as its \
-                 area. Paint it onto the ground with the Areas tool.",
-            );
-        ui.checkbox(&mut form.open_it, "Open after creating")
-            .on_hover_text("Switches the editor to the new map once it is created, saving the open map first.");
+        if form.editing.is_none() {
+            ui.checkbox(&mut form.zone, "Create zone")
+                .on_hover_text(
+                    "An AreaTable zone named after the map, which the map's row names as its \
+                     area. Paint it onto the ground with the Areas tool.",
+                );
+            ui.checkbox(&mut form.open_it, "Open after creating")
+                .on_hover_text("Switches the editor to the new map once it is created, saving the open map first.");
+        }
         let problem = form.problem(&session.maps);
         if let Some(why) = &problem {
             ui.label(egui::RichText::new(why).size(theme::SMALL).color(theme::WARN));
         }
         theme::note(
             ui,
-            "The server needs the map's tiles extracted (Server files) and a restart \
-             before a character can stand on it.",
+            match form.editing {
+                None => "The server needs the map's tiles extracted (Server files) and a restart \
+                         before a character can stand on it.",
+                Some(_) => "Map.dbc changes reach the client through the project's archive. \
+                            map_template changes are applied from the Server panel, and the \
+                            server reads them on .reload map_template.",
+            },
         );
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            if ui.add_enabled(problem.is_none(), egui::Button::new("Create")).clicked() {
-                asked = Some(Asked::NewMap);
+            let (button, answer) = match form.editing {
+                None => ("Create", Asked::NewMap),
+                Some(_) => ("Save", Asked::SaveMap),
+            };
+            if ui.add_enabled(problem.is_none(), egui::Button::new(button)).clicked() {
+                asked = Some(answer);
             }
             if ui.button("Cancel").clicked() {
                 close = true;
@@ -1076,6 +1087,91 @@ fn new_map_dialog(
         tiles.new_map = None;
     }
     asked
+}
+
+/// The rest of the map's `Map.dbc` row, a raid's reset and the layout, on
+/// both forms; and on an existing map's, where its server row came from.
+fn edit_rows(ui: &mut egui::Ui, form: &mut crate::tools::maps::Form) {
+    use crate::tools::maps::ServerRow;
+    const PVP: &str = "Map.dbc field 3. 4 of the 44 shipped maps set it.";
+    const LEVELS: &str = "Map.dbc fields 13 and 14: the lowest and highest character level \
+                          for the map. 0 is none. 4 of the 44 shipped maps set them.";
+    const AREA: &str = "The zone the map belongs to: an AreaTable id. Written to Map.dbc \
+                        field 19 and to the server's map_template.linked_zone. 0 is none.";
+    const DESCRIPTION: &str = "Map.dbc fields 20 and 29. Most shipped maps leave both empty.";
+    const RESET: &str = "map_template.reset_delay: days between the raid's resets. 0 is none.";
+    const LAYOUT: &str = "Terrain: the map is drawn from its ADT tiles. Single WMO: the map is \
+                          one WMO and has no tiles, as most dungeons are; the WDT's header flag \
+                          says so and names the WMO. Only a map with no tiles can be made a \
+                          single-WMO map.";
+    theme::row_about(ui, "PvP", PVP, |ui| {
+        ui.checkbox(&mut form.pvp, "").on_hover_text(PVP);
+    });
+    theme::row_about(ui, "levels", LEVELS, |ui| {
+        ui.add(egui::DragValue::new(&mut form.min_level).range(0..=255).prefix("min "))
+            .on_hover_text(LEVELS);
+        ui.add(egui::DragValue::new(&mut form.max_level).range(0..=255).prefix("max "))
+            .on_hover_text(LEVELS);
+    });
+    // A new map's zone is made by Create zone unless that is off.
+    if form.editing.is_some() || !form.zone {
+        theme::row_about(ui, "zone", AREA, |ui| {
+            ui.add(egui::DragValue::new(&mut form.area).speed(1.0)).on_hover_text(AREA);
+        });
+    }
+    for (n, label) in ["description 0", "description 1"].into_iter().enumerate() {
+        theme::row_about(ui, label, DESCRIPTION, |ui| {
+            ui.add(
+                egui::TextEdit::multiline(&mut form.descriptions[n])
+                    .desired_rows(1)
+                    .desired_width(f32::INFINITY),
+            )
+            .on_hover_text(DESCRIPTION);
+        });
+    }
+    if form.instance_type == 2 {
+        theme::row_about(ui, "reset", RESET, |ui| {
+            ui.add(egui::DragValue::new(&mut form.reset_delay).range(0..=365).suffix(" days"))
+                .on_hover_text(RESET);
+        });
+    }
+    theme::row_about(ui, "layout", LAYOUT, |ui| {
+        ui.radio_value(&mut form.single_wmo, false, "Terrain").on_hover_text(LAYOUT);
+        ui.radio_value(&mut form.single_wmo, true, "Single WMO").on_hover_text(LAYOUT);
+    });
+    if form.single_wmo {
+        theme::row(ui, "WMO", |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut form.wmo)
+                    .desired_width(f32::INFINITY)
+                    .hint_text(r"World\wmo\…\name.wmo"),
+            )
+            .on_hover_text("The archive path of the WMO's root file.");
+        });
+    }
+    if form.editing.is_none() {
+        return;
+    }
+    if form.single_wmo != !form.wmo_was.is_empty() || (form.single_wmo && form.wmo.trim() != form.wmo_was) {
+        theme::note(
+            ui,
+            "A layout change is written to the project's WDT when saved, is not on the \
+             undo history, and shows after the map is opened again.",
+        );
+    }
+    let server = match &form.server {
+        ServerRow::Unread | ServerRow::Reading => "reading the server's map_template row…".to_string(),
+        ServerRow::Found { key, created: true, .. } => format!("map_template {}: created by this project", key.text()),
+        ServerRow::Found { key, created: false, .. } => {
+            format!("map_template {}: from the database, with this project's edits", key.text())
+        }
+        ServerRow::Missing => "the database has no map_template row for this map; the server columns \
+                               will not be saved"
+            .to_string(),
+        ServerRow::Unreachable(why) => format!("map_template could not be read ({why}); the server \
+                                               columns will not be saved"),
+    };
+    theme::note(ui, server);
 }
 
 /// A dungeon's or raid's parent and ghost entrance on the New map form.

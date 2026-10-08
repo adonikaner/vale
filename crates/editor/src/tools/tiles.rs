@@ -79,11 +79,10 @@ pub struct Tiles {
     /// system does it.
     pub asked: Option<crate::ui::mapview::Asked>,
     /// The building the map is, when it is one, read from its WDT for the
-    /// map named in `building_for`; and the path typed to make it one. See
-    /// [`read_building`].
+    /// map named in `building_for`. See [`read_building`]. Map properties
+    /// changes it; see `super::maps`.
     pub building: Option<String>,
     pub building_for: String,
-    pub building_path: String,
     /// A picture chosen for import and waiting on the map window's dialog,
     /// and the folder the last file dialog was left in.
     pub pending: Option<super::images::Pending>,
@@ -121,7 +120,6 @@ impl Default for Tiles {
             asked: None,
             building: None,
             building_for: String::new(),
-            building_path: String::new(),
             pending: None,
             image_dir: None,
             new_map: None,
@@ -707,10 +705,15 @@ impl Background<'_> {
 /// repeats across it, anything finer is below what the picture resolves.
 const SWATCH: u32 = 4;
 
-/// The tile's WDT, from the project if it has been edited and the archives
-/// otherwise.
+/// The open map's WDT, from the project if it has been edited and the
+/// archives otherwise.
 fn load_wdt(session: &EditSession, assets: &GameAssets) -> Result<wdt::WdtFile, String> {
-    let path = wdt::wdt_path(&session.map);
+    load_wdt_of(session, assets, &session.map)
+}
+
+/// …and any map's, by its folder.
+pub(crate) fn load_wdt_of(session: &EditSession, assets: &GameAssets, map: &str) -> Result<wdt::WdtFile, String> {
+    let path = wdt::wdt_path(map);
     if let Some(bytes) = session.project.read(&path) {
         // A project WDT written before new maps carried `MWMO` is given one,
         // and the next save writes it; see `WdtFile::repair_terrain_shape`.
@@ -751,40 +754,40 @@ fn choose_import(session: &EditSession, tiles: &mut Tiles, chosen: &[(u32, u32)]
     }
 }
 
-/// Make the map the building typed in [`Tiles::building_path`], or terrain
-/// again, in the project's copy of its WDT.
+/// The box of the WMO whose root file is at `path`, which the WDT's `MODF`
+/// carries for a single-WMO map.
+pub(crate) fn wmo_bounds(assets: &GameAssets, path: &str) -> Result<[[f32; 3]; 2], String> {
+    let root = assets
+        .with_archive(|chain| Ok(chain.read(path).ok()))
+        .ok()
+        .flatten()
+        .ok_or_else(|| format!("{path} is not in the archives or the project"))?;
+    vale_assets::world::wmo::WmoRoot::parse(&root)
+        .map(|root| root.bounds)
+        .map_err(|e| format!("{path} is not a valid WMO root file: {e}"))
+}
+
+/// **Make the open map the WMO at `building`, or terrain again**, in the
+/// project's copy of its WDT. Answers the status line.
 ///
 /// Only a map with no tiles is made a building, since the client draws a
 /// map as one or the other. The building's box is read from its root file.
-fn make_building(
-    session: &mut EditSession,
-    assets: &GameAssets,
-    tiles: &mut Tiles,
-    building: bool,
-) -> Result<String, String> {
+/// The map window's [`Tiles::building`] catches up when the map is next
+/// opened; see [`read_building`].
+pub(crate) fn set_layout(session: &mut EditSession, assets: &GameAssets, building: Option<&str>) -> Result<String, String> {
     let mut wdt = load_wdt(session, assets)?;
     let map = session.map.clone();
-    if !building {
+    let Some(path) = building else {
         wdt.set_building(None);
         save_wdt(session, &wdt)?;
-        tiles.building = None;
         return Ok(format!("{map} is now a terrain map. Reopen the map to see the change."));
-    }
+    };
     let count = wdt.tile_count();
     if count > 0 {
         return Err(format!("{map} has {count} tiles; only a map with no tiles can be a single-WMO map"));
     }
-    let path = tiles.building_path.trim().to_string();
-    let root = assets
-        .with_archive(|chain| Ok(chain.read(&path).ok()))
-        .ok()
-        .flatten()
-        .ok_or_else(|| format!("{path} is not in the archives or the project"))?;
-    let root = vale_assets::world::wmo::WmoRoot::parse(&root)
-        .map_err(|e| format!("{path} is not a valid WMO root file: {e}"))?;
-    wdt.set_building(Some((&path, root.bounds)));
+    wdt.set_building(Some((path, wmo_bounds(assets, path)?)));
     save_wdt(session, &wdt)?;
-    tiles.building = Some(path.clone());
     Ok(format!("{map} is now a single-WMO map: {path}. Reopen the map to see the change."))
 }
 
@@ -902,10 +905,19 @@ pub fn run_asked(
         return;
     }
 
-    // What the map is acts on the map and wants no selection.
-    if matches!(asked, Asked::MakeBuilding | Asked::MakeTerrain) {
-        tiles.said = match make_building(&mut session, &assets, &mut tiles, asked == Asked::MakeBuilding) {
-            Ok(said) | Err(said) => said,
+    // …and nor does saving an existing map's properties.
+    if asked == Asked::SaveMap {
+        let Some(form) = tiles.new_map.clone() else {
+            return;
+        };
+        tiles.said = match super::maps::save(&mut session, &assets, &form, time.elapsed_secs_f64()) {
+            Ok(said) => {
+                tiles.new_map = None;
+                // The layout may have changed; the map window reads it again.
+                tiles.building_for.clear();
+                said
+            }
+            Err(said) => said,
         };
         session.status = tiles.said.clone();
         return;
@@ -1004,9 +1016,8 @@ pub fn run_asked(
         Asked::Rebake
         | Asked::Minimap
         | Asked::MinimapsAll
-        | Asked::MakeBuilding
-        | Asked::MakeTerrain
         | Asked::NewMap
+        | Asked::SaveMap
         | Asked::ServerFiles
         | Asked::ExportHeights
         | Asked::ExportBlends

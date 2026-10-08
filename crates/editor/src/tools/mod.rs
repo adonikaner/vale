@@ -748,7 +748,7 @@ impl Plugin for ToolPlugin {
         app.init_resource::<Tool>()
             .init_resource::<Opening>()
             .add_systems(Update, (open_tiles, close_tiles, modes).chain())
-            .add_systems(Update, maps::follow_map_table)
+            .add_systems(Update, (maps::follow_map_table, maps::read_edited_map))
             .add_systems(Update, release_held);
         app.add_plugins((
             terrain::TerrainToolPlugin,

@@ -90,6 +90,13 @@ pub struct MapSpec {
     pub area: u32,
     /// A `LoadingScreens` row, or 0.
     pub loading_screen: u32,
+    /// Field 3.
+    pub pvp: bool,
+    /// Fields 13 and 14; 0 for none.
+    pub min_level: u32,
+    pub max_level: u32,
+    /// Fields 20 and 29, in the client's own locale; empty for none.
+    pub descriptions: [String; 2],
 }
 
 /// Why an operation wrote nothing.
@@ -338,7 +345,10 @@ pub fn new_map(tables: &mut HashMap<String, DbcFile>, spec: &MapSpec) -> Result<
         record,
         &[
             (mf::INSTANCE_TYPE, spec.instance_type),
+            (mf::PVP, u32::from(spec.pvp)),
             (mf::NAME_FLAGS, vale_assets::tables::map::SHIPPED_NAME_FLAGS),
+            (mf::MIN_LEVEL, spec.min_level),
+            (mf::MAX_LEVEL, spec.max_level),
             (mf::MAX_PLAYERS, spec.max_players),
             (mf::FIELD_16, u32::MAX),
             (mf::AREA, spec.area),
@@ -351,6 +361,11 @@ pub fn new_map(tables: &mut HashMap<String, DbcFile>, spec: &MapSpec) -> Result<
     )?;
     table.set_string(record, mf::DIRECTORY, &spec.directory);
     table.set_string(record, mf::NAME, &spec.name);
+    for (field, text) in [(mf::DESCRIPTION_0, &spec.descriptions[0]), (mf::DESCRIPTION_1, &spec.descriptions[1])] {
+        if !text.is_empty() {
+            table.set_string(record, field, text);
+        }
+    }
     let mut out = Edits::default();
     out.rows.push((MAPS.to_string(), Row::added(table, record).ok_or(Refused::WrongWidth(MAPS))?));
     out.made = Some(id);
@@ -439,6 +454,10 @@ mod tests {
             max_players: 5,
             area: 0,
             loading_screen: 0,
+            pvp: true,
+            min_level: 20,
+            max_level: 30,
+            descriptions: ["Held by no one.".into(), String::new()],
         };
         let done = new_map(&mut tables, &spec).unwrap();
         assert_eq!(done.made, Some(37));
@@ -448,6 +467,9 @@ mod tests {
         assert_eq!(maps.string_at(record, mf::NAME).as_deref(), Some("The Islands"));
         assert_eq!(maps.u32_at(record, mf::INSTANCE_TYPE), Some(1));
         assert_eq!(maps.u32_at(record, mf::FIELD_16), Some(u32::MAX));
+        assert_eq!(maps.u32_at(record, mf::PVP), Some(1));
+        assert_eq!((maps.u32_at(record, mf::MIN_LEVEL), maps.u32_at(record, mf::MAX_LEVEL)), (Some(20), Some(30)));
+        assert_eq!(maps.string_at(record, mf::DESCRIPTION_0).as_deref(), Some("Held by no one."));
 
         let again = MapSpec { directory: "AZEROTH".into(), ..spec };
         assert!(matches!(new_map(&mut tables, &again), Err(Refused::BadDirectory(_))));
