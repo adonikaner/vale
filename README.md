@@ -66,26 +66,40 @@ The workspace builds three programs:
 Vale IDE builds the same app as the client and adds editing on top of it, so
 the world it shows is drawn by the client's own renderer.
 
-- **Terrain.** Height brushes (raise, lower, flatten, smooth), ramps between
-  two points, texture painting with blend maps, vertex colour, holes, area ids
-  per chunk, and water. Whole chunks can be selected, copied, pasted, and
-  stitched to the ground around them.
+- **Terrain.** Height brushes (raise, lower, flatten, smooth, noise),
+  flattening onto a sloped plane, a vertex selection that can be levelled,
+  smoothed and tilted, and locked vertices that no height operation moves.
+  Ramps between two points, and roads along a curve of points that grade the
+  ground and paint a surface and a verge texture. Texture painting with blend
+  maps, vertex colour, holes, area ids per chunk, and flat or sloped water.
+  Whole chunks can be selected, copied, pasted, turned, mirrored and stitched
+  to the ground around them.
 - **Placement.** Placing, moving, rotating, scaling and removing models and
   buildings, with group selection, a model picker with previews and
-  favourites, and moves across tile borders.
-- **Map.** A map window for selecting, creating, copying and pasting tiles, and
-  a find-and-replace over every tile of a map for texture and model paths.
+  favourites, randomised placement, locked placements, and moves across tile
+  borders.
+- **Map.** A map window for selecting, creating, copying and pasting tiles,
+  rebaking shadows, redrawing minimaps, and exporting and importing heights
+  and blends as images. New maps, and a properties dialog for a map's client
+  row, its server row, and whether it is terrain or a single WMO. A top-down
+  map view, and a find-and-replace over every tile of a map for texture and
+  model paths.
+- **World data.** Lights, flight paths and their flight map, area triggers
+  with their server actions, and graveyards with the zones they serve, each
+  picked and dragged in the world.
 - **Client tables.** A table editor that opens every data table the client
-  ships, with named fields for spells and their visuals, the skill tables and
-  item sets. A spell's skill lines and teaching spells are edited on the
-  spell's own form. Spell visuals, kits and effects are previewed where they
-  are edited and where they are chosen, and an attachment lab positions
+  ships, with named fields for spells and their visuals, the skill tables,
+  item sets and zones. A spell's skill lines and teaching spells are edited on
+  the spell's own form. Spell visuals, kits and effects are previewed where
+  they are edited and where they are chosen, and an attachment lab positions
   effect models on a character.
 - **Server content.** Editors for the server's world database: creature and
   game object spawns and templates, items, quests with their giver and taker
   relations, loot tables, vendor and trainer lists, creature AI events, spell
-  lists and scripts with their texts, creature waypoint paths, and flight
-  paths. Model pickers show every display id as a picture.
+  lists and scripts with their texts, gossip menus, conditions, and creature
+  waypoint paths. Model pickers show every display id as a picture.
+- **Right-click menus.** A right click in the world opens a menu of the
+  current tool's one-click operations for what was clicked.
 - **Server data.** The server's navmesh drawn over the ground, and
   regeneration of the server's map, vmap and mmap tiles for changed terrain.
 - **Projects.** Edits are kept per project with undo. Applying writes rows to

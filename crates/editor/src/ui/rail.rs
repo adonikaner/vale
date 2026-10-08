@@ -87,7 +87,9 @@ const GROUPS: [(&str, &[Subject]); 3] = [
             s(
                 "Road",
                 Tool::Road,
-                "Builds a road along a run of points: grades the ground along it                  and paints a surface texture and a verge texture. Click to add                  points, then apply.",
+                "Builds a road along a run of points: grades the ground along it \
+                 and paints a surface texture and a verge texture. Click to add \
+                 points, then apply.",
             ),
             s(
                 "Shading",

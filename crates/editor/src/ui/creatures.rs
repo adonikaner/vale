@@ -914,8 +914,8 @@ fn claim(
                     .on_hover_text(match (spawn.is_new(), written) {
                         (true, true) => {
                             "Remove the spawn from this project. The row is \
-                                         already in the database and stays there; Put \
-                                         back removes it."
+                                         already in the database and stays there; \
+                                         Restore on the Server panel removes it."
                         }
                         (true, false) => {
                             "Remove the spawn this project creates. Nothing in \
