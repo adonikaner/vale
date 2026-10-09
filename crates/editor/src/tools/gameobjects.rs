@@ -2055,8 +2055,7 @@ fn draw(
                 let to = vale_client::render::axes::to_bevy(
                     (spawn.at - Vec3::new(arm * dx, arm * dy, -BODY / 2.0)).to_array(),
                 );
-                let thickness = marks.line_radius(from) * 1.6;
-                marks.tube(from, to, thickness, REMOVED, Look::Ghosted);
+                marks.wide_line(from, to, 1.6, REMOVED, Look::Ghosted);
             }
         }
         if chosen {

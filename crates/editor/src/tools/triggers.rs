@@ -1397,8 +1397,7 @@ fn draw(
         if trigger.is_sphere() {
             marks.sphere(bevy(at), trigger.radius, colour.with_alpha(fill), look);
             // The equator, so the sphere's size reads where the fill is faint.
-            let thickness = marks.line_radius(bevy(at)) * 1.2;
-            marks.ring(bevy(at), Vec3::Y, trigger.radius, thickness, colour, look);
+            marks.wide_ring(bevy(at), Vec3::Y, trigger.radius, 1.2, colour, look);
             continue;
         }
         let extent = Vec3::from(trigger.extent);

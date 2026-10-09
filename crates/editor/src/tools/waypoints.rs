@@ -834,8 +834,7 @@ fn draw(
             true => LEG_HOME,
             false => LEG,
         };
-        let radius = marks.line_radius(from.midpoint(to)) * 1.6;
-        marks.tube(from, to, radius, colour, Look::Ghosted);
+        marks.wide_line(from, to, 1.6, colour, Look::Ghosted);
     }
 
     for (index, node) in path.nodes.iter().enumerate() {

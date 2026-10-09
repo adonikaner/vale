@@ -1707,9 +1707,7 @@ pub(crate) fn ring(
         if let (Some(from), Some(to)) = (points[i], points[(i + 1) % points.len()]) {
             // Resting on the ground rather than half in it. See
             // `crate::marks::Marks::ground_line`.
-            let radius = marks.line_radius(from) * 1.5;
-            let lift = Vec3::Y * radius;
-            marks.tube(from + lift, to + lift, radius, colour, crate::marks::Look::Ghosted);
+            marks.wide_ground_line(from, to, 1.5, colour, crate::marks::Look::Ghosted);
         }
     }
 }
