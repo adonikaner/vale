@@ -53,6 +53,7 @@
 //! is the row most worth editing: it is what the whole map is lit by.
 
 use super::Tool;
+use crate::marks::{Look, Marks};
 use crate::session::EditSession;
 use vale_assets::tables::light::{light_field as lf, YARDS_PER_UNIT};
 use vale_client::render::axes;
@@ -547,10 +548,13 @@ fn press(
 /// Two rings per light, at the radii the row states: the inner one is where it
 /// stops applying at full strength and the outer is where it has faded out, and
 /// the pair is what a falloff *is*. Flat rings rather than spheres — a sphere
-/// wireframe at 700 yards is a ball of lines with the ground invisible inside
-/// it, and the question being asked is how far across the map the light reaches.
+/// at 700 yards surrounds the camera with the ground hidden inside it, and the
+/// question being asked is how far across the map the light reaches.
+///
+/// Everything here is [`Look::Ghosted`]: a light is a thing to aim at, and a
+/// ring behind a hill is still part of the falloff.
 fn draw(
-    mut gizmos: Gizmos<super::gizmo::EditorHandles>,
+    mut marks: ResMut<Marks>,
     lights: Res<Lights>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
@@ -585,7 +589,7 @@ fn draw(
             (false, true) => Color::srgb(1.0, 1.0, 1.0),
             (false, false) => Color::srgb(0.95, 0.72, 0.30),
         };
-        marker(&mut gizmos, mark.at, grab_radius(mark.at, eye), colour);
+        marker(&mut marks, mark.at, grab_radius(mark.at, eye), colour);
 
         // **The falloff belongs to the light that is being edited, and to
         // nothing else.** Drawn for all eighty it was a screen full of
@@ -629,8 +633,8 @@ fn draw(
         // orthographically, at one world unit to the window — see
         // `vale_client::render::present::PRESENT_LAYER`. A ring at world
         // z = 0 is Bevy y = 0, which that camera put on the centre row.
-        circle(&mut gizmos, mark.at, mark.start, Plane::Flat, inner);
-        circle(&mut gizmos, mark.at, mark.end, Plane::Flat, outer);
+        circle(&mut marks, mark.at, mark.start, inner);
+        circle(&mut marks, mark.at, mark.end, outer);
     }
 }
 
@@ -660,60 +664,26 @@ const MARKER_LARGEST: f32 = 22.0;
 
 /// **A light, as a thing standing in the world.**
 ///
-/// A small ball at the position with a line dropping under it. The ball is the
+/// A ball at the position with a line dropping under it. The ball is the
 /// same size on screen wherever it is, like a doodad's handle; the drop is what
 /// gives it a height, and without it a light in the air and a light on the
 /// ground are the same two pixels.
-fn marker(gizmos: &mut Gizmos<super::gizmo::EditorHandles>, at: Vec3, radius: f32, colour: Color) {
-    sphere(gizmos, at, radius, colour);
-    let foot = Vec3::from(axes::to_bevy([at.x, at.y, at.z - DROP]));
+fn marker(marks: &mut Marks, at: Vec3, radius: f32, colour: Color) {
     let head = Vec3::from(axes::to_bevy(at.to_array()));
+    marks.sphere(head, radius, colour, Look::Ghosted);
+    let foot = Vec3::from(axes::to_bevy([at.x, at.y, at.z - DROP]));
     // Dimmer than the ball: the drop says where the light is *over*, and it
     // should not compete with the thing it is pointing at.
-    gizmos.line(foot, head, colour.with_alpha(0.55));
+    marks.line(foot, head, colour.with_alpha(0.55), Look::Ghosted);
 }
 
-/// Three great circles, one in each axis plane, in the world's own axes.
+/// One flat circle at the light's height, in the world's own axes.
 ///
-/// It reads as a ball from any angle, which one circle does not: seen edge-on a
-/// single circle is a straight line, and that is what put a bar across the
-/// window when every light was drawn as one.
-///
-/// Three great circles, one in each axis plane.
-///
-/// **Only for the marker, whose radius is a handful of yards.** A falloff is
-/// drawn as a silhouette and a footprint — see [`draw`], which says why three
-/// axis-aligned circles are the wrong shape at that size.
-fn sphere(gizmos: &mut Gizmos<super::gizmo::EditorHandles>, at: Vec3, radius: f32, colour: Color) {
-    for plane in [Plane::Flat, Plane::NorthUp, Plane::EastUp] {
-        circle(gizmos, at, radius, plane, colour);
-    }
-}
-
-/// Which two of the world's axes a circle varies in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Plane {
-    /// Horizontal — the one a drag moves in, and the one a falloff is measured
-    /// in on the ground.
-    Flat,
-    NorthUp,
-    EastUp,
-}
-
-/// One circle, in the world's own axes.
-///
-/// Drawn as a run of segments rather than with `Gizmos::circle`, because that
-/// one takes an isometry in Bevy's axes and the rotation to get a circle lying
-/// in a chosen plane of *this* world out of it is the kind of conversion this
-/// crate has paid for twice. A circle is 48 lines; the arithmetic is not worth
-/// the risk.
-fn circle(
-    gizmos: &mut Gizmos<super::gizmo::EditorHandles>,
-    at: Vec3,
-    radius: f32,
-    plane: Plane,
-    colour: Color,
-) {
+/// Drawn as a run of segments, each [`Marks::line`] thick at its own distance,
+/// rather than as one ring of a single thickness: a falloff is up to 2,648
+/// yards across, and a thickness right for the near side is a thread or a bar
+/// on the far side.
+fn circle(marks: &mut Marks, at: Vec3, radius: f32, colour: Color) {
     // **`is_finite` as well as positive.** A NaN fails every comparison, so
     // `radius <= 0.0` alone lets one through and every point of the circle
     // becomes NaN — which is a line drawn somewhere undefined rather than no
@@ -724,22 +694,9 @@ fn circle(
     let point = |n: usize| {
         let angle = n as f32 / RING_SEGMENTS as f32 * std::f32::consts::TAU;
         let (a, b) = (radius * angle.cos(), radius * angle.sin());
-        match plane {
-            Plane::Flat => Vec3::new(at.x + a, at.y + b, at.z),
-            Plane::NorthUp => Vec3::new(at.x + a, at.y, at.z + b),
-            Plane::EastUp => Vec3::new(at.x, at.y + a, at.z + b),
-        }
+        Vec3::from(axes::to_bevy([at.x + a, at.y + b, at.z]))
     };
-    let mut last = point(0);
-    for n in 1..=RING_SEGMENTS {
-        let next = point(n);
-        gizmos.line(
-            Vec3::from(axes::to_bevy(last.to_array())),
-            Vec3::from(axes::to_bevy(next.to_array())),
-            colour,
-        );
-        last = next;
-    }
+    marks.line_strip((0..=RING_SEGMENTS).map(point), colour, Look::Ghosted);
 }
 
 /// **Move the light under a held button, and write it as one undo entry.**

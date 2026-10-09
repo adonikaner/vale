@@ -439,9 +439,9 @@ fn tiles_under(radius: f32, at: Vec3) -> Vec<(u32, u32)> {
 /// the lesson the hole outline paid for. Four is a sample every eight yards.
 const DRAPE: usize = 4;
 
-/// How far above the ground the preview is lifted, in yards. It draws over the
-/// world anyway (see [`crate::tools::gizmo::EditorHandles`]); this is so it
-/// reads as lying *on* the ground rather than inside it.
+/// How far above the ground the preview is lifted, in yards. Its hidden part
+/// is drawn faint anyway (see [`crate::marks`]); this is so it reads as lying
+/// *on* the ground rather than inside it.
 const LIFT: f32 = 0.1;
 
 /// Outline what a press would paint.
@@ -456,7 +456,7 @@ const LIFT: f32 = 0.1;
 /// chunk's ground is built once and sampled directly, so there is no search per
 /// sample.
 fn draw(
-    mut gizmos: Gizmos<crate::tools::gizmo::EditorHandles>,
+    mut marks: ResMut<crate::marks::Marks>,
     areas: Res<Areas>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
@@ -482,7 +482,7 @@ fn draw(
         let ground = vale_edit::adt::heights::ground(square);
         for edge in [Along::X, Along::Y, Along::NegX, Along::NegY] {
             let (from, to) = edge.edge(ground.position);
-            run(&mut gizmos, &ground, from, to, colour);
+            run(&mut marks, &ground, from, to, colour);
         }
     }
 }
@@ -605,7 +605,7 @@ impl Along {
 /// hair inside the square, because `ChunkGround::height_at` is exclusive at its
 /// far edge and every edge drawn here is exactly on one.
 fn run(
-    gizmos: &mut Gizmos<crate::tools::gizmo::EditorHandles>,
+    marks: &mut crate::marks::Marks,
     ground: &vale_assets::world::adt::ChunkGround,
     from: (f32, f32),
     to: (f32, f32),
@@ -625,7 +625,7 @@ fn run(
     for step in 1..=DRAPE {
         let k = step as f32 / DRAPE as f32;
         let next = at(from.0 + (to.0 - from.0) * k, from.1 + (to.1 - from.1) * k);
-        gizmos.line(last, next, colour);
+        marks.line(last, next, colour, crate::marks::Look::Ghosted);
         last = next;
     }
 }

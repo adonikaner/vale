@@ -40,6 +40,7 @@
 use super::flightpaths::{aim_of, eye, marker_radius, meets_upright_plane, DRAG_PIXELS, HANDLE_PIXELS};
 use super::triggers::{create_row, remove_row, shipped_ids, shown};
 use super::Tool;
+use crate::marks::{Look, Marks};
 use crate::session::{EditSession, Gesture};
 use vale_assets::tables::area::Areas;
 use vale_client::assets::GameAssets;
@@ -633,11 +634,12 @@ fn keys(
     session.status = line;
 }
 
-/// Draw the places near the camera, each with an upright line and, where its
-/// facing is known, an arrow the way a spirit faces.
+/// Draw the places near the camera: a dome on the ground with a post and a
+/// crossbar over it, and, where its facing is known, an arrow the way a
+/// spirit faces. All [`Look::Ghosted`], since each is a thing to aim at.
 #[allow(clippy::too_many_arguments)]
 fn draw(
-    mut handles: Gizmos<super::gizmo::EditorHandles>,
+    mut marks: ResMut<Marks>,
     graveyards: Res<Graveyards>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
@@ -671,25 +673,27 @@ fn draw(
             _ => Color::srgb(0.55, 0.8, 1.0),
         };
         let radius = marker_radius(at, eye);
-        handles.sphere(bevy(at), radius, colour);
+        marks.dome(bevy(at), radius, colour, Look::Ghosted);
         let top = at + Vec3::Z * radius * 5.0;
-        handles.line(bevy(at), bevy(top), colour);
+        let post = radius * 0.12;
+        marks.tube(bevy(at), bevy(top), post, colour, Look::Ghosted);
         // A cross at the top, as the world map draws a spirit healer.
         let arm = radius * 1.2;
-        handles.line(bevy(top - Vec3::X * arm), bevy(top + Vec3::X * arm), colour);
+        marks.tube(bevy(top - Vec3::X * arm), bevy(top + Vec3::X * arm), post, colour, Look::Ghosted);
         if let Some((facing, _)) = graveyards.facing(&session.server_edits, place.id) {
             let ahead = at + Vec3::new(facing.cos(), facing.sin(), 0.0) * radius * 4.0;
-            handles.arrow(bevy(at), bevy(ahead), colour);
+            let lift = Vec3::Z * radius * 0.3;
+            marks.arrow(bevy(at + lift), bevy(ahead + lift), post, colour, Look::Ghosted);
         }
     }
     let Some(pointer) = cursor.surface else { return };
     match graveyards.armed {
         Armed::NewPlace => {
-            handles.sphere(bevy(pointer), marker_radius(pointer, eye), Color::srgb(0.55, 0.8, 1.0));
+            marks.dome(bevy(pointer), marker_radius(pointer, eye), Color::srgb(0.55, 0.8, 1.0), Look::Ghosted);
         }
         Armed::LinkZone => {
             if let Some(place) = graveyards.selected.and_then(|id| graveyards.place(id)) {
-                handles.line(bevy(Vec3::from(place.at)), bevy(pointer), Color::srgb(0.5, 1.0, 0.5));
+                marks.line(bevy(Vec3::from(place.at)), bevy(pointer), Color::srgb(0.5, 1.0, 0.5), Look::Ghosted);
             }
         }
         Armed::Nothing => {}

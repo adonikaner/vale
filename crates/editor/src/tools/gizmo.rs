@@ -37,36 +37,25 @@
 //!
 //! The pick, the axes and the arithmetic are in WoW coordinates, because the
 //! record and the ray are. `render::axes::to_bevy` is applied only on the way
-//! into `Gizmos`. It is a rotation, so a direction converts the same way as a
+//! into [`Marks`]. It is a rotation, so a direction converts the same way as a
 //! position.
 //!
-//! ## Why the handles are drawn in front of the world
+//! ## Why a handle inside its model is drawn faint rather than hidden
 //!
 //! [`REACH`] keeps a gizmo the same size in pixels at any camera distance. That
 //! is not enough on its own. A handle stands at the placement's origin, and the
 //! origin is inside the model: the arrows on a lamp post stick out of the top,
 //! and the arrows on a cathedral are a few yards long in the middle of a
-//! building a hundred yards across. With the depth test on, the handles were
+//! building a hundred yards across. With a plain depth test, the handles were
 //! hidden behind their own model until the camera was far enough away for the
-//! constant-pixel length to exceed the building. At that distance the handles
-//! appeared already at full size, which read as the handles scaling up rather
-//! than becoming visible. The scaling was correct; the handles only appeared
-//! once they outgrew the geometry.
+//! constant-pixel length to exceed the building.
 //!
-//! [`EditorHandles`] is a gizmo config group with `depth_bias: -1.0`, which
-//! draws in front of everything. Every instrument in this crate that a person
-//! aims the pointer at uses it: the handles, the selection boxes, the hole
-//! outlines. The two brushes' rings do not: a brush ring shows where the ground
-//! is, and a ring drawn through a hill would show the ground somewhere it is
-//! not.
-//!
-//! [`PathMarks`] is the waypoint path's group. It is in front like the handles,
-//! because a person aims at a path node by node. See its own doc.
-//!
-//! [`WorldMarks`] is the group for marks that show where something is, at the
-//! default bias. Such a mark is occluded by whatever is in front of it, because
-//! a thing behind a tree cannot be seen.
+//! The handles are meshes drawn with [`Look::Ghosted`]: solid where nothing
+//! hides them, and faint where the model or the ground does. See
+//! [`crate::marks`]. The pick is arithmetic on the pointer's ray and does not
+//! depend on what is drawn.
 
+use crate::marks::{Look, Marks};
 use crate::session::EditSession;
 use crate::tools::creatures::Creatures;
 use crate::tools::doodads::Selection;
@@ -74,8 +63,6 @@ use crate::tools::gameobjects::GameObjects;
 use crate::tools::{doodads, spawn, wmos, Tool};
 use vale_client::render::axes;
 use vale_client::world::camera::WorldCamera;
-use bevy::gizmos::config::{GizmoConfig, GizmoConfigGroup, GizmoLineConfig};
-use bevy::gizmos::AppGizmoBuilder;
 use bevy::prelude::*;
 
 /// Which handles are shown, and what a drag on one does.
@@ -101,70 +88,6 @@ impl Handles {
         }
     }
 }
-
-/// The gizmo group for everything the pointer aims at, at `depth_bias: -1.0`,
-/// so it draws in front of the world rather than inside it. The module comment
-/// gives the reason.
-///
-/// It is a group rather than a flag on each call because `depth_bias` is a
-/// property of the config, and because one group for all aimable instruments
-/// sets their visibility in one place instead of five.
-#[derive(Default, Reflect, GizmoConfigGroup)]
-#[reflect(Default)]
-pub struct EditorHandles;
-
-/// The gizmo group for marks that show where something is, at the default
-/// depth bias, so they draw inside the world rather than in front of it.
-///
-/// The two brush rings are drawn this way for the reason the module comment
-/// gives: a ring through a hill shows the ground somewhere it is not. The same
-/// applies to a mark for something standing on the ground. The creature tool
-/// marks every spawn it cannot draw a model for, which in a forest is a
-/// thousand rings; drawn in front, they showed through the trees and over the
-/// hillsides behind them. A spawn behind a tree cannot be seen, so its mark
-/// must be hidden too.
-///
-/// What a person aims at stays in [`EditorHandles`]. The creature tool draws
-/// the selected and hovered marks there and all other marks here, the same
-/// split the brushes make.
-#[derive(Default, Reflect, GizmoConfigGroup)]
-#[reflect(Default)]
-pub struct WorldMarks;
-
-/// The gizmo group for a waypoint path. It draws in front of the world, like
-/// [`EditorHandles`], and is its own group because line width is a property of
-/// a gizmo config and cannot be set per call. At the default two pixels a path
-/// over grass was a hairline.
-///
-/// ## Why the path is drawn in front
-///
-/// A depth-tested path, on [`WorldMarks`]' reasoning that a mark drawn through
-/// a hillside shows the creature walking somewhere it does not, disappeared
-/// into every rise between it and the camera, which hid most of a path.
-///
-/// Drawing each leg twice, solid and depth-tested in one group and dashed and
-/// in front in a second, made the path flicker: two coincident translucent
-/// lines are both visible, and the blend order of two gizmo groups is not
-/// stable from frame to frame.
-///
-/// Drawing each leg once and choosing the pass by whether the node was under
-/// the terrain needed a height lookup per node per frame and still hid most of
-/// a path, because a leg is hidden by the rise between it and the camera, not
-/// by the ground at its own node.
-///
-/// Drawn in front, the path matches the selection marks, the handles and the
-/// hole outlines, and the nodes a person aims at are visible. [`WorldMarks`]
-/// exists to stop a mark showing something where it is not; a path drawn over
-/// a hill still meets the ground at every node, which is where its values are.
-#[derive(Default, Reflect, GizmoConfigGroup)]
-#[reflect(Default)]
-pub struct PathMarks;
-
-/// How far in front of the world they are drawn. -1 is "always in front".
-///
-/// Fully in front rather than slightly: a handle half-buried in a wall can only
-/// be used after moving the camera.
-const IN_FRONT: f32 = -1.0;
 
 /// The three, as a list a panel can offer.
 pub const HANDLES: [(&str, Handles); 3] = [
@@ -536,34 +459,6 @@ pub struct GizmoToolPlugin;
 
 impl Plugin for GizmoToolPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_gizmo_config(
-            EditorHandles,
-            GizmoConfig {
-                depth_bias: IN_FRONT,
-                ..default()
-            },
-        );
-        // The marks drawn inside the world, at the default bias, so geometry in
-        // front of a mark hides it. See [`WorldMarks`].
-        app.insert_gizmo_config(WorldMarks, GizmoConfig::default());
-        // The waypoint path; see [`PathMarks`]. It has its own group for the
-        // width, which is a property of the config and cannot be set per call,
-        // and it is in front for the reason given there.
-        //
-        // Two and a half pixels rather than four: at four a path was too heavy
-        // across the viewport, and drawn in front of the world it does not need
-        // the extra width to be found.
-        app.insert_gizmo_config(
-            PathMarks,
-            GizmoConfig {
-                depth_bias: IN_FRONT,
-                line: GizmoLineConfig {
-                    width: 2.5,
-                    ..default()
-                },
-                ..default()
-            },
-        );
         app.init_resource::<Gizmo>().add_systems(
             Update,
             // Before each tool's own pick, so a press on a handle does not also
@@ -579,40 +474,9 @@ impl Plugin for GizmoToolPlugin {
                 .before(crate::tools::gameobjects::press),
         );
         app.add_systems(Update, draw);
-        // The whole group is hidden during a playtest by
-        // [`hide_while_playing`], one system rather than a guard in each of
-        // the seven that draw into it.
-        app.add_systems(Update, hide_while_playing);
         // After the drag, so a held handle takes precedence: a grab and a held
         // `Alt` both turn the same placement, and only one may act in a frame.
         app.add_systems(Update, spin.after(drag));
-    }
-}
-
-/// Disables the [`EditorHandles`] group while a playtest is running.
-///
-/// A selection box was drawn in the world during a playtest with a character
-/// walking under it. The seven systems that draw into [`EditorHandles`] each
-/// checked the tool and none checked the playtest, and a new one would likely
-/// repeat that.
-///
-/// So the guard is on the group and not on the systems. The group's buffer is
-/// drawn only while `GizmoConfig::enabled` is set, so switching it off leaves
-/// every producer running and writing lines that nothing renders. Writing the
-/// lines is the cheap part of a gizmo, and no state has to be rebuilt when the
-/// playtest ends.
-///
-/// It does not affect the two brushes' rings, which are in the default group
-/// for the reason the module comment gives; those are already off during a
-/// playtest because the tools that draw them stop.
-fn hide_while_playing(
-    mut config: ResMut<bevy::gizmos::config::GizmoConfigStore>,
-    state: Res<crate::playtest::Playtest>,
-) {
-    let (config, _) = config.config_mut::<EditorHandles>();
-    let wanted = state.editing();
-    if config.enabled != wanted {
-        config.enabled = wanted;
     }
 }
 
@@ -1143,7 +1007,7 @@ fn angle_in_plane(offset: Vec3, normal: Vec3) -> f32 {
 
 /// Draw whichever handles are on.
 fn draw(
-    mut gizmos: Gizmos<EditorHandles>,
+    mut marks: ResMut<Marks>,
     gizmo: Res<Gizmo>,
     selection: Res<Selection>,
     buildings: Res<wmos::Selection>,
@@ -1181,6 +1045,14 @@ fn draw(
         _ => [Vec3::X, Vec3::Y, Vec3::Z],
     };
 
+    // The handles are solid where nothing hides them and faint where the
+    // model or the ground does, so a handle inside a building can still be
+    // found. See `crate::marks`.
+    let look = Look::Ghosted;
+    if gizmo.handles == Handles::Move {
+        // A knob at the origin, which is where the three arrows meet.
+        marks.sphere(drawn, reach * HANDLE_THICKNESS * 2.2, Color::srgb(0.85, 0.85, 0.85), look);
+    }
     for (axis, &along) in axes_now.iter().enumerate() {
         let colour = match lit == Some(axis) {
             true => Color::srgb(1.0, 0.95, 0.55),
@@ -1190,29 +1062,20 @@ fn draw(
         match gizmo.handles {
             Handles::Turn if at.upright && axis != 2 => {}
             Handles::Turn => {
-                gizmos
-                    .circle(
-                        Isometry3d::new(drawn, Quat::from_rotation_arc(Vec3::Z, along)),
-                        reach,
-                        colour,
-                    )
-                    .resolution(48);
+                marks.ring(drawn, along, reach, reach * HANDLE_THICKNESS * 0.8, colour, look);
             }
             _ => {
-                let tip = drawn + along * reach;
-                gizmos.line(drawn, tip, colour);
-                // A head, so which end is the tip is legible from any angle: a
-                // short cross at the tip, in the plane facing the camera.
-                let (a, b) = along.any_orthonormal_pair();
-                let head = reach * 0.08;
-                gizmos.line(tip - along * head * 2.0 + a * head, tip, colour);
-                gizmos.line(tip - along * head * 2.0 - a * head, tip, colour);
-                gizmos.line(tip - along * head * 2.0 + b * head, tip, colour);
-                gizmos.line(tip - along * head * 2.0 - b * head, tip, colour);
+                // Starting clear of the knob, so the three shafts do not merge
+                // into one blob at the origin.
+                let from = drawn + along * reach * 0.12;
+                marks.arrow(from, drawn + along * reach, reach * HANDLE_THICKNESS, colour, look);
             }
         }
     }
 }
+
+/// A handle's shaft radius, as a fraction of its length.
+const HANDLE_THICKNESS: f32 = 0.03;
 
 #[cfg(test)]
 mod tests {

@@ -284,7 +284,7 @@ fn under(
 /// once the ground behind it fills the gap, and because a person cutting a cave
 /// mouth is placing squares against squares already cut.
 fn draw(
-    mut gizmos: Gizmos<crate::tools::gizmo::EditorHandles>,
+    mut marks: ResMut<crate::marks::Marks>,
     state_of: Res<Holes>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
@@ -309,7 +309,7 @@ fn draw(
     for bit in 0..16usize {
         if mask & (1 << bit) != 0 && bit != square.bit {
             outline(
-                &mut gizmos,
+                &mut marks,
                 &session,
                 square.tile,
                 origin,
@@ -320,7 +320,7 @@ fn draw(
     }
     let patching = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     outline(
-        &mut gizmos,
+        &mut marks,
         &session,
         square.tile,
         origin,
@@ -341,17 +341,16 @@ const DRAPE: usize = 4;
 
 /// How far above the ground the outline is lifted, in yards.
 ///
-/// Small, and it is not about z-fighting: the outline is in the handle gizmo
-/// group and therefore draws over the world whatever its depth says — see
-/// [`crate::tools::gizmo`]. It is so that the line reads as lying *on* the
-/// ground rather than buried in the interpolation error the wedge lookup has
-/// against the drawn mesh.
+/// Small: the outline is a tube a few pixels thick, and its hidden part is
+/// drawn faint anyway (see [`crate::marks`]). It is so that the line reads as
+/// lying *on* the ground rather than buried in the interpolation error the
+/// wedge lookup has against the drawn mesh.
 const LIFT: f32 = 0.05;
 
 /// One hole square as four draped edges and a cross, on the ground the square
 /// came out of.
 fn outline(
-    gizmos: &mut Gizmos<crate::tools::gizmo::EditorHandles>,
+    marks: &mut crate::marks::Marks,
     session: &EditSession,
     tile: (u32, u32),
     origin: [f32; 3],
@@ -386,7 +385,7 @@ fn outline(
         for step in 1..=DRAPE {
             let k = step as f32 / DRAPE as f32;
             let next = at(from.0 + (to.0 - from.0) * k, from.1 + (to.1 - from.1) * k);
-            gizmos.line(last, next, colour);
+            marks.line(last, next, colour, crate::marks::Look::Ghosted);
             last = next;
         }
     }

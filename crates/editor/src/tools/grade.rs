@@ -202,11 +202,11 @@ pub fn aim(
 
 /// Draw the line and its two ends.
 ///
-/// **In the default gizmo group and not `EditorHandles`**, for the reason that
-/// group's own comment gives: a grade is a statement about where the *ground*
-/// is, and one drawn through a hill would say the ground is somewhere it is not.
+/// Ghosted: a grade is a statement about where the *ground* is, so the part
+/// of the line a hill hides is drawn faint rather than over the hill, which
+/// would say the ground is somewhere it is not. See `crate::marks`.
 pub fn draw(
-    mut gizmos: Gizmos,
+    mut marks: ResMut<crate::marks::Marks>,
     grading: Res<Grading>,
     tool: Res<super::Tool>,
     cursor: Res<Cursor>,
@@ -214,15 +214,15 @@ pub fn draw(
     if *tool != super::Tool::Grade {
         return;
     }
-    let mark = |gizmos: &mut Gizmos, end: &End, colour: Color| {
+    let mark = |marks: &mut crate::marks::Marks, end: &End, colour: Color| {
         let at = vale_client::render::axes::to_bevy([end.at[0], end.at[1], end.height]);
-        gizmos.sphere(at, 1.5, colour);
+        marks.sphere(at, 1.5, colour, crate::marks::Look::Ghosted);
     };
     if let Some(from) = &grading.from {
-        mark(&mut gizmos, from, Color::srgb(0.35, 0.9, 0.45));
+        mark(&mut marks, from, Color::srgb(0.35, 0.9, 0.45));
     }
     if let Some(to) = &grading.to {
-        mark(&mut gizmos, to, Color::srgb(0.95, 0.65, 0.25));
+        mark(&mut marks, to, Color::srgb(0.95, 0.65, 0.25));
     }
 
     // The line: between the two ends once both are picked, and from the first
@@ -241,7 +241,7 @@ pub fn draw(
     let Some((at, height)) = second else { return };
     let a = vale_client::render::axes::to_bevy([from.at[0], from.at[1], from.height]);
     let b = vale_client::render::axes::to_bevy([at[0], at[1], height]);
-    gizmos.line(a, b, Color::srgb(0.95, 0.85, 0.35));
+    marks.line(a, b, Color::srgb(0.95, 0.85, 0.35), crate::marks::Look::Ghosted);
 }
 
 pub struct GradeToolPlugin;

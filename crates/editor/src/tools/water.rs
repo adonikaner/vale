@@ -445,7 +445,7 @@ const LIFT: f32 = 0.05;
 /// calls to `liquid::pools` a frame, each of which copies an 804-byte block per
 /// liquid — which is a lot of work to draw cells nobody is looking at.
 fn draw(
-    mut gizmos: Gizmos<crate::tools::gizmo::EditorHandles>,
+    mut marks: ResMut<crate::marks::Marks>,
     water: Res<Water>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
@@ -484,7 +484,7 @@ fn draw(
                             continue;
                         }
                         let (high, low) = cell_square(origin, row, col, 1);
-                        outline(&mut gizmos, high, low, pool.height(row, col) + LIFT, colour);
+                        outline(&mut marks, high, low, pool.height(row, col) + LIFT, colour);
                     }
                 }
             }
@@ -508,7 +508,7 @@ fn draw(
         corner(high[0], low[1]),
     ];
     for at in 0..4 {
-        gizmos.line(square[at], square[(at + 1) % 4], colour);
+        marks.line(square[at], square[(at + 1) % 4], colour, crate::marks::Look::Ghosted);
     }
 
     // The slope's ends, each a short upright at its height, and the line
@@ -519,13 +519,13 @@ fn draw(
         };
         let up = |end: [f32; 3]| Vec3::from(axes::to_bevy([end[0], end[1], end[2] + 3.0]));
         for end in water.ends.iter().flatten() {
-            gizmos.line(mark(*end), up(*end), colour);
+            marks.line(mark(*end), up(*end), colour, crate::marks::Look::Ghosted);
         }
         if let [Some(start), Some(end)] = water.ends {
-            gizmos.line(mark(start), mark(end), colour);
+            marks.line(mark(start), mark(end), colour, crate::marks::Look::Ghosted);
             // The start is the one with a crossbar.
             let across = Vec3::from(axes::to_bevy([2.0, 0.0, 0.0])) - Vec3::from(axes::to_bevy([0.0, 0.0, 0.0]));
-            gizmos.line(up(start) - across, up(start) + across, colour);
+            marks.line(up(start) - across, up(start) + across, colour, crate::marks::Look::Ghosted);
         }
     }
 }
@@ -547,7 +547,7 @@ fn colour_of(kind: Liquid) -> Color {
 /// ground would be drawing the one thing the tool exists to place as though it
 /// followed the terrain.
 fn outline(
-    gizmos: &mut Gizmos<crate::tools::gizmo::EditorHandles>,
+    marks: &mut crate::marks::Marks,
     high: [f32; 2],
     low: [f32; 2],
     z: f32,
@@ -559,6 +559,6 @@ fn outline(
     let c = corner(low[0], low[1]);
     let d = corner(high[0], low[1]);
     for (from, to) in [(a, b), (b, c), (c, d), (d, a)] {
-        gizmos.line(from, to, colour);
+        marks.line(from, to, colour, crate::marks::Look::Ghosted);
     }
 }

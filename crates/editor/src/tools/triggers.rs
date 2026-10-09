@@ -67,6 +67,7 @@
 
 use super::flightpaths::{aim_of, eye, meets_upright_plane, DRAG_PIXELS, HANDLE_PIXELS};
 use super::Tool;
+use crate::marks::{Look, Marks};
 use crate::session::{EditSession, Gesture};
 use vale_client::assets::GameAssets;
 use vale_client::render::axes;
@@ -1353,10 +1354,14 @@ pub fn colour_of(does: Does) -> Color {
 }
 
 /// Draw the triggers near the camera, and what a click would make.
+///
+/// A trigger is a translucent volume with solid edges, so the ground hides the
+/// part of it that is under the ground and a trigger buried in a hillside
+/// reads as buried. The selected and hovered one is [`Look::Ghosted`]: its
+/// hidden part is drawn faint as well. The rest are [`Look::Solid`].
 #[allow(clippy::too_many_arguments)]
 fn draw(
-    mut handles: Gizmos<super::gizmo::EditorHandles>,
-    mut marks: Gizmos<super::gizmo::WorldMarks>,
+    mut marks: ResMut<Marks>,
     triggers: Res<Triggers>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
@@ -1384,24 +1389,30 @@ fn draw(
             _ => colour_of(triggers.does(&session.server_edits, trigger.id)),
         };
         let marker = super::flightpaths::marker_radius(at, eye) * 0.5;
-        handles.sphere(bevy(at), marker, colour);
+        marks.sphere(bevy(at), marker, colour, Look::Ghosted);
+        let (look, fill) = match selected || hovered {
+            true => (Look::Ghosted, VOLUME_AIMED),
+            false => (Look::Solid, VOLUME),
+        };
         if trigger.is_sphere() {
-            match selected || hovered {
-                true => {
-                    handles.sphere(bevy(at), trigger.radius, colour);
-                }
-                false => {
-                    marks.sphere(bevy(at), trigger.radius, colour.with_alpha(0.6));
-                }
-            }
+            marks.sphere(bevy(at), trigger.radius, colour.with_alpha(fill), look);
+            // The equator, so the sphere's size reads where the fill is faint.
+            let thickness = marks.line_radius(bevy(at)) * 1.2;
+            marks.ring(bevy(at), Vec3::Y, trigger.radius, thickness, colour, look);
             continue;
         }
+        let extent = Vec3::from(trigger.extent);
+        // The box's own axes in Bevy's: WoW x is Bevy -z, WoW y is Bevy -x,
+        // and the yaw about WoW's up is a turn about Bevy's y. See `axes`.
+        let pose = Transform {
+            translation: bevy(at),
+            rotation: Quat::from_rotation_y(trigger.yaw),
+            scale: Vec3::new(extent.y, extent.z, extent.x),
+        };
+        marks.cuboid(pose, colour.with_alpha(fill), look);
         let c = corners(trigger);
         for (a, b) in BOX_EDGES {
-            match selected || hovered {
-                true => handles.line(bevy(c[a]), bevy(c[b]), colour),
-                false => marks.line(bevy(c[a]), bevy(c[b]), colour.with_alpha(0.6)),
-            }
+            marks.line(bevy(c[a]), bevy(c[b]), colour, look);
         }
     }
     // The selected trigger's teleport target and battleground exit, when they
@@ -1421,34 +1432,41 @@ fn draw(
                 PickFor::Teleport => colour_of(Does { teleport: true, ..Does::default() }),
                 PickFor::BgExit => colour_of(Does { entrance: true, ..Does::default() }),
             };
-            place_mark(&mut handles, at, facing, eye, colour);
+            place_mark(&mut marks, at, facing, eye, colour);
             if let Some(from) = from {
-                marks.line(bevy(from), bevy(at), colour.with_alpha(0.5));
+                marks.line(bevy(from), bevy(at), colour.with_alpha(0.5), Look::Ghosted);
             }
         }
     }
     let Some(pointer) = cursor.surface else { return };
     if let Some(pick) = triggers.pick.as_ref().filter(|pick| pick.map == triggers.map) {
         let at = pick.pressed.unwrap_or(pointer);
-        place_mark(&mut handles, at, pick.facing, eye, Color::WHITE);
+        place_mark(&mut marks, at, pick.facing, eye, Color::WHITE);
         return;
     }
     if triggers.armed == Armed::NewTrigger {
         let radius = triggers.radius.max(0.5);
         let at = pointer + Vec3::Z * radius * 0.5;
-        handles.sphere(bevy(at), radius, colour_of(Does::default()));
+        let colour = colour_of(Does::default()).with_alpha(VOLUME_AIMED);
+        marks.sphere(bevy(at), radius, colour, Look::Ghosted);
     }
 }
 
+/// How opaque a trigger's volume is drawn, and the selected or hovered one's.
+/// Faint, so the ground and the models inside it stay readable.
+const VOLUME: f32 = 0.14;
+const VOLUME_AIMED: f32 = 0.24;
+
 /// A place a character is sent to: a marker standing on it and an arrow the
 /// way the character faces.
-fn place_mark(handles: &mut Gizmos<super::gizmo::EditorHandles>, at: Vec3, facing: f32, eye: Vec3, colour: Color) {
+fn place_mark(marks: &mut Marks, at: Vec3, facing: f32, eye: Vec3, colour: Color) {
     let bevy = |p: Vec3| axes::to_bevy(p.to_array());
     let radius = super::flightpaths::marker_radius(at, eye);
-    handles.sphere(bevy(at), radius, colour);
-    handles.line(bevy(at), bevy(at + Vec3::Z * radius * 4.0), colour);
+    marks.sphere(bevy(at), radius, colour, Look::Ghosted);
+    marks.line(bevy(at), bevy(at + Vec3::Z * radius * 4.0), colour, Look::Ghosted);
     let ahead = at + Vec3::new(facing.cos(), facing.sin(), 0.0) * radius * 4.0;
-    handles.arrow(bevy(at), bevy(ahead), colour);
+    let thickness = marks.line_radius(bevy(at)) * 1.6;
+    marks.arrow(bevy(at), bevy(ahead), thickness, colour, Look::Ghosted);
 }
 
 /// The twelve edges of a box, as pairs of [`corners`].

@@ -227,7 +227,7 @@ fn panel(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         theme::note(
             ui,
             "Click a creature in the viewport to open it. The nearest ones are drawn as \
-             models; everything further out is a ring on the ground.",
+             models; everything further out is a dome.",
         );
         return;
     };

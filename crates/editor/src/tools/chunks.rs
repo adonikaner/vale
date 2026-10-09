@@ -1801,7 +1801,7 @@ const INSET: f32 = 0.05;
 /// Only the sides a set shares with a chunk outside it are drawn, so a block
 /// is one outline and not a lattice.
 fn draw(
-    mut gizmos: Gizmos<crate::tools::gizmo::EditorHandles>,
+    mut marks: ResMut<crate::marks::Marks>,
     chunks: Res<Chunks>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
@@ -1817,9 +1817,9 @@ fn draw(
     let pasting = Color::srgb(0.45, 0.90, 0.55);
     let hovered = Color::srgba(1.0, 1.0, 1.0, 0.7);
 
-    outline(&mut gizmos, &session, &chunks.selected, selected);
+    outline(&mut marks, &session, &chunks.selected, selected);
     let swept: BTreeSet<Cell> = chunks.sweeping().iter().copied().collect();
-    outline(&mut gizmos, &session, &swept, sweeping);
+    outline(&mut marks, &session, &swept, sweeping);
     let Some(at) = chunks.at.filter(|_| swept.is_empty()) else {
         return;
     };
@@ -1829,9 +1829,9 @@ fn draw(
     match control && !chunks.clip.is_empty() {
         true => {
             let footprint: BTreeSet<Cell> = chunks.clip.footprint(at).map(|(cell, _)| cell).collect();
-            outline(&mut gizmos, &session, &footprint, pasting);
+            outline(&mut marks, &session, &footprint, pasting);
         }
-        false => outline(&mut gizmos, &session, &BTreeSet::from([at]), hovered),
+        false => outline(&mut marks, &session, &BTreeSet::from([at]), hovered),
     }
 }
 
@@ -1850,7 +1850,7 @@ fn border(cells: &BTreeSet<Cell>) -> Vec<(Cell, Side)> {
 
 /// Draw the border of `cells` on the ground.
 fn outline(
-    gizmos: &mut Gizmos<crate::tools::gizmo::EditorHandles>,
+    marks: &mut crate::marks::Marks,
     session: &EditSession,
     cells: &BTreeSet<Cell>,
     colour: Color,
@@ -1890,7 +1890,7 @@ fn outline(
         for step in 1..=steps {
             let k = step as f32 / steps as f32;
             let next = at(from.0 + (to.0 - from.0) * k, from.1 + (to.1 - from.1) * k);
-            gizmos.line(last, next, colour);
+            marks.line(last, next, colour, crate::marks::Look::Ghosted);
             last = next;
         }
     }

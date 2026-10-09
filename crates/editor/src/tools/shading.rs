@@ -283,12 +283,12 @@ fn tiles_under(radius: f32, at: Vec3) -> Vec<(u32, u32)> {
 /// brush's own ring, in this tool's own colour.
 ///
 /// **The colour is what the brush is aimed at**, tone-mapped back into something
-/// a line can be drawn in: `MCCV` reaches to 2.0 and a gizmo cannot, so the ring
+/// a line can be drawn in: `MCCV` reaches to 2.0 and a colour cannot, so the ring
 /// shows the *hue* of the target at full brightness and the panel shows the
 /// number. A ring that tried to show a multiplier of 1.8 would be white, which
 /// is what a multiplier of 1.0 would look like too.
 fn draw_brush(
-    mut gizmos: Gizmos,
+    mut marks: ResMut<crate::marks::Marks>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
     shading: Res<Shading>,
@@ -304,7 +304,7 @@ fn draw_brush(
     let peak = aim[0].max(aim[1]).max(aim[2]).max(1e-3);
     let colour = Color::srgb(aim[0] / peak, aim[1] / peak, aim[2] / peak);
     crate::tools::terrain::rings(
-        &mut gizmos,
+        &mut marks,
         &session,
         at,
         shading.brush.radius,

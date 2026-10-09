@@ -91,6 +91,7 @@
 //! an axis other than the one the handle was drawn on.
 
 use crate::pick::Cursor;
+use crate::marks::{Look, Marks};
 use crate::session::EditSession;
 use crate::tools::Tool;
 use vale_client::render::axes;
@@ -1509,10 +1510,10 @@ fn publish(mut session: Option<ResMut<EditSession>>, buttons: Res<ButtonInput<Mo
 /// a volume, and a marker that did not enclose it would leave "did I click the
 /// tree or the rock behind it" unanswered.
 fn draw_marker(
-    // In front of the world — see [`super::gizmo::EditorHandles`]. A box
-    // around a tree is around a thing with leaves in the way of it, and one
-    // around a building is inside the building.
-    mut gizmos: Gizmos<super::gizmo::EditorHandles>,
+    // Ghosted: a box around a tree has leaves in the way of it, and one
+    // around a building is inside the building, so the hidden edges are
+    // drawn faint. See `crate::marks`.
+    mut marks: ResMut<Marks>,
     selection: Res<Selection>,
     tool: Res<Tool>,
     drawn: Query<(&Doodad, &GlobalTransform, &Aabb)>,
@@ -1541,24 +1542,25 @@ fn draw_marker(
         };
         let centre = transform.affine().transform_point3(Vec3::from(aabb.center));
         let half = Vec3::from(aabb.half_extents) * transform.scale();
-        gizmos.cube(
+        marks.box_edges(
             Transform::from_translation(centre)
                 .with_rotation(transform.rotation())
                 .with_scale(half * 2.0),
             colour,
+            Look::Ghosted,
         );
     }
     // …and a stem to the ground under it, which is what says where it stands
     // when the box is in the air — a hanging lantern, a bird, a treetop.
     let world = vale_assets::world::adt::placement_to_world(at.record.position);
     let foot = axes::to_bevy(world);
-    gizmos.line(foot, foot + Vec3::Y * 2.0, colour);
+    marks.line(foot, foot + Vec3::Y * 2.0, colour, Look::Ghosted);
 }
 
 /// Box every locked doodad in red while the tool is chosen, so a click that
 /// selects nothing is explained. See `crate::session::PlacementLocks`.
 fn draw_locked(
-    mut gizmos: Gizmos<super::gizmo::EditorHandles>,
+    mut marks: ResMut<Marks>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
     drawn: Query<(&Doodad, &GlobalTransform, &Aabb)>,
@@ -1577,11 +1579,12 @@ fn draw_locked(
         }
         let centre = transform.affine().transform_point3(Vec3::from(aabb.center));
         let half = Vec3::from(aabb.half_extents) * transform.scale();
-        gizmos.cube(
+        marks.box_edges(
             Transform::from_translation(centre)
                 .with_rotation(transform.rotation())
                 .with_scale(half * 2.0),
             LOCKED,
+            Look::Ghosted,
         );
     }
 }

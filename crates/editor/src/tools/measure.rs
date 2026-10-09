@@ -248,14 +248,13 @@ fn aim(
 /// The two points and the line between them; while only the first is picked,
 /// the line runs to the pointer.
 ///
-/// In [`super::gizmo::EditorHandles`], which draws in front of the world, as
-/// every other instrument the pointer aims at does. The line between two
-/// ground points passes under any ground that bulges between them, and
-/// depth-tested it showed only where the ground dipped. The numbers in the
-/// panel say whether the straight line is above or below the ground; the
-/// drawing only has to show where the two points are.
+/// Ghosted, as every other instrument the pointer aims at is: the line
+/// between two ground points passes under any ground that bulges between
+/// them, and the part under the ground is drawn faint rather than hidden. The
+/// numbers in the panel say whether the straight line is above or below the
+/// ground. See `crate::marks`.
 fn draw(
-    mut gizmos: Gizmos<super::gizmo::EditorHandles>,
+    mut marks: ResMut<crate::marks::Marks>,
     measuring: Res<Measuring>,
     tool: Res<super::Tool>,
     cursor: Res<Cursor>,
@@ -270,18 +269,18 @@ fn draw(
         let Some(probe) = probe else { continue };
         // A sphere and a two-yard pole, so the point shows from above and
         // from the side.
-        gizmos.sphere(bevy(probe.at), MARK, colour);
-        gizmos.line(bevy(probe.at), bevy(probe.at + Vec3::Z * POLE), colour);
+        marks.sphere(bevy(probe.at), MARK, colour, crate::marks::Look::Ghosted);
+        marks.line(bevy(probe.at), bevy(probe.at + Vec3::Z * POLE), colour, crate::marks::Look::Ghosted);
         // A point on a model also has a line down to the ground under it.
         if let (On::Model, Some(ground)) = (probe.on, probe.ground) {
             let below = Vec3::new(probe.at.x, probe.at.y, ground);
-            gizmos.line(bevy(probe.at), bevy(below), colour.with_alpha(0.6));
+            marks.line(bevy(probe.at), bevy(below), colour.with_alpha(0.6), crate::marks::Look::Ghosted);
         }
     }
     let Some(first) = measuring.first else { return };
     let end = measuring.second.map(|p| p.at).or(cursor.surface);
     if let Some(end) = end {
-        gizmos.line(bevy(first.at), bevy(end), Color::srgb(0.95, 0.85, 0.35));
+        marks.line(bevy(first.at), bevy(end), Color::srgb(0.95, 0.85, 0.35), crate::marks::Look::Ghosted);
     }
 }
 

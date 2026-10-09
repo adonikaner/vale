@@ -38,6 +38,7 @@
 use super::creatures::TemplateSubject;
 use super::Tool;
 use crate::server::fresh::Fresh;
+use crate::marks::{Look, Marks};
 use crate::session::EditSession;
 use vale_client::render::focus::WorldFocus;
 use vale_client::world::camera::WorldCamera;
@@ -1306,6 +1307,10 @@ const HANDLE_PIXELS: f32 = 16.0;
 /// How far from the original a duplicate lands, in yards.
 const APART: f32 = 2.0;
 
+/// The smallest box drawn around a spawn's model, in yards across: a vein or
+/// a chest is about this size.
+const BOX_AROUND_MODEL: f32 = 0.8;
+
 /// How far up from the row's position the marker reaches, in yards. Half the
 /// creature tool's: a vein or a chest is knee high.
 const BODY: f32 = 1.0;
@@ -1968,10 +1973,15 @@ fn move_one(session: &mut EditSession, guid: u64, to: Vec3, now: f64) {
     }
 }
 
-/// Draw a marker for every near spawn, and the selected one's facing.
+/// Draw a box on every near spawn, and the selected one's facing.
+///
+/// A box rather than the creature tool's dome, so the two server tools' marks
+/// differ by shape as well as by colour. A spawn drawn as a model gets a
+/// translucent box around its base; one with no model a smaller, near-opaque
+/// one. What is aimed at is [`Look::Ghosted`] and the rest [`Look::Solid`], for
+/// the reason `super::creatures::draw` gives.
 fn draw(
-    mut handles: Gizmos<super::gizmo::EditorHandles>,
-    mut marks: Gizmos<super::gizmo::WorldMarks>,
+    mut marks: ResMut<Marks>,
     objects: Res<GameObjects>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
@@ -2009,28 +2019,21 @@ fn draw(
         let aimed = chosen || member || under;
         let at = vale_client::render::axes::to_bevy(spawn.at.to_array());
         let radius = (spawn.at.distance(eye) * 0.010).clamp(0.25, 3.0);
-        // A square rather than the creature tool's ring, so the two server
-        // tools' marks differ by shape as well as by colour.
-        let corner = |dx: f32, dy: f32| {
-            vale_client::render::axes::to_bevy(
-                (spawn.at + Vec3::new(dx * radius, dy * radius, 0.0)).to_array(),
-            )
+        let look = match aimed {
+            true => Look::Ghosted,
+            false => Look::Solid,
         };
-        let corners = [corner(1.0, 1.0), corner(1.0, -1.0), corner(-1.0, -1.0), corner(-1.0, 1.0)];
-        let top = vale_client::render::axes::to_bevy((spawn.at + Vec3::Z * BODY).to_array());
-        for side in 0..4 {
-            let (from, to) = (corners[side], corners[(side + 1) % 4]);
-            match aimed {
-                true => handles.line(from, to, colour),
-                false => marks.line(from, to, colour),
-            }
-        }
-        if !has_model {
-            match aimed {
-                true => handles.line(at, top, colour),
-                false => marks.line(at, top, colour),
-            }
-        }
+        let (side, colour) = match has_model {
+            true => (radius.max(BOX_AROUND_MODEL) * 2.0, colour.with_alpha(0.4)),
+            false => (radius * 2.0, colour.with_alpha(0.85)),
+        };
+        // Turned to the spawn's facing and standing on its position.
+        let pose = Transform {
+            translation: at + Vec3::Y * (side * 0.5),
+            rotation: Quat::from_rotation_y(spawn.orientation),
+            scale: Vec3::splat(side),
+        };
+        marks.cuboid(pose, colour, look);
         if spawn.is_removed() {
             let arm = radius * 1.4;
             for (dx, dy) in [(1.0, 1.0), (1.0, -1.0)] {
@@ -2040,17 +2043,20 @@ fn draw(
                 let to = vale_client::render::axes::to_bevy(
                     (spawn.at - Vec3::new(arm * dx, arm * dy, -BODY / 2.0)).to_array(),
                 );
-                handles.line(from, to, REMOVED);
+                let thickness = marks.line_radius(from) * 1.6;
+                marks.tube(from, to, thickness, REMOVED, Look::Ghosted);
             }
         }
         if chosen {
-            // A line showing which way it faces, since a value such as 4.71
+            // An arrow showing which way it faces, since a value such as 4.71
             // radians is hard to read as a direction.
             let facing = Vec3::new(spawn.orientation.cos(), spawn.orientation.sin(), 0.0);
+            let from = vale_client::render::axes::to_bevy((spawn.at + Vec3::Z * 0.2).to_array());
             let nose = vale_client::render::axes::to_bevy(
                 (spawn.at + facing * (radius * 3.0) + Vec3::Z * 0.2).to_array(),
             );
-            handles.line(at, nose, Color::srgb(1.0, 0.95, 0.6));
+            let thickness = marks.line_radius(from) * 1.6;
+            marks.arrow(from, nose, thickness, Color::srgb(1.0, 0.95, 0.6), Look::Ghosted);
         }
     }
 }
@@ -2162,7 +2168,7 @@ pub struct Ghost {
 fn ghost(
     mut commands: Commands,
     mut objects: ResMut<GameObjects>,
-    mut handles: Gizmos<super::gizmo::EditorHandles>,
+    mut marks: ResMut<Marks>,
     cursor: Res<crate::pick::Cursor>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
@@ -2216,12 +2222,9 @@ fn ghost(
     let nose = vale_client::render::axes::to_bevy(
         (at + Vec3::new(facing.cos(), facing.sin(), 0.0) * 1.5 + Vec3::Z * 0.2).to_array(),
     );
-    handles.line(centre, nose, NEW);
-    handles.circle(
-        Isometry3d::new(centre, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-        0.6,
-        NEW,
-    );
+    let thickness = marks.line_radius(centre) * 1.6;
+    marks.arrow(centre, nose, thickness, NEW, Look::Ghosted);
+    marks.flat_ring(centre, 0.6, NEW, Look::Ghosted);
 
     let stand = Transform {
         translation: centre,

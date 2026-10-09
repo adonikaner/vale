@@ -486,9 +486,10 @@ fn aim(
 const LIFT: f32 = 0.3;
 
 /// Draw the points, the centre line at the road's height, and the edges of
-/// the road and its shoulder on the ground.
+/// the road and its shoulder on the ground. Ghosted, so a line a rise hides is
+/// faint rather than gone; see `crate::marks`.
 fn draw(
-    mut gizmos: Gizmos,
+    mut marks: ResMut<crate::marks::Marks>,
     tool: Res<RoadTool>,
     current: Res<super::Tool>,
     cursor: Res<Cursor>,
@@ -506,16 +507,17 @@ fn draw(
             (.., 0) => Color::srgb(0.35, 0.9, 0.45),
             _ => Color::srgb(0.9, 0.9, 0.9),
         };
-        gizmos.sphere(to_bevy(point.at[0], point.at[1], point.height), 1.2, colour);
+        marks.sphere(to_bevy(point.at[0], point.at[1], point.height), 1.2, colour, crate::marks::Look::Ghosted);
     }
 
     // The next point, from the last one to the pointer.
     if tool.dragging.is_none() && tool.hovered.is_none() {
         if let (Some(last), Some(at)) = (tool.points.last(), cursor.ground) {
-            gizmos.line(
+            marks.line(
                 to_bevy(last.at[0], last.at[1], last.height + LIFT),
                 to_bevy(at.x, at.y, at.z + LIFT),
                 Color::srgba(0.9, 0.9, 0.9, 0.5),
+                crate::marks::Look::Ghosted,
             );
         }
     }
@@ -527,7 +529,7 @@ fn draw(
         .iter()
         .map(|s| to_bevy(s[0], s[1], s[2] + tool.offset + tool.crown.max(0.0) + LIFT))
         .collect();
-    gizmos.linestrip(centre, Color::srgb(0.95, 0.85, 0.35));
+    marks.line_strip(centre, Color::srgb(0.95, 0.85, 0.35), crate::marks::Look::Ghosted);
 
     // The edges, offset along each sample's normal and dropped onto the
     // ground: the road's width solid, its shoulder and its paint fainter.
@@ -563,7 +565,7 @@ fn draw(
                     Some(to_bevy(x, y, z + LIFT))
                 })
                 .collect();
-            gizmos.linestrip(line, colour);
+            marks.line_strip(line, colour, crate::marks::Look::Ghosted);
         }
     }
 }

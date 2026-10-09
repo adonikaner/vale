@@ -31,6 +31,8 @@
 //! navmesh.rs   the server's navmesh drawn over the ground: the mmaps tiles
 //!              around the camera, coloured by what a path query makes of
 //!              each polygon
+//! marks.rs     what the tools draw in the world: handles, domes, dashed
+//!              rings, volumes, as meshes the ground can hide
 //! tools/       what the pointer does when a button is held, one file per tool
 //! ui/          the panels: the shell, the theme, and one file per region of it
 //! server/      what is sent to the server a playtest runs against; the one
@@ -85,6 +87,7 @@ pub mod context;
 pub mod favourites;
 pub mod jobs;
 pub mod lab;
+pub mod marks;
 pub mod navmesh;
 pub mod pick;
 pub mod places;
@@ -243,6 +246,7 @@ impl Plugin for EditorPlugins {
             lab::LabPlugin,
             portraits::PortraitPlugin,
             navmesh::NavmeshPlugin,
+            marks::MarksPlugin,
             ui::PanelPlugin,
         ));
         app.init_resource::<favourites::Favourites>()

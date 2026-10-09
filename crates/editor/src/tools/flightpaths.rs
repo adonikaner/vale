@@ -68,6 +68,7 @@
 //! vmangos reads all three at startup only.
 
 use super::Tool;
+use crate::marks::{Look, Marks};
 use crate::session::EditSession;
 use vale_client::render::axes;
 use vale_client::render::focus::WorldFocus;
@@ -1283,11 +1284,14 @@ pub fn side_colour(mounts: [u32; 2]) -> Color {
 }
 
 /// Draw the nodes, the paths and the selected path's points.
+///
+/// A route that is selected, hovered or leaves the selected node, and every
+/// node and point, is [`Look::Ghosted`]: a mountain between it and the camera
+/// hides it to a faint line rather than not at all. The other routes are
+/// [`Look::Solid`].
 #[allow(clippy::too_many_arguments)]
 fn draw(
-    mut handles: Gizmos<super::gizmo::EditorHandles>,
-    mut marks: Gizmos<super::gizmo::WorldMarks>,
-    mut chosen: Gizmos<super::gizmo::PathMarks>,
+    mut marks: ResMut<Marks>,
     flights: Res<Flightpaths>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
@@ -1326,13 +1330,14 @@ fn draw(
             if !leg_shown(&flights, route, a, b, eye) {
                 continue;
             }
-            match selected || under || of_node {
-                true => chosen.line(bevy(a), bevy(b), colour),
-                false => marks.line(bevy(a), bevy(b), colour),
-            }
+            let look = match selected || under || of_node {
+                true => Look::Ghosted,
+                false => Look::Solid,
+            };
+            marks.line(bevy(a), bevy(b), colour, look);
             // Which way the selected path flies: a chevron on every third leg.
             if selected && n % 3 == 1 {
-                chevron(&mut chosen, a, b, colour);
+                chevron(&mut marks, a, b, colour);
             }
         }
         if !selected {
@@ -1345,7 +1350,7 @@ fn draw(
                 (false, true) => Color::srgb(1.0, 0.9, 0.6),
                 _ => Color::srgb(1.0, 0.6, 0.15),
             };
-            handles.sphere(bevy(at), marker_radius(at, eye) * 0.6, colour);
+            marks.sphere(bevy(at), marker_radius(at, eye) * 0.6, colour, Look::Ghosted);
         }
         // A line from the selected point down to the ground, which shows its
         // height.
@@ -1354,7 +1359,7 @@ fn draw(
         {
             let at = Vec3::from(point.at);
             if let Some(ground) = super::doodads::ground_height(session, at.x, at.y) {
-                handles.line(bevy(at), bevy(Vec3::new(at.x, at.y, ground)), lit.with_alpha(0.6));
+                marks.line(bevy(at), bevy(Vec3::new(at.x, at.y, ground)), lit.with_alpha(0.6), Look::Ghosted);
             }
         }
     }
@@ -1372,10 +1377,12 @@ fn draw(
             _ => side_colour(node.mounts),
         };
         let radius = marker_radius(at, eye);
-        handles.sphere(bevy(at), radius, colour);
-        handles.line(bevy(at), bevy(at + Vec3::Z * radius * 4.0), colour);
+        marks.sphere(bevy(at), radius, colour, Look::Ghosted);
+        marks.line(bevy(at), bevy(at + Vec3::Z * radius * 4.0), colour, Look::Ghosted);
         if selected {
-            handles.sphere(bevy(at), radius * 1.6, side_colour(node.mounts));
+            // A shell around the node, in its side's colour, which the white
+            // of the selection would otherwise hide.
+            marks.sphere(bevy(at), radius * 1.6, side_colour(node.mounts).with_alpha(0.35), Look::Ghosted);
         }
     }
 
@@ -1384,7 +1391,7 @@ fn draw(
     match flights.armed {
         Armed::Connect { from } => {
             if let Some(node) = flights.node(from) {
-                handles.line(bevy(Vec3::from(node.at)), bevy(pointer), Color::srgb(0.5, 1.0, 0.5));
+                marks.line(bevy(Vec3::from(node.at)), bevy(pointer), Color::srgb(0.5, 1.0, 0.5), Look::Ghosted);
             }
         }
         Armed::AddPoints => {
@@ -1394,13 +1401,13 @@ fn draw(
                 let before = route.points.iter().find(|p| p.index + 1 == index);
                 let after = route.points.iter().find(|p| p.index == index);
                 for end in [before, after].into_iter().flatten() {
-                    handles.line(bevy(Vec3::from(end.at)), bevy(new), Color::srgb(1.0, 0.85, 0.5));
+                    marks.line(bevy(Vec3::from(end.at)), bevy(new), Color::srgb(1.0, 0.85, 0.5), Look::Ghosted);
                 }
-                handles.line(bevy(new), bevy(pointer), lit.with_alpha(0.5));
+                marks.line(bevy(new), bevy(pointer), lit.with_alpha(0.5), Look::Ghosted);
             }
         }
         Armed::NewNode => {
-            handles.sphere(bevy(pointer), marker_radius(pointer, eye), side_colour(NEW_NODE_MOUNTS));
+            marks.sphere(bevy(pointer), marker_radius(pointer, eye), side_colour(NEW_NODE_MOUNTS), Look::Ghosted);
         }
         Armed::Draw { .. } | Armed::Nothing => {}
     }
@@ -1410,7 +1417,7 @@ fn draw(
 /// ground, and the leg the next click makes. The next point is red when it is
 /// below the ground under it.
 fn draw_draft(
-    mut handles: Gizmos<super::gizmo::EditorHandles>,
+    mut marks: ResMut<Marks>,
     flights: Res<Flightpaths>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
@@ -1431,8 +1438,8 @@ fn draw_draft(
     let drawn = Color::srgb(0.5, 1.0, 0.5);
     let mut last = start;
     for &at in &draft.points {
-        handles.line(bevy(last), bevy(at), drawn);
-        handles.sphere(bevy(at), marker_radius(at, eye) * 0.6, drawn);
+        marks.line(bevy(last), bevy(at), drawn, Look::Ghosted);
+        marks.sphere(bevy(at), marker_radius(at, eye) * 0.6, drawn, Look::Ghosted);
         last = at;
     }
     // A hovered far node is where the next click ends the path.
@@ -1440,7 +1447,7 @@ fn draw_draft(
         Some(Handle::Node(id)) if id != draft.from => flights.node(id).map(|node| Vec3::from(node.at)),
         _ => None,
     } {
-        handles.line(bevy(last), bevy(end), Color::WHITE);
+        marks.line(bevy(last), bevy(end), Color::WHITE, Look::Ghosted);
         return;
     }
     let Some(next) = draft.next(cursor.surface) else { return };
@@ -1451,29 +1458,30 @@ fn draw_draft(
         Some(ground) if next.z < ground => Color::srgb(1.0, 0.3, 0.25),
         _ => Color::srgb(1.0, 0.85, 0.5),
     };
-    handles.line(bevy(last), bevy(next), colour.with_alpha(0.7));
-    handles.sphere(bevy(next), marker_radius(next, eye) * 0.6, colour);
+    marks.line(bevy(last), bevy(next), colour.with_alpha(0.7), Look::Ghosted);
+    marks.sphere(bevy(next), marker_radius(next, eye) * 0.6, colour, Look::Ghosted);
     if let Some(ground) = ground {
-        handles.line(bevy(next), bevy(next.truncate().extend(ground)), Color::WHITE.with_alpha(0.6));
+        marks.line(bevy(next), bevy(next.truncate().extend(ground)), Color::WHITE.with_alpha(0.6), Look::Ghosted);
     }
 }
 
-/// An arrowhead at the middle of a leg, pointing from `a` to `b`.
-fn chevron(gizmos: &mut Gizmos<super::gizmo::PathMarks>, a: Vec3, b: Vec3, colour: Color) {
-    let along = (b - a).truncate();
+/// A cone at the middle of a leg, pointing from `a` to `b`.
+fn chevron(marks: &mut Marks, a: Vec3, b: Vec3, colour: Color) {
+    let along = b - a;
     let length = along.length();
     if length < 1.0 {
         return;
     }
-    let forward = along / length;
-    let side = Vec2::new(-forward.y, forward.x);
     let size = (length * 0.15).clamp(2.0, 12.0);
     let tip = (a + b) * 0.5;
-    for sign in [1.0, -1.0] {
-        let tail = tip.truncate() - forward * size + side * size * 0.6 * sign;
-        let tail = Vec3::new(tail.x, tail.y, tip.z);
-        gizmos.line(axes::to_bevy(tail.to_array()), axes::to_bevy(tip.to_array()), colour);
-    }
+    let base = tip - along / length * size;
+    marks.cone(
+        axes::to_bevy(base.to_array()),
+        axes::to_bevy(tip.to_array()),
+        size * 0.35,
+        colour.with_alpha(1.0),
+        Look::Ghosted,
+    );
 }
 
 /// Take the camera to a place the panel asked for.

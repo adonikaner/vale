@@ -41,6 +41,7 @@
 //! acceptable rather than a fallback of last resort.
 
 use crate::pick::Cursor;
+use crate::marks::{Look, Marks};
 use crate::session::EditSession;
 use crate::tools::Tool;
 use vale_client::render::axes;
@@ -1376,7 +1377,7 @@ fn resync(mut selection: ResMut<Selection>, session: Option<Res<EditSession>>) {
 /// Box every part of a locked WMO in red while the tool is chosen. See
 /// `crate::session::PlacementLocks`.
 fn draw_locked(
-    mut gizmos: Gizmos<super::gizmo::EditorHandles>,
+    mut marks: ResMut<Marks>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
     parts: Query<(&ChildOf, &GlobalTransform, &Aabb), With<WmoPart>>,
@@ -1399,20 +1400,20 @@ fn draw_locked(
         }
         let centre = transform.affine().transform_point3(Vec3::from(aabb.center));
         let half = Vec3::from(aabb.half_extents) * transform.scale();
-        gizmos.cube(
+        marks.box_edges(
             Transform::from_translation(centre)
                 .with_rotation(transform.rotation())
                 .with_scale(half * 2.0),
             super::doodads::LOCKED.with_alpha(0.5),
+            Look::Ghosted,
         );
     }
 }
 
 fn draw_marker(
-    // In front of the world — see [`super::gizmo::EditorHandles`]. This is
-    // the case that made it necessary: a cathedral's box is drawn entirely
-    // inside the cathedral.
-    mut gizmos: Gizmos<super::gizmo::EditorHandles>,
+    // Ghosted, so a box drawn entirely inside a cathedral is still seen,
+    // faintly, through its walls. See `crate::marks`.
+    mut marks: ResMut<Marks>,
     selection: Res<Selection>,
     tool: Res<Tool>,
     parts: Query<(&ChildOf, &GlobalTransform, &Aabb), With<WmoPart>>,
@@ -1440,11 +1441,12 @@ fn draw_marker(
         };
         let centre = transform.affine().transform_point3(Vec3::from(aabb.center));
         let half = Vec3::from(aabb.half_extents) * transform.scale();
-        gizmos.cube(
+        marks.box_edges(
             Transform::from_translation(centre)
                 .with_rotation(transform.rotation())
                 .with_scale(half * 2.0),
             colour,
+            Look::Ghosted,
         );
     }
 
@@ -1455,10 +1457,13 @@ fn draw_marker(
     let upper = Vec3::new(a[0].max(b[0]), a[1].max(b[1]), a[2].max(b[2]));
     let centre = (lower + upper) * 0.5;
     let size = upper - lower;
-    gizmos.cube(
+    // The size is in the world's axes and the cube's scale in Bevy's, so it
+    // is converted the same way a position is.
+    marks.box_edges(
         Transform::from_translation(axes::to_bevy(centre.to_array()))
-            .with_scale(Vec3::from(axes::to_wow(size)).abs()),
+            .with_scale(Vec3::from(axes::to_bevy(size.to_array())).abs()),
         Color::srgb(1.0, 0.8, 0.3).with_alpha(0.35),
+        Look::Ghosted,
     );
 }
 

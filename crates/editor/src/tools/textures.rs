@@ -540,7 +540,7 @@ fn tiles_under(radius: f32, at: Vec3) -> Vec<(u32, u32)> {
 /// lookup the brush ring uses, so it lies on the ground rather than flat across
 /// it.
 fn draw_pin(
-    mut gizmos: Gizmos,
+    mut marks: ResMut<crate::marks::Marks>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
     textures: Res<Textures>,
@@ -588,7 +588,7 @@ fn draw_pin(
         for step in 0..ALONG {
             let (a, b) = (step as f32 / ALONG as f32, (step + 1) as f32 / ALONG as f32);
             if let (Some(from), Some(to)) = (at(a, edge), at(b, edge)) {
-                gizmos.line(from, to, colour);
+                marks.line(from, to, colour, crate::marks::Look::Ghosted);
             }
         }
     }
@@ -600,7 +600,7 @@ fn draw_pin(
 /// follows the edited heights rather than lying flat. Both brushes use the same
 /// ring, so they cannot disagree about where the pointer is.
 fn draw_brush(
-    mut gizmos: Gizmos,
+    mut marks: ResMut<crate::marks::Marks>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
     textures: Res<Textures>,
@@ -620,7 +620,7 @@ fn draw_brush(
         false => Color::srgb(0.85, 0.6, 1.0),
     };
     super::terrain::rings(
-        &mut gizmos,
+        &mut marks,
         &session,
         at,
         textures.brush.radius,

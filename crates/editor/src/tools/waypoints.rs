@@ -66,6 +66,7 @@
 //! measurement rather than a fault.
 
 use super::Tool;
+use crate::marks::{Look, Marks};
 use crate::session::{EditSession, Gesture};
 use vale_client::world::camera::WorldCamera;
 use vale_mangos::path::{self, Node, Path, Walk, Which};
@@ -783,31 +784,22 @@ fn drag(
     waypoints.write(session, &path, time.elapsed_secs_f64(), "Move waypoint");
 }
 
-/// Draw the path: a line through its nodes and a marker at each, each drawn
-/// once.
+/// Draw the path: a dome on each node and a tube along each leg.
 ///
-/// Two groups, both in front of the world:
+/// ## Why the hidden part of the path is drawn faint
 ///
-/// * [`super::gizmo::PathMarks`] — the legs and the nodes.
-/// * [`super::gizmo::EditorHandles`] — the selected and hovered node, which is
-///   what a person is aiming at, and the only thing here drawn a second time.
-///
-/// ## Why the path is drawn in one pass in front of the world
-///
-/// Three earlier versions failed. A depth-tested path vanished behind every
-/// rise. Drawing each leg twice, solid in place and dashed in front, flickered,
-/// because two coincident translucent lines are visible as both and the blend
-/// order of two gizmo groups is not stable from frame to frame. Drawing each
-/// leg once and choosing the pass by whether its nodes were under the terrain
-/// answered a different question from whether anything is in front of the
-/// leg, needed a height lookup per node per frame, and still hid every leg
-/// behind a rise between it and the camera.
-///
-/// So it is one pass, in front, like every other thing in this crate a person
-/// aims at. [`super::gizmo::PathMarks`] gives the full reasoning.
+/// Every part is [`Look::Ghosted`]: solid where nothing is in front of it, and
+/// faint where a rise or a building is. Three earlier versions drew gizmo
+/// lines and failed. A depth-tested path vanished behind every rise. Drawing
+/// each leg twice, solid in place and dashed in front, flickered, because two
+/// coincident translucent lines are visible as both and the blend order of two
+/// gizmo groups is not stable from frame to frame. Choosing the pass per leg by
+/// whether its nodes were under the terrain answered a different question from
+/// whether anything is in front of the leg. A ghost pass is drawn only where the
+/// solid pass is not, per pixel, so neither problem arises; see
+/// [`crate::marks`].
 fn draw(
-    mut handles: Gizmos<super::gizmo::EditorHandles>,
-    mut path_marks: Gizmos<super::gizmo::PathMarks>,
+    mut marks: ResMut<Marks>,
     waypoints: Res<Waypoints>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
@@ -838,14 +830,12 @@ fn draw(
         // picture: it is the only one that is not part of the drawn sequence.
         let home = next == 0;
         let (from, to) = (point(&path.nodes[index]), point(&path.nodes[next]));
-        path_marks.line(
-            from,
-            to,
-            match home {
-                true => LEG_HOME,
-                false => LEG,
-            },
-        );
+        let colour = match home {
+            true => LEG_HOME,
+            false => LEG,
+        };
+        let radius = marks.line_radius(from.midpoint(to)) * 1.6;
+        marks.tube(from, to, radius, colour, Look::Ghosted);
     }
 
     for (index, node) in path.nodes.iter().enumerate() {
@@ -867,36 +857,33 @@ fn draw(
             (_, _, true) => Color::srgb(1.0, 0.70, 0.30),
             _ => NODE,
         };
-        let ring = Isometry3d::new(at, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2));
-        // A vertical line up from each, so a node on a slope reads as standing
-        // on it rather than as painted on the picture. Scaled with the ring,
-        // because both are screen-proportional; a fixed height would be too
-        // tall close up and too small to see far away.
-        let top = vale_client::render::axes::to_bevy([node.x, node.y, node.z + radius * 1.5]);
-        path_marks.circle(ring, radius, colour);
-        path_marks.line(at, top, colour);
-        if chosen || under {
-            // Drawn a second time in front of everything, so the node being
-            // aimed at stays visible whatever is between it and the eye.
-            handles.circle(ring, radius * 1.3, colour);
-            handles.line(at, top, colour);
-        }
+        // A dome standing on the node, so a node on a slope reads as standing
+        // on it. The one being aimed at is larger.
+        let size = match chosen || under {
+            true => radius * 0.9,
+            false => radius * 0.7,
+        };
+        marks.dome(at, size, colour, Look::Ghosted);
         if chosen {
             // Which way it faces on arrival, when that is a thing that happens
             // — `Node::faces` is the rule, and it needs a wait as well as an
             // orientation.
             if node.faces() {
                 let facing = Vec3::new(node.orientation.cos(), node.orientation.sin(), 0.0);
+                let lift = Vec3::Z * (size * 0.5);
+                let from = vale_client::render::axes::to_bevy((here + lift).to_array());
                 let nose = vale_client::render::axes::to_bevy(
-                    (here + facing * (radius * 3.0) + Vec3::Z * 0.2).to_array(),
+                    (here + lift + facing * (radius * 3.0)).to_array(),
                 );
-                handles.line(at, nose, Color::srgb(1.0, 0.95, 0.6));
+                let thickness = marks.line_radius(from) * 1.6;
+                marks.arrow(from, nose, thickness, Color::srgb(1.0, 0.95, 0.6), Look::Ghosted);
             }
             if node.wander_distance > 0.1 {
-                handles.circle(
-                    ring,
+                marks.flat_ring(
+                    at,
                     node.wander_distance,
                     Color::srgba(1.0, 0.82, 0.25, 0.5),
+                    Look::Ghosted,
                 );
             }
         }

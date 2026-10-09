@@ -881,11 +881,15 @@ fn vertices_on_the_command_line(
     }
 }
 
-/// Mark every selected vertex near the pointer with a short upright line, in
-/// front of the world, so the selection is seen through the ground's own
-/// folds.
+/// Mark every selected vertex near the pointer with a short upright post. A
+/// post behind a fold of the ground is drawn faint, so the selection is seen
+/// through the folds.
+///
+/// The posts are a fixed [`VERTEX_POST`] thick rather than a few pixels: there
+/// can be [`VERTEX_MARKS`] of them, and a fixed size leaves their poses
+/// unchanged while the camera moves.
 fn draw_vertices(
-    mut gizmos: Gizmos<super::gizmo::EditorHandles>,
+    mut marks: ResMut<crate::marks::Marks>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
@@ -918,8 +922,15 @@ fn draw_vertices(
                 }
                 drawn += 1;
                 let top = at + Vec3::Z * 1.2;
-                gizmos.line(world(at), world(top), LOCK_COLOUR);
-                gizmos.line(world(top - Vec3::X * 0.4), world(top + Vec3::X * 0.4), LOCK_COLOUR);
+                let look = crate::marks::Look::Ghosted;
+                marks.tube(world(at), world(top), VERTEX_POST, LOCK_COLOUR, look);
+                marks.tube(
+                    world(top - Vec3::X * 0.4),
+                    world(top + Vec3::X * 0.4),
+                    VERTEX_POST,
+                    LOCK_COLOUR,
+                    look,
+                );
             }
         }
     }
@@ -934,7 +945,7 @@ fn draw_vertices(
     if terrain.selecting && terrain.vertex_tilt[0] > 0.0 && terrain.selected > 0 {
         let [x, y] = terrain.tilt_pivot.unwrap_or(terrain.selected_centre);
         draw_tilt(
-            &mut gizmos,
+            &mut marks,
             Vec3::new(x, y, terrain.selected_mean),
             terrain.brush.radius,
             terrain.vertex_tilt[0],
@@ -955,14 +966,19 @@ fn draw_vertices(
                 return;
             }
             drawn += 1;
-            gizmos.line(
-                vale_client::render::axes::to_bevy(position),
-                vale_client::render::axes::to_bevy((at + Vec3::Z * 1.2).to_array()),
+            marks.tube(
+                world(at),
+                world(at + Vec3::Z * 1.2),
+                VERTEX_POST,
                 colour,
+                crate::marks::Look::Ghosted,
             );
         }
     }
 }
+
+/// How thick a vertex's post is, in yards: its radius.
+const VERTEX_POST: f32 = 0.06;
 
 /// The colour of a locked vertex's mark.
 const LOCK_COLOUR: Color = Color::srgb(1.0, 0.45, 0.4);
@@ -976,9 +992,10 @@ const TILT_COLOUR: Color = Color::srgb(0.35, 0.95, 1.0);
 /// ends, and an arrowhead on the plane's uphill end. `at` is in world
 /// coordinates, its height on the plane.
 ///
-/// Drawn in front of the ground, since half the plane is usually under it.
+/// Half the plane is usually under the ground, so the hidden part is drawn
+/// faint rather than not at all.
 fn draw_tilt(
-    gizmos: &mut Gizmos<super::gizmo::EditorHandles>,
+    marks: &mut crate::marks::Marks,
     at: Vec3,
     reach: f32,
     angle: f32,
@@ -994,20 +1011,17 @@ fn draw_tilt(
     let dim = colour.with_alpha(0.45);
     let (level_low, level_high) = (at - along * reach, at + along * reach);
     let (low, high) = (at - up * reach, at + up * reach);
-    gizmos.line(world(level_low), world(level_high), dim);
-    gizmos.line(world(level_high), world(high), dim);
-    gizmos.line(world(low), world(high), colour);
-    // The arrowhead lies across the plane, so it reads from above.
-    let side = Vec3::new(-along.y, along.x, 0.0);
-    let back = up.normalize() * (reach * 0.15);
-    for wing in [1.0, -1.0] {
-        gizmos.line(world(high), world(high - back + side * wing * reach * 0.08), colour);
-    }
+    let look = crate::marks::Look::Ghosted;
+    marks.line(world(level_low), world(level_high), dim, look);
+    marks.line(world(level_high), world(high), dim, look);
+    // The plane's line with a head on its uphill end.
+    let thickness = marks.line_radius(world(at)) * 1.3;
+    marks.arrow(world(low), world(high), thickness, colour, look);
 }
 
 /// How far from the camera's target a selected vertex is still marked, in
-/// yards, and the most marks drawn in a frame. A mark is a gizmo line rebuilt
-/// every frame.
+/// yards, and the most marks drawn in a frame. A mark is a mesh posed every
+/// frame.
 const VERTEX_MARK_RANGE: f32 = 400.0;
 const VERTEX_MARKS: usize = 20_000;
 
@@ -1542,8 +1556,7 @@ fn swap(
 /// two disagree by the whole of what has been painted, and the ring is the only
 /// thing on screen that is up to date.
 fn draw_brush(
-    mut gizmos: Gizmos,
-    mut handles: Gizmos<super::gizmo::EditorHandles>,
+    mut marks: ResMut<crate::marks::Marks>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
     terrain: Res<Terrain>,
@@ -1573,7 +1586,7 @@ fn draw_brush(
     // which on a slope is the difference between a circle and an ellipse in the
     // wrong place.
     rings(
-        &mut gizmos,
+        &mut marks,
         &session,
         at,
         terrain.brush.radius,
@@ -1596,7 +1609,7 @@ fn draw_brush(
                 (false, false) => terrain.flatten_height,
             };
             draw_tilt(
-                &mut handles,
+                &mut marks,
                 Vec3::new(at.x, at.y, height),
                 terrain.brush.radius,
                 terrain.tilt_angle,
@@ -1623,7 +1636,7 @@ fn draw_brush(
 /// is the report. Two copies of a rule is how the third comes to be missing.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn rings(
-    gizmos: &mut Gizmos,
+    marks: &mut crate::marks::Marks,
     session: &EditSession,
     at: Vec3,
     radius: f32,
@@ -1634,14 +1647,20 @@ pub(crate) fn rings(
     let inner = (core > 0.0).then(|| radius * core);
     for (radius, shade) in [Some(radius), inner]
         .into_iter()
-        .zip([1.0, 0.5])
+        .zip([1.0, 0.6])
         .filter_map(|(radius, shade)| Some((radius?, shade)))
     {
-        ring(gizmos, session, at, radius, shape, colour.with_alpha(shade));
+        ring(marks, session, at, radius, shape, colour.with_alpha(shade));
     }
 }
 
-/// One ring of 48 segments, each vertex dropped onto the edited ground.
+/// One dashed ring of 64 segments, each vertex dropped onto the edited ground.
+///
+/// Three segments of each four are drawn, so the ring is sixteen dashes and
+/// reads as a brush rather than as a line on the map. A dash is a tube a few
+/// pixels thick ([`crate::marks::Marks::line`]), so a hill between the camera
+/// and the ring hides it; the hidden part is drawn faint
+/// ([`crate::marks::Look::Ghosted`]).
 ///
 /// Shared with the texture brush, which wants the same ring for the same reason
 /// and must not grow a second copy of it: two brushes that disagreed about where
@@ -1656,7 +1675,7 @@ pub(crate) fn rings(
 /// ground, on ground that is not torn. A gap in the ring says what is true,
 /// which is that there is nothing there to draw on.
 pub(crate) fn ring(
-    gizmos: &mut Gizmos,
+    marks: &mut crate::marks::Marks,
     session: &EditSession,
     at: Vec3,
     radius: f32,
@@ -1684,9 +1703,10 @@ pub(crate) fn ring(
         Some(vale_client::render::axes::to_bevy([x, y, z + LIFT]))
     };
     let points: Vec<Option<Vec3>> = rim.iter().map(point).collect();
-    for i in 0..points.len() {
+    for i in (0..points.len()).filter(|i| i % 4 != 3) {
         if let (Some(from), Some(to)) = (points[i], points[(i + 1) % points.len()]) {
-            gizmos.line(from, to, colour);
+            let radius = marks.line_radius(from) * 1.5;
+            marks.tube(from, to, radius, colour, crate::marks::Look::Ghosted);
         }
     }
 }
