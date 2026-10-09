@@ -327,7 +327,9 @@ fn a_paint_stroke_lands_where_the_pointer_is() {
         strength: 4.0,
         falloff: Falloff::Smooth,
         shape: Shape::Circle,
-        core: 0.0,
+        // The centre is in the full-strength core, which is what reaches
+        // the opacity; see `PaintBrush`.
+        core: 0.35,
         texture: "Tileset\\Generic\\Black.blp".into(),
         effect_id: 0,
         ..PaintBrush::default()
@@ -687,7 +689,9 @@ fn a_weak_brush_still_reaches_opaque_if_it_is_held() {
         strength: 0.2,
         falloff: Falloff::Smooth,
         shape: Shape::Circle,
-        core: 0.0,
+        // The centre is in the full-strength core, which is what reaches
+        // the opacity; see `PaintBrush`.
+        core: 0.35,
         texture: "Tileset\\Generic\\Black.blp".into(),
         effect_id: 0,
         ..PaintBrush::default()
@@ -1074,6 +1078,42 @@ fn a_stroke_converges_on_its_opacity_from_either_side() {
     hold(&mut tile, &half, which, 6.0);
     let from_above = centre_of(&tile, which, top);
     assert!((110..=145).contains(&from_above), "from above: {from_above}");
+}
+
+/// **A held stroke stays inside its own footprint.** A texel most of the way
+/// to the rim settles at about the falloff's weight there and goes no further
+/// however long the brush is held, and one past the rim is not touched.
+///
+/// The brush this replaced moved every texel toward full opacity and used the
+/// weight only as the speed, so a held brush painted out to its whole radius;
+/// six seconds at strength 4 left this texel nearly opaque.
+#[test]
+fn a_held_stroke_stays_inside_its_footprint() {
+    use vale_assets::world::adt::ALPHA_SIDE;
+    let Some(mut tile) = tile() else { return };
+    let Some(which) = room_for_a_layer(&tile) else {
+        return;
+    };
+    // Its own falloff and core, so the band it checks does not move with the
+    // defaults.
+    let brush = crate::ops::PaintBrush {
+        falloff: Falloff::Smooth,
+        core: 0.35,
+        ..paint_brush("Tileset\\Generic\\Black.blp")
+    };
+    hold(&mut tile, &brush, which, 6.0);
+    let top = crate::adt::alpha::paint(tile.chunk(which).unwrap()).len() - 1;
+    let map = &crate::adt::alpha::paint(tile.chunk(which).unwrap()).maps[top];
+    let row = ALPHA_SIDE / 2 * ALPHA_SIDE;
+    // Eleven texels out is most of the way across an 8-yard brush, where
+    // the falloff's weight is a small fraction.
+    let edge = map[row + ALPHA_SIDE / 2 + 11];
+    assert!((8..=110).contains(&edge), "near the rim: {edge}");
+    hold(&mut tile, &brush, which, 6.0);
+    let again = crate::adt::alpha::paint(tile.chunk(which).unwrap()).maps[top][row + ALPHA_SIDE / 2 + 11];
+    assert!(again > edge, "a second stroke builds on the first: {edge} then {again}");
+    assert!(map[row + ALPHA_SIDE / 2] > 230, "the centre is opaque");
+    assert_eq!(map[row + ALPHA_SIDE / 2 + 17], 0, "past the rim is untouched");
 }
 
 /// An eraser takes the texture's own layer toward transparent and adds

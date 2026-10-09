@@ -226,9 +226,31 @@ fn panel(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     if let Some(gizmo) = subject.gizmo.as_deref_mut() {
         super::creatures::handles(ui, gizmo);
     }
-    match super::creatures::group_line(ui, subject.objects.also.len() + 1, "game objects") {
-        Some(super::creatures::GroupAsk::Only) => subject.objects.also.clear(),
-        Some(super::creatures::GroupAsk::Clear) => subject.objects.select(None),
+    let asked = {
+        let objects = &*subject.objects;
+        let edits = Some(&subject.session.server_edits);
+        let member = |index: usize| {
+            let guid = match index {
+                0 => spawn.guid,
+                _ => objects.also[index - 1],
+            };
+            super::members::Member {
+                id: guid,
+                label: objects
+                    .edited(guid, edits)
+                    .map(|spawn| spawn.label())
+                    .unwrap_or_else(|| "not on this map".to_string()),
+                detail: format!("guid {guid}"),
+            }
+        };
+        super::creatures::group_line(ui, objects.also.len() + 1, "game objects", member)
+    };
+    use super::creatures::GroupAsk;
+    match asked {
+        Some(GroupAsk::Only) => subject.objects.also.clear(),
+        Some(GroupAsk::Clear) => subject.objects.select(None),
+        Some(GroupAsk::Primary(guid)) => subject.objects.promote(guid),
+        Some(GroupAsk::Drop(guid)) => subject.objects.also.retain(|&had| had != guid),
         None => {}
     }
     // As on the creature panel, everything above the spawn's columns stays in

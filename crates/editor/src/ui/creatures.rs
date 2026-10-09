@@ -235,9 +235,30 @@ fn panel(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     if let Some(gizmo) = subject.gizmo.as_deref_mut() {
         handles(ui, gizmo);
     }
-    match group_line(ui, subject.creatures.also.len() + 1, "creatures") {
+    let asked = {
+        let creatures = &*subject.creatures;
+        let edits = Some(&subject.session.server_edits);
+        let member = |index: usize| {
+            let guid = match index {
+                0 => spawn.guid,
+                _ => creatures.also[index - 1],
+            };
+            super::members::Member {
+                id: guid,
+                label: creatures
+                    .edited(guid, edits)
+                    .map(|spawn| spawn.label())
+                    .unwrap_or_else(|| "not on this map".to_string()),
+                detail: format!("guid {guid}"),
+            }
+        };
+        group_line(ui, creatures.also.len() + 1, "creatures", member)
+    };
+    match asked {
         Some(GroupAsk::Only) => subject.creatures.also.clear(),
         Some(GroupAsk::Clear) => subject.creatures.select_only(None),
+        Some(GroupAsk::Primary(guid)) => subject.creatures.promote(guid),
+        Some(GroupAsk::Drop(guid)) => subject.creatures.also.retain(|&had| had != guid),
         None => {}
     }
     // The spawn's name, the two folding sections and the buttons stay in
@@ -283,14 +304,24 @@ pub(super) enum GroupAsk {
     Only,
     /// Drop the whole selection.
     Clear,
+    /// Make this member the primary, from the list of members.
+    Primary(u64),
+    /// Take this member out of the group, from the list of members.
+    Drop(u64),
 }
 
 /// The line over a spawn's form when several spawns are selected: how many,
-/// that the form is the primary's, and the two buttons that shrink the group.
-/// Nothing is drawn for one. See `crate::tools::group`.
+/// that the form is the primary's, the two buttons that shrink the group, and
+/// the list of members (`super::members`), of which `member(0)` is the
+/// primary. Nothing is drawn for one. See `crate::tools::group`.
 ///
 /// `pub(super)` because the game-object panel draws the same line.
-pub(super) fn group_line(ui: &mut egui::Ui, count: usize, noun: &str) -> Option<GroupAsk> {
+pub(super) fn group_line(
+    ui: &mut egui::Ui,
+    count: usize,
+    noun: &str,
+    member: impl Fn(usize) -> super::members::Member,
+) -> Option<GroupAsk> {
     if count < 2 {
         return None;
     }
@@ -319,6 +350,11 @@ pub(super) fn group_line(ui: &mut egui::Ui, count: usize, noun: &str) -> Option<
         }
     });
     theme::note(ui, "shift + click adds or removes one · drag on empty ground selects a rectangle");
+    match super::members::list(ui, noun, count, member) {
+        Some(super::members::Pick::Primary(guid)) => asked = Some(GroupAsk::Primary(guid)),
+        Some(super::members::Pick::Drop(guid)) => asked = Some(GroupAsk::Drop(guid)),
+        None => {}
+    }
     ui.add_space(4.0);
     asked
 }

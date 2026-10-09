@@ -157,6 +157,9 @@ enum Shape {
     Sphere,
     /// The upper half of [`Self::Sphere`], closed underneath.
     Dome,
+    /// [`Self::Dome`] with a quarter of the triangles, for a mark there can
+    /// be thousands of. See [`Marks::cap`].
+    Cap,
     /// Radius 1, from y = -0.5 to 0.5.
     Tube,
     /// Base radius 1 at y = 0, tip at y = 1.
@@ -165,7 +168,8 @@ enum Shape {
     Cube,
 }
 
-const SHAPES: [Shape; 5] = [Shape::Sphere, Shape::Dome, Shape::Tube, Shape::Cone, Shape::Cube];
+const SHAPES: [Shape; 6] =
+    [Shape::Sphere, Shape::Dome, Shape::Cap, Shape::Tube, Shape::Cone, Shape::Cube];
 
 #[derive(Debug, Clone, Copy)]
 struct Mark {
@@ -255,6 +259,14 @@ impl Marks {
     pub fn dome(&mut self, base: Vec3, radius: f32, colour: Color, look: Look) {
         let pose = Transform::from_translation(base).with_scale(Vec3::splat(radius));
         self.push(Shape::Dome, pose, colour, look);
+    }
+
+    /// A low dome `radius` across and `height` tall standing on `base`: a mark
+    /// on a point of the ground, such as a selected vertex. Coarser than
+    /// [`Self::dome`], since the terrain tool draws up to twenty thousand.
+    pub fn cap(&mut self, base: Vec3, radius: f32, height: f32, colour: Color, look: Look) {
+        let pose = Transform::from_translation(base).with_scale(Vec3::new(radius, height, radius));
+        self.push(Shape::Cap, pose, colour, look);
     }
 
     /// A round bar from `a` to `b`.
@@ -928,6 +940,7 @@ fn mesh_of(shape: Shape) -> Mesh {
     match shape {
         Shape::Sphere => Sphere::new(1.0).mesh().uv(24, 16),
         Shape::Dome => dome(24, 8),
+        Shape::Cap => dome(12, 3),
         Shape::Tube => Cylinder::new(1.0, 1.0).mesh().resolution(10).build(),
         Shape::Cone => Cone {
             radius: 1.0,

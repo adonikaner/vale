@@ -881,13 +881,18 @@ fn vertices_on_the_command_line(
     }
 }
 
-/// Mark every selected vertex near the pointer with a short upright post. A
-/// post behind a fold of the ground is drawn faint, so the selection is seen
-/// through the folds.
+/// Mark every selected vertex near the pointer with a low dome on the ground,
+/// and every locked one with the same dome in red. A mark behind a fold of the
+/// ground is drawn faint, so the selection is seen through the folds.
 ///
-/// The posts are a fixed [`VERTEX_POST`] thick rather than a few pixels: there
-/// can be [`VERTEX_MARKS`] of them, and a fixed size leaves their poses
-/// unchanged while the camera moves.
+/// A dome rather than the post a selected vertex had first: a selection of
+/// hundreds read as a field of sticks, and a dome reads as the patch of ground
+/// being chosen. WoWEdit's vertex colour picker marks the vertices under its
+/// brush the same way.
+///
+/// The domes are a fixed size rather than a few pixels: there can be
+/// [`VERTEX_MARKS`] of them, and a fixed size leaves their poses unchanged
+/// while the camera moves.
 fn draw_vertices(
     mut marks: ResMut<crate::marks::Marks>,
     session: Option<Res<EditSession>>,
@@ -903,10 +908,13 @@ fn draw_vertices(
         return;
     }
     let Some(session) = session else { return };
-    // Locked vertices first, as a short red post with a crossbar, so a
-    // selected vertex drawn after them is still seen where the two coincide.
+    // Locked vertices first. A vertex both locked and selected is drawn red
+    // alone: two domes in one place would fight over the depth and flicker,
+    // and the lock is what decides whether a stroke moves it.
     let world = |point: Vec3| vale_client::render::axes::to_bevy(point.to_array());
+    let look = crate::marks::Look::Ghosted;
     let mut drawn = 0;
+    let mut red = std::collections::HashSet::new();
     if terrain.locked > 0 {
         for (coord, tile) in &session.tiles {
             let Some(locks) = session.locks_if_read(*coord) else {
@@ -921,16 +929,8 @@ fn draw_vertices(
                     break;
                 }
                 drawn += 1;
-                let top = at + Vec3::Z * 1.2;
-                let look = crate::marks::Look::Ghosted;
-                marks.tube(world(at), world(top), VERTEX_POST, LOCK_COLOUR, look);
-                marks.tube(
-                    world(top - Vec3::X * 0.4),
-                    world(top + Vec3::X * 0.4),
-                    VERTEX_POST,
-                    LOCK_COLOUR,
-                    look,
-                );
+                red.insert(at.to_array().map(f32::to_bits));
+                marks.cap(world(at), VERTEX_CAP, VERTEX_CAP_HEIGHT, LOCK_COLOUR, look);
             }
         }
     }
@@ -965,20 +965,20 @@ fn draw_vertices(
             if drawn >= VERTEX_MARKS {
                 return;
             }
+            if red.contains(&at.to_array().map(f32::to_bits)) {
+                continue;
+            }
             drawn += 1;
-            marks.tube(
-                world(at),
-                world(at + Vec3::Z * 1.2),
-                VERTEX_POST,
-                colour,
-                crate::marks::Look::Ghosted,
-            );
+            marks.cap(world(at), VERTEX_CAP, VERTEX_CAP_HEIGHT, colour, look);
         }
     }
 }
 
-/// How thick a vertex's post is, in yards: its radius.
-const VERTEX_POST: f32 = 0.06;
+/// A selected vertex's dome, in yards: its radius and its height. Neighbouring
+/// vertices are about 2.9 yards apart, so the domes of a selection do not
+/// touch, and low enough that a slope shows through between them.
+const VERTEX_CAP: f32 = 0.7;
+const VERTEX_CAP_HEIGHT: f32 = 0.3;
 
 /// The colour of a locked vertex's mark.
 const LOCK_COLOUR: Color = Color::srgb(1.0, 0.45, 0.4);

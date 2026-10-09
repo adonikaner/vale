@@ -11,6 +11,8 @@
 //! rail.rs       the subject list: what the editor edits now and what it will
 //!               edit
 //! inspector.rs  the panel beside the viewport: the chosen tool's controls
+//! members.rs    a group selection's members as a folded list, in which one
+//!               can be made the primary or taken out
 //! context.rs    the right-click menu over the viewport: each world tool's
 //!               one-click operations on what was clicked
 //! thumbnails.rs the pictures the inspector draws in a list, decoded a few per
@@ -184,6 +186,7 @@ pub mod lab;
 pub mod loot;
 pub mod manifest;
 pub mod mapview;
+pub mod members;
 pub mod popover;
 pub mod quests;
 pub mod rail;

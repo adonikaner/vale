@@ -2277,9 +2277,12 @@ fn wmo(
 
     ui.add_space(4.0);
     theme::heading(ui, "Selection");
-    let chosen: Vec<&str> = selection.members().map(|at| at.path.as_str()).collect();
+    let chosen: Vec<(u32, &str)> =
+        selection.members().map(|at| (at.unique_id, at.path.as_str())).collect();
     match group(ui, &chosen, "WMOs") {
         Group::Nothing => {}
+        Group::Primary(id) => selection.promote(id),
+        Group::Drop(id) => selection.also.retain(|at| at.unique_id != id),
         Group::Only => {
             let primary = selection.at.take();
             selection.only(primary);
@@ -3756,6 +3759,9 @@ fn paint(
                 .speed(0.01)
                 .range(crate::tools::CORE)
                 .fixed_decimals(2),
+        )
+        .on_hover_text(
+            "The share of the radius painted at full strength, drawn as the inner              ring. Outside it the paint fades along the falloff to nothing at the              outer ring, and a held stroke goes no further than that fade.",
         );
     });
 
@@ -4441,6 +4447,10 @@ enum Group {
     AllOfModel,
     /// Lock every selected placement and drop the selection.
     Lock,
+    /// Make this member the primary, from the list of members.
+    Primary(u32),
+    /// Take this member out of the group, from the list of members.
+    Drop(u32),
 }
 
 /// How many doodads or WMOs of the map are locked, and a button that unlocks
@@ -4474,11 +4484,11 @@ fn locked_placements(ui: &mut egui::Ui, session: &mut EditSession, kind: Kind) {
 /// The lines about a selection of several, above the primary's own numbers:
 /// how many, what they are, and the three buttons that change the group.
 ///
-/// `chosen` is every member's path, the primary first. With one placement or
-/// none this draws only the "Select all of this model" button, which makes a
-/// group of one kind in one press. See `crate::tools::group`.
-fn group(ui: &mut egui::Ui, chosen: &[&str], noun: &str) -> Group {
-    let Some(primary) = chosen.first() else {
+/// `chosen` is every member's unique id and path, the primary first. With one
+/// placement or none this draws only the "Select all of this model" button,
+/// which makes a group of one kind in one press. See `crate::tools::group`.
+fn group(ui: &mut egui::Ui, chosen: &[(u32, &str)], noun: &str) -> Group {
+    let Some(&(_, primary)) = chosen.first() else {
         return Group::Nothing;
     };
     let mut asked = Group::Nothing;
@@ -4491,7 +4501,7 @@ fn group(ui: &mut egui::Ui, chosen: &[&str], noun: &str) -> Group {
         // What the group is made of, most numerous first: a sweep of a forest
         // is thirty of one tree and a hand-picked group is a few of several.
         let mut counts: Vec<(&str, usize)> = Vec::new();
-        for path in chosen {
+        for (_, path) in chosen {
             let leaf = path.rsplit(['\\', '/']).next().unwrap_or(path);
             match counts.iter_mut().find(|(had, _)| had.eq_ignore_ascii_case(leaf)) {
                 Some((_, count)) => *count += 1,
@@ -4510,6 +4520,19 @@ fn group(ui: &mut egui::Ui, chosen: &[&str], noun: &str) -> Group {
             "The values below are the primary selection's (drawn brighter). \
              Dragging, the handles, the keys and Delete act on all of them.",
         );
+        let member = |index: usize| {
+            let (id, path) = chosen[index];
+            super::members::Member {
+                id: u64::from(id),
+                label: path.rsplit(['\\', '/']).next().unwrap_or(path).to_string(),
+                detail: id.to_string(),
+            }
+        };
+        match super::members::list(ui, noun, chosen.len(), member) {
+            Some(super::members::Pick::Primary(id)) => asked = Group::Primary(id as u32),
+            Some(super::members::Pick::Drop(id)) => asked = Group::Drop(id as u32),
+            None => {}
+        }
     }
     ui.horizontal_wrapped(|ui| {
         let leaf = primary.rsplit(['\\', '/']).next().unwrap_or(primary);
@@ -4580,9 +4603,12 @@ fn doodad(
 
     ui.add_space(4.0);
     theme::heading(ui, "Selection");
-    let chosen: Vec<&str> = selection.members().map(|at| at.path.as_str()).collect();
+    let chosen: Vec<(u32, &str)> =
+        selection.members().map(|at| (at.unique_id, at.path.as_str())).collect();
     match group(ui, &chosen, "doodads") {
         Group::Nothing => {}
+        Group::Primary(id) => selection.promote(id),
+        Group::Drop(id) => selection.also.retain(|at| at.unique_id != id),
         Group::Only => {
             let primary = selection.at.take();
             selection.only(primary);
