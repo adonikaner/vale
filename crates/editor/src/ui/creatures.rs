@@ -373,6 +373,14 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
              editor streams a 7x7 block, so drawing every one of them is several thousand \
              creatures.",
         );
+    });
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut subject.creatures.show_markers, "Markers")
+            .on_hover_text(
+                "Mark every spawn near the camera. Off, only the selected, hovered and \
+                 grouped spawns are marked, which saves frame time where many spawns are \
+                 near. Spawns can still be clicked.",
+            );
         ui.checkbox(&mut subject.creatures.show_services, "Services")
             .on_hover_text(
                 "Draw an icon over each creature within 150 yards for each service its \

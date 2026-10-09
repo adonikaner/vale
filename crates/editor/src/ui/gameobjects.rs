@@ -284,6 +284,11 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         )
         .on_hover_text("Maximum number of spawns drawn as models, nearest first.");
     });
+    ui.checkbox(&mut subject.objects.show_markers, "Markers").on_hover_text(
+        "Mark every spawn near the camera. Off, only the selected, hovered and grouped \
+         spawns are marked, which saves frame time where many spawns are near. Spawns can \
+         still be clicked.",
+    );
 }
 
 /// Why the list is empty: a connection error, a read in progress, or a map

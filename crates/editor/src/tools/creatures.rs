@@ -551,6 +551,12 @@ pub struct Creatures {
     spawn_at: Option<(u64, bool)>,
     /// Draw the near ones as models, or as markers only.
     pub show_models: bool,
+    /// Mark every near spawn, or only the selected, hovered and grouped ones.
+    /// Off is for a place with so many spawns near the camera that their
+    /// markers slow the frame. Picking does not depend on it: the tool picks
+    /// by arithmetic on the pointer's ray, so an unmarked spawn can still be
+    /// clicked.
+    pub show_markers: bool,
     /// How many models at once — see the module comment.
     pub model_budget: usize,
     /// Draw a row of service icons over each near creature that offers one.
@@ -609,6 +615,7 @@ impl Default for Creatures {
             spawn_task: None,
             spawn_at: None,
             show_models: true,
+            show_markers: true,
             // 200 creatures is about what a busy city block holds, and is
             // well inside what the entity pass draws in a session. The panel
             // changes it and shows the count.
@@ -2608,6 +2615,15 @@ fn draw(
         let Some(base) = creatures.base_spawn(*index) else {
             continue;
         };
+        // With the markers off, only what is aimed at, tested before the
+        // edits are looked up so the rest cost nothing. See
+        // [`Creatures::show_markers`].
+        let wanted = creatures.selected == Some(base.guid)
+            || creatures.hovered == Some(base.guid)
+            || super::group::holds(&members, base.guid);
+        if !creatures.show_markers && !wanted {
+            continue;
+        }
         let with_edits = edits.and_then(|edits| base.with_edits(edits));
         let spawn = with_edits.as_ref().unwrap_or(base);
         let chosen = creatures.selected == Some(spawn.guid);

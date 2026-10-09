@@ -541,6 +541,9 @@ pub struct GameObjects {
     /// …and the same for [`Self::spawn_row`].
     spawn_at: Option<(u64, bool)>,
     pub show_models: bool,
+    /// Mark every near spawn, or only the selected, hovered and grouped ones.
+    /// See `super::creatures::Creatures::show_markers`.
+    pub show_markers: bool,
     pub model_budget: usize,
     /// How far out a spawn is drawn at all, in yards.
     pub range: f32,
@@ -588,6 +591,7 @@ impl Default for GameObjects {
             spawn_task: None,
             spawn_at: None,
             show_models: true,
+            show_markers: true,
             // A game object is a static model with no skeleton to pose and no
             // dressing to compose, so the budget is twice the creature tool's.
             model_budget: 400,
@@ -1998,6 +2002,14 @@ fn draw(
     let members = super::group::sorted(objects.also.iter().copied());
     for (rank, index) in objects.near.iter().enumerate() {
         let Some(base) = objects.base_spawn(*index) else { continue };
+        // With the markers off, only what is aimed at. See
+        // [`GameObjects::show_markers`].
+        let wanted = objects.selected == Some(base.guid)
+            || objects.hovered == Some(base.guid)
+            || super::group::holds(&members, base.guid);
+        if !objects.show_markers && !wanted {
+            continue;
+        }
         let with_edits = edits.and_then(|edits| base.with_edits(edits));
         let spawn = with_edits.as_ref().unwrap_or(base);
         let chosen = objects.selected == Some(spawn.guid);
