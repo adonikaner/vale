@@ -432,12 +432,28 @@ impl Material for MarkMaterial {
 /// Which pooled entities draw one shape in one material.
 type PoolKey = (Shape, [u8; 4], bool);
 
+/// How many frames a key keeps entities it has not needed, before [`show`]
+/// despawns them. A tool chosen again within this keeps its entities rather
+/// than spawning them afresh.
+const KEEP_FRAMES: u32 = 300;
+
+/// One key's pooled entities: the first `shown` are visible, the rest hidden.
+#[derive(Default)]
+struct Slots {
+    entities: Vec<Entity>,
+    shown: usize,
+    /// The most marks the key has drawn in one frame since the count of
+    /// `frames` began.
+    most: usize,
+    frames: u32,
+}
+
 /// The meshes, the materials and the entities [`show`] poses.
 #[derive(Resource, Default)]
 struct Pool {
     meshes: HashMap<Shape, Handle<Mesh>>,
     materials: HashMap<([u8; 4], bool), Handle<MarkMaterial>>,
-    entities: HashMap<PoolKey, Vec<Entity>>,
+    entities: HashMap<PoolKey, Slots>,
     /// This frame's poses per key, kept to reuse the allocations.
     wanted: HashMap<PoolKey, Vec<Transform>>,
 }
@@ -485,7 +501,9 @@ fn follow_eye(
 /// Pose one pooled entity per mark and hide the rest, then empty the list.
 ///
 /// Nothing is drawn while a playtest is running, whatever a tool asked for:
-/// the tools that draw marks do not each check the playtest.
+/// the tools that draw marks do not each check the playtest. The pool is
+/// despawned when one starts, so a playtest keeps no editor entities and this
+/// does nothing until the editor is back.
 #[allow(clippy::too_many_arguments)]
 fn show(
     mut marks: ResMut<Marks>,
@@ -500,21 +518,27 @@ fn show(
     for poses in pool.wanted.values_mut() {
         poses.clear();
     }
-    if state.editing() {
-        for mark in marks.list.drain(..) {
-            pool.wanted
-                .entry((mark.shape, mark.colour, false))
-                .or_default()
-                .push(mark.pose);
-            if mark.look == Look::Ghosted {
-                pool.wanted
-                    .entry((mark.shape, ghost_of(mark.colour), true))
-                    .or_default()
-                    .push(mark.pose);
+    if !state.editing() {
+        marks.list.clear();
+        for (_, slots) in pool.entities.drain() {
+            for entity in slots.entities {
+                commands.entity(entity).despawn();
             }
         }
+        return;
     }
-    marks.list.clear();
+    for mark in marks.list.drain(..) {
+        pool.wanted
+            .entry((mark.shape, mark.colour, false))
+            .or_default()
+            .push(mark.pose);
+        if mark.look == Look::Ghosted {
+            pool.wanted
+                .entry((mark.shape, ghost_of(mark.colour), true))
+                .or_default()
+                .push(mark.pose);
+        }
+    }
 
     if pool.meshes.is_empty() {
         for shape in SHAPES {
@@ -522,13 +546,25 @@ fn show(
         }
     }
 
-    // Every key ever used, so a key with nothing this frame hides its entities.
-    let keys: Vec<PoolKey> = pool.wanted.keys().chain(pool.entities.keys()).copied().collect();
+    // Every key with marks this frame, and every key that has entities, so a
+    // key with nothing this frame hides them.
+    let keys: Vec<PoolKey> = pool
+        .wanted
+        .iter()
+        .filter(|(_, poses)| !poses.is_empty())
+        .map(|(key, _)| *key)
+        .chain(
+            pool.entities
+                .keys()
+                .filter(|key| pool.wanted.get(*key).is_none_or(Vec::is_empty))
+                .copied(),
+        )
+        .collect();
     for key in keys {
         let poses = pool.wanted.get(&key).map(Vec::as_slice).unwrap_or(&[]);
-        let have = pool.entities.entry(key).or_default();
+        let slots = pool.entities.entry(key).or_default();
         for (i, pose) in poses.iter().enumerate() {
-            match have.get(i) {
+            match slots.entities.get(i) {
                 Some(&entity) => {
                     if let Ok((mut transform, mut visibility)) = entities.get_mut(entity) {
                         if *transform != *pose {
@@ -563,16 +599,37 @@ fn show(
                             NotShadowReceiver,
                         ))
                         .id();
-                    have.push(entity);
+                    slots.entities.push(entity);
                 }
             }
         }
-        for &entity in have.iter().skip(poses.len()) {
+        // Only the entities shown last frame and not wanted now. The rest
+        // were hidden on an earlier frame, and a tool that once drew
+        // thousands of lines left that many: looking each one up every frame
+        // cost every tool chosen after it.
+        let shown = slots.shown.min(slots.entities.len());
+        for &entity in slots.entities.iter().take(shown).skip(poses.len()) {
             if let Ok((_, mut visibility)) = entities.get_mut(entity) {
                 if *visibility != Visibility::Hidden {
                     *visibility = Visibility::Hidden;
                 }
             }
+        }
+        slots.shown = poses.len();
+
+        // Despawn what the key has not needed for `KEEP_FRAMES`, so the
+        // world does not keep every entity the busiest tool ever asked for.
+        slots.most = slots.most.max(poses.len());
+        slots.frames += 1;
+        if slots.frames >= KEEP_FRAMES {
+            for entity in slots.entities.drain(slots.most..) {
+                commands.entity(entity).despawn();
+            }
+            slots.most = poses.len();
+            slots.frames = 0;
+        }
+        if slots.entities.is_empty() {
+            pool.entities.remove(&key);
         }
     }
 }
