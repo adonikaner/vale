@@ -190,6 +190,8 @@ struct TileData {
     atlas: Image,
     /// Decoded ground textures, parallel to the ADT's texture list.
     textures: Vec<Option<Image>>,
+    /// …and that list, for [`TileGround`].
+    names: Vec<String>,
     /// The `MDDF` doodads this tile owns — see [`read_tile`] for what "owns"
     /// means, since a placement can appear in two tiles — each with whether
     /// its origin stands in the tile's baked `MCSH` shadow, sampled here
@@ -270,6 +272,110 @@ pub struct LiveEdits(pub bool);
 /// Present only under [`LiveEdits`].
 #[derive(Component, Debug)]
 pub struct GroundSources(pub Vec<u32>);
+
+/// A drawn tile's ground textures, one image per `MCLY` texture name in the
+/// file's order, and the names themselves.
+///
+/// Kept so that a host which gives a chunk a texture it did not carry can cut
+/// the tile's ground into groups again without reading the tile: the atlas
+/// ([`TileAlpha`]) and the tint ([`TileTint`]) are already on the tile, and
+/// these are the rest of what a group's material names. A host that adds a
+/// name appends its image here. Present only under [`LiveEdits`].
+#[derive(Component, Debug, Clone)]
+pub struct TileGround {
+    pub textures: Vec<Handle<Image>>,
+    pub names: Vec<String>,
+}
+
+/// Which draw group a ground entity is: a hash of its texture set, its
+/// scrolls and the tile vertices it holds.
+///
+/// Two cuttings of a tile give a group the same key exactly when it holds the
+/// same chunks with the same textures, so a host that cuts a tile again
+/// replaces only the groups whose keys changed and leaves the rest on the GPU
+/// as they are. See [`ground_groups`]. Present only under [`LiveEdits`].
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GroundKey(pub u64);
+
+impl GroundKey {
+    pub fn of(draw: &vale_assets::world::adt::TerrainDraw, sources: &[u32]) -> GroundKey {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        draw.textures.hash(&mut hasher);
+        for scroll in &draw.scrolls {
+            scroll.map(f32::to_bits).hash(&mut hasher);
+        }
+        sources.hash(&mut hasher);
+        GroundKey(hasher.finish())
+    }
+}
+
+/// A tile's ground cut into draw groups as the streamer cuts it under
+/// [`LiveEdits`]: each group's draw, its mesh, where its vertices came from and
+/// its key. For a host that has changed which textures a chunk carries; see
+/// [`GroundKey`].
+pub fn ground_groups(
+    adt: &Adt,
+) -> Vec<(vale_assets::world::adt::TerrainDraw, Mesh, GroundSources, GroundKey)> {
+    let mesh = adt.to_mesh();
+    mesh.draws
+        .iter()
+        .filter_map(|draw| {
+            let (group, sources) = group_mesh(&mesh, draw.index_start, draw.index_count, true)?;
+            let key = GroundKey::of(draw, &sources);
+            Some((draw.clone(), group, GroundSources(sources), key))
+        })
+        .collect()
+}
+
+/// One draw group's material: its textures out of the tile's list (a slot it
+/// names past the list takes the first texture), the tile's atlas and tint,
+/// and its scrolls. The streamer's own, and a host cutting a tile again uses
+/// it so that the two cannot differ.
+pub fn ground_material(
+    draw: &vale_assets::world::adt::TerrainDraw,
+    ground: &[Handle<Image>],
+    atlas: Handle<Image>,
+    tint: Handle<Image>,
+) -> TerrainMaterial {
+    let pick = |slot: usize| -> Handle<Image> {
+        draw.textures
+            .get(slot)
+            .and_then(|&i| ground.get(i as usize))
+            .cloned()
+            .unwrap_or_else(|| ground.first().cloned().unwrap_or_default())
+    };
+    TerrainMaterial {
+        params: TerrainParams {
+            layer_count: draw.textures.len().min(4) as u32,
+            repeat: TEXTURE_REPEAT,
+            // Off. See [`TerrainParams::tint`].
+            tint: 0.0,
+            // Off. See [`TerrainParams::guides`].
+            grid: TerrainParams::NO_GUIDES.0,
+            scroll_a: pair(&draw.scrolls, 0),
+            scroll_b: pair(&draw.scrolls, 2),
+            guides: TerrainParams::NO_GUIDES.1,
+        },
+        alpha: atlas,
+        tint,
+        layer0: pick(0),
+        layer1: pick(1),
+        layer2: pick(2),
+        layer3: pick(3),
+    }
+}
+
+/// One ground texture as an image, decoded as the streamer decodes it, its
+/// file read through `read`: the magenta stand-in when it cannot be read, as
+/// the streamer draws it. For a host that gives a tile a texture it did not
+/// carry; see [`TileGround`].
+pub fn ground_image(read: &mut dyn FnMut(&str) -> Option<Vec<u8>>, name: &str) -> Image {
+    match ground_texture(read, name) {
+        Some(texture) => texture.into_image(),
+        None => crate::render::models::missing_image(),
+    }
+}
 
 /// What colour the ground's sheen is this frame, as the `MeshTag` every
 /// ground draw carries.
@@ -1048,15 +1154,14 @@ fn request_tiles(
 /// it is the conservative side: a missing mask draws no sheen
 /// instead of the most sheen in the world.
 fn ground_texture(
-    archive: &mut vale_assets::Assets,
+    read: &mut dyn FnMut(&str) -> Option<Vec<u8>>,
     name: &str,
 ) -> Option<crate::render::models::RawTexture> {
     let specular = vale_assets::world::adt::specular_texture(name);
-    if let Some(blp) = archive.read(&specular).ok().and_then(|raw| blp::decode_mipped(&raw).ok()) {
+    if let Some(blp) = read(&specular).and_then(|raw| blp::decode_mipped(&raw).ok()) {
         return Some(crate::render::models::RawTexture::from_blp(blp));
     }
-    let mut texture =
-        crate::render::models::RawTexture::from_blp(blp::decode_mipped(&archive.read(name).ok()?).ok()?);
+    let mut texture = crate::render::models::RawTexture::from_blp(blp::decode_mipped(&read(name)?).ok()?);
     for level in &mut texture.levels {
         for texel in level.chunks_exact_mut(4) {
             texel[3] = 0;
@@ -1099,7 +1204,7 @@ fn read_tile(
             // through the model image builder, so the ground samples exactly
             // as a model does — because the chain concatenation is a memcpy the
             // main thread should not make.
-            Some(ground_texture(&mut archive, name)?.into_image())
+            Some(ground_texture(&mut |path: &str| archive.read(path).ok(), name)?.into_image())
         })
         .collect();
 
@@ -1164,6 +1269,7 @@ fn read_tile(
         groups,
         atlas: atlas_image(&adt.alpha_atlas(), live),
         textures,
+        names: adt.texture_names.clone(),
         doodads,
         wmos,
         liquids,
@@ -1290,6 +1396,7 @@ fn receive_tiles(
                 groups,
                 atlas,
                 textures,
+                names,
                 doodads,
                 wmos,
                 liquids,
@@ -1388,6 +1495,10 @@ fn receive_tiles(
                 commands.entity(tile).insert((
                     TileAlpha(atlas_handle.clone()),
                     TileTint(tint_handle.clone()),
+                    TileGround {
+                        textures: ground.clone(),
+                        names,
+                    },
                 ));
             }
 
@@ -1425,32 +1536,12 @@ fn receive_tiles(
             continue;
         }
         if let Some((draw, mesh, sources)) = build.groups.pop() {
-            let pick = |slot: usize| -> Handle<Image> {
-                draw.textures
-                    .get(slot)
-                    .and_then(|&i| build.ground.get(i as usize))
-                    .cloned()
-                    .unwrap_or_else(|| build.ground.first().cloned().unwrap_or_default())
-            };
-            let material = materials.add(TerrainMaterial {
-                params: TerrainParams {
-                    layer_count: draw.textures.len().min(4) as u32,
-                    repeat: TEXTURE_REPEAT,
-                    // Off. See [`TerrainParams::tint`].
-                    tint: 0.0,
-                    // Off. See [`TerrainParams::guides`].
-                    grid: TerrainParams::NO_GUIDES.0,
-                    scroll_a: pair(&draw.scrolls, 0),
-                    scroll_b: pair(&draw.scrolls, 2),
-                    guides: TerrainParams::NO_GUIDES.1,
-                },
-                alpha: build.atlas.clone(),
-                tint: build.tint.clone(),
-                layer0: pick(0),
-                layer1: pick(1),
-                layer2: pick(2),
-                layer3: pick(3),
-            });
+            let material = materials.add(ground_material(
+                &draw,
+                &build.ground,
+                build.atlas.clone(),
+                build.tint.clone(),
+            ));
             let bytes = mesh_bytes(&mesh);
             handed.bytes += bytes;
             handed.largest = handed.largest.max(bytes);
@@ -1468,7 +1559,9 @@ fn receive_tiles(
                 ))
                 .id();
             if !sources.is_empty() {
-                commands.entity(ground).insert(GroundSources(sources));
+                commands
+                    .entity(ground)
+                    .insert((GroundKey::of(&draw, &sources), GroundSources(sources)));
             }
             build.spawned_groups += 1;
             new_groups += 1;

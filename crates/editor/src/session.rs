@@ -133,10 +133,15 @@ pub struct EditSession {
     /// drains it every frame of a stroke because one chunk's cell is 16 KB
     /// against the ground's 81,840 vertices.
     ///
-    /// A chunk whose set of textures changed is not in here; it is in `stale`.
-    /// The set is part of the material a draw group was built with, so there is
-    /// nothing to patch and the tile has to be read again.
+    /// A chunk whose set of textures changed is here as well, for its new
+    /// cell, and its tile is in `regroup`: the set is part of the material a
+    /// draw group was built with, so the chunk has to move to another group.
     pub repaint: HashMap<(u32, u32), HashSet<usize>>,
+    /// Tiles whose ground has to be cut into draw groups again because a chunk
+    /// carries a different set of textures: done in place, replacing only the
+    /// groups that changed, by [`crate::tools::textures::live_regroup`]. A tile
+    /// that cannot be done that way is moved to `stale`.
+    pub regroup: HashSet<(u32, u32)>,
     /// Tiles that need the whole tile read again rather than a vertex patch:
     /// what the live path could not do, and anything that changes more than
     /// heights.
@@ -502,6 +507,7 @@ impl EditSession {
             changes: HashMap::default(),
             unpublished: HashSet::default(),
             repaint: HashMap::default(),
+            regroup: HashSet::default(),
             stale: HashSet::default(),
             unsaved: HashSet::default(),
             unsaved_tables: HashSet::default(),
@@ -2026,19 +2032,14 @@ impl EditSession {
                         }
                     }
                 }
-                // …and the paint, on the same fork and for the same reason: a
-                // change that gave a chunk a texture it did not have cannot be
-                // put back by writing into the atlas, because what it changed is
-                // the material the draw group was built with.
-                match change.changes_the_texture_set(&key) {
-                    true => {
-                        self.stale.insert(coord);
-                    }
-                    false => {
-                        for chunk in change.painted(&key) {
-                            self.repainted(coord, chunk);
-                        }
-                    }
+                // …and the paint. A change that gave a chunk a texture it did
+                // not have also moves the chunk to another draw group, because
+                // the set is part of the material the group was built with.
+                if change.changes_the_texture_set(&key) {
+                    self.regroup.insert(coord);
+                }
+                for chunk in change.painted(&key) {
+                    self.repainted(coord, chunk);
                 }
                 // …and the third fork, which has no `false` arm at all: a hole
                 // changes how many vertices a chunk contributes, so there is
@@ -2083,19 +2084,14 @@ impl EditSession {
                         }
                     }
                 }
-                // …and the paint, on the same fork and for the same reason: a
-                // change that gave a chunk a texture it did not have cannot be
-                // put back by writing into the atlas, because what it changed is
-                // the material the draw group was built with.
-                match change.changes_the_texture_set(&key) {
-                    true => {
-                        self.stale.insert(coord);
-                    }
-                    false => {
-                        for chunk in change.painted(&key) {
-                            self.repainted(coord, chunk);
-                        }
-                    }
+                // …and the paint. A change that gave a chunk a texture it did
+                // not have also moves the chunk to another draw group, because
+                // the set is part of the material the group was built with.
+                if change.changes_the_texture_set(&key) {
+                    self.regroup.insert(coord);
+                }
+                for chunk in change.painted(&key) {
+                    self.repainted(coord, chunk);
                 }
                 // …and the third fork, which has no `false` arm at all: a hole
                 // changes how many vertices a chunk contributes, so there is
@@ -2447,6 +2443,7 @@ fn open(
         changes: HashMap::default(),
         unpublished: HashSet::default(),
         repaint: HashMap::default(),
+        regroup: HashSet::default(),
         stale: HashSet::default(),
         unsaved: HashSet::default(),
         unsaved_tables: HashSet::default(),

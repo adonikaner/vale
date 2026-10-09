@@ -26,11 +26,17 @@
 //!
 //! Which textures a chunk names is not in the atlas. It is part of the
 //! `TerrainMaterial` its draw group was built with (four image handles and a
-//! layer count), so a chunk given a fourth texture must have its tile read
-//! again. That takes a third of a second in a debug build and happens once per
-//! texture per chunk: the first stroke that introduces a texture pays for it
-//! and every stroke after it is live. [`Edit::changes_the_texture_set`]
-//! distinguishes the two cases. It is asked per edit, not per stroke.
+//! layer count), so a chunk given a texture it did not carry has to move to
+//! another draw group. [`live_regroup`] cuts the tile's ground into groups
+//! again from its bytes and replaces only the groups whose chunks changed,
+//! in the frame of the stroke. [`Edit::changes_the_texture_set`] distinguishes
+//! the two cases. It is asked per edit, not per stroke.
+//!
+//! That used to be a whole read of the tile: a third of a second in a debug
+//! build, the parse, the 5 MiB atlas, every texture, doodad and pool, handed
+//! over a little each frame and swapped in. A stroke paid it on every chunk it
+//! entered that lacked the texture, and the paint on that chunk did not show
+//! until the swap, so a stroke over new ground went down in blocks.
 //!
 //! ## What a stroke can be told
 //!
@@ -68,7 +74,9 @@ use crate::session::EditSession;
 use crate::tools::Tool;
 use vale_assets::world::adt::{self as rules, ALPHA_LEN, ALPHA_SIDE, CHUNKS_PER_SIDE};
 use vale_client::assets::GameAssets;
-use vale_client::render::terrain::{TerrainTile, TileAlpha};
+use vale_client::render::terrain::{
+    GroundKey, TerrainGround, TerrainMaterial, TerrainTile, TileAlpha, TileGround, TileTint,
+};
 use vale_edit::ops::{Falloff, PaintBrush, Working};
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
@@ -158,7 +166,7 @@ impl Plugin for TextureToolPlugin {
             .init_resource::<Held>()
             .add_systems(
                 Update,
-                (read_catalogue, stroke, live_paint)
+                (read_catalogue, stroke, live_regroup, live_paint)
                     .chain()
                     // After the pick, for the same reason as the height brush:
                     // the stroke is aimed by where the pointer met the ground,
@@ -344,30 +352,23 @@ fn stroke(
         if edits.is_empty() {
             continue;
         }
-        // The route to the screen is decided per edit. A stroke that gives one
-        // chunk a new texture and moves the alpha on three others rebuilds the
-        // tile once and patches the other three, rather than rebuilding on
-        // every frame it is held.
-        let mut rebuild = false;
+        // The route to the screen is decided per edit. Every painted chunk's
+        // cell is written into the atlas; a chunk given a texture it did not
+        // carry also moves its tile to `regroup`, once however many chunks did.
+        let mut regroup = false;
         let mut touched: Vec<usize> = Vec::new();
         for edit in &edits {
-            match edit.changes_the_texture_set() {
-                true => rebuild = true,
-                false => touched.extend(edit.painted()),
-            }
+            regroup |= edit.changes_the_texture_set();
+            touched.extend(edit.painted());
         }
         session.history.record(&key, edits);
-        match rebuild {
-            true => {
-                session.publish(coord);
-                session.stale.insert(coord);
-                session.unsaved.insert(coord);
-            }
-            false => {
-                for chunk in touched {
-                    session.repainted(coord, chunk);
-                }
-            }
+        if regroup {
+            session.publish(coord);
+            session.regroup.insert(coord);
+            session.unsaved.insert(coord);
+        }
+        for chunk in touched {
+            session.repainted(coord, chunk);
         }
     }
 
@@ -411,6 +412,133 @@ fn stroke(
     // show a chunk that is not the one refusing.
     if let Some(&(coord, chunk)) = full.first() {
         textures.pinned = Some((coord, chunk));
+    }
+}
+
+/// Cut each tile in [`EditSession::regroup`] into draw groups again and
+/// replace the groups that changed, keeping the tile, its atlas and every other
+/// group on screen.
+///
+/// The groups come from the tile's bytes through the client's own cutting
+/// (`terrain::ground_groups`), and each carries a key
+/// (`terrain::GroundKey`) that is the same for a group holding the same chunks
+/// with the same textures. A drawn group whose key is not among the new ones is
+/// despawned; a new group whose key is not among the drawn ones is spawned, with
+/// the material the streamer would have given it. Giving one chunk a texture
+/// changes two groups, the one it left and the one it joined, and those two are
+/// all that is uploaded. A texture the tile did not name before is decoded here,
+/// once, and appended to the tile's list.
+///
+/// A tile with no `TileGround` (built before `LiveEdits` was set), one whose
+/// texture names are no longer an extension of the drawn list, or one being
+/// replaced by a read already in flight, is read again instead: it goes to
+/// `stale`, which is what every texture-set change did before this.
+#[allow(clippy::too_many_arguments)]
+fn live_regroup(
+    mut session: Option<ResMut<EditSession>>,
+    assets: Res<GameAssets>,
+    mut commands: Commands,
+    mut tiles: Query<(Entity, &TerrainTile, &TileAlpha, &TileTint, &mut TileGround)>,
+    children: Query<&Children>,
+    keys: Query<&GroundKey>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<TerrainMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let Some(session) = session.as_mut() else {
+        return;
+    };
+    if session.regroup.is_empty() {
+        return;
+    }
+    let regroup: Vec<(u32, u32)> = session.regroup.drain().collect();
+    for coord in regroup {
+        if session.stale.contains(&coord) {
+            continue;
+        }
+        let drawn: Vec<Entity> = tiles
+            .iter()
+            .filter(|(_, tile, ..)| tile.coord == coord)
+            .map(|(entity, ..)| entity)
+            .collect();
+        match drawn.len() {
+            // Off screen or still loading. Its bytes are already right, so
+            // whatever streams it next draws the paint.
+            0 => continue,
+            1 => {}
+            // A read of it is already being swapped in, built from bytes older
+            // than this stroke. Once it lands, it is read again.
+            _ => {
+                session.stale.insert(coord);
+                continue;
+            }
+        }
+        let Some(file) = session.tiles.get(&coord) else {
+            continue;
+        };
+        let Ok(adt) = vale_assets::world::adt::Adt::parse(&file.write()) else {
+            session.stale.insert(coord);
+            continue;
+        };
+        let Ok((entity, _, alpha, tint, mut ground)) = tiles.get_mut(drawn[0]) else {
+            continue;
+        };
+        // The drawn list has to be the start of the file's: a texture is only
+        // ever appended to `MTEX`, and anything else means the indices the new
+        // groups name do not match the images held.
+        let extends = ground.names.len() <= adt.texture_names.len()
+            && ground
+                .names
+                .iter()
+                .zip(&adt.texture_names)
+                .all(|(had, now)| had.eq_ignore_ascii_case(now));
+        if !extends {
+            session.stale.insert(coord);
+            continue;
+        }
+        let reader = assets.reader();
+        for name in &adt.texture_names[ground.names.len()..] {
+            let image = vale_client::render::terrain::ground_image(&mut |path: &str| reader(path), name);
+            ground.textures.push(images.add(image));
+            ground.names.push(name.clone());
+        }
+
+        let groups = vale_client::render::terrain::ground_groups(&adt);
+        let wanted: std::collections::HashSet<GroundKey> = groups.iter().map(|group| group.3).collect();
+        let mut kept: std::collections::HashSet<GroundKey> = std::collections::HashSet::new();
+        for child in children.get(entity).into_iter().flatten() {
+            let Ok(key) = keys.get(*child) else {
+                continue;
+            };
+            match wanted.contains(key) {
+                true => {
+                    kept.insert(*key);
+                }
+                false => commands.entity(*child).despawn(),
+            }
+        }
+        for (draw, mesh, sources, key) in groups {
+            if kept.contains(&key) {
+                continue;
+            }
+            let material = materials.add(vale_client::render::terrain::ground_material(
+                &draw,
+                &ground.textures,
+                alpha.0.clone(),
+                tint.0.clone(),
+            ));
+            commands.spawn((
+                TerrainGround,
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(material),
+                // The sheen's colour, which `terrain::light_sheen` writes on the
+                // next frame, as it does for a group the streamer spawns.
+                bevy::mesh::MeshTag(0),
+                sources,
+                key,
+                ChildOf(entity),
+            ));
+        }
     }
 }
 
@@ -690,31 +818,58 @@ pub fn layers_of(session: &EditSession, coord: (u32, u32), chunk: usize) -> Opti
 /// The open layers are the only source for this, since neither table names a
 /// texture: `GroundEffectTexture` is keyed by an id that only `MCLY` carries.
 /// A brush that takes its id from here plants what the zone plants. A person
-/// who wants something else has the number beside it.
+/// who wants something else picks from [`effect_counts`].
 pub fn usual_effect(session: &EditSession, path: &str) -> Option<u32> {
-    let mut seen: bevy::platform::collections::HashMap<u32, usize> = Default::default();
+    effect_counts(session, path).with.first().map(|&(id, _)| id)
+}
+
+/// The ground effects of the open tiles' layers, counted: those on layers of
+/// the texture at `path`, and those on layers of any other texture. Each list
+/// is most used first, a tie going to the lower id, and leaves out zero.
+///
+/// It reads every chunk of every open tile (their `MCLY` records, not their
+/// blend maps), so a panel works it out once when its list opens and keeps
+/// it while the list stays open.
+pub struct EffectCounts {
+    pub with: Vec<(u32, usize)>,
+    pub elsewhere: Vec<(u32, usize)>,
+}
+
+pub fn effect_counts(session: &EditSession, path: &str) -> EffectCounts {
+    type Counts = bevy::platform::collections::HashMap<u32, usize>;
+    let (mut with, mut elsewhere): (Counts, Counts) = Default::default();
     for tile in session.tiles.values() {
-        let Some(texture_id) = tile
-            .texture_names()
-            .iter()
-            .position(|name| name.eq_ignore_ascii_case(path))
-        else {
-            continue;
-        };
+        let names = tile.texture_names();
         for index in 0..tile.chunks.len() {
             let Some(chunk) = tile.chunk(index) else {
                 continue;
             };
-            for layer in vale_edit::adt::alpha::paint(chunk).layers {
-                if layer.texture_id as usize == texture_id && layer.effect_id != 0 {
-                    *seen.entry(layer.effect_id).or_default() += 1;
+            for layer in vale_edit::adt::alpha::layers(chunk) {
+                if layer.effect_id == 0 {
+                    continue;
                 }
+                let this = names
+                    .get(layer.texture_id as usize)
+                    .is_some_and(|name| name.eq_ignore_ascii_case(path));
+                let counts = match this {
+                    true => &mut with,
+                    false => &mut elsewhere,
+                };
+                *counts.entry(layer.effect_id).or_default() += 1;
             }
         }
     }
-    seen.into_iter()
-        .max_by_key(|&(id, count)| (count, std::cmp::Reverse(id)))
-        .map(|(id, _)| id)
+    let ranked = |counts: Counts| {
+        let mut list: Vec<(u32, usize)> = counts.into_iter().collect();
+        list.sort_by_key(|&(id, count)| (std::cmp::Reverse(count), id));
+        list
+    };
+    let with = ranked(with);
+    let elsewhere = ranked(elsewhere)
+        .into_iter()
+        .filter(|(id, _)| !with.iter().any(|(had, _)| had == id))
+        .collect();
+    EffectCounts { with, elsewhere }
 }
 
 /// Change what one layer grows. It records as [`swap_layer`] does: one entry
@@ -1124,5 +1279,69 @@ mod tests {
         let gloss = |path: &str| path.trim_end_matches(".blp").ends_with("_s");
         assert!(gloss("Tileset\\Elwynn\\ElwynnGrass_s.blp"));
         assert!(!gloss("Tileset\\Elwynn\\ElwynnGrass.blp"));
+    }
+
+    /// Elwynn's (32, 48), out of the game data, or `None` where there is none.
+    fn real_tile() -> Option<vale_edit::adt::AdtFile> {
+        let root = std::env::var("VALE_GAMEDATA").unwrap_or_else(|_| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("..")
+                .join("Data")
+                .to_string_lossy()
+                .into_owned()
+        });
+        let mut assets = vale_assets::Assets::open(&root).ok()?;
+        let bytes = assets.read(&vale_assets::adt_path("Azeroth", 32, 48)).ok()?;
+        vale_edit::adt::AdtFile::parse(&bytes).ok()
+    }
+
+    /// The keys of a tile's ground groups, cut as `live_regroup` cuts them.
+    fn group_keys(
+        tile: &vale_edit::adt::AdtFile,
+    ) -> std::collections::HashSet<vale_client::render::terrain::GroundKey> {
+        let adt = vale_assets::world::adt::Adt::parse(&tile.write()).expect("the tile parses");
+        vale_client::render::terrain::ground_groups(&adt)
+            .into_iter()
+            .map(|(_, _, _, key)| key)
+            .collect()
+    }
+
+    /// **Giving one chunk a texture it did not carry changes at most two draw
+    /// groups**, the one it left and the one it joined, and every other
+    /// group's key is as it was. That is what lets `live_regroup` replace two
+    /// groups rather than read the whole tile again, which a stroke over new
+    /// ground used to do at every chunk it entered.
+    #[test]
+    fn a_new_texture_on_one_chunk_changes_at_most_two_groups() {
+        let Some(mut tile) = real_tile() else { return };
+        let before = group_keys(&tile);
+        // Cut twice, a tile gives the same keys: nothing in them depends on
+        // when they were made.
+        assert_eq!(before, group_keys(&tile));
+
+        let room = |tile: &vale_edit::adt::AdtFile, index: usize| {
+            let paint = vale_edit::adt::alpha::paint(tile.chunk(index).expect("a chunk"));
+            !paint.is_empty() && paint.len() < vale_edit::adt::alpha::MAX_LAYERS
+        };
+        let Some(which) = (0..tile.chunks.len()).find(|&index| room(&tile, index)) else {
+            return;
+        };
+        let origin = tile.chunk(which).expect("a chunk").head().position();
+        // Three yards at the middle of a 33-yard chunk reaches that chunk alone.
+        let brush = PaintBrush {
+            radius: 3.0,
+            strength: 1000.0,
+            texture: "Tileset\\Generic\\Black.blp".into(),
+            ..PaintBrush::default()
+        };
+        let painted = brush.stroke(&mut tile, &mut Working::default(), [origin[0] - 16.0, origin[1] - 16.0], 1.0);
+        assert!(painted.edits.iter().any(|edit| edit.changes_the_texture_set()));
+
+        let after = group_keys(&tile);
+        let gone = before.difference(&after).count();
+        let new = after.difference(&before).count();
+        assert!((1..=2).contains(&gone), "{gone} groups changed");
+        assert!((1..=2).contains(&new), "{new} groups made");
     }
 }

@@ -306,24 +306,11 @@ impl Paint {
 /// nothing is painted on — the tools' own tiles do not have one, but a
 /// hand-written or damaged tile can.
 pub fn paint(chunk: &MapChunk) -> Paint {
-    let mcly = chunk
-        .region(Region::Layers)
-        .map(|sub| sub.data.as_slice())
-        .unwrap_or(&[]);
     let mcal = chunk
         .region(Region::Alpha)
         .map(|sub| sub.data.as_slice())
         .unwrap_or(&[]);
-
-    let layers: Vec<TextureLayer> = mcly
-        .chunks_exact(LAYER_RECORD)
-        .map(|record| TextureLayer {
-            texture_id: u32_at(record, 0),
-            flags: u32_at(record, 4),
-            alpha_offset: u32_at(record, 8),
-            effect_id: u32_at(record, 12),
-        })
-        .collect();
+    let layers = layers(chunk);
     let stride = rules::alpha_stride(&layers, mcal.len());
     let maps = layers
         .iter()
@@ -335,6 +322,24 @@ pub fn paint(chunk: &MapChunk) -> Paint {
         maps,
         stride,
     }
+}
+
+/// Read one chunk's `MCLY` records alone, without decoding a blend map: what
+/// a caller that walks every chunk of the open tiles for their textures or
+/// ground effects needs, at a fraction of [`paint`]'s cost.
+pub fn layers(chunk: &MapChunk) -> Vec<TextureLayer> {
+    chunk
+        .region(Region::Layers)
+        .map(|sub| sub.data.as_slice())
+        .unwrap_or(&[])
+        .chunks_exact(LAYER_RECORD)
+        .map(|record| TextureLayer {
+            texture_id: u32_at(record, 0),
+            flags: u32_at(record, 4),
+            alpha_offset: u32_at(record, 8),
+            effect_id: u32_at(record, 12),
+        })
+        .collect()
 }
 
 /// Write one chunk's layers and blend maps back.

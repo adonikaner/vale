@@ -3887,33 +3887,27 @@ fn tileset_chosen(
             // `effectId`. It is set, when the texture is chosen, from what the
             // open ground pairs this texture with, and can be edited here. See
             // `PaintBrush::effect_id`.
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("ground effect")
-                        .size(theme::SMALL)
-                        .color(theme::INK_DIM),
-                );
-                ui.add(
-                    egui::DragValue::new(&mut textures.brush.effect_id)
-                        .speed(1.0)
-                        .range(0..=u32::MAX),
-                )
-                .on_hover_text(
-                    "MCLY effectId: the GroundEffectTexture row whose doodads \
-                     a new layer of this texture places. 0 places none. Set, \
-                     when the texture is chosen, to the value the open tiles \
-                     use most with this texture.",
-                );
-                if ui
-                    .small_button("most common")
-                    .on_hover_text("Set to the effect id the open tiles use most with this texture.")
-                    .clicked()
-                {
-                    textures.brush.effect_id =
-                        textures::usual_effect(session, &chosen).unwrap_or(0);
-                }
-            });
-            theme::note(ui, grows(assets, textures.brush.effect_id));
+            theme::row_about(
+                ui,
+                "foliage",
+                "What a new layer of this texture grows: MCLY effectId, a \
+                 GroundEffectTexture row. Set, when the texture is chosen, to what \
+                 the open tiles grow on it most.",
+                |ui| {
+                    let picked = ground_effect(
+                        ui,
+                        "brush",
+                        textures.brush.effect_id,
+                        true,
+                        session,
+                        &chosen,
+                        assets,
+                    );
+                    if let Some(id) = picked {
+                        textures.brush.effect_id = id;
+                    }
+                },
+            );
         }
     }
 }
@@ -4235,152 +4229,100 @@ fn chunk_layers(
         true => None,
         false => Some(textures.brush.texture.clone()),
     };
+    let mut using: Option<(String, u32)> = None;
     for (index, layer) in layers.iter().enumerate() {
+        if index > 0 {
+            ui.add_space(6.0);
+        }
         ui.horizontal(|ui| {
             swatch(ui, thumbnails, &layer.texture);
             ui.vertical(|ui| {
-                ui.label(
-                    egui::RichText::new(textures::leaf(&layer.texture))
-                        .size(theme::SMALL)
-                        .color(theme::INK),
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(textures::leaf(&layer.texture))
+                            .size(theme::SMALL)
+                            .color(theme::INK),
+                    )
+                    .truncate(),
                 )
                 .on_hover_text(layer.texture.clone());
                 // The base is the one layer with no blend map and cannot be
                 // removed, so it is labelled "base" instead of showing a
-                // coverage it cannot change.
-                theme::note(
-                    ui,
-                    match index {
-                        0 => "base".to_string(),
-                        _ => format!("{:.0}% visible", layer.coverage * 100.0),
-                    },
-                );
-                // The layer's foliage, editable: the `MCLY` field no brush
-                // writes. The number is the table row; the note names what
-                // the row plants, for a reader who does not know the table.
+                // coverage it cannot change. The row's buttons share the line.
                 ui.horizontal(|ui| {
-                    let mut effect = layer.effect_id;
-                    let response = ui
-                        .add_enabled(
-                            pinned,
-                            egui::DragValue::new(&mut effect)
-                                .speed(1.0)
-                                .range(0..=u32::MAX),
-                        )
-                        .on_hover_text(
-                            "MCLY effectId: the GroundEffectTexture row whose doodads \
-                             this layer places. 0 places none.",
-                        )
-                        .on_disabled_hover_text("Pin the chunk (press Space over it).");
-                    if response.changed() {
-                        grow = Some((index, effect));
-                    }
-                    if ui
-                        .add_enabled(pinned, egui::Button::new("most common").small())
-                        .on_hover_text("Set to the effect id the open tiles use most with this texture.")
-                        .clicked()
-                    {
-                        if let Some(id) = textures::usual_effect(session, &layer.texture) {
-                            grow = Some((index, id));
-                        }
-                    }
-                    theme::note(ui, grows(assets, layer.effect_id));
+                    theme::note(
+                        ui,
+                        match index {
+                            0 => "base".to_string(),
+                            _ => format!("{:.0}% visible", layer.coverage * 100.0),
+                        },
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        layer_buttons(ui, index, pinned, chosen.is_some(), &mut |ask| match ask {
+                            LayerAsk::Drop => drop = Some(index),
+                            LayerAsk::Swap => swap = Some((index, chosen.clone().unwrap_or_default())),
+                            LayerAsk::Rebase => rebase = chosen.clone(),
+                            LayerAsk::Use => using = Some((layer.texture.clone(), layer.effect_id)),
+                        });
+                    });
                 });
-                // The layer's texture animation: the last field of the record
-                // that no other control writes. Three controls, because the
-                // file stores three values: a switch, one of eight directions
-                // and one of eight speeds. The note states them in words: only
-                // 164 layers in Azeroth carry these bits, all of them lava, so
-                // the meaning of the numbers (direction 2 is east) is not
-                // commonly known.
-                ui.horizontal(|ui| {
-                    let (mut turn, mut rate, mut on) = layer.animation;
+            });
+        });
+        // The layer's foliage and animation, under the name: the two `MCLY`
+        // fields no brush writes. Disabled while the chunk follows the
+        // pointer, for the reason the buttons are.
+        let picked = theme::row_about(
+            ui,
+            "foliage",
+            "MCLY effectId: what this layer grows, a GroundEffectTexture row.",
+            |ui| {
+                ground_effect(
+                    ui,
+                    &format!("layer {index}"),
+                    layer.effect_id,
+                    pinned,
+                    session,
+                    &layer.texture,
+                    assets,
+                )
+            },
+        );
+        if let Some(id) = picked {
+            grow = Some((index, id));
+        }
+        // Only 164 layers in Azeroth are animated, all of them lava, so the
+        // direction and speed are shown only once the switch is on.
+        theme::row_about(
+            ui,
+            "animation",
+            "MCLY texture animation: scrolls this layer's texture coordinates, as on \
+             the Burning Steppes lava.",
+            |ui| {
+                let (mut turn, mut rate, mut on) = layer.animation;
+                ui.add_enabled_ui(pinned, |ui| {
                     let mut moved = ui
-                        .add_enabled(pinned, egui::Checkbox::new(&mut on, "animated"))
-                        .on_hover_text(
-                            "MCLY texture animation: scrolls this layer's texture \
-                             coordinates, as on the Burning Steppes lava.",
-                        )
+                        .checkbox(&mut on, "scrolls")
                         .on_disabled_hover_text("Pin the chunk (press Space over it).")
                         .changed();
-                    moved |= ui
-                        .add_enabled(
-                            pinned && on,
-                            egui::DragValue::new(&mut turn).speed(0.1).range(0..=7),
-                        )
-                        .on_hover_text("Direction, 0..7 — each step is 45° clockwise from north.")
-                        .changed();
-                    moved |= ui
-                        .add_enabled(
-                            pinned && on,
-                            egui::DragValue::new(&mut rate).speed(0.1).range(0..=7),
-                        )
-                        .on_hover_text("Speed, 0..7 — each step doubles it.")
-                        .changed();
+                    if on {
+                        moved |= crawl_direction(ui, index, &mut turn);
+                        moved |= ui
+                            .add(egui::DragValue::new(&mut rate).speed(0.1).range(0..=7).prefix("speed "))
+                            .on_hover_text("0 to 7: each step doubles it.")
+                            .changed();
+                        theme::note(ui, crawls((turn, rate, on)));
+                    }
                     if moved {
                         crawl = Some((index, turn, rate, on));
                     }
-                    theme::note(ui, crawls(layer.animation));
                 });
-            });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if index == 0 {
-                    // The base is replaced, never removed; see
-                    // `Paint::set_base`. It is the one layer a brush cannot
-                    // change: painting adds a layer over it, and a chunk at the
-                    // four-layer limit cannot add even that.
-                    if ui
-                        .add_enabled(pinned && chosen.is_some(), egui::Button::new("↧").small())
-                        .on_hover_text(
-                            "Make the chosen texture this chunk's base, under everything \
-                             already painted on it. Every blend map is kept.",
-                        )
-                        .on_disabled_hover_text(
-                            "Pin the chunk (press Space over it) and choose a texture below.",
-                        )
-                        .clicked()
-                    {
-                        rebase = chosen.clone();
-                    }
-                    return;
-                }
-                // Disabled rather than hidden while the chunk follows the
-                // pointer, because a press would act on whichever chunk the
-                // pointer crossed on the way to the button, with no indication
-                // that it was the wrong chunk. The tooltip says so.
-                if ui
-                    .add_enabled(
-                        pinned && chosen.is_some(),
-                        egui::Button::new("swap").small(),
-                    )
-                    .on_hover_text(
-                        "Replace this layer's texture with the chosen texture, keeping its \
-                         blend map. On a full chunk this changes a texture without removing a layer.",
-                    )
-                    .on_disabled_hover_text(
-                        "Pin the chunk (press Space over it) and choose a texture below.",
-                    )
-                    .clicked()
-                {
-                    swap = Some((index, chosen.clone().unwrap_or_default()));
-                }
-                if ui
-                    .add_enabled(pinned, egui::Button::new("×").small())
-                    .on_hover_text(
-                        "Remove this layer from the chunk, freeing a slot for another \
-                         texture. Removing a layer at 0% changes nothing on screen.",
-                    )
-                    .on_disabled_hover_text(
-                        "Pin the chunk first (press Space over it). Unpinned, this \
-                         would act on the last chunk the pointer crossed on the way \
-                         to the button.",
-                    )
-                    .clicked()
-                {
-                    drop = Some(index);
-                }
-            });
-        });
+            },
+        );
+    }
+    if let Some((path, effect_id)) = using {
+        textures.brush.effect_id = effect_id;
+        session.status = format!("painting with {}", textures::leaf(&path));
+        textures.brush.texture = path;
     }
     if let Some(index) = drop {
         textures::drop_layer(session, coord, chunk, index);
@@ -4434,6 +4376,192 @@ fn chunk_layers(
              to paint a different texture.",
         );
     }
+}
+
+/// What a layer row's buttons asked for.
+enum LayerAsk {
+    /// Paint with the layer's texture and ground effect.
+    Use,
+    /// Replace the layer's texture with the chosen one.
+    Swap,
+    /// Make the chosen texture the chunk's base.
+    Rebase,
+    /// Remove the layer.
+    Drop,
+}
+
+/// A layer row's buttons, right to left: remove, swap (or set the base, on
+/// the base) and use.
+///
+/// Use is always available, since it changes the brush and not the chunk. The
+/// others are disabled rather than hidden while the chunk follows the pointer,
+/// because a press would act on whichever chunk the pointer crossed on the
+/// way to the button, with no sign that it was the wrong one.
+fn layer_buttons(
+    ui: &mut egui::Ui,
+    index: usize,
+    pinned: bool,
+    chosen: bool,
+    asked: &mut dyn FnMut(LayerAsk),
+) {
+    let unpinned = "Pin the chunk first (press Space over it). Unpinned, this would act on \
+                    the last chunk the pointer crossed on the way to the button.";
+    match index {
+        // The base is replaced, never removed; see `Paint::set_base`.
+        0 => {
+            if ui
+                .add_enabled(pinned && chosen, egui::Button::new("Set base").small())
+                .on_hover_text(
+                    "Make the chosen texture this chunk's base, under everything already \
+                     painted on it. Every blend map is kept.",
+                )
+                .on_disabled_hover_text("Pin the chunk (press Space over it) and choose a texture.")
+                .clicked()
+            {
+                asked(LayerAsk::Rebase);
+            }
+        }
+        _ => {
+            if ui
+                .add_enabled(pinned, egui::Button::new("×").small())
+                .on_hover_text(
+                    "Remove this layer from the chunk, freeing a slot for another texture. \
+                     Removing a layer at 0% changes nothing on screen.",
+                )
+                .on_disabled_hover_text(unpinned)
+                .clicked()
+            {
+                asked(LayerAsk::Drop);
+            }
+            if ui
+                .add_enabled(pinned && chosen, egui::Button::new("Swap").small())
+                .on_hover_text(
+                    "Replace this layer's texture with the chosen texture, keeping its blend \
+                     map. On a full chunk this changes a texture without removing a layer.",
+                )
+                .on_disabled_hover_text("Pin the chunk (press Space over it) and choose a texture.")
+                .clicked()
+            {
+                asked(LayerAsk::Swap);
+            }
+        }
+    }
+    if ui
+        .button(egui::RichText::new("Use").size(theme::SMALL))
+        .on_hover_text("Paint with this texture: it becomes the brush's, with this layer's foliage.")
+        .clicked()
+    {
+        asked(LayerAsk::Use);
+    }
+}
+
+/// A layer's animation direction as a compass point, from `MCLY`'s 0 to 7:
+/// step 0 is north (up the texture) and each step 45° clockwise. Returns
+/// whether it changed.
+fn crawl_direction(ui: &mut egui::Ui, index: usize, turn: &mut u32) -> bool {
+    const COMPASS: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+    let was = *turn;
+    egui::ComboBox::from_id_salt(("layer-direction", index))
+        .selected_text(COMPASS[(*turn & 7) as usize])
+        .width(48.0)
+        .show_ui(ui, |ui| {
+            for (step, name) in COMPASS.iter().enumerate() {
+                ui.selectable_value(turn, step as u32, *name);
+            }
+        })
+        .response
+        .on_hover_text("Which way the texture crawls.");
+    *turn != was
+}
+
+/// **A ground effect, chosen by what it grows** rather than typed as a
+/// `GroundEffectTexture` row id. Returns the row picked this frame.
+///
+/// The list offers nothing, then the effects the open tiles grow on this
+/// texture, most used first, then the ones they grow on other textures. Each
+/// is named by its models (see [`grows`]). Neither table names a texture, so
+/// the open ground is the only record of which effect suits which, and a zone
+/// generally reuses a handful. A row id the open tiles do not use can still be
+/// typed at the bottom.
+///
+/// The counts read every open chunk. Worked out every frame the list was
+/// open, they took the editor to a crawl, so they are worked out on the frame
+/// it opens and kept in egui's memory while it stays open.
+fn ground_effect(
+    ui: &mut egui::Ui,
+    salt: &str,
+    current: u32,
+    enabled: bool,
+    session: &EditSession,
+    texture: &str,
+    assets: &vale_client::assets::GameAssets,
+) -> Option<u32> {
+    let mut picked = None;
+    let width = ui.available_width().max(80.0);
+    ui.add_enabled_ui(enabled, |ui| {
+        egui::ComboBox::from_id_salt(("ground-effect", salt))
+            .selected_text(egui::RichText::new(grows(assets, current)).size(theme::SMALL))
+            .width(width)
+            .truncate()
+            .show_ui(ui, |ui| {
+                ui.set_min_width(width.max(260.0));
+                if ui.selectable_label(current == 0, "nothing").clicked() {
+                    picked = Some(0);
+                }
+                let counts = counts_while_open(ui, salt, session, texture);
+                let mut section = |ui: &mut egui::Ui, title: &str, list: &[(u32, usize)]| {
+                    if list.is_empty() {
+                        return;
+                    }
+                    ui.add_space(4.0);
+                    theme::note(ui, title);
+                    for &(id, count) in list.iter().take(20) {
+                        let label = format!("{}  · {count} layers · row {id}", grows(assets, id));
+                        if ui.selectable_label(current == id, label).clicked() {
+                            picked = Some(id);
+                        }
+                    }
+                };
+                section(ui, "grown on this texture in the open tiles", &counts.with);
+                section(ui, "grown on other textures in the open tiles", &counts.elsewhere);
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    theme::note(ui, "another row");
+                    let mut id = current;
+                    if ui
+                        .add(egui::DragValue::new(&mut id).speed(1.0).range(0..=u32::MAX))
+                        .on_hover_text("A GroundEffectTexture row id, for one the open tiles do not use.")
+                        .changed()
+                    {
+                        picked = Some(id);
+                    }
+                });
+            });
+    })
+    .response
+    .on_disabled_hover_text("Pin the chunk (press Space over it).");
+    picked
+}
+
+/// [`textures::effect_counts`] for a list that is open: worked out on the
+/// first frame and kept while the list is drawn on every frame after it, or
+/// again if the texture it was for has changed.
+fn counts_while_open(
+    ui: &egui::Ui,
+    salt: &str,
+    session: &EditSession,
+    texture: &str,
+) -> std::sync::Arc<textures::EffectCounts> {
+    type Kept = (u64, String, std::sync::Arc<textures::EffectCounts>);
+    let id = egui::Id::new(("ground-effect-counts", salt));
+    let pass = ui.ctx().cumulative_pass_nr();
+    let kept = ui.data(|data| data.get_temp::<Kept>(id));
+    let counts = match kept {
+        Some((last, path, counts)) if last + 1 >= pass && path == texture => counts,
+        _ => std::sync::Arc::new(textures::effect_counts(session, texture)),
+    };
+    ui.data_mut(|data| data.insert_temp(id, (pass, texture.to_string(), counts.clone())));
+    counts
 }
 
 /// What the group lines under the Selection heading asked for.
