@@ -217,6 +217,9 @@ const DRAG_PIXELS: f32 = 6.0;
 /// How near the pointer has to be to a node to pick it, in pixels.
 const GRAB_PIXELS: f32 = 14.0;
 
+/// A node's radius in yards, from which its dome and facing arrow are sized.
+const NODE_RADIUS: f32 = 0.8;
+
 /// The colour of a path's legs. The path colours are named constants because
 /// the four are a set and are read against each other rather than on their own.
 ///
@@ -804,7 +807,6 @@ fn draw(
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
-    camera: Query<&GlobalTransform, With<WorldCamera>>,
 ) {
     if !state.editing() || *tool != Tool::Creatures {
         return;
@@ -812,8 +814,6 @@ fn draw(
     let Some(path) = waypoints.path(session.as_deref()) else {
         return;
     };
-    let Ok(camera) = camera.single() else { return };
-    let eye = Vec3::from(vale_client::render::axes::to_wow(camera.translation()));
 
     let point = |node: &Node| vale_client::render::axes::to_bevy([node.x, node.y, node.z]);
 
@@ -842,12 +842,10 @@ fn draw(
         let under = waypoints.hovered == Some(index);
         let at = point(node);
         let here = Vec3::new(node.x, node.y, node.z);
-        // The same screen-proportional radius the creature markers use, so a
-        // node stays grabbable at any distance.
-        // One and a half times the radius an earlier version used: a node is
-        // a thing to aim at, and these are drawn at every distance from
-        // underfoot to the far side of a zone.
-        let radius = (here.distance(eye) * 0.015).clamp(0.5, 4.5);
+        // A size in the world, with a floor so a far node is still a dot;
+        // see `Marks::visible_radius`. The pick is in pixels, so a far node
+        // is as easy to click as a near one.
+        let radius = marks.visible_radius(at, NODE_RADIUS);
         let colour = match (chosen, under, node.waittime > 0) {
             (true, _, _) => Color::srgb(1.0, 0.82, 0.25),
             (_, true, _) => Color::WHITE,

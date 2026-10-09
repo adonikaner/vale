@@ -2082,6 +2082,12 @@ const REMOVED: Color = Color::srgb(0.95, 0.30, 0.30);
 /// members in it too.
 pub(crate) const MEMBER: Color = Color::srgb(0.95, 0.78, 0.50);
 
+/// The dome drawn over a spawn with no model, in yards: a size in the world,
+/// drawn through `Marks::visible_radius` so a far one is still a dot. A spawn
+/// is picked by its distance from the pointer's ray in pixels, so a far one is
+/// as easy to click as a near one.
+const DOME_RADIUS: f32 = 0.6;
+
 /// The smallest dome drawn around a spawn's model, in yards: about the
 /// height of a person's waist, so the dome reads as around the model.
 const DOME_AROUND_MODEL: f32 = 1.2;
@@ -2592,13 +2598,10 @@ fn draw(
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
-    camera: Query<&GlobalTransform, With<WorldCamera>>,
 ) {
     if !state.editing() || *tool != Tool::Creatures {
         return;
     }
-    let Ok(camera) = camera.single() else { return };
-    let eye = Vec3::from(vale_client::render::axes::to_wow(camera.translation()));
 
     let edits = session.as_ref().map(|session| &session.server_edits);
     // Sorted once and searched per marker — see `super::doodads::draw_marker`.
@@ -2653,7 +2656,7 @@ fn draw(
         };
         let chosen_or_member = chosen || member;
         let at = vale_client::render::axes::to_bevy(spawn.at.to_array());
-        let radius = ((spawn.at.distance(eye)) * 0.012).clamp(0.35, 4.0);
+        let radius = marks.visible_radius(at, DOME_RADIUS);
         let look = match chosen_or_member || under {
             true => Look::Ghosted,
             false => Look::Solid,

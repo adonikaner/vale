@@ -37,7 +37,7 @@
 //! on the Server panel writes. Links are live on `.reload game_graveyard_zone`;
 //! a facing needs a restart.
 
-use super::flightpaths::{aim_of, eye, marker_radius, meets_upright_plane, DRAG_PIXELS, HANDLE_PIXELS};
+use super::flightpaths::{aim_of, eye, meets_upright_plane, DRAG_PIXELS, HANDLE_PIXELS, MARKER_RADIUS};
 use super::triggers::{create_row, remove_row, shipped_ids, shown};
 use super::Tool;
 use crate::marks::{Look, Marks};
@@ -672,7 +672,7 @@ fn draw(
             _ if graveyards.held.is_some() && !linked.contains(&place.id) => Color::srgb(0.6, 0.6, 0.65),
             _ => Color::srgb(0.55, 0.8, 1.0),
         };
-        let radius = marker_radius(at, eye);
+        let radius = marks.visible_radius(bevy(at), MARKER_RADIUS);
         marks.dome(bevy(at), radius, colour, Look::Ghosted);
         let top = at + Vec3::Z * radius * 5.0;
         let post = radius * 0.12;
@@ -689,7 +689,8 @@ fn draw(
     let Some(pointer) = cursor.surface else { return };
     match graveyards.armed {
         Armed::NewPlace => {
-            marks.dome(bevy(pointer), marker_radius(pointer, eye), Color::srgb(0.55, 0.8, 1.0), Look::Ghosted);
+            let radius = marks.visible_radius(bevy(pointer), MARKER_RADIUS);
+            marks.dome(bevy(pointer), radius, Color::srgb(0.55, 0.8, 1.0), Look::Ghosted);
         }
         Armed::LinkZone => {
             if let Some(place) = graveyards.selected.and_then(|id| graveyards.place(id)) {

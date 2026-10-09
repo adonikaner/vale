@@ -1311,6 +1311,10 @@ const HANDLE_PIXELS: f32 = 16.0;
 /// How far from the original a duplicate lands, in yards.
 const APART: f32 = 2.0;
 
+/// Half the side of the box drawn over a spawn with no model, in yards. See
+/// `super::creatures::DOME_RADIUS`.
+const BOX_RADIUS: f32 = 0.5;
+
 /// The smallest box drawn around a spawn's model, in yards across: a vein or
 /// a chest is about this size.
 const BOX_AROUND_MODEL: f32 = 0.8;
@@ -1990,13 +1994,10 @@ fn draw(
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
-    camera: Query<&GlobalTransform, With<WorldCamera>>,
 ) {
     if !state.editing() || *tool != Tool::GameObjects {
         return;
     }
-    let Ok(camera) = camera.single() else { return };
-    let eye = Vec3::from(vale_client::render::axes::to_wow(camera.translation()));
     let edits = session.as_ref().map(|session| &session.server_edits);
     // Sorted once and searched per marker. See `super::doodads::draw_marker`.
     let members = super::group::sorted(objects.also.iter().copied());
@@ -2030,7 +2031,7 @@ fn draw(
         };
         let aimed = chosen || member || under;
         let at = vale_client::render::axes::to_bevy(spawn.at.to_array());
-        let radius = (spawn.at.distance(eye) * 0.010).clamp(0.25, 3.0);
+        let radius = marks.visible_radius(at, BOX_RADIUS);
         let look = match aimed {
             true => Look::Ghosted,
             false => Look::Solid,

@@ -1388,7 +1388,7 @@ fn draw(
             (false, true) => Color::srgb(1.0, 1.0, 0.8),
             _ => colour_of(triggers.does(&session.server_edits, trigger.id)),
         };
-        let marker = super::flightpaths::marker_radius(at, eye) * 0.5;
+        let marker = marks.visible_radius(bevy(at), super::flightpaths::MARKER_RADIUS * 0.5);
         marks.sphere(bevy(at), marker, colour, Look::Ghosted);
         let (look, fill) = match selected || hovered {
             true => (Look::Ghosted, VOLUME_AIMED),
@@ -1431,7 +1431,7 @@ fn draw(
                 PickFor::Teleport => colour_of(Does { teleport: true, ..Does::default() }),
                 PickFor::BgExit => colour_of(Does { entrance: true, ..Does::default() }),
             };
-            place_mark(&mut marks, at, facing, eye, colour);
+            place_mark(&mut marks, at, facing, colour);
             if let Some(from) = from {
                 marks.line(bevy(from), bevy(at), colour.with_alpha(0.5), Look::Ghosted);
             }
@@ -1440,7 +1440,7 @@ fn draw(
     let Some(pointer) = cursor.surface else { return };
     if let Some(pick) = triggers.pick.as_ref().filter(|pick| pick.map == triggers.map) {
         let at = pick.pressed.unwrap_or(pointer);
-        place_mark(&mut marks, at, pick.facing, eye, Color::WHITE);
+        place_mark(&mut marks, at, pick.facing, Color::WHITE);
         return;
     }
     if triggers.armed == Armed::NewTrigger {
@@ -1458,9 +1458,9 @@ const VOLUME_AIMED: f32 = 0.24;
 
 /// A place a character is sent to: a marker standing on it and an arrow the
 /// way the character faces.
-fn place_mark(marks: &mut Marks, at: Vec3, facing: f32, eye: Vec3, colour: Color) {
+fn place_mark(marks: &mut Marks, at: Vec3, facing: f32, colour: Color) {
     let bevy = |p: Vec3| axes::to_bevy(p.to_array());
-    let radius = super::flightpaths::marker_radius(at, eye);
+    let radius = marks.visible_radius(bevy(at), super::flightpaths::MARKER_RADIUS);
     marks.sphere(bevy(at), radius, colour, Look::Ghosted);
     marks.line(bevy(at), bevy(at + Vec3::Z * radius * 4.0), colour, Look::Ghosted);
     let ahead = at + Vec3::new(facing.cos(), facing.sin(), 0.0) * radius * 4.0;

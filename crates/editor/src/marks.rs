@@ -104,6 +104,10 @@ const GHOST_FLOOR: f32 = 0.10;
 /// dashes of one pixel and none.
 const LINE_PIXELS: f32 = 1.5;
 
+/// The smallest a marker is drawn, as a radius in pixels; see
+/// [`Marks::visible_radius`].
+const MARKER_PIXELS: f32 = 4.0;
+
 /// How many sides a line's tube has. The shader keeps the tube a few pixels
 /// across, where six sides look round.
 const LINE_SIDES: usize = 6;
@@ -220,6 +224,17 @@ impl Marks {
     /// drawn to match the lines, such as an arrow's shaft.
     pub fn line_radius(&self, at: Vec3) -> f32 {
         self.pixel(at) * LINE_PIXELS
+    }
+
+    /// The radius a marker of `radius` yards at `at` is drawn with: its own,
+    /// or [`MARKER_PIXELS`] pixels where that is larger.
+    ///
+    /// A marker is the size of the thing it marks, so near ones sit in the
+    /// world at their true size rather than growing with distance; the floor
+    /// keeps a far one as a dot rather than letting it vanish, which matters
+    /// for flight-path nodes seen from across a zone and in the map view.
+    pub fn visible_radius(&self, at: Vec3, radius: f32) -> f32 {
+        radius.max(self.pixel(at) * MARKER_PIXELS)
     }
 
     fn push(&mut self, shape: Shape, pose: Transform, colour: Color, look: Look) {

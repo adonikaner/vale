@@ -1266,11 +1266,11 @@ fn keys(
     }
 }
 
-/// How wide a marker is drawn, in yards, at a distance: about the handle's
-/// width on screen, clamped.
-pub(super) fn marker_radius(at: Vec3, eye: Vec3) -> f32 {
-    ((at - eye).length() * 0.02).clamp(0.6, 22.0)
-}
+/// How wide a marker is, in yards: a size in the world, drawn through
+/// `Marks::visible_radius` so a far one is still a dot. The pick is measured in
+/// pixels ([`HANDLE_PIXELS`]), so a far marker is as easy to click as a near
+/// one.
+pub(super) const MARKER_RADIUS: f32 = 2.0;
 
 /// A node's colour: by which sides vmangos offers it to, from its two mount
 /// columns (field 14 Horde, field 15 Alliance).
@@ -1350,7 +1350,8 @@ fn draw(
                 (false, true) => Color::srgb(1.0, 0.9, 0.6),
                 _ => Color::srgb(1.0, 0.6, 0.15),
             };
-            marks.sphere(bevy(at), marker_radius(at, eye) * 0.6, colour, Look::Ghosted);
+            let radius = marks.visible_radius(bevy(at), MARKER_RADIUS * 0.6);
+            marks.sphere(bevy(at), radius, colour, Look::Ghosted);
         }
         // A line from the selected point down to the ground, which shows its
         // height.
@@ -1376,7 +1377,7 @@ fn draw(
             (false, true) => Color::srgb(1.0, 1.0, 0.8),
             _ => side_colour(node.mounts),
         };
-        let radius = marker_radius(at, eye);
+        let radius = marks.visible_radius(bevy(at), MARKER_RADIUS);
         marks.sphere(bevy(at), radius, colour, Look::Ghosted);
         marks.line(bevy(at), bevy(at + Vec3::Z * radius * 4.0), colour, Look::Ghosted);
         if selected {
@@ -1407,7 +1408,8 @@ fn draw(
             }
         }
         Armed::NewNode => {
-            marks.sphere(bevy(pointer), marker_radius(pointer, eye), side_colour(NEW_NODE_MOUNTS), Look::Ghosted);
+            let radius = marks.visible_radius(bevy(pointer), MARKER_RADIUS);
+            marks.sphere(bevy(pointer), radius, side_colour(NEW_NODE_MOUNTS), Look::Ghosted);
         }
         Armed::Draw { .. } | Armed::Nothing => {}
     }
@@ -1423,12 +1425,11 @@ fn draw_draft(
     state: Res<crate::playtest::Playtest>,
     cursor: Res<crate::pick::Cursor>,
     session: Option<Res<EditSession>>,
-    camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) {
     if !active(&tool, &state) {
         return;
     }
-    let (Some(draft), Some(eye)) = (flights.draft.as_ref(), eye(&camera)) else {
+    let Some(draft) = flights.draft.as_ref() else {
         return;
     };
     let Some(start) = flights.node(draft.from).map(|node| Vec3::from(node.at)) else {
@@ -1439,7 +1440,8 @@ fn draw_draft(
     let mut last = start;
     for &at in &draft.points {
         marks.line(bevy(last), bevy(at), drawn, Look::Ghosted);
-        marks.sphere(bevy(at), marker_radius(at, eye) * 0.6, drawn, Look::Ghosted);
+        let radius = marks.visible_radius(bevy(at), MARKER_RADIUS * 0.6);
+        marks.sphere(bevy(at), radius, drawn, Look::Ghosted);
         last = at;
     }
     // A hovered far node is where the next click ends the path.
@@ -1459,7 +1461,8 @@ fn draw_draft(
         _ => Color::srgb(1.0, 0.85, 0.5),
     };
     marks.line(bevy(last), bevy(next), colour.with_alpha(0.7), Look::Ghosted);
-    marks.sphere(bevy(next), marker_radius(next, eye) * 0.6, colour, Look::Ghosted);
+    let radius = marks.visible_radius(bevy(next), MARKER_RADIUS * 0.6);
+    marks.sphere(bevy(next), radius, colour, Look::Ghosted);
     if let Some(ground) = ground {
         marks.line(bevy(next), bevy(next.truncate().extend(ground)), Color::WHITE.with_alpha(0.6), Look::Ghosted);
     }
