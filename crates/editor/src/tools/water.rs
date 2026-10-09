@@ -508,7 +508,7 @@ fn draw(
         corner(high[0], low[1]),
     ];
     for at in 0..4 {
-        marks.line(square[at], square[(at + 1) % 4], colour, crate::marks::Look::Ghosted);
+        marks.ground_line(square[at], square[(at + 1) % 4], colour, crate::marks::Look::Ghosted);
     }
 
     // The slope's ends, each a short upright at its height, and the line
@@ -522,7 +522,7 @@ fn draw(
             marks.line(mark(*end), up(*end), colour, crate::marks::Look::Ghosted);
         }
         if let [Some(start), Some(end)] = water.ends {
-            marks.line(mark(start), mark(end), colour, crate::marks::Look::Ghosted);
+            marks.ground_line(mark(start), mark(end), colour, crate::marks::Look::Ghosted);
             // The start is the one with a crossbar.
             let across = Vec3::from(axes::to_bevy([2.0, 0.0, 0.0])) - Vec3::from(axes::to_bevy([0.0, 0.0, 0.0]));
             marks.line(up(start) - across, up(start) + across, colour, crate::marks::Look::Ghosted);
@@ -559,6 +559,6 @@ fn outline(
     let c = corner(low[0], low[1]);
     let d = corner(high[0], low[1]);
     for (from, to) in [(a, b), (b, c), (c, d), (d, a)] {
-        marks.line(from, to, colour, crate::marks::Look::Ghosted);
+        marks.ground_line(from, to, colour, crate::marks::Look::Ghosted);
     }
 }

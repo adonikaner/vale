@@ -385,7 +385,7 @@ fn outline(
         for step in 1..=DRAPE {
             let k = step as f32 / DRAPE as f32;
             let next = at(from.0 + (to.0 - from.0) * k, from.1 + (to.1 - from.1) * k);
-            marks.line(last, next, colour, crate::marks::Look::Ghosted);
+            marks.ground_line(last, next, colour, crate::marks::Look::Ghosted);
             last = next;
         }
     }

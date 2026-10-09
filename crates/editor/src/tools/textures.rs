@@ -588,7 +588,7 @@ fn draw_pin(
         for step in 0..ALONG {
             let (a, b) = (step as f32 / ALONG as f32, (step + 1) as f32 / ALONG as f32);
             if let (Some(from), Some(to)) = (at(a, edge), at(b, edge)) {
-                marks.line(from, to, colour, crate::marks::Look::Ghosted);
+                marks.ground_line(from, to, colour, crate::marks::Look::Ghosted);
             }
         }
     }

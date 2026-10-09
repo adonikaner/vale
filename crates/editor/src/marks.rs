@@ -69,13 +69,37 @@ pub const GHOST: f32 = 0.35;
 /// still seen.
 const GHOST_FLOOR: f32 = 0.10;
 
-/// A line's radius as a fraction of its distance from the camera, which keeps
-/// it a few pixels wide at any distance, like the gizmo lines it replaces.
-const LINE: f32 = 0.0016;
+/// A line's radius in pixels, so it is about three pixels wide wherever it
+/// is. Narrower than this, a tube with no multisampling breaks up into
+/// dashes of one pixel and none.
+const LINE_PIXELS: f32 = 1.5;
 
-/// …and the thinnest it may be, so a line at the camera's feet is not a
+/// The most pieces [`Marks::line`] cuts one line into.
+const LINE_PIECES: usize = 48;
+
+/// How many yards one pixel covers at a point, from the world camera's
+/// projection.
+///
+/// Read from the projection rather than from the distance to the camera,
+/// because the map view is orthographic: there the size of a pixel is the
+/// visible area divided by the picture's height and does not depend on the
+/// distance at all. Sized by distance, every line in the map view became
+/// thinner than a pixel as the view zoomed out, and drew as a faint broken
 /// thread.
-const LINE_SMALLEST: f32 = 0.03;
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Scale {
+    /// Yards per pixel per yard of depth: `2 tan(fov / 2) / height`.
+    Perspective(f32),
+    /// Yards per pixel, everywhere.
+    Orthographic(f32),
+}
+
+impl Default for Scale {
+    /// A 60-degree view a thousand pixels tall, until the camera is read.
+    fn default() -> Self {
+        Scale::Perspective(2.0 * (30.0f32).to_radians().tan() / 1000.0)
+    }
+}
 
 /// Whether the part of a mark behind something is drawn. See the module
 /// comment.
@@ -116,8 +140,11 @@ struct Mark {
 #[derive(Resource, Default)]
 pub struct Marks {
     list: Vec<Mark>,
-    /// The world camera's position, read at the start of the frame.
+    /// The world camera's position and the way it looks, read at the start
+    /// of the frame.
     eye: Vec3,
+    forward: Vec3,
+    scale: Scale,
 }
 
 impl Marks {
@@ -126,9 +153,19 @@ impl Marks {
         self.eye
     }
 
-    /// The radius a line at `at` is drawn with: a few pixels wide.
+    /// How many yards one pixel covers at `at`. See [`Scale`].
+    pub fn pixel(&self, at: Vec3) -> f32 {
+        match self.scale {
+            // A point beside or behind the eye is given a yard of depth, so
+            // nothing is drawn with no thickness at all.
+            Scale::Perspective(per_depth) => (at - self.eye).dot(self.forward).max(1.0) * per_depth,
+            Scale::Orthographic(per_pixel) => per_pixel,
+        }
+    }
+
+    /// The radius a line at `at` is drawn with: [`LINE_PIXELS`].
     pub fn line_radius(&self, at: Vec3) -> f32 {
-        (at.distance(self.eye) * LINE).max(LINE_SMALLEST)
+        self.pixel(at) * LINE_PIXELS
     }
 
     fn push(&mut self, shape: Shape, pose: Transform, colour: Color, look: Look) {
@@ -166,10 +203,50 @@ impl Marks {
         self.push(Shape::Tube, pose, colour, look);
     }
 
-    /// A tube [`Self::line_radius`] thick at its end nearer the camera.
+    /// A tube [`Self::line_radius`] thick.
+    ///
+    /// In perspective a long line is cut into pieces no longer than half
+    /// their own depth, each as thick as its nearer end needs. One thickness
+    /// for the whole of a flight path's leg made a leg that starts near the
+    /// camera a thread at its far end, and a short leg beside that far end
+    /// thick, so two lines at one depth were drawn at two widths.
     pub fn line(&mut self, a: Vec3, b: Vec3, colour: Color, look: Look) {
-        let radius = self.line_radius(nearest_on_segment(self.eye, a, b));
-        self.tube(a, b, radius, colour, look);
+        let length = a.distance(b);
+        if length < 1e-4 {
+            return;
+        }
+        let at = |along: f32| a + (b - a) * (along / length);
+        let mut from = 0.0;
+        for piece in 0..LINE_PIECES {
+            let start = at(from);
+            let step = match self.scale {
+                Scale::Orthographic(_) => length,
+                Scale::Perspective(_) => ((start - self.eye).dot(self.forward) * 0.5).max(1.0),
+            };
+            let to = match piece + 1 == LINE_PIECES {
+                true => length,
+                false => (from + step).min(length),
+            };
+            let end = at(to);
+            let radius = self.line_radius(nearest_on_segment(self.eye, start, end));
+            self.tube(start, end, radius, colour, look);
+            if to >= length {
+                break;
+            }
+            from = to;
+        }
+    }
+
+    /// [`Self::line`] lying on the ground: raised by its own radius at each
+    /// end, so the tube rests on the surface rather than half inside it.
+    ///
+    /// A tube centred on the ground is half buried, and where the height a
+    /// tool samples differs from the drawn mesh by more than that, all of it
+    /// is, and that part is drawn as a ghost: an outline faint in some places
+    /// and solid in others.
+    pub fn ground_line(&mut self, a: Vec3, b: Vec3, colour: Color, look: Look) {
+        let (lift_a, lift_b) = (self.line_radius(a), self.line_radius(b));
+        self.line(a + Vec3::Y * lift_a, b + Vec3::Y * lift_b, colour, look);
     }
 
     /// [`Self::line`] through every point in turn.
@@ -382,10 +459,27 @@ impl Plugin for MarksPlugin {
     }
 }
 
-fn follow_eye(mut marks: ResMut<Marks>, camera: Query<&GlobalTransform, With<WorldCamera>>) {
-    if let Ok(eye) = camera.single() {
-        marks.eye = eye.translation();
-    }
+fn follow_eye(
+    mut marks: ResMut<Marks>,
+    camera: Query<(&GlobalTransform, &Camera, &Projection), With<WorldCamera>>,
+) {
+    let Ok((eye, camera, projection)) = camera.single() else {
+        return;
+    };
+    marks.eye = eye.translation();
+    marks.forward = eye.forward().into();
+    let height = camera
+        .physical_viewport_size()
+        .map(|size| size.y.max(1) as f32)
+        .unwrap_or(1000.0);
+    marks.scale = match projection {
+        Projection::Orthographic(ortho) => Scale::Orthographic(ortho.area.height() / height),
+        Projection::Perspective(perspective) => {
+            Scale::Perspective(2.0 * (perspective.fov * 0.5).tan() / height)
+        }
+        // A projection this crate does not make: keep the last.
+        _ => marks.scale,
+    };
 }
 
 /// Pose one pooled entity per mark and hide the rest, then empty the list.
@@ -575,13 +669,62 @@ mod tests {
         }
     }
 
-    /// The line radius follows the nearest point, not the far end.
+    fn looking_down_z(scale: Scale) -> Marks {
+        Marks {
+            forward: Vec3::NEG_Z,
+            scale,
+            ..Marks::default()
+        }
+    }
+
+    /// In perspective a line is as thick as its depth needs, and in the map
+    /// view's orthographic projection the same everywhere.
     #[test]
-    fn a_line_is_as_thick_as_its_nearest_point_needs() {
-        let marks = Marks::default();
+    fn a_line_is_a_few_pixels_wide_in_either_projection() {
         let near = nearest_on_segment(Vec3::ZERO, Vec3::new(-10.0, 5.0, 0.0), Vec3::new(10.0, 5.0, 0.0));
         assert!(near.distance(Vec3::new(0.0, 5.0, 0.0)) < 1e-4);
-        assert!((marks.line_radius(Vec3::new(0.0, 1000.0, 0.0)) - 1.6).abs() < 1e-3);
-        assert_eq!(marks.line_radius(Vec3::ZERO), LINE_SMALLEST);
+
+        let perspective = looking_down_z(Scale::Perspective(0.001));
+        let far = perspective.line_radius(Vec3::new(0.0, 0.0, -1000.0));
+        assert!((far - 1000.0 * 0.001 * LINE_PIXELS).abs() < 1e-4);
+        // Behind the eye is a yard of depth, not none.
+        assert!(perspective.line_radius(Vec3::new(0.0, 0.0, 5.0)) > 0.0);
+
+        let ortho = looking_down_z(Scale::Orthographic(2.0));
+        assert_eq!(ortho.line_radius(Vec3::new(0.0, 0.0, -3.0)), 2.0 * LINE_PIXELS);
+        assert_eq!(ortho.line_radius(Vec3::new(50.0, 0.0, -900.0)), 2.0 * LINE_PIXELS);
+    }
+
+    /// A long line in perspective is cut into pieces that meet end to end and
+    /// grow thicker with depth; in orthographic it is one piece.
+    #[test]
+    fn a_long_line_is_cut_into_pieces_that_thicken_with_depth() {
+        let mut marks = looking_down_z(Scale::Perspective(0.001));
+        let (a, b) = (Vec3::new(0.0, 0.0, -2.0), Vec3::new(0.0, 0.0, -2000.0));
+        marks.line(a, b, Color::WHITE, Look::Solid);
+        assert!(marks.list.len() > 4 && marks.list.len() <= LINE_PIECES, "{}", marks.list.len());
+        let ends: Vec<(Vec3, Vec3)> = marks
+            .list
+            .iter()
+            .map(|m| {
+                let p = [-0.5, 0.5].map(|y| m.pose.transform_point(Vec3::new(0.0, y, 0.0)));
+                // Ordered from the eye outward.
+                match p[0].z > p[1].z {
+                    true => (p[0], p[1]),
+                    false => (p[1], p[0]),
+                }
+            })
+            .collect();
+        assert!(ends[0].0.distance(a) < 1e-3);
+        assert!(ends.last().unwrap().1.distance(b) < 1e-2);
+        for pair in ends.windows(2) {
+            assert!(pair[0].1.distance(pair[1].0) < 1e-2, "{pair:?}");
+        }
+        let radii: Vec<f32> = marks.list.iter().map(|m| m.pose.scale.x).collect();
+        assert!(radii.windows(2).all(|r| r[1] >= r[0]), "{radii:?}");
+
+        let mut ortho = looking_down_z(Scale::Orthographic(1.0));
+        ortho.line(a, b, Color::WHITE, Look::Solid);
+        assert_eq!(ortho.list.len(), 1);
     }
 }
