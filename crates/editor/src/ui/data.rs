@@ -2872,31 +2872,41 @@ fn reference(
                 true => format!("{points_at} {raw}"),
                 false => label.title.clone(),
             };
-            // A label that truncates rather than a `Link`, which keeps its
-            // full width: a long row name after the id box and the buttons
-            // made the row wider than the inspector, and the right-docked
-            // panel then grew past its own edge.
+            // The row's name and its detail line as one label that truncates.
+            // Two labels each keep a minimum width even when truncated to
+            // "…", and with the id box and the buttons before them that
+            // minimum made the row wider than the inspector's maximum: the
+            // right-docked panel then grew past its own edge line and clipped
+            // the rows instead of truncating them. One label has one minimum.
+            let mut job = egui::text::LayoutJob::default();
+            job.append(
+                &title,
+                0.0,
+                egui::TextFormat::simple(egui::TextStyle::Body.resolve(ui.style()), theme::ACCENT),
+            );
+            if !label.sub.is_empty() {
+                job.append(
+                    &label.sub,
+                    8.0,
+                    egui::TextFormat {
+                        font_id: egui::TextStyle::Small.resolve(ui.style()),
+                        color: theme::INK_DIM,
+                        valign: egui::Align::Center,
+                        ..Default::default()
+                    },
+                );
+            }
+            let whole = match label.sub.is_empty() {
+                true => title.clone(),
+                false => format!("{title}\n{}", label.sub),
+            };
             if ui
-                .add(
-                    egui::Label::new(egui::RichText::new(title).color(theme::ACCENT))
-                        .truncate()
-                        .sense(egui::Sense::click()),
-                )
+                .add(egui::Label::new(job).truncate().sense(egui::Sense::click()))
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text(format!("open {points_at} {raw}"))
+                .on_hover_text(format!("{whole}\n\nopen {points_at} {raw}"))
                 .clicked()
             {
                 follow_reference(work, points_at, raw);
-            }
-            if !label.sub.is_empty() {
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(&label.sub)
-                            .small()
-                            .color(theme::INK_DIM),
-                    )
-                    .truncate(),
-                );
             }
         }
         None => {
