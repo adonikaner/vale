@@ -44,6 +44,10 @@
 //! lamps.rs      light from additive emitters (a torch, a brazier, a spell
 //!               landing) on the world around them
 //! stars.rs      the star field, which does not move
+//! clouds.rs     the cloud layer the client generates, on its dome over the
+//!               camera
+//! skybox.rs     the LightSkybox models a light names, drawn around the camera
+//!               at the light's weight
 //! weather.rs    the rain, the snow and the sand the server states, drawn as
 //!               the 1.12.1 client's three emitters
 //! celestial.rs  the sun and the two moons, which move across the sky
@@ -76,12 +80,15 @@
 //! `embedded_asset!` resolves a path against the directory of the file that
 //! calls it. The shaders' asset URIs are therefore
 //! `embedded://vale_client/render/shaders/*.wgsl`. Moving the `shaders/`
-//! directory, or one of the three modules that embed them (`models`, `sky`,
-//! `terrain`), breaks the path at run time, as a shader handle that never
-//! resolves, and not at compile time as a missing file.
+//! directory, or any module that embeds one (`sky`, `terrain`, `stars`,
+//! `celestial`, `clouds`, `skybox` and others; `models` embeds its own from
+//! `models/shaders/`), breaks the path at run time, as a shader handle that
+//! never resolves, and not at compile time as a missing file. The URIs are
+//! listed in [`shader`], and its test checks each one.
 
 pub mod axes;
 pub mod celestial;
+pub mod clouds;
 pub mod decals;
 pub mod doodads;
 pub mod focus;
@@ -116,6 +123,7 @@ pub mod selection;
 pub mod shadows;
 pub mod ships;
 pub mod sky;
+pub mod skybox;
 pub mod stars;
 pub mod weather;
 pub mod terrain;
@@ -138,7 +146,7 @@ impl bevy::app::Plugin for RenderPlugins {
         // Which world layers are drawn. Each pass reads it in a system in its
         // own file; see [`tuning`] for why one central switch would conflict
         // with the three passes that decide their own visibility. Registered
-        // in every build: the resource is a dozen bools and the systems that
+        // in every build: the resource is twenty bools and the systems that
         // read it exist for other reasons. What `diagnostics` removes is the
         // window that sets it.
         app.init_resource::<tuning::WorldTuning>();
@@ -164,11 +172,15 @@ impl bevy::app::Plugin for RenderPlugins {
             // Also grouped here, as a grade over what these produce: the one
             // deliberate deviation from the 1.12.1 client in this directory.
             // See [`night`]: it is the identity in daylight, so it changes
-            // nothing about the three above until the light is dark.
+            // nothing about the sky passes above it until the light is dark.
             (
                 sky::SkyPlugin,
                 stars::StarPlugin,
                 celestial::CelestialPlugin,
+                // The cloud layer and the skybox models, which read the
+                // resolved light as the three above do.
+                clouds::CloudPlugin,
+                skybox::SkyboxPlugin,
                 night::NightPlugin,
                 // The lights that the night makes visible. They run after the
                 // particle pass by a system ordering that the lamp module
@@ -319,11 +331,13 @@ pub mod shader {
     pub const M2_PREPASS_VERTEX: &str =
         "embedded://vale_client/render/models/shaders/m2_prepass_vertex.wgsl";
     pub const CELESTIAL: &str = "embedded://vale_client/render/shaders/celestial.wgsl";
+    pub const CLOUDS: &str = "embedded://vale_client/render/shaders/clouds.wgsl";
     pub const PRESENT: &str = "embedded://vale_client/render/shaders/present.wgsl";
     pub const GLOW_BOX4: &str = "embedded://vale_client/render/shaders/glow_box4.wgsl";
     pub const GLOW_GAUSS4: &str = "embedded://vale_client/render/shaders/glow_gauss4.wgsl";
     pub const GLOW_COMBINE: &str = "embedded://vale_client/render/shaders/glow_combine.wgsl";
     pub const SKY: &str = "embedded://vale_client/render/shaders/sky.wgsl";
+    pub const SKYBOX: &str = "embedded://vale_client/render/shaders/skybox.wgsl";
     pub const STARS: &str = "embedded://vale_client/render/shaders/stars.wgsl";
     pub const TERRAIN: &str = "embedded://vale_client/render/shaders/terrain.wgsl";
     pub const WEATHER: &str = "embedded://vale_client/render/shaders/weather.wgsl";
@@ -362,11 +376,13 @@ mod tests {
     #[test]
     fn the_shader_uris_are_the_paths_the_macro_registers() {
         assert_eq!(shader::CELESTIAL, crate::embedded_shader_uri!("celestial.wgsl"));
+        assert_eq!(shader::CLOUDS, crate::embedded_shader_uri!("clouds.wgsl"));
         assert_eq!(shader::PRESENT, crate::embedded_shader_uri!("present.wgsl"));
         assert_eq!(shader::GLOW_BOX4, crate::embedded_shader_uri!("glow_box4.wgsl"));
         assert_eq!(shader::GLOW_GAUSS4, crate::embedded_shader_uri!("glow_gauss4.wgsl"));
         assert_eq!(shader::GLOW_COMBINE, crate::embedded_shader_uri!("glow_combine.wgsl"));
         assert_eq!(shader::SKY, crate::embedded_shader_uri!("sky.wgsl"));
+        assert_eq!(shader::SKYBOX, crate::embedded_shader_uri!("skybox.wgsl"));
         assert_eq!(shader::STARS, crate::embedded_shader_uri!("stars.wgsl"));
         assert_eq!(shader::TERRAIN, crate::embedded_shader_uri!("terrain.wgsl"));
         assert_eq!(shader::WEATHER, crate::embedded_shader_uri!("weather.wgsl"));

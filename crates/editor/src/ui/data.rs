@@ -125,8 +125,8 @@
 //! ## Field widths
 //!
 //! [`LABEL`] and [`VALUE`] set the label column and the common value width. A
-//! small-text label followed by a default-width `DragValue` on each line gave
-//! sixty rows of grey 11-point text with no alignment, which was hard to read.
+//! small-text label followed by a default-width `DragValue` on each line makes
+//! sixty rows of grey 11-point text with no alignment, which is hard to read.
 //! The form uses a label column wide enough for the longest name in the schema,
 //! values at a common width, and rows tall enough to click. The field index and
 //! what the schema knows about the column are in the label's tooltip rather
@@ -349,9 +349,6 @@ fn signed(raw: u32) -> String {
     }
 }
 
-/// Append `.blp` to a table's texture path unless it already has it. The
-/// tables store paths without an extension and the client appends it. See
-/// `ui::framexml::decode_rgba`, which applies the same rule in another crate.
 /// The archive path of a spell icon by its `SpellIcon` row id, or `None` for
 /// id 0 and an id no row has. Shared with the reference picker's spell rows.
 ///
@@ -381,6 +378,9 @@ pub(super) fn spell_icon_path(
     Some(with_blp(&path))
 }
 
+/// Append `.blp` to a table's texture path unless it already has it. The
+/// tables store paths without an extension and the client appends it. See
+/// `ui::framexml::decode_rgba`, which applies the same rule in another crate.
 fn with_blp(path: &str) -> String {
     match path.to_ascii_lowercase().ends_with(".blp") {
         true => path.to_string(),
@@ -1010,8 +1010,8 @@ fn form(
             .table(&table_name)
             .and_then(|table| table.u32_at(record, 0));
         // The preview pane has a minimum width, `STAGE_FLOOR`, and the chain
-        // gets the rest. A fixed 480-point chain left the preview a sliver on a
-        // 1280-wide window.
+        // gets the rest. A fixed 480-point chain left the preview too narrow to
+        // use on a 1280-wide window.
         let here = ui.available_width();
         let chain = CHAIN_WIDTH.min((here - STAGE_FLOOR).max(300.0));
         egui::Panel::left("storyboard-chain")
@@ -1558,9 +1558,9 @@ fn taught_by(ui: &mut egui::Ui, work: &mut Workspace<'_>, spell: u32) {
     if let Some(id) = follow {
         follow_reference(work, "Spell", id);
     }
-    // A trainer's list wants an instant one. A spell with only a teaching
-    // spell that has a cast time, which is the kind a book casts, is offered
-    // an instant one beside it.
+    // A trainer's list needs an instant teaching spell. A spell whose only
+    // teaching spell has a cast time, as the teaching spell a book casts has,
+    // is offered an instant one beside it.
     // The command's label says which, and is `None` when an instant one
     // exists.
     let offered = work
@@ -2214,7 +2214,9 @@ fn head(
     }
 }
 
-/// `Used by 9 spells: Fireball, Fireball, … · 2 kits` — clickable.
+/// The line naming the rows that point at this one, grouped by table, such as
+/// `Used by 9 spells: Fireball, Fireball, … · 2 kits`. Each name is a link.
+/// Shows a note instead when no row of an open table points here.
 fn used_by_line(ui: &mut egui::Ui, work: &mut Workspace<'_>, table_name: &str, id: u32) {
     let uses = work.browser.used_by(work.session, table_name, id);
     if uses.is_empty() {
@@ -2737,7 +2739,7 @@ fn reference(
     // and `-1`. Drawn as the `u32` it is read as, `-1` appears as
     // `4294967295` in the id box. The kits hold many of these, because
     // `blank_defaults` and the shipped rows both write `-1`. The label beside
-    // the box says "none" for it, and the signed box now agrees.
+    // the box says "none" for it, and the signed box shows `-1` to match.
     let mut value = raw as i32;
     if number(ui, &mut value).changed() {
         write(work, table_name, record, column, value as u32);
@@ -2773,6 +2775,23 @@ fn reference(
         let ctx = ui.ctx().clone();
         run_command(&ctx, work, table_name, record, Command::LookLike);
     }
+    // Before the row's name, which is long enough to push a button off the
+    // panel.
+    if points_at == "LightParams"
+        && raw != 0
+        && raw != u32::MAX
+        && ui
+            .small_button("copy")
+            .on_hover_text(
+                "copy this LightParams row with its 18 colour bands and 6 float bands, and                  set this field to the copy's id; other lights that use the original keep it",
+            )
+            .clicked()
+    {
+        if let Some(id) = new_light_params(work, raw, Some((table_name, record, column.field))) {
+            work.browser.forget_buffers();
+            follow_reference(work, points_at, id);
+        }
+    }
     let chain_table = matches!(
         points_at,
         "SpellVisual" | "SpellVisualKit" | "SpellVisualEffectName"
@@ -2795,6 +2814,20 @@ fn reference(
                 .small()
                 .color(theme::INK_FAINT),
         );
+        if points_at == "LightParams"
+            && ui
+                .small_button("+ new")
+                .on_hover_text(
+                    "create a LightParams row with its 18 colour bands and 6 float bands,                      copied from this light's clear LightParams (or from the Eastern Kingdoms                      default light's), and set this field to its id",
+                )
+                .clicked()
+        {
+            let from = light_params_to_copy(work, table_name, record);
+            if let Some(id) = new_light_params(work, from, Some((table_name, record, column.field))) {
+                work.browser.forget_buffers();
+                follow_reference(work, points_at, id);
+            }
+        }
         if chain_table
             && ui
                 .small_button("+ new")
@@ -2839,10 +2872,17 @@ fn reference(
                 true => format!("{points_at} {raw}"),
                 false => label.title.clone(),
             };
+            // A label that truncates rather than a `Link`, which keeps its
+            // full width: a long row name after the id box and the buttons
+            // made the row wider than the inspector, and the right-docked
+            // panel then grew past its own edge.
             if ui
-                .add(egui::Link::new(
-                    egui::RichText::new(title).color(theme::ACCENT),
-                ))
+                .add(
+                    egui::Label::new(egui::RichText::new(title).color(theme::ACCENT))
+                        .truncate()
+                        .sense(egui::Sense::click()),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(format!("open {points_at} {raw}"))
                 .clicked()
             {
@@ -2906,6 +2946,45 @@ fn reference(
             );
         }
     }
+}
+
+/// Make a `LightParams` row copied from `from`, with its bands, through
+/// [`tables::copy_light_params`], opening the two band tables first. Says what
+/// it did on the status line. Returns the new row's id.
+fn new_light_params(
+    work: &mut Workspace<'_>,
+    from: u32,
+    assign: Option<(&str, usize, usize)>,
+) -> Option<u32> {
+    for table in ["LightParams", "LightIntBand", "LightFloatBand"] {
+        if !work.session.open_table(work.assets, table) {
+            work.session.status = format!("{table}.dbc is not open yet; try again");
+            return None;
+        }
+    }
+    let made = tables::copy_light_params(work.session, from, assign);
+    work.session.status = match made {
+        Some(id) => format!("created LightParams {id} with its bands, copied from LightParams {from}"),
+        None => "could not create a LightParams row".to_string(),
+    };
+    made
+}
+
+/// What a new `LightParams` row on a light's form copies: the light's own
+/// clear `LightParams`, or, when that is empty too, the Eastern Kingdoms
+/// default light's (`Light` row 1), which every map without a light of its own
+/// is lit by.
+fn light_params_to_copy(work: &Workspace<'_>, table_name: &str, record: usize) -> u32 {
+    use vale_assets::tables::light::light_field;
+    let Some(lights) = work.session.table("Light") else {
+        return 0;
+    };
+    let own = (table_name == "Light")
+        .then(|| lights.u32_at(record, light_field::PARAMS_CLEAR))
+        .flatten()
+        .filter(|&id| id != 0);
+    own.or_else(|| lights.row_of(1).and_then(|row| lights.u32_at(row, light_field::PARAMS_CLEAR)))
+        .unwrap_or(0)
 }
 
 /// A dot saying whether the archives hold a model, with the reason on hover.
@@ -3167,9 +3246,9 @@ fn preview_of(
 /// press, Enter or Use writes it to the field. Answers whether the dialog
 /// closes.
 ///
-/// A list of names cannot be chosen from when the names are not what is
-/// being chosen: a visual is labelled by the spells that use it and a kit by
-/// its models' names, and what a person wants to know is what it looks like.
+/// A list of labels does not identify these rows: a visual is labelled by the
+/// spells that use it and a kit by its models' names, and a person choosing
+/// one needs to see what it looks like.
 #[allow(clippy::too_many_arguments)]
 fn pick_previewing(
     ui: &mut egui::Ui,
@@ -3566,6 +3645,17 @@ pub(super) fn run_command(
         }
         // The shell gives the area to the Areas tool and switches to it.
         Command::PaintArea => work.browser.paint_area = Some(id),
+        // A `LightParams` row is copied with its bands, which no column
+        // points at; see `tables::copy_light_params`.
+        Command::Clone if table == "LightParams" => {
+            if let Some(copy) = new_light_params(work, id, None) {
+                if here {
+                    if let Some(at) = work.session.table(table).and_then(|t| t.row_of(copy)) {
+                        work.browser.open_row(at);
+                    }
+                }
+            }
+        }
         Command::Clone => {
             if let Some(at) = tables::clone_row(work.session, table, record) {
                 if here {

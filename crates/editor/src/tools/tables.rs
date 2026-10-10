@@ -31,8 +31,8 @@
 //!
 //! A table that `vale_assets::tables::schema` describes is drawn as named,
 //! grouped, typed fields. A table without a schema is drawn as numbered fields
-//! with guessed types, which is what `vale dbc <Table>` prints. That is less
-//! useful than a schema, and more useful than refusing to open the table.
+//! with guessed types, which is what `vale dbc <Table>` prints. That shows
+//! less than a schema does, but the table can still be opened.
 //!
 //! ## Which workspace reaches which table
 //!
@@ -957,8 +957,9 @@ pub fn describe(
         // reads, and field 4 is the first of the eight locale columns holding
         // the map's display name.
         "Map" => (text(1), text(4)),
-        // A skill line is named by its own name, and its heading on the
-        // skills panel says what kind of skill it is.
+        // A skill line is named by its own name. Its second line is the name
+        // of its `SkillLineCategory` row, the heading it is listed under on
+        // the skills panel.
         "SkillLine" => {
             let category = session
                 .table("SkillLineCategory")
@@ -1287,7 +1288,8 @@ pub const TAXI_TABS: [(&str, &str); 3] = [
 /// The trigger tool's one table. It keeps the viewport, so no tab is drawn.
 pub const TRIGGER_TABS: [(&str, &str); 1] = [("Triggers", "AreaTrigger")];
 
-/// …and the graveyard tool's.
+/// The graveyard tool's one table. It also keeps the viewport, so no tab is
+/// drawn.
 pub const SAFE_LOC_TABS: [(&str, &str); 1] = [("Graveyards", "WorldSafeLocs")];
 
 /// The spell workspace's tabs: the spell chain in the order a cast reads it,
@@ -1750,6 +1752,95 @@ pub fn add_light(
     let at = push_row(session, "Light", &numbers, &[]);
     session.history.end();
     at
+}
+
+/// A new `LightParams` row copied from row `from`, with its 18 `LightIntBand`
+/// and 6 `LightFloatBand` rows, as one undo entry. When `assign` names a
+/// reference, `(table, record, field)`, that field is pointed at the new row in
+/// the same entry. Returns the new row's id.
+///
+/// No column points at a band: band `b` of params `p` is the row whose id is
+/// `(p - 1) * 18 + b + 1` (and `* 6` for the float bands; see
+/// [`vale_assets::tables::light::int_band_row`]). So the generic row copy
+/// gives a params row with no bands, which the client draws with the colours
+/// of whatever light it lies over. This copies the bands to the ids the new row
+/// owns. The new id is the next one above every `LightParams` id whose band ids
+/// are all free; a band the source does not have is written as a row with no
+/// keys. `from` that names no row copies a blank row with the shipped rows'
+/// usual glow and water opacities.
+///
+/// All three tables must be open; `None` when one is not.
+pub fn copy_light_params(
+    session: &mut EditSession,
+    from: u32,
+    assign: Option<(&str, usize, usize)>,
+) -> Option<u32> {
+    use vale_assets::tables::light::{float_band_row, int_band_row, BANDS_PER_PARAMS, FLOAT_BANDS_PER_PARAMS};
+    const PARAMS: &str = "LightParams";
+    const INT: &str = "LightIntBand";
+    const FLOAT: &str = "LightFloatBand";
+    let bands = |params: u32| {
+        let ints = (0..BANDS_PER_PARAMS).filter_map(move |b| Some((INT, int_band_row(params, b)?)));
+        let floats =
+            (0..FLOAT_BANDS_PER_PARAMS).filter_map(move |b| Some((FLOAT, float_band_row(params, b)?)));
+        ints.chain(floats)
+    };
+    let mut id = session.table(PARAMS)?.max_id().checked_add(1)?;
+    session.table(INT)?;
+    session.table(FLOAT)?;
+    while bands(id).any(|(table, row)| session.table(table).is_some_and(|t| t.row_of(row).is_some())) {
+        id = id.checked_add(1)?;
+    }
+
+    session.history.begin("New LightParams");
+    // The params row: the source's bytes, or a blank row with 0.5 glow and
+    // the water opacities 0.5, 1, 0.75 and 1, which most shipped rows hold.
+    let params = session.tables.get_mut(PARAMS)?;
+    let mut bytes = match params.row_of(from) {
+        Some(record) => params.record_bytes(record)?.to_vec(),
+        None => {
+            let mut blank = params.blank_record(id);
+            for (field, value) in [(4, 0.5f32), (5, 0.5), (6, 1.0), (7, 0.75), (8, 1.0)] {
+                if let Some(slot) = blank.get_mut(field * 4..field * 4 + 4) {
+                    slot.copy_from_slice(&value.to_bits().to_le_bytes());
+                }
+            }
+            blank
+        }
+    };
+    bytes[..4].copy_from_slice(&id.to_le_bytes());
+    let at = params.push_record(&bytes)?;
+    let row = Row::added(params, at)?;
+    session.history.record_row(PARAMS, row);
+
+    // The bands, each copied to the id the new row owns.
+    for ((table, source), (_, target)) in bands(from).zip(bands(id)) {
+        let file = session.tables.get_mut(table)?;
+        let mut bytes = match file.row_of(source) {
+            Some(record) => file.record_bytes(record)?.to_vec(),
+            None => file.blank_record(target),
+        };
+        bytes[..4].copy_from_slice(&target.to_le_bytes());
+        let at = file.push_record(&bytes)?;
+        let row = Row::added(file, at)?;
+        session.history.record_row(table, row);
+    }
+    if let Some((table_name, record, field)) = assign {
+        if let Some(table) = session.tables.get_mut(table_name) {
+            if let Some(edit) = Cell::new(table, record, field, id) {
+                edit.apply(table);
+                session.history.record_cell(table_name, edit);
+            }
+        }
+    }
+    session.history.end();
+    for table in [PARAMS, INT, FLOAT] {
+        session.table_edited(table);
+    }
+    if let Some((table_name, _, _)) = assign {
+        session.table_edited(table_name);
+    }
+    Some(id)
 }
 
 /// A new sub-area of the zone `of` is, or is in, as one undo entry. It takes
@@ -2704,8 +2795,8 @@ pub fn open_tables(
     let Some(wanted) = tool.table() else {
         // Clear the stage here when no table tool is chosen. The panel sets
         // `showing`, and the panel is not drawn once the rail moves to a World
-        // tool, so without this the stage stayed up, the actors stayed in the
-        // world and the camera stayed locked on the storyboard's characters.
+        // tool. Without this the stage stays up, the actors stay in the world
+        // and the camera stays locked on the storyboard's characters.
         stage.close();
         return;
     };
@@ -2726,12 +2817,12 @@ pub fn open_tables(
         false => wanted.to_string(),
     };
     let followed_in = std::mem::take(&mut browser.followed_in);
-    // The back stack belongs to the workspace it was made in. Carried into
-    // another, `< back` opened the last workspace's tables under this one's
-    // tool: Zones showing SkillLineAbility, with no tab to leave by, since
-    // Zones has one table and draws no tabs. A follow from outside pushes the
-    // table the browser last showed, which is no more a way back, so it is
-    // cleared too.
+    // The back stack belongs to the workspace it was made in, and is cleared
+    // when the workspace changes. If it were kept, `< back` would open the
+    // last workspace's tables under this one's tool: Zones would show
+    // SkillLineAbility with no tab to leave by, since Zones has one table and
+    // draws no tabs. A follow from outside pushes the table the browser last
+    // showed, which is not a way back either, so it is cleared too.
     if pointed.as_deref() != Some(wanted) {
         browser.back.clear();
     }
@@ -2745,8 +2836,9 @@ pub fn open_tables(
         // It accepts any table, not only the tool's own tabs. The tabs are a
         // few of the tables; a table reached by following a reference
         // (`SpellCategory`, `SpellIcon`, `SpellRange`) has no tab but can be
-        // opened, and so can one with no schema. `--table` on one of those
-        // was once accepted and then ignored, which left the run on `Spell`.
+        // opened, and so can one with no schema. An earlier version accepted
+        // `--table` on one of those and then ignored it, which left the run on
+        // `Spell`.
         // A name that is not a table logs a warning, as `--without` does.
         match (args.table.as_deref(), browser.seeded) {
             (Some(table), false) => match table_named(table) {
@@ -2784,14 +2876,14 @@ pub fn open_tables(
     // Then open the subject's root table and its chain, one per frame, so no
     // single frame waits on all of them.
     //
-    // The root table is included deliberately. `chain_for` lists the tables a
-    // subject references and never the subject itself, so a browser opened
-    // directly on a table the root references (`--table SpellCategory`, or a
-    // followed reference) left `Spell` closed. Nothing appears broken in that
-    // state: the row and its fields draw, but the reverse index is built over
-    // the open tables only and finds nothing, so every category read `unused`
-    // while 136 of the 166 are used by 22,360 spells. The reverse index is
-    // only complete when every table that references the target is open.
+    // The root table is opened here because `chain_for` lists the tables a
+    // subject references and never the subject itself. Without this, a
+    // browser opened directly on a table the root references (`--table
+    // SpellCategory`, or a followed reference) leaves `Spell` closed. The row
+    // and its fields still draw, but the reverse index is built over the open
+    // tables only and finds nothing, so every category reads `unused` while
+    // 136 of the 166 are used by 22,360 spells. The reverse index is only
+    // complete when every table that references the target is open.
     //
     // In the Tables workspace the root is the open table itself.
     let root: &str = match any {
@@ -2956,8 +3048,8 @@ mod tests {
     /// Every one of the six kit columns round-trips through its point. The
     /// lab's drop-down depends on this: it chooses a point, and
     /// `slot_for_point` must return the column. A point that returned `None`
-    /// would make a choice that changed nothing, which is the fault the
-    /// drop-down was reported with.
+    /// would make a choice that changed nothing. That was the fault reported
+    /// against the drop-down.
     #[test]
     fn the_six_kit_columns_and_their_points_agree_both_ways() {
         use vale_assets::tables::spell::fields::EFFECTS;
@@ -3085,6 +3177,62 @@ mod tests {
             }
         }
         session.table_revision += 1;
+    }
+
+    /// A new `LightParams` row is copied with its 18 int and 6 float bands,
+    /// each at the id the band arithmetic gives the new row, and a light's
+    /// column is pointed at it in the same entry, which one undo takes out.
+    #[test]
+    fn a_light_params_copy_brings_its_bands_to_the_ids_it_owns() {
+        let (mut session, install) = session("lightparams");
+        let mut params = empty(9);
+        add(&mut params, 5, &[(2, 3)], &[]);
+        let mut ints = empty(34);
+        for band in 0..18 {
+            add(&mut ints, 4 * 18 + band + 1, &[(1, 1), (18, 0x00AA_0000 + band)], &[]);
+        }
+        let mut floats = empty(34);
+        for band in 0..6 {
+            add(&mut floats, 4 * 6 + band + 1, &[(1, 1), (18, (band as f32).to_bits())], &[]);
+        }
+        let mut lights = empty(12);
+        add(&mut lights, 416, &[(1, 534), (7, 5)], &[]);
+        session.tables.insert("LightParams".to_string(), params);
+        session.tables.insert("LightIntBand".to_string(), ints);
+        session.tables.insert("LightFloatBand".to_string(), floats);
+        session.tables.insert("Light".to_string(), lights);
+
+        let depth = session.history.depth_done();
+        let id = copy_light_params(&mut session, 5, Some(("Light", 0, 7))).expect("a copy");
+        assert_eq!(id, 6);
+        assert_eq!(session.history.depth_done(), depth + 1, "one entry");
+        let params = &session.tables["LightParams"];
+        let row = params.row_of(6).expect("the new row");
+        assert_eq!(params.u32_at(row, 2), Some(3), "the skybox column is copied");
+        let ints = &session.tables["LightIntBand"];
+        for band in 0..18 {
+            let row = ints.row_of(5 * 18 + band + 1).expect("an int band");
+            assert_eq!(ints.u32_at(row, 18), Some(0x00AA_0000 + band));
+        }
+        let floats = &session.tables["LightFloatBand"];
+        for band in 0..6 {
+            let row = floats.row_of(5 * 6 + band + 1).expect("a float band");
+            assert_eq!(floats.u32_at(row, 18), Some((band as f32).to_bits()));
+        }
+        assert_eq!(session.tables["Light"].u32_at(0, 7), Some(6), "the light names the copy");
+
+        // A source with no row gives a blank row, still with all its bands.
+        let blank = copy_light_params(&mut session, 999, None).expect("a blank row");
+        assert_eq!(blank, 7);
+        assert!(session.tables["LightIntBand"].row_of(6 * 18 + 18).is_some());
+
+        undo(&mut session);
+        undo(&mut session);
+        assert_eq!(session.tables["LightParams"].record_count(), 1);
+        assert_eq!(session.tables["LightIntBand"].record_count(), 18);
+        assert_eq!(session.tables["LightFloatBand"].record_count(), 6);
+        assert_eq!(session.tables["Light"].u32_at(0, 7), Some(5));
+        let _ = std::fs::remove_dir_all(&install);
     }
 
     /// A spell is put in a skill line by a new ability row naming it, found

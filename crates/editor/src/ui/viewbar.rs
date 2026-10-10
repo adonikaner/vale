@@ -3,7 +3,7 @@
 //!
 //! ## Why the toggles are on a bar and not behind F4
 //!
-//! The eighteen layer subtractions, the seven diagnostic overlays and the three
+//! The twenty layer subtractions, the seven diagnostic overlays and the three
 //! frame settings that F5, F9 and F10 toggle are all on tabs of the client's
 //! debug window, where they are used during an investigation. In the editor
 //! they are used every few minutes to look at what is being edited: doodads
@@ -14,13 +14,14 @@
 //! A button draws the icon [`super::icons`] has under its switch label, and
 //! its short label from [`ART`] when there is none. No icons are shipped yet.
 //!
-//! ## The five groups
+//! ## The six groups
 //!
 //! ```text
 //! world    a subtraction: the layer is in the frame, and this takes it out
 //! overlay  an addition: not in the frame at all, drawn on top of it
 //! server   the server's navmesh, which is the editor's own overlay
 //! ground   the guides drawn on the terrain: one button that opens a menu
+//! camera   the editor camera's top-down map view
 //! frame    how the frame is produced: the three settings F5, F9 and F10 toggle
 //! ```
 //!
@@ -53,10 +54,10 @@
 //!
 //! ## A lit button is one moved off its default
 //!
-//! Sixteen of the eighteen layer switches default to on, so lighting every on
-//! button would light sixteen and show nothing. The accent marks a button that
-//! is not in its default state, and the label's or icon's brightness shows on
-//! and off.
+//! Nineteen of the twenty layer switches default to on in the editor, so
+//! lighting every on button would light nineteen and show nothing. The accent
+//! marks a button that is not in its default state, and the label's or icon's
+//! brightness shows on and off.
 //! The status line prints the same state as command-line flags.
 //!
 //! The default is the editor's own, not the client's:
@@ -130,12 +131,14 @@ const PICTURE: f32 = 24.0;
 /// by. `short` is drawn when the switch has no icon.
 ///
 /// A label absent from this table is drawn from [`initials`].
-pub const ART: [(&str, &str); 29] = [
+pub const ART: [(&str, &str); 31] = [
     // --- the world, in the order the frame is built ---
     ("fog", "FOG"),
     ("sky dome", "SKY"),
     ("stars", "STR"),
     ("sun and moons", "SUN"),
+    ("clouds", "CLD"),
+    ("skyboxes", "SBX"),
     ("terrain", "TER"),
     ("water", "WTR"),
     ("specular", "SPC"),
@@ -248,8 +251,8 @@ pub struct Bar<'a> {
 }
 
 pub fn draw(ui: &mut Ui, bar: &mut Bar) {
-    // Wrapped, not scrolled: twenty-nine buttons at 32 points with 3 between
-    // them are about 1,015 points before the rules and `reset`, which fits one
+    // Wrapped, not scrolled: thirty-two buttons at 32 points with 3 between
+    // them are about 1,120 points before the rules and `reset`, which fits one
     // row on a full-width window, and a narrow window still shows all of them
     // on two rows rather than clipping the last ones.
     ui.horizontal_wrapped(|ui| {

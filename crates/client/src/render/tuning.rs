@@ -56,8 +56,8 @@ use bevy::prelude::*;
 /// marks the resource changed whether or not the value changed, so a panel
 /// that wrote its checkboxes directly into the resource would trigger
 /// [`switch`]'s change test on every frame it was open: a pass over every
-/// doodad batch in the world, sixty times a second, from the instrument that
-/// measures such costs. The panel edits a copy and compares.
+/// doodad batch in the world, sixty times a second, added by the panel that is
+/// used to measure such costs. The panel edits a copy and compares.
 #[derive(Resource, Clone, PartialEq, Eq)]
 pub struct WorldTuning {
     /// `Light.dbc`'s distance fog, on the world camera. Off shows the streaming
@@ -71,6 +71,12 @@ pub struct WorldTuning {
     pub stars: bool,
     /// The sun and the two moons on their arcs.
     pub celestial: bool,
+    /// The cloud layer the 1.12.1 client generates over the sky; see
+    /// `render::clouds`.
+    pub clouds: bool,
+    /// The `LightSkybox` models a light names; see `render::skybox`. Off also
+    /// stops them hiding the rest of the sky.
+    pub skyboxes: bool,
     /// The nine tiles of ground. A switch of its own rather than the tile's
     /// root entity: doodads and buildings are children of the tile they stand
     /// on, so hiding the root would hide the whole world and not identify
@@ -141,6 +147,8 @@ impl Default for WorldTuning {
             sky_dome: true,
             stars: true,
             celestial: true,
+            clouds: true,
+            skyboxes: true,
             terrain: true,
             water: true,
             specular: true,
@@ -165,11 +173,13 @@ impl Default for WorldTuning {
 /// switch cannot leave it off the panel. The order is the order the frame is
 /// built in: the sky, then the ground, then what stands on it, then the
 /// interface over everything.
-pub const SWITCHES: [(&str, fn(&mut WorldTuning) -> &mut bool); 18] = [
+pub const SWITCHES: [(&str, fn(&mut WorldTuning) -> &mut bool); 20] = [
     ("fog", |t| &mut t.fog),
     ("sky dome", |t| &mut t.sky_dome),
     ("stars", |t| &mut t.stars),
     ("sun and moons", |t| &mut t.celestial),
+    ("clouds", |t| &mut t.clouds),
+    ("skyboxes", |t| &mut t.skyboxes),
     ("terrain", |t| &mut t.terrain),
     ("water", |t| &mut t.water),
     ("specular", |t| &mut t.specular),
@@ -232,8 +242,8 @@ impl WorldTuning {
 ///
 /// The pass over the whole population runs only when the resource changed.
 /// The doodad batches alone are thousands of entities, and writing
-/// `Visibility` on all of them every frame for a checkbox nobody clicked is
-/// the kind of cost this module measures rather than adds.
+/// `Visibility` on all of them every frame for a checkbox nobody clicked would
+/// add a per-frame cost of the kind this module exists to measure.
 ///
 /// That test alone is not enough, because the world streams. With the doodads
 /// turned off, every placement that loads after the click spawns visible, so

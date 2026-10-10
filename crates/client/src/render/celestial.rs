@@ -1,62 +1,59 @@
-//! **The sun and the two moons** — the things in this sky that move.
+//! The sun and the two moons, the objects in the sky that move.
 //!
-//! `sky.rs` draws the gradient, `stars.rs` the field hanging in it, and both are
-//! fixed: the dome is a function of the hour and the star model has no skeleton
-//! and no rotation anywhere in the client (see that module's retraction). What
-//! actually moves in 1.12's sky is three sprites, and this is them.
+//! `sky.rs` draws the gradient and `stars.rs` the star field, and both are
+//! fixed: the dome is a function of the hour, and the 1.12.1 client does not
+//! rotate the star model, which has no skeleton (see `stars.rs`). What moves
+//! in 1.12's sky is three sprites, drawn by this module. The cloud layer is
+//! [`crate::render::clouds`] and the skybox models are
+//! [`crate::render::skybox`]; an opaque skybox hides the sun and the moons
+//! (see [`crate::render::sky::SkyCover`]).
 //!
-//! ## Why they could not be drawn before, and what changed
+//! ## Position tracks
 //!
-//! The previous round drew the stars and deliberately left these out, on the
-//! grounds that a sun nailed to one direction all afternoon is the
-//! "renders plausibly rather than failing" trap in its purest form. That was the
-//! right call and the missing piece was the client's per-frame celestial
-//! update, which evaluates a
-//! polar track and an azimuth track per body with the same little four-key
-//! evaluator the star fade already came out of. The tracks are transcribed in
-//! [`vale_assets::tables::light::celestial`], key by key.
+//! Each body's position at an hour is given by two tracks, a polar angle and
+//! an azimuth, each interpolated over four keys in the same way as the star
+//! fade. The tracks, key by key, are in
+//! [`vale_assets::tables::light::celestial`].
 //!
-//! So nothing here is invented. The sun rises at 05:30, climbs to within five
-//! degrees of the zenith at noon and sets at 21:30; the moon runs the opposite
-//! arc; both keep a **constant bearing of 45°**, which is the one thing about
-//! this sky nobody would have guessed and which agrees to five degrees with the
-//! azimuth `vale sun` measured off the ground's own baked `MCSH` shadows.
-//! The blue moon is the only body whose bearing moves at all, and it keeps its
-//! own 1.7-day calendar.
+//! The sun rises at 05:30, climbs to within five degrees of the zenith at noon
+//! and sets at 21:30; the moon runs the opposite arc. Both keep a constant
+//! bearing of 45°, which agrees to five degrees with the azimuth `vale sun`
+//! measured from the ground's own baked `MCSH` shadows. The blue moon is the
+//! only body whose bearing moves, and it keeps its own 1.7-day calendar.
 //!
-//! ## Where they are, and why that is not a mistake
+//! ## Distance and size
 //!
-//! **Twelve yards from the camera** ([`celestial::CELESTIAL_RADIUS`]), on a
-//! **one-yard square** — the sprite quad is four corners at ±0.5 — scaled by
-//! the body's own track. That puts the sun's
-//! disc at 4.8° across at noon and 9.5° at the horizon, and the moon at 8.3°,
+//! Each body is drawn twelve yards from the camera
+//! ([`celestial::CELESTIAL_RADIUS`]) on a one-yard square (the sprite quad's
+//! four corners are at ±0.5), scaled by the body's own track. That makes the
+//! sun's disc 4.8° across at noon and 9.5° at the horizon, and the moon 8.3°,
 //! which is why this game's moon looks the size it does.
 //!
-//! Twelve yards is inside the first tree, and it works for the same reason the
-//! 950-yard dome works: every sky surface writes its depth at the far plane, so
-//! what is in front of it is decided by the depth buffer rather than by any
-//! distance. See [`crate::render::sky::behind_the_world`], which is the whole
-//! of that rule.
+//! Twelve yards is nearer than most trees, and it works for the same reason
+//! the 950-yard dome works: every sky surface writes its depth at the far
+//! plane, so what is in front of it is decided by the depth buffer rather than
+//! by distance. See [`crate::render::sky::behind_the_world`], which defines
+//! that rule.
 //!
-//! ## What is deliberately not drawn
+//! ## What is not drawn
 //!
-//! **The two glares.** `Textures\sunGlare.blp` and `moonGlare.blp` are in the
+//! The two glares. `Textures\sunGlare.blp` and `moonGlare.blp` are in the
 //! archive and their visibility curves are measured
 //! ([`celestial::SUN_GLARE`], [`celestial::MOON_GLARE`]), and `vale sky`
-//! reports the sun's as the one sprite in the set that is *additive* — its
-//! transparent texels mean 0/0/0 where the three discs carry full-strength art
-//! under their masks. What is not read is the geometry: the glare object
-//! carries six constants (1.5151515, 4.0, 3.0, 20.0, 0.7, 0.5) that
-//! are plainly a screen-space flare rather than a billboard, and guessing at
-//! that is guessing at the brightest thing in the frame.
+//! reports the sun glare as the one additive sprite in the set: its
+//! transparent texels are 0/0/0, where the three discs carry full-strength art
+//! under their masks. The glare's geometry is not established. The 1.12.1
+//! client draws it as a screen-space flare rather than a billboard, and
+//! drawing it without that geometry would mean guessing at the brightest thing
+//! in the frame.
 //!
-//! **And the discs are not tinted by bands 8 and 9.** The two are read and
-//! carried ([`vale_assets::tables::light::Atmosphere::sun_disc`] and `sun_halo`) and
-//! `vale sky` prints them across the day; what consumes them in the real
-//! client is not established, and band 8 at map 0's noon is 77/77/77 — a disc
-//! multiplied by that is a third as bright, which would look like a bug in the
-//! blend rather than like a colour. So the sprites are drawn as the art states
-//! them and the two bands stay printed rather than applied.
+//! The discs are not tinted by bands 8 and 9. Both are read and carried
+//! ([`vale_assets::tables::light::Atmosphere::sun_disc`] and `sun_halo`), and
+//! `vale sky` prints them across the day, but how the 1.12.1 client uses them
+//! is not established. Band 8 at map 0's noon is 77/77/77, and a disc
+//! multiplied by that is a third as bright, which would look like a blend bug
+//! rather than a colour. The sprites are therefore drawn as the art states
+//! them, and the two bands are printed but not applied.
 
 use vale_assets::world::blp;
 use vale_assets::tables::light::celestial;
@@ -72,11 +69,10 @@ use bevy::shader::ShaderRef;
 
 /// The side of the sprite quad, in yards, before a body's own scale.
 ///
-/// **One**, and it is the client's rather than a size that looked right:
-/// the one quad every sky sprite is drawn on is four corners
-/// at ±0.5 in the billboard plane. Everything about how big the sun looks is
-/// therefore [`celestial::Body::size`] and [`celestial::CELESTIAL_RADIUS`], both
-/// of which are also the client's.
+/// One yard, which is the 1.12.1 client's size: every sky sprite is drawn on a
+/// quad with four corners at ±0.5 in the billboard plane. How big the sun looks
+/// is therefore set by [`celestial::Body::size`] and
+/// [`celestial::CELESTIAL_RADIUS`], both of which are also the client's.
 const SPRITE_QUAD: f32 = 1.0;
 
 /// The sun and the moons: three sprites, one material and two systems.
@@ -87,30 +83,31 @@ impl Plugin for CelestialPlugin {
         embedded_asset!(app, "shaders/celestial.wgsl");
         app.add_plugins(MaterialPlugin::<CelestialMaterial>::default())
             .init_resource::<CelestialState>()
-            // **Behind a condition, because it is a startup job on an Update
-            // schedule.** It reads one enum and returns for the whole of every
-            // session after the archives answer — but the return is on the
-            // first line of a *body*, so four `ResMut<Assets<_>>` and a
-            // `Commands` were being fetched sixty times a second to do nothing.
-            // Tracy self-time at the floor framing: 0.073 ms a frame. The same
-            // finding as `lua::host`'s two loaders, in a different directory.
+            // Behind a run condition, because it is a startup job on an
+            // `Update` schedule. It reads one enum and returns for the rest of
+            // every session once the archives answer, but a return in the
+            // system body still fetched four `ResMut<Assets<_>>` and a
+            // `Commands` sixty times a second to do nothing. Tracy self-time
+            // at the floor framing: 0.073 ms a frame. The same finding applied
+            // to `lua::host`'s two loaders.
             .add_systems(Update, load.run_if(nothing_loaded_yet))
             // Placed relative to the camera, so after the camera has been
-            // placed — the same anchor the two domes take, and for the same
-            // reason: a frame behind and the sun slides against the world as
-            // the character runs.
+            // placed: the same anchor the two domes use, for the same reason.
+            // One frame late, the sun slides against the world as the
+            // character runs.
             .add_systems(Update, follow_camera.after(crate::world::camera::place))
-            // The moon behind the clouds: the overcast writes the tint the
-            // material has carried since it was built — see [`overcast`].
+            // The weather fades the sun and the moons through the tint the
+            // material has carried since it was built; see [`overcast`].
             .add_systems(Update, overcast)
-            // …and the switch that takes all three off. Nothing else writes a
-            // body's visibility — `follow_camera` only moves them, and a body
-            // under the horizon is drawn and occluded by the ground rather than
-            // hidden — so this is the generic
-            // shape rather than a fold, as [`crate::render::tuning`] describes.
+            // The switch that takes all three off, which also hides them behind
+            // an opaque skybox; see [`crate::render::sky::SkyCover`]. Nothing
+            // else writes a body's visibility: `follow_camera` only moves them,
+            // and a body under the horizon is drawn and occluded by the ground
+            // rather than hidden.
             .add_systems(
                 Update,
-                crate::render::tuning::switch::<CelestialBody>(|tuning| tuning.celestial),
+                crate::render::sky::under_skybox::<CelestialBody>(|tuning| tuning.celestial)
+                    .after(crate::render::skybox::follow_the_light),
             );
         #[cfg(feature = "diagnostics")]
         app.add_systems(Update, report.run_if(crate::ui::report::watched));
@@ -122,16 +119,16 @@ impl Plugin for CelestialPlugin {
 #[cfg(feature = "diagnostics")]
 const SLOT: crate::ui::report::Slot = crate::ui::report::Slot(20);
 
-/// **Where the sun and the moons actually stand**, and whether the stars are
-/// drawn at all — both on the HUD, and both for the same reason.
+/// Where the sun and the moons are, and whether the stars are drawn, both on
+/// the HUD for the same reason.
 ///
-/// The star byte is the client's own (see [`crate::render::stars`]), so `off`
-/// here means the real client would not have drawn them either — "the stars are
-/// missing" and "the stars are correctly almost out at 22:36" look identical on
-/// screen. The elevations answer the same question one level along: a body
-/// below the horizon and a body that was never drawn look identical too, and at
-/// more than half the hours of the day one of the three is under the world. A
-/// negative elevation here is the correct answer and not a missing pass.
+/// The star byte is the 1.12.1 client's (see [`crate::render::stars`]), so
+/// `off` here means the 1.12.1 client would not draw them either: missing
+/// stars and stars correctly almost out at 22:36 look the same on screen. The
+/// elevations answer the same question for the bodies: a body below the
+/// horizon and a body that was never drawn also look the same, and for more
+/// than half the hours of the day one of the three is below the horizon. A
+/// negative elevation here is correct and does not mean a pass is missing.
 #[cfg(feature = "diagnostics")]
 fn report(
     clock: Res<crate::render::sky::WorldClock>,
@@ -166,34 +163,34 @@ fn report(
 #[derive(Component)]
 pub struct CelestialBody {
     body: &'static celestial::Body,
-    /// Whether this body reads the day's clock or its own calendar — the blue
-    /// moon is the one that does not, and forgetting that would put it exactly
-    /// on top of the white one, which looks entirely reasonable.
+    /// Whether this body reads the day's clock or its own calendar. The blue
+    /// moon uses its own; sampling it on the day's clock would put it exactly
+    /// on top of the white moon, which does not look obviously wrong.
     own_calendar: bool,
 }
 
 /// Whether the sprites have been asked for yet.
 ///
-/// Read on the main thread, on the same terms as the star dome's: three
-/// textures, once per session, against a loader queue that exists to keep a
-/// tile's hundred-odd models off the frame.
+/// Read on the main thread, for the same reason as the star dome: three
+/// textures, once per session, while the loader queue exists to keep a tile's
+/// hundred-odd models off the frame.
 #[derive(Resource, Default)]
 enum CelestialState {
     #[default]
     Unasked,
     Built,
-    /// A sky with no sun is a degradation and not an error, exactly as a
-    /// missing `LightParams` is. Reported once.
+    /// A sky with no sun is a degradation and not an error, in the same way as
+    /// a missing `LightParams`. Reported once.
     Failed,
 }
 
 /// One body's material: its sprite, and a colour to scale it by.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct CelestialMaterial {
-    /// White and opaque at every hour — see the module note on why bands 8 and
-    /// 9 are not applied here. It is a uniform rather than a constant in the
-    /// shader so that the round which does establish a fade has somewhere to
-    /// put it.
+    /// White, and opaque at every hour in clear weather; the weather sets its
+    /// alpha to `1 - storm` (see [`overcast`]). See the module note on why
+    /// bands 8 and 9 are not applied here. It is a uniform rather than a
+    /// constant in the shader so that it can be written at run time.
     #[uniform(0)]
     pub tint: Vec4,
     #[texture(1)]
@@ -206,9 +203,8 @@ impl Material for CelestialMaterial {
         crate::render::shader::CELESTIAL.into()
     }
 
-    /// **Alpha blended, and that is a measurement** — `vale sky` decodes each
-    /// sprite and reports the mean colour of the texels its alpha channel calls
-    /// empty. All three discs read bright there (the sun 255/255/167, the moon
+    /// Alpha blended, as measured: `vale sky` decodes each sprite and reports
+    /// the mean colour of the texels its alpha channel marks empty. All three discs read bright there (the sun 255/255/167, the moon
     /// 175/178/181, the blue moon 103/162/220), so they are cut-outs; adding
     /// them would paint their whole rectangle over the sky. The one additive
     /// sprite in the set is `sunGlare.blp` at 0/0/0, and it is not drawn.
@@ -216,9 +212,9 @@ impl Material for CelestialMaterial {
         AlphaMode::Blend
     }
 
-    /// See [`crate::render::sky::CELESTIAL_SORT`], which is where the whole of
-    /// this sky's transparent ordering is — and which is the fix for a moon
-    /// drawn on top of a lake.
+    /// See [`crate::render::sky::CELESTIAL_SORT`], which defines the sky's
+    /// transparent ordering and keeps the moon from being drawn on top of a
+    /// lake.
     fn depth_bias(&self) -> f32 {
         crate::render::sky::CELESTIAL_SORT
     }
@@ -247,17 +243,17 @@ impl Material for CelestialMaterial {
     }
 }
 
-/// Read the three sprites once and spawn a quad for each.
-/// Has the sky's art been asked for yet?
+/// Whether the sky's art has not been requested yet.
 ///
-/// Exactly [`load`]'s own first line, lifted into a run condition — the body
-/// keeps it, because a condition that drifts from the body it guards is either
-/// a system that runs and returns (the state this removes) or one that never
-/// runs at all (a sky with no sun in it).
+/// The same test as [`load`]'s first line, used as a run condition. The body
+/// keeps its own copy of the test, because a condition that differs from the
+/// body it guards gives either a system that runs and returns (the cost this
+/// removes) or one that never runs (a sky with no sun).
 fn nothing_loaded_yet(state: Res<CelestialState>) -> bool {
     matches!(*state, CelestialState::Unasked)
 }
 
+/// Read the three sprites once and spawn a quad for each.
 fn load(
     mut state: ResMut<CelestialState>,
     assets: Res<crate::assets::GameAssets>,
@@ -313,25 +309,9 @@ fn load(
     *state = CelestialState::Built;
 }
 
-/// Put each body where the hour says, facing the camera.
-///
-/// The client's celestial update in five lines: evaluate the two tracks, turn
-/// them into a unit vector, push it out to [`celestial::CELESTIAL_RADIUS`] and
-/// add the camera's own position. The billboard and the scale are the only
-/// parts of this the client does elsewhere.
-///
-/// **The camera's `Transform`, not its `GlobalTransform`** — `sky.rs`'s own
-/// `follow_camera` carries the whole of why, and this is the pass it was
-/// visible on. A sprite twelve yards from the eye placed at *last* frame's eye
-/// is a sprite at the wrong **angle**, and under a mouse-look drag the eye
-/// swings yards in a frame: the sun and the moons jumped about the sky with
-/// every movement of the camera, which is exactly the thing they are not
-/// supposed to do.
-/// **The overcast hides the sun and the moons**, exactly as it hides the
-/// stars: the weather's storm mix is the only cloud cover this client has, and
-/// a full moon shining through a blizzard was half of "clouds still don't
-/// exist". Quantised to a byte and written only when it moves, like the star
-/// dome's own fade.
+/// Fade the sun and the moons by the weather: their alpha is `1 - storm`, the
+/// 1.12.1 client's rule, which it applies to the star field too. Quantised to a
+/// byte as the client stores it, and written only when the byte moves.
 fn overcast(
     weather: Res<crate::render::weather::WeatherState>,
     bodies: Query<&MeshMaterial3d<CelestialMaterial>, With<CelestialBody>>,
@@ -351,6 +331,19 @@ fn overcast(
     }
 }
 
+/// Put each body where the hour says, facing the camera.
+///
+/// Evaluate the body's two tracks, turn them into a unit vector, push it out
+/// to [`celestial::CELESTIAL_RADIUS`] and add the camera's own position, which
+/// is how the 1.12.1 client places the bodies. The billboard and the scale are
+/// applied separately.
+///
+/// This reads the camera's `Transform`, not its `GlobalTransform`; `sky.rs`'s
+/// own `follow_camera` explains why, and this is the pass where the error was
+/// visible. A sprite twelve yards from the eye, placed at last frame's eye
+/// position, is at the wrong angle, and under a mouse-look drag the eye moves
+/// yards in a frame: the sun and the moons jumped about the sky with every
+/// movement of the camera.
 fn follow_camera(
     clock: Res<crate::render::sky::WorldClock>,
     camera: Query<&Transform, With<crate::world::camera::WorldCamera>>,
@@ -365,9 +358,9 @@ fn follow_camera(
     let eye = eye.translation;
     for (body, mut transform) in &mut bodies {
         // The blue moon's tracks are sampled on its own 1.7-day cycle; day 0 is
-        // the epoch, since nothing on the wire gives this client the client's
-        // own day counter yet. It still crosses the sky correctly within a day,
-        // which is the visible half.
+        // the epoch, because nothing in the protocol gives this client the
+        // 1.12.1 client's day counter. It still crosses the sky correctly
+        // within a day, which is the visible part.
         let at = if body.own_calendar {
             celestial::blue_moon_fraction(0, clock.half_minutes)
         } else {
@@ -379,8 +372,8 @@ fn follow_camera(
         transform.translation = eye + direction * celestial::CELESTIAL_RADIUS;
         transform.scale = Vec3::splat(body.body.size(at));
         // The quad's own normal is +Z and `looking_to` points -Z along its
-        // argument, so pointing it *away* from the camera is what turns its face
-        // toward one.
+        // argument, so pointing it away from the camera turns its face toward
+        // the camera.
         transform.rotation = Transform::default()
             .looking_to(direction, Vec3::Y)
             .rotation;
@@ -430,10 +423,9 @@ mod tests {
             .collect()
     }
 
-    /// **The sprites are placed relative to the camera and nowhere near the
-    /// world's origin**, which is the failure a static sky would produce and
-    /// which no count would show: a sun left at the origin is simply a sun a
-    /// long way off in one particular direction.
+    /// The sprites are placed relative to the camera, not near the world's
+    /// origin. A static sky would fail this way and no count would show it: a
+    /// sun left at the origin is a sun a long way off in one direction.
     #[test]
     fn every_body_is_hung_off_the_camera_at_the_clients_own_radius() {
         let mut app = app(DAY / 2);
@@ -452,9 +444,9 @@ mod tests {
         assert_eq!(seen, 3, "the sun and both moons");
     }
 
-    /// **Noon puts the sun overhead and the moon under the floor**, and midnight
-    /// swaps them. Bevy's +Y is up, so this is the one assertion that crosses
-    /// the axis conversion as well as the tracks — a transposed `to_bevy` would
+    /// Noon puts the sun overhead and the moon below the horizon, and midnight
+    /// swaps them. Bevy's +Y is up, so this is the one assertion that covers
+    /// the axis conversion as well as the tracks: a transposed `to_bevy` would
     /// leave every elevation in this project's own tests intact and put the sun
     /// on the horizon here.
     #[test]
@@ -468,15 +460,15 @@ mod tests {
         assert!(midnight[1] > 0.0, "and the moon: {midnight:?}");
     }
 
-    /// **The sprites follow the camera the frame it moves, not the frame
-    /// after.**
+    /// The sprites follow the camera in the frame it moves, not the frame
+    /// after.
     ///
     /// `camera::place` writes the camera's `Transform` in `Update`; Bevy
     /// propagates it into the `GlobalTransform` in `PostUpdate`. A pass ordered
-    /// after `place` that reads the *global* one therefore reads last frame's
-    /// eye however carefully it is ordered — and at twelve yards that is not a
-    /// position error, it is an **angle**: under a mouse-look drag the eye
-    /// swings yards in a frame and the sun jumps about the sky with it.
+    /// after `place` that reads the global transform therefore reads last
+    /// frame's eye regardless of ordering, and at twelve yards the error is an
+    /// angular one: under a mouse-look drag the eye moves yards in a frame and
+    /// the sun jumps about the sky with it.
     ///
     /// So this moves the `Transform` alone, leaves the stale `GlobalTransform`
     /// where it was, and asserts the sun went with the new one. Reading the
@@ -508,8 +500,8 @@ mod tests {
     }
 
     /// The blue moon keeps its own calendar, so at the hour the white one is
-    /// highest the two are **not** in the same place — which is exactly what a
-    /// blue moon sampled on the plain day fraction would look like.
+    /// highest the two are not in the same place, as they would be if the blue
+    /// moon were sampled on the plain day fraction.
     #[test]
     fn the_blue_moon_does_not_shadow_the_white_one() {
         let mut app = app(0);

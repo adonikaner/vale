@@ -1,37 +1,28 @@
-//! **The star field**, which is the one thing the game draws in its sky that
-//! this client can draw without guessing.
+//! The star field, drawn from `Stars.m2`.
 //!
-//! `sky.rs` draws the gradient — six colours out of `Light.dbc` on a dome — and
-//! for a long time that was the whole sky. What sat in the gap is everything the
-//! table's bands 8..12 are *for*: a sun disc, its halo, three cloud sheets, and,
-//! not in the table at all, the stars. This module is the last of those.
+//! `sky.rs` draws the gradient: six colours out of `Light.dbc` on a dome. The
+//! table's bands 8..12 are for a sun disc, its halo and three cloud sheets; the
+//! stars are not in the table at all.
 //!
-//! The sun and the moons are [`crate::render::celestial`], which was written a
-//! round later once their position tracks were known; this module
-//! is only the field they hang in.
+//! The sun and the moons are [`crate::render::celestial`], the cloud layer is
+//! [`crate::render::clouds`] and the skybox models are
+//! [`crate::render::skybox`]. This module is only the field behind them. An
+//! opaque skybox hides the field; see [`crate::render::sky::SkyCover`].
 //!
-//! ## What it costs when it is not up
+//! ## Cost when the stars are not up
 //!
-//! Nothing, and that is the client's own policy rather than an optimisation.
-//! The client stores the fade as `value * 254 + 1` in a byte and
-//! refuses to draw the dome at all below 2, so from 04:30 to 22:30 the pass is
-//! seven entities sitting at `Visibility::Hidden`. [`fade`] is the same rule:
-//! it writes only when the byte moves, which is a handful of times an hour.
+//! Nothing, and this follows the 1.12.1 client's rule rather than being an
+//! optimisation. The client stores the fade as `value * 254 + 1` in a byte and
+//! does not draw the dome at all below 2, so from 04:30 to 22:30 the pass is
+//! seven entities at `Visibility::Hidden`. [`fade`] applies the same rule: it
+//! writes only when the byte changes, which is a few times an hour.
 //!
-//! ## The dome does not turn, and that is the client's answer rather than ours
+//! ## The dome does not rotate
 //!
-//! **This is a retraction.** The previous note here said the real client wheels
-//! the field a quarter turn a day, off an accumulator. Read properly, that
-//! accumulator gains 0.25 *per second*, is clamped to 1.0 and is used to
-//! `mix` two values before quantising the result to a byte: it is the
-//! **four-second cross-fade between two `LightSkybox` models**, not a rotation,
-//! and it resets to zero at each end.
-//!
-//! Nothing else turns it either. The dome's own draw hands its
-//! scene node a zeroed vector, and `Stars.m2` carries no skeleton at all
-//! (`vale anim 'Environments\Stars\Stars.m2'` says so in one line), so there
-//! is no track for a rotation to live on. **The 1.12 sky moves by moving the
-//! sun and the moons across it**, which is [`crate::render::celestial`]; the
+//! The 1.12.1 client does not rotate the star dome, and `Stars.m2` carries no
+//! skeleton (`vale anim 'Environments\Stars\Stars.m2'` reports this in one
+//! line), so there is no track for a rotation. The 1.12 sky moves by moving
+//! the sun and the moons across it, which is [`crate::render::celestial`]; the
 //! field behind them is fixed.
 
 use vale_assets::tables::light::celestial;
@@ -49,14 +40,13 @@ use bevy::shader::ShaderRef;
 
 /// How far out the star dome is drawn, in yards.
 ///
-/// **Inside the gradient dome, and otherwise arbitrary.** It used to be picked
-/// to sit beyond the loaded terrain — which it never actually did, and which is
-/// why the field could be drawn over a far mountain; occlusion is now the
-/// far-plane depth rule's business
-/// ([`crate::render::sky::behind_the_world`]) rather than the radius's. What is
-/// left for the number is only that the dome is centred on the camera and has
-/// to be inside `sky::DOME_RADIUS`, so the gradient is behind the stars and not
-/// through them.
+/// Inside the gradient dome; otherwise the value is arbitrary. It was first
+/// chosen to sit beyond the loaded terrain, which it never did, so the field
+/// could be drawn over a far mountain. Occlusion is now handled by the
+/// far-plane depth rule ([`crate::render::sky::behind_the_world`]), not by the
+/// radius. The only remaining requirement is that the dome, centred on the
+/// camera, is inside `sky::DOME_RADIUS`, so the gradient is behind the stars
+/// and not in front of them.
 const STAR_RADIUS: f32 = 900.0;
 
 /// The star pass: a model, a material and one system.
@@ -67,11 +57,14 @@ impl Plugin for StarPlugin {
         embedded_asset!(app, "shaders/stars.wgsl");
         app.add_plugins(MaterialPlugin::<StarMaterial>::default())
             .init_resource::<StarDomeState>()
-            .add_systems(Update, (load, fade))
-            // Centred on the camera, so it moves *after* the camera has been
-            // placed — a frame behind and the whole sky slides against the
-            // world as the character runs. The same anchor `sky::follow_camera`
-            // takes, and for the same reason: nothing fails when it is missing.
+            .add_systems(
+                Update,
+                (load, fade.after(crate::render::skybox::follow_the_light)),
+            )
+            // Centred on the camera, so it moves after the camera has been
+            // placed; one frame late, the whole sky slides against the world
+            // as the character runs. The same anchor `sky::follow_camera`
+            // uses, for the same reason: nothing fails when it is missing.
             .add_systems(
                 Update,
                 follow_camera.after(crate::world::camera::place),
@@ -86,29 +79,31 @@ pub struct StarDome;
 
 /// Whether the model has been asked for yet, and what came back.
 ///
-/// **Read on the main thread rather than through the model loader**, which is
-/// the one place in this renderer that is allowed: it is 200 vertices and two
-/// 256x256 textures, exactly once per session, against a loader queue that
-/// exists to keep a *tile's* 130 models off the frame. Putting it there would
-/// mean a cache key, a dressing and a `Lookup` state machine for a model that
-/// is never dressed and never has a second instance.
+/// Read on the main thread rather than through the model loader, which is the
+/// one place in this renderer where that is allowed: it is 200 vertices and two
+/// 256x256 textures, read once per session, and the loader queue exists to keep
+/// a tile's 130 models off the frame. Using the loader would need a cache key,
+/// a dressing and a `Lookup` state machine for a model that is never dressed
+/// and never has a second instance.
 #[derive(Resource, Default)]
 enum StarDomeState {
     #[default]
     Unasked,
-    /// Built, with the byte and the overcast the materials were last written
-    /// for — see [`fade`].
+    /// Built, with the byte, the overcast and the skybox cover the materials
+    /// were last written for; see [`fade`].
     Built {
         byte: Option<u32>,
         overcast: u8,
+        behind_skybox: bool,
     },
-    /// The model would not read. Reported once; a sky with no stars is a
-    /// degradation and not an error, exactly as a missing `LightParams` is.
+    /// The model could not be read. Reported once; a sky with no stars is a
+    /// degradation and not an error, in the same way as a missing
+    /// `LightParams`.
     Failed,
 }
 
-/// **The opacity the model itself states for this batch**, kept beside the
-/// material rather than only inside it.
+/// The opacity the model states for this batch, kept beside the material
+/// rather than only inside it.
 ///
 /// The material's `tint.w` is this times the hour's fade and is rewritten every
 /// time the hour moves; multiplying the fade into it in place would compound,
@@ -120,8 +115,9 @@ struct BatchOpacity(f32);
 /// One batch's material: the model's own texture, and one colour to scale it by.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct StarMaterial {
-    /// `rgb` is the star colour (white) and `a` is **the batch's own constant
-    /// opacity times the hour's fade** — see [`fade`].
+    /// `rgb` is the star colour (white) and `a` is the batch's own constant
+    /// opacity times the hour's fade and the weather's `1 - storm`; see
+    /// [`fade`].
     #[uniform(0)]
     pub tint: Vec4,
     #[texture(1)]
@@ -134,11 +130,11 @@ impl Material for StarMaterial {
         crate::render::shader::STARS.into()
     }
 
-    /// **Alpha blended, which is the model's own `blend 2` on all seven
-    /// batches** — and which also puts the dome in the transparent phase, after
-    /// the opaque one. That ordering is load-bearing in one direction: the
-    /// gradient dome is opaque, so it is already in the framebuffer when the
-    /// stars are drawn over it.
+    /// Alpha blended, which is the model's own `blend 2` on all seven batches.
+    /// This also puts the dome in the transparent phase, after the opaque one,
+    /// and the code depends on that order in one direction: the gradient dome
+    /// is opaque, so it is already in the framebuffer when the stars are drawn
+    /// over it.
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Blend
     }
@@ -154,12 +150,12 @@ impl Material for StarMaterial {
         false
     }
 
-    /// **Behind every blended surface in the world**, which the far-plane depth
-    /// rule cannot arrange on its own — see
+    /// Behind every blended surface in the world, which the far-plane depth
+    /// rule cannot arrange on its own; see
     /// [`crate::render::sky::STARS_SORT`]. The field's mesh centre is the
-    /// camera's own position, so without a bias it sorted as the *nearest*
-    /// transparent in the frame and was drawn over the water, the particles and
-    /// every spell effect.
+    /// camera's own position, so without a bias it sorted as the nearest
+    /// transparent surface in the frame and was drawn over the water, the
+    /// particles and every spell effect.
     fn depth_bias(&self) -> f32 {
         crate::render::sky::STARS_SORT
     }
@@ -173,11 +169,11 @@ impl Material for StarMaterial {
         // Seen from the inside, and the model's own batches declare it: every
         // one of the seven is two-sided.
         descriptor.primitive.cull_mode = None;
-        // No depth write — the model says so too (`no_depth_write` on all
-        // seven), which is what stops the seven layers of the field from
-        // occluding each other — and the far-plane depth rule the whole sky
-        // shares, which is what stops the field standing in front of the far
-        // half of the terrain. See [`crate::render::sky::behind_the_world`].
+        // No depth write, which the model also states (`no_depth_write` on all
+        // seven) and which stops the seven layers of the field from occluding
+        // each other; and the far-plane depth rule the whole sky shares, which
+        // stops the field standing in front of the far half of the terrain.
+        // See [`crate::render::sky::behind_the_world`].
         crate::render::sky::behind_the_world(descriptor);
         Ok(())
     }
@@ -261,13 +257,13 @@ fn load(
         let Some(mesh) = batch_mesh(&model, batch) else {
             continue;
         };
-        // **The batch's own constant opacity, baked.** All five of the model's
+        // The batch's own constant opacity, baked. All five of the model's
         // transparency tracks hold a single key (0.25, 0.35, 0.50, 0.65, 0.75),
-        // so there is nothing to animate — what makes the field read as depth
-        // is that its seven layers are drawn at different strengths, and this
-        // is where that comes from. `sample` is asked for it at t=0 rather than
-        // reaching into the track, so an animated one would still be honoured
-        // at whatever it holds when the night starts.
+        // so there is nothing to animate. The field appears to have depth
+        // because its seven layers are drawn at different strengths, and this
+        // is where those strengths come from. `sample` is asked for the value
+        // at t=0 rather than reading the track directly, so an animated track
+        // would still be used at whatever it holds when the night starts.
         let alpha = batch
             .tint
             .map(|tint| model.tints.sample(tint, 0, 0, 0, 0)[3])
@@ -277,7 +273,7 @@ fn load(
             BatchOpacity(alpha),
             Mesh3d(meshes.add(mesh)),
             MeshMaterial3d(materials.add(StarMaterial {
-                // Zero until the first [`fade`], which is the honest starting
+                // Zero until the first [`fade`], which is the correct starting
                 // state: the dome spawns `Hidden` and the hour decides.
                 tint: Vec4::new(1.0, 1.0, 1.0, 0.0),
                 texture,
@@ -291,7 +287,11 @@ fn load(
         ));
     }
 
-    *state = StarDomeState::Built { byte: None, overcast: 0 };
+    *state = StarDomeState::Built {
+        byte: None,
+        overcast: 0,
+        behind_skybox: false,
+    };
 }
 
 /// One batch of the model as a mesh, in Bevy's axes.
@@ -306,9 +306,9 @@ fn batch_mesh(model: &M2, batch: &vale_assets::world::m2::M2Batch) -> Option<Mes
 
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
-        // Built once and never written again — the whole point of the
-        // per-frame fade living in the *material* rather than in a vertex
-        // colour is that nothing here has to come back to the CPU.
+        // Built once and never written again. The per-frame fade is in the
+        // material rather than in a vertex colour so that nothing here has to
+        // come back to the CPU.
         RenderAssetUsages::RENDER_WORLD,
     );
     mesh.insert_attribute(
@@ -334,8 +334,8 @@ fn batch_mesh(model: &M2, batch: &vale_assets::world::m2::M2Batch) -> Option<Mes
 
 /// Keep the dome centred on the camera, so the sky never gets nearer.
 ///
-/// The camera's `Transform` and not its `GlobalTransform` — see `sky.rs`'s own
-/// `follow_camera`, which carries the whole of why.
+/// The camera's `Transform` and not its `GlobalTransform`; see `sky.rs`'s own
+/// `follow_camera`, which explains why.
 fn follow_camera(
     camera: Query<&Transform, With<crate::world::camera::WorldCamera>>,
     mut dome: Query<&mut Transform, (With<StarDome>, Without<crate::world::camera::WorldCamera>)>,
@@ -348,44 +348,53 @@ fn follow_camera(
     }
 }
 
-/// Fade the field with the hour, and take it off the screen entirely when the
-/// client's own floor says it is not up.
+/// Fade the field with the hour, and hide it entirely when the 1.12.1 client's
+/// byte floor says the stars are not up.
 ///
-/// **Written only when the byte moves**, which is the difference between a
-/// handful of writes an hour and rewriting seven materials — and with them
-/// seven GPU uniform uploads — sixty times a second for a value that changes on
-/// a 24-minute ramp.
+/// Written only when the byte changes, which is the difference between a few
+/// writes an hour and rewriting seven materials, with seven GPU uniform
+/// uploads, sixty times a second for a value that changes on a 24-minute ramp.
 fn fade(
     clock: Res<crate::render::sky::WorldClock>,
-    // The overcast — see the body. A resource the glue screens also have, so
+    // The overcast; see the body. A resource the glue screens also have, so
     // this system runs unchanged before any world exists.
     weather: Res<crate::render::weather::WeatherState>,
-    // **The switch is folded in here rather than applied over the top**, which
-    // is the rule [`crate::render::tuning`] states: this system already owns
-    // the dome's visibility, and a second writer would fight it and win only on
-    // the frames the hour happened to move.
+    // The switch is applied here rather than by a separate system, which is
+    // the rule [`crate::render::tuning`] states: this system already owns the
+    // dome's visibility, and a second writer would conflict with it and take
+    // effect only on the frames the hour happened to change.
     tuning: Res<crate::render::tuning::WorldTuning>,
+    // An opaque skybox hides the field; see `render::sky::SkyCover`.
+    skybox: Res<crate::render::sky::SkyCover>,
     mut state: ResMut<StarDomeState>,
     mut dome: Query<(&mut Visibility, &Children), With<StarDome>>,
     parts: Query<(&MeshMaterial3d<StarMaterial>, &BatchOpacity)>,
     mut materials: ResMut<Assets<StarMaterial>>,
 ) {
-    let StarDomeState::Built { byte: last, overcast: last_overcast } = &mut *state else {
+    let StarDomeState::Built {
+        byte: last,
+        overcast: last_overcast,
+        behind_skybox,
+    } = &mut *state
+    else {
         return;
     };
     let byte = celestial::star_byte(clock.half_minutes);
-    // **The overcast hides the stars** — a snowing night sky full of stars was
-    // the report that "clouds still don't exist". The storm mix is the cloud
-    // cover this client has; the byte quantisation is the same trick the
-    // hour's own fade uses, so a ten-second ramp is a fade rather than a strobe
-    // and a still sky rewrites nothing.
+    // The weather fades the field by `1 - storm`, the 1.12.1 client's rule,
+    // quantised to a byte as the hour's own fade is, so a ten-second ramp is a
+    // fade and a still sky rewrites nothing.
     let cover = (weather.storm().clamp(0.0, 1.0) * 255.0) as u8;
-    if *last == byte && *last_overcast == cover && !tuning.is_changed() {
+    if *last == byte
+        && *last_overcast == cover
+        && *behind_skybox == skybox.opaque
+        && !tuning.is_changed()
+    {
         return;
     }
     *last = byte;
     *last_overcast = cover;
-    let byte = if tuning.stars { byte } else { None };
+    *behind_skybox = skybox.opaque;
+    let byte = if tuning.stars && !skybox.opaque { byte } else { None };
     let clear_sky = 1.0 - f32::from(cover) / 255.0;
 
     for (mut visibility, children) in &mut dome {
@@ -423,8 +432,13 @@ mod tests {
                 from_server: true,
                 ..default()
             })
-            .insert_resource(StarDomeState::Built { byte: None, overcast: 0 })
+            .insert_resource(StarDomeState::Built {
+                byte: None,
+                overcast: 0,
+                behind_skybox: false,
+            })
             .init_resource::<crate::render::tuning::WorldTuning>()
+            .init_resource::<crate::render::sky::SkyCover>()
             // A clear sky, so the hour's own fade is what these tests measure.
             .init_resource::<crate::render::weather::WeatherState>()
             .add_systems(Update, fade);
@@ -455,15 +469,15 @@ mod tests {
         app.update();
     }
 
-    /// **The hour scales the batch's own opacity, and doing it twice gives the
-    /// same answer as doing it once.**
+    /// The hour scales the batch's own opacity, and applying it twice gives the
+    /// same result as applying it once.
     ///
-    /// This is the bug this pass nearly shipped with. The obvious shape — keep
-    /// one alpha in the material and multiply the fade into it as the hour
-    /// moves — compounds: an evening ramp would multiply the batch constant by
-    /// every value the curve passed through and the field would be gone by
-    /// midnight, on a curve that measures correct. So the constant lives in
-    /// [`BatchOpacity`] and the material is *written*, never scaled.
+    /// Keeping one alpha in the material and multiplying the fade into it as
+    /// the hour moves would compound: an evening ramp would multiply the batch
+    /// constant by every value the curve passed through, and the field would
+    /// be gone by midnight even though the curve itself is correct. So the
+    /// constant lives in [`BatchOpacity`] and the material is written, never
+    /// scaled.
     #[test]
     fn the_hours_fade_scales_the_batch_constant_and_never_compounds() {
         let (mut app, handle) = app(0.25);
@@ -486,9 +500,9 @@ mod tests {
         assert_eq!(alpha(&app, &handle), half_way, "the hour is not cumulative");
     }
 
-    /// The whole dome comes off the screen when the client's own byte floor says
-    /// it is not up — which is three quarters of the day, and is why this pass
-    /// costs nothing at noon.
+    /// The whole dome is hidden when the 1.12.1 client's byte floor says the
+    /// stars are not up, which is three quarters of the day; this is why the
+    /// pass costs nothing at noon.
     #[test]
     fn the_dome_is_hidden_outright_when_the_stars_are_not_up() {
         let (mut app, _) = app(1.0);
@@ -505,8 +519,8 @@ mod tests {
         set(&mut app, 2, 0);
         assert_eq!(visible(&app), Visibility::Inherited);
 
-        // …and the switch takes it off at an hour the curve says it is up,
-        // without disturbing the curve — turn it back on and 2am is 2am again.
+        // The switch hides it at an hour the curve says it is up, without
+        // changing the curve: turned back on, the dome is visible at 2am again.
         app.world_mut().resource_mut::<crate::render::tuning::WorldTuning>().stars = false;
         app.update();
         assert_eq!(visible(&app), Visibility::Hidden);
