@@ -185,6 +185,8 @@ fn run_music(
     cvars: Res<crate::settings::cvars::CVars>,
     alive: Query<(), With<AudioPlayer>>,
     glue: Option<Res<crate::render::glue::GlueScenes>>,
+    // A ghost hears the ghost playlist instead of the zone's.
+    dying: Option<Res<crate::interface::death::Dying>>,
 ) {
     let now = time.elapsed_secs();
     // A voice that finished has despawned itself (`PlaybackMode::Despawn`);
@@ -319,8 +321,17 @@ fn run_music(
     }
 
     // --- claim 4: the playlist ---
-    if state.music_id != sounds.zone_music {
-        state.music_id = sounds.zone_music;
+    // While the player is a ghost the 1.12.1 client plays the ghost row in
+    // place of the zone's; the change ends the zone's track as a zone
+    // crossing does.
+    let zone_music = match dying.is_some_and(|d| d.ghost) {
+        true => bank
+            .zone_music_named(vale_assets::tables::sound::GHOST_MUSIC)
+            .unwrap_or(sounds.zone_music),
+        false => sounds.zone_music,
+    };
+    if state.music_id != zone_music {
+        state.music_id = zone_music;
         // **A zone's track belongs to that zone, so crossing out of it ends
         // it.** Without this a track started in Elwynn played on through
         // Westfall and Duskwood to its end — reported exactly that way — and

@@ -299,11 +299,11 @@ mod tests {
         // is where trade is allowed; and the `City` row the trade channel is
         // named after.
         Areas::from_rows(vec![
-            Area { id: 12, map: 0, parent: 0, name: "Elwynn Forest".into(), explore_bit: 0, explore_level: -1, flags: 0x40 },
-            Area { id: 87, map: 0, parent: 12, name: "Goldshire".into(), explore_bit: 0, explore_level: -1, flags: 0x40 },
-            Area { id: 1519, map: 0, parent: 0, name: "Stormwind City".into(), explore_bit: 0, explore_level: -1, flags: 0x138 },
-            Area { id: 1617, map: 0, parent: 1519, name: "Trade District".into(), explore_bit: 0, explore_level: -1, flags: 0x38 },
-            Area { id: 3459, map: 0, parent: 0, name: "City".into(), explore_bit: 0, explore_level: -1, flags: 0x200 },
+            Area { id: 12, map: 0, parent: 0, name: "Elwynn Forest".into(), explore_bit: 0, explore_level: -1, flags: 0x40, team: 0 },
+            Area { id: 87, map: 0, parent: 12, name: "Goldshire".into(), explore_bit: 0, explore_level: -1, flags: 0x40, team: 0 },
+            Area { id: 1519, map: 0, parent: 0, name: "Stormwind City".into(), explore_bit: 0, explore_level: -1, flags: 0x138, team: 0 },
+            Area { id: 1617, map: 0, parent: 1519, name: "Trade District".into(), explore_bit: 0, explore_level: -1, flags: 0x38, team: 0 },
+            Area { id: 3459, map: 0, parent: 0, name: "City".into(), explore_bit: 0, explore_level: -1, flags: 0x200, team: 0 },
         ])
     }
 

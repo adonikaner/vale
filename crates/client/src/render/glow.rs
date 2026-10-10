@@ -145,7 +145,13 @@ const FORMAT: TextureFormat = TextureFormat::Rgba8Unorm;
 #[derive(Component, ExtractComponent, Clone, Copy, Default, ShaderType)]
 pub struct Glow {
     pub amount: f32,
+    /// 1 while the player is a ghost and `ffxDeath` is on: the combine is
+    /// `FFXDeath.bls` instead of `FFXGlow.bls`. See `glow_combine.wgsl`.
+    pub death: f32,
 }
+
+/// The CVar for the full-screen death effect, registered `"1"`.
+const FFX_DEATH: &str = "ffxDeath";
 
 pub struct GlowPlugin;
 
@@ -187,24 +193,44 @@ fn attach(mut commands: Commands, camera: Query<Entity, With<crate::world::camer
 /// world and [`GLUE_AMOUNT`] before it with both switches on, zero otherwise.
 /// Written only when it moves, since a changed component is re-extracted and
 /// its uniform re-uploaded.
+///
+/// While the player is a ghost the 1.12.1 client swaps the glow for the death
+/// effect, which is on with `ffxDeath` whatever `ffxGlow` says. Its amount is
+/// the `LightParams` glow of the light in force, which for a ghost is the
+/// death column's (0.8 on map 0).
 fn switch(
     tuning: Res<WorldTuning>,
     cvars: Res<crate::settings::cvars::CVars>,
     session: Res<crate::world::session::Session>,
+    dying: Option<Res<crate::interface::death::Dying>>,
+    sky: Option<Res<crate::render::sky::Sky>>,
     mut glow: Query<&mut Glow>,
 ) {
-    let amount = amount_for(
-        tuning.glow && cvars.flag(FFX_GLOW),
-        matches!(session.screen(), crate::world::session::Screen::InWorld),
-    );
+    let in_world = matches!(session.screen(), crate::world::session::Screen::InWorld);
+    let ghost = in_world && dying.is_some_and(|d| d.ghost);
+    let wanted = if ghost {
+        let on = tuning.glow && cvars.flag(FFX_DEATH);
+        Glow {
+            amount: if on { sky.map_or(0.0, |s| s.current.glow) } else { 0.0 },
+            death: if on { 1.0 } else { 0.0 },
+        }
+    } else {
+        Glow {
+            amount: amount_for(tuning.glow && cvars.flag(FFX_GLOW), in_world),
+            death: 0.0,
+        }
+    };
     for mut glow in &mut glow {
-        if glow.amount != amount {
+        if glow.amount != wanted.amount || glow.death != wanted.death {
             info!(
-                "glow: amount {amount} (switch {}, {FFX_GLOW} {:?})",
+                "glow: amount {} death {} (switch {}, {FFX_GLOW} {:?}, {FFX_DEATH} {:?})",
+                wanted.amount,
+                wanted.death,
                 tuning.glow,
-                cvars.get(FFX_GLOW)
+                cvars.get(FFX_GLOW),
+                cvars.get(FFX_DEATH)
             );
-            glow.amount = amount;
+            *glow = wanted;
         }
     }
 }
@@ -327,7 +353,7 @@ fn glow_pass(
     mut ctx: RenderContext,
 ) {
     let Ok((target, glow, index)) = views.get(current.0) else { return };
-    if glow.amount <= 0.0 {
+    if glow.amount <= 0.0 && glow.death <= 0.0 {
         return;
     }
     if target.main_texture_format() != FORMAT {

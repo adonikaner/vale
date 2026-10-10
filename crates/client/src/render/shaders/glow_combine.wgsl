@@ -20,6 +20,30 @@
 @group(0) @binding(1) var blur: texture_2d<f32>;
 struct Glow {
     amount: f32,
+    // 1 for the death effect, `FFXDeath.bls`; see below.
+    death: f32,
+}
+
+// The colour the death effect puts back into the mid-tones of the grey
+// frame, as bytes: 83, 147, 168, the 1.12.1 client's own.
+const DEATH_TINT: vec3<f32> = vec3<f32>(83.0, 147.0, 168.0) / 255.0;
+
+// `Shaders\Pixel\FFXDeath.bls`, the combine while the player is a ghost:
+//
+//     MUL R0.xyz, R0, R0;                          // blur²
+//     MAD R0.xyz, R0, fragment.color.primary.w, R1; // scene + w * blur²
+//     DP3_SAT R0.x, R0, c[0].yzww;                 // grey: 0.299, 0.587, 0.144
+//     ADD R0.y, -R0.x, c[0].x;
+//     MUL R0.y, R0.x, R0;
+//     MUL_SAT R0.y, R0, c[1].x;                    // 4 * grey * (1 - grey)
+//     MAD result.color.xyz, fragment.color.primary, R0.y, R0.x;
+//
+// The tint is the quad's vertex colour and `w` its alpha. The blue weight is
+// 0.144 in the shipped file, not the usual 0.114.
+fn death(lifted: vec3<f32>) -> vec3<f32> {
+    let grey = clamp(dot(lifted, vec3<f32>(0.299, 0.587, 0.144)), 0.0, 1.0);
+    let midtone = clamp(4.0 * grey * (1.0 - grey), 0.0, 1.0);
+    return DEATH_TINT * midtone + vec3<f32>(grey);
 }
 @group(0) @binding(2) var<uniform> glow: Glow;
 
@@ -47,6 +71,12 @@ fn fragment(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(floor(in.position.xy));
     let source = textureLoad(scene, pixel, 0);
     let b = blur_bytes(in.uv);
+    if glow.death > 0.5 {
+        // The death program does not clamp before its grey, and its result is
+        // written through the frame's own clamp.
+        let lifted = source.rgb + glow.amount * b * b;
+        return vec4<f32>(clamp(death(lifted), vec3<f32>(0.0), vec3<f32>(1.0)), source.a);
+    }
     let lifted = clamp(source.rgb + glow.amount * b * b, vec3<f32>(0.0), vec3<f32>(1.0));
     return vec4<f32>(lifted, source.a);
 }

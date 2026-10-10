@@ -64,8 +64,9 @@ use crate::interface::api::UnitId;
 /// `GetMapZones` 2, `SetMapZoom` 2, `GetCurrentMapZone` 1, `GetMapContinents` 1,
 /// `SetMapToCurrentZone` 1, `ZoomOut` 1, `ProcessMapClick` 1,
 /// `UpdateMapHighlight` 1, `GetPlayerMapPosition` 1, plus the four zone-text
-/// names, which the minimap and the chat line call rather than the map.
-pub const READS: [&str; 17] = [
+/// names and `GetZonePVPInfo`, which the minimap, the zone popup and the chat
+/// line call rather than the map.
+pub const READS: [&str; 18] = [
     "GetCorpseMapPosition",
     "GetCurrentMapContinent",
     "GetCurrentMapZone",
@@ -80,6 +81,7 @@ pub const READS: [&str; 17] = [
     "GetPlayerMapPosition",
     "GetRealZoneText",
     "GetSubZoneText",
+    "GetZonePVPInfo",
     "GetZoneText",
     "UpdateMapHighlight",
     // Registered as a read although it records nothing and returns nothing:
@@ -492,6 +494,19 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         "GetSubZoneText",
         scope.create_function(move |_, ()| Ok(answers.sub_zone_text()))?,
     )?;
+    // `pvpType, factionName, isArena`. The first two are both nil or both
+    // set; the third is 1 or nil.
+    globals.set(
+        "GetZonePVPInfo",
+        scope.create_function(move |_, ()| {
+            let territory = answers.territory();
+            let (stance, side) = match territory.stance {
+                Some((stance, side)) => (Some(stance.lua()), Some(side)),
+                None => (None, None),
+            };
+            Ok((stance, side, territory.arena.then_some(1)))
+        })?,
+    )?;
     // The minimap shows the sub-area when there is one and the zone otherwise.
     // That is one string, so the game has a separate function for it.
     globals.set(
@@ -544,6 +559,30 @@ mod tests {
     use super::*;
     use crate::lua::api::tests::Stub;
     use crate::lua::host::LuaHost;
+
+    /// `GetZonePVPInfo`'s three values as `Minimap_Update` tests them: the
+    /// stance and the side together or neither, and the arena flag as 1 or
+    /// nil.
+    #[test]
+    fn the_zone_pvp_info_is_three_values_the_minimap_can_test() {
+        use vale_assets::tables::territory::{Stance, Territory};
+        let host = LuaHost::new().expect("the interpreter starts");
+        let ask = |territory: Territory| -> (Option<String>, Option<String>, Option<i64>) {
+            let mut world = Stub::default();
+            world.territory = territory;
+            host.run(&world, |lua| lua.load("return GetZonePVPInfo()").eval())
+                .expect("the call runs")
+        };
+        assert_eq!(ask(Territory::default()), (None, None, None));
+        assert_eq!(
+            ask(Territory { stance: Some((Stance::Hostile, "Horde".into())), arena: false }),
+            (Some("hostile".into()), Some("Horde".into()), None),
+        );
+        assert_eq!(
+            ask(Territory { stance: Some((Stance::Contested, String::new())), arena: true }),
+            (Some("contested".into()), Some(String::new()), Some(1)),
+        );
+    }
 
     /// Runs the highlight block of `WorldMapButton_OnUpdate`: the eight return
     /// values unpacked in the file's order, and the arithmetic of the five
@@ -786,6 +825,12 @@ pub trait MapAnswers {
     /// `GetSubZoneText()`: empty in open country, which the minimap's second
     /// line depends on.
     fn sub_zone_text(&self) -> String;
+    /// `GetZonePVPInfo()`: whose land the character stands on. See
+    /// [`vale_assets::tables::territory`]. The default is no stance and no
+    /// arena, which draws the zone name in the ordinary gold.
+    fn territory(&self) -> vale_assets::tables::territory::Territory {
+        Default::default()
+    }
 }
 
 impl MapAnswers for super::super::api::Live<'_, '_, '_> {
@@ -996,5 +1041,13 @@ impl MapAnswers for super::super::api::Live<'_, '_, '_> {
             .as_ref()
             .and_then(|tables| tables.areas())
             .map_or_else(String::new, |areas| areas.sub_zone_name(self.place.area))
+    }
+
+    fn territory(&self) -> vale_assets::tables::territory::Territory {
+        let Some(tables) = self.tables.as_ref() else {
+            return Default::default();
+        };
+        let template = self.units.get(UnitId::Player).and_then(|player| player.faction);
+        tables.territory(self.place.area, template, self.realm_type)
     }
 }

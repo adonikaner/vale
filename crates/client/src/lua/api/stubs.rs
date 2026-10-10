@@ -43,7 +43,7 @@
 //! * Buffs and debuffs: answered in [`super::super::panels::auras`]. Weapon
 //!   enchants and the tracking texture stay here.
 //! * The zone and the clock: answered in [`super::super::panels::worldmap`]
-//!   and `super::UnitAnswers::game_time`. `GetZonePVPInfo` stays here.
+//!   and `super::UnitAnswers::game_time`. Nothing is stubbed here.
 //! * The chat settings: the windows, their channels and their colours. These
 //!   belong to `SavedVariables`, which `chat-cache.txt` holds and this client
 //!   does not read.
@@ -65,7 +65,7 @@ use super::super::api::one_or_nil;
 /// Every name this module registers with nothing behind it. Sorted.
 ///
 /// This count is not a measure of progress. See the module comment.
-pub const REGISTERED: [&str; 100] = [
+pub const REGISTERED: [&str; 99] = [
     "AcceptAreaSpiritHeal",
     "CanJoinBattlefieldAsGroup",
     "CanMerchantRepair",
@@ -126,7 +126,6 @@ pub const REGISTERED: [&str; 100] = [
     "GetTrackingTexture",
     "GetVideoCaps",
     "GetWeaponEnchantInfo",
-    "GetZonePVPInfo",
     "HasKey",
     "HasSoulstone",
     "HideFriendNameplates",
@@ -592,7 +591,7 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     // only when the minute differs from the one it last drew. A constant
     // answer therefore gave the wrong hour and also left the frame at its
     // default texture coordinates, drawing the whole day/night sheet at once.
-    no!("GetZonePVPInfo");
+    // `GetZonePVPInfo` is answered beside the zone names.
 
     // --- the chat settings, and the languages ---
     // `GetChatWindowInfo` is answered below. `GetChatWindowChannels` is

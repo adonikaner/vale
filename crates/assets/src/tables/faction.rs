@@ -513,11 +513,31 @@ impl Factions {
     /// function's `if ( factionGroup and UnitIsPVP(unit) )` guard handles this
     /// case: there is no such icon for a wolf.
     pub fn group_name(&self, template: u32) -> Option<(&str, &str)> {
-        let mask = self.group(template)?;
+        let group = self.named_group(self.group(template)?)?;
+        Some((group.internal.as_str(), group.localised.as_str()))
+    }
+
+    /// The localised name of the side a group mask names: the first
+    /// `FactionGroup.dbc` row, in id order, whose bit is in `mask` and whose
+    /// localised name is not empty. The same search as [`Self::group_name`],
+    /// over a mask that is not a template's. `AreaTable`'s team column is
+    /// such a mask; see [`crate::tables::territory`].
+    pub fn side_name(&self, mask: u32) -> Option<&str> {
+        Some(self.named_group(mask)?.localised.as_str())
+    }
+
+    fn named_group(&self, mask: u32) -> Option<&Group> {
         self.1
             .iter()
             .find(|group| group.bit & mask != 0 && !group.localised.is_empty())
-            .map(|group| (group.internal.as_str(), group.localised.as_str()))
+    }
+
+    /// A template's `friendlyMask` and `hostileMask`: the groups its units
+    /// are friendly and hostile towards. `None` for a template the table does
+    /// not have.
+    pub fn masks(&self, template: u32) -> Option<(u32, u32)> {
+        let row = self.0.get(&template)?;
+        Some((row.friendly_mask, row.hostile_mask))
     }
 
     /// How the unit on `template` stands towards the unit on `towards`, decided

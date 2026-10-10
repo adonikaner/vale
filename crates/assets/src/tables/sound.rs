@@ -452,6 +452,14 @@ pub const UNARMED_SUBCLASS: u32 = 13;
 /// own names confirm the reading, but it is not the miss whoosh, and where it
 /// *is* played has not been pinned — see [`SoundBank::swing`].
 pub const COMBAT_MISS_1H: &str = "(DONOTRENAME)Combat Miss 1H";
+
+/// The `SoundEntries` row the 1.12.1 client loops on the ambience channel
+/// while the player is a ghost, in place of the zone's own ambience.
+pub const GHOST_AMBIENCE: &str = "Ghost (DONOTRENAME)";
+
+/// The `ZoneMusic` row (by set name) the 1.12.1 client plays while the player
+/// is a ghost, in place of the zone's own music.
+pub const GHOST_MUSIC: &str = "GhostMusic (DONOTRENAME)";
 pub const COMBAT_MISS_2H: &str = "(DONOTRENAME)Combat Miss 2H";
 
 /// …and a third of the six: **the noise a shield makes when it eats a blow.**
@@ -904,6 +912,15 @@ impl SoundBank {
 
     pub fn zone_music(&self, id: u32) -> Option<&ZoneMusic> {
         self.zone_music.get(&id)
+    }
+
+    /// The `ZoneMusic` row with this set name, as the client finds
+    /// [`GHOST_MUSIC`]: by exact name.
+    pub fn zone_music_named(&self, name: &str) -> Option<u32> {
+        self.zone_music
+            .iter()
+            .find(|(_, music)| music.set_name == name)
+            .map(|(&id, _)| id)
     }
 
     pub fn intro_music(&self, id: u32) -> Option<&IntroMusic> {

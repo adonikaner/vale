@@ -37,6 +37,9 @@ const CHALLENGE_PROTOCOL_VERSION: u8 = 3;
 #[derive(Debug, Clone)]
 pub struct Realm {
     pub name: String,
+    /// The realm type: 0 normal, 1 PvP, 6 role-playing, 8 role-playing PvP.
+    /// The client reads its rules from `Cfg_Configs.dbc` by this value.
+    pub kind: u32,
     /// "host:port" as advertised by the server, and the only word on where the
     /// world server is: a row here that this machine cannot reach is fixed in
     /// `realmd.realmlist`, not worked around on this side.
@@ -263,7 +266,7 @@ fn read_realm_list(stream: &mut TcpStream) -> io::Result<Vec<Realm>> {
     let count = r.u8();
     let mut realms = Vec::with_capacity(count as usize);
     for _ in 0..count {
-        let _icon = r.u32(); // realm type
+        let kind = r.u32();
         let _flags = r.u8();
         let name = r.cstring();
         let address = r.cstring();
@@ -273,6 +276,7 @@ fn read_realm_list(stream: &mut TcpStream) -> io::Result<Vec<Realm>> {
         let _unk = r.u8();
         realms.push(Realm {
             name,
+            kind,
             address,
             population,
             num_chars,

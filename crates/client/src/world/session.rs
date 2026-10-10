@@ -65,6 +65,10 @@ pub struct ActiveSession {
     /// and a handshake names its realm because `GetServerName()` returns it.
     /// Nothing in the world reads it.
     pub realm: String,
+    /// The realm's type from the realm list, carried the same way. The world
+    /// does read this one: `GetZonePVPInfo` answers differently on a PvP
+    /// realm. See [`vale_assets::tables::territory`].
+    pub realm_type: u32,
     /// Which account this character belongs to. The world does read this: the
     /// key bindings live under `WTF\Account\<account>\`, and the two files there
     /// are keyed by this and by [`Self::realm`]. See [`Handshake::account`] for
@@ -169,6 +173,8 @@ pub struct Handshake {
     pub characters: Vec<world::CharListEntry>,
     /// Which realm's world server this is, for the screen to say so.
     pub realm: String,
+    /// That realm's type; see [`ActiveSession::realm_type`].
+    pub realm_type: u32,
     /// The account that logged in: the one the SRP6 exchange used. It is
     /// carried for the same reason as [`ActiveSession::realm`]: nothing else in
     /// the client can reconstruct it for this session.
@@ -588,6 +594,7 @@ fn re_enumerate_blocking(
     realm: String,
     account: String,
 ) -> Result<Handshake, LoginFailure> {
+    let realm_type = active.realm_type;
     let Some(mut socket) = active.live.reclaim() else {
         return Err(LoginFailure::local(
             "DISCONNECTED",
@@ -607,6 +614,7 @@ fn re_enumerate_blocking(
         session: socket,
         characters,
         realm,
+        realm_type,
         account,
         pinged: std::time::Instant::now(),
     })
@@ -2097,6 +2105,7 @@ fn logon_blocking(credentials: Credentials) -> Result<Handshake, LoginFailure> {
         session,
         characters,
         realm: realm.name.clone(),
+        realm_type: realm.kind,
         account: credentials.account.clone(),
         pinged: std::time::Instant::now(),
     })
@@ -2172,6 +2181,7 @@ pub fn start_entering(
     // [`Handshake`], and a handshake names its realm. Nothing else in the world
     // uses it, which is why it travels here rather than in a resource.
     let realm = handshake.realm;
+    let realm_type = handshake.realm_type;
     // The account that logged in, carried the same way for a second reason:
     // the two key-binding files live under `WTF\Account\<account>\`. See
     // [`Handshake::account`] for why `Config.wtf` cannot supply it.
@@ -2183,7 +2193,7 @@ pub fn start_entering(
     let keep_caches = caches.0;
     session.entering = Some(AsyncComputeTaskPool::get().spawn(async move {
         enter_world_blocking(
-            socket, chosen, realm, account, gamedata_dir, overlay, solids, keep_caches,
+            socket, chosen, realm, realm_type, account, gamedata_dir, overlay, solids, keep_caches,
         )
     }));
 }
@@ -2193,6 +2203,7 @@ fn enter_world_blocking(
     session: world::WorldSession,
     chosen: world::CharListEntry,
     realm: String,
+    realm_type: u32,
     account: String,
     gamedata_dir: String,
     overlay: Option<vale_assets::archive::Overlay>,
@@ -2323,6 +2334,7 @@ fn enter_world_blocking(
         map_name,
         map_id,
         realm,
+        realm_type,
         account,
         terrain,
     })

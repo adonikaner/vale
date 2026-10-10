@@ -413,6 +413,9 @@ pub const YARDS_PER_UNIT: f32 = 1.0 / 36.0;
 /// `LightParams` fields. 0..4 are the id, the sky flags and the glow; 5..8 are
 /// the four water alphas.
 pub mod params_field {
+    /// The glow: the strength of the full-screen death effect under this
+    /// light. The ordinary glow's strength is fixed and does not read it.
+    pub const GLOW: usize = 4;
     /// The `LightSkybox` row whose model is drawn around the camera wherever
     /// this light is in force; 0 for none. Five of the 426 shipped rows name
     /// one, all of them row 3, `DeathClouds`.
@@ -474,6 +477,10 @@ pub mod light_field {
     /// both switches. Falls back to the clear-underwater row and then to the
     /// clear one; see [`super::Weather::of`].
     pub const PARAMS_STORM_UNDERWATER: usize = 10;
+    /// The light while the player is a ghost. The 1.12.1 client lights the
+    /// whole map with the map default light's death row and lays no
+    /// positional light over it; see [`super::LightTables::atmosphere_dead`].
+    pub const PARAMS_DEATH: usize = 11;
 }
 
 /// Which of the five weather columns a light is being asked for.
@@ -1088,6 +1095,9 @@ pub struct Atmosphere {
     /// How much of the sky the clouds cover, float band 3. 0 for a light
     /// that states no float bands.
     pub cloud_density: f32,
+    /// The `LightParams` glow of the light in force, which sets the death
+    /// effect's strength. 0.8 for map 0's death row.
+    pub glow: f32,
     /// The sky models in force, and how strongly. See [`SkyboxWeight`].
     pub skyboxes: [SkyboxWeight; 2],
 }
@@ -1156,6 +1166,7 @@ impl Atmosphere {
         fog_start: Atmosphere::DEFAULT_FOG_END * Atmosphere::DEFAULT_FOG_START_SCALER,
         clouds: [[0.0; 3]; 3],
         cloud_density: 0.0,
+        glow: 0.5,
         skyboxes: [SkyboxWeight { id: 0, weight: 0.0 }; 2],
     };
 
@@ -1203,6 +1214,7 @@ impl Atmosphere {
                 lerp3(self.clouds[2], other.clouds[2]),
             ],
             cloud_density: lerp(self.cloud_density, other.cloud_density),
+            glow: lerp(self.glow, other.glow),
             skyboxes: self.skyboxes,
         }
     }
@@ -1424,6 +1436,11 @@ pub struct LightTables {
     /// sphere. Those are [`Self::positional`].
     /// `[clear, clear-underwater, storm, storm-underwater]`; see [`Weather`].
     defaults: std::collections::HashMap<u32, [u32; 4]>,
+    /// Per map: the default light's death row; see
+    /// [`light_field::PARAMS_DEATH`].
+    deaths: std::collections::HashMap<u32, u32>,
+    /// `LightParams` rows by id: the glow.
+    glows: std::collections::HashMap<u32, f32>,
     /// Every row that is not a default: a sphere of its own daylight over the
     /// map's default, which is where a zone's own look comes from.
     ///
@@ -1475,6 +1492,7 @@ impl LightTables {
         }
 
         let mut defaults = std::collections::HashMap::new();
+        let mut deaths = std::collections::HashMap::new();
         let mut positional = Vec::new();
         for record in 0..light.record_count {
             let map = light.u32_at(record, light_field::MAP)?;
@@ -1494,6 +1512,9 @@ impl LightTables {
             // The default light is the one whose falloff covers nothing, which is
             // how the client marks "everywhere on this map".
             if end == 0.0 {
+                if let Some(death) = light.u32_at(record, light_field::PARAMS_DEATH) {
+                    deaths.entry(map).or_insert(death);
+                }
                 defaults.entry(map).or_insert([
                     params,
                     params_underwater,
@@ -1542,10 +1563,14 @@ impl LightTables {
 
         let mut params = std::collections::HashMap::new();
         let mut skyboxes = std::collections::HashMap::new();
+        let mut glows = std::collections::HashMap::new();
         for record in 0..params_dbc.record_count {
             let Some(id) = params_dbc.u32_at(record, 0) else {
                 continue;
             };
+            if let Some(glow) = params_dbc.f32_at(record, params_field::GLOW) {
+                glows.insert(id, glow);
+            }
             match params_dbc.u32_at(record, params_field::SKYBOX) {
                 Some(0) | None => {}
                 Some(skybox) => {
@@ -1586,12 +1611,26 @@ impl LightTables {
 
         Some(LightTables {
             defaults,
+            deaths,
+            glows,
             positional,
             params,
             skyboxes,
             bands,
             float_bands,
         })
+    }
+
+    /// The light while the player is a ghost: the map default light's death
+    /// row alone, as the 1.12.1 client lights the ghost world, with no
+    /// positional light, weather or water over it. A map with no light of its
+    /// own takes map 0's, as [`Self::atmosphere`] does. Its skybox, if it names
+    /// one, is at full weight; map 0's death row names `DeathClouds`.
+    pub fn atmosphere_dead(&self, map: u32, time: u32) -> Atmosphere {
+        match self.deaths.get(&map).or_else(|| self.deaths.get(&0)) {
+            Some(&params) if params != 0 => self.atmosphere_of(params, time),
+            _ => self.atmosphere(map, time),
+        }
     }
 
     /// The `LightSkybox` row a `LightParams` row names, or 0.
@@ -1908,6 +1947,7 @@ impl LightTables {
             cloud_density: self
                 .band_value(params_id, float_band::CLOUD_DENSITY, time)
                 .unwrap_or(base.cloud_density),
+            glow: self.glows.get(&params_id).copied().unwrap_or(base.glow),
             skyboxes: base.skyboxes,
             diffuse: self.band(params_id, band::DIFFUSE, time).unwrap_or(base.diffuse),
             ambient: self.band(params_id, band::AMBIENT, time).unwrap_or(base.ambient),
@@ -2003,6 +2043,7 @@ impl LightTables {
             cloud_density: self
                 .band_value(params_id, float_band::CLOUD_DENSITY, time)
                 .unwrap_or(0.0),
+            glow: self.glows.get(&params_id).copied().unwrap_or(Atmosphere::PLACEHOLDER.glow),
             skyboxes,
             diffuse: self.band_colour(params_id, band::DIFFUSE, time),
             ambient: self.band_colour(params_id, band::AMBIENT, time),

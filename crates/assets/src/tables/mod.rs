@@ -50,6 +50,8 @@
 //! charcreate.rs what a character may be made of
 //! area.rs       where the character is, in the game's own words
 //! channels.rs   the six chat channels everybody is in, and which of them where
+//! territory.rs  whose land the character stands on, which colours the zone
+//!               name on PvP realms
 //! defense.rs    which defense channels hear that a zone is under attack
 //! worldstate.rs which world states the frame above the minimap lists where,
 //!               and how a line's text names the values it shows
@@ -120,6 +122,7 @@ pub mod enchant;
 pub mod stationery;
 pub mod talent;
 pub mod taxi;
+pub mod territory;
 pub mod transport;
 pub mod tradeskill;
 pub mod trainer;

@@ -374,6 +374,10 @@ pub struct DisplayTables {
     /// The six chat channels and which of them apply in a given area; see
     /// [`crate::tables::channels`].
     chat_channels: Option<crate::tables::channels::ChatChannels>,
+    /// `Cfg_Configs.dbc`: which realm types are PvP realms. See
+    /// [`crate::tables::territory`]. An absent table makes every realm a
+    /// normal one.
+    realm_configs: crate::tables::territory::RealmConfigs,
     /// `QuestSort.dbc`: the second table a quest log heading can come from,
     /// chosen by the sign of `ZoneOrSort`. See [`crate::tables::questsort`].
     /// Not wrapped in `Option`: an absent file is an empty map, which leaves
@@ -563,6 +567,9 @@ impl DisplayTables {
         Ok(DisplayTables {
             areas,
             chat_channels,
+            realm_configs: crate::tables::territory::RealmConfigs::parse(
+                &read("Cfg_Configs").unwrap_or_default(),
+            ),
             quest_sorts: crate::tables::questsort::QuestSorts::parse(
                 &read("QuestSort").unwrap_or_default(),
             ),
@@ -963,6 +970,33 @@ impl DisplayTables {
     /// [`crate::tables::area`].
     pub fn areas(&self) -> Option<&crate::tables::area::Areas> {
         self.areas.as_ref()
+    }
+
+    /// Whether a realm of this type is a PvP realm; see
+    /// [`crate::tables::territory::RealmConfigs`].
+    pub fn is_pvp_realm(&self, realm_type: u32) -> bool {
+        self.realm_configs.is_pvp(realm_type)
+    }
+
+    /// Whose land `area` is, for a character on faction `template`; see
+    /// [`crate::tables::territory`]. The default, no stance and no arena,
+    /// without `AreaTable`.
+    pub fn territory(
+        &self,
+        area: u32,
+        template: Option<u32>,
+        realm_type: u32,
+    ) -> crate::tables::territory::Territory {
+        let Some(areas) = self.areas.as_ref() else {
+            return Default::default();
+        };
+        crate::tables::territory::territory(
+            areas,
+            self.factions.as_ref(),
+            area,
+            template,
+            self.is_pvp_realm(realm_type),
+        )
     }
 
     /// The six chat channels; see [`crate::tables::channels`]. Optional like

@@ -130,7 +130,7 @@ pub struct Sky {
     /// Every input the resolved atmosphere depends on — see `resolve`, which
     /// names each one where it builds it. The last is which parse of the DBCs
     /// the bands came from, so a table edit re-lights the world.
-    resolved_for: Option<(u32, u32, [i32; 3], bool, i32, i32, i32, u64)>,
+    resolved_for: Option<(u32, u32, [i32; 3], bool, i32, i32, i32, u64, bool)>,
 }
 
 /// How coarsely the player's position is remembered in [`Sky::resolved_for`],
@@ -663,6 +663,9 @@ fn resolve(
     // subtraction that leaves half the pass in place measures neither half;
     // see [`crate::render::tuning`].
     tuning: Res<crate::render::tuning::WorldTuning>,
+    // Whether the player is a ghost, which lights the world with the death row
+    // of the map's default light; see `LightTables::atmosphere_dead`.
+    dying: Option<Res<crate::interface::death::Dying>>,
 ) {
     if !focus.present {
         // Outside the world, the light returns to what it was before the first
@@ -806,6 +809,7 @@ fn resolve(
     // that a table edit does not touch. One relaxed atomic load per resolve,
     // and a resolve happens only when this key changes.
     let tables_from = assets.tables_generation();
+    let ghost = dying.is_some_and(|d| d.ghost);
     let key = (
         focus.map_id,
         clock.half_minutes,
@@ -815,6 +819,7 @@ fn resolve(
         storm,
         visibility,
         tables_from,
+        ghost,
     );
     if sky.resolved_for == Some(key) {
         return;
@@ -832,7 +837,10 @@ fn resolve(
     // including the lamp glow. The night depends on the hour; the storm comes
     // from the server and already carries its own darkening.
     let mut hours_own = sky.current;
-    if let Some(light) = tables.light() {
+    if let (true, Some(light)) = (ghost, tables.light()) {
+        sky.current = light.atmosphere_dead(focus.map_id, clock.half_minutes);
+        hours_own = sky.current;
+    } else if let Some(light) = tables.light() {
         let weather = if submerged {
             vale_assets::tables::light::Weather::Underwater
         } else {
@@ -857,7 +865,7 @@ fn resolve(
     // applied underwater, because precipitation is a property of air, and
     // floored so that an instance whose fog is already close does not close
     // further to an opaque wall. See `render::weather::VISIBILITY_TAKEN`.
-    if visibility < 255 && !submerged {
+    if visibility < 255 && !submerged && !ghost {
         let squeeze = visibility as f32 / 255.0;
         let floor = crate::render::weather::VISIBILITY_FLOOR_YARDS.min(sky.current.fog_end);
         sky.current.fog_end = (sky.current.fog_end * squeeze).max(floor);
@@ -1150,7 +1158,7 @@ mod tests {
         sky.current.diffuse = [0.19, 0.28, 0.40];
         sky.current.ambient = [0.03, 0.05, 0.08];
         sky.submerged = true;
-        sky.resolved_for = Some((0, NOON, [1, 2, 3], true, 255, 0, 255, 0));
+        sky.resolved_for = Some((0, NOON, [1, 2, 3], true, 255, 0, 255, 0, false));
 
         let mut app = App::new();
         app.insert_resource(sky)
@@ -1304,8 +1312,8 @@ mod tests {
     /// generation must not compare equal.
     #[test]
     fn a_forgotten_table_makes_the_sky_resolve_again() {
-        let before = (0u32, NOON, [1i32, 2, 3], false, -1i32, 0i32, 255i32, 4u64);
-        let after = (0u32, NOON, [1i32, 2, 3], false, -1i32, 0i32, 255i32, 5u64);
+        let before = (0u32, NOON, [1i32, 2, 3], false, -1i32, 0i32, 255i32, 4u64, false);
+        let after = (0u32, NOON, [1i32, 2, 3], false, -1i32, 0i32, 255i32, 5u64, false);
         assert_ne!(before, after, "a re-parse of the tables must re-resolve");
         assert_eq!(before, before.clone(), "and nothing else about it moved");
     }

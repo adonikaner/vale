@@ -565,6 +565,9 @@ pub struct Live<'a, 'w, 's> {
     /// The local player's facing, for the map arrow. See
     /// [`Answers::player_facing`].
     pub facing: f32,
+    /// The realm's type from the realm list, 0 (normal) outside the world.
+    /// See [`crate::world::session::ActiveSession::realm_type`].
+    pub realm_type: u32,
     /// The pre-world screens: the handshake this client holds open, if any,
     /// and what the account box remembers.
     ///
@@ -798,6 +801,7 @@ impl LuaWorld<'_, '_> {
                 |active| (active.map_id, self.status.position.x, self.status.position.y),
             ),
             facing: self.status.orientation,
+            realm_type: self.session.active.as_ref().map_or(0, |active| active.realm_type),
             now: api::get_time(&self.time),
             game_clock: self.clock.hour_minute(),
             binder: &self.home,
@@ -2545,6 +2549,9 @@ pub(crate) mod tests {
         /// What `UpdateMapHighlight` answers. `None` is the ordinary case: the
         /// pointer over open water, and every point on a zone map.
         highlight: Option<crate::lua::panels::worldmap::Highlight>,
+        /// What `GetZonePVPInfo` answers. The default is no stance and no
+        /// arena.
+        pub territory: vale_assets::tables::territory::Territory,
         /// The explored overlays on the map. Empty is the ordinary case: a
         /// client with no world, or a zone nobody has walked.
         overlays: Vec<crate::lua::panels::worldmap::OverlayArt>,
@@ -3720,6 +3727,9 @@ pub(crate) mod tests {
         }
         fn sub_zone_text(&self) -> String {
             String::new()
+        }
+        fn territory(&self) -> vale_assets::tables::territory::Territory {
+            self.territory.clone()
         }
     }
 

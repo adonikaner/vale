@@ -71,6 +71,8 @@ fn run_ambience(
     game: Res<crate::assets::GameAssets>,
     // …and the sky, whose loop outranks the place's. See below.
     status: Res<crate::world::session::WorldStatus>,
+    // A ghost hears the ghost loop instead of the place's or the weather's.
+    dying: Option<Res<crate::interface::death::Dying>>,
 ) {
     let in_world =
         session.screen() == crate::world::session::Screen::InWorld && session.active.is_some();
@@ -84,8 +86,14 @@ fn run_ambience(
     // moment the server says fine weather with sound 0 the place's own bed
     // comes back through the same fade. One channel, one voice, one rule.
     let weather = status.weather.map_or(0, |w| w.sound);
+    let ghost = dying.is_some_and(|d| d.ghost);
     let wanted = if !in_world {
         0
+    } else if ghost {
+        // The 1.12.1 client's ambience choice is the ghost loop first, then
+        // the place's.
+        bank.entry_named(vale_assets::tables::sound::GHOST_AMBIENCE)
+            .map_or(0, |entry| entry.id)
     } else if weather != 0 {
         weather
     } else {

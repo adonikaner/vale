@@ -1016,3 +1016,18 @@ fn a_skybox_row_names_its_model_by_the_archive_path() {
     assert_eq!(models.get(&3).map(String::as_str), Some(r"Environments\Stars\DeathClouds.m2"));
     assert_eq!(models.get(&7), None, "an empty name is no model");
 }
+
+/// A ghost is lit by the death row of the map's default light (column 11,
+/// `LightParams` 4 on map 0) and by nothing laid over it, and that row's
+/// glow is what sets the death effect's strength.
+#[test]
+fn a_ghost_is_lit_by_the_default_lights_death_row_alone() {
+    let tables = tables();
+    let dead = tables.atmosphere_dead(0, NOON);
+    assert_eq!(dead, tables.atmosphere_of(4, NOON));
+    assert_eq!(dead.glow, 0.2, "the fixture's LightParams glow");
+    // Standing inside both positional spheres changes nothing.
+    assert_eq!(tables.atmosphere_dead(0, NOON), dead);
+    // A map with no light of its own takes map 0's.
+    assert_eq!(tables.atmosphere_dead(999, NOON), dead);
+}

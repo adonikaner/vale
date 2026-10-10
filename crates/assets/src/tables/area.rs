@@ -110,6 +110,10 @@ pub struct Area {
     /// means a landmark in this area is shown without asking whether it has
     /// been explored — see [`crate::tables::areapoi`], which is the only reader.
     pub explore_level: i32,
+    /// Which side the area belongs to, field 20: a mask over
+    /// `FactionGroup.MaskID`, so 2 for the Alliance and 4 for the Horde.
+    /// See [`crate::tables::territory`], which is the only reader.
+    pub team: u32,
 }
 
 /// `AREA_FLAG_SLAVE_CAPITAL`, `0x8` — "allow trade channel" in vmangos' own
@@ -162,6 +166,7 @@ impl Areas {
                         .u32_at(record, fields::EXPLORE_LEVEL)
                         .unwrap_or(0) as i32,
                     flags: dbc.u32_at(record, fields::FLAGS).unwrap_or(0),
+                    team: dbc.u32_at(record, fields::TEAM).unwrap_or(0),
                 },
             );
         }
