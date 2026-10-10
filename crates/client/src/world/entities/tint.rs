@@ -166,6 +166,11 @@ pub(super) fn paint_models(
 /// the kit's opacity; see [`Procedurals::opacity_at`]. While easing, the value
 /// is stepped to multiples of 8/255, because each value is a material.
 ///
+/// The local player's opacity is also multiplied by how far the camera is
+/// zoomed in, with no easing: the model fades out as the camera nears first
+/// person; see `vale_assets::look::firstperson`. That factor is stepped the
+/// same way, since it changes on every frame of a zoom.
+///
 /// This is a separate system from [`paint_models`] because an opacity changes
 /// the batch's pipeline: an opaque body cannot blend until its blend mode is
 /// changed. See [`crate::render::models::Materials::with_opacity`], which
@@ -177,25 +182,44 @@ pub(super) fn fade_models(
     children: Query<&Children>,
     parts: Query<&MeshMaterial3d<M2Material>>,
     mut materials: Materials,
-    mut units: Query<(Entity, &WorldEntity, &mut EntityModel, &mut Procedurals)>,
+    mut units: Query<(
+        Entity,
+        &WorldEntity,
+        &mut EntityModel,
+        &mut Procedurals,
+        Has<crate::world::session::LocalPlayer>,
+    )>,
+    // The zoom, for the local player's fade: the distance the eye is from the
+    // point it orbits this frame, and the near plane.
+    rig: Option<Res<crate::world::camera::CameraRig>>,
+    cameras: Query<&Projection, With<crate::world::camera::WorldCamera>>,
 ) {
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::Tint);
     let now = time.elapsed_secs_f64();
     let spells = displays.tables().and_then(|tables| tables.spells());
-    for (entity, world, mut model, mut procs) in &mut units {
+    let near = match cameras.iter().next() {
+        Some(Projection::Perspective(projection)) => projection.near,
+        _ => 0.1,
+    };
+    let zoomed = rig
+        .as_ref()
+        .map_or(1.0, |rig| vale_assets::look::firstperson::opacity(rig.reach, near));
+    for (entity, world, mut model, mut procs, own) in &mut units {
         let target = spells
             .and_then(|spells| world.auras.iter().find_map(|aura| spells.aura_opacity(aura.spell)))
             .or_else(|| world.not_solid().then_some(f32::from(STEALTH_OPACITY) / 255.0))
             .unwrap_or(1.0);
+        let zoom = if own { zoomed } else { 1.0 };
         // Almost every unit is solid and wants to be, and is done here
         // without touching its change flag.
-        if target == 1.0 && procs.opacity.is_none() && model.faded.is_none() {
+        if target == 1.0 && zoom == 1.0 && procs.opacity.is_none() && model.faded.is_none() {
             continue;
         }
-        let value = procs.opacity_at(target, now);
+        let aura = procs.opacity_at(target, now);
+        let value = aura * zoom;
         let wanted = (value < 1.0).then(|| {
             let bytes = (value.clamp(0.0, 1.0) * 255.0).round() as u8;
-            if value == target {
+            if aura == target && zoom == 1.0 {
                 bytes
             } else {
                 bytes & !7

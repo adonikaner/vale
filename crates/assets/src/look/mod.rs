@@ -29,6 +29,8 @@
 //! pick.rs         what the pointer is on: the volume a click must hit
 //! blips.rs        the dot a unit gets on the minimap, if any
 //! anchor.rs       where a third-person camera looks at a unit
+//! firstperson.rs  how much of the player's own model shows as the camera
+//!                 zooms in to first person
 //! portrait.rs     where to stand to take a unit's picture
 //! inspect.rs      who may be inspected: a player on the character's side,
 //!                 within ten yards
@@ -41,6 +43,7 @@ pub mod conform;
 pub mod cursor;
 pub mod dress;
 pub mod emblem;
+pub mod firstperson;
 pub mod inspect;
 pub mod object;
 pub mod pick;

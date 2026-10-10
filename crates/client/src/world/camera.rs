@@ -852,13 +852,11 @@ fn glide(rig: &mut CameraRig, dt: f32, speed: f32, furthest: f32) {
     }
 }
 
-/// How close the wheel may push the eye, in yards. This is the one number here
-/// that is this client's rather than the game's: 1.12 zooms all the way into
-/// first person, and this client has no first-person mode because the
-/// character's own model would be inside the near plane. It is a named
-/// constant so that the deviation is stated rather than hidden as a literal in
-/// the clamp.
-pub(crate) const CLOSEST: f32 = 2.0;
+/// How close the wheel may push the eye, in yards: none, as in the 1.12.1
+/// client. At zero the eye is at the point the camera orbits, which is first
+/// person; the player's own model fades out on the way in, see
+/// `vale_assets::look::firstperson` and `world::entities::tint::fade_models`.
+pub(crate) const CLOSEST: f32 = 0.0;
 
 /// Which way a drag turns the view, as a multiplier on [`look_rate`]'s two
 /// axes: `mouseInvertYaw` and `mouseInvertPitch`, both registered `"0"`. The
@@ -1055,7 +1053,11 @@ pub fn place(rig: Res<CameraRig>, mut camera: Query<&mut Transform, With<WorldCa
         return;
     };
     let eye = axes::to_bevy(rig.eye().to_array());
-    let target = axes::to_bevy(rig.focus().to_array());
+    // Aimed along the orbit's direction, from the eye toward the focus, rather
+    // than at the focus itself: at a zoom of zero (first person) the eye is on
+    // the focus and the direction between the two points is undefined.
+    let toward = axes::to_bevy((rig.focus() - rig.at(1.0)).to_array());
+    let target = eye + toward;
     // Bevy's up is +Y, which is WoW's +Z; `axes` does that conversion.
     *transform = Transform::from_translation(eye).looking_at(target, view_up(&rig, eye, target));
 }
@@ -1826,5 +1828,29 @@ mod tests {
             "100".into(),
         )]);
         assert_eq!(furthest(&far), DISTANCE_CEILING);
+    }
+
+    /// At a zoom of zero the eye is on the point it orbits, which is first
+    /// person, and the view still faces the way the orbit faces.
+    #[test]
+    fn a_zoom_of_zero_looks_the_same_way_as_any_other() {
+        let mut app = App::new();
+        let rig = CameraRig {
+            yaw: 1.0,
+            pitch: 0.3,
+            distance: 5.0,
+            reach: 5.0,
+            ..CameraRig::default()
+        };
+        app.insert_resource(rig).add_systems(Update, place);
+        let camera = app.world_mut().spawn((Transform::default(), WorldCamera)).id();
+        app.update();
+        let far = app.world().get::<Transform>(camera).unwrap().rotation;
+        app.world_mut().resource_mut::<CameraRig>().reach = 0.0;
+        app.update();
+        let near = *app.world().get::<Transform>(camera).unwrap();
+        assert!(near.rotation.angle_between(far) < 1e-4, "{near:?}");
+        let focus = axes::to_bevy(app.world().resource::<CameraRig>().focus().to_array());
+        assert!((near.translation - focus).length() < 1e-4, "the eye is on the focus");
     }
 }

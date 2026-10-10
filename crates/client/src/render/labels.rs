@@ -268,10 +268,12 @@ fn reconcile(
     // rig's accessor because the camera's `GlobalTransform` is a frame stale in
     // `Update`: propagation has not run yet.
     let eye = crate::render::axes::to_bevy(rig.eye().to_array());
-    // The focus is the other input to the basis every label takes. One rotation
-    // serves the whole pass; see [`face_the_camera`].
-    let facing_the_camera =
-        face_the_camera(eye, crate::render::axes::to_bevy(rig.focus().to_array()));
+    // The view direction is the other input to the basis every label takes,
+    // taken from the orbit (the eye toward the focus, one yard on) so that it
+    // is defined at a zoom of zero. One rotation serves the whole pass; see
+    // [`face_the_camera`].
+    let toward = crate::render::axes::to_bevy((rig.focus() - rig.at(1.0)).to_array());
+    let facing_the_camera = face_the_camera(eye, eye + toward);
     // The quad's axes, taken from that rotation once. Every name is parallel to
     // the near plane, so `right` and `up` are the screen's axes and each corner
     // is the centre plus multiples of them. Building the merged mesh in world

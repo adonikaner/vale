@@ -905,8 +905,10 @@ pub struct Indoors(pub Option<RoomLight>);
 /// A doodad's scale is decided once, at tile load. A unit moves, so it is
 /// sampled here once a frame from the same terrain cache the mover stands on.
 /// The 1.12.1 client lights the character with 2.5 times band 0's sun colour
-/// outdoors and on an inn's floor, with the zone's own fill and the room's
-/// lamps, and never with the room's colour.
+/// outdoors and on an exterior building floor (an inn's, in the trace), with
+/// 1.0 times it on an interior floor (a mine, a cave; see
+/// [`is_interior_floor`]), with the zone's own fill and the room's lamps, and
+/// never with the room's colour.
 ///
 /// The client moves the value toward its target at a fixed rate rather than
 /// switching it, so a unit crossing a shadow's edge does not change brightness
@@ -997,13 +999,21 @@ fn light_entities(
         if current != Some(&now) {
             commands.entity(entity).insert(now);
         }
+        // The 1.12.1 client's three cases: 1.0 on the floor of an interior
+        // group (a cave, a mine, a cellar), 2.5 on any other building floor
+        // with no shadow test, and on the terrain 0.5 in a baked shadow and
+        // 2.5 out of one.
+        use crate::render::models::sun_scale;
         let target = match active {
-            Some(a) if !on_building(a, solids.as_deref(), feet)
-                && a.terrain_shadowed(a.map_id, feet[0], feet[1]) =>
-            {
-                crate::render::models::sun_scale::SHADOWED_GROUND
-            }
-            _ => crate::render::models::sun_scale::LIT_GROUND,
+            Some(a) => match building_under(a, solids.as_deref(), feet) {
+                Some(flags) if is_interior_floor(flags) => sun_scale::NEUTRAL,
+                Some(_) => sun_scale::LIT_GROUND,
+                None if a.terrain_shadowed(a.map_id, feet[0], feet[1]) => {
+                    sun_scale::SHADOWED_GROUND
+                }
+                None => sun_scale::LIT_GROUND,
+            },
+            None => sun_scale::LIT_GROUND,
         };
         let sun = match scale {
             Some(scale) => scale.toward(target, dt),
@@ -1017,26 +1027,35 @@ fn light_entities(
 
 /// Whether an entity stands on a building rather than on the terrain: a
 /// building floor lies under the point [`INDOOR_PROBE`] above its feet, and
-/// it is higher than the terrain there. Such an entity takes the lit sun
-/// scale without the shadow test.
-fn on_building(
+/// it is higher than the terrain there. Such an entity skips the shadow test:
+/// it takes the lit sun scale, or the neutral one on an interior floor.
+///
+/// Answers the floor's WMO group flags (`MOGP`) when it does, for
+/// [`is_interior_floor`].
+fn building_under(
     active: &crate::world::session::ActiveSession,
     solids: Option<&crate::world::session::Solids>,
     feet: [f32; 3],
-) -> bool {
-    let Some(solids) = solids else {
-        return false;
-    };
-    let Some((floor, _)) =
-        solids
+) -> Option<u32> {
+    let (floor, flags) =
+        solids?
             .0
-            .building_floor(active.map_id, feet[0], feet[1], feet[2] + INDOOR_PROBE)
-    else {
-        return false;
-    };
+            .building_floor(active.map_id, feet[0], feet[1], feet[2] + INDOOR_PROBE)?;
     active
         .terrain_height(active.map_id, feet[0], feet[1])
         .is_none_or(|ground| floor > ground)
+        .then_some(flags)
+}
+
+/// Whether a building floor's group is interior for lighting a unit: it
+/// carries neither `EXTERIOR` (0x8) nor `EXTERIOR_LIT` (0x40). A unit standing
+/// on one takes the sun at 1.0 rather than 2.5, so a character in a mine is
+/// lit by the sun at the same strength as the room's own doodads, not as on
+/// open ground. The same mask decides which groups the renderer shades as
+/// rooms (`vale_assets::world::wmo::WmoGroupDraw::is_room`).
+fn is_interior_floor(flags: u32) -> bool {
+    use vale_assets::world::wmo::group_flags;
+    flags & (group_flags::EXTERIOR | group_flags::EXTERIOR_LIT) == 0
 }
 
 /// An entity whose display id resolves to nothing, or whose model will not read.
