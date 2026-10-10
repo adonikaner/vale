@@ -689,6 +689,22 @@ pub struct MeshVertex {
     pub colour: [f32; 4],
 }
 
+/// Each drawn cell's place among a chunk's drawn cells, in emission order;
+/// `None` for a cell under a hole.
+fn cell_ordinals(holes: u16) -> [[Option<u32>; INNER_SIDE]; INNER_SIDE] {
+    let mut out = [[None; INNER_SIDE]; INNER_SIDE];
+    let mut next = 0;
+    for (row, cells) in out.iter_mut().enumerate() {
+        for (col, cell) in cells.iter_mut().enumerate() {
+            if holes & (1 << ((row / 2) * 4 + col / 2)) == 0 {
+                *cell = Some(next);
+                next += 1;
+            }
+        }
+    }
+    out
+}
+
 /// Cells a chunk draws: 64 less the ones its hole mask covers.
 ///
 /// Five vertices each, which is what a chunk contributes to a tile mesh. A free
@@ -773,6 +789,17 @@ pub fn hole_square(position: [f32; 3], bit: usize) -> ([f32; 2], [f32; 2]) {
 /// `heights`, `normals` and `colours` are [`HEIGHTS_PER_CHUNK`] long and in
 /// `MCVT` order — except `colours`, which may also be **empty**, because most
 /// chunks have no `MCCV` at all.
+///
+/// A vertex's x and y are taken from the map's vertex lattice
+/// ([`lattice_xy`]), not computed from the chunk's own origin. The origins in
+/// the files are rounded: on `Azeroth_32_48` every chunk's far edge, computed
+/// from its origin, lies 0.65 mm short of where its neighbour's origin puts
+/// the same vertices. Two meshes whose shared vertices differ by any amount
+/// leave hairline gaps the background shows through, which flicker as the
+/// camera moves. On the lattice a vertex shared by two chunks, or by two
+/// tiles, is computed from the same integers and is the same `f32` in both.
+/// The heights a caller passes should be [`ChunkGrid::stitched`]'s for the
+/// same reason.
 pub fn chunk_mesh_vertices(
     position: [f32; 3],
     heights: &[f32],
@@ -783,6 +810,7 @@ pub fn chunk_mesh_vertices(
 ) {
     let outer = |row: usize, col: usize| row * (OUTER_SIDE + INNER_SIDE) + col;
     let inner = |row: usize, col: usize| row * (OUTER_SIDE + INNER_SIDE) + OUTER_SIDE + col;
+    let base = lattice_index(position);
     for row in 0..INNER_SIDE {
         for col in 0..INNER_SIDE {
             if holes & (1 << ((row / 2) * 4 + col / 2)) != 0 {
@@ -805,13 +833,10 @@ pub fn chunk_mesh_vertices(
                 } else {
                     outer(r as usize, c as usize)
                 };
+                let [x, y] = lattice_xy(base, r, c);
                 emit(MeshVertex {
                     corner: i,
-                    position: [
-                        position[0] - r * UNIT_SIZE,
-                        position[1] - c * UNIT_SIZE,
-                        heights.get(at).copied().unwrap_or(0.0),
-                    ],
+                    position: [x, y, heights.get(at).copied().unwrap_or(0.0)],
                     normal: normals.get(at).copied().unwrap_or(UP),
                     uv: [c / INNER_SIDE as f32, r / INNER_SIDE as f32],
                     colour: colours.get(at).copied().unwrap_or(COLOUR_NONE),
@@ -820,6 +845,135 @@ pub fn chunk_mesh_vertices(
         }
     }
 }
+
+/// The map's vertex lattice: the corner of the 64x64 tile grid, and the
+/// spacing of a chunk's outer vertices, in `f64` so that a vertex index maps to
+/// the same `f32` whichever chunk computes it. A tile is 1600/3 yards.
+const LATTICE_ORIGIN: f64 = 32.0 * 1600.0 / 3.0;
+const LATTICE_UNIT: f64 = 1600.0 / 3.0 / 128.0;
+
+/// A chunk origin's place on the vertex lattice, as whole vertex steps from
+/// the map's corner along x and y. The file's origins are within a millimetre
+/// of a lattice point; rounding takes them onto it.
+pub fn lattice_index(position: [f32; 3]) -> [f64; 2] {
+    [
+        ((LATTICE_ORIGIN - f64::from(position[0])) / LATTICE_UNIT).round(),
+        ((LATTICE_ORIGIN - f64::from(position[1])) / LATTICE_UNIT).round(),
+    ]
+}
+
+/// The world x and y of the vertex `r` rows and `c` columns (in cell units,
+/// halves for a cell's centre) from a chunk whose origin is at lattice
+/// `base`.
+pub fn lattice_xy(base: [f64; 2], r: f32, c: f32) -> [f32; 2] {
+    [
+        (LATTICE_ORIGIN - (base[0] + f64::from(r)) * LATTICE_UNIT) as f32,
+        (LATTICE_ORIGIN - (base[1] + f64::from(c)) * LATTICE_UNIT) as f32,
+    ]
+}
+
+/// A tile's chunks by their place on the map, for finding a chunk's
+/// neighbours.
+///
+/// A vertex on a chunk's edge is stored twice, once in each chunk that shares
+/// it (four times at a corner), and the copies need not decode to the same
+/// height: `MCVT` stores heights relative to each chunk's own base, so the
+/// same world height rounds differently in two chunks. On the `Nephraites`
+/// tiles the editor wrote, a third of shared edge vertices differ, by up to 6
+/// mm. [`Self::stitched`] gives every copy the same value.
+pub struct ChunkGrid {
+    cells: std::collections::HashMap<(i64, i64), usize>,
+}
+
+impl ChunkGrid {
+    /// From the chunks' origins, in the tile's order; a chunk is named by its
+    /// index in that order.
+    pub fn new(origins: impl IntoIterator<Item = [f32; 3]>) -> ChunkGrid {
+        let cells = origins
+            .into_iter()
+            .enumerate()
+            .map(|(index, origin)| (Self::cell(origin), index))
+            .collect();
+        ChunkGrid { cells }
+    }
+
+    fn cell(origin: [f32; 3]) -> (i64, i64) {
+        let [x, y] = lattice_index(origin);
+        ((x / 8.0).round() as i64, (y / 8.0).round() as i64)
+    }
+
+    /// The chunk `rows` and `cols` chunks on from the one at `origin`, toward
+    /// decreasing x and y, if the tile has it.
+    pub fn neighbour(&self, origin: [f32; 3], rows: i64, cols: i64) -> Option<usize> {
+        let (x, y) = Self::cell(origin);
+        self.cells.get(&(x + rows, y + cols)).copied()
+    }
+
+    /// A chunk's heights with every outer vertex on its edges replaced by the
+    /// same vertex's height in the chunk that owns it.
+    ///
+    /// The owner is chosen among the chunks of this tile that hold the vertex
+    /// (two along an edge, four at a corner) as the one furthest on: greatest
+    /// row step, then greatest column step. That is a property of the vertex
+    /// and of which chunks the tile has, so every chunk holding the vertex
+    /// picks the same owner and reads the same value. A vertex on the tile's
+    /// own outer edge is held by fewer chunks here than on the map; the next
+    /// tile's copy may still differ slightly, and [`Adt::to_mesh`] covers that
+    /// seam with a skirt.
+    ///
+    /// `heights_of` answers a chunk's decoded heights by index.
+    pub fn stitched(
+        &self,
+        origin: [f32; 3],
+        heights: &[f32],
+        heights_of: impl Fn(usize) -> Option<Vec<f32>>,
+    ) -> Vec<f32> {
+        let mut out = heights.to_vec();
+        let side = OUTER_SIDE + INNER_SIDE;
+        let last = INNER_SIDE as i64;
+        let mut cache: std::collections::HashMap<(i64, i64), Option<Vec<f32>>> =
+            std::collections::HashMap::new();
+        for r in 0..=last {
+            for c in 0..=last {
+                if r != 0 && r != last && c != 0 && c != last {
+                    continue;
+                }
+                // The row steps and column steps of the chunks holding (r, c).
+                let rows: &[i64] = if r == 0 { &[-1, 0] } else if r == last { &[0, 1] } else { &[0] };
+                let cols: &[i64] = if c == 0 { &[-1, 0] } else if c == last { &[0, 1] } else { &[0] };
+                let mut owner = (0, 0);
+                for &dr in rows {
+                    for &dc in cols {
+                        if (dr, dc) > owner && self.neighbour(origin, dr, dc).is_some() {
+                            owner = (dr, dc);
+                        }
+                    }
+                }
+                if owner == (0, 0) {
+                    continue;
+                }
+                let theirs = cache
+                    .entry(owner)
+                    .or_insert_with(|| self.neighbour(origin, owner.0, owner.1).and_then(&heights_of));
+                let Some(theirs) = theirs else {
+                    continue;
+                };
+                let (tr, tc) = (r - owner.0 * last, c - owner.1 * last);
+                let at = |row: i64, col: i64| (row as usize) * side + col as usize;
+                if let (Some(slot), Some(&value)) = (out.get_mut(at(r, c)), theirs.get(at(tr, tc))) {
+                    *slot = value;
+                }
+            }
+        }
+        out
+    }
+}
+
+/// How far below a tile's outer edge its skirt reaches, in yards. Enough to
+/// cover the sub-centimetre height differences between two tiles' copies of
+/// their shared edge, which [`ChunkGrid::stitched`] cannot reach because the
+/// other tile is not in hand.
+pub const SKIRT_DEPTH: f32 = 0.25;
 
 /// **The `MCCV` byte that means "leave this vertex alone".**
 ///
@@ -1205,15 +1359,29 @@ impl Adt {
         // ranges concatenated below. A chunk's own indices have to be built
         // together regardless, because they reference vertices it owns.
         let mut per_chunk: Vec<(Vec<u32>, TerrainDraw)> = Vec::new();
+        // Where each chunk's vertices start in the buffer, for the skirts.
+        let mut starts: Vec<u32> = Vec::with_capacity(self.chunks.len());
+        let grid = ChunkGrid::new(self.chunks.iter().map(|c| c.position));
 
         for (chunk_index, chunk) in self.chunks.iter().enumerate() {
             let mut indices: Vec<u32> = Vec::new();
             let mut base = positions.len() as u32;
+            starts.push(base);
 
             // The emission order is [`chunk_mesh_vertices`]' and not this
             // function's, so that anything patching a chunk's heights can put
-            // each new position at the index the original went to.
-            chunk.mesh_vertices(|vertex| {
+            // each new position at the index the original went to. The
+            // heights are stitched, so a vertex two chunks share is one value.
+            let heights = grid.stitched(chunk.position, &chunk.heights, |i| {
+                self.chunks.get(i).map(|c| c.heights.clone())
+            });
+            chunk_mesh_vertices(
+                chunk.position,
+                &heights,
+                &chunk.normals,
+                &chunk.colours,
+                chunk.holes,
+                |vertex| {
                 positions.push(vertex.position);
                 normals.push(vertex.normal);
                 colours.push(vertex.colour);
@@ -1231,7 +1399,8 @@ impl Adt {
                     }
                     base += 5;
                 }
-            });
+            },
+            );
 
             // The chunk's own footprint is known without looking at the mesh —
             // it is one CHUNK_SIZE square from its origin, running in
@@ -1262,6 +1431,53 @@ impl Adt {
                     chunks: 1,
                 },
             ));
+        }
+
+        // The skirts: along each side of a chunk that has no neighbour in this
+        // tile, a strip hanging `SKIRT_DEPTH` below the edge, drawn from both
+        // sides, in the chunk's own draw group. It covers the gap to the next
+        // tile, whose copy of the edge can differ in height by a millimetre
+        // or so. Each skirt vertex copies an edge vertex, and the bottom pair
+        // drops by the depth. They go after every chunk's vertices so the
+        // per-chunk spans stay as `chunk_vertex_span` states them.
+        let mut skirt_sources: Vec<u32> = Vec::new();
+        for (chunk_index, chunk) in self.chunks.iter().enumerate() {
+            let cell_of = cell_ordinals(chunk.holes);
+            // (neighbour row step, column step, cell for segment k, its two corners)
+            let sides: [(i64, i64, fn(usize) -> (usize, usize), usize, usize); 4] = [
+                (-1, 0, |k| (0, k), 0, 1),
+                (1, 0, |k| (INNER_SIDE - 1, k), 3, 2),
+                (0, -1, |k| (k, 0), 0, 3),
+                (0, 1, |k| (k, INNER_SIDE - 1), 1, 2),
+            ];
+            for (rows, cols, cell, from, to) in sides {
+                if grid.neighbour(chunk.position, rows, cols).is_some() {
+                    continue;
+                }
+                for k in 0..INNER_SIDE {
+                    let (row, col) = cell(k);
+                    let Some(ordinal) = cell_of[row][col] else {
+                        continue;
+                    };
+                    let first = starts[chunk_index] + ordinal * 5;
+                    let (a, b) = (first + from as u32, first + to as u32);
+                    let at = positions.len() as u32;
+                    for (source, drop) in [(a, 0.0), (b, 0.0), (a, SKIRT_DEPTH), (b, SKIRT_DEPTH)] {
+                        let i = source as usize;
+                        let [x, y, z] = positions[i];
+                        positions.push([x, y, z - drop]);
+                        normals.push(normals[i]);
+                        colours.push(colours[i]);
+                        uvs.push(uvs[i]);
+                        alpha_uvs.push(alpha_uvs[i]);
+                        skirt_sources.push(source);
+                    }
+                    let (ta, tb, ba, bb) = (at, at + 1, at + 2, at + 3);
+                    per_chunk[chunk_index]
+                        .0
+                        .extend([ta, ba, tb, tb, ba, bb, ta, tb, ba, tb, bb, ba]);
+                }
+            }
         }
 
         // Concatenate the chunks that want identical GL state.
@@ -1339,6 +1555,7 @@ impl Adt {
             draws,
             centre,
             radius,
+            skirt_sources,
         }
     }
 
@@ -1967,9 +2184,24 @@ pub struct TerrainMesh {
     /// that a draw can span it.
     pub centre: [f32; 3],
     pub radius: f32,
+    /// The skirt vertices at the end of `positions`, each as the edge vertex it
+    /// copies. See [`Self::source_of`].
+    pub skirt_sources: Vec<u32>,
 }
 
 impl TerrainMesh {
+    /// The chunk vertex a vertex follows: itself, or for a skirt vertex the
+    /// edge vertex it hangs from. A caller that rewrites chunk vertices in
+    /// place (a height brush) writes a skirt vertex from this one, which folds
+    /// the skirt flat until the tile is built again.
+    pub fn source_of(&self, index: u32) -> u32 {
+        let first = (self.positions.len() - self.skirt_sources.len()) as u32;
+        match index.checked_sub(first) {
+            Some(skirt) => self.skirt_sources.get(skirt as usize).copied().unwrap_or(index),
+            None => index,
+        }
+    }
+
     pub fn triangle_count(&self) -> usize {
         self.indices.len() / 3
     }

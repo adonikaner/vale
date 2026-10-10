@@ -1795,8 +1795,10 @@ fn group_mesh(
             // Positions and normals cross into Bevy's axes here — the only place
             // terrain geometry does. A change of basis is a rotation, so the
             // normals need the same treatment as the positions and no rescaling.
+            // A skirt vertex follows the edge vertex it hangs from; see
+            // `TerrainMesh::source_of`.
             if live {
-                sources.push(index);
+                sources.push(source.source_of(index));
             }
             positions.push(axes::to_bevy(source.positions[i]).to_array());
             normals.push(axes::to_bevy(source.normals[i]).to_array());
@@ -2003,6 +2005,7 @@ mod tests {
             draws: Vec::new(),
             centre: [0.0; 3],
             radius: 1.0,
+            skirt_sources: Vec::new(),
         }
     }
 
@@ -2189,6 +2192,7 @@ mod tests {
             draws: Vec::new(),
             centre: [0.0; 3],
             radius: 1.0,
+            skirt_sources: Vec::new(),
         }
     }
 

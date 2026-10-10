@@ -654,10 +654,13 @@ fn holes_shrink_a_draw_range_rather_than_shifting_its_neighbours() {
     };
     let mesh = adt.to_mesh();
     // Chunk 0 lost a 2x2 block of cells; chunk 1 is whole and must start
-    // exactly where chunk 0 ended.
-    assert_eq!(mesh.draws[0].index_count as usize, (64 - 4) * 4 * 3);
+    // exactly where chunk 0 ended. Both chunks share an origin, so neither
+    // has a neighbour and each carries a skirt on all four sides: 12 indices
+    // per edge segment, less the four segments along the holed block.
+    let skirt = |segments: usize| segments * 12;
+    assert_eq!(mesh.draws[0].index_count as usize, (64 - 4) * 4 * 3 + skirt(32 - 4));
     assert_eq!(mesh.draws[1].index_start, mesh.draws[0].index_count);
-    assert_eq!(mesh.draws[1].index_count as usize, 64 * 4 * 3);
+    assert_eq!(mesh.draws[1].index_count as usize, 64 * 4 * 3 + skirt(32));
 }
 
 #[test]
@@ -873,15 +876,17 @@ fn mesh_emits_four_triangles_per_cell_and_skips_holes() {
         wmos: vec![],
         chunks: vec![test_chunk(heights.clone(), 0)],
     };
-    // 8x8 cells x 4 triangles.
-    assert_eq!(adt.to_mesh().triangle_count(), 64 * 4);
+    // 8x8 cells x 4 triangles, and a lone chunk's skirt: 32 edge segments,
+    // four triangles each (two per side of the strip).
+    assert_eq!(adt.to_mesh().triangle_count(), 64 * 4 + 32 * 4);
 
-    // One hole bit removes a 2x2 block of cells => 4 cells => 16 triangles.
+    // One hole bit removes a 2x2 block of cells => 4 cells => 16 triangles,
+    // and the four skirt segments along the block's two outer sides.
     let holed = Adt {
         chunks: vec![test_chunk(heights, 0b1)],
         ..adt.clone()
     };
-    assert_eq!(holed.to_mesh().triangle_count(), (64 - 4) * 4);
+    assert_eq!(holed.to_mesh().triangle_count(), (64 - 4) * 4 + (32 - 4) * 4);
 }
 
 // -----------------------------------------------------------------------
@@ -1612,4 +1617,88 @@ fn a_scrolling_layer_reaches_its_own_draw_group() {
             }
         }
     }
+}
+
+/// Two chunks side by side whose files disagree about their shared edge, as
+/// the shipped and edited tiles do: an origin rounded away from the lattice by
+/// a fraction of a millimetre, and edge heights a few millimetres apart. Every
+/// vertex the two meshes share comes out as the same `f32` triple, so no gap
+/// is left between them.
+#[test]
+fn two_chunks_share_their_edge_vertices_exactly() {
+    let left = Mcnk {
+        position: [-8533.333_984, 0.0, 236.7],
+        ..test_chunk((0..HEIGHTS_PER_CHUNK).map(|i| (i % 17) as f32 * 0.37).collect(), 0)
+    };
+    // The next chunk across (decreasing y), its origin off the lattice as
+    // the files have it, and its column-0 heights 4 mm off its neighbour's
+    // column 8.
+    let mut heights: Vec<f32> = (0..HEIGHTS_PER_CHUNK).map(|i| (i % 17) as f32 * 0.21).collect();
+    for row in 0..9 {
+        heights[row * 17] = left.heights[row * 17 + 8] + 0.004;
+    }
+    let right = Mcnk {
+        position: [-8533.333_984, -33.333_984, 236.7],
+        ..test_chunk(heights, 0)
+    };
+    let adt = Adt {
+        chunks: vec![left, right],
+        ..one_chunk_tile(vec![0.0; HEIGHTS_PER_CHUNK], 0)
+    };
+    let mesh = adt.to_mesh();
+    let (start, count) = adt.chunk_vertex_span(1);
+    let first: std::collections::HashSet<[u32; 3]> = mesh.positions[..start]
+        .iter()
+        .map(|p| p.map(f32::to_bits))
+        .collect();
+    let mut shared = 0;
+    for p in &mesh.positions[start..start + count] {
+        // On the shared edge by lattice x/y: the left chunk's column 8 is
+        // the right chunk's column 0.
+        let near = mesh.positions[..start]
+            .iter()
+            .find(|q| (q[0] - p[0]).abs() < 0.01 && (q[1] - p[1]).abs() < 0.01);
+        if let Some(q) = near {
+            shared += 1;
+            assert_eq!(q.map(f32::to_bits), p.map(f32::to_bits), "{q:?} against {p:?}");
+            assert!(first.contains(&p.map(f32::to_bits)));
+        }
+    }
+    // Nine vertices on the edge, each emitted by two cells on each side.
+    assert!(shared >= 9, "{shared} shared vertices found");
+}
+
+/// On a shipped tile, every vertex position that two chunks' meshes share is
+/// the same `f32` triple in both. Before the lattice every chunk edge on
+/// `Azeroth_32_48` was 0.65 mm apart from its neighbour's.
+#[test]
+fn a_real_tiles_chunks_share_their_edges_exactly() {
+    let Some(adt) = real_tile("Azeroth", 32, 48) else {
+        eprintln!("no archives: the shared-edge check did not run");
+        return;
+    };
+    assert_eq!(seam_mismatches(&adt), 0);
+}
+
+/// How many vertex positions of a tile mesh lie within a tenth of a yard of
+/// another chunk's vertex without being the same `f32` triple.
+fn seam_mismatches(adt: &Adt) -> usize {
+    let mesh = adt.to_mesh();
+    let mut by_cell: std::collections::HashMap<(i64, i64), Vec<([u32; 3], usize)>> =
+        std::collections::HashMap::new();
+    for chunk in 0..adt.chunks.len() {
+        let (start, count) = adt.chunk_vertex_span(chunk);
+        for p in &mesh.positions[start..start + count] {
+            let key = ((p[0] * 10.0).round() as i64, (p[1] * 10.0).round() as i64);
+            by_cell.entry(key).or_default().push((p.map(f32::to_bits), chunk));
+        }
+    }
+    by_cell
+        .values()
+        .filter(|vertices| {
+            vertices
+                .iter()
+                .any(|(bits, chunk)| vertices.iter().any(|(b, c)| c != chunk && b != bits))
+        })
+        .count()
 }

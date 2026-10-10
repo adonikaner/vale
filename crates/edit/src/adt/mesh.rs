@@ -23,7 +23,7 @@
 //! count.
 
 use super::{heights, AdtFile};
-use vale_assets::world::adt::{chunk_mesh_vertices, drawn_cells, MeshVertex};
+use vale_assets::world::adt::{chunk_mesh_vertices, drawn_cells, ChunkGrid, MeshVertex};
 
 /// Where a chunk's vertices begin in the tile's mesh, and how many there are.
 ///
@@ -50,6 +50,12 @@ pub fn chunk_vertices(tile: &AdtFile, chunk: usize) -> Option<Vec<MeshVertex>> {
     if heights.is_empty() {
         return None;
     }
+    // Stitched as `Adt::to_mesh` stitches them, so a patched edge vertex has
+    // the value the tile mesh gave it; see `ChunkGrid::stitched`.
+    let grid = ChunkGrid::new((0..).map_while(|i| tile.chunk(i)).map(|c| c.head().position()));
+    let heights = grid.stitched(head.position(), &heights, |i| {
+        tile.chunk(i).map(heights::heights).filter(|h| !h.is_empty())
+    });
     let normals = heights::normals(map_chunk);
     // **The shading too**, because a live patch writes every attribute a vertex
     // has and a colour stroke is a vertex edit. Decoded through
@@ -120,15 +126,14 @@ mod tests {
             assert_eq!(vertices.len(), count, "chunk {chunk}");
             for (i, vertex) in vertices.iter().enumerate() {
                 let at = start + i;
+                // Exactly: both sides put x and y on the lattice and stitch
+                // the edge heights, so a live patch writes the bits the tile
+                // mesh was built with and opens no seam.
                 let was = mesh.positions[at];
-                for k in 0..3 {
-                    assert!(
-                        (vertex.position[k] - was[k]).abs() < 1e-3,
-                        "chunk {chunk} vertex {i} (tile vertex {at}): {:?} against to_mesh's {:?}",
-                        vertex.position,
-                        was
-                    );
-                }
+                assert_eq!(
+                    vertex.position, was,
+                    "chunk {chunk} vertex {i} (tile vertex {at}) against to_mesh's"
+                );
                 checked += 1;
             }
         }
@@ -136,11 +141,12 @@ mod tests {
         // the holes: 81,840 on `Azeroth_32_48`. The bound is well under that so
         // that a tile with more holes still counts as checked.
         assert!(checked > 50_000, "only {checked} vertices were checked");
+        // The skirt along the tile's edges follows the chunk vertices.
         assert_eq!(
-            mesh.positions.len(),
+            mesh.positions.len() - mesh.skirt_sources.len(),
             parsed.chunk_vertex_span(parsed.chunks.len() - 1).0
                 + parsed.chunk_vertex_span(parsed.chunks.len() - 1).1,
-            "the spans account for every vertex in the tile"
+            "the spans account for every chunk vertex in the tile"
         );
     }
 }
