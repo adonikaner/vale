@@ -1061,6 +1061,27 @@ pub(super) fn landing_for(move_flags: u32) -> Option<u16> {
     Some(anim::JUMP_LAND_RUN)
 }
 
+/// Whether a landing one-shot gives way to `state`: a standing landing to any
+/// travelling gait, and a running landing to any state that does not travel.
+/// See [`Playback::advance`].
+pub(super) fn landing_yields(landing: u16, state: u16) -> bool {
+    let travels = matches!(
+        state,
+        anim::WALK
+            | anim::RUN
+            | anim::SPRINT
+            | anim::WALK_BACKWARDS
+            | anim::RUN_LEFT
+            | anim::RUN_RIGHT
+            | anim::STEALTH_WALK
+    );
+    match landing {
+        anim::JUMP_END => travels,
+        anim::JUMP_LAND_RUN => !travels,
+        _ => false,
+    }
+}
+
 /// The combat ids: the only ids that are masked when airborne. So a swing
 /// made mid-jump plays over the jump arc, and an emote in mid-air does not.
 fn combat_id(id: u16) -> bool {
@@ -1149,8 +1170,16 @@ fn off_hand(world: &WorldEntity, sheath: u8) -> WeaponAnim {
 /// Every character model carries 87, 88 and 10 (16 of 16, `vale anim`);
 /// creatures carry none of them, and their chains in [`fallbacks`] end at the
 /// unarmed swing, which is a wolf's bite.
+///
+/// A melee blow is made with the melee weapon whether or not it was drawn, so
+/// a stowed unit asks for the armed swing, not `AttackUnarmed`. The armed
+/// swing carries `DRAW_MELEE`, and the reconcile after the play draws the
+/// weapon. Asking for `AttackUnarmed` instead made the first blow from a
+/// stowed weapon a punch, and its `STOW_EMPTY_HANDS` kept the weapon stowed.
+/// A ranged-drawn unit keeps what it holds.
 pub(super) fn swing(world: &WorldEntity, sheath: u8) -> u16 {
     use vale_protocol::play::action::hit_info;
+    let sheath = if sheath == SHEATH_STATE_RANGED { sheath } else { SHEATH_STATE_MELEE };
     if world.last_swing_info & hit_info::LEFT_SWING != 0 {
         return off_hand(world, sheath).off_attack();
     }
@@ -1658,7 +1687,22 @@ impl Playback {
         // A one-shot outranks the state while it lasts, and expires on its own
         // clock rather than on a change of state: a creature that starts running
         // half way through its swing finishes the swing.
+        //
+        // The two landings are the exception, because each is a statement
+        // about the legs: `JumpEnd` is a landing standing still and
+        // `JumpLandRun` one that runs on. A landing that no longer matches what
+        // the legs are doing gives way to the gait at once. Otherwise a unit
+        // that landed still and set off again slid along in the landing's
+        // crouch for the rest of the clip, its legs doing nothing.
         let mut ran_out = None;
+        if self
+            .oneshot
+            .as_ref()
+            .is_some_and(|shot| now < shot.until && landing_yields(shot.wanted, state))
+        {
+            self.oneshot = None;
+            ran_out = Some(now);
+        }
         let wanted = match self.oneshot.as_ref() {
             Some(shot) if now < shot.until => shot.wanted,
             Some(shot) => {
@@ -2617,7 +2661,9 @@ impl Playback {
 
     /// Where in its stride the base track is: `(animation id, fraction 0..1 of
     /// the cycle)` while the legs play a travelling ground gait, `None`
-    /// otherwise.
+    /// otherwise. `Sprint` is one of the gaits: a mount at 60% or 100% speed
+    /// asks for it and plays its `Run` in its place, and leaving it out made
+    /// every mounted footfall silent.
     ///
     /// Used by the footstep system (`crate::sound::footsteps`), which watches
     /// the fraction pass the two footfalls. The `move_speed` test excludes a
@@ -2625,7 +2671,7 @@ impl Playback {
     /// because footsteps from an idle loop are worse than silent feet. The
     /// clock arithmetic is [`Playback::advance`]'s, without changing state.
     pub(crate) fn stride(&self, now: f32) -> Option<(u16, f32)> {
-        if !matches!(self.wanted, anim::WALK | anim::RUN | anim::WALK_BACKWARDS) {
+        if !matches!(self.wanted, anim::WALK | anim::RUN | anim::SPRINT | anim::WALK_BACKWARDS) {
             return None;
         }
         let seq = self.skeleton.sequences.get(self.sequence)?;

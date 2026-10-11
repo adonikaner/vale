@@ -2679,10 +2679,12 @@ fn an_unchanged_entity_does_not_rebuild_its_model() {
         name_anchor: 0.0,
         anchor: 0.0,
         mounted_anchor: None,
+        mounted_name: None,
         model_sphere: Default::default(),
         pick: Arc::new(Default::default()),
         room: None,
         sun: crate::render::models::sun_scale::NEUTRAL,
+        lamps: Default::default(),
         shadow_radius: 0.5,
         cull_radius: f32::MAX,
         roots: Vec::new(),
@@ -2839,10 +2841,12 @@ fn crossing_a_threshold_keeps_the_model() {
         name_anchor: 0.0,
                 anchor: 0.0,
                 mounted_anchor: None,
+                mounted_name: None,
                 model_sphere: Default::default(),
                 pick: Arc::new(Default::default()),
                 room: None,
                 sun: crate::render::models::sun_scale::NEUTRAL,
+                lamps: Default::default(),
                 shadow_radius: 0.5,
                 cull_radius: f32::MAX,
                 roots: Vec::new(),
@@ -2920,10 +2924,12 @@ fn a_change_of_sun_scale_retags_the_parts_without_a_rebuild() {
         name_anchor: 0.0,
                 anchor: 0.0,
                 mounted_anchor: None,
+                mounted_name: None,
                 model_sphere: Default::default(),
                 pick: Arc::new(Default::default()),
                 room: None,
                 sun: crate::render::models::sun_scale::NEUTRAL,
+                lamps: Default::default(),
                 shadow_radius: 0.5,
                 cull_radius: f32::MAX,
                 roots: Vec::new(),
@@ -3183,10 +3189,12 @@ fn a_model(display_id: u32) -> EntityModel {
         name_anchor: 0.0,
         anchor: 0.0,
         mounted_anchor: None,
+        mounted_name: None,
         model_sphere: Default::default(),
         pick: Arc::new(Default::default()),
         room: None,
         sun: crate::render::models::sun_scale::NEUTRAL,
+        lamps: Default::default(),
         shadow_radius: 0.5,
         cull_radius: f32::MAX,
         roots: Vec::new(),
@@ -3260,10 +3268,12 @@ fn a_re_dressing_keeps_the_spell_effects_and_a_shapeshift_does_not() {
         name_anchor: 0.0,
                     anchor: 0.0,
                     mounted_anchor: None,
+                    mounted_name: None,
                     model_sphere: Default::default(),
                     pick: Arc::new(Default::default()),
                     room: None,
                     sun: crate::render::models::sun_scale::NEUTRAL,
+                    lamps: Default::default(),
                     shadow_radius: 0.5,
                     cull_radius: f32::MAX,
                     roots: Vec::new(),
@@ -3626,10 +3636,12 @@ fn one_rig(app: &mut App, cull_radius: f32) -> [Entity; 4] {
         name_anchor: 0.0,
             anchor: 0.0,
             mounted_anchor: None,
+            mounted_name: None,
             model_sphere: Default::default(),
             pick: Arc::new(Default::default()),
             room: None,
             sun: crate::render::models::sun_scale::NEUTRAL,
+            lamps: Default::default(),
             shadow_radius: 0.5,
             cull_radius,
             roots: Vec::new(),
@@ -4671,10 +4683,12 @@ fn bench_animate_over_a_crowd() {
                 name_anchor: 0.0,
                 anchor: 0.0,
                 mounted_anchor: None,
+                mounted_name: None,
                 model_sphere: Default::default(),
                 pick: Arc::new(Default::default()),
                 room: None,
                 sun: crate::render::models::sun_scale::NEUTRAL,
+                lamps: Default::default(),
                 shadow_radius: 0.5,
                 cull_radius: f32::MAX,
                 roots: Vec::new(),
@@ -4839,4 +4853,52 @@ fn a_reread_asks_for_the_tables_at_once() {
     assert!(cache.tried);
     assert!(cache.resolved.contains_key(&(false, 49)));
     assert!(cache.tables().is_none(), "these archives hold no table");
+}
+
+/// A mount at riding speed asks for `Sprint` and plays its `Run`, and its
+/// stride still has footfalls in it. Without `Sprint` among the gaits the
+/// footstep pass heard nothing from any mount at 60% or 100% speed.
+#[test]
+fn a_galloping_mount_still_has_a_stride() {
+    let mut play = playing(&[anim::STAND, anim::RUN]);
+    let mut skeleton = (*play.skeleton).clone();
+    skeleton.sequences[1].move_speed = 7.0;
+    play.skeleton = Arc::new(skeleton);
+    play.speed = 14.0;
+    play.advance(anim::SPRINT, 0.0);
+    let (gait, _) = play.stride(0.1).expect("a stride at a gallop");
+    assert_eq!(gait, anim::SPRINT);
+}
+
+/// A stowed weapon swings as the weapon, not as a fist: the first blow of a
+/// fight from a sheathed character was a punch.
+#[test]
+fn a_stowed_weapon_swings_as_the_weapon() {
+    let mut armed = moving(0.0);
+    armed.weapons[0] = a_greatsword();
+    assert_eq!(swing(&armed, 0), anim::ATTACK_2H);
+    // With nothing to hold, it is still a punch.
+    assert_eq!(swing(&moving(0.0), 0), anim::ATTACK_UNARMED);
+}
+
+/// A standing landing gives way to a gait at once, and a running one to
+/// standing still; neither gives way to the other kind of state.
+#[test]
+fn a_landing_gives_way_when_the_legs_change() {
+    use super::pose::landing_yields;
+    assert!(landing_yields(anim::JUMP_END, anim::RUN));
+    assert!(landing_yields(anim::JUMP_END, anim::SPRINT));
+    assert!(!landing_yields(anim::JUMP_END, anim::STAND));
+    assert!(landing_yields(anim::JUMP_LAND_RUN, anim::STAND));
+    assert!(!landing_yields(anim::JUMP_LAND_RUN, anim::RUN));
+    // Nothing else yields.
+    assert!(!landing_yields(anim::ATTACK_1H, anim::RUN));
+
+    // And in the playback: a landing still, then the run keys pressed.
+    let mut play = playing(&[anim::STAND, anim::RUN, anim::JUMP_END]);
+    play.oneshot = Some(OneShot { wanted: anim::JUMP_END, until: 1.0 });
+    play.advance(anim::STAND, 0.1);
+    assert_eq!(play.wanted, anim::JUMP_END, "still standing: the landing plays");
+    play.advance(anim::RUN, 0.2);
+    assert_eq!(play.wanted, anim::RUN, "moving: the landing gives way");
 }

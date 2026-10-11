@@ -242,6 +242,7 @@ fn reconcile(
         &WorldEntity,
         &Transform,
         Option<&crate::world::entities::EntityModel>,
+        Option<&crate::world::entities::Mount>,
     )>,
 ) {
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::Labels);
@@ -284,7 +285,7 @@ fn reconcile(
 
     // One bucket per tint. The module note explains why the split is by colour.
     let mut wanted: HashMap<u32, Quads> = HashMap::default();
-    for (unit, at, model) in &units {
+    for (unit, at, model, mount) in &units {
         if unit.name.is_empty() {
             // A unit with an empty name has a name query in flight; it is not a
             // unit without a name. It is skipped, because an empty quad that is
@@ -317,7 +318,10 @@ fn reconcile(
         // the same number, so the ramp is applied to the placed height and not
         // to the model's own.
         let lift = model.map_or(2.0, |model| model.name_anchor) * at.scale.y;
-        let over = at.translation + Vec3::Y * lift;
+        // A rider's name hangs above the saddle, and is sized by the rider's
+        // own height as on foot.
+        let over = at.translation
+            + Vec3::Y * model.map_or(lift, |model| model.name_lift(mount, at.scale.y));
         // The whole text: the name with its tags and rank, then the guild,
         // the subname and the owner line, one under another. See
         // [`rules::floating_text`].

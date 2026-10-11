@@ -474,9 +474,10 @@ impl StaticLamps {
     /// The two above are readings of a *drawing*: an emitter's colour is the
     /// flame's, a glow batch's is its texture's. This one is the game stating a
     /// light outright — colour, position, and a falloff in yards — and it is
-    /// the only source that does. 1.12 reads none of it: a WMO is lit by its
-    /// baked `MOCV` and these records go unused, which is why a lit window
-    /// lights nothing in the reference client either.
+    /// the only source that does. 1.12 lights the building's own surfaces
+    /// with its baked `MOCV` and not with these records, which is why a lit
+    /// window lights no wall in the reference client. It does light the
+    /// models standing near them; see [`crate::render::building_lights`].
     ///
     /// **The falloff is the file's and not this module's.** `atten_end` is
     /// where the building says the light stops, so it is taken as the reach

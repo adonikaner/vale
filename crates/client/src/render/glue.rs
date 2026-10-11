@@ -785,6 +785,7 @@ fn dress_the_character(
                     false,
                     None,
                     crate::render::models::sun_scale::NEUTRAL,
+                    Default::default(),
                     now,
                 );
                 // A held item's visual. `SMSG_CHAR_ENUM` carries no

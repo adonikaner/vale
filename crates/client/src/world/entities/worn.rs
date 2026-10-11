@@ -40,6 +40,7 @@ pub(super) fn spawn_attachments(
         // entity, so the wearer and its attachments always share a room.
         let room = model.room;
         let sun = model.sun;
+        let lamps = model.lamps;
         for attachment in std::mem::take(&mut model.wanted) {
             match cache.attached(
                 &attachment.path,
@@ -77,6 +78,7 @@ pub(super) fn spawn_attachments(
                         false,
                         room,
                         sun,
+                        lamps,
                         now,
                     );
                     part.want_nested(attachment.effects);
@@ -135,6 +137,7 @@ pub(crate) fn hang_nested(
                     false,
                     None,
                     crate::render::models::sun_scale::NEUTRAL,
+                    Default::default(),
                     now,
                 );
                 part.nested.push(nested);

@@ -292,6 +292,10 @@ pub struct EntityModel {
     /// Static. Read from the live pose, it would rise and fall with a
     /// galloping horse's spine and move the camera with it.
     pub mounted_anchor: Option<f32>,
+    /// The name's height once the `Mount` clip has placed the body in a
+    /// saddle, or `None` for a model with no such clip. Static for the reason
+    /// [`Self::mounted_anchor`] is. See [`Self::name_lift`].
+    pub mounted_name: Option<f32>,
     /// The model's own header sphere, in model yards. Every path in
     /// [`Self::pick_sphere`] falls back to it, and it is the whole answer for a
     /// model with no skeleton.
@@ -348,6 +352,9 @@ pub struct EntityModel {
     /// The sun scale its batches were tagged with; see [`SunScale`]. Stored so
     /// that a change is a retag rather than a rebuild, as the room's colour is.
     sun: f32,
+    /// The building lights its batches were tagged with, for the same reason;
+    /// see [`crate::render::building_lights`].
+    lamps: crate::render::building_lights::UnitLamps,
     /// What was in the entity's hands when this was built, and whether it was
     /// drawn.
     ///
@@ -364,6 +371,16 @@ pub struct EntityModel {
 }
 
 impl EntityModel {
+    /// How far above the entity's origin its name hangs, in world yards: the
+    /// `PlayerName` point times the entity's scale, or, for a rider, that
+    /// point in the `Mount` clip above the saddle. A rider's name taken from
+    /// its standing height hung at a person's height beside the horse's head.
+    pub fn name_lift(&self, mount: Option<&Mount>, scale: f32) -> f32 {
+        match mount {
+            Some(mount) => mount.seat + self.mounted_name.unwrap_or(self.name_anchor) * scale,
+            None => self.name_anchor * scale,
+        }
+    }
     /// Stage one of the mouse pick: the sphere the pointer's ray must cross
     /// before this unit's triangles are tested, in model yards.
     ///
@@ -651,6 +668,7 @@ impl EffectSet {
                         effect.point == vale_assets::world::m2::attach::BASE,
                         None,
                         crate::render::models::sun_scale::NEUTRAL,
+                        Default::default(),
                         now,
                     );
                     self.stated(&part, now);
@@ -971,7 +989,16 @@ const INDOOR_PROBE: f32 = 1.0;
 /// and an entity standing still is not re-dressed sixty times a second.
 fn light_entities(
     mut commands: Commands,
-    entities: Query<(Entity, &Transform, Option<&Indoors>, Option<&SunScale>), With<WorldEntity>>,
+    entities: Query<
+        (
+            Entity,
+            &Transform,
+            Option<&Indoors>,
+            Option<&SunScale>,
+            Option<&crate::render::building_lights::UnitLamps>,
+        ),
+        With<WorldEntity>,
+    >,
     interiors: Query<&crate::render::wmos::Interior>,
     // The terrain under the entity, for the shadow bit; see [`SunScale`].
     // Optional because the indoor test needs no session and is tested without
@@ -982,11 +1009,14 @@ fn light_entities(
     solids: Option<Res<crate::world::session::Solids>>,
     // For the blend; an app with no clock steps the whole way at once.
     time: Option<Res<Time>>,
+    // The building lights near the camera; see `render::building_lights`.
+    // Optional because an app with no renderer has none.
+    lamp_slots: Option<Res<crate::render::building_lights::LampSlots>>,
 ) {
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::LightEntities);
     let active = session.as_ref().and_then(|s| s.active.as_ref());
     let dt = time.as_ref().map_or(f32::MAX, |t| t.delta_secs());
-    for (entity, transform, current, scale) in &entities {
+    for (entity, transform, current, scale, lamps) in &entities {
         let feet = crate::render::axes::to_wow(transform.translation);
         let mut point = feet;
         point[2] += INDOOR_PROBE;
@@ -1021,6 +1051,14 @@ fn light_entities(
         };
         if scale != Some(&sun) {
             commands.entity(entity).insert(sun);
+        }
+        // The building lights it stands within reach of, nearest three. Taken at
+        // the model's origin, the feet, as the client takes its model position.
+        let near = lamp_slots
+            .as_ref()
+            .map_or_else(Default::default, |slots| slots.nearest(transform.translation));
+        if lamps.copied().unwrap_or_default() != near || lamps.is_none() {
+            commands.entity(entity).insert(near);
         }
     }
 }

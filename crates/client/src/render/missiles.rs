@@ -289,6 +289,7 @@ fn spawn_missiles(
                     false,
                     None,
                     crate::render::models::sun_scale::NEUTRAL,
+                    Default::default(),
                     launch.since,
                 );
                 commands.entity(carrier).insert(Missile {

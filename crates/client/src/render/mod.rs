@@ -87,6 +87,7 @@
 //! listed in [`shader`], and its test checks each one.
 
 pub mod axes;
+pub mod building_lights;
 pub mod celestial;
 pub mod clouds;
 pub mod decals;
@@ -204,6 +205,10 @@ impl bevy::app::Plugin for RenderPlugins {
             // constrain.
             (
                 wmos::WmoPlugin,
+                // The buildings' own lamps, stocked for the units standing
+                // near them. Reads what the building pass inserts and nothing
+                // else; see its module doc.
+                building_lights::BuildingLightPlugin,
                 // The buildings no file places. A boat or a zeppelin is a game
                 // object the server spawns, so it does not go through the
                 // tile's `PendingWmos`. It shares the building cache and

@@ -2141,7 +2141,8 @@ fn parse_group_info(data: &[u8]) -> Vec<WmoGroupInfo> {
 /// ```text
 /// 0x00 u8      kind          0 omni, 1 spot, 2 direct, 3 ambient
 /// 0x01 u8      use_atten
-/// 0x02 u8[2]   pad
+/// 0x02 u8      diffuse       the light has a diffuse term
+/// 0x03 u8      ambient       the light has an ambient term
 /// 0x04 BGRA    colour
 /// 0x08 f32[3]  position, in the building's own space
 /// 0x14 f32     intensity
@@ -2168,6 +2169,12 @@ pub struct WmoLight {
     pub kind: u8,
     /// Whether the two distances below are read at all.
     pub use_atten: bool,
+    /// Whether the light lights a model's surfaces facing it: its colour
+    /// times intensity, times the cosine. Set on all ten of the inn's.
+    pub diffuse: bool,
+    /// Whether it also adds its colour times intensity to every surface of
+    /// the model, facing it or not. Also set on all ten of the inn's.
+    pub ambient: bool,
     /// Its colour, 0..1, **sRGB as the file states it** — the space every other
     /// band in this project is summed in. `MOLT` stores BGRA.
     pub colour: [f32; 3],
@@ -2186,6 +2193,27 @@ impl WmoLight {
     pub fn is_point(&self) -> bool {
         self.kind == 0 && self.use_atten && self.atten_end > self.atten_start
     }
+
+    /// Whether the light lights the models standing near it: an omni light,
+    /// whatever its falloff says. See [`Self::model_reach`].
+    pub fn lights_models(&self) -> bool {
+        self.kind == 0
+    }
+
+    /// How far from the light a model may stand and still be lit by it, in
+    /// the building's yards: the attenuation end, moved out by a tenth of a
+    /// yard when it is within a thousandth of the start.
+    ///
+    /// It is a reach and not a falloff. A model inside it takes the light at
+    /// the fixed point-light curve `1 / (0.7d + 0.03d²)`, which has no radius
+    /// in it, so the light does not fade to nothing at this distance.
+    pub fn model_reach(&self) -> f32 {
+        if (self.atten_end - self.atten_start).abs() < 0.001 {
+            self.atten_end + 0.1
+        } else {
+            self.atten_end
+        }
+    }
 }
 
 /// `MOLT`: one 48-byte record per light. See [`WmoLight`] for the layout and
@@ -2195,6 +2223,8 @@ fn parse_lights(data: &[u8]) -> Vec<WmoLight> {
         .map(|r| WmoLight {
             kind: r[0],
             use_atten: r[1] != 0,
+            diffuse: r[2] != 0,
+            ambient: r[3] != 0,
             // BGRA on disk, and the alpha is not an opacity — no light in the
             // measured set has anything but 255 in it.
             colour: [
@@ -2226,6 +2256,8 @@ mod light_tests {
         let mut r = vec![0u8; 0x30];
         r[0] = 0; // omni
         r[1] = 1; // attenuated
+        r[2] = 1; // diffuse
+        r[3] = 1; // ambient
         r[4..8].copy_from_slice(&[160, 255, 255, 255]); // BGRA
         r[0x08..0x14].copy_from_slice(&[
             0x00, 0x00, 0x12, 0xC1, // -9.125
@@ -2242,6 +2274,7 @@ mod light_tests {
         let l = lights[0];
         assert_eq!(l.kind, 0);
         assert!(l.use_atten);
+        assert!(l.diffuse && l.ambient);
         // BGRA on disk, so the warm channel is the *last* byte of the four.
         assert_eq!(l.colour, [1.0, 1.0, 160.0 / 255.0]);
         assert_eq!(l.intensity, 1.0);
@@ -2260,6 +2293,8 @@ mod light_tests {
         let lamp = WmoLight {
             kind: 0,
             use_atten: true,
+            diffuse: true,
+            ambient: true,
             colour: [1.0, 1.0, 1.0],
             position: [0.0; 3],
             intensity: 1.0,
@@ -2272,6 +2307,28 @@ mod light_tests {
         assert!(!WmoLight { use_atten: false, ..lamp }.is_point());
         // A falloff that ends where it starts lights nothing.
         assert!(!WmoLight { atten_end: 5.0, ..lamp }.is_point());
+    }
+
+    /// The reach a model is lit within is the falloff's end, nudged out when
+    /// the falloff has no width, and only an omni light has one.
+    #[test]
+    fn a_model_is_lit_within_the_falloffs_end() {
+        let lamp = WmoLight {
+            kind: 0,
+            use_atten: true,
+            diffuse: true,
+            ambient: true,
+            colour: [1.0, 1.0, 1.0],
+            position: [0.0; 3],
+            intensity: 1.0,
+            atten_start: 5.0,
+            atten_end: 6.972,
+        };
+        assert_eq!(lamp.model_reach(), 6.972);
+        assert!((WmoLight { atten_end: 5.0, ..lamp }.model_reach() - 5.1).abs() < 1e-6);
+        assert!(lamp.lights_models());
+        assert!(WmoLight { use_atten: false, ..lamp }.lights_models());
+        assert!(!WmoLight { kind: 1, ..lamp }.lights_models());
     }
 
     /// A truncated tail yields the whole records and drops the fragment, which

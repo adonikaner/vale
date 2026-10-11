@@ -113,6 +113,15 @@ pub const UV_TABLE_ROWS: u32 = 1024;
 /// Texels per row: one per matrix element, `a, b, tx, c, d, ty`, and two unused.
 const UV_TABLE_WIDTH: u32 = 8;
 
+/// The rows after the texture matrices, which hold the building lights a unit
+/// may be lit by; see [`crate::render::building_lights`]. Slot `n` (1..=255)
+/// is row `UV_TABLE_ROWS + n - 1`, and `m2.wgsl`'s `LAMP_ROW_BEFORE` is that
+/// row less `n`.
+pub const LAMP_ROWS: u32 = 255;
+
+/// The table's whole height: the matrices, then the lights.
+const TABLE_ROWS: u32 = UV_TABLE_ROWS + LAMP_ROWS;
+
 /// `uv_row0.w` for a batch whose matrix is in row 0 of [`UV_TABLE`]; row `n`
 /// is this plus `n`. The values below it are 0, no matrix, and 1, a matrix held
 /// in `uv_row0` and `uv_row1` themselves.
@@ -131,11 +140,11 @@ pub fn uv_table_image() -> Image {
     Image::new(
         bevy::render::render_resource::Extent3d {
             width: UV_TABLE_WIDTH,
-            height: UV_TABLE_ROWS,
+            height: TABLE_ROWS,
             depth_or_array_layers: 1,
         },
         bevy::render::render_resource::TextureDimension::D2,
-        vec![0u8; (UV_TABLE_WIDTH * UV_TABLE_ROWS * 4) as usize],
+        vec![0u8; (UV_TABLE_WIDTH * TABLE_ROWS * 4) as usize],
         bevy::render::render_resource::TextureFormat::Rgba8Unorm,
         bevy::asset::RenderAssetUsages::MAIN_WORLD | bevy::asset::RenderAssetUsages::RENDER_WORLD,
     )
@@ -742,7 +751,7 @@ impl Default for UvAnimations {
     fn default() -> Self {
         UvAnimations {
             entries: Vec::new(),
-            table: vec![0u8; (UV_TABLE_WIDTH * UV_TABLE_ROWS * 4) as usize],
+            table: vec![0u8; (UV_TABLE_WIDTH * TABLE_ROWS * 4) as usize],
             free_rows: Vec::new(),
             next_row: 0,
         }
@@ -793,6 +802,36 @@ impl UvAnimations {
         }
         slot.copy_from_slice(&bytes);
         true
+    }
+
+    /// Write one building light's row: slot `slot` (1..=255) of the
+    /// [`LAMP_ROWS`]. `false` when the row already held these values, so the
+    /// caller uploads only on a change; see [`Self::upload`].
+    pub fn set_lamp_row(&mut self, slot: u8, row: [f32; 8]) -> bool {
+        if slot == 0 {
+            return false;
+        }
+        let start = ((UV_TABLE_ROWS + u32::from(slot) - 1) * UV_TABLE_WIDTH * 4) as usize;
+        let mut bytes = [0u8; 32];
+        for (chunk, value) in bytes.chunks_exact_mut(4).zip(row.iter()) {
+            chunk.copy_from_slice(&value.to_le_bytes());
+        }
+        let target = &mut self.table[start..start + 32];
+        if *target == bytes {
+            return false;
+        }
+        target.copy_from_slice(&bytes);
+        true
+    }
+
+    /// Copy the whole table into [`UV_TABLE`], for a caller that changed a
+    /// lamp row. [`follow_uv_animations`] does the same for the matrices.
+    pub fn upload(&self, images: &mut Assets<Image>) {
+        if let Some(mut image) = images.get_mut(&UV_TABLE) {
+            if let Some(data) = image.data.as_mut() {
+                data.copy_from_slice(&self.table);
+            }
+        }
     }
 
     /// How many batches in the world have a moving texture. A test reads it to

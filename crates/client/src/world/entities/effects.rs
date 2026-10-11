@@ -73,6 +73,9 @@ pub(crate) fn hang_model(
     // The wearer's sun scale, on the same terms; see `SunScale`. The neutral
     // 1.0 for anything with no wearer.
     sun: f32,
+    // The building lights the wearer stands in; see `UnitLamps`. None for
+    // anything with no wearer, and for a glow, which takes no lighting.
+    lamps: crate::render::building_lights::UnitLamps,
     now: f32,
 ) -> AttachedPart {
     // No `EntityPart` on the root: it draws nothing, and the HUD's batch
@@ -184,9 +187,9 @@ pub(crate) fn hang_model(
                 });
             }
             _ => {
-                part.insert(bevy::mesh::MeshTag(crate::render::models::instance_tag(
-                    room, sun,
-                )));
+                part.insert(bevy::mesh::MeshTag(
+                    crate::render::models::instance_tag(room, sun) | lamps.bits(),
+                ));
             }
         }
         // The model's own declared box, for the same reason an entity part
@@ -895,6 +898,7 @@ pub(super) fn persistent_areas(
                     true,
                     None,
                     crate::render::models::sun_scale::NEUTRAL,
+                    Default::default(),
                     now,
                 );
                 commands.entity(entity).insert(AreaArt(part));
@@ -1064,6 +1068,7 @@ pub(super) fn rain_impacts(
                 true,
                 None,
                 crate::render::models::sun_scale::NEUTRAL,
+                Default::default(),
                 now + stagger,
             );
             // The clip `hang_model` chose, not sequence 0. The two differ for a

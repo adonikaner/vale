@@ -142,7 +142,12 @@ fn raise(
     // `Transform` rather than `GlobalTransform`, for `render::labels`'
     // reason: the first is written this frame and the second is a frame stale
     // in `Update`.
-    units: Query<(&WorldEntity, &Transform, Option<&crate::world::entities::EntityModel>)>,
+    units: Query<(
+        &WorldEntity,
+        &Transform,
+        Option<&crate::world::entities::EntityModel>,
+        Option<&crate::world::entities::Mount>,
+    )>,
     mut text: ResMut<WorldText>,
 ) {
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::WorldText);
@@ -154,7 +159,7 @@ fn raise(
     if !tuning.entities || !tuning.interface {
         return;
     }
-    for (unit, at, model) in &units {
+    for (unit, at, model, mount) in &units {
         let previous = text.seen.insert(unit.guid, unit.damage_taken);
         // The first sight of a unit raises nothing. A creature that comes into
         // view mid-fight arrives with a counter already in the dozens, and
@@ -169,7 +174,7 @@ fn raise(
         // Mid-body, not the 1.12.1 client's `PlayerName` minus a third of a
         // yard. [`rules::ORIGIN`] says which two of this client's
         // approximations compound to put that on top of the name.
-        let lift = model.map_or(2.0, |m| m.name_anchor) * at.scale.y * rules::ORIGIN;
+        let lift = model.map_or(2.0 * at.scale.y, |m| m.name_lift(mount, at.scale.y)) * rules::ORIGIN;
         let slot = free_slot(&text.live, unit.guid);
         let colour = number_colour(&assets, unit, kind);
         text.live.push(Floater {

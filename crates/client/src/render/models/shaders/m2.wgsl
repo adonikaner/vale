@@ -305,6 +305,48 @@ fn model_light(params: M2Params, world_position: vec3<f32>, world_normal: vec3<f
 }
 #endif  // SCENE_LIT
 
+// The building lights a unit stands near, which the 1.12.1 client lights its
+// models with; see `render::building_lights`. Slot `n` of the three in `ids`
+// is row `LAMP_ROW_BEFORE + n` of the texture-matrix table: position,
+// colour times intensity, and the diffuse and ambient flags. Each adds
+// `colour × att × (max(N·L, 0) + 1)` with the client's point-light curve,
+// clamped at 1 where it diverges at the light, as `model_light` does.
+const LAMP_ROW_BEFORE: i32 = 1023;
+
+fn building_lamps(
+    table: texture_2d<f32>,
+    ids: u32,
+    world_position: vec3<f32>,
+    world_normal: vec3<f32>,
+) -> vec3<f32> {
+    var sum = vec3<f32>(0.0);
+    let normal = normalize(world_normal);
+    for (var k = 0u; k < 3u; k = k + 1u) {
+        let slot = (ids >> (16u - 8u * k)) & 0xFFu;
+        if slot == 0u {
+            continue;
+        }
+        let row = LAMP_ROW_BEFORE + i32(slot);
+        let at = vec3<f32>(
+            uv_table_float(textureLoad(table, vec2<i32>(0, row), 0)),
+            uv_table_float(textureLoad(table, vec2<i32>(1, row), 0)),
+            uv_table_float(textureLoad(table, vec2<i32>(2, row), 0)),
+        );
+        let colour = vec3<f32>(
+            uv_table_float(textureLoad(table, vec2<i32>(3, row), 0)),
+            uv_table_float(textureLoad(table, vec2<i32>(4, row), 0)),
+            uv_table_float(textureLoad(table, vec2<i32>(5, row), 0)),
+        );
+        let diffuse = uv_table_float(textureLoad(table, vec2<i32>(6, row), 0));
+        let ambient = uv_table_float(textureLoad(table, vec2<i32>(7, row), 0));
+        let toward = at - world_position;
+        let distance = max(length(toward), 1e-4);
+        let fade = min(1.0 / (0.7 * distance + 0.03 * distance * distance), 1.0);
+        sum += colour * (fade * (diffuse * max(dot(normal, toward / distance), 0.0) + ambient));
+    }
+    return sum;
+}
+
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 #ifdef BINDLESS
@@ -402,6 +444,23 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var lamps = vec3<f32>(0.0);
     if params.unlit < 0.5 {
         lamps = lamplight(in.world_position, in.world_normal, in.position);
+    }
+    // A unit's building lights, three slot numbers in the tag's low 24 bits.
+    // Only a sun-lit batch that is not a tint reads them: on a room-lit batch
+    // those bits are the room's colour, on a tinted one the batch's own, and
+    // every other sun-lit instance leaves them zero.
+    let lamp_ids = tag & 0xFFFFFFu;
+    if params.unlit < 0.5 && params.vertex_lit < 0.5 && !is_tint && lamp_ids != 0u {
+#ifdef BINDLESS
+        lamps += building_lamps(
+            bindless_textures_2d[material_indices[slot].uv_table],
+            lamp_ids,
+            in.world_position.xyz,
+            in.world_normal,
+        );
+#else
+        lamps += building_lamps(uv_table_texture, lamp_ids, in.world_position.xyz, in.world_normal);
+#endif
     }
     // The same sun as terrain.wgsl, from the same code; see `atmosphere.wgsl`
     // for why that matters more here than anywhere else in the renderer. The

@@ -103,14 +103,26 @@ pub fn base(attachments: &[M2Attachment], height: f32) -> f32 {
 /// with the hooves and the whole view bobs with the animation. The reference
 /// bobs a camera only where `cameraBobbing*` says to, which is not here.
 pub fn in_clip(attachments: &[M2Attachment], skeleton: &M2Skeleton, clip: u16) -> Option<f32> {
-    let point = attachments.iter().find(|a| a.id == POINT)?;
+    Some(point_in_clip(attachments, skeleton, clip, POINT)? + RISE)
+}
+
+/// The height of attachment `id` at a clip's first frame, in model yards:
+/// [`in_clip`] for any point. `None` when the model has no such point or
+/// clip.
+pub fn point_in_clip(
+    attachments: &[M2Attachment],
+    skeleton: &M2Skeleton,
+    clip: u16,
+    id: u32,
+) -> Option<f32> {
+    let point = attachments.iter().find(|a| a.id == id)?;
     let sequence = skeleton.find_sequence(clip)?;
     let pose = skeleton.pose(sequence, 0, 0, None, PoseLayers::default());
     let m = pose.get(point.bone as usize)?;
     let p = point.position;
     // Row-major 3x4 in the model's own frame, as `M2::skin_position` applies
-    // it. Only the third row is wanted: the anchor's height.
-    Some(m[8] * p[0] + m[9] * p[1] + m[10] * p[2] + m[11] + RISE)
+    // it. Only the third row is wanted: the point's height.
+    Some(m[8] * p[0] + m[9] * p[1] + m[10] * p[2] + m[11])
 }
 
 /// The clip a unit's **stand state** puts it in, as far as the camera is

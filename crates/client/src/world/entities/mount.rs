@@ -183,12 +183,13 @@ pub(super) fn spawn_mounts(
         &WorldEntity,
         Option<&Indoors>,
         Option<&SunScale>,
+        Option<&crate::render::building_lights::UnitLamps>,
         Option<&Mount>,
         Option<&NoMount>,
     )>,
 ) {
     let now = time.elapsed_secs();
-    for (entity, world, indoors, shade, mount, refused) in &entities {
+    for (entity, world, indoors, shade, lamps, mount, refused) in &entities {
         let wanted = world.mount_display_id;
         // Still riding the same thing: nothing to do, which is every frame of
         // every ride after the first.
@@ -282,6 +283,8 @@ pub(super) fn spawn_mounts(
             // A mount stands where its rider stands, so it takes the rider's
             // scale — see `SunScale`.
             shade.map_or(crate::render::models::sun_scale::NEUTRAL, |s| s.now()),
+            // …and the rider's building lights, for the same reason.
+            lamps.copied().unwrap_or_default(),
             now,
         );
         // **The one divergence from an attachment, and it is about lifetime.**

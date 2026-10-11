@@ -16,6 +16,7 @@ pub(super) fn rebuild_changed_models(
             &Sheath,
             &mut EntityModel,
             Option<&SunScale>,
+            Option<&crate::render::building_lights::UnitLamps>,
             Option<&Children>,
         ),
         // **`Changed<Sheath>` is load-bearing.** Drawing a weapon moves it from
@@ -23,7 +24,7 @@ pub(super) fn rebuild_changed_models(
         // it is now a *client-side* decision, so nothing about `WorldEntity`
         // changes when it happens. Without this the sword stays on the back
         // until something else about the unit moves.
-        Or<(Changed<WorldEntity>, Changed<SunScale>, Changed<Sheath>)>,
+        Or<(Changed<WorldEntity>, Changed<SunScale>, Changed<crate::render::building_lights::UnitLamps>, Changed<Sheath>)>,
     >,
     // `AttachedTo` is in the filter for the attachment **roots**: they carry
     // no `EntityPart` (they draw nothing), and their drawn parts are
@@ -42,19 +43,21 @@ pub(super) fn rebuild_changed_models(
     displays: Res<DisplayCache>,
 ) {
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::Rebuild);
-    for (entity, world, sheath, mut model, shade, children) in &mut entities {
+    for (entity, world, sheath, mut model, shade, lamps, children) in &mut entities {
         // A unit is dressed sun-lit wherever it stands — see `EntityModel::room`.
         let room = None;
         let sun = shade.map_or(crate::render::models::sun_scale::NEUTRAL, |s| s.now());
+        let lamps = lamps.copied().unwrap_or_default();
         if model.matches(world, room) {
             // Still the right batch list — but a different sun scale under the
             // same dressing is possible, and it is not in the materials: it
             // rides each part's `MeshTag`, so it is rewritten in place. See
             // `SunScale`.
-            if room != model.room || sun != model.sun {
+            if room != model.room || sun != model.sun || lamps != model.lamps {
                 model.room = room;
                 model.sun = sun;
-                let word = crate::render::models::instance_tag(room, sun);
+                model.lamps = lamps;
+                let word = crate::render::models::instance_tag(room, sun) | lamps.bits();
                 for child in children.into_iter().flatten() {
                     // …except a part whose tag is its animated colour: the
                     // two payloads share the word, and this one belongs to
@@ -221,6 +224,7 @@ pub(super) fn spawn_models(
             &WorldEntity,
             &Sheath,
             Option<&SunScale>,
+            Option<&crate::render::building_lights::UnitLamps>,
             Option<&mut CarriedEffects>,
         ),
         (Without<EntityModel>, Without<NoModel>),
@@ -263,7 +267,7 @@ pub(super) fn spawn_models(
             fault: super::fallback::deserves_a_box(kind, display_id),
         }
     };
-    for (entity, world, sheath, shade, mut carried) in &mut entities {
+    for (entity, world, sheath, shade, lamps, mut carried) in &mut entities {
         if budget == 0 {
             return;
         }
@@ -412,6 +416,7 @@ pub(super) fn spawn_models(
                         hands: (world.weapons, sheath.state()),
                         room,
                         sun: shade.map_or(crate::render::models::sun_scale::NEUTRAL, |s| s.now()),
+                        lamps: lamps.copied().unwrap_or_default(),
                         // Taken rather than removed here: the component goes
                         // with the `remove` below, and taking it keeps
                         // `spawn_model` a pure builder.
@@ -456,6 +461,8 @@ struct Dressing<'a> {
     room: Option<RoomLight>,
     /// …and the sun scale under it — see [`SunScale`].
     sun: f32,
+    /// …and the building lights it stands in; see [`crate::render::building_lights::UnitLamps`].
+    lamps: crate::render::building_lights::UnitLamps,
     /// The spell effects that outlived the model this replaces — see
     /// [`CarriedEffects`]. `None` for an entity being built for the first time
     /// and for a shapeshift, which is the case that must *not* carry them.
@@ -479,6 +486,7 @@ fn spawn_model(
         hands,
         room,
         sun,
+        lamps,
         carried,
     } = dressing;
     // Whatever survived the last model, or three empty sets for a first build.
@@ -538,9 +546,9 @@ fn spawn_model(
                 });
             }
             _ => {
-                part.insert(bevy::mesh::MeshTag(crate::render::models::instance_tag(
-                    room, sun,
-                )));
+                part.insert(bevy::mesh::MeshTag(
+                    crate::render::models::instance_tag(room, sun) | lamps.bits(),
+                ));
             }
         }
         // The model's own declared box rather than the batch's bind-pose one:
@@ -650,6 +658,7 @@ fn spawn_model(
         name_anchor: name_height(model),
         anchor: anchor_height(model),
         mounted_anchor: mounted_anchor(model),
+        mounted_name: mounted_name(model),
         // **The two halves of the mouse pick**, both properties of the file and
         // both taken verbatim from it rather than derived: the header sphere
         // every branch falls back to, and the drawn triangles the pointer is
@@ -660,6 +669,7 @@ fn spawn_model(
         hands,
         room,
         sun,
+        lamps,
         roots,
         // **The reference's own arithmetic over the model's declared box**, and
         // it is not the half-extent this used to take: a box with no width and
@@ -783,6 +793,17 @@ fn mounted_anchor(model: &ModelAssets) -> Option<f32> {
         &model.attachments,
         skeleton,
         vale_assets::look::anchor::MOUNT_CLIP,
+    )
+}
+
+/// …and where the name hangs in the same clip; see [`EntityModel::name_lift`].
+fn mounted_name(model: &ModelAssets) -> Option<f32> {
+    let skeleton = model.skeleton.as_ref()?;
+    vale_assets::look::anchor::point_in_clip(
+        &model.attachments,
+        skeleton,
+        vale_assets::look::anchor::MOUNT_CLIP,
+        vale_assets::look::unitname::ANCHOR_ATTACHMENT,
     )
 }
 

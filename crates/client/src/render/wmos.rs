@@ -961,10 +961,14 @@ pub fn spawn_wmos(
             let transform = Transform::from_matrix(axes::to_bevy_affine(placement_matrix));
             // The lights the building's `MOLT` chunk lists, resolved to world
             // space once here because a building does not move. `None` for a
-            // barn and ten for the Goldshire inn. See `render::lamps`. The
-            // 1.12.1 client does not use these records; lighting from them is
-            // a deviation of this client.
+            // barn and ten for the Goldshire inn. Two readers: the units
+            // standing near them, as the 1.12.1 client lights them (see
+            // `render::building_lights`), and the deep night's lamps, which
+            // light surfaces as well and are a deviation of this client (see
+            // `render::lamps`).
             let lamps = crate::render::lamps::StaticLamps::of_building(&ready.lights, &transform);
+            let unit_lights =
+                crate::render::building_lights::BuildingLights::of_building(&ready.lights, &transform);
             let building = commands
                 .spawn((
                     WmoPlacement {
@@ -981,6 +985,9 @@ pub fn spawn_wmos(
                 .id();
             if let Some(lamps) = lamps {
                 commands.entity(building).insert(lamps);
+            }
+            if let Some(lights) = unit_lights {
+                commands.entity(building).insert(lights);
             }
 
             for draw in &ready.draws {
