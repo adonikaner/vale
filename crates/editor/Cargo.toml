@@ -53,15 +53,23 @@ md-5 = "0.10"
 # where to write one. See `src/tools/images.rs`.
 rfd = "0.15"
 
-# **The process's working set, for `--tour`.** One call into `psapi`, behind
-# `cfg(windows)`; the instrument reports "unavailable" elsewhere. The version
-# is the one already in the tree under Bevy, so it costs no second build of it.
+# The process's working set, for `--tour`: one call into `psapi`; the
+# instrument reports "unavailable" on other platforms. The pen's pointer
+# messages, for `src/tablet.rs`: a subclass of the primary window, and
+# `GetPointerPenInfo` for the pressure. The windows-sys version is the one
+# already in the tree under Bevy, so it costs no second build of it, and
+# raw-window-handle is the version Bevy's `RawHandleWrapper` returns.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_ProcessStatus",
     "Win32_System_Threading",
+    "Win32_UI_Input_Pointer",
+    "Win32_UI_Shell",
+    "Win32_UI_TabletPC",
+    "Win32_UI_WindowsAndMessaging",
 ] }
+raw-window-handle = "0.6"
 
 [features]
 default = ["diagnostics"]

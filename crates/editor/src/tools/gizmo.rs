@@ -437,7 +437,7 @@ fn carry(
 /// number of pixels at any distance, as other 3D editors do.
 const REACH: f32 = 0.16;
 
-/// Degrees a held `Alt` turns a placement per pixel of mouse travel.
+/// Degrees a held `Alt` turns a placement per physical pixel of pointer travel.
 ///
 /// It is a rate rather than a step, because this gesture turns a placement by
 /// eye rather than to a number: a fence post is straightened by eye, and a tree
@@ -685,7 +685,7 @@ fn drag(
     }
 }
 
-/// Turns the selection about the world's up while `Alt` is held and the mouse
+/// Turns the selection about the world's up while `Alt` is held and the pointer
 /// moves.
 ///
 /// This is the third way to turn a placement, beside `,` and `.` and the ring.
@@ -693,7 +693,7 @@ fn drag(
 /// the only one scenery needs. `,` and `.` step it in fifteens, and the ring is
 /// exact but has to be grabbed; this turns it continuously.
 ///
-/// No mouse button is involved, only the modifier and mouse movement, and
+/// No button is involved, only the modifier and pointer movement, and
 /// holding `Alt` moves nothing else: the camera turns on a right-drag and the
 /// tools act on a left one.
 ///
@@ -713,7 +713,9 @@ fn spin(
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
     keys: Res<ButtonInput<KeyCode>>,
-    motion: Res<bevy::input::mouse::AccumulatedMouseMotion>,
+    // Raw mouse motion, or the cursor's change in position while a tablet's
+    // pen is in range, in physical pixels. See [`crate::tablet`].
+    motion: Res<crate::tablet::Pointer>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     time: Res<Time>,
     mut settling: Settling,

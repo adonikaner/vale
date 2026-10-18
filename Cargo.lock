@@ -6690,6 +6690,7 @@ dependencies = [
  "bevy_egui",
  "md-5",
  "png",
+ "raw-window-handle",
  "rfd",
  "vale-assets",
  "vale-client",

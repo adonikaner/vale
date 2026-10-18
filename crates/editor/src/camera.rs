@@ -1,69 +1,66 @@
-//! The free camera, which is the one control a client has no use for.
+//! The editor's free camera, a control the client does not have.
 //!
-//! ## It drives the client's own rig rather than the transform
+//! ## The camera writes the client's `CameraRig`, not a `Transform`
 //!
-//! `vale_client::world::camera::CameraRig` is what the whole client means by
-//! "where the camera is": `place` builds the view matrix from it, `render::sky`
-//! asks it whether the eye is under water, and `render::glue` aims through it.
-//! Writing a `Transform` directly would move the picture and leave every one of
-//! those reading the old position. So this writes the rig, and the client's
-//! `place` puts the camera where the rig says, exactly as it does in a session.
+//! `vale_client::world::camera::CameraRig` holds the camera position for the
+//! whole client: `place` builds the view matrix from it, `render::sky` asks it
+//! whether the eye is under water, and `render::glue` aims through it. Writing a
+//! `Transform` directly would move the picture while every one of those systems
+//! read the old position. So this module writes the rig, and the client's
+//! `place` puts the camera where the rig says, as it does in a session.
 //!
 //! The rig is an orbit, not a flight: a focus point on the ground, a yaw, a
-//! pitch and a distance. That is what the reference client's camera is and it is
-//! also the right shape for an editor, because the point being orbited is the
-//! point being edited.
+//! pitch and a distance. The 1.12.1 client's camera has the same shape. It also
+//! suits an editor, because the point being orbited is the point being edited.
 //!
-//! ## Three writers, and the order between them
+//! ## System order against `orbit` and `collide`
 //!
 //! `world::camera::orbit` writes the rig from the mouse and from the interface's
 //! bindings, and `world::camera::collide` writes `CameraRig::reach` from
-//! `CameraRig::distance` afterwards. This runs between them and is ordered
-//! against both, because both faults that ordering removes were reported as one:
-//! "the camera jerks back and forth while painting".
+//! `CameraRig::distance` afterwards. This module runs between them and is
+//! ordered against both. Without either ordering the camera jerked back and
+//! forth while painting.
 //!
-//! * **After `orbit`**, so the editor's yaw and pitch are what the frame draws
-//!   rather than whichever of the two ran last.
-//! * **Before `collide`**, and writing `distance` rather than `reach`. `reach`
-//!   is not an input: `collide` derives it from `distance` every frame, so a
-//!   host that set `reach` had its value kept on the frames `collide` ran first
-//!   and thrown away on the frames it ran second. That is one frame of the
-//!   editor's zoom and the next of the client's default, alternating.
+//! * After `orbit`, so the frame draws the editor's yaw and pitch rather than
+//!   those of whichever system ran last.
+//! * Before `collide`, and writing `distance` rather than `reach`. `reach` is
+//!   not an input: `collide` derives it from `distance` every frame. A host that
+//!   set `reach` kept its value on frames where `collide` ran first and lost it
+//!   on frames where `collide` ran second, so the zoom alternated between the
+//!   editor's value and the client's default from one frame to the next.
 //!
-//! ## …and the pointer
+//! ## The world's pointer gestures are claimed while the editor drives
 //!
-//! A left-drag is 1.12's own steer, so the client armed a mouse-look on the
-//! press that starts a brush stroke: the view turned, and
+//! In the 1.12.1 client a left-drag steers the camera. Without a claim, the
+//! press that starts a brush stroke armed a mouse-look: the view turned, and
 //! `ui::cursor::hide_while_steering` locked the pointer, which froze
-//! `Window::cursor_position` and pinned every pick to the pixel the press landed
-//! on. The world's gestures are claimed through
-//! `world::camera::PointerTaken` while the editor is driving, which is the same
-//! claim the interface already makes for a press that lands on a frame. That
-//! claim is written by [`crate::playtest`] rather than here, because it is one
-//! of three switches that all follow the same state and they belong together.
+//! `Window::cursor_position` and pinned every pick to the pixel where the press
+//! landed. While the editor drives, it claims the world's gestures through
+//! `world::camera::PointerTaken`. The interface makes the same claim for a press
+//! that lands on a frame. [`crate::playtest`] writes the claim, not this module,
+//! because it is one of three switches that follow the same state, and the three
+//! are kept together.
 //!
-//! ## …and the wheel, which egui could not be asked about
+//! ## Gestures over a panel are tested with `crate::ui::over_the_world`
 //!
-//! The panels' lists are scroll areas, and a wheel notch over one was moving the
-//! list **and** zooming the camera: the world slid back while the list slid
-//! down, which reads as the whole view lurching every time you look for a
-//! texture. The guard was `EguiWantsInput::wants_pointer_input`, which is
-//! egui's own `is_using_pointer() || (over_egui && !any_down())` — and its
-//! `over_egui` term is `is_pointer_over_area`, which for a widget on the
-//! background layer answers from a rectangle bevy_egui never writes. See
-//! [`crate::ui`], where both of egui's answers and why neither works are set
-//! out.
+//! The panels' lists are scroll areas. A wheel notch over one moved the list and
+//! also zoomed the camera, so the world moved back while the list scrolled down.
+//! The guard was `EguiWantsInput::wants_pointer_input`, which is egui's
+//! `is_using_pointer() || (over_egui && !any_down())`. Its `over_egui` term is
+//! `is_pointer_over_area`, which, for a widget on the background layer, answers
+//! from a rectangle bevy_egui never writes. [`crate::ui`] sets out both of
+//! egui's answers and why neither works.
 //!
-//! So this asks the shell, through [`crate::ui::over_the_world`], exactly as
-//! every tool does — and it asks it about **every** pointer gesture rather than
-//! only the wheel, because the same argument covers a right-drag that started on
-//! a panel. The drag itself is remembered once it is accepted, on the rule this
-//! crate keeps arriving at: *a drag belongs to where it began*, so a look that
-//! wanders over the inspector keeps turning.
+//! So this module asks the shell, through [`crate::ui::over_the_world`], as
+//! every tool does. It asks about every pointer gesture, not only the wheel,
+//! because a right-drag that started on a panel has the same problem. An
+//! accepted drag is remembered, because a drag belongs to where it began: a look
+//! that moves over the inspector keeps turning.
 
 use crate::playtest::Playtest;
 use vale_client::world::camera::CameraRig;
-use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
+use crate::tablet::Pointer;
+use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 
 /// Where the editor is looking, and how fast it moves.
@@ -75,7 +72,7 @@ pub struct EditorCamera {
     pub yaw: f32,
     /// Radians above the horizon.
     pub pitch: f32,
-    /// Yards the eye is *asked* to sit from the focus.
+    /// Yards the eye is asked to sit from the focus, before collision.
     ///
     /// The rig's `distance` and not its `reach`: `reach` is what
     /// `world::camera::collide` leaves after shortening this by whatever is in
@@ -288,7 +285,7 @@ fn orthographic(span: f32) -> Projection {
 /// How much faster a held shift is.
 pub const SPRINT: f32 = 6.0;
 
-/// Radians of pitch per pixel of drag.
+/// Radians of yaw or pitch per physical pixel of drag.
 const LOOK_RATE: f32 = 0.005;
 
 /// How far from level the pitch may go. Short of the poles, where a camera
@@ -297,11 +294,10 @@ const PITCH_LIMIT: f32 = 1.5;
 
 /// Yards the closest and furthest the eye may be asked to sit from the focus.
 ///
-/// **The far end is half the open block** and not a number of its own — see
-/// [`crate::OPEN_BLOCK`]. It was 400, which was the right answer for the 3x3
-/// and is a fifth of the ground this session now streams: a wheel that stops at
-/// 400 yards cannot be pulled back far enough to see the block it is editing,
-/// which is the whole of what a wider reach is for.
+/// The far end is half of [`crate::OPEN_BLOCK`], not a separate number. It was
+/// 400 yards, which suited a 3x3 block of tiles and is a fifth of the ground the
+/// session now streams. At 400 yards the camera cannot pull back far enough to
+/// see the block being edited.
 const DISTANCE: std::ops::RangeInclusive<f32> = 5.0..=(crate::OPEN_BLOCK / 2.0);
 
 pub struct CameraPlugin;
@@ -312,32 +308,34 @@ impl Plugin for CameraPlugin {
             Update,
             (fly, drive)
                 .chain()
-                // **After the client's own steer and before its collision** —
-                // see the module comment, where what each of the two orderings
-                // removes is written down. Both were the same report.
+                // After the client's `orbit` and before its `collide`. The
+                // module comment says which fault each of the two orderings
+                // removes.
                 .after(vale_client::world::camera::orbit)
                 .before(vale_client::world::camera::collide)
-                // **Before the client puts the camera where the rig says**, so
-                // the frame that reads a key is the frame that moves. Running
-                // after `place` would draw every frame from the rig as it was
-                // before this frame's input, which at a sprint is two yards of
-                // lag on a camera that is being flown by hand.
+                // Before `place`, which puts the camera where the rig says, so
+                // the frame that reads a key is the frame that moves. After
+                // `place`, every frame would be drawn from the rig as it was
+                // before this frame's input: two yards of lag at a sprint.
                 .before(vale_client::world::camera::place),
         );
     }
 }
 
-/// Read the keyboard and the mouse.
+/// Read the keyboard, the wheel and the [`Pointer`], and move the camera.
 ///
-/// **`pub` so [`crate::playtest`] can order itself in front of it.** The state
-/// this reads is written in the same schedule.
+/// `pub` so [`crate::playtest`] can order itself in front of it. The state this
+/// reads is written in the same schedule.
 #[allow(clippy::too_many_arguments)]
 pub fn fly(
     mut camera: ResMut<EditorCamera>,
     state: Res<Playtest>,
     keys: Res<ButtonInput<KeyCode>>,
-    buttons: Res<ButtonInput<MouseButton>>,
-    motion: Res<AccumulatedMouseMotion>,
+    // The pointer's motion in physical pixels and its right button: raw mouse
+    // motion and the right mouse button, or, while a tablet pen is in range,
+    // the cursor's change of position and the pen's barrel button. See
+    // [`crate::tablet`].
+    motion: Res<Pointer>,
     scroll: Res<AccumulatedMouseScroll>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     viewport: Res<crate::ui::Viewport>,
@@ -347,17 +345,17 @@ pub fn fly(
     time: Res<Time>,
     mut top: ResMut<TopDown>,
     // How far the pointer has moved since the right button went down, in
-    // mouse units. Under `crate::context::CLICK_SLOP` the press is a click
+    // physical pixels. Under `crate::context::CLICK_SLOP` the press is a click
     // that asks for the right-click menu, and turns nothing.
     mut travel: Local<f32>,
     mut menu: ResMut<crate::context::ContextMenu>,
 ) {
-    // **The editor drives while it is editing, and not one frame longer.** It
-    // used to be `session.active.is_none()`, which is also true on the login
-    // screen: a password typed there flew the camera, because `w`, `a`, `s` and
-    // `d` are half the letters in most of them. `Playtest` is the same condition
-    // with that case in it — see [`crate::playtest`], which also writes
-    // `PointerTaken` from the same state.
+    // The editor drives only while it is editing. The test was
+    // `session.active.is_none()`, which is also true on the login screen, so
+    // the `w`, `a`, `s` and `d` in a password typed there moved the camera.
+    // `Playtest` is the same condition with the login screen excluded. See
+    // [`crate::playtest`], which also writes `PointerTaken` from the same
+    // state.
     camera.active = state.editing();
     if !camera.active {
         return;
@@ -369,15 +367,16 @@ pub fn fly(
     // of the view bar's MAP button, until a click in the world took the focus
     // away.
     let typing = wants.wants_keyboard_input();
-    // …and so does a wheel notch over one, and a drag that began on one. The
-    // shell's own answer and not egui's — see the module comment.
+    // A wheel notch over a panel, and a drag that began on one, also belong to
+    // the panel. `in_world` is the shell's answer, not egui's; see the module
+    // comment.
     let in_world = crate::ui::over_the_world(&viewport, &wants, &windows);
 
-    // **A drag belongs to where it began**, so the look is armed on the press
-    // and answered wherever the pointer has got to. Asking per frame instead is
-    // a camera that starts turning the moment the pointer crosses back into the
-    // viewport with the button still down.
-    if buttons.just_pressed(MouseButton::Right) {
+    // A drag belongs to where it began, so the look is armed on the press and
+    // followed wherever the pointer goes. Asking every frame instead would start
+    // the camera turning when the pointer crossed back into the viewport with
+    // the button still down.
+    if motion.right_pressed {
         *steering = in_world;
         *travel = 0.0;
     }
@@ -386,12 +385,12 @@ pub fn fly(
     }
     // A press and release that barely moved is a click, which opens the
     // right-click menu at the pointer. See `crate::context`.
-    if buttons.just_released(MouseButton::Right) && *steering && *travel <= crate::context::CLICK_SLOP {
+    if motion.right_released && *steering && *travel <= crate::context::CLICK_SLOP {
         if let Some(at) = windows.single().ok().and_then(Window::cursor_position) {
             menu.pending = Some(at);
         }
     }
-    if !buttons.pressed(MouseButton::Right) {
+    if !motion.right {
         *steering = false;
     }
     // The view turns, or the map pans, only once the press has become a drag.
@@ -418,10 +417,9 @@ pub fn fly(
         camera.distance = (camera.distance * step).clamp(*DISTANCE.start(), *DISTANCE.end());
     }
 
-    // …and nothing below this line is the pointer's, so a pointer over a panel
-    // does not stop the keys: `W` still flies while the model list is under the
-    // cursor, which is what a person scrolling a list and flying at the same
-    // time expects.
+    // Nothing below this line reads the pointer, so a pointer over a panel does
+    // not stop the keys: `W` still flies while the model list is under the
+    // cursor, and a person can scroll a list and fly at the same time.
 
     if typing {
         return;
@@ -457,8 +455,8 @@ pub fn fly(
 
 /// The map view's half of [`fly`].
 ///
-/// The right-drag moves the focus by the pointer's movement at the picture's
-/// scale, so the ground under the pointer stays under it. The keys move along
+/// The right-drag moves the focus by the pointer's movement in physical pixels,
+/// at the picture's scale, so the ground under the pointer stays under it. The keys move along
 /// the compass at a speed proportional to the span, so crossing the picture
 /// takes the same time at every zoom. The wheel sets the span. The focus is
 /// asked onto the ground every frame, which `session::drop_to_the_ground`
@@ -469,7 +467,7 @@ fn top_down(
     camera: &mut EditorCamera,
     top: &mut TopDown,
     keys: &ButtonInput<KeyCode>,
-    motion: &AccumulatedMouseMotion,
+    motion: &Pointer,
     scroll: &AccumulatedMouseScroll,
     windows: &Query<&Window>,
     time: &Time,
@@ -524,7 +522,7 @@ fn top_down(
     }
 }
 
-/// …and write it onto the rig the whole client reads.
+/// Write the [`EditorCamera`] onto the `CameraRig` that the whole client reads.
 fn drive(camera: Res<EditorCamera>, top: Res<TopDown>, mut rig: ResMut<CameraRig>) {
     if !camera.active {
         return;
@@ -544,9 +542,8 @@ fn drive(camera: Res<EditorCamera>, top: Res<TopDown>, mut rig: ResMut<CameraRig
     }
     rig.yaw = camera.yaw;
     rig.pitch = camera.pitch;
-    // **`distance` and not `reach`** — see the module comment. `reach` is
-    // `collide`'s output and writing it is writing to something that is about to
-    // be recomputed.
+    // `distance`, not `reach`: `reach` is the output of `collide`, which
+    // recomputes it from `distance` later in the frame. See the module comment.
     rig.distance = camera.distance;
 }
 

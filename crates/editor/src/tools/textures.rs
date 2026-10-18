@@ -250,6 +250,7 @@ fn stroke(
     windows: Query<&Window>,
     state: Res<crate::playtest::Playtest>,
     time: Res<Time>,
+    pressure: crate::tablet::Pressure,
 ) {
     if !state.editing() || *tool != Tool::Textures {
         return;
@@ -317,6 +318,11 @@ fn stroke(
     if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
         brush.erase = !brush.erase;
     }
+    // A pen's pressure scales this frame's strength and radius. See
+    // `crate::tablet::Pressure`.
+    let by = pressure.scale();
+    brush.strength *= by.strength;
+    brush.radius = (brush.radius * by.radius).max(*RADIUS.start());
     if !held.painting {
         held.painting = true;
         session.history.begin(match brush.erase {
@@ -631,8 +637,8 @@ fn live_paint(
 /// than decoding `MCSH` again and cannot disagree with it.
 ///
 /// The blend maps take the edge fix here, because the cell is what a renderer
-/// reads: the file's last row and column hold nothing the reference client
-/// ever samples. `vale_edit` decodes without the fix, so that a tile written
+/// reads: the 1.12.1 client never samples the file's last row and column.
+/// `vale_edit` decodes without the fix, so that a tile written
 /// back is written back as it was.
 fn cell_of(chunk: &vale_edit::adt::MapChunk, index: usize, atlas: &[u8]) -> Vec<u8> {
     let paint = vale_edit::adt::alpha::paint(chunk);
@@ -733,6 +739,8 @@ fn draw_brush(
     tool: Res<Tool>,
     textures: Res<Textures>,
     cursor: Res<Cursor>,
+    pressure: crate::tablet::Pressure,
+    held: Res<Held>,
 ) {
     if *tool != Tool::Textures {
         return;
@@ -751,10 +759,12 @@ fn draw_brush(
         &mut marks,
         &session,
         at,
-        textures.brush.radius,
+        // At the radius a pen's pressure gives it this frame.
+        (textures.brush.radius * pressure.scale().radius).max(*RADIUS.start()),
         textures.brush.core,
         textures.brush.shape,
         colour,
+        held.painting,
     );
 }
 
@@ -1307,11 +1317,11 @@ mod tests {
             .collect()
     }
 
-    /// **Giving one chunk a texture it did not carry changes at most two draw
-    /// groups**, the one it left and the one it joined, and every other
-    /// group's key is as it was. That is what lets `live_regroup` replace two
-    /// groups rather than read the whole tile again, which a stroke over new
-    /// ground used to do at every chunk it entered.
+    /// Giving one chunk a texture it did not carry changes at most two draw
+    /// groups, the one it left and the one it joined, and every other group's
+    /// key is unchanged. This lets `live_regroup` replace two groups rather
+    /// than read the whole tile again, which a stroke over new ground used to
+    /// do at every chunk it entered.
     #[test]
     fn a_new_texture_on_one_chunk_changes_at_most_two_groups() {
         let Some(mut tile) = real_tile() else { return };

@@ -450,6 +450,10 @@ pub struct Editing<'w> {
     pub(crate) menu: ResMut<'w, crate::context::ContextMenu>,
     /// What the doodad and WMO tools have copied, for the menu's Paste here.
     pub(crate) clipboard: Res<'w, crate::tools::group::Clipboard>,
+    /// The drawing tablet settings and the pen's state, for the section the
+    /// three painting brushes show. See [`crate::tablet`].
+    pub(crate) tablet: ResMut<'w, crate::tablet::Tablet>,
+    pub(crate) pen: Res<'w, crate::tablet::Pen>,
 }
 
 /// What the view bar reads and writes, as one parameter.

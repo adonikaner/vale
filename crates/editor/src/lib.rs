@@ -33,6 +33,9 @@
 //!              each polygon
 //! marks.rs     what the tools draw in the world: handles, domes, dashed
 //!              rings, volumes, as meshes the ground can hide
+//! tablet.rs    drawing tablet input: pen taps and pressure from the pen's
+//!              pointer messages, and pointer motion read from the cursor's
+//!              position while a pen is in range
 //! tools/       what the pointer does when a button is held, one file per tool
 //! ui/          the panels: the shell, the theme, and one file per region of it
 //! server/      what is sent to the server a playtest runs against; the one
@@ -43,9 +46,9 @@
 //!
 //! [`run`] builds the same app `vale_client::run` does, through the same
 //! three functions ([`vale_client::app`]), and then adds [`EditorPlugins`].
-//! Every pass that draws the world is the client's own. A terrain mesher, an M2
-//! material or a light chain written twice is a rule written twice, and the
-//! second copy becomes wrong when the original is corrected.
+//! Every pass that draws the world is the client's own. A second copy of a
+//! terrain mesher, an M2 material or a light chain would be a second copy of
+//! its rule, and that copy becomes wrong when the original is corrected.
 //!
 //! The editor adds four things the client does not need: a camera that is not
 //! attached to a character, a pointer that resolves to a place in the world,
@@ -97,6 +100,7 @@ pub mod server;
 pub mod session;
 pub mod shot;
 pub mod stage;
+pub mod tablet;
 pub mod tools;
 /// The heap census, built only with the `heap-census` feature. See [`heap`],
 /// and the manifest, which states why the feature is off by default.
@@ -249,6 +253,8 @@ impl Plugin for EditorPlugins {
             marks::MarksPlugin,
             ui::PanelPlugin,
         ));
+        // Outside the tuple, which Bevy implements for at most fifteen plugins.
+        app.add_plugins(tablet::TabletPlugin);
         app.init_resource::<favourites::Favourites>()
             .init_resource::<bookmarks::Bookmarks>();
     }
@@ -402,8 +408,8 @@ pub struct Args {
     /// It exists for the same reason as `--place`: a sweep is a choice of list,
     /// two text fields and a button, so without this a scripted run can only
     /// photograph an empty form. It finds and never replaces. Because it writes
-    /// nothing, it is safe on a command line that may be run twice, and the
-    /// find is the half worth checking: whether a path is spelled as expected
+    /// nothing, it is safe on a command line that may be run twice. The find
+    /// is the part a run needs to check: whether a path is spelled as expected
     /// and how many tiles carry it.
     ///
     /// The list it searches is `--tool`'s: `--tool sweep` is the default and
@@ -521,7 +527,8 @@ pub struct Args {
     /// `--server`: open the Server panel, for photographing it.
     ///
     /// Same reason as `--projects`: the panel is a button and a popover in, and
-    /// a panel a scripted run cannot put on screen has a layout nobody checks.
+    /// the layout of a panel a scripted run cannot put on screen goes
+    /// unchecked.
     pub server: bool,
     /// `--publish [name]`: the bar's Publish… button, from the command line: a
     /// patch folder under the project's `publish\`, named or stamped — see
@@ -637,10 +644,10 @@ pub struct Args {
     /// buttons, from the command line.
     ///
     /// Same reason as `--revert`: applying is the one action in the creature
-    /// tool that writes to a database, it is only a press on a panel, and a
-    /// path a script cannot drive has no check. `--apply-creatures` runs
-    /// the project's `sql\creatures.sql` after writing the statements that put
-    /// it back; `--revert-creatures` runs those.
+    /// tool that writes to a database, it is only a press on a panel, and
+    /// without a flag no script can run it, so nothing checks it.
+    /// `--apply-creatures` runs the project's `sql\creatures.sql` after writing
+    /// the statements that put it back; `--revert-creatures` runs those.
     ///
     /// Each runs once, on the first frame that has a session to read the
     /// project from.

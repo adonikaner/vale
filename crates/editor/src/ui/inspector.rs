@@ -17,8 +17,8 @@
 //! compass word names an axis only until something is turned, after which
 //! "west" is a direction and `y` is still an axis.
 //!
-//! The conversion belongs to `vale_assets`, both ways and for both kinds: a
-//! position through `placement_to_world` and the three angles through
+//! The conversion belongs to `vale_assets`, both ways, for positions and for
+//! angles: a position through `placement_to_world` and the three angles through
 //! `placement_euler_to_world`, which states that the file's second angle is
 //! the turn about the world's z. See [`crate::tools::doodads`], where this is
 //! written down in full.
@@ -324,6 +324,60 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
             },
         ),
     }
+    // The three brushes whose strength and radius a pen's pressure scales.
+    if matches!(tool, Tool::Terrain | Tool::Textures | Tool::Shading) {
+        tablet(ui, &mut editing.tablet, &editing.pen);
+    }
+}
+
+/// The drawing tablet settings, and what the pen is doing.
+///
+/// The settings apply to every brush and are written to one file, so the
+/// section is the same on each brush that reads them. See [`crate::tablet`].
+fn tablet(ui: &mut egui::Ui, tablet: &mut crate::tablet::Tablet, pen: &crate::tablet::Pen) {
+    ui.add_space(6.0);
+    theme::heading(ui, "Drawing tablet");
+    let mut changed = false;
+    changed |= ui
+        .checkbox(&mut tablet.pressure_strength, "Pen pressure scales strength")
+        .on_hover_text(
+            "While the pen tip is on the tablet, the brush's strength is multiplied by the \
+             pressure, 0 to 1. A mouse stroke is not affected.",
+        )
+        .changed();
+    changed |= ui
+        .checkbox(&mut tablet.pressure_radius, "Pen pressure scales radius")
+        .on_hover_text(
+            "While the pen tip is on the tablet, the brush's radius is multiplied by the \
+             pressure, 0 to 1. The ring shows the radius in use.",
+        )
+        .changed();
+    changed |= ui
+        .checkbox(&mut tablet.pointer_position, "Motion from cursor position")
+        .on_hover_text(
+            "Right-drag turns the view by the change in the cursor's position instead of \
+             raw mouse motion. A tablet reports raw motion as absolute positions, which \
+             spin the view. On automatically while a Windows Ink pen is in range; turn it \
+             on for a tablet driver with Windows Ink switched off.",
+        )
+        .changed();
+    if changed {
+        tablet.save();
+    }
+    theme::note(
+        ui,
+        match (pen.hooked, pen.seen, pen.in_range, pen.contact) {
+            (false, ..) => "pen input is read on Windows only".to_string(),
+            (true, false, ..) => {
+                "no Windows Ink pen seen yet; pressure needs Windows Ink on in the tablet driver"
+                    .to_string()
+            }
+            (true, true, _, true) => format!("pen on the tablet, pressure {:.2}", pen.pressure),
+            (true, true, true, false) => "pen in range".to_string(),
+            (true, true, false, false) => "pen out of range".to_string(),
+        },
+    );
+    theme::note(ui, "pen tip clicks · barrel button held turns the view");
 }
 
 /// The water tool: what is under the pointer, and the level the brush writes.
@@ -4474,7 +4528,7 @@ fn crawl_direction(ui: &mut egui::Ui, index: usize, turn: &mut u32) -> bool {
     *turn != was
 }
 
-/// **A ground effect, chosen by what it grows** rather than typed as a
+/// A ground effect, chosen by what it grows rather than typed as a
 /// `GroundEffectTexture` row id. Returns the row picked this frame.
 ///
 /// The list offers nothing, then the effects the open tiles grow on this
@@ -4484,9 +4538,9 @@ fn crawl_direction(ui: &mut egui::Ui, index: usize, turn: &mut u32) -> bool {
 /// generally reuses a handful. A row id the open tiles do not use can still be
 /// typed at the bottom.
 ///
-/// The counts read every open chunk. Worked out every frame the list was
-/// open, they took the editor to a crawl, so they are worked out on the frame
-/// it opens and kept in egui's memory while it stays open.
+/// The counts read every open chunk. Worked out on every frame the list was
+/// open, they made the editor slow, so they are worked out on the frame the
+/// list opens and kept in egui's memory while it stays open.
 fn ground_effect(
     ui: &mut egui::Ui,
     salt: &str,
@@ -4614,7 +4668,7 @@ fn locked_placements(ui: &mut egui::Ui, session: &mut EditSession, kind: Kind) {
 ///
 /// `chosen` is every member's unique id and path, the primary first. With one
 /// placement or none this draws only the "Select all of this model" button,
-/// which makes a group of one kind in one press. See `crate::tools::group`.
+/// which makes a group of one model in one press. See `crate::tools::group`.
 fn group(ui: &mut egui::Ui, chosen: &[(u32, &str)], noun: &str) -> Group {
     let Some(&(_, primary)) = chosen.first() else {
         return Group::Nothing;

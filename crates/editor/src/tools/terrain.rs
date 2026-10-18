@@ -1,23 +1,23 @@
 //! The height brush: raise, lower, flatten, smooth.
 //!
-//! ## The edit loop, in five steps
+//! ## The edit loop
 //!
-//! The tiles are opened by [`super::open_tiles`], which is the directory's and
-//! not this tool's. What is left is:
+//! [`super::open_tiles`] opens the tiles; it belongs to the `tools` module, not
+//! to this tool. This tool runs five steps:
 //!
 //! 1. [`stroke`] runs the brush while the left button is down, applies the edits
 //!    to the open tile, and folds them into one entry on the history.
 //! 2. [`live_ground`] writes the changed chunks' vertices straight into the
 //!    meshes already on the GPU, in the frame the mouse moved.
-//! 3. [`live_foliage`] puts the grass back on those chunks once the button comes
-//!    up, which is the one thing standing on the ground that a vertex patch
-//!    cannot carry with it.
+//! 3. [`live_foliage`] rebuilds the grass on those chunks once the button comes
+//!    up. Grass is the one thing standing on the ground that a vertex patch
+//!    does not move.
 //! 4. [`publish`] writes the edited tile's bytes into the overlay when the
-//!    button is released, which is what makes the archives answer with them.
+//!    button is released, so the archives return the edited bytes.
 //! 5. [`remesh`] forgets a tile the live path could not reach, so the streamer
 //!    reads it again.
 //!
-//! Every one of them stands down for a playtest — see [`crate::playtest`].
+//! None of the five runs during a playtest. See [`crate::playtest`].
 //!
 //! ## What the tool does besides the five brush modes
 //!
@@ -43,63 +43,60 @@
 //!                ([`carry`])
 //! ```
 //!
-//! ## The ground moves while the button is held
+//! ## Patching the ground while the button is held
 //!
-//! Rebuilding a tile is the client's own streamer reading the file, meshing 256
-//! chunks and decoding eleven tilesets: a third of a second in a debug build,
-//! which cannot happen sixty times a second. So the ground is not rebuilt at all
-//! while a stroke is held. [`live_ground`] rewrites the **positions and normals
-//! of the chunks the stroke touched**, in place, in the buffers the draw groups
-//! already hold — four chunks at 320 vertices each rather than a tile at 81,840.
+//! Rebuilding a tile means the client's streamer reads the file, meshes 256
+//! chunks and decodes eleven tilesets. That takes a third of a second in a
+//! debug build, which is too slow for every frame. So the ground is not rebuilt
+//! while a stroke is held. [`live_ground`] rewrites the positions and normals
+//! of the chunks the stroke touched, in place, in the buffers the draw groups
+//! already hold: four chunks at 320 vertices each rather than a tile at 81,840.
 //!
-//! Three things make that possible and all three are stated where they are
-//! decided rather than here: `vale_edit::adt::mesh` for where a chunk's
-//! vertices sit in a tile's buffer,
-//! `vale_client::render::terrain::GroundSources` for where each of a draw
-//! group's vertices came from, and
+//! Three items make this possible, and each is documented where it is
+//! defined: `vale_edit::adt::mesh` for where a chunk's vertices sit in a
+//! tile's buffer, `vale_client::render::terrain::GroundSources` for where each
+//! of a draw group's vertices came from, and
 //! `vale_client::render::terrain::LiveEdits` for the two costs of keeping
 //! either.
 //!
-//! [`remesh`] is the fallback and not the normal path. A tile whose draw groups
-//! carry no sources — the client's own build, or a tile that arrived before the
-//! switch was set — is read again instead.
+//! [`remesh`] is the fallback, not the normal path. A tile whose draw groups
+//! carry no sources is read again instead. That happens in the client's own
+//! build, and for a tile that arrived before the switch was set.
 //!
-//! ## …and what a patched vertex does not carry with it
+//! ## What a patched vertex does not move
 //!
-//! A live patch moves the ground's own positions and normals and nothing else,
-//! so anything the tile *built from* those heights is left where it was. The
-//! visible one is the foliage: the tufts are a merged mesh, standing at the
-//! heights the chunk had when the mesh was made, and an undone raise left a
-//! chunk's grass hanging in the air where the hill had been. [`live_foliage`] is
-//! the answer for that population and it is the only one that needed a live
-//! answer, because it is the only one the terrain's own heights place.
+//! A live patch moves the ground's own positions and normals and nothing else.
+//! Anything the tile built from those heights stays where it was. The foliage
+//! is the visible case: the tufts are a merged mesh at the heights the chunk had
+//! when the mesh was made, so an undone raise left a chunk's grass in the air
+//! where the hill had been. [`live_foliage`] rebuilds it. Foliage is the only
+//! population that needs a live rebuild, because it is the only one placed by
+//! the terrain's own heights.
 //!
 //! A doodad or a building stands at the absolute height in its record, so
 //! raising the ground under a tree buries it. When the stroke ends, [`carry`]
 //! moves every placement over ground the stroke moved by as much as the
 //! ground under it moved, in the stroke's own undo entry
-//! ([`Terrain::objects_follow`], on by default). It is done at the release
-//! and not per frame: it reads the ground under every placement of the tile.
+//! ([`Terrain::objects_follow`], on by default). It runs at the release and not
+//! per frame, because it reads the ground under every placement of the tile.
 //!
-//! Two others read the heights and are deliberately left to a re-read:
+//! Other items read the heights and are left to a re-read:
 //!
 //! * `recompute_normals` stops at the tile's edge, so a stroke across a border
 //!   leaves a shading seam.
 //!
-//! A third used to be listed here and is believed to be gone: the draw group's
-//! `Aabb`, baked when the mesh was built, so ground raised far above its
-//! original range could be frustum-culled early. Bevy 0.19's `calculate_bounds`
-//! carries a second query — `Or<(AssetChanged<Mesh3d>, Changed<Mesh3d>)>` —
-//! that recomputes an existing `Aabb` when the mesh asset is mutated, and
-//! [`live_ground`] mutates it through `Assets::get_mut`, which is what raises
-//! `Modified`. **That is read off Bevy's source and not measured here**, which
-//! is the difference between the two halves of any rendering claim; it is
-//! written down because it is one of the candidates for a reported artefact
-//! and it is the one this weakens.
+//! The draw group's `Aabb` is probably no longer one of them. It is baked when
+//! the mesh is built, so ground raised far above its original range could be
+//! frustum-culled early. Bevy 0.19's `calculate_bounds` has a second query,
+//! `Or<(AssetChanged<Mesh3d>, Changed<Mesh3d>)>`, that recomputes an existing
+//! `Aabb` when the mesh asset is mutated. [`live_ground`] mutates the mesh
+//! through `Assets::get_mut`, which raises `Modified`. This comes from reading
+//! Bevy's source and has not been measured. It is recorded because the `Aabb`
+//! was a candidate cause of a reported artefact, and this makes it less likely.
 //!
-//! All three are fixed by the tile being read again, which is what
-//! [`crate::playtest`] does on its way into a login: what a playtest walks into
-//! is built from the bytes rather than patched into place.
+//! Reading the tile again fixes all of these. [`crate::playtest`] does that on
+//! its way into a login, so a playtest draws ground built from the bytes, not
+//! patched in place.
 
 use crate::pick::Cursor;
 use crate::session::EditSession;
@@ -117,34 +114,35 @@ use bevy::prelude::*;
 
 /// How large the height brush may be, in yards.
 ///
-/// **The upper bound is the one thing here that is not arbitrary.** A stroke can
-/// only reach tiles this session has *open*, which is [`crate::OPEN_BLOCK`] yards
-/// across, so a brush wider than that paints a circle with pieces missing
-/// rather than a bigger circle. Half of it is the honest cap: a brush centred
-/// anywhere in the middle tile still lands entirely on open ground.
+/// The upper bound follows from the open block. A stroke can only reach tiles
+/// this session has open, which is [`crate::OPEN_BLOCK`] yards across, so a
+/// brush wider than that paints a circle with pieces missing rather than a
+/// bigger circle. The cap is half of it: a brush centred anywhere in the middle
+/// tile still lands entirely on open ground.
 ///
-/// It was 200, which was a guess, and a guess in the direction of refusing work
-/// the tool can do; then 800, which was half the 3x3 the editor used to stream.
-/// **It is derived from [`crate::REACH`] now** rather than written down, so the
-/// two cannot drift — and a run that narrows the block with `--reach` keeps this
-/// cap, which is the harmless direction: a brush past the open ground paints the
-/// part of its circle that is open and nothing else.
+/// The bound is derived from [`crate::REACH`], not written as a number, so the
+/// two cannot drift. A run that narrows the block with `--reach` keeps this cap.
+/// That is harmless: a brush past the open ground paints the open part of its
+/// circle and nothing else. Earlier values were 200, a guess that refused work
+/// the tool can do, and then 800, half the 3x3 the editor used to stream.
 pub const RADIUS: std::ops::RangeInclusive<f32> = 0.5..=(crate::OPEN_BLOCK / 2.0);
 
-/// …and how hard, in yards a second for raise and lower.
+/// How strong the height brush may be, in yards a second, for raise and lower.
 ///
-/// **No upper bound worth the name.** A height is an `f32` in the file and a
-/// stroke moves it by `strength * weight * seconds`, so the only thing a large
-/// number does is move the ground a long way in one frame — which is what
-/// somebody asking for a large number wants. The old ceiling of 60 was a guess.
+/// The upper bound is set high enough that it does not limit anything. A height
+/// is an `f32` in the file and a stroke moves it by
+/// `strength * weight * seconds`, so a large number only moves the ground a long
+/// way in one frame, which is what a user who types a large number wants. The
+/// previous ceiling of 60 was a guess.
 pub const STRENGTH: std::ops::RangeInclusive<f32> = 0.0..=100_000.0;
 
-/// …and for the two modes that converge rather than climb.
+/// How strong the height brush may be for flatten and smooth, the two modes
+/// that converge on a height rather than climb.
 ///
-/// A fraction of the remaining distance a second, and `Brush::moved` clamps one
-/// step to 1.0 of it — so anything past about 60 at sixty frames a second is
-/// already "all of it in one frame" and the range is wide only so that nothing
-/// is refused.
+/// The unit is a fraction of the remaining distance a second, and
+/// `Brush::moved` clamps one step to 1.0 of it. At sixty frames a second any
+/// value above about 60 already covers the whole distance in one frame. The
+/// range is wide only so that no typed value is refused.
 pub const RATE: std::ops::RangeInclusive<f32> = 0.0..=1_000.0;
 
 /// The terrain tool's settings.
@@ -292,10 +290,10 @@ impl Plugin for TerrainToolPlugin {
             .add_systems(
                 Update,
                 (
-                    // **After the pick**, which is what a stroke is aimed by:
-                    // running first would paint at the position the pointer had
-                    // on the previous frame, which while the camera is moving is
-                    // a stroke that trails the cursor.
+                    // After the pick, which aims the stroke. Run before it, the
+                    // stroke would paint at the pointer's position from the
+                    // previous frame, and while the camera moves the stroke
+                    // would trail the cursor.
                     (
                         stroke,
                         vertex_asks,
@@ -312,14 +310,13 @@ impl Plugin for TerrainToolPlugin {
                     vertices_on_the_command_line,
                 ),
             )
-            // **In `PostUpdate`, and before visibility is propagated.** The
-            // streamer spawns a replacement tile in `Update` and it becomes
-            // queryable at the next sync point, so a system in `Update` sees it
-            // for the first time a frame *after* it was spawned — one frame with
-            // two copies of the same ground in the same place, which speckles.
-            // Here it is hidden on the frame it appears, and the `before` is
-            // what makes that hiding take effect in the same frame rather than
-            // the next.
+            // In `PostUpdate`, before visibility is propagated. The streamer
+            // spawns a replacement tile in `Update` and it becomes queryable at
+            // the next sync point, so a system in `Update` first sees it one
+            // frame after it was spawned. That frame draws two copies of the
+            // same ground in the same place, which speckles. Here the tile is
+            // hidden on the frame it appears, and the `before` makes the hiding
+            // take effect in that frame rather than the next.
             .add_systems(
                 PostUpdate,
                 swap.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
@@ -343,18 +340,20 @@ fn stroke(
     windows: Query<&Window>,
     state: Res<crate::playtest::Playtest>,
     time: Res<Time>,
+    pressure: crate::tablet::Pressure,
 ) {
-    // **The left button is the game's during a playtest**, and so is the wheel:
-    // one is 1.12's own steer and the other is its zoom.
+    // During a playtest the left button and the wheel belong to the game: the
+    // 1.12.1 client steers with the left button and zooms with the wheel.
     if !state.editing() {
         return;
     }
-    // …and a press that landed on a panel is the panel's. See
-    // [`crate::ui::over_the_world`], which is where the two answers egui gives
-    // and why neither works are written down.
+    // A press that landed on a panel belongs to the panel.
+    // [`crate::ui::over_the_world`] documents the two answers egui gives and
+    // why neither works.
     let in_world = crate::ui::over_the_world(&viewport, &wants, &windows);
-    // **Three numbers on the wheel, by modifier** — see [`Wheel`], which is the
-    // one list and is what `camera::fly` reads to decline the same notch.
+    // The wheel sets one of three numbers, chosen by the modifier held. See
+    // [`Wheel`], the single list, which `camera::fly` also reads to ignore the
+    // same notch.
     if in_world && scroll.delta.y != 0.0 {
         let step = 1.0 + scroll.delta.y * 0.1;
         match Wheel::held(&keys) {
@@ -363,10 +362,10 @@ fn stroke(
                     (terrain.brush.radius * step).clamp(*RADIUS.start(), *RADIUS.end());
             }
             Some(Wheel::Strength) => {
-                // **Proportional, off a floor.** The ranges span four decades,
-                // so a fixed step is either useless at the top or unusable at
-                // the bottom; the floor is what lets it climb away from zero,
-                // which multiplying alone cannot.
+                // A proportional step from a floor. The ranges span four
+                // decades, so a fixed step is too small at the top or too large
+                // at the bottom. The floor lets the value rise from zero, which
+                // multiplication alone cannot do.
                 let range = match terrain.brush.mode {
                     Mode::Raise | Mode::Lower => STRENGTH,
                     _ => RATE,
@@ -374,8 +373,9 @@ fn stroke(
                 terrain.brush.strength =
                     (terrain.brush.strength.max(0.01) * step).clamp(*range.start(), *range.end());
             }
-            // A fraction, so this one is a fixed step: a twentieth of the radius
-            // a notch takes it end to end in a turn of the wheel.
+            // The core is a fraction, so it takes a fixed step: a twentieth of
+            // the radius a notch, which covers the whole range in a turn of the
+            // wheel.
             Some(Wheel::Core) => {
                 terrain.brush.core =
                     (terrain.brush.core + scroll.delta.y * 0.05).clamp(*CORE.start(), *CORE.end());
@@ -405,10 +405,10 @@ fn stroke(
     if *tool != Tool::Terrain {
         return;
     }
-    // **The gate is on the press and not on every frame** — a stroke belongs to
-    // wherever it started, which is the rule every paint program follows. Asked
-    // per frame instead, a stroke that wandered over a panel stopped dead in the
-    // middle and started again on the way back.
+    // The panel check applies to the press, not to every frame: a stroke
+    // belongs to where it started, as in other paint programs. Checked per
+    // frame, a stroke that crossed a panel stopped in the middle and started
+    // again on the way back.
     if buttons.just_pressed(MouseButton::Left) && !in_world {
         return;
     }
@@ -442,11 +442,11 @@ fn stroke(
     }
 
     if buttons.just_pressed(MouseButton::Left) {
-        // What a flatten flattens toward is decided once, when the button goes
-        // down: taking it from the pointer every frame would flatten toward
-        // whatever the brush had just made, which is a stroke that never
-        // converges. The plane's pivot is the same point, so a tilted flatten
-        // is a ramp through where the stroke began.
+        // The flatten target is set once, when the button goes down. Taken
+        // from the pointer every frame, it would be the height the brush had
+        // just made, and the stroke would never converge. The plane's pivot is
+        // the same point, so a tilted flatten is a ramp through where the
+        // stroke began.
         if let Mode::Flatten { .. } = terrain.brush.mode {
             let to = match terrain.flatten_to_cursor {
                 true => at.z,
@@ -473,21 +473,26 @@ fn stroke(
         return;
     }
 
-    // **Every tile the circle reaches, not the one the stroke began on.** A
-    // brush that stopped at the tile border left a step in the ground exactly
-    // there: one side raised and the other not, with nothing about either file
-    // wrong. The four corners of the brush's own bounding box name the tiles,
-    // which is at most four and usually one.
-    let brush = terrain.brush;
+    // Every tile the circle reaches is edited, not only the one the stroke
+    // began on. A brush that stopped at the tile border left a step in the
+    // ground there: one side raised and the other not, with both files valid.
+    // The four corners of the brush's bounding box name the tiles, which is at
+    // most four and usually one.
+    // A pen's pressure scales this frame's strength and radius. See
+    // `crate::tablet::Pressure`.
+    let mut brush = terrain.brush;
+    let by = pressure.scale();
+    brush.strength *= by.strength;
+    brush.radius = (brush.radius * by.radius).max(*RADIUS.start());
     let seconds = time.delta_secs();
-    // **Where a smooth is pulling everything, decided once across every tile the
-    // brush reaches**, before any of them move. Taken per tile — or, as it was,
-    // per chunk — each piece converges on its own height and the boundary
+    // The height a smooth pulls toward is computed once across every tile the
+    // brush reaches, before any of them move. Computed per tile, or per chunk
+    // as it once was, each piece converges on its own height and the boundary
     // between two pieces becomes a step. See `Brush::weighed`.
     //
-    // In its own pass because the tiles are borrowed immutably to read it and
-    // mutably to stroke it, and because a mean taken while the ground is already
-    // moving is a mean of two different grounds.
+    // It is a separate pass for two reasons. The tiles are borrowed immutably
+    // to read the mean and mutably to stroke them. A mean taken while the
+    // ground is moving would mix heights from before and after the edit.
     let level = match brush.mode {
         Mode::Smooth => {
             let (mut sum, mut weight) = (0.0, 0.0);
@@ -505,10 +510,10 @@ fn stroke(
     for coord in tiles_under(&brush, at) {
         let key = session.key(coord);
         let Some(tile) = session.tiles.get_mut(&coord) else {
-            // Not open yet. `open_tiles` is working through the 3x3 a tile a
-            // frame and will have it shortly; skipping is a few frames of the
-            // stroke not reaching that side, where opening it here would be a
-            // two-megabyte parse in the middle of a drag.
+            // Not open yet. `open_tiles` opens the 3x3 one tile a frame and
+            // will reach this one shortly. Skipping it costs a few frames in
+            // which the stroke does not reach that side. Opening it here would
+            // be a two-megabyte parse in the middle of a drag.
             continue;
         };
         // Before the stroke first moves this tile. See [`Held::standing`].
@@ -885,10 +890,10 @@ fn vertices_on_the_command_line(
 /// and every locked one with the same dome in red. A mark behind a fold of the
 /// ground is drawn faint, so the selection is seen through the folds.
 ///
-/// A dome rather than the post a selected vertex had first: a selection of
-/// hundreds read as a field of sticks, and a dome reads as the patch of ground
-/// being chosen. WoWEdit's vertex colour picker marks the vertices under its
-/// brush the same way.
+/// A dome replaced the vertical post a selected vertex first had. A selection
+/// of hundreds of posts hid the ground; domes show the patch of ground being
+/// chosen. WoWEdit's vertex colour picker marks the vertices under its brush
+/// the same way.
 ///
 /// The domes are a fixed size rather than a few pixels: there can be
 /// [`VERTEX_MARKS`] of them, and a fixed size leaves their poses unchanged
@@ -1097,11 +1102,11 @@ fn live_ground(
         let Some(tile) = session.tiles.get(&coord) else {
             continue;
         };
-        // The new vertices, as one run per changed chunk. **A run and not a
-        // map**: this is compared against every vertex of every draw group of
-        // the tile, which is up to 81,840 of them on every frame of a stroke,
-        // and a stroke touches at most four chunks. Four integer comparisons
-        // beat a hash lookup by enough to matter at that count.
+        // The new vertices, as one run per changed chunk, not a map. Every
+        // vertex of every draw group of the tile is looked up here, up to
+        // 81,840 on every frame of a stroke, and a stroke touches at most four
+        // chunks. At that count four integer comparisons are measurably faster
+        // than a hash lookup.
         let mut moved: Vec<(u32, Vec<vale_assets::world::adt::MeshVertex>)> = Vec::new();
         for chunk in &chunks {
             let (start, _) = vale_edit::adt::mesh::chunk_span(tile, *chunk);
@@ -1166,20 +1171,18 @@ fn live_ground(
 
 /// Put the grass back on the ground the brush has moved.
 ///
-/// **Once the stroke is over, not every frame of it.** A tuft's mesh is merged
-/// from the heights it was built with, so there is nothing in it to patch the
-/// way [`live_ground`] patches the terrain's vertices: the chunk's whole lawn
-/// has to be built again. That is a few thousand vertices per chunk per
-/// material, which is affordable once a stroke and not sixty times a second —
-/// and doing it during the stroke would also mean throwing away the mesh being
-/// looked at on every frame, which is a flicker rather than an animation.
+/// Runs once the stroke is over, not on every frame of it. A tuft's mesh is
+/// merged from the heights it was built with, so it has no vertices to patch
+/// the way [`live_ground`] patches the terrain: the chunk's whole lawn is built
+/// again. That is a few thousand vertices per chunk per material, which is
+/// affordable once a stroke but not sixty times a second. Rebuilding during the
+/// stroke would also replace the visible mesh on every frame, which flickers.
 ///
-/// What it fixes was reported as *"the foliage floats where the old ground
-/// was"*, and the undo case is the one that made it obvious: an undone raise
-/// puts the ground back and left the grass standing in the air at the height the
-/// raise had reached. Everything that reads the ground **outside** the tile's
-/// own mesh has the same problem — see [`remesh`] for the ones this does not
-/// cover.
+/// Without this, the foliage floated where the old ground was. An undone raise
+/// showed it most clearly: the ground went back and the grass stayed in the air
+/// at the height the raise had reached. Everything that reads the ground outside
+/// the tile's own mesh has the same problem. See [`remesh`] for the ones this
+/// does not cover.
 fn live_foliage(
     mut session: Option<ResMut<EditSession>>,
     mut tiles: Query<(&TerrainTile, &mut TileFoliagePlans)>,
@@ -1209,10 +1212,10 @@ fn live_foliage(
             let Some(chunk) = tile.chunk(index) else {
                 continue;
             };
-            // The heights and the **recomputed** normals — see
-            // `vale_edit::adt::heights::recompute_normals`, which the stroke
-            // has already run. A lawn regrounded onto the old shading is lit as
-            // the hill was before it was raised.
+            // The heights and the recomputed normals. The stroke has already
+            // run `vale_edit::adt::heights::recompute_normals`. A lawn
+            // regrounded onto the old normals is lit as the hill was before it
+            // was raised.
             let ground = vale_edit::adt::heights::ground(chunk);
             let normals = vale_edit::adt::heights::normals(chunk);
             if plans.reground(index, ground, &normals, &mut dead) {
@@ -1255,13 +1258,13 @@ fn write_vertices(mesh: &mut Mesh, hits: &[(usize, &vale_assets::world::adt::Mes
             }
         }
     }
-    // **And the shading, which is the third attribute a vertex has.** It rides
-    // this path rather than one of its own because `MCCV` is one length or
-    // absent — see `vale_edit::adt::colours` — so a colour stroke moves a
-    // vertex exactly as a height stroke does and the mesh keeps its shape, its
-    // indices and its length. Absent in a client build, where the attribute is
-    // never uploaded; present in every editor one, because `LiveEdits` asks for
-    // it whether or not the tile has any yet.
+    // The vertex colour, the third attribute a vertex has. It uses this path
+    // rather than one of its own because `MCCV` has one fixed length or is
+    // absent (see `vale_edit::adt::colours`). A colour stroke therefore changes
+    // a vertex as a height stroke does, and the mesh keeps its shape, its
+    // indices and its length. The attribute is absent in a client build, which
+    // never uploads it. It is present in every editor build, because
+    // `LiveEdits` requests it whether or not the tile has colours yet.
     if let Some(VertexAttributeValues::Float32x4(colours)) =
         mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR)
     {
@@ -1275,21 +1278,19 @@ fn write_vertices(mesh: &mut Mesh, hits: &[(usize, &vale_assets::world::adt::Mes
 
 /// The tiles a brush's circle reaches.
 ///
-/// **Every tile in the bounding box's range, not only the four corners.** The
-/// corners are enough while a brush is smaller than a tile — which it was, when
-/// the ceiling was 200 yards against a tile's 533 — and stop being enough the
-/// moment it is not: a 600-yard brush spans three tiles on an axis and its four
-/// corners name none of the middle ones, so it would paint a ring and leave a
-/// cross of untouched ground through it.
+/// Returns every tile in the bounding box's range, not only the tiles under the
+/// four corners. The corners are enough while a brush is smaller than a tile,
+/// as it was when the ceiling was 200 yards against a tile's 533. A 600-yard
+/// brush spans three tiles on an axis and its four corners name none of the
+/// middle ones, so it would paint a ring around a cross of untouched ground.
 ///
-/// The box rather than the circle because a corner of the box outside the circle
-/// is at worst one extra tile whose vertices all weigh zero.
+/// It uses the box rather than the circle because a corner of the box outside
+/// the circle adds at most one extra tile whose vertices all weigh zero.
 fn tiles_under(brush: &Brush, at: Vec3) -> Vec<(u32, u32)> {
     tiles_in_range(brush.radius, at)
 }
 
-/// The same, for any radius — shared with the texture brush, which asks the same
-/// question about the same circle.
+/// The tiles a circle of any radius reaches. The texture brush uses it too.
 pub(crate) fn tiles_in_range(radius: f32, at: Vec3) -> Vec<(u32, u32)> {
     let a = vale_assets::tile_for_position(at.x - radius, at.y - radius);
     let b = vale_assets::tile_for_position(at.x + radius, at.y + radius);
@@ -1322,48 +1323,47 @@ fn publish(mut session: Option<ResMut<EditSession>>, buttons: Res<ButtonInput<Mo
     }
 }
 
-/// The tile on screen that a fresh read is going to replace, and **which other
-/// tiles it has to change places with**.
+/// Marks a tile on screen that a fresh read will replace. The number is its
+/// batch: the other tiles it changes places with at the same time.
 ///
-/// It stays drawn and stays exactly as it was; [`swap`] takes it away on the
-/// frame every replacement in its batch is whole. See [`remesh`] for why a tile
-/// is replaced at all and [`swap`] for why they go in batches.
+/// The tile stays drawn, unchanged, until [`swap`] removes it on the frame
+/// every replacement in its batch is whole. See [`remesh`] for why a tile is
+/// replaced at all and [`swap`] for why tiles are replaced in batches.
 #[derive(Component)]
 pub struct Replacing(pub u64);
 
 /// Hand a stale tile back to the streamer, keeping the old one on screen.
 ///
-/// ## Why not simply despawn it
+/// ## Why the old tile stays on screen until the new one is whole
 ///
-/// That is what this did, and the gap was reported as *"the entire screen
-/// flashes and the terrain re-renders, momentarily disappearing"*. It is not a
-/// flash of anything: it is a **third of a second with no tile there**, because
-/// despawning is instant and reading a tile again is a parse, a mesh of 256
-/// chunks and eleven texture decodes. At editing distance one tile is most of
-/// the screen.
+/// Despawning the old tile at once leaves a third of a second with no tile
+/// there, because despawning is instant and reading a tile again is a parse, a
+/// mesh of 256 chunks and eleven texture decodes. At editing distance one tile
+/// is most of the screen, so the gap looked like the whole screen flashing and
+/// the terrain disappearing. This function used to do that.
 ///
-/// The other obvious arrangement is worse. Leaving the old one and letting the
-/// new one spawn over it puts two copies of identical ground in the same place,
-/// which z-fights along every triangle for as long as it lasts.
+/// Leaving the old tile and spawning the new one visible over it is worse. Two
+/// copies of identical ground in the same place z-fight along every triangle
+/// until one is removed.
 ///
-/// So: the old tile is **marked and left alone**, the new one is spawned
-/// **hidden**, and the two change places in one frame. `LoadedTiles::arriving`
-/// is what says when the new one is whole — the one thing a host cannot work out
-/// from outside, because a tile's atlas, textures and draw groups are spread
-/// over several frames by the upload budget.
+/// So the old tile is marked and left alone, the new one is spawned hidden,
+/// and the two change places in one frame. `LoadedTiles::arriving` says when
+/// the new one is whole. A host cannot work that out on its own, because the
+/// upload budget spreads a tile's atlas, textures and draw groups over several
+/// frames.
 ///
-/// A tile whose replacement never arrives — an ADT that will not parse — keeps
-/// the old one for ever, which is the right way for this to fail.
+/// A tile whose replacement never arrives, such as an ADT that does not parse,
+/// keeps the old one on screen indefinitely. That is the intended failure.
 fn remesh(
     mut session: Option<ResMut<EditSession>>,
     mut loaded: ResMut<LoadedTiles>,
     tiles: Query<(Entity, &TerrainTile, Option<&Replacing>)>,
     mut commands: Commands,
-    // **One batch per pass, not per tile** — see [`swap`]. Everything made stale
-    // together is replaced together, which for the one thing that makes two
-    // tiles stale at once is the whole point.
+    // One batch per pass, not per tile. See [`swap`]. Tiles made stale together
+    // are replaced together, which matters for the one edit that makes two
+    // tiles stale at once: a placement moved across a tile border.
     mut batch: Local<u64>,
-    // **The change count each in-flight replacement was started at** — see the
+    // The change count each in-flight replacement was started at. See the
     // loop below, and `crate::session::EditSession::changes`.
     mut started: Local<bevy::platform::collections::HashMap<(u32, u32), u64>>,
 ) {
@@ -1371,23 +1371,22 @@ fn remesh(
         return;
     };
 
-    // **A replacement reads the file once, when it is started.** Any change
-    // made between then and the frame it lands is one that read cannot have
-    // seen, and nothing downstream corrects it: the live sets — the
-    // ground's vertices, a placement's transform, a chunk's blend map — were
-    // drained against the *outgoing* copy, which is despawned the moment the
-    // incoming one appears. So the tile on screen goes back to whatever the
-    // older bytes said and stays there until something else makes it stale.
+    // A replacement reads the file once, when it is started. That read cannot
+    // see a change made between then and the frame it lands, and nothing
+    // downstream corrects it: the live sets (the ground's vertices, a
+    // placement's transform, a chunk's blend map) were drained against the
+    // outgoing copy, which is despawned when the incoming one appears. The tile
+    // on screen then shows the older bytes until something else makes it stale.
     //
-    // It was reported as a building that stayed where it had been dragged after
-    // an undo, with the file already correct. A drag ends by asking for the tile
-    // again, that read takes a third of a second — seconds on a city tile — and
-    // `Ctrl+Z` inside that window moves the outgoing copy back and then has it
-    // replaced by one built before the undo.
+    // Example: a building stayed where it had been dragged after an undo, with
+    // the file already correct. A drag ends by requesting the tile again, and
+    // that read takes a third of a second, or seconds on a city tile. `Ctrl+Z`
+    // inside that window moves the outgoing copy back, and then a copy built
+    // before the undo replaces it.
     //
-    // Asking for another read is the answer that converges, and it is the same
-    // answer the one-at-a-time guard below already gives: the file is right, so
-    // reading it again is right.
+    // The fix is to request another read, which converges. The one-at-a-time
+    // guard below does the same: the file is correct, so reading it again gives
+    // the correct tile.
     started.retain(|coord, _| {
         tiles
             .iter()
@@ -1405,19 +1404,16 @@ fn remesh(
     for coord in behind {
         session.stale.insert(coord);
     }
-    // **While the button is still down, and that is new.** It used to wait for
-    // the release, because a rebuild was a third of a second with a hole in the
-    // world and doing that mid-stroke was unthinkable. Now that a replacement
-    // keeps the old tile on screen until the new one is whole, a rebuild costs
-    // a task on the compute pool and nothing on screen at all — so there is no
-    // reason to make somebody let go of the mouse to see what they painted.
+    // Stale tiles are replaced while the button is still down. This used to
+    // wait for the release, because a rebuild left a hole in the world for a
+    // third of a second. A replacement now keeps the old tile on screen until
+    // the new one is whole, so a rebuild costs a task on the compute pool and
+    // shows nothing on screen. Waiting for the release meant paint on a newly
+    // reached tile did not show until the mouse button was let go.
     //
-    // It was reported as exactly that: *"when you are painting and hit another
-    // tile, the new paint does not show until you let go of the cursor."*
-    //
-    // What keeps it from queueing a rebuild a frame is the one-at-a-time guard
-    // below: a tile that is already being replaced stays stale and is picked up
-    // when the one in flight lands, by which point the file holds everything
+    // The one-at-a-time guard below keeps this from queueing a rebuild every
+    // frame: a tile already being replaced stays stale and is picked up when
+    // the one in flight lands, by which point the file holds everything
     // painted since.
     if session.stale.is_empty() {
         return;
@@ -1425,11 +1421,11 @@ fn remesh(
     let stale: Vec<(u32, u32)> = session.stale.drain().collect();
     *batch += 1;
     for coord in stale {
-        // **One replacement at a time per tile.** A second `reload` while the
+        // One replacement at a time per tile. A second `reload` while the
         // first is still arriving would leave two outgoing copies and no way to
-        // say which the incoming one replaces. It stays stale and is picked up
-        // on a later frame, by which point the file holds everything the stroke
-        // wrote anyway.
+        // tell which one the incoming copy replaces. The tile stays stale and
+        // is picked up on a later frame, by which point the file holds
+        // everything the stroke wrote.
         if tiles
             .iter()
             .any(|(_, tile, going)| tile.coord == coord && going.is_some())
@@ -1442,22 +1438,22 @@ fn remesh(
                 commands.entity(entity).insert(Replacing(*batch));
             }
         }
-        // **The read sees the tile as it is now.** A read is of the overlay,
-        // which is what was last published, and a tile can be ahead of that:
-        // a vertex drag publishes when the button comes up, while carrying the
-        // placements on the moved ground can mark the tile stale on any frame
-        // of it. Read from the older bytes, the replacement drew the ground
-        // part as it was before the drag.
+        // Publish first, so the read sees the tile as it is now. A read is of
+        // the overlay, which holds what was last published, and a tile can be
+        // ahead of that: a vertex drag publishes when the button comes up, but
+        // carrying the placements on the moved ground can mark the tile stale
+        // on any frame of the drag. Read from the older bytes, the replacement
+        // drew part of the ground as it was before the drag.
         if session.is_unpublished(coord) {
             session.publish(coord);
         }
         // What the read about to start will see. Taken here rather than when it
         // lands, so the error is on the side of one read too many.
         started.insert(coord, session.changes(coord));
-        // **Without the despawn this time**, which is the half `LoadedTiles`'
-        // own comment warns about: forgetting a tile without despawning it
-        // draws the tile twice. [`swap`] is what pairs with it, one frame later
-        // than it used to be.
+        // The old tile is not despawned here. `LoadedTiles`' own comment warns
+        // that forgetting a tile without despawning it draws the tile twice.
+        // [`swap`] does the despawn, one frame later than this function used
+        // to.
         loaded.reload(coord);
     }
 }
@@ -1466,20 +1462,21 @@ fn remesh(
 ///
 /// ## Tiles made stale together change over together
 ///
-/// One tile at a time is right for a texture edit, which is about one tile. It is
-/// **wrong for anything that moves a thing between two of them**: a placement
-/// dragged past a tile border is taken out of one file and put into the other, so
-/// both are read again, and the two reads finish whenever they finish. If each
-/// swapped on its own the moment it was ready, then between the two moments the
-/// tile that gained the placement is drawing it while the tile that lost it is
-/// still drawing the old copy — and the thing is **on screen twice**.
+/// One tile at a time is correct for a texture edit, which affects one tile. It
+/// is wrong for an edit that moves an object between two tiles. A placement
+/// dragged past a tile border is taken out of one file and put into the other,
+/// so both tiles are read again, and the two reads finish at different times.
+/// If each tile swapped as soon as it was ready, then between the two swaps the
+/// tile that gained the placement draws it while the tile that lost it still
+/// draws the old copy, and the object is on screen twice.
 ///
-/// That is not a theoretical window. It was reported of Stormwind, where it is
-/// seconds: a city tile is 311 groups and 844,627 vertices, so the read that
-/// removes it takes far longer than the read that adds it.
+/// In Stormwind that window lasts seconds: a city tile is 311 groups and
+/// 844,627 vertices, so the read that removes the placement takes far longer
+/// than the read that adds it.
 ///
-/// So the batch is the unit. Everything [`remesh`] made stale in one pass carries
-/// the same number, and none of them changes over until all of them are whole.
+/// So the batch is the unit. Every tile [`remesh`] made stale in one pass
+/// carries the same number, and none of them changes over until all of them
+/// are whole.
 ///
 /// Runs every frame there is an outgoing tile, which is for about a third of a
 /// second after an edit that needs a re-read and never otherwise.
@@ -1508,10 +1505,10 @@ fn swap(
             .collect();
 
         // Every replacement in the batch, and whether all of them have landed.
-        // **Whole means every group, not merely spawned**: a tile's root exists
-        // from its first instalment and its ground arrives over the frames after
-        // it, so swapping on the root's appearance would show a tile with two of
-        // its thirty draw groups on it.
+        // A replacement is whole when every draw group has arrived, not when it
+        // is spawned. A tile's root exists from its first instalment and its
+        // ground arrives over the following frames, so swapping when the root
+        // appears could show a tile with two of its thirty draw groups.
         let mut incoming: Vec<Entity> = Vec::new();
         let mut ready = true;
         for (old, coord) in &mine {
@@ -1551,10 +1548,10 @@ fn swap(
 
 /// The brush ring, drawn on the ground it is about to change.
 ///
-/// Against the **edited** heights rather than the drawn mesh, for the reason
-/// [`crate::pick`] marches its ray against them: while a stroke is held those
-/// two disagree by the whole of what has been painted, and the ring is the only
-/// thing on screen that is up to date.
+/// The ring follows the edited heights rather than the drawn mesh, for the same
+/// reason [`crate::pick`] marches its ray against them: while a stroke is held,
+/// the two differ by everything painted so far, and the ring is the only thing
+/// on screen that is up to date.
 fn draw_brush(
     mut marks: ResMut<crate::marks::Marks>,
     session: Option<Res<EditSession>>,
@@ -1562,12 +1559,13 @@ fn draw_brush(
     terrain: Res<Terrain>,
     cursor: Res<Cursor>,
     held: Res<Held>,
+    pressure: crate::tablet::Pressure,
 ) {
     if *tool != Tool::Terrain {
         return;
     }
-    // `cursor.ground` is `None` for the whole of a playtest — see
-    // [`crate::pick::aim`] — so there is no second check for it here.
+    // `cursor.ground` is `None` for the whole of a playtest (see
+    // [`crate::pick::aim`]), so no separate playtest check is needed here.
     let (Some(session), Some(at)) = (session, cursor.ground) else {
         return;
     };
@@ -1582,17 +1580,24 @@ fn draw_brush(
         Mode::Noise => Color::srgb(0.8, 0.5, 0.9),
     };
     // Two rings: the radius, and the half-radius where a smooth falloff still
-    // has most of its strength. Both follow the ground rather than lying flat,
-    // which on a slope is the difference between a circle and an ellipse in the
-    // wrong place.
+    // has most of its strength. Both follow the ground rather than lying flat.
+    // A flat circle seen on a slope would look like an ellipse in the wrong
+    // place.
+    // At the radius a pen's pressure gives it, which is what the stroke
+    // reaches this frame. The vertex selection is not scaled.
+    let radius = match terrain.selecting {
+        true => terrain.brush.radius,
+        false => (terrain.brush.radius * pressure.scale().radius).max(*RADIUS.start()),
+    };
     rings(
         &mut marks,
         &session,
         at,
-        terrain.brush.radius,
+        radius,
         terrain.brush.core,
         terrain.brush.shape,
         colour,
+        held.on,
     );
     // A tilted flatten: the plane it goes to, at the pointer. While a stroke
     // is held that is the plane through where it began; before, the plane
@@ -1622,18 +1627,19 @@ fn draw_brush(
 
 /// The two rings every brush draws: the radius, and the core inside it.
 ///
-/// **The inner ring is the core, and there is no inner ring without one.** It
-/// used to sit at half the radius and mark nothing — a preview line at a place
-/// the brush does nothing in particular is a line a person reads a meaning into
-/// that is not there, and this one was read as *where the pressure is focused*,
-/// which is what the core now actually is.
+/// The inner ring marks the core, and is not drawn when the core is zero. It
+/// used to sit at half the radius and mark nothing in particular. Users read
+/// it as where the pressure is focused, which is what the core now is.
 ///
-/// **One function because the three brushes that take a core must not be able
-/// to disagree about whether they draw it.** Each of them used to spell this
-/// out for itself and the shading brush did not spell it out at all: its
-/// `Alt`+wheel set a core the preview never showed, so the one control on the
-/// tool with no feedback was the one that decides where the paint lands. That
-/// is the report. Two copies of a rule is how the third comes to be missing.
+/// It is one function so that the three brushes that take a core cannot differ
+/// about whether they draw it. Each brush used to draw the rings itself, and
+/// the shading brush did not draw the core: its `Alt`+wheel set a core the
+/// preview never showed, so the control that decides where the paint lands
+/// had no feedback.
+///
+/// `active` is true while a stroke is changing the ground. The rings are then
+/// drawn solid, twice as wide and closer to white, so a stroke that is being
+/// applied looks different from the preview of the next one.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn rings(
     marks: &mut crate::marks::Marks,
@@ -1643,37 +1649,46 @@ pub(crate) fn rings(
     core: f32,
     shape: Shape,
     colour: Color,
+    active: bool,
 ) {
+    use bevy::color::Mix;
+    let colour = match active {
+        true => colour.mix(&Color::WHITE, ACTIVE_WHITE),
+        false => colour,
+    };
     let inner = (core > 0.0).then(|| radius * core);
     for (radius, shade) in [Some(radius), inner]
         .into_iter()
         .zip([1.0, 0.6])
         .filter_map(|(radius, shade)| Some((radius?, shade)))
     {
-        ring(marks, session, at, radius, shape, colour.with_alpha(shade));
+        ring(marks, session, at, radius, shape, colour.with_alpha(shade), active);
     }
 }
 
-/// One dashed ring of 64 segments, each vertex dropped onto the edited ground.
+/// How far toward white an active stroke's rings are drawn, 0 to 1.
+const ACTIVE_WHITE: f32 = 0.45;
+
+/// One ring of 64 segments, each vertex dropped onto the edited ground.
 ///
-/// Three segments of each four are drawn, so the ring is sixteen dashes and
-/// reads as a brush rather than as a line on the map. A dash is a tube a few
+/// While `solid` is false, three segments of each four are drawn, so the ring
+/// is sixteen dashes and reads as a brush rather than as a line on the map.
+/// While it is true, every segment is drawn at twice the width: see
+/// [`rings`]. A dash is a tube a few
 /// pixels thick ([`crate::marks::Marks::line`]), so a hill between the camera
 /// and the ring hides it; the hidden part is drawn faint
 /// ([`crate::marks::Look::Ghosted`]).
 ///
-/// Shared with the texture brush, which wants the same ring for the same reason
-/// and must not grow a second copy of it: two brushes that disagreed about where
-/// the pointer is would be two brushes, one of which is wrong.
+/// The texture brush uses it too, rather than a copy of its own, so the two
+/// brushes cannot disagree about where the pointer is.
 ///
-/// **A vertex with no ground under it breaks the ring rather than borrowing a
-/// height.** There are three ways to have none — a hole in the terrain, a tile
-/// that is not open, and the ground beyond the edge of the map — and the first
-/// draft substituted the height under the pointer for all three. During a raise
-/// that height is the top of the hill being built, so the ring grew a spike to
-/// it wherever it crossed a hole: an artefact that reads exactly like torn
-/// ground, on ground that is not torn. A gap in the ring says what is true,
-/// which is that there is nothing there to draw on.
+/// A ring vertex with no ground under it breaks the ring rather than taking
+/// another height. There are three cases: a hole in the terrain, a tile that
+/// is not open, and the ground beyond the edge of the map. An earlier version
+/// used the height under the pointer for all three. During a raise that height
+/// is the top of the hill being built, so the ring drew a spike up to it
+/// wherever it crossed a hole, which looked like torn ground. A gap in the ring
+/// shows that there is no ground there.
 pub(crate) fn ring(
     marks: &mut crate::marks::Marks,
     session: &EditSession,
@@ -1681,16 +1696,17 @@ pub(crate) fn ring(
     radius: f32,
     shape: Shape,
     colour: Color,
+    solid: bool,
 ) {
     const SEGMENTS: usize = 64;
     /// Yards above the ground, so the line is not buried in the mesh it is
     /// drawn over.
     const LIFT: f32 = 0.15;
 
-    // **The shape's own outline and not a circle**, and taken from the shape
-    // rather than drawn here: a preview built from a second reading of the
-    // footprint is a preview that says the brush reaches somewhere it does not,
-    // and the two would drift the first time a norm was corrected. See
+    // The shape's own outline, not always a circle, and taken from the shape
+    // rather than computed here. A preview built from a second copy of the
+    // footprint logic could show the brush reaching where it does not, and the
+    // two would drift apart the first time a norm was corrected. See
     // `vale_edit::ops::Shape::outline`.
     let rim = shape.outline(radius, SEGMENTS);
     let point = |&(dx, dy): &(f32, f32)| -> Option<Vec3> {
@@ -1703,11 +1719,12 @@ pub(crate) fn ring(
         Some(vale_client::render::axes::to_bevy([x, y, z + LIFT]))
     };
     let points: Vec<Option<Vec3>> = rim.iter().map(point).collect();
-    for i in (0..points.len()).filter(|i| i % 4 != 3) {
+    let width = if solid { 3.0 } else { 1.5 };
+    for i in (0..points.len()).filter(|i| solid || i % 4 != 3) {
         if let (Some(from), Some(to)) = (points[i], points[(i + 1) % points.len()]) {
             // Resting on the ground rather than half in it. See
             // `crate::marks::Marks::ground_line`.
-            marks.wide_ground_line(from, to, 1.5, colour, crate::marks::Look::Ghosted);
+            marks.wide_ground_line(from, to, width, colour, crate::marks::Look::Ghosted);
         }
     }
 }
@@ -1730,11 +1747,11 @@ pub const MODES: [(&str, Mode); 5] = [
     ("Noise", Mode::Noise),
 ];
 
-/// …and the five falloffs.
+/// The five falloffs, as a list a panel can offer.
 ///
-/// **In order of how much of the radius they keep**, which is what a person is
-/// choosing between: `Dome` holds nearly all of it, `Sharp` gives it up at once,
-/// and the three in the middle are the ones that were here.
+/// They are in order of how much of the radius keeps its strength, which is
+/// the choice a user makes: `Dome` holds nearly all of it and `Sharp` loses it
+/// at once. The other three are the original falloffs.
 pub const FALLOFFS: [(&str, Falloff); 5] = [
     ("Smooth", Falloff::Smooth),
     ("Linear", Falloff::Linear),
@@ -1743,9 +1760,10 @@ pub const FALLOFFS: [(&str, Falloff); 5] = [
     ("Dome", Falloff::Dome),
 ];
 
-/// …and the three footprints. See `vale_edit::ops::Shape`, where a shape
-/// being a *distance* rather than a mask is argued — it is what lets these three
-/// and the five above be two lists rather than fifteen.
+/// The three footprints, as a list a panel can offer. `vale_edit::ops::Shape`
+/// explains why a shape is a distance rather than a mask. That design lets these
+/// three and the five falloffs above be two lists rather than fifteen
+/// combinations.
 pub const SHAPES: [(&str, Shape); 3] = [
     ("Circle", Shape::Circle),
     ("Square", Shape::Square),
