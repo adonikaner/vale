@@ -21,7 +21,8 @@
 //! overlay  an addition: not in the frame at all, drawn on top of it
 //! server   the server's navmesh, which is the editor's own overlay
 //! ground   the guides drawn on the terrain: one button that opens a menu
-//! camera   the editor camera's top-down map view
+//! camera   the editor camera's top-down map view, and free flight: whether
+//!          W and S follow the line of sight
 //! frame    how the frame is produced: the three settings F5, F9 and F10 toggle
 //! ```
 //!
@@ -81,13 +82,14 @@ use vale_client::render::overlay::{CollisionDrawn, DebugOverlay, WireframeSuppor
 /// How far round the camera's target the collision overlay is drawn in the
 /// editor, in yards, and the most triangles it draws in one frame.
 ///
-/// The client's own defaults are 25 yards and 10,000 triangles, which is
-/// what is underfoot: the client's overlay answers whether the hull the
-/// character stands on is the shape of the thing it stands on. The editor's
-/// camera looks at a place from a distance, and the question is whether a
-/// placed building or a raised hill is solid at all, so the overlay covers
-/// the view. 200 yards is a third of a tile; a full tile is 533. The cap
-/// rises with it so a wide radius does not stop at the nearest building.
+/// The client's own defaults are 25 yards and 10,000 triangles, which cover
+/// the ground under the character: the client's overlay shows whether the
+/// hull the character stands on has the shape of the object under it. The
+/// editor's camera looks at a place from a distance, and the editor needs to
+/// show whether a placed building or a raised hill is solid at all, so the
+/// overlay covers the view. 200 yards is a third of a tile; a full tile is
+/// 533. The cap rises with the radius so a wide radius does not stop at the
+/// nearest building.
 /// Both are on `DebugOverlay`, which every host may set for itself.
 #[cfg(feature = "diagnostics")]
 pub const COLLISION_RADIUS: f32 = 200.0;
@@ -131,7 +133,7 @@ const PICTURE: f32 = 24.0;
 /// by. `short` is drawn when the switch has no icon.
 ///
 /// A label absent from this table is drawn from [`initials`].
-pub const ART: [(&str, &str); 31] = [
+pub const ART: [(&str, &str); 32] = [
     // --- the world, in the order the frame is built ---
     ("fog", "FOG"),
     ("sky dome", "SKY"),
@@ -163,7 +165,8 @@ pub const ART: [(&str, &str); 31] = [
     ("unit facing", "FAC"),
     // --- the editor camera's own view ---
     ("map view", "MAP"),
-    // --- and how the frame is made ---
+    ("free flight", "FLY"),
+    // --- how the frame is produced ---
     ("MSAA", "AA"),
     ("vsync", "VSY"),
     ("sun shadows", "SSH"),
@@ -186,6 +189,7 @@ pub fn names() -> Vec<&'static str> {
     names.extend(OVERLAYS.iter().map(|(label, _, _)| *label));
     names.push("navmesh");
     names.push("map view");
+    names.push("free flight");
     names
 }
 
@@ -234,6 +238,9 @@ pub struct Bar<'a> {
     /// Whether the top-down map view is on. A copy, written back by the caller
     /// when it changed. See [`crate::camera::TopDown`].
     pub map_view: &'a mut bool,
+    /// Whether W and S follow the line of sight. A copy, written back by the
+    /// caller when it changed. See [`crate::camera::Movement`].
+    pub flight: &'a mut bool,
     /// Whether the editor is editing. The map view is the editor camera's, so
     /// it is unavailable during a playtest.
     pub editing: bool,
@@ -355,6 +362,25 @@ pub fn draw(ui: &mut Ui, bar: &mut Bar) {
         let on = *bar.map_view;
         if toggle(ui, bar.icons, "map view", on, false, bar.editing, &why) {
             *bar.map_view = !on;
+        }
+        // How the keys move the perspective camera. The map view has its own
+        // movement, so the button is unavailable while that is on.
+        let why = match (bar.editing, *bar.map_view) {
+            (true, false) => "camera: free flight. On, W and S move along the line of sight, so \
+                              W with the view pitched down moves toward the ground. Off, W and \
+                              S move level along the ground. A and D move sideways and Q and E \
+                              down and up in both."
+                .to_string(),
+            (true, true) => "camera: unavailable in the map view, which moves north, west, \
+                             south and east."
+                .to_string(),
+            (false, _) => "camera: unavailable during a playtest, which uses the game's camera."
+                .to_string(),
+        };
+        let on = *bar.flight;
+        let available = bar.editing && !*bar.map_view;
+        if toggle(ui, bar.icons, "free flight", on, false, available, &why) {
+            *bar.flight = !on;
         }
 
         rule(ui);
@@ -742,9 +768,9 @@ mod tests {
         }
     }
 
-    /// The scripted echo is empty when nothing has been touched, names exactly
-    /// what has when something is, and leaves out a switch the baseline has
-    /// off: the editor's own `interface = false` is not echoed.
+    /// The scripted echo is empty when no switch has changed, names exactly
+    /// the changed switches when some have, and leaves out a switch the
+    /// baseline has off: the editor's own `interface = false` is not echoed.
     #[test]
     fn the_echo_names_what_was_subtracted() {
         let editing = crate::playtest::world_baseline(true);

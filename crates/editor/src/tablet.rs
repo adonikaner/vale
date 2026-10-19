@@ -336,6 +336,16 @@ fn measure(
     pointer.right = right;
 }
 
+/// How far, in physical pixels, a right press with a pen may move from where
+/// it began and still be a click that opens the right-click menu, rather than
+/// a drag that turns the view.
+///
+/// A mouse's is `crate::context::CLICK_SLOP`, 4 pixels of path. A pen cannot be
+/// held that still: the tip shakes, and pressing the barrel button moves it.
+/// `camera::fly` measures a pen's travel as its distance from the press, not
+/// the length of its path. Applies while [`Pointer::from_position`] is true.
+pub const PEN_CLICK_SLOP: f32 = 16.0;
+
 /// The size of the pressure bar, in egui points.
 const METER: egui::Vec2 = egui::vec2(7.0, 44.0);
 

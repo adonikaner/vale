@@ -93,6 +93,41 @@ pub struct EditorCamera {
     /// below the ground afterwards is allowed: a camera pinned to the terrain
     /// could not get under a bridge to look at its underside.
     pub wants_the_ground: bool,
+    /// Which way W and S move in the perspective view. Switched by the view
+    /// bar's FLY button.
+    pub movement: Movement,
+}
+
+/// Which way W and S move the camera in the perspective view.
+///
+/// In both modes A and D move sideways along the ground, and Q and E move
+/// straight down and up. The map view has its own movement and reads neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Movement {
+    /// W and S move along the ground, in the direction the view faces. The
+    /// height changes only with Q and E.
+    #[default]
+    Level,
+    /// W and S move along the line of sight, so W with the view pitched down
+    /// moves down toward the ground. A tablet user, who has no second hand on a
+    /// mouse, steers with the view and one key.
+    Flight,
+}
+
+/// The direction W moves the focus, as a unit vector in the world's axes.
+///
+/// The eye sits at `yaw` and `pitch` from the focus (see
+/// `world::camera::CameraRig::at`), so the line of sight is the opposite of
+/// that offset. [`Movement::Level`] drops its vertical part.
+pub fn forward(yaw: f32, pitch: f32, movement: Movement) -> Vec3 {
+    let (sin, cos) = yaw.sin_cos();
+    match movement {
+        Movement::Level => Vec3::new(-cos, -sin, 0.0),
+        Movement::Flight => {
+            let (up, across) = pitch.sin_cos();
+            Vec3::new(-cos * across, -sin * across, -up)
+        }
+    }
 }
 
 impl Default for EditorCamera {
@@ -107,6 +142,7 @@ impl Default for EditorCamera {
             speed: 60.0,
             active: true,
             wants_the_ground: true,
+            movement: Movement::Level,
         }
     }
 }
@@ -345,9 +381,12 @@ pub fn fly(
     time: Res<Time>,
     mut top: ResMut<TopDown>,
     // How far the pointer has moved since the right button went down, in
-    // physical pixels. Under `crate::context::CLICK_SLOP` the press is a click
-    // that asks for the right-click menu, and turns nothing.
+    // physical pixels. Under the click slop (see `click_slop`) the press is a
+    // click that asks for the right-click menu, and turns nothing.
     mut travel: Local<f32>,
+    // The pointer's offset from where the right button went down, in physical
+    // pixels. A pen's travel is the farthest this has been from zero.
+    mut offset: Local<Vec2>,
     mut menu: ResMut<crate::context::ContextMenu>,
 ) {
     // The editor drives only while it is editing. The test was
@@ -379,13 +418,23 @@ pub fn fly(
     if motion.right_pressed {
         *steering = in_world;
         *travel = 0.0;
+        *offset = Vec2::ZERO;
     }
+    // A mouse's travel is the length of its path. A pen's is its farthest
+    // distance from where the press began: a pen tip held still wanders a few
+    // pixels each way, and the length of that path grows for as long as the
+    // button is held.
     if *steering {
-        *travel += motion.delta.length();
+        *offset += motion.delta;
+        *travel = match motion.from_position {
+            true => travel.max(offset.length()),
+            false => *travel + motion.delta.length(),
+        };
     }
+    let slop = click_slop(&motion);
     // A press and release that barely moved is a click, which opens the
     // right-click menu at the pointer. See `crate::context`.
-    if motion.right_released && *steering && *travel <= crate::context::CLICK_SLOP {
+    if motion.right_released && *steering && *travel <= slop {
         if let Some(at) = windows.single().ok().and_then(Window::cursor_position) {
             menu.pending = Some(at);
         }
@@ -394,7 +443,7 @@ pub fn fly(
         *steering = false;
     }
     // The view turns, or the map pans, only once the press has become a drag.
-    let looking = *steering && *travel > crate::context::CLICK_SLOP;
+    let looking = *steering && *travel > slop;
 
     // The map view: north is at the top of the picture, so the right-drag
     // moves the map with the pointer and the keys move along the compass.
@@ -424,10 +473,11 @@ pub fn fly(
     if typing {
         return;
     }
-    // The horizontal frame the keys move in. The eye sits at `yaw` from the
-    // focus, so the direction the view runs in is the opposite of it.
+    // The frame the keys move in. The eye sits at `yaw` from the focus, so the
+    // direction the view runs in is the opposite of it. Right is level in both
+    // movement modes.
     let (sin, cos) = camera.yaw.sin_cos();
-    let forward = Vec3::new(-cos, -sin, 0.0);
+    let forward = forward(camera.yaw, camera.pitch, camera.movement);
     let right = Vec3::new(-sin, cos, 0.0);
 
     let mut step = Vec3::ZERO;
@@ -450,6 +500,17 @@ pub fn fly(
             camera.speed
         };
         camera.target += step.normalize() * speed * time.delta_secs();
+    }
+}
+
+/// How far a right press may travel and still be a click, in physical pixels:
+/// [`crate::tablet::PEN_CLICK_SLOP`] while the motion is read from the
+/// cursor's position, which is while a pen is in use, and
+/// `crate::context::CLICK_SLOP` for a mouse.
+fn click_slop(motion: &Pointer) -> f32 {
+    match motion.from_position {
+        true => crate::tablet::PEN_CLICK_SLOP,
+        false => crate::context::CLICK_SLOP,
     }
 }
 
@@ -563,5 +624,24 @@ mod tests {
         assert_eq!(right, Vec3::new(0.0, 1.0, 0.0), "+Y is west");
         // …and right is ninety degrees clockwise from forward, seen from above.
         assert!(forward.dot(right).abs() < 1e-6);
+    }
+
+    /// In flight, W moves along the line of sight: from the eye toward the
+    /// focus, which is the opposite of the rig's eye offset.
+    #[test]
+    fn flight_moves_along_the_line_of_sight() {
+        for (yaw, pitch) in [(0.0f32, 0.9f32), (2.1, -0.4), (-1.3, 1.4)] {
+            let offset = Vec3::new(
+                pitch.cos() * yaw.cos(),
+                pitch.cos() * yaw.sin(),
+                pitch.sin(),
+            );
+            let w = forward(yaw, pitch, Movement::Flight);
+            assert!((w + offset).length() < 1e-5, "yaw {yaw}, pitch {pitch}");
+            assert!((w.length() - 1.0).abs() < 1e-5);
+        }
+        // Looking down, W descends; on the level it does not.
+        assert!(forward(0.0, 0.9, Movement::Flight).z < 0.0);
+        assert_eq!(forward(0.0, 0.9, Movement::Level).z, 0.0);
     }
 }

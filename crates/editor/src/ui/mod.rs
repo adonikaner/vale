@@ -697,6 +697,7 @@ fn draw(
 
     let mut edited_guides = viewing.guides.clone();
     let mut map_view = viewing.top_down.on;
+    let mut flight = camera.movement == crate::camera::Movement::Flight;
     egui::Panel::bottom("editor-view")
         .frame(bar(theme::PANEL))
         .show(&mut root, |ui| {
@@ -714,6 +715,7 @@ fn draw(
                     navmesh: &mut viewing.navmesh,
                     guides: &mut edited_guides,
                     map_view: &mut map_view,
+                    flight: &mut flight,
                     editing: playing.state.editing(),
                     areas_shown: *tool == Tool::Areas,
                     open_guides: editing.args.guides_menu
@@ -730,6 +732,13 @@ fn draw(
     }
     if map_view != viewing.top_down.on {
         viewing.top_down.on = map_view;
+    }
+    let movement = match flight {
+        true => crate::camera::Movement::Flight,
+        false => crate::camera::Movement::Level,
+    };
+    if movement != camera.movement {
+        camera.movement = movement;
     }
 
     // The rail is not drawn over a playtest. Every tile on it keeps the
