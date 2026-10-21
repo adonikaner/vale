@@ -206,7 +206,7 @@ const GROUPS: [(&str, &[Subject]); 3] = [
 ];
 
 /// The workspaces after *World*, in the order the top bar draws them.
-const WORKSPACES: [Subject; 5] = [
+const WORKSPACES: [Subject; 7] = [
     s(
         "Spells",
         Tool::Spells,
@@ -228,6 +228,23 @@ const WORKSPACES: [Subject; 5] = [
         "quest_template (objectives, text and rewards) and the four relation tables \
          that set which creatures and game objects start and end each quest. Rows \
          in vmangos' database, so this needs a database connection.",
+    ),
+    s(
+        "Creatures",
+        Tool::CreatureData,
+        "creature_template: every creature the server loads, searched by name, \
+         subname or entry, with every column of the open row, its model, and its \
+         quests, loot, events, spells, gossip, vendor and trainer windows. The same \
+         rows the rail's Creatures tool edits through a spawn. Rows in vmangos' \
+         database, so this needs a database connection.",
+    ),
+    s(
+        "Game Objects",
+        Tool::GameObjectData,
+        "gameobject_template: every game object the server loads, searched by name, \
+         type or entry, with every column of the open row, its model, and its quest \
+         and loot windows. The same rows the rail's Objects tool edits through a \
+         spawn. Rows in vmangos' database, so this needs a database connection.",
     ),
     s(
         "Zones",
@@ -713,11 +730,14 @@ mod tests {
         for subject in &WORKSPACES {
             assert_eq!(
                 held(subject.tool, true, true).is_none(),
-                subject.tool != Tool::Zones,
+                subject.tool.survives_playtest(),
                 "{}",
                 subject.name
             );
         }
+        assert!(held(Tool::Zones, true, true).is_some());
+        assert!(held(Tool::CreatureData, true, true).is_some());
+        assert!(held(Tool::GameObjectData, false, false).is_some());
         assert!(held(Tool::Spells, true, true).is_none());
         assert!(held(Tool::Creatures, false, false).is_some());
         assert!(held(Tool::Items, false, false).is_some());

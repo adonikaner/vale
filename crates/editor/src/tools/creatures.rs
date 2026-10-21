@@ -320,7 +320,7 @@ impl Known {
     /// A template this project creates, read out of its row in the store:
     /// the columns a marker, a model and a heading need, under the key's
     /// entry and patch.
-    fn from_store(key: &Key, row: &RowEdit) -> Option<Known> {
+    pub(crate) fn from_store(key: &Key, row: &RowEdit) -> Option<Known> {
         let entry = key.first()? as u32;
         let patch = key
             .0
@@ -356,7 +356,7 @@ impl Known {
 }
 
 /// One row of the brief template query.
-fn read_known(row: &creature::Row) -> Option<Known> {
+pub(crate) fn read_known(row: &creature::Row) -> Option<Known> {
     let integer = |column: &str| row.integer(column).unwrap_or(0) as u32;
     Some(Known {
         entry: row.integer("entry")? as u32,
@@ -580,6 +580,14 @@ pub struct Creatures {
     /// the edit arrived afterwards. `Waypoints::scripted_done` is the same
     /// flag for the same reason, and the apply waits on both.
     pub scripted_done: bool,
+    /// Every `creature_template` row, for the Creatures workspace. See
+    /// [`super::creature_data`].
+    pub listed: super::listing::Listing<Known>,
+    /// A tool the panel or the Creatures workspace asks the shell to switch
+    /// to: the workspace from a spawn's panel, the creature tool from the
+    /// workspace. The shell switches after everything is drawn, since the
+    /// tool is borrowed while a panel draws.
+    pub switch_to: Option<Tool>,
 }
 
 impl Default for Creatures {
@@ -628,6 +636,8 @@ impl Default for Creatures {
             drag: None,
             fly_to: None,
             scripted_done: false,
+            listed: super::listing::Listing::default(),
+            switch_to: None,
         }
     }
 }
@@ -1114,6 +1124,36 @@ impl Creatures {
         patch: u32,
         now: f64,
     ) -> u32 {
+        let (entry, known) = self.write_new_template(session, name, patch, now);
+        if let Some(known) = known {
+            self.open_template(known);
+        }
+        entry
+    }
+
+    /// Make a new template and open it in the Creatures workspace. The
+    /// creature tool's picker and window are left as they are.
+    pub fn create_listed_template(
+        &mut self,
+        session: &mut EditSession,
+        name: &str,
+        patch: u32,
+        now: f64,
+    ) -> u32 {
+        let (entry, _) = self.write_new_template(session, name, patch, now);
+        self.open_listed(entry);
+        entry
+    }
+
+    /// The claim a new template is: every column at once, as one undo entry.
+    /// Answers its entry and the row as a list shows it.
+    fn write_new_template(
+        &mut self,
+        session: &mut EditSession,
+        name: &str,
+        patch: u32,
+        now: f64,
+    ) -> (u32, Option<Known>) {
         let entry = self.next_entry(&session.server_edits);
         let key = creature::template_key(entry, patch);
         let mut row = RowEdit {
@@ -1134,10 +1174,7 @@ impl Creatures {
                 now,
             }),
         );
-        if let Some(known) = Known::from_store(&key, &row) {
-            self.open_template(known);
-        }
-        entry
+        (entry, Known::from_store(&key, &row))
     }
 
     /// A copy of the template the window shows, under a new entry.
@@ -1157,6 +1194,36 @@ impl Creatures {
         patch: u32,
         now: f64,
     ) -> Option<u32> {
+        let (entry, known) = self.write_copy(session, subject, patch, now)?;
+        if let Some(known) = known {
+            self.open_template(known);
+        }
+        Some(entry)
+    }
+
+    /// A copy of the open row in the Creatures workspace, opened there. `None`
+    /// on the terms of [`Self::copy_template`].
+    pub fn copy_listed_template(
+        &mut self,
+        session: &mut EditSession,
+        subject: &TemplateSubject,
+        patch: u32,
+        now: f64,
+    ) -> Option<u32> {
+        let (entry, _) = self.write_copy(session, subject, patch, now)?;
+        self.open_listed(entry);
+        Some(entry)
+    }
+
+    /// The claim a copy is, as one undo entry. Answers its entry and the row
+    /// as a list shows it.
+    fn write_copy(
+        &mut self,
+        session: &mut EditSession,
+        subject: &TemplateSubject,
+        patch: u32,
+        now: f64,
+    ) -> Option<(u32, Option<Known>)> {
         let from = self
             .template
             .as_ref()
@@ -1201,10 +1268,14 @@ impl Creatures {
                 now,
             }),
         );
-        if let Some(known) = Known::from_store(&key, &row) {
-            self.open_template(known);
-        }
-        Some(entry)
+        Some((entry, Known::from_store(&key, &row)))
+    }
+
+    /// Open a template in the Creatures workspace's form.
+    pub fn open_listed(&mut self, entry: u32) {
+        self.listed.open = Some(entry);
+        self.template = None;
+        self.created_for = None;
     }
 
     /// Choose a template in the picker and open the window on it.
@@ -1248,13 +1319,17 @@ impl Creatures {
         {
             self.new_spawn.chosen = None;
         }
+        if self.listed.open == Some(entry) {
+            self.listed.open = None;
+        }
         self.template = None;
         self.created_for = None;
     }
 
     /// Whether an entry is already a creature, as far as this tool can see:
     /// the templates behind the map's spawns, the picker's matches, the
-    /// templates read for created spawns, and the ones this project creates.
+    /// templates read for created spawns, the ones this project creates, and
+    /// the whole table once the Creatures workspace has read it.
     /// Asked by the entry the project gives each row and by the entry the
     /// database has it at, because the database is where an apply runs.
     ///
@@ -1270,6 +1345,7 @@ impl Creatures {
                 .chain(self.new_spawn.matches.iter())
                 .chain(self.templates.iter())
                 .any(|known| known.entry == entry || known.read_entry == entry)
+            || self.listed.holds(entry)
     }
 
     /// Move a template to another entry.
@@ -1319,6 +1395,10 @@ impl Creatures {
                     chosen.read_entry = to;
                 }
             }
+        }
+        // The workspace's open row follows it on the same terms.
+        if self.listed.open == Some(subject.entry) {
+            self.listed.open = Some(to);
         }
         self.template = None;
         self.created_for = None;
@@ -1613,7 +1693,9 @@ fn rebuild_created(
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
 ) {
-    if !state.editing() || *tool != Tool::Creatures {
+    // Under the Creatures workspace too: Discard there finds the created
+    // template in `templates`.
+    if !state.editing() || !matches!(*tool, Tool::Creatures | Tool::CreatureData) {
         return;
     }
     let Some(session) = session else { return };
@@ -3503,7 +3585,7 @@ pub fn fetch_rows(
             }
         }
     }
-    if !state.editing() || *tool != Tool::Creatures {
+    if !state.editing() || !matches!(*tool, Tool::Creatures | Tool::CreatureData) {
         return;
     }
     // A row is made again when the database has been written since it was
@@ -3514,10 +3596,12 @@ pub fn fetch_rows(
         return;
     };
     // The template half follows the window's subject, which in Place is the
-    // picker's creature and in Select the selected spawn's template.
-    let subject = session
-        .as_ref()
-        .and_then(|session| creatures.template_subject(&session.server_edits));
+    // picker's creature and in Select the selected spawn's template; under
+    // the Creatures workspace it is the row open there.
+    let subject = session.as_ref().and_then(|session| match *tool {
+        Tool::CreatureData => creatures.listed.subject(&session.server_edits),
+        _ => creatures.template_subject(&session.server_edits),
+    });
     if let Some(subject) = subject {
         let wants_template = creatures.template_task.is_none()
             && (creatures.template.as_ref().is_none_or(|had| had.entry != subject.entry)
@@ -3557,6 +3641,10 @@ pub fn fetch_rows(
                 }));
             }
         }
+    }
+    // The spawn half is the creature tool's alone.
+    if *tool != Tool::Creatures {
+        return;
     }
     let Some(spawn) = creatures.chosen().cloned() else {
         return;

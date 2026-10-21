@@ -145,9 +145,9 @@ pub fn draw(ui: &mut egui::Ui, mut subject: Subject<'_>) {
 }
 
 /// The two dialogs a form here can open: the display picker and the
-/// reference picker. Drawn against the context, so the sidebar and the
-/// template window reach the same two.
-fn dialogs(ctx: &egui::Context, subject: &mut Subject<'_>) {
+/// reference picker. Drawn against the context, so the sidebar, the template
+/// window and the Creatures workspace reach the same two.
+pub(super) fn dialogs(ctx: &egui::Context, subject: &mut Subject<'_>) {
     super::displays::window(
         ctx,
         &mut subject.creatures.display_pick,
@@ -282,7 +282,7 @@ fn panel(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         summary(ui, subject, &spawn, template_edited);
     });
     ui.add_space(4.0);
-    windows(ui, subject, &spawn);
+    windows(ui, subject, spawn.entry, spawn.label(), Some(&spawn));
     ui.add_space(8.0);
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
@@ -582,7 +582,7 @@ fn edits_block(
 /// Computed once per display id and kept in `Creatures::worn`: it is a DBC
 /// lookup, a string build and a `Dressing`, and a picker row asks for it on
 /// every frame it is drawn.
-fn worn(subject: &mut Subject<'_>, display_id: u32) -> Option<crate::portraits::Worn> {
+pub(super) fn worn(subject: &mut Subject<'_>, display_id: u32) -> Option<crate::portraits::Worn> {
     if let Some(had) = subject.creatures.worn.get(&display_id) {
         return had.clone();
     }
@@ -637,17 +637,20 @@ fn picker(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
             theme::note(ui, "ctrl with alt snaps the turn to 15\u{b0}");
             // The window's toggle, here as well as under a selected spawn, so
             // a creature can be edited before any spawn of it exists.
-            let open = subject.creatures.template_window;
-            if ui
-                .selectable_label(open, "Edit creature…")
-                .on_hover_text(
-                    "Open creature_template's 78 columns in a separate window. The \
-                     window follows the chosen creature.",
-                )
-                .clicked()
-            {
-                subject.creatures.template_window = !open;
-            }
+            ui.horizontal_wrapped(|ui| {
+                let open = subject.creatures.template_window;
+                if ui
+                    .selectable_label(open, "Edit creature…")
+                    .on_hover_text(
+                        "Open creature_template's 78 columns in a separate window. The \
+                         window follows the chosen creature.",
+                    )
+                    .clicked()
+                {
+                    subject.creatures.template_window = !open;
+                }
+                open_in_templates(ui, subject, chosen.entry);
+            });
             // The large preview, the same pane the placement pickers use. See
             // `crate::portraits`, and `ui::inspector::preview_pane`, which is
             // this widget. A creature is drawn wearing its skins; the pose is
@@ -1230,47 +1233,21 @@ fn summary(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn, edited: 
 /// its template: its path, quests, loot, events, spells and its two service
 /// lists. Each is a toggle, lit while its window is open. Drawn outside the
 /// folding sections, so they are reachable with both shut.
-fn windows(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
+///
+/// `spawn` is the selected spawn in the world. The Creatures workspace draws
+/// the same row with none, and then the template window, the path and the
+/// link to the workspace are left out: the form is already in the middle of
+/// the screen, and a path belongs to a spawn.
+pub(super) fn windows(
+    ui: &mut egui::Ui,
+    subject: &mut Subject<'_>,
+    entry: u32,
+    label: String,
+    spawn: Option<&Spawn>,
+) {
     ui.horizontal_wrapped(|ui| {
-        let open = subject.creatures.template_window;
-        if ui
-            .selectable_label(open, "Edit creature…")
-            .on_hover_text(
-                "Open creature_template's 78 columns in a separate window. The window can \
-                 be moved off the panel and stay open while you work in the viewport.",
-            )
-            .clicked()
-        {
-            subject.creatures.template_window = !open;
-        }
-        // Waypoints is a mode rather than a form: it takes the pointer while
-        // it is open, so it is a toggle like the template window beside it,
-        // not a button that opens something and returns. The toggle shows or
-        // hides the window, not this creature's path. The path in the window
-        // follows the selection, as the template window does. See
-        // `tools::waypoints::follow_the_selection`.
-        let showing = subject.waypoints.showing;
-        if ui
-            .selectable_label(showing, "Waypoints")
-            .on_hover_text(
-                "The creature's waypoint path from creature_movement, drawn on the ground. \
-                 Points can be selected, dragged, added and removed. The window follows the \
-                 selection and shows the path of the selected creature.",
-            )
-            .clicked()
-        {
-            match showing {
-                true => subject.waypoints.close(),
-                false => {
-                    subject.waypoints.showing = true;
-                    // Opened here as well as by the follow, so the window has
-                    // its creature on the frame the button is pressed rather
-                    // than on the next frame.
-                    subject
-                        .waypoints
-                        .open_for(spawn.guid, spawn.entry, spawn.movement_type);
-                }
-            }
+        if let Some(spawn) = spawn {
+            spawn_windows(ui, subject, spawn);
         }
         // Quests is a window over the world, like the two beside it, and like
         // them it follows the selection. `super::quests` draws it, and the
@@ -1292,11 +1269,7 @@ fn windows(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         {
             subject.quests.window_for = match quests_open {
                 true => None,
-                false => Some((
-                    crate::tools::quests::Holder::Creature,
-                    spawn.entry,
-                    spawn.label(),
-                )),
+                false => Some((crate::tools::quests::Holder::Creature, entry, label.clone())),
             };
         }
         // Loot is a window over the world that follows the selection, like
@@ -1379,7 +1352,73 @@ fn windows(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         {
             subject.services.toggle(Kind::Trainer);
         }
+        if spawn.is_some() {
+            open_in_templates(ui, subject, entry);
+        }
     });
+}
+
+/// The two buttons of [`windows`] that belong to a spawn in the world: the
+/// template window and the path.
+fn spawn_windows(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
+    let open = subject.creatures.template_window;
+    if ui
+        .selectable_label(open, "Edit creature…")
+        .on_hover_text(
+            "Open creature_template's 78 columns in a separate window. The window can \
+             be moved off the panel and stay open while you work in the viewport.",
+        )
+        .clicked()
+    {
+        subject.creatures.template_window = !open;
+    }
+    // Waypoints is a mode rather than a form: it takes the pointer while it
+    // is open, so it is a toggle like the template window beside it, not a
+    // button that opens something and returns. The toggle shows or hides the
+    // window, not this creature's path. The path in the window follows the
+    // selection, as the template window does. See
+    // `tools::waypoints::follow_the_selection`.
+    let showing = subject.waypoints.showing;
+    if ui
+        .selectable_label(showing, "Waypoints")
+        .on_hover_text(
+            "The creature's waypoint path from creature_movement, drawn on the ground. \
+             Points can be selected, dragged, added and removed. The window follows the \
+             selection and shows the path of the selected creature.",
+        )
+        .clicked()
+    {
+        match showing {
+            true => subject.waypoints.close(),
+            false => {
+                subject.waypoints.showing = true;
+                // Opened here as well as by the follow, so the window has its
+                // creature on the frame the button is pressed rather than on
+                // the next frame.
+                subject
+                    .waypoints
+                    .open_for(spawn.guid, spawn.entry, spawn.movement_type);
+            }
+        }
+    }
+}
+
+/// The link from the creature tool to the Creatures workspace on the top
+/// bar, open on this creature's template. The shell switches tools after the
+/// frame is drawn.
+fn open_in_templates(ui: &mut egui::Ui, subject: &mut Subject<'_>, entry: u32) {
+    if ui
+        .button("Open in Workspace")
+        .on_hover_text(
+            "Opens this creature_template row in the Creatures workspace on the top bar, \
+             which lists every creature_template row and edits the open one in the middle \
+             of the screen. The row and its edits are the same as in the template window.",
+        )
+        .clicked()
+    {
+        subject.creatures.open_listed(entry);
+        subject.creatures.switch_to = Some(crate::tools::Tool::CreatureData);
+    }
 }
 
 /// The side of the picture beside the summary, in points.
@@ -1522,7 +1561,7 @@ fn template_head(
 /// [`crate::tools::creatures::Creatures::rekey_template`]. For a row the
 /// database holds, the apply then moves the row and every column of the world
 /// database that names a creature by entry.
-fn entry_field(
+pub(super) fn entry_field(
     ui: &mut egui::Ui,
     subject: &mut Subject<'_>,
     shown: &crate::tools::creatures::TemplateSubject,
@@ -1598,7 +1637,7 @@ fn entry_field(
 /// first are not the ones that come first in the table. A group holding an
 /// edit is opened whatever `open` says, so a change is never hidden under a
 /// folded heading.
-fn groups(
+pub(super) fn groups(
     ui: &mut egui::Ui,
     subject: &mut Subject<'_>,
     table: &'static str,

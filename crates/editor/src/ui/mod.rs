@@ -40,6 +40,13 @@
 //!               columns, the quest as the log would show it, who gives and
 //!               takes it, and the window the creature tool opens on one
 //!               creature's quests
+//! creature_data.rs the Creatures workspace: every creature_template row as
+//!               a list, the open row in the template window's form, and its
+//!               model and other tables in the inspector
+//! gameobject_data.rs the Game Objects workspace: the same for
+//!               gameobject_template
+//! listing.rs    the parts of those two workspaces that are the same: the
+//!               docked list, its search box, and the form's head
 //! behaviour.rs  the three windows a creature's behaviour is edited in: its
 //!               events, the spell list its template names, and one script,
 //!               with every parameter named by the event's type, the row's
@@ -171,10 +178,12 @@ pub mod bands;
 pub mod behaviour;
 pub mod conditions;
 pub mod context;
+pub mod creature_data;
 pub mod creatures;
 pub mod data;
 pub mod displays;
 pub mod flightpaths;
+pub mod gameobject_data;
 pub mod gameobjects;
 pub mod gossip;
 pub mod graveyards;
@@ -183,6 +192,7 @@ pub mod icons;
 pub mod inspector;
 pub mod items;
 pub mod lab;
+pub mod listing;
 pub mod loot;
 pub mod manifest;
 pub mod mapview;
@@ -878,6 +888,51 @@ fn draw(
                     );
                     return;
                 }
+                // The Creatures and Game Objects workspaces, over the
+                // creature and game object tools' own state. See
+                // `ui::creature_data` and `ui::gameobject_data`.
+                if *tool == Tool::CreatureData {
+                    creature_data::draw(
+                        ui,
+                        creatures::Subject {
+                            session,
+                            creatures: &mut editing.creatures,
+                            waypoints: &mut editing.waypoints,
+                            quests: &mut editing.quests,
+                            loot: &mut editing.loot,
+                            behaviour: &mut editing.behaviour,
+                            services: &mut editing.services,
+                            gossip: &mut editing.gossip,
+                            server: &playing.server,
+                            server_panel: &mut popovers.server,
+                            assets: &assets,
+                            portraits: &mut editing.portraits,
+                            thumbnails: &mut editing.thumbnails,
+                            now: time.elapsed_secs_f64(),
+                            gizmo: None,
+                        },
+                    );
+                    return;
+                }
+                if *tool == Tool::GameObjectData {
+                    gameobject_data::draw(
+                        ui,
+                        gameobjects::Subject {
+                            session,
+                            objects: &mut editing.objects,
+                            quests: &mut editing.quests,
+                            loot: &mut editing.loot,
+                            server: &playing.server,
+                            server_panel: &mut popovers.server,
+                            assets: &assets,
+                            portraits: &mut editing.portraits,
+                            thumbnails: &mut editing.thumbnails,
+                            now: time.elapsed_secs_f64(),
+                            gizmo: None,
+                        },
+                    );
+                    return;
+                }
                 // The quest workspace has the item workspace's shape with a
                 // different third part. See `ui::quests`.
                 if *tool == Tool::Quests {
@@ -1104,41 +1159,38 @@ fn draw(
         viewport.floating.extend(template);
     }
 
+    // The creature or game object the windows below are about: the selected
+    // spawn's template under the rail tool, and the open row under the
+    // Creatures or Game Objects workspace. See [`Focus`].
+    let creature_focus = Focus::creature(*tool, &editing.creatures, &session.server_edits);
+    let object_focus = Focus::object(*tool, &editing.objects, &session.server_edits);
+
     // The quest window of a creature or a game object, on the root context
     // for the same reason. It follows the selection as the template window
     // does: it shows the chosen holder's quests, so selecting another holder
-    // shows that one's. It is drawn only under its two tools; elsewhere the
-    // same rows are edited in the quest workspace.
-    let holder = match *tool {
-        Tool::Creatures => editing
-            .creatures
-            .chosen_edited(Some(&session.server_edits))
-            .map(|spawn| {
-                (
-                    crate::tools::quests::Holder::Creature,
-                    spawn.entry,
-                    spawn.label(),
-                    quests::HolderIs::Creature {
-                        npc_flags: spawn.npc_flags,
-                        template_key: spawn.template_key(),
-                    },
-                )
-            }),
-        Tool::GameObjects => editing
-            .objects
-            .chosen_edited(Some(&session.server_edits))
-            .map(|spawn| {
-                (
-                    crate::tools::quests::Holder::Object,
-                    spawn.entry,
-                    spawn.label(),
-                    quests::HolderIs::Object {
-                        kind: spawn.known.as_ref().map(|known| known.kind).unwrap_or(0),
-                        template_key: spawn.template_key(),
-                    },
-                )
-            }),
-        _ => None,
+    // shows that one's. It is drawn only under the creature and game object
+    // tools and their workspaces; elsewhere the same rows are edited
+    // in the quest workspace.
+    let holder = match (&creature_focus, &object_focus) {
+        (Some(focus), _) => Some((
+            crate::tools::quests::Holder::Creature,
+            focus.entry,
+            focus.label.clone(),
+            quests::HolderIs::Creature {
+                npc_flags: focus.npc_flags,
+                template_key: focus.template_key.clone(),
+            },
+        )),
+        (None, Some(focus)) => Some((
+            crate::tools::quests::Holder::Object,
+            focus.entry,
+            focus.label.clone(),
+            quests::HolderIs::Object {
+                kind: focus.object.as_ref().map(|known| known.kind).unwrap_or(0),
+                template_key: focus.template_key.clone(),
+            },
+        )),
+        (None, None) => None,
     };
     if let Some((kind, entry, label, is)) = holder {
         if editing.quests.window_for.is_some() {
@@ -1173,11 +1225,8 @@ fn draw(
     // [`crate::tools::loot::Window`].
     let mut fixes: Vec<Option<loot::Fix>> = Vec::new();
     let described = match *tool {
-        Tool::Creatures => editing
-            .creatures
-            .chosen_edited(Some(&session.server_edits))
-            .map(|spawn| {
-                let key = spawn.template_key();
+        Tool::Creatures | Tool::CreatureData => creature_focus.as_ref().map(|spawn| {
+                let key = spawn.template_key.clone();
                 let template = editing
                     .creatures
                     .template
@@ -1223,7 +1272,7 @@ fn draw(
                     }
                 };
                 crate::tools::loot::Window {
-                    title: spawn.label(),
+                    title: spawn.label.clone(),
                     about: match template {
                         Some(_) => format!(
                             "creature_template entry {}: every spawn of this creature drops this loot.",
@@ -1234,12 +1283,9 @@ fn draw(
                     sets,
                 }
             }),
-        Tool::GameObjects => editing
-            .objects
-            .chosen_edited(Some(&session.server_edits))
-            .map(|spawn| {
-                let key = spawn.template_key();
-                let known = spawn.known.as_ref();
+        Tool::GameObjects | Tool::GameObjectData => object_focus.as_ref().map(|spawn| {
+                let key = spawn.template_key.clone();
+                let known = spawn.object.as_ref();
                 let looted = known.is_some_and(|known| known.is_looted());
                 let entry = known.and_then(|known| known.loot()).unwrap_or(0);
                 if looted {
@@ -1260,7 +1306,7 @@ fn draw(
                     }));
                 }
                 crate::tools::loot::Window {
-                    title: spawn.label(),
+                    title: spawn.label.clone(),
                     about: match (known, looted) {
                         (None, _) => "No gameobject_template row at this content patch.".to_string(),
                         (Some(known), false) => format!(
@@ -1357,11 +1403,8 @@ fn draw(
     // template form changes the window on the next frame. Drawn under the
     // creature tool only; the windows keep their open flags across tools.
     editing.behaviour.about = match *tool {
-        Tool::Creatures => editing
-            .creatures
-            .chosen_edited(Some(&session.server_edits))
-            .map(|spawn| {
-                let key = spawn.template_key();
+        Tool::Creatures | Tool::CreatureData => creature_focus.as_ref().map(|spawn| {
+                let key = spawn.template_key.clone();
                 let template = editing
                     .creatures
                     .template
@@ -1378,7 +1421,7 @@ fn draw(
                 };
                 crate::tools::behaviour::About {
                     entry: spawn.entry,
-                    label: spawn.label(),
+                    label: spawn.label.clone(),
                     template_key: key.clone(),
                     spell_list_id: column("spell_list_id").trim().parse().unwrap_or(0),
                     ai_name: column("ai_name"),
@@ -1392,11 +1435,8 @@ fn draw(
     // `npc_flags` typed into the template form changes the window on the next
     // frame.
     editing.services.about = match *tool {
-        Tool::Creatures => editing
-            .creatures
-            .chosen_edited(Some(&session.server_edits))
-            .and_then(|spawn| {
-                let key = spawn.template_key();
+        Tool::Creatures | Tool::CreatureData => creature_focus.as_ref().and_then(|spawn| {
+                let key = spawn.template_key.clone();
                 let template = editing
                     .creatures
                     .template
@@ -1413,7 +1453,7 @@ fn draw(
                 };
                 Some(crate::tools::services::About {
                     entry: spawn.entry,
-                    label: spawn.label(),
+                    label: spawn.label.clone(),
                     template_key: key.clone(),
                     npc_flags: column("npc_flags"),
                     vendor_id: column("vendor_id"),
@@ -1430,7 +1470,7 @@ fn draw(
     // stays open on a menu opened by number under any tool. The texts it
     // shows are read by the behaviour tool, which holds `broadcast_text`.
     editing.gossip.about = match *tool {
-        Tool::Creatures => editing.services.about.as_ref().map(|services| {
+        Tool::Creatures | Tool::CreatureData => editing.services.about.as_ref().map(|services| {
             let template = editing
                 .creatures
                 .template
@@ -1451,11 +1491,7 @@ fn draw(
                 template_key: services.template_key.clone(),
                 gossip_menu_id,
                 npc_flags: services.npc_flags,
-                at: editing
-                    .creatures
-                    .selected
-                    .and_then(|guid| editing.creatures.spawns.iter().find(|spawn| spawn.guid == guid))
-                    .map(|spawn| [spawn.at.x, spawn.at.y]),
+                at: creature_focus.as_ref().and_then(|focus| focus.at),
             }
         }),
         _ => None,
@@ -1489,7 +1525,7 @@ fn draw(
         },
     );
     viewport.floating.extend(condition_window);
-    if *tool == Tool::Creatures {
+    if matches!(*tool, Tool::Creatures | Tool::CreatureData) {
         let service_windows = services::windows(
             &ctx,
             services::Subject {
@@ -1506,7 +1542,9 @@ fn draw(
     }
     // The script window also opens from a trigger's script id, and from the
     // gossip window's script columns under any tool.
-    if matches!(*tool, Tool::Creatures | Tool::Triggers) || editing.gossip.open {
+    if matches!(*tool, Tool::Creatures | Tool::CreatureData | Tool::Triggers)
+        || editing.gossip.open
+    {
         let behaviour_windows = behaviour::windows(
             &ctx,
             behaviour::Subject {
@@ -1595,6 +1633,14 @@ fn draw(
     let part = editing.items.switch_to.take().or_else(|| editing.browser.switch_to.take());
     if let Some(part) = part {
         *tool = part;
+    }
+    // Open in Workspace on a spawn's panel, and Place in World in the
+    // Creatures or Game Objects workspace's inspector. A tool that keeps the
+    // viewport is refused during a playtest, as the rail refuses it.
+    let linked = editing.creatures.switch_to.take().or_else(|| editing.objects.switch_to.take());
+    if let Some(wanted) = linked.filter(|wanted| !in_world || wanted.survives_playtest()) {
+        *tool = wanted;
+        viewing.rail.follow(wanted);
     }
     let quest = editing.items.show_quest.take().or_else(|| editing.quests.show_quest.take());
     if let Some(entry) = quest {
@@ -1690,6 +1736,82 @@ fn side(fill: egui::Color32) -> Frame {
         .fill(fill)
         .stroke(Stroke::new(1.0, theme::LINE))
         .inner_margin(Margin::symmetric(8, 4))
+}
+
+/// The creature or game object template the windows that follow a selection
+/// (quests, loot, events, spells, gossip, vendor, trainer) are about.
+///
+/// Under the creature and game object tools it is the selected spawn's
+/// template; under the Creatures and Game Objects workspaces it is the
+/// open row. The windows'
+/// subjects are built from this, so each window works the same from either.
+struct Focus {
+    entry: u32,
+    label: String,
+    template_key: vale_mangos::row::Key,
+    /// `npc_flags`, for the creature's quest and service windows.
+    npc_flags: u32,
+    /// Where the spawn stands, for the gossip window. `None` for a template
+    /// opened in the workspace.
+    at: Option<[f32; 2]>,
+    /// The game object's brief row, for the quest window's type check and the
+    /// loot window's loot column. `None` for a creature, and for a spawn
+    /// whose template row is missing.
+    object: Option<crate::tools::gameobjects::Known>,
+}
+
+impl Focus {
+    fn creature(
+        tool: Tool,
+        creatures: &crate::tools::creatures::Creatures,
+        edits: &vale_mangos::row::Edits,
+    ) -> Option<Self> {
+        match tool {
+            Tool::Creatures => creatures.chosen_edited(Some(edits)).map(|spawn| Focus {
+                entry: spawn.entry,
+                label: spawn.label(),
+                template_key: spawn.template_key(),
+                npc_flags: spawn.npc_flags,
+                at: Some([spawn.at.x, spawn.at.y]),
+                object: None,
+            }),
+            Tool::CreatureData => creatures.listed.open_row(edits).map(|known| Focus {
+                entry: known.entry,
+                label: known.label(),
+                template_key: known.key(),
+                npc_flags: known.npc_flags,
+                at: None,
+                object: None,
+            }),
+            _ => None,
+        }
+    }
+
+    fn object(
+        tool: Tool,
+        objects: &crate::tools::gameobjects::GameObjects,
+        edits: &vale_mangos::row::Edits,
+    ) -> Option<Self> {
+        match tool {
+            Tool::GameObjects => objects.chosen_edited(Some(edits)).map(|spawn| Focus {
+                entry: spawn.entry,
+                label: spawn.label(),
+                template_key: spawn.template_key(),
+                npc_flags: 0,
+                at: Some([spawn.at.x, spawn.at.y]),
+                object: spawn.known.clone(),
+            }),
+            Tool::GameObjectData => objects.listed.open_row(edits).map(|known| Focus {
+                entry: known.entry,
+                label: known.label(),
+                template_key: known.key(),
+                npc_flags: 0,
+                at: None,
+                object: Some(known),
+            }),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]

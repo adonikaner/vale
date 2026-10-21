@@ -101,7 +101,7 @@ impl Known {
     /// A template this project creates, read out of its row in the store:
     /// the columns a marker, a model and a heading need, under the key's
     /// entry and patch.
-    fn from_store(key: &Key, row: &RowEdit) -> Option<Known> {
+    pub(crate) fn from_store(key: &Key, row: &RowEdit) -> Option<Known> {
         let entry = key.first()? as u32;
         let patch = key
             .0
@@ -200,7 +200,7 @@ fn unknown_object(entry: u32) -> Known {
 }
 
 /// One row of the brief template query.
-fn read_known(row: &gameobject::Row) -> Option<Known> {
+pub(crate) fn read_known(row: &gameobject::Row) -> Option<Known> {
     let integer = |column: &str| row.integer(column).unwrap_or(0);
     Some(Known {
         entry: row.integer("entry")? as u32,
@@ -555,6 +555,12 @@ pub struct GameObjects {
     /// Whether the scripted placements and removals have finished, which
     /// `--apply-gameobjects` waits on.
     pub scripted_done: bool,
+    /// Every `gameobject_template` row, for the Game Objects workspace. See
+    /// [`super::gameobject_data`].
+    pub listed: super::listing::Listing<Known>,
+    /// A tool the panel or the Game Objects workspace asks the shell to
+    /// switch to. See `tools::creatures::Creatures::switch_to`.
+    pub switch_to: Option<Tool>,
 }
 
 impl Default for GameObjects {
@@ -603,6 +609,8 @@ impl Default for GameObjects {
             drag: None,
             fly_to: None,
             scripted_done: false,
+            listed: super::listing::Listing::default(),
+            switch_to: None,
         }
     }
 }
@@ -638,6 +646,36 @@ impl GameObjects {
         patch: u32,
         now: f64,
     ) -> u32 {
+        let (entry, known) = self.write_new_template(session, name, patch, now);
+        if let Some(known) = known {
+            self.open_template(known);
+        }
+        entry
+    }
+
+    /// Make a new template and open it in the Game Objects workspace. The tool's
+    /// picker and window are left as they are.
+    pub fn create_listed_template(
+        &mut self,
+        session: &mut EditSession,
+        name: &str,
+        patch: u32,
+        now: f64,
+    ) -> u32 {
+        let (entry, _) = self.write_new_template(session, name, patch, now);
+        self.open_listed(entry);
+        entry
+    }
+
+    /// The claim a new template is, as one undo entry. Answers its entry and
+    /// the row as a list shows it.
+    fn write_new_template(
+        &mut self,
+        session: &mut EditSession,
+        name: &str,
+        patch: u32,
+        now: f64,
+    ) -> (u32, Option<Known>) {
         let entry = self.next_entry(&session.server_edits);
         let key = gameobject::template_key(entry, patch);
         let mut row = RowEdit { life: Life::Insert, ..RowEdit::default() };
@@ -651,10 +689,7 @@ impl GameObjects {
             Some(&row),
             Some(crate::session::Gesture { label: "New game object", subject: &subject, now }),
         );
-        if let Some(known) = Known::from_store(&key, &row) {
-            self.open_template(known);
-        }
-        entry
+        (entry, Known::from_store(&key, &row))
     }
 
     /// A copy of the template the window shows, under a new entry: every
@@ -668,6 +703,36 @@ impl GameObjects {
         patch: u32,
         now: f64,
     ) -> Option<u32> {
+        let (entry, known) = self.write_copy(session, subject, patch, now)?;
+        if let Some(known) = known {
+            self.open_template(known);
+        }
+        Some(entry)
+    }
+
+    /// A copy of the open row in the Game Objects workspace, opened there. `None`
+    /// on the terms of [`Self::copy_template`].
+    pub fn copy_listed_template(
+        &mut self,
+        session: &mut EditSession,
+        subject: &TemplateSubject,
+        patch: u32,
+        now: f64,
+    ) -> Option<u32> {
+        let (entry, _) = self.write_copy(session, subject, patch, now)?;
+        self.open_listed(entry);
+        Some(entry)
+    }
+
+    /// The claim a copy is, as one undo entry. Answers its entry and the row
+    /// as a list shows it.
+    fn write_copy(
+        &mut self,
+        session: &mut EditSession,
+        subject: &TemplateSubject,
+        patch: u32,
+        now: f64,
+    ) -> Option<(u32, Option<Known>)> {
         let from = self.template.as_ref().filter(|held| held.entry == subject.entry)?;
         let source = subject.key();
         let entry = self.next_entry(&session.server_edits);
@@ -697,10 +762,14 @@ impl GameObjects {
             Some(&row),
             Some(crate::session::Gesture { label: "Copy game object", subject: &gesture, now }),
         );
-        if let Some(known) = Known::from_store(&key, &row) {
-            self.open_template(known);
-        }
-        Some(entry)
+        Some((entry, Known::from_store(&key, &row)))
+    }
+
+    /// Open a template in the Game Objects workspace's form.
+    pub fn open_listed(&mut self, entry: u32) {
+        self.listed.open = Some(entry);
+        self.template = None;
+        self.created_for = None;
     }
 
     /// Choose a template in the picker and open the window on it.
@@ -733,15 +802,19 @@ impl GameObjects {
         if self.new_spawn.chosen.as_ref().is_some_and(|chosen| chosen.entry == entry) {
             self.new_spawn.chosen = None;
         }
+        if self.listed.open == Some(entry) {
+            self.listed.open = None;
+        }
         self.template = None;
         self.created_for = None;
     }
 
     /// Whether an entry is already a game object, as far as this tool can
     /// see: the templates behind the map's spawns, the picker's matches, the
-    /// templates read for created spawns, and the ones this project creates.
-    /// Asked by both entries a row has, because the database is where an
-    /// apply runs. An entry the tool has not met is caught at the apply.
+    /// templates read for created spawns, the ones this project creates, and
+    /// the whole table once the Game Objects workspace has read it. Asked by
+    /// both entries a row has, because the database is where an apply runs.
+    /// An entry the tool has not met is caught at the apply.
     pub fn entry_taken(&self, entry: u32) -> bool {
         self.spawns.iter().any(|spawn| spawn.entry == entry || spawn.read_entry == entry)
             || self
@@ -750,6 +823,7 @@ impl GameObjects {
                 .chain(self.new_spawn.matches.iter())
                 .chain(self.templates.iter())
                 .any(|known| known.entry == entry || known.read_entry == entry)
+            || self.listed.holds(entry)
     }
 
     /// Move a template to another entry, by re-keying the project's one claim
@@ -789,6 +863,9 @@ impl GameObjects {
                     chosen.read_entry = to;
                 }
             }
+        }
+        if self.listed.open == Some(subject.entry) {
+            self.listed.open = Some(to);
         }
         self.template = None;
         self.created_for = None;
@@ -1426,7 +1503,9 @@ fn rebuild_created(
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
 ) {
-    if !state.editing() || *tool != Tool::GameObjects {
+    // Under the Game Objects workspace too: Discard there finds the created
+    // template in `templates`.
+    if !state.editing() || !matches!(*tool, Tool::GameObjects | Tool::GameObjectData) {
         return;
     }
     let Some(session) = session else { return };
@@ -2303,7 +2382,7 @@ pub fn fetch_rows(
             }
         }
     }
-    if !state.editing() || *tool != Tool::GameObjects {
+    if !state.editing() || !matches!(*tool, Tool::GameObjects | Tool::GameObjectData) {
         return;
     }
     // A row is made again when the database has been written since it was
@@ -2312,10 +2391,12 @@ pub fn fetch_rows(
     let writes = session.as_ref().map_or(0, |session| session.database_writes);
     let Some((at, _)) = settings.resolve() else { return };
     // The template half follows the window's subject: the picker's object in
-    // Place, the selected spawn's template in Select.
-    let subject = session
-        .as_ref()
-        .and_then(|session| objects.template_subject(&session.server_edits));
+    // Place, the selected spawn's template in Select, and the open row under
+    // the Game Objects workspace.
+    let subject = session.as_ref().and_then(|session| match *tool {
+        Tool::GameObjectData => objects.listed.subject(&session.server_edits),
+        _ => objects.template_subject(&session.server_edits),
+    });
     if let Some(subject) = subject {
         let wants_template = objects.template_task.is_none()
             && (objects.template.as_ref().is_none_or(|had| had.entry != subject.entry)
@@ -2346,6 +2427,10 @@ pub fn fetch_rows(
                 }));
             }
         }
+    }
+    // The spawn half is the game object tool's alone.
+    if *tool != Tool::GameObjects {
+        return;
     }
     let Some(spawn) = objects.chosen().cloned() else { return };
     // A spawn this project creates has no row to read: the form is given an

@@ -954,6 +954,13 @@ pub fn search_query(term: &str, kind: Option<u32>, wow_patch: u32, limit: usize)
     )
 }
 
+/// Every game object the server would load, with the brief columns, ordered
+/// by entry. The Templates workspace reads this once and searches it in
+/// memory.
+pub fn all_templates_query(wow_patch: u32) -> String {
+    format!("SELECT {BRIEF} {} ORDER BY t.`entry`", winning_join(wow_patch))
+}
+
 /// The columns of whichever of the two tables, or an empty slice.
 pub fn columns_of(table: &str) -> &'static [Column] {
     match table {
@@ -1287,6 +1294,17 @@ mod tests {
         assert!(!sql.contains("t.`type` ="), "{sql}");
         assert!(search_query("x'; DROP TABLE `gameobject`; --", None, 10, 50)
             .contains("'%x\\'; DROP TABLE `gameobject`; --%'"));
+    }
+
+    /// The whole-table read picks the row each entry loads at the server's
+    /// patch, as the search does, and has no limit.
+    #[test]
+    fn the_whole_table_read_takes_the_winning_patch() {
+        let sql = all_templates_query(10);
+        assert!(sql.contains("`patch` <= 10"), "{sql}");
+        assert!(sql.contains("t.`type`"), "{sql}");
+        assert!(sql.ends_with("ORDER BY t.`entry`"), "{sql}");
+        assert!(!sql.contains("LIMIT"), "{sql}");
     }
 
     /// A LEFT join: a spawn whose template row is missing is a spawn worth

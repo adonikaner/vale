@@ -160,9 +160,9 @@ pub fn draw(ui: &mut egui::Ui, mut subject: Subject<'_>) {
 }
 
 /// The two dialogs a form here can open: the display picker and the
-/// reference picker. Drawn against the context, so the sidebar and the
-/// template window reach the same two.
-fn dialogs(ctx: &egui::Context, subject: &mut Subject<'_>) {
+/// reference picker. Drawn against the context, so the sidebar, the template
+/// window and the Game Objects workspace reach the same two.
+pub(super) fn dialogs(ctx: &egui::Context, subject: &mut Subject<'_>) {
     super::displays::window(
         ctx,
         &mut subject.objects.display_pick,
@@ -465,17 +465,20 @@ fn picker(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
             theme::note(ui, "ctrl with alt snaps the turn to 15\u{b0}");
             // The window's toggle, here as well as under a selected spawn, so
             // an object can be edited before any spawn of it exists.
-            let open = subject.objects.template_window;
-            if ui
-                .selectable_label(open, "Edit object…")
-                .on_hover_text(
-                    "Opens the gameobject_template columns in a separate window. The window \
-                     shows the chosen object.",
-                )
-                .clicked()
-            {
-                subject.objects.template_window = !open;
-            }
+            ui.horizontal_wrapped(|ui| {
+                let open = subject.objects.template_window;
+                if ui
+                    .selectable_label(open, "Edit object…")
+                    .on_hover_text(
+                        "Opens the gameobject_template columns in a separate window. The \
+                         window shows the chosen object.",
+                    )
+                    .clicked()
+                {
+                    subject.objects.template_window = !open;
+                }
+                open_in_templates(ui, subject, chosen.entry);
+            });
             match subject.objects.model_of(subject.assets, chosen.display_id) {
                 Some(path) => {
                     ui.add_space(4.0);
@@ -966,17 +969,36 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
     });
 
     ui.add_space(4.0);
+    windows(ui, subject, spawn.entry, spawn.label(), true);
+}
+
+/// The buttons that open the template window and the object's quest and loot
+/// windows. Each is a toggle, lit while its window is open.
+///
+/// `in_world` is whether a spawn is selected in the world. The Game Objects
+/// workspace draws the same row without one, and then the template window and
+/// the link to the workspace are left out, since the form is already in the
+/// middle of the screen.
+pub(super) fn windows(
+    ui: &mut egui::Ui,
+    subject: &mut Subject<'_>,
+    entry: u32,
+    label: String,
+    in_world: bool,
+) {
     ui.horizontal_wrapped(|ui| {
-        let open = subject.objects.template_window;
-        if ui
-            .selectable_label(open, "Edit object…")
-            .on_hover_text(
-                "Opens the 34 gameobject_template columns in a separate window. The 24 data \
-                 columns are labelled with the field names of this object's type.",
-            )
-            .clicked()
-        {
-            subject.objects.template_window = !open;
+        if in_world {
+            let open = subject.objects.template_window;
+            if ui
+                .selectable_label(open, "Edit object…")
+                .on_hover_text(
+                    "Opens the 34 gameobject_template columns in a separate window. The 24 \
+                     data columns are labelled with the field names of this object's type.",
+                )
+                .clicked()
+            {
+                subject.objects.template_window = !open;
+            }
         }
         let quests_open = subject
             .quests
@@ -995,7 +1017,7 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         {
             subject.quests.window_for = match quests_open {
                 true => None,
-                false => Some((Holder::Object, spawn.entry, spawn.label())),
+                false => Some((Holder::Object, entry, label.clone())),
             };
         }
         // The loot window stays open over the world and follows the selection,
@@ -1013,7 +1035,29 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         {
             subject.loot.toggle();
         }
+        if in_world {
+            open_in_templates(ui, subject, entry);
+        }
     });
+}
+
+/// The link from the game object tool to the Game Objects workspace on the
+/// top bar, open on this object's template. The shell switches tools after
+/// the frame is drawn.
+fn open_in_templates(ui: &mut egui::Ui, subject: &mut Subject<'_>, entry: u32) {
+    if ui
+        .button("Open in Workspace")
+        .on_hover_text(
+            "Opens this gameobject_template row in the Game Objects workspace on the top \
+             bar, which lists every gameobject_template row and edits the open one in the \
+             middle of the screen. The row and its edits are the same as in the template \
+             window.",
+        )
+        .clicked()
+    {
+        subject.objects.open_listed(entry);
+        subject.objects.switch_to = Some(crate::tools::Tool::GameObjectData);
+    }
 }
 
 /// The side of the picture beside the summary, in points.
@@ -1126,7 +1170,7 @@ fn template_head(
 /// operation whatever the row is: the project's claim on the row is re-keyed.
 /// See [`crate::tools::gameobjects::GameObjects::rekey_template`], and
 /// `super::creatures::entry_field`, which is the same field for the other table.
-fn entry_field(
+pub(super) fn entry_field(
     ui: &mut egui::Ui,
     subject: &mut Subject<'_>,
     shown: &crate::tools::creatures::TemplateSubject,
@@ -1187,14 +1231,14 @@ fn entry_field(
 }
 
 /// Which row a form is over.
-struct Form<'a> {
-    table: &'static str,
-    key: &'a Key,
-    row: &'a gameobject::Row,
+pub(super) struct Form<'a> {
+    pub(super) table: &'static str,
+    pub(super) key: &'a Key,
+    pub(super) row: &'a gameobject::Row,
     /// The selected spawn, for `orientation`, the one column whose write
-    /// depends on it; see [`field`]. `None` for the template window, which
-    /// may be about an object with no spawn.
-    spawn: Option<&'a Spawn>,
+    /// depends on it; see [`field`]. `None` for the template window and the
+    /// Game Objects workspace, which may be about an object with no spawn.
+    pub(super) spawn: Option<&'a Spawn>,
 }
 
 impl Form<'_> {
@@ -1263,7 +1307,7 @@ fn drawn(table: &str, column: &'static Column, kind: u32) -> Drawn {
 /// The same as `super::creatures::groups`, except that the template's `Stats`
 /// group (the 24 `data` columns) is split in two: the columns the type reads,
 /// under the type's name, and the columns it does not read, folded.
-fn groups(ui: &mut egui::Ui, subject: &mut Subject<'_>, form: &Form<'_>, open: &[Group]) {
+pub(super) fn groups(ui: &mut egui::Ui, subject: &mut Subject<'_>, form: &Form<'_>, open: &[Group]) {
     page_spacing(ui);
     let kind = form.shown_type(subject.session);
     let mut seen: Vec<Group> = Vec::new();

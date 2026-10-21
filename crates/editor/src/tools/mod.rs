@@ -43,6 +43,13 @@
 //!                what a quest asks for, says and gives, and who hands it out.
 //!                A workspace of the same kind, and the list the creature
 //!                tool's Quests window reads from the other direction
+//! creature_data.rs   the Creatures workspace: every `creature_template` row
+//!                as a list, read once and searched in memory, edited with the
+//!                creature tool's own form and state
+//! gameobject_data.rs the Game Objects workspace: the same for
+//!                `gameobject_template`, over the game object tool's state
+//! listing.rs     a server table read whole and searched in memory: the list
+//!                the two workspaces above draw, written once over any row type
 //! loot.rs        the nine loot tables. No workspace and no rail entry: a set
 //!                is reached from the creature, the object or the item whose
 //!                column names it, in a window that follows the selection.
@@ -144,10 +151,12 @@ pub mod areas;
 pub mod behaviour;
 pub mod chunks;
 pub mod conditions;
+pub mod creature_data;
 pub mod creatures;
 pub mod displays;
 pub mod doodads;
 pub mod flightpaths;
+pub mod gameobject_data;
 pub mod gameobjects;
 pub mod gizmo;
 pub mod gossip;
@@ -159,6 +168,7 @@ pub mod holes;
 pub mod images;
 pub mod items;
 pub mod lights;
+pub mod listing;
 pub mod loot;
 pub mod maps;
 pub mod measure;
@@ -284,6 +294,18 @@ pub enum Tool {
     /// loaders clear their maps before they read, so an applied row is live
     /// after a reload.
     Quests,
+    /// The Creatures workspace: every `creature_template` row as a list,
+    /// searched by name, subname or entry, and edited in the middle of the
+    /// screen — see [`creature_data`].
+    ///
+    /// The same row the creature tool's template window edits, reached by
+    /// name rather than by clicking a spawn. A template has no place in the
+    /// world, so the workspace replaces the viewport. It does not survive a
+    /// playtest, because the server reads `creature_template` at startup.
+    CreatureData,
+    /// The Game Objects workspace: every `gameobject_template` row, on
+    /// [`Tool::CreatureData`]'s terms — see [`gameobject_data`].
+    GameObjectData,
     /// A find-and-replace over every tile of the map — see [`sweep`].
     ///
     /// The second subject whose document is not a place: it edits the map's
@@ -359,7 +381,7 @@ pub enum Surface {
 /// [`Tool::at`] enforces the list: an exhaustive `match` that does not compile
 /// until a new variant has an index, plus a test that this list is exactly
 /// those indices in order.
-pub const ALL: [Tool; 26] = [
+pub const ALL: [Tool; 28] = [
     Tool::Select,
     Tool::Terrain,
     Tool::Grade,
@@ -386,6 +408,8 @@ pub const ALL: [Tool; 26] = [
     Tool::Triggers,
     Tool::Graveyards,
     Tool::Road,
+    Tool::CreatureData,
+    Tool::GameObjectData,
 ];
 
 impl Tool {
@@ -424,6 +448,8 @@ impl Tool {
             Tool::Triggers => 23,
             Tool::Graveyards => 24,
             Tool::Road => 25,
+            Tool::CreatureData => 26,
+            Tool::GameObjectData => 27,
         }
     }
 
@@ -463,6 +489,8 @@ impl Tool {
             Tool::GameObjects => Some(vale_mangos::gameobject::SPAWN),
             Tool::Items => Some(vale_mangos::item::TEMPLATE),
             Tool::Quests => Some(vale_mangos::quest::TEMPLATE),
+            Tool::CreatureData => Some(vale_mangos::creature::TEMPLATE),
+            Tool::GameObjectData => Some(vale_mangos::gameobject::TEMPLATE),
             _ => None,
         }
     }
@@ -491,7 +519,10 @@ impl Tool {
     /// edit client tables but pick and drag their rows in the viewport, and
     /// the server reads the taxi tables at startup only.
     /// [`Tool::Creatures`] and [`Tool::GameObjects`] also need the server
-    /// restarted for a change to show.
+    /// restarted for a change to show. The Creatures and Game Objects
+    /// workspaces replace the viewport but do not survive either: the server
+    /// reads both template tables at startup, so an edit made during a
+    /// playtest is not seen in it.
     pub fn survives_playtest(self) -> bool {
         matches!(
             self,
@@ -520,7 +551,9 @@ impl Tool {
             | Tool::ItemSets
             | Tool::Quests
             | Tool::Tables
-            | Tool::Zones => Surface::Middle,
+            | Tool::Zones
+            | Tool::CreatureData
+            | Tool::GameObjectData => Surface::Middle,
             // A light's row, a flight path node or point, a creature's spawn
             // row and a game object's are each a place in the world, so each
             // is picked with the pointer and puts its form where every other
@@ -646,6 +679,11 @@ impl Tool {
             Tool::Zones => "Zones",
             Tool::Triggers => "Triggers",
             Tool::Graveyards => "Graveyards",
+            // The top bar calls these two workspaces Creatures and Game
+            // Objects. The tool names differ because `--tool` matches a name,
+            // and the rail's spawn tools are already Creatures and Objects.
+            Tool::CreatureData => "Creature Data",
+            Tool::GameObjectData => "Game Object Data",
         }
     }
 }
@@ -775,7 +813,13 @@ impl Plugin for ToolPlugin {
             creatures::CreatureToolPlugin,
             gameobjects::GameObjectToolPlugin,
             waypoints::WaypointToolPlugin,
-            items::ItemToolPlugin,
+            // The item tool and the two workspaces' lists as one entry, which
+            // keeps the tuple within what `add_plugins` accepts.
+            (
+                items::ItemToolPlugin,
+                creature_data::CreatureDataPlugin,
+                gameobject_data::GameObjectDataPlugin,
+            ),
             quests::QuestToolPlugin,
             loot::LootToolPlugin,
             // Behaviour, conditions and gossip as one entry, which keeps the
@@ -1215,6 +1259,8 @@ fn modes(
         | Tool::Items
         | Tool::ItemSets
         | Tool::Quests
+        | Tool::CreatureData
+        | Tool::GameObjectData
         | Tool::Tables
         | Tool::Zones
         | Tool::Triggers
@@ -1338,14 +1384,18 @@ mod tests {
     }
 
     /// The tools that work during a playtest are four workspaces, with the
-    /// Sets part of Items, and nothing that keeps the viewport. Zones is the
-    /// one workspace that does not.
+    /// Sets part of Items, and nothing that keeps the viewport. Zones,
+    /// Creatures and Game Objects are the workspaces that do not.
     #[test]
     fn only_the_workspaces_survive_a_playtest() {
         for tool in ALL {
+            let read_at_startup = matches!(
+                tool,
+                Tool::Zones | Tool::CreatureData | Tool::GameObjectData
+            );
             assert_eq!(
                 tool.survives_playtest(),
-                tool.covers_viewport() && tool != Tool::Zones,
+                tool.covers_viewport() && !read_at_startup,
                 "{}",
                 tool.name()
             );

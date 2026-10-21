@@ -729,6 +729,13 @@ pub struct Args {
     /// `--item` for quests, and takes a title for the same reason. It implies
     /// `--tool quests`.
     pub quest: Option<String>,
+    /// `--creature-data <entry>`: open the Creatures workspace on that
+    /// `creature_template` row. It implies the workspace as the tool. See
+    /// `crate::tools::creature_data`.
+    pub creature_data: Option<u32>,
+    /// `--object-data <entry>`: the same for the Game Objects workspace and
+    /// `gameobject_template`.
+    pub object_data: Option<u32>,
     /// `--quest-new`: make a new quest, and open it.
     pub quest_new: bool,
     /// `--quest-entry <n>`: renumber the open quest to that entry. It is
@@ -957,6 +964,8 @@ impl Default for Args {
             apply_items: false,
             revert_items: false,
             quest: None,
+            creature_data: None,
+            object_data: None,
             quest_new: false,
             quest_entry: None,
             quests_of: None,
@@ -1317,6 +1326,16 @@ impl Args {
                     parsed.quest_new = true;
                     parsed.tool = Some(tools::Tool::Quests);
                 }
+                "--creature-data" => {
+                    parsed.creature_data =
+                        args.next().as_deref().and_then(|v| v.trim().parse().ok());
+                    parsed.tool = Some(tools::Tool::CreatureData);
+                }
+                "--object-data" => {
+                    parsed.object_data =
+                        args.next().as_deref().and_then(|v| v.trim().parse().ok());
+                    parsed.tool = Some(tools::Tool::GameObjectData);
+                }
                 "--quest-entry" => {
                     parsed.quest_entry = args.next().as_deref().and_then(|v| v.trim().parse().ok());
                     parsed.tool = Some(tools::Tool::Quests);
@@ -1513,6 +1532,28 @@ mod tests {
             Some((-9450.0, -50.0))
         );
         assert_eq!(parse(&["--tool", "taxi"]).tool, Some(tools::Tool::Flightpaths));
+    }
+
+    /// `--creature-data` and `--object-data` open their workspace on the
+    /// row, and `--tool` names each workspace apart from the rail's spawn
+    /// tools.
+    #[test]
+    fn the_data_flags_open_their_workspaces() {
+        let parse = |list: &[&str]| Args::parse(list.iter().map(|s| s.to_string()));
+        let args = parse(&["--creature-data", "68"]);
+        assert_eq!(
+            (args.creature_data, args.tool),
+            (Some(68), Some(tools::Tool::CreatureData))
+        );
+        let args = parse(&["--object-data", "1731"]);
+        assert_eq!(
+            (args.object_data, args.tool),
+            (Some(1731), Some(tools::Tool::GameObjectData))
+        );
+        assert_eq!(
+            parse(&["--tool", "creature data"]).tool,
+            Some(tools::Tool::CreatureData)
+        );
     }
 
     /// `--overlay` and `--doom` each take one argument; `--doom` also opens the

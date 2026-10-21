@@ -879,6 +879,12 @@ pub fn search_query(term: &str, wow_patch: u32, limit: usize) -> String {
     )
 }
 
+/// Every creature the server would load, with the brief columns, ordered by
+/// entry. The Templates workspace reads this once and searches it in memory.
+pub fn all_templates_query(wow_patch: u32) -> String {
+    format!("SELECT {BRIEF} {} ORDER BY t.`entry`", winning_join(wow_patch))
+}
+
 /// The columns of whichever of the two tables, or an empty slice for a name
 /// this module does not know.
 pub fn columns_of(table: &str) -> &'static [Column] {
@@ -1145,6 +1151,17 @@ mod tests {
         // A name that tries to close the literal and add a statement cannot.
         assert!(search_query("x'; DROP TABLE `creature`; --", 10, 50)
             .contains("'%x\\'; DROP TABLE `creature`; --%'"));
+    }
+
+    /// The whole-table read picks the row each entry loads at the server's
+    /// patch, as the search does, and has no limit.
+    #[test]
+    fn the_whole_table_read_takes_the_winning_patch() {
+        let sql = all_templates_query(10);
+        assert!(sql.contains("`patch` <= 10"), "{sql}");
+        assert!(sql.contains("t.`subname`"), "{sql}");
+        assert!(sql.ends_with("ORDER BY t.`entry`"), "{sql}");
+        assert!(!sql.contains("LIMIT"), "{sql}");
     }
 
     /// The template schema is the server's own `SELECT`, in order.

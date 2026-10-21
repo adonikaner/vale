@@ -301,6 +301,45 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
                 now,
             },
         ),
+        // The Creatures and Game Objects workspaces' third part: the open
+        // template's model, a summary, and the windows for its other tables.
+        // See `super::creature_data` and `super::gameobject_data`.
+        Tool::CreatureData => super::creature_data::inspector(
+            ui,
+            super::creatures::Subject {
+                session,
+                creatures: &mut editing.creatures,
+                waypoints: &mut editing.waypoints,
+                quests: &mut editing.quests,
+                loot: &mut editing.loot,
+                behaviour: &mut editing.behaviour,
+                services: &mut editing.services,
+                gossip: &mut editing.gossip,
+                server,
+                server_panel,
+                assets,
+                portraits: &mut editing.portraits,
+                thumbnails: &mut editing.thumbnails,
+                now,
+                gizmo: None,
+            },
+        ),
+        Tool::GameObjectData => super::gameobject_data::inspector(
+            ui,
+            super::gameobjects::Subject {
+                session,
+                objects: &mut editing.objects,
+                quests: &mut editing.quests,
+                loot: &mut editing.loot,
+                server,
+                server_panel,
+                assets,
+                portraits: &mut editing.portraits,
+                thumbnails: &mut editing.thumbnails,
+                now,
+                gizmo: None,
+            },
+        ),
         // A table's inspector shows what the open row points at. The form
         // itself is in the middle, where the viewport would be; see
         // `super::data`. This follows the shell's rule that the inspector
