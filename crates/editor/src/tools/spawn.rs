@@ -287,11 +287,18 @@ pub fn keys(
     keys: Res<ButtonInput<KeyCode>>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     time: Res<Time>,
+    mut menu: ResMut<crate::context::ContextMenu>,
 ) {
     if !matches!(*tool, Tool::Creatures | Tool::GameObjects) || !state.editing() {
         return;
     }
-    if wants.wants_keyboard_input() {
+    // The right-click menu's Delete and Duplicate, carried out here so the
+    // item and the key are one operation. A menu item keeps egui's focus
+    // after it is pressed, so a request is answered whatever has the
+    // keyboard.
+    use crate::context::Request;
+    let request = menu.take_request(|request| matches!(request, Request::Delete | Request::Duplicate));
+    if request.is_none() && wants.wants_keyboard_input() {
         return;
     }
     // While a spawn is on the cursor the keys are the placer's: `,` and `.`
@@ -329,6 +336,9 @@ pub fn keys(
     };
     let now = time.elapsed_secs_f64();
     let control = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    let delete = keys.just_pressed(KeyCode::Delete) || request == Some(Request::Delete);
+    let duplicate =
+        (control && keys.just_pressed(KeyCode::KeyD)) || request == Some(Request::Duplicate);
     // The group is looked up only on a frame a key is pressed: finding a member
     // is a walk of the map's spawns, and most frames press nothing.
     let grouped = match *tool {
@@ -336,7 +346,7 @@ pub fn keys(
         _ => !objects.also.is_empty(),
     };
     if grouped {
-        if !KEYS.iter().any(|&key| keys.just_pressed(key)) {
+        if request.is_none() && !KEYS.iter().any(|&key| keys.just_pressed(key)) {
             return;
         }
         let others = members(*tool, &creatures, &objects, Some(&session.server_edits));
@@ -347,7 +357,11 @@ pub fn keys(
             &keys,
             was,
             others,
-            control,
+            Asked {
+                control,
+                delete,
+                duplicate,
+            },
             now,
         );
         return;
@@ -355,7 +369,7 @@ pub fn keys(
 
     // Ctrl+D. `tools::shortcuts` handles it for doodads and WMOs and does not
     // name these two tools, so the two cannot both act on one press.
-    if control && keys.just_pressed(KeyCode::KeyD) {
+    if duplicate {
         let made = match was.kind {
             Kind::Creature => creatures.duplicate(session, now),
             Kind::Object { .. } => objects.duplicate(session, now),
@@ -372,7 +386,7 @@ pub fn keys(
         return;
     }
 
-    if keys.just_pressed(KeyCode::Delete) {
+    if delete {
         let created = match was.kind {
             Kind::Creature => creatures.chosen().is_some_and(|spawn| spawn.is_new()),
             Kind::Object { .. } => objects.chosen().is_some_and(|spawn| spawn.is_new()),
@@ -444,6 +458,17 @@ const KEYS: [KeyCode; 9] = [
     KeyCode::Delete,
 ];
 
+/// What [`keys`] read from the keyboard and the right-click menu, for
+/// [`group_keys`].
+struct Asked {
+    /// `Ctrl` is held.
+    control: bool,
+    /// `Delete`, or the menu's Delete.
+    delete: bool,
+    /// `Ctrl+D`, or the menu's Duplicate.
+    duplicate: bool,
+}
+
 /// The keys over a group of spawns: the primary `was` and the `others`.
 ///
 /// The arrows and `,`/`.` move and turn every member as one undo entry — a
@@ -462,7 +487,7 @@ fn group_keys(
     keys: &ButtonInput<KeyCode>,
     was: Standing,
     others: Vec<Standing>,
-    control: bool,
+    asked: Asked,
     now: f64,
 ) {
     let mut all = vec![was];
@@ -471,17 +496,18 @@ fn group_keys(
         Kind::Creature => "creatures",
         Kind::Object { .. } => "game objects",
     };
-    if control {
-        if keys.just_pressed(KeyCode::KeyD) {
-            session.status = format!(
-                "{} {noun} selected; Ctrl+D duplicates one spawn at a time",
-                all.len()
-            );
-        }
+    if asked.duplicate {
+        session.status = format!(
+            "{} {noun} selected; Ctrl+D duplicates one spawn at a time",
+            all.len()
+        );
+        return;
+    }
+    if asked.control {
         return;
     }
 
-    if keys.just_pressed(KeyCode::Delete) {
+    if asked.delete {
         let (table, prefix) = match was.kind {
             Kind::Creature => (creature::SPAWN, "creature"),
             Kind::Object { .. } => (gameobject::SPAWN, "gameobject"),

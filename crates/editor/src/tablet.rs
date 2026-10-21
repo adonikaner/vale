@@ -75,7 +75,7 @@
 //!
 //! ## What is drawn while a stroke presses
 //!
-//! The brush rings are drawn solid, wider and lighter while a stroke is
+//! The brush rings are drawn solid and slightly lighter while a stroke is
 //! changing the ground, for a mouse as well as for a pen; see
 //! `tools::terrain::rings`. While the pen tip is on the tablet over the world,
 //! and one of the two pressure settings is on, `meter` draws a bar beside the
@@ -349,9 +349,12 @@ pub const PEN_CLICK_SLOP: f32 = 16.0;
 /// The size of the pressure bar, in egui points.
 const METER: egui::Vec2 = egui::vec2(7.0, 44.0);
 
-/// How far the pressure bar sits from the cursor's tip, in egui points: to the
-/// right of the cursor and centred on it vertically.
-const METER_OFFSET: egui::Vec2 = egui::vec2(18.0, -22.0);
+/// Where the pressure bar's top-left corner sits from the cursor's tip, in
+/// egui points: above and to the left, with the percentage between the bar
+/// and the tip. A right-handed pen and hand cover the area below and to the
+/// right of the tip, where the bar was first drawn (18 points right of the
+/// tip, centred on it vertically) and could not be read.
+const METER_OFFSET: egui::Vec2 = egui::vec2(-56.0, -64.0);
 
 /// Draw the pressure bar beside the cursor. See the module comment.
 #[allow(clippy::too_many_arguments)]

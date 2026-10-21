@@ -496,7 +496,7 @@ pub struct Creatures {
     /// cursor. Set toward the camera when the placer is armed, kept from one
     /// placement to the next, and turned by [`Self::turn_ghost`]. See
     /// [`ghost`].
-    ghost_facing: Option<f32>,
+    pub(crate) ghost_facing: Option<f32>,
     /// The read, while it is running. `None` when there is nothing in flight.
     task: Option<Task<Result<MapRead, String>>>,
     /// What [`Self::spawns`] was read for: the map, and what the last apply
@@ -1628,6 +1628,7 @@ impl Plugin for CreatureToolPlugin {
                     search_creatures,
                     collect_the_near,
                     aim,
+                    menu_target,
                     press,
                     enclose,
                     drag,
@@ -2046,7 +2047,7 @@ pub struct MapRead {
 
 /// What the map query already says about a creature, which is everything a
 /// created spawn of the same creature needs.
-fn known_from(spawn: &Spawn) -> Option<Known> {
+pub(crate) fn known_from(spawn: &Spawn) -> Option<Known> {
     Some(Known {
         entry: spawn.entry,
         read_entry: spawn.read_entry,
@@ -2179,6 +2180,25 @@ const DOME_AROUND_MODEL: f32 = 1.2;
 /// A creature model stands on its position, so the pointer is aimed at
 /// something above the ground rather than at the ground itself.
 const BODY: f32 = 2.0;
+
+/// What a right click landed on, for the right-click menu: the spawn the
+/// pointer is over, which [`aim`] found this frame. A spawn outside the
+/// selection becomes the selection, so the menu's actions apply to it; a
+/// member of the group keeps the group. See `crate::context`.
+pub(crate) fn menu_target(
+    mut creatures: ResMut<Creatures>,
+    mut menu: ResMut<crate::context::ContextMenu>,
+    tool: Res<Tool>,
+) {
+    if *tool != Tool::Creatures || !menu.asked() {
+        return;
+    }
+    let Some(guid) = creatures.hovered else { return };
+    if !creatures.holds(guid) {
+        creatures.select_only(Some(guid));
+    }
+    menu.object = Some(crate::context::Target::Creature { guid });
+}
 
 /// Find the spawn the pointer is over.
 fn aim(

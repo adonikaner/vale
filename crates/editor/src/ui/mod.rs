@@ -756,7 +756,11 @@ fn draw(
     // [`Tool::survives_playtest`](crate::tools::Tool::survives_playtest).
     // During a playtest the workspace control on the top bar is the only way
     // to choose a tool.
-    if !in_world {
+    //
+    // Nor is it drawn while a workspace covers the viewport. Every tile would
+    // leave the workspace for the world, which the top bar's World does in one
+    // click, and the width goes to the workspace's list and form instead.
+    if !in_world && !tool.covers_viewport() {
         egui::Panel::left("editor-rail")
             .exact_size(theme::RAIL_WIDTH)
             .frame(side(theme::SHELL))
@@ -1103,7 +1107,7 @@ fn draw(
     // The right-click menu, on the root context so it is not clipped to a
     // panel. Its area is added to the floating list with the other areas at
     // the end of this function.
-    context::draw(&ctx, session, &mut editing, &assets, viewport.zoom);
+    context::draw(&ctx, session, &mut editing, &assets, viewport.zoom, time.elapsed_secs_f64());
 
     // The creature template's own window, drawn on the root context like the
     // map window: a window inside a panel is clipped to the panel, and this

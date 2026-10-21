@@ -31,6 +31,7 @@ pub fn draw(
     editing: &mut Editing,
     assets: &GameAssets,
     zoom: f32,
+    now: f64,
 ) {
     let Some(open) = editing.menu.open else {
         return;
@@ -46,7 +47,7 @@ pub fn draw(
                 ui.set_min_width(WIDTH);
                 ui.set_max_width(WIDTH);
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                chosen = items(ui, open, session, editing, assets);
+                chosen = items(ui, open, session, editing, assets, now);
             });
         });
     let outside = ctx.input(|input| {
@@ -95,6 +96,7 @@ fn items(
     session: &mut EditSession,
     editing: &mut Editing,
     assets: &GameAssets,
+    now: f64,
 ) -> bool {
     let mut chosen = match (open.tool, open.target) {
         (Tool::Doodads, Target::Doodad { unique_id, locked }) => {
@@ -110,11 +112,27 @@ fn items(
         (Tool::Holes, Target::Ground { tile, chunk, .. }) => holes(ui, session, tile, chunk),
         (Tool::Grade, Target::Ground { .. }) => grade(ui, session, editing),
         (Tool::Road, Target::Ground { at, .. }) => road(ui, session, editing, at),
+        (Tool::Creatures, Target::Creature { guid }) => creature(ui, session, editing, guid, now),
+        (Tool::GameObjects, Target::GameObject { guid }) => game_object(ui, session, editing, guid, now),
+        (Tool::Creatures | Tool::GameObjects, Target::Ground { at, .. }) => {
+            spawns_ground(ui, session, editing, open.tool, at, now)
+        }
         _ => false,
     };
-    // What every menu ends with: the clicked point, and the history.
+    // The doodad and WMO tools' Select and Place switch, whatever was
+    // clicked. The creature and game object tools carry theirs in
+    // `spawns_ground`, since a spawn's menu is about the spawn.
+    if matches!(open.tool, Tool::Doodads | Tool::Wmos) {
+        ui.separator();
+        chosen |= placement_mode(ui, editing);
+    }
+    // What every menu ends with: the clicked point, or the clicked spawn's
+    // position, and the history.
+    let edits = Some(&session.server_edits);
     let at = match open.target {
         Target::Ground { at, .. } => at,
+        Target::Creature { guid } => editing.creatures.edited(guid, edits).map(|spawn| spawn.at),
+        Target::GameObject { guid } => editing.objects.edited(guid, edits).map(|spawn| spawn.at),
         _ => None,
     };
     chosen |= common(ui, session, assets, at);
@@ -130,7 +148,7 @@ fn common(ui: &mut egui::Ui, session: &mut EditSession, assets: &GameAssets, at:
         ui,
         "Copy position",
         at.is_some(),
-        "Copy the clicked point's x, y and z to the clipboard.",
+        "Copy the clicked point's x, y and z to the clipboard: the ground's, or the clicked          spawn's own position.",
         "The click was not on open ground.",
     ) {
         if let Some(at) = at {
@@ -142,7 +160,7 @@ fn common(ui: &mut egui::Ui, session: &mut EditSession, assets: &GameAssets, at:
         ui,
         "Copy .go command",
         at.is_some(),
-        "Copy a GM command that teleports a character to the clicked point on this map.",
+        "Copy a GM command that teleports a character to the clicked point, or to the clicked          spawn, on this map.",
         "The click was not on open ground.",
     ) {
         if let Some(at) = at {
@@ -574,6 +592,26 @@ fn wmo(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing, uniq
     chosen
 }
 
+/// The doodad and WMO tools' Select and Place switch, which the two tools
+/// share, as the panel's switch and the number keys set it.
+fn placement_mode(ui: &mut egui::Ui, editing: &mut Editing) -> bool {
+    use crate::tools::place::Mode;
+    let (label, to) = match editing.placing.mode {
+        Mode::Select => ("Switch to Place", Mode::Place),
+        Mode::Place => ("Switch to Select", Mode::Select),
+    };
+    if !item(ui, label, true, "The panel's Select and Place switch. 1 and 2 choose them; Tab toggles.", "") {
+        return false;
+    }
+    editing.placing.mode = to;
+    // Switching to Select drops whatever was on the cursor, as the panel's
+    // switch does.
+    if to == Mode::Select {
+        editing.placing.disarm();
+    }
+    true
+}
+
 /// The doodad or WMO tool, clicked on ground: paste, the selection, and the
 /// map's locks.
 fn placements_ground(
@@ -814,6 +852,438 @@ fn road(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing, at:
     }
     if item(ui, "Clear points", !road.points.is_empty(), "Remove every point.", "There are no points.") {
         road.clear();
+        chosen = true;
+    }
+    chosen
+}
+
+/// Whether a spawn's `npc_flags` carries the bit vmangos names `name`.
+fn has_npc_flag(npc_flags: u32, name: &str) -> bool {
+    vale_mangos::creature::NPC_FLAGS
+        .iter()
+        .find(|flag| flag.name == name)
+        .is_some_and(|flag| npc_flags & flag.bit != 0)
+}
+
+/// The selected spawns of the tool the menu is for, primary first, as the
+/// project's edits leave them.
+fn spawn_selection(tool: Tool, editing: &Editing, session: &EditSession) -> Vec<crate::tools::spawn::Standing> {
+    let edits = Some(&session.server_edits);
+    let mut all: Vec<_> = crate::tools::spawn::chosen(tool, &editing.creatures, &editing.objects, edits)
+        .into_iter()
+        .collect();
+    all.extend(crate::tools::spawn::members(tool, &editing.creatures, &editing.objects, edits));
+    all
+}
+
+/// Stand each spawn on the terrain under it: its `position_z` becomes the
+/// height of the open tile's ground at its x and y, as one undo entry. A
+/// spawn over no open tile is left. Answers how many moved.
+fn drop_to_terrain(session: &mut EditSession, spawns: &[crate::tools::spawn::Standing], noun: &str, now: f64) -> usize {
+    let Some(first) = spawns.first() else { return 0 };
+    let label = format!("Drop {} {noun} to the terrain", spawns.len());
+    let subject = format!("{noun} {} drop", first.guid);
+    session.as_one(&label, &subject, |session| {
+        let mut moved = 0;
+        for spawn in spawns {
+            let tile = vale_assets::tile_for_position(spawn.at.x, spawn.at.y);
+            let ground = session
+                .tiles
+                .get(&tile)
+                .and_then(|open| vale_edit::adt::heights::height_at(open, spawn.at.x, spawn.at.y));
+            if let Some(z) = ground {
+                spawn.move_to(session, Vec3::new(spawn.at.x, spawn.at.y, z), now);
+                moved += 1;
+            }
+        }
+        moved
+    })
+}
+
+/// A creature spawn that was right-clicked: the windows about it, what its
+/// keys do, and the selection.
+fn creature(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing, guid: u64, now: f64) -> bool {
+    use crate::tools::creatures::Creatures;
+    use crate::tools::quests::Holder;
+    use crate::tools::services::Kind as Service;
+    let mut chosen = false;
+    let Some(spawn) = editing.creatures.edited(guid, Some(&session.server_edits)) else {
+        caption(ui, &format!("Creature {guid}, not on this map"));
+        return false;
+    };
+    let count = 1 + editing.creatures.also.len();
+    caption(
+        ui,
+        &match count {
+            1 => format!("{} \u{b7} guid {guid}", spawn.label()),
+            n => format!("{n} creatures selected"),
+        },
+    );
+    if item(ui, "Edit creature\u{2026}", true, "Open creature_template's columns in a separate window.", "") {
+        editing.creatures.template_window = true;
+        chosen = true;
+    }
+    if item(
+        ui,
+        "Open in workspace",
+        true,
+        "Open this creature_template row in the Creatures workspace on the top bar.",
+        "",
+    ) {
+        editing.creatures.open_listed(spawn.entry);
+        editing.creatures.switch_to = Some(Tool::CreatureData);
+        chosen = true;
+    }
+    if item(
+        ui,
+        "Waypoints\u{2026}",
+        count == 1,
+        "Open this spawn's path from creature_movement, drawn on the ground.",
+        "A path belongs to one spawn; select one.",
+    ) {
+        editing.waypoints.showing = true;
+        editing.waypoints.open_for(spawn.guid, spawn.entry, spawn.movement_type);
+        chosen = true;
+    }
+    if item(ui, "Quests\u{2026}", true, "The quests this creature starts and ends.", "") {
+        editing.quests.window_for = Some((Holder::Creature, spawn.entry, spawn.label()));
+        chosen = true;
+    }
+    if item(ui, "Loot\u{2026}", true, "The creature's drop, pickpocket and skinning loot.", "") {
+        if !editing.loot.open {
+            editing.loot.toggle();
+        }
+        chosen = true;
+    }
+    if item(ui, "Events\u{2026}", true, "The creature's creature_ai_events.", "") {
+        editing.behaviour.events_open = true;
+        chosen = true;
+    }
+    if has_npc_flag(spawn.npc_flags, "GOSSIP")
+        && item(ui, "Gossip\u{2026}", true, "The gossip menu the template's gossip_menu_id names.", "")
+    {
+        editing.gossip.open = true;
+        editing.gossip.menu = None;
+        editing.gossip.trail.clear();
+        chosen = true;
+    }
+    if has_npc_flag(spawn.npc_flags, "VENDOR")
+        && item(ui, "Vendor\u{2026}", true, "What the creature sells: npc_vendor and its vendor_id's list.", "")
+    {
+        if !editing.services.is_open(Service::Vendor) {
+            editing.services.toggle(Service::Vendor);
+        }
+        chosen = true;
+    }
+    if has_npc_flag(spawn.npc_flags, "TRAINER")
+        && item(ui, "Trainer\u{2026}", true, "What the creature teaches: npc_trainer and its trainer_id's list.", "")
+    {
+        if !editing.services.is_open(Service::Trainer) {
+            editing.services.toggle(Service::Trainer);
+        }
+        chosen = true;
+    }
+
+    ui.separator();
+    if item(
+        ui,
+        "Duplicate",
+        count == 1,
+        "Ctrl+D. Copy this spawn's row to a new guid two yards north.",
+        "Ctrl+D duplicates one spawn at a time.",
+    ) {
+        editing.menu.request = Some(Request::Duplicate);
+        chosen = true;
+    }
+    if spawn.is_removed() {
+        if item(ui, "Cancel removal", true, "Keep the row. Column edits this project made to it remain.", "") {
+            for standing in spawn_selection(Tool::Creatures, editing, session) {
+                Creatures::keep(session, standing.guid, now);
+            }
+            session.status = format!("removal of {count} creature(s) cancelled");
+            chosen = true;
+        }
+    } else {
+        let label = match (count, spawn.is_new()) {
+            (1, true) => "Discard",
+            _ => "Remove",
+        };
+        if item(
+            ui,
+            label,
+            true,
+            "Delete. Mark the spawn for removal; Apply deletes the row, its path, its addon and \
+             its game-event rows. A spawn this project created is discarded.",
+            "",
+        ) {
+            editing.menu.request = Some(Request::Delete);
+            chosen = true;
+        }
+    }
+    if item(
+        ui,
+        "Drop to terrain",
+        true,
+        "Set position_z to the terrain height under each selected spawn. The terrain only: a \
+         creature on a bridge or a building's floor is dropped through it.",
+        "",
+    ) {
+        let spawns = spawn_selection(Tool::Creatures, editing, session);
+        let n = drop_to_terrain(session, &spawns, "creature", now);
+        session.status = format!("{n} creature(s) dropped to the terrain");
+        chosen = true;
+    }
+
+    ui.separator();
+    if item(
+        ui,
+        "Select all of this creature",
+        true,
+        "Add every spawn of this creature_template entry on this map to the selection.",
+        "",
+    ) {
+        let creatures = &mut *editing.creatures;
+        let more: Vec<u64> = (0..creatures.spawn_count())
+            .filter_map(|index| creatures.base_spawn(index))
+            .filter(|other| other.entry == spawn.entry && !creatures.holds(other.guid))
+            .map(|other| other.guid)
+            .collect();
+        session.status = format!("{} more spawn(s) of {} selected", more.len(), spawn.label());
+        creatures.also.extend(more);
+        chosen = true;
+    }
+    let known = crate::tools::creatures::known_from(&spawn);
+    if item(
+        ui,
+        "Place this creature",
+        known.is_some(),
+        "Switch to Place with this creature on the pointer.",
+        "The creature's template has not been read.",
+    ) {
+        editing.creatures.mode = crate::tools::place::Mode::Place;
+        editing.creatures.new_spawn.chosen = known;
+        chosen = true;
+    }
+    if item(ui, "Copy guid", true, "Copy the spawn's guid to the clipboard.", "") {
+        ui.ctx().copy_text(guid.to_string());
+        chosen = true;
+    }
+    chosen
+}
+
+/// A game object spawn that was right-clicked, on [`creature`]'s terms.
+fn game_object(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing, guid: u64, now: f64) -> bool {
+    use crate::tools::gameobjects::GameObjects;
+    use crate::tools::quests::Holder;
+    let mut chosen = false;
+    let Some(spawn) = editing.objects.edited(guid, Some(&session.server_edits)) else {
+        caption(ui, &format!("Game object {guid}, not on this map"));
+        return false;
+    };
+    let count = 1 + editing.objects.also.len();
+    caption(
+        ui,
+        &match count {
+            1 => format!("{} \u{b7} guid {guid}", spawn.label()),
+            n => format!("{n} game objects selected"),
+        },
+    );
+    if item(ui, "Edit object\u{2026}", true, "Open gameobject_template's columns in a separate window.", "") {
+        editing.objects.template_window = true;
+        chosen = true;
+    }
+    if item(
+        ui,
+        "Open in workspace",
+        true,
+        "Open this gameobject_template row in the Game Objects workspace on the top bar.",
+        "",
+    ) {
+        editing.objects.open_listed(spawn.entry);
+        editing.objects.switch_to = Some(Tool::GameObjectData);
+        chosen = true;
+    }
+    if item(ui, "Quests\u{2026}", true, "The quests this object starts and ends.", "") {
+        editing.quests.window_for = Some((Holder::Object, spawn.entry, spawn.label()));
+        chosen = true;
+    }
+    if item(ui, "Loot\u{2026}", true, "The loot of a chest, vein, herb or fishing hole.", "") {
+        if !editing.loot.open {
+            editing.loot.toggle();
+        }
+        chosen = true;
+    }
+
+    ui.separator();
+    if item(
+        ui,
+        "Duplicate",
+        count == 1,
+        "Ctrl+D. Copy this spawn's row to a new guid two yards north.",
+        "Ctrl+D duplicates one spawn at a time.",
+    ) {
+        editing.menu.request = Some(Request::Duplicate);
+        chosen = true;
+    }
+    if spawn.is_removed() {
+        if item(ui, "Cancel removal", true, "Keep the row. Column edits this project made to it remain.", "") {
+            for standing in spawn_selection(Tool::GameObjects, editing, session) {
+                GameObjects::keep(session, standing.guid, now);
+            }
+            session.status = format!("removal of {count} game object(s) cancelled");
+            chosen = true;
+        }
+    } else {
+        let label = match (count, spawn.is_new()) {
+            (1, true) => "Discard",
+            _ => "Remove",
+        };
+        if item(
+            ui,
+            label,
+            true,
+            "Delete. Mark the spawn for removal; Apply deletes the row. A spawn this project \
+             created is discarded.",
+            "",
+        ) {
+            editing.menu.request = Some(Request::Delete);
+            chosen = true;
+        }
+    }
+    if item(
+        ui,
+        "Drop to terrain",
+        true,
+        "Set position_z to the terrain height under each selected spawn. The terrain only: an \
+         object on a table, a wall or a building's floor is dropped through it.",
+        "",
+    ) {
+        let spawns = spawn_selection(Tool::GameObjects, editing, session);
+        let n = drop_to_terrain(session, &spawns, "gameobject", now);
+        session.status = format!("{n} game object(s) dropped to the terrain");
+        chosen = true;
+    }
+
+    ui.separator();
+    if item(
+        ui,
+        "Select all of this object",
+        true,
+        "Add every spawn of this gameobject_template entry on this map to the selection.",
+        "",
+    ) {
+        let objects = &mut *editing.objects;
+        let more: Vec<u64> = (0..objects.spawn_count())
+            .filter_map(|index| objects.base_spawn(index))
+            .filter(|other| other.entry == spawn.entry && !objects.holds(other.guid))
+            .map(|other| other.guid)
+            .collect();
+        session.status = format!("{} more spawn(s) of {} selected", more.len(), spawn.label());
+        objects.also.extend(more);
+        chosen = true;
+    }
+    if item(
+        ui,
+        "Place this object",
+        spawn.known.is_some(),
+        "Switch to Place with this object on the pointer.",
+        "The spawn has no gameobject_template row.",
+    ) {
+        editing.objects.mode = crate::tools::place::Mode::Place;
+        editing.objects.new_spawn.chosen = spawn.known.clone();
+        chosen = true;
+    }
+    if item(ui, "Copy guid", true, "Copy the spawn's guid to the clipboard.", "") {
+        ui.ctx().copy_text(guid.to_string());
+        chosen = true;
+    }
+    chosen
+}
+
+/// The creature or game object tool, clicked on ground: place the chosen
+/// row there, switch between Select and Place, and clear the selection.
+fn spawns_ground(
+    ui: &mut egui::Ui,
+    session: &mut EditSession,
+    editing: &mut Editing,
+    tool: Tool,
+    at: Option<Vec3>,
+    now: f64,
+) -> bool {
+    use crate::tools::place::Mode;
+    let mut chosen = false;
+    let (noun, count, mode, chosen_label) = match tool {
+        Tool::Creatures => (
+            "creatures",
+            editing.creatures.selected.map_or(0, |_| 1 + editing.creatures.also.len()),
+            editing.creatures.mode,
+            editing.creatures.new_spawn.chosen.as_ref().map(|known| known.label()),
+        ),
+        _ => (
+            "game objects",
+            editing.objects.selected.map_or(0, |_| 1 + editing.objects.also.len()),
+            editing.objects.mode,
+            editing.objects.new_spawn.chosen.as_ref().map(|known| known.label()),
+        ),
+    };
+    caption(ui, &format!("{count} {noun} selected"));
+    let place_label = match &chosen_label {
+        Some(label) => format!("Place {label} here"),
+        None => "Place here".to_string(),
+    };
+    if item(
+        ui,
+        &place_label,
+        chosen_label.is_some() && at.is_some(),
+        "Create a spawn of the chosen row at the clicked point, facing as the one on the pointer.",
+        "Choose a row in Place, and click on open ground.",
+    ) {
+        if let Some(at) = at {
+            let made = match tool {
+                Tool::Creatures => editing.creatures.new_spawn.chosen.clone().map(|known| {
+                    let facing = editing.creatures.ghost_facing.unwrap_or(0.0);
+                    editing.creatures.create(session, &known, at, facing, now)
+                }),
+                _ => editing.objects.new_spawn.chosen.clone().map(|known| {
+                    let facing = editing.objects.ghost_facing.unwrap_or(0.0);
+                    editing.objects.create(session, &known, at, facing, now)
+                }),
+            };
+            if let Some(guid) = made {
+                session.status = format!("placed as guid {guid}");
+            }
+        }
+        chosen = true;
+    }
+    let (switch, to) = match mode {
+        Mode::Select => ("Switch to Place", Mode::Place),
+        Mode::Place => ("Switch to Select", Mode::Select),
+    };
+    if item(ui, switch, true, "The panel's Select and Place switch.", "") {
+        match tool {
+            Tool::Creatures => {
+                editing.creatures.mode = to;
+                if to == Mode::Select {
+                    editing.creatures.new_spawn.chosen = None;
+                } else {
+                    // Only one mode may take the click; see the creature panel.
+                    editing.waypoints.adding = false;
+                }
+            }
+            _ => {
+                editing.objects.mode = to;
+                if to == Mode::Select {
+                    editing.objects.new_spawn.chosen = None;
+                }
+            }
+        }
+        chosen = true;
+    }
+    if item(ui, "Deselect", count > 0, "Clear the selection.", "Nothing is selected.") {
+        match tool {
+            Tool::Creatures => editing.creatures.select_only(None),
+            _ => editing.objects.select(None),
+        }
         chosen = true;
     }
     chosen

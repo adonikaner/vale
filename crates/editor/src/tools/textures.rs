@@ -53,7 +53,9 @@
 //!
 //! The last two and the Full chunks guide are the panel's answers to the
 //! four-texture limit, grouped under that heading. The stroke reports what it
-//! could not do on the status line, a refusal before anything else.
+//! could not do on the status line, a refusal before anything else, pins the
+//! first chunk that refused it, and while the chunk under the pointer is one
+//! that refused, the brush is drawn as a red cross instead of its rings.
 //!
 //! ## The catalogue is the archives' listing of `Tileset\`
 //!
@@ -174,7 +176,9 @@ impl Plugin for TextureToolPlugin {
                     // the cursor.
                     .after(crate::pick::aim),
             )
-            .add_systems(Update, (draw_brush, draw_pin));
+            // After the stroke, so the cross over a full chunk is drawn on the
+            // frame the stroke found it.
+            .add_systems(Update, (draw_brush.after(stroke), draw_pin));
     }
 }
 
@@ -197,6 +201,11 @@ struct Held {
     /// when the button comes up, because a copy kept past the stroke that made
     /// it disagrees with the file as soon as anything else writes.
     working: bevy::platform::collections::HashMap<(u32, u32), Working>,
+    /// Whether the chunk under the pointer refused this frame's step because
+    /// it already carries four textures and not this one. While it is true
+    /// the brush is drawn as a red cross in place of its rings; see
+    /// [`draw_brush`].
+    refused_under: bool,
 }
 
 /// The list of tilesets, read once.
@@ -296,6 +305,7 @@ fn stroke(
         session.history.end();
         held.painting = false;
         held.armed = false;
+        held.refused_under = false;
         held.working.clear();
         return;
     }
@@ -419,6 +429,12 @@ fn stroke(
     if let Some(&(coord, chunk)) = full.first() {
         textures.pinned = Some((coord, chunk));
     }
+    // The pointer's own chunk, as against any chunk the brush's edge reaches:
+    // the cross says that the ground being pointed at cannot take the texture.
+    held.refused_under = cursor
+        .tile
+        .zip(cursor.chunk)
+        .is_some_and(|under| full.contains(&under));
 }
 
 /// Cut each tile in [`EditSession::regroup`] into draw groups again and
@@ -748,6 +764,14 @@ fn draw_brush(
     let (Some(session), Some(at)) = (session, cursor.ground) else {
         return;
     };
+    // A stroke held over a chunk that refused it: a red cross on the ground
+    // in place of the rings, at the brush's size. The layer list is pinned to
+    // the same chunk by the stroke.
+    let radius = (textures.brush.radius * pressure.scale().radius).max(*RADIUS.start());
+    if held.painting && held.refused_under {
+        refused(&mut marks, &session, at, radius);
+        return;
+    }
     // The eraser's ring is red, so the mode is read at the pointer and not
     // only on the panel. Shift is not asked here: the ring is drawn from the
     // panel's mode.
@@ -760,12 +784,47 @@ fn draw_brush(
         &session,
         at,
         // At the radius a pen's pressure gives it this frame.
-        (textures.brush.radius * pressure.scale().radius).max(*RADIUS.start()),
+        radius,
         textures.brush.core,
         textures.brush.shape,
         colour,
         held.painting,
     );
+}
+
+/// The cross drawn in place of the brush over a chunk that refused the
+/// stroke: two diagonals through the pointer, each reaching 0.7 of the radius
+/// from it, dropped onto the ground in segments as the rings are, and drawn
+/// three lines wide.
+fn refused(marks: &mut crate::marks::Marks, session: &EditSession, at: Vec3, radius: f32) {
+    const SEGMENTS: usize = 16;
+    /// Yards above the ground, the rings' own lift.
+    const LIFT: f32 = 0.15;
+    const WIDTH: f32 = 3.0;
+    let colour = Color::srgb(1.0, 0.2, 0.15);
+    let arm = radius * 0.7;
+    let point = |x: f32, y: f32| -> Option<Vec3> {
+        let coord = vale_assets::tile_for_position(x, y);
+        let z = session
+            .tiles
+            .get(&coord)
+            .and_then(|tile| vale_edit::adt::heights::height_at(tile, x, y))?;
+        Some(vale_client::render::axes::to_bevy([x, y, z + LIFT]))
+    };
+    for (dx, dy) in [(1.0f32, 1.0f32), (1.0, -1.0)] {
+        let (dx, dy) = (dx * arm, dy * arm);
+        for step in 0..SEGMENTS {
+            let t0 = step as f32 / SEGMENTS as f32 * 2.0 - 1.0;
+            let t1 = (step + 1) as f32 / SEGMENTS as f32 * 2.0 - 1.0;
+            let from = point(at.x + dx * t0, at.y + dy * t0);
+            let to = point(at.x + dx * t1, at.y + dy * t1);
+            // A segment with no ground under an end is left out, as a ring's
+            // is; see `super::terrain::ring`.
+            if let (Some(from), Some(to)) = (from, to) {
+                marks.wide_ground_line(from, to, WIDTH, colour, crate::marks::Look::Ghosted);
+            }
+        }
+    }
 }
 
 /// One row of the chunk-under-the-pointer list, as the panel needs it.

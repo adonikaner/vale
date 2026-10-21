@@ -6,8 +6,8 @@
 //!
 //! Tools that act on the world (terrain, grading, holes, texture layers,
 //! doodads, area assignment, lights, water) are tiles on the side rail, and
-//! editors that do not (Spells, Items, Quests, Zones, Tables) are parts of
-//! the workspace control on the top bar. [`Tool::surface`] decides it: a subject for which
+//! editors that do not (Spells, Items, Quests, Creatures, Game Objects, Zones,
+//! Tables) are parts of the workspace control on the top bar. [`Tool::surface`] decides it: a subject for which
 //! the viewport is the document is a tile on the rail, and a subject whose
 //! workspace replaces the viewport is a part of the workspace control.
 //!
@@ -21,14 +21,20 @@
 //!               Spawns   rows of vmangos' database that stand in the world:
 //!                        creature and gameobject spawns, picked and moved in
 //!                        the viewport
-//! the top bar   World | Spells | Items | Quests | Zones | Tables: World
-//!               returns to the rail's last tool; the other five replace the
-//!               viewport. Tables is last because it reaches every table the
-//!               others do not. All but Zones are available during a playtest,
-//!               and nothing else is
+//! the top bar   World | Spells | Items | Quests | Creatures | Game Objects |
+//!               Zones | Tables: World returns to the rail's last tool; the
+//!               other seven replace the viewport. Tables is last because it
+//!               reaches every table the others do not. Spells, Items, Quests
+//!               and Tables are available during a playtest, and nothing else
+//!               is
 //! the corner    Select and Measure, which change nothing and are returned to
 //!               rather than started with
 //! ```
+//!
+//! The rail is drawn only while the viewport is the world's: not while a
+//! workspace replaces it, and not during a playtest. In a workspace every
+//! tile would leave it for the world, which World on the top bar does, and
+//! the shell gives the rail's width to the workspace.
 //!
 //! Lights, Taxi, Triggers and Graveyards edit client tables, but a light's
 //! sphere, a taxi node, a trigger and a safe place are picked and dragged in

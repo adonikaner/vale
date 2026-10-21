@@ -508,7 +508,7 @@ pub struct GameObjects {
     /// click writes. `None` while nothing is on the cursor. Set toward the
     /// camera when the placer is armed, kept from one placement to the next,
     /// and turned by [`Self::turn_ghost`]. See `tools::creatures::ghost`.
-    ghost_facing: Option<f32>,
+    pub(crate) ghost_facing: Option<f32>,
     task: Option<Task<Result<MapRead, String>>>,
     /// What [`Self::spawns`] was read for: the map, and how many times this
     /// session has written the tables. See `EditSession::database_writes`.
@@ -1341,6 +1341,7 @@ impl Plugin for GameObjectToolPlugin {
                     search_objects,
                     collect_the_near,
                     aim,
+                    menu_target,
                     press,
                     enclose,
                     drag,
@@ -1723,6 +1724,23 @@ fn collect_the_near(
         .collect();
     near.sort_unstable();
     objects.near = near.into_iter().map(|(_, index)| index).collect();
+}
+
+/// What a right click landed on, for the right-click menu: the spawn the
+/// pointer is over, on `tools::creatures::menu_target`'s terms.
+pub(crate) fn menu_target(
+    mut objects: ResMut<GameObjects>,
+    mut menu: ResMut<crate::context::ContextMenu>,
+    tool: Res<Tool>,
+) {
+    if *tool != Tool::GameObjects || !menu.asked() {
+        return;
+    }
+    let Some(guid) = objects.hovered else { return };
+    if !objects.holds(guid) {
+        objects.select(Some(guid));
+    }
+    menu.object = Some(crate::context::Target::GameObject { guid });
 }
 
 /// Find the spawn the pointer is over. This is `tools::creatures::aim` with a

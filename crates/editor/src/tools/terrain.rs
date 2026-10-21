@@ -1638,8 +1638,10 @@ fn draw_brush(
 /// had no feedback.
 ///
 /// `active` is true while a stroke is changing the ground. The rings are then
-/// drawn solid, twice as wide and closer to white, so a stroke that is being
-/// applied looks different from the preview of the next one.
+/// drawn solid and a little closer to white, at the preview's width, so a
+/// stroke that is being applied looks different from the preview of the next
+/// one. They were drawn twice as wide and 45% toward white as well, and the
+/// heavier line hid the ground being painted.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn rings(
     marks: &mut crate::marks::Marks,
@@ -1667,13 +1669,13 @@ pub(crate) fn rings(
 }
 
 /// How far toward white an active stroke's rings are drawn, 0 to 1.
-const ACTIVE_WHITE: f32 = 0.45;
+const ACTIVE_WHITE: f32 = 0.2;
 
 /// One ring of 64 segments, each vertex dropped onto the edited ground.
 ///
 /// While `solid` is false, three segments of each four are drawn, so the ring
 /// is sixteen dashes and reads as a brush rather than as a line on the map.
-/// While it is true, every segment is drawn at twice the width: see
+/// While it is true, every segment is drawn, at the same width: see
 /// [`rings`]. A dash is a tube a few
 /// pixels thick ([`crate::marks::Marks::line`]), so a hill between the camera
 /// and the ring hides it; the hidden part is drawn faint
@@ -1719,12 +1721,12 @@ pub(crate) fn ring(
         Some(vale_client::render::axes::to_bevy([x, y, z + LIFT]))
     };
     let points: Vec<Option<Vec3>> = rim.iter().map(point).collect();
-    let width = if solid { 3.0 } else { 1.5 };
+    const WIDTH: f32 = 1.5;
     for i in (0..points.len()).filter(|i| solid || i % 4 != 3) {
         if let (Some(from), Some(to)) = (points[i], points[(i + 1) % points.len()]) {
             // Resting on the ground rather than half in it. See
             // `crate::marks::Marks::ground_line`.
-            marks.wide_ground_line(from, to, width, colour, crate::marks::Look::Ghosted);
+            marks.wide_ground_line(from, to, WIDTH, colour, crate::marks::Look::Ghosted);
         }
     }
 }

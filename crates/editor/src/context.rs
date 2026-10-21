@@ -14,15 +14,18 @@
 //! ```text
 //! Doodads, WMOs   the placement under the pointer, locked or not
 //!                 (`tools::doodads::select`, `tools::wmos::select`)
+//! Creatures,      the spawn under the pointer, as the tool's hover found it
+//! Objects         (`tools::creatures::menu_target`,
+//!                 `tools::gameobjects::menu_target`)
 //! every tool      the ground under the pointer: its position, tile and chunk
 //!                 (`crate::pick::Cursor`)
 //! ```
 //!
-//! A right click on a placement that is not selected selects it alone, and a
-//! right click on a chunk the Chunks tool has not selected selects it alone,
-//! so the menu's actions apply to what was clicked. A click on a member of a
-//! group keeps the group. A locked placement is not selected; its menu offers
-//! to unlock it.
+//! A right click on a placement or a spawn that is not selected selects it
+//! alone, and a right click on a chunk the Chunks tool has not selected
+//! selects it alone, so the menu's actions apply to what was clicked. A click
+//! on a member of a group keeps the group. A locked placement is not selected;
+//! its menu offers to unlock it.
 //!
 //! The menus themselves are drawn by `crate::ui::context`, which has the same
 //! access to the session and the tools as the inspector, and each item calls
@@ -50,6 +53,10 @@ pub enum Target {
     Doodad { unique_id: u32, locked: bool },
     /// A WMO, by `uniqueId`.
     Wmo { unique_id: u32, locked: bool },
+    /// A `creature` spawn, by guid.
+    Creature { guid: u64 },
+    /// A `gameobject` spawn, by guid.
+    GameObject { guid: u64 },
 }
 
 /// A menu on screen.
@@ -87,10 +94,12 @@ pub enum Request {
     /// `Ctrl+V` at a point in the world, which is where the menu was opened
     /// rather than where the pointer is when the item is pressed.
     Paste(Vec3),
-    /// `Ctrl+D` over a group (`tools::group::clipboard`).
+    /// `Ctrl+D` over a group (`tools::group::clipboard`), or for the selected
+    /// creature or game object spawn (`tools::spawn::keys`).
     Duplicate,
     /// `Delete` for the doodad or WMO selection (`tools::doodads::remove`,
-    /// `tools::wmos::remove`).
+    /// `tools::wmos::remove`), or for the creature or game object selection
+    /// (`tools::spawn::keys`).
     Delete,
 }
 
@@ -121,10 +130,12 @@ impl Plugin for ContextMenuPlugin {
         app.init_resource::<ContextMenu>().add_systems(
             Update,
             open
-                // After the two pickers that answer for objects, which run
+                // After the four pickers that answer for objects, which run
                 // after the pointer's pick.
                 .after(crate::tools::doodads::select)
                 .after(crate::tools::wmos::select)
+                .after(crate::tools::creatures::menu_target)
+                .after(crate::tools::gameobjects::menu_target)
                 .after(crate::pick::aim),
         );
     }
