@@ -1007,18 +1007,17 @@ fn display_field(
         work.items.pick_display(id);
     }
     match look {
-        Some(look) if look.has_models() => {
-            ui.label(
-                egui::RichText::new(format!("{} model(s)", look.models.len()))
-                    .small()
-                    .color(theme::INK_DIM),
-            );
-        }
         Some(look) => {
-            ui.label(
-                egui::RichText::new(format!("{} texture(s)", look.painted()))
-                    .small()
-                    .color(theme::INK_DIM),
+            let made_of = match look.has_models() {
+                true => format!("{} model(s)", look.models.len()),
+                false => format!("{} texture(s)", look.painted()),
+            };
+            super::reference::display_link(
+                ui,
+                egui::RichText::new(made_of).small(),
+                &mut work.items.show_row,
+                "ItemDisplayInfo",
+                id,
             );
         }
         None if id != 0 => {
@@ -1477,7 +1476,21 @@ fn appearance(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
         .items
         .look(work.assets, display_id, known.inventory_type);
     ui.horizontal(|ui| {
-        ui.label(theme::number(format!("display {display_id}")));
+        match (display_id, look.is_some()) {
+            (0, _) | (_, false) => {
+                ui.label(theme::number(format!("display {display_id}")));
+            }
+            _ => {
+                ui.label(theme::number("display"));
+                super::reference::display_link(
+                    ui,
+                    theme::number(display_id.to_string()),
+                    &mut work.items.show_row,
+                    "ItemDisplayInfo",
+                    display_id,
+                );
+            }
+        }
         if ui.small_button("choose\u{2026}").clicked() {
             work.items.pick_display(display_id);
         }

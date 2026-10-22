@@ -3,11 +3,10 @@
 // the batches the group's `MOGP` header marks as transition batches, the
 // second faded into the first per vertex, which is how a doorway is lit.
 //
-// The structure follows MODEL_FRAG in web/models.js. The lighting does not:
-// that shader's 0.55/0.45 split was a colourless stand-in for the sun and the
-// fill, which the game states per zone and per hour. Both come from
-// `atmosphere.wgsl`, the same code the ground is lit by, so a model and the
-// ground under it are lit for the same time of day.
+// The structure follows MODEL_FRAG in web/models.js; the lighting does not.
+// The sun and the fill colours are stated by the game per zone and per hour,
+// and both come from `atmosphere.wgsl`, the same code the ground is lit by, so
+// a model and the ground under it are lit for the same time of day.
 //
 // ## Interior lighting
 //
@@ -168,9 +167,9 @@ struct M2Params {
     // the world that is not a piece of armour. `.zw` unused. See
     // `models::material::M2Material::overlay_a`.
     overlay: vec4<f32>,
-    // The lighting the model states for itself: `M2Light`, which nothing in
-    // the world carries and which is the whole shading of the two screens
-    // before it. `scene_ambient.rgb` is the fill and `.w` is how many of the
+    // The lighting the model states for itself: `M2Light`. No model in the
+    // world carries it; the login and character-select scenes are lit only by
+    // it. `scene_ambient.rgb` is the fill and `.w` is how many of the
     // lamps below are real; each lamp is two vectors, `(place.xyz, is_point)`
     // and `(colour.rgb, 0)`, where `place` is a position for a point light and
     // a unit vector toward the light for a directional one. Zero everywhere
@@ -306,45 +305,33 @@ fn model_light(params: M2Params, world_position: vec3<f32>, world_normal: vec3<f
 #endif  // SCENE_LIT
 
 // The building lights a unit stands near, which the 1.12.1 client lights its
-// models with; see `render::building_lights`. Slot `n` of the three in `ids`
-// is row `LAMP_ROW_BEFORE + n` of the texture-matrix table: position,
-// colour times intensity, and the diffuse and ambient flags. Each adds
-// `colour × att × (max(N·L, 0) + 1)` with the client's point-light curve,
-// clamped at 1 where it diverges at the light, as `model_light` does.
+// models with; see `render::building_lights`. Slot `n` (1..=255) is row
+// `LAMP_ROW_BEFORE + n` of the texture-matrix table. The row's eight texels
+// are the light's position, its colour times intensity, and its diffuse and
+// ambient flags. Each light adds `colour × att × (max(N·L, 0) + 1)` with the
+// client's point-light curve, clamped at 1 where the curve diverges at the
+// light, as `model_light` does.
 const LAMP_ROW_BEFORE: i32 = 1023;
 
-fn building_lamps(
-    table: texture_2d<f32>,
-    ids: u32,
+// One building light's term at `world_position`, from the eight texels of its
+// row. The fragment program loads the texels itself and passes the values:
+// passing the table texture as a function parameter, taken from the bindless
+// array, made the NVIDIA Vulkan driver fail to compile this shader ("NVVM
+// compilation failed") and lose the device.
+fn building_lamp(
+    e0: vec4<f32>, e1: vec4<f32>, e2: vec4<f32>, e3: vec4<f32>,
+    e4: vec4<f32>, e5: vec4<f32>, e6: vec4<f32>, e7: vec4<f32>,
     world_position: vec3<f32>,
-    world_normal: vec3<f32>,
+    normal: vec3<f32>,
 ) -> vec3<f32> {
-    var sum = vec3<f32>(0.0);
-    let normal = normalize(world_normal);
-    for (var k = 0u; k < 3u; k = k + 1u) {
-        let slot = (ids >> (16u - 8u * k)) & 0xFFu;
-        if slot == 0u {
-            continue;
-        }
-        let row = LAMP_ROW_BEFORE + i32(slot);
-        let at = vec3<f32>(
-            uv_table_float(textureLoad(table, vec2<i32>(0, row), 0)),
-            uv_table_float(textureLoad(table, vec2<i32>(1, row), 0)),
-            uv_table_float(textureLoad(table, vec2<i32>(2, row), 0)),
-        );
-        let colour = vec3<f32>(
-            uv_table_float(textureLoad(table, vec2<i32>(3, row), 0)),
-            uv_table_float(textureLoad(table, vec2<i32>(4, row), 0)),
-            uv_table_float(textureLoad(table, vec2<i32>(5, row), 0)),
-        );
-        let diffuse = uv_table_float(textureLoad(table, vec2<i32>(6, row), 0));
-        let ambient = uv_table_float(textureLoad(table, vec2<i32>(7, row), 0));
-        let toward = at - world_position;
-        let distance = max(length(toward), 1e-4);
-        let fade = min(1.0 / (0.7 * distance + 0.03 * distance * distance), 1.0);
-        sum += colour * (fade * (diffuse * max(dot(normal, toward / distance), 0.0) + ambient));
-    }
-    return sum;
+    let at = vec3<f32>(uv_table_float(e0), uv_table_float(e1), uv_table_float(e2));
+    let colour = vec3<f32>(uv_table_float(e3), uv_table_float(e4), uv_table_float(e5));
+    let diffuse = uv_table_float(e6);
+    let ambient = uv_table_float(e7);
+    let toward = at - world_position;
+    let distance = max(length(toward), 1e-4);
+    let fade = min(1.0 / (0.7 * distance + 0.03 * distance * distance), 1.0);
+    return colour * (fade * (diffuse * max(dot(normal, toward / distance), 0.0) + ambient));
 }
 
 @fragment
@@ -410,9 +397,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         f32(tag & 0xFFu),
     ) / 255.0;
     // When the tag is a tint, all four bytes are the batch's own animated
-    // colour and none of them is a sun scale. The top
-    // byte is opacity, so reading it as 1/32nds would scale a half-faded
-    // effect's sun by four. `params.particle.y` is the only thing that says
+    // colour and none of them is a sun scale. The top byte is opacity, so
+    // reading it as 1/32nds would scale a half-faded effect's sun by four. `params.particle.y` is the only thing that says
     // which of the two payloads the word holds.
     let is_tint = params.particle.y > 0.5;
     let scale_bits = tag >> 24u;
@@ -451,16 +437,38 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // every other sun-lit instance leaves them zero.
     let lamp_ids = tag & 0xFFFFFFu;
     if params.unlit < 0.5 && params.vertex_lit < 0.5 && !is_tint && lamp_ids != 0u {
+        let lamp_normal = normalize(in.world_normal);
+        for (var k = 0u; k < 3u; k = k + 1u) {
+            let lamp_slot = (lamp_ids >> (16u - 8u * k)) & 0xFFu;
+            if lamp_slot == 0u {
+                continue;
+            }
+            let row = LAMP_ROW_BEFORE + i32(lamp_slot);
 #ifdef BINDLESS
-        lamps += building_lamps(
-            bindless_textures_2d[material_indices[slot].uv_table],
-            lamp_ids,
-            in.world_position.xyz,
-            in.world_normal,
-        );
-#else
-        lamps += building_lamps(uv_table_texture, lamp_ids, in.world_position.xyz, in.world_normal);
-#endif
+            let table = material_indices[slot].uv_table;
+            lamps += building_lamp(
+                textureLoad(bindless_textures_2d[table], vec2<i32>(0, row), 0),
+                textureLoad(bindless_textures_2d[table], vec2<i32>(1, row), 0),
+                textureLoad(bindless_textures_2d[table], vec2<i32>(2, row), 0),
+                textureLoad(bindless_textures_2d[table], vec2<i32>(3, row), 0),
+                textureLoad(bindless_textures_2d[table], vec2<i32>(4, row), 0),
+                textureLoad(bindless_textures_2d[table], vec2<i32>(5, row), 0),
+                textureLoad(bindless_textures_2d[table], vec2<i32>(6, row), 0),
+                textureLoad(bindless_textures_2d[table], vec2<i32>(7, row), 0),
+                in.world_position.xyz, lamp_normal);
+#else   // BINDLESS
+            lamps += building_lamp(
+                textureLoad(uv_table_texture, vec2<i32>(0, row), 0),
+                textureLoad(uv_table_texture, vec2<i32>(1, row), 0),
+                textureLoad(uv_table_texture, vec2<i32>(2, row), 0),
+                textureLoad(uv_table_texture, vec2<i32>(3, row), 0),
+                textureLoad(uv_table_texture, vec2<i32>(4, row), 0),
+                textureLoad(uv_table_texture, vec2<i32>(5, row), 0),
+                textureLoad(uv_table_texture, vec2<i32>(6, row), 0),
+                textureLoad(uv_table_texture, vec2<i32>(7, row), 0),
+                in.world_position.xyz, lamp_normal);
+#endif  // BINDLESS
+        }
     }
     // The same sun as terrain.wgsl, from the same code; see `atmosphere.wgsl`
     // for why that matters more here than anywhere else in the renderer. The
@@ -560,14 +568,15 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // outdoor-facing vertex black, so walking out of a building crossed a step
     // of darkness. See `WmoGroup::shaded_colours`.
     let seam = room * mix(vec3<f32>(1.0), sun, vertex_alpha);
-    // The third lighting model, for a model that carries its own lights. It
-    // replaces the sun rather than adding to it: a scene that states its own
-    // lamps and its own near-black fill states everything that lights it, and
-    // `Light.dbc`'s values for a map nobody is on do not apply.
+    // The lighting for a model that carries its own lights. It replaces the
+    // sun rather than adding to it: such a scene states its own lamps and its
+    // own near-black fill, and the player is on no map, so `Light.dbc` has no
+    // values for it.
     //
-    // A shader def and not a branch, so that the world does not pay for two
-    // screens; see `M2MaterialKey::scene_lit` for the reasoning. Outside those
-    // screens the scene path is not compiled.
+    // A shader def and not a branch, so that world batches do not carry the
+    // code for the login and character-select scenes; see
+    // `M2MaterialKey::scene_lit`. Outside those scenes the scene path is not
+    // compiled.
 #ifdef SCENE_LIT
     let light = model_light(params, in.world_position.xyz, in.world_normal);
 #else
@@ -764,8 +773,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // is drawn through a flat factor here. It is below the test because the
     // cutoff is the blend mode's own number (224/255 for an alpha key), so
     // scaling the alpha before it would push a cut-out's own texels under their
-    // own threshold and cut holes in the model: a stealthed rogue with gaps in
-    // his cloak. It is above the fog, which multiplies the colour and leaves
+    // own threshold and cut holes in the model, such as in a stealthed unit's
+    // cloak. It is above the fog, which multiplies the colour and leaves
     // the alpha alone, so the order between those two does not matter.
     let solid = vec4<f32>(out.rgb, out.a * params.body.x);
 
@@ -786,19 +795,18 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // An additive particle (`particle.x` = 2) fades toward black instead of
     // toward the air: under `(src·α, ONE)` blending, black adds nothing.
     //
-    // These are branches rather than `select` for performance. `select` is an
-    // expression: both of its arms are evaluated and one result is thrown away.
-    // With `select`, this fragment fogged itself twice, once toward the air and
-    // once toward black, and then discarded both for a batch that is not
-    // fogged at all.
+    // These are branches rather than `select` for performance. `select`
+    // evaluates both arms, so this fragment fogged itself twice, once toward
+    // the air and once toward black, and then discarded both results for a
+    // batch that is not fogged at all.
     //
-    // Each fog call contains the deep night, and `night_air` is two `exp`s, a
+    // Each fog call includes the deep night, and `night_air` is two `exp`s, a
     // `pow`, a `length` and a `normalize`. The batches that pay it most have
     // the worst overdraw in the game. With `select`, Goldshire's inn measured
     // 11 ms against 5 ms looking away with the night on, and 5 against 4 with
     // it off: its lit windows are large additive quads drawn with no depth
     // write, several deep over every pixel of the building, and each of them
-    // ran the mist twice.
+    // computed the night fog twice.
     //
     // Both conditions are material uniforms, so the branches are coherent over
     // the whole draw rather than per fragment, the cheapest kind of branch a

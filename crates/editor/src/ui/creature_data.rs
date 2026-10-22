@@ -293,7 +293,18 @@ pub fn inspector(ui: &mut egui::Ui, mut subject: Subject<'_>) {
                 ("NPC flags", creature::mask_words(&creature::NPC_FLAGS, known.npc_flags)),
             ] {
                 ui.label(egui::RichText::new(name).color(theme::INK_DIM));
-                ui.label(egui::RichText::new(value).color(theme::INK));
+                match name == "Display" && known.display_id != 0 {
+                    true => super::reference::display_link(
+                        ui,
+                        egui::RichText::new(value),
+                        &mut subject.quests.show_row,
+                        crate::tools::displays::Table::Creature.name(),
+                        known.display_id,
+                    ),
+                    false => {
+                        ui.label(egui::RichText::new(value).color(theme::INK));
+                    }
+                }
                 ui.end_row();
             }
         });

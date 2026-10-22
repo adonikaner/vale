@@ -80,7 +80,7 @@ use vale_mangos::creature::{self, Column, Group, Kind};
 use vale_mangos::row::{Key, Life};
 
 use super::rowform::{
-    choice_cell, draft_or, finished, flags_cell, meaning, meaning_truncated, number_cell,
+    choice_cell, draft_or, finished, flags_cell, meaning, number_cell,
     number_means, page_row, page_spacing, revert_button, section, text_cell, FORM_ROW,
     FORM_VALUE,
 };
@@ -616,14 +616,30 @@ fn picker(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     match subject.creatures.new_spawn.chosen.clone() {
         Some(chosen) => {
             ui.label(egui::RichText::new(chosen.label()).color(theme::INK));
-            ui.label(
-                egui::RichText::new(format!(
-                    "level {}–{} · faction {} · display {}",
-                    chosen.level.0, chosen.level.1, chosen.faction, chosen.display_id
-                ))
-                .small()
-                .color(theme::INK_DIM),
-            );
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.label(
+                    egui::RichText::new(format!(
+                        "level {}–{} · faction {} · display",
+                        chosen.level.0, chosen.level.1, chosen.faction
+                    ))
+                    .small()
+                    .color(theme::INK_DIM),
+                );
+                let id = egui::RichText::new(chosen.display_id.to_string()).small();
+                match chosen.display_id {
+                    0 => {
+                        ui.label(id.color(theme::INK_DIM));
+                    }
+                    display => super::reference::display_link(
+                        ui,
+                        id,
+                        &mut subject.quests.show_row,
+                        DisplayTable::Creature.name(),
+                        display,
+                    ),
+                }
+            });
             if chosen.is_new() {
                 ui.label(
                     egui::RichText::new(
@@ -1214,7 +1230,18 @@ fn summary(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn, edited: 
                     ),
                 ] {
                     ui.label(egui::RichText::new(name).color(theme::INK_DIM));
-                    ui.label(egui::RichText::new(value).color(theme::INK));
+                    match name == "display" && spawn.display_id != 0 {
+                        true => super::reference::display_link(
+                            ui,
+                            egui::RichText::new(value),
+                            &mut subject.quests.show_row,
+                            DisplayTable::Creature.name(),
+                            spawn.display_id,
+                        ),
+                        false => {
+                            ui.label(egui::RichText::new(value).color(theme::INK));
+                        }
+                    }
                     ui.end_row();
                 }
             });
@@ -1872,7 +1899,13 @@ fn display_cell(
         subject.creatures.display_pick = Some(DisplayPick::open(DisplayTable::Creature, target, id));
     }
     match worn {
-        Some(worn) => meaning_truncated(ui, worn.path),
+        Some(worn) => super::reference::display_link(
+            ui,
+            egui::RichText::new(worn.path).small(),
+            &mut subject.quests.show_row,
+            DisplayTable::Creature.name(),
+            id,
+        ),
         None if id != 0 => {
             ui.label(
                 egui::RichText::new("not in CreatureDisplayInfo.dbc")

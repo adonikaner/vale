@@ -34,7 +34,8 @@
 //! answers after everything is drawn. An item opens the item workspace
 //! through `Quests::show_item`. A creature or a game object is named and not
 //! linked: the tool that edits one is the tool this form is already in, and
-//! its selection is a spawn, not a template.
+//! its selection is a spawn, not a template. A display id opens its display
+//! workspace through [`display_link`].
 
 use bevy_egui::egui;
 
@@ -229,11 +230,33 @@ fn dbc_link(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, table: &'static str,
     }
 }
 
+/// A display row, named by its id or by what it draws, as a link that opens
+/// the row in its display workspace through `show_row`, the mailbox the
+/// shell answers. A display row has no name of its own, so the caller chooses
+/// the text. `Tool::for_table` decides the workspace.
+pub fn display_link(
+    ui: &mut egui::Ui,
+    text: egui::RichText,
+    show_row: &mut Option<(&'static str, u32)>,
+    table: &'static str,
+    id: u32,
+) {
+    let workspace = crate::tools::Tool::for_table(table).name();
+    if link_text(ui, text, theme::ACCENT, &format!("Open {table} {id} in {workspace}.")) {
+        *show_row = Some((table, id));
+    }
+}
+
 /// A name that opens something: drawn in `colour`, underlined while the
 /// pointer is over it. `true` when it was clicked.
 pub fn link(ui: &mut egui::Ui, text: &str, colour: egui::Color32, hover: &str) -> bool {
+    link_text(ui, egui::RichText::new(text), colour, hover)
+}
+
+/// [`link`] for text with its own size.
+fn link_text(ui: &mut egui::Ui, text: egui::RichText, colour: egui::Color32, hover: &str) -> bool {
     let name = ui.add(
-        egui::Label::new(egui::RichText::new(text).color(colour))
+        egui::Label::new(text.color(colour))
             .truncate()
             .sense(egui::Sense::click()),
     );

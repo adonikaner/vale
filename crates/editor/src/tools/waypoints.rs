@@ -582,22 +582,23 @@ fn aim(
     let Some(path) = waypoints.path(session.as_deref()) else {
         return;
     };
-    let Ok((camera, camera_at)) = camera.single() else {
+    let Some((camera, eye, window)) = super::group::view(&camera, &windows) else {
         return;
     };
-    let Some(pointer) = windows
-        .single()
-        .ok()
-        .and_then(|window| window.cursor_position())
-    else {
+    let Some(pointer) = window.cursor_position() else {
         waypoints.hovered = None;
         return;
     };
 
     let mut best: Option<(f32, usize)> = None;
     for (index, node) in path.nodes.iter().enumerate() {
-        let at = vale_client::render::axes::to_bevy([node.x, node.y, node.z]);
-        let Ok(on_screen) = camera.world_to_viewport(camera_at, at) else {
+        // In logical pixels, as the pointer is. `world_to_viewport` alone
+        // answers in physical ones, and on a scaled display every node's grab
+        // spot sat further from the screen's centre than the node, so a node
+        // could only be picked with the pointer well off it.
+        let Some(on_screen) =
+            super::group::on_screen(camera, eye, window, Vec3::new(node.x, node.y, node.z))
+        else {
             continue;
         };
         let away = on_screen.distance(pointer);

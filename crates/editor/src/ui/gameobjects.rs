@@ -437,16 +437,27 @@ fn picker(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         Some(chosen) => {
             ui.label(egui::RichText::new(chosen.label()).color(theme::INK));
             let gathered = gathered_by(locks(&mut subject.objects.locks, subject.assets), &chosen);
-            ui.label(
-                egui::RichText::new(format!(
-                    "{} · display {}{}",
-                    chosen.type_word(),
-                    chosen.display_id,
-                    gathered.map(|words| format!(" · {words}")).unwrap_or_default()
-                ))
-                .small()
-                .color(theme::INK_DIM),
-            );
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let faint = |text: String| egui::RichText::new(text).small().color(theme::INK_DIM);
+                ui.label(faint(format!("{} · display", chosen.type_word())));
+                let id = egui::RichText::new(chosen.display_id.to_string()).small();
+                match chosen.display_id {
+                    0 => {
+                        ui.label(id.color(theme::INK_DIM));
+                    }
+                    display => super::reference::display_link(
+                        ui,
+                        id,
+                        &mut subject.quests.show_row,
+                        DisplayTable::Object.name(),
+                        display,
+                    ),
+                }
+                if let Some(words) = gathered {
+                    ui.label(faint(format!("· {words}")));
+                }
+            });
             if chosen.is_new() {
                 ui.label(
                     egui::RichText::new(
@@ -952,7 +963,18 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
                 }
                 for (name, value) in rows {
                     ui.label(egui::RichText::new(name).color(theme::INK_DIM));
-                    ui.label(egui::RichText::new(value).color(theme::INK));
+                    match name == "display" && known.display_id != 0 {
+                        true => super::reference::display_link(
+                            ui,
+                            egui::RichText::new(value),
+                            &mut subject.quests.show_row,
+                            DisplayTable::Object.name(),
+                            known.display_id,
+                        ),
+                        false => {
+                            ui.label(egui::RichText::new(value).color(theme::INK));
+                        }
+                    }
                     ui.end_row();
                 }
             });
@@ -1571,7 +1593,13 @@ fn display_cell(
         subject.objects.display_pick = Some(DisplayPick::open(DisplayTable::Object, target, id));
     }
     match path {
-        Some(path) => meaning_truncated(ui, path),
+        Some(path) => super::reference::display_link(
+            ui,
+            egui::RichText::new(path).small(),
+            &mut subject.quests.show_row,
+            DisplayTable::Object.name(),
+            id,
+        ),
         None if id != 0 => {
             ui.label(
                 egui::RichText::new("not in GameObjectDisplayInfo.dbc")
