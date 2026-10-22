@@ -139,7 +139,7 @@ impl Plugin for PickPlugin {
 
 pub fn aim(
     mut cursor: ResMut<Cursor>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     session: Option<Res<EditSession>>,
     state: Res<crate::playtest::Playtest>,
@@ -271,7 +271,7 @@ pub fn aim(
 /// depends on who is asking is a pick nobody can reason about.
 pub fn solid_under(
     session: &EditSession,
-    windows: &Query<&Window>,
+    windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) -> Option<Vec3> {
     let (origin, direction) = ray(windows, camera)?;
@@ -320,7 +320,7 @@ pub fn solid_under(
 /// and answering nothing there is better than answering a mile away.
 pub fn on_plane(
     z: f32,
-    windows: &Query<&Window>,
+    windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) -> Option<Vec3> {
     let (origin, direction) = ray(windows, camera)?;
@@ -346,7 +346,7 @@ pub fn meets_plane(origin: Vec3, direction: Vec3, z: f32) -> Option<Vec3> {
 /// conversion: `cursor_position` is logical and the world camera draws into a
 /// target measured in physical pixels.
 pub fn ray(
-    windows: &Query<&Window>,
+    windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) -> Option<(Vec3, Vec3)> {
     let window = windows.single().ok()?;

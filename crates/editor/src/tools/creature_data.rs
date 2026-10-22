@@ -132,6 +132,7 @@ fn read_the_list(
     session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
     tool: Res<Tool>,
+    popout: Res<crate::popout::Popout>,
     state: Res<crate::playtest::Playtest>,
 ) {
     // A finished read is collected under any tool, so switching away and
@@ -139,7 +140,7 @@ fn read_the_list(
     if let Some(highest) = creatures.listed.collect() {
         creatures.max_entry = creatures.max_entry.max(highest);
     }
-    if !state.editing() || *tool != Tool::CreatureData {
+    if !state.editing() || !popout.shows(*tool, Tool::CreatureData) {
         return;
     }
     let Some(session) = session else { return };

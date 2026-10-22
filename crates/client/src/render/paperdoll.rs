@@ -313,7 +313,7 @@ fn follow(
     mut materials: Materials,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     ui_scale: Res<crate::ui::scale::InterfaceScale>,
     mut egui: ResMut<bevy_egui::EguiUserTextures>,
     time: Res<Time>,
@@ -491,7 +491,7 @@ fn enabled() -> bool {
 /// The interface's viewport, built the same way [`crate::ui::framexml`] builds
 /// it. One place decides the conversion from interface units to pixels, and
 /// this function uses it rather than computing its own.
-fn viewport(windows: &Query<&Window>, ui_scale: f64) -> crate::lua::widgets::layout::Viewport {
+fn viewport(windows: &Query<&Window, With<bevy::window::PrimaryWindow>>, ui_scale: f64) -> crate::lua::widgets::layout::Viewport {
     match windows.iter().next() {
         Some(window) => crate::lua::widgets::layout::Viewport::of(
             window.width() as f64,

@@ -576,9 +576,26 @@ fn fitted(ui: &egui::Ui, name: &str, size: f32, width: f32) -> egui::FontId {
 /// replaces the viewport. *World* is lit while a rail or corner tool is in use
 /// and returns to the last one chosen. It is disabled during a playtest, when
 /// no tool that keeps the viewport can be used.
-pub fn workspaces(ui: &mut egui::Ui, tool: &mut Tool, rail: &mut Rail, playing: bool, server: bool) {
+///
+/// `popped` is the workspaces in pop-out windows: their buttons are lit too,
+/// and pressing one sends the tool to its window and brings the window
+/// forward (see `crate::popout`). A pop-out window draws the same control
+/// with `world` false, since it has no world to return to.
+pub fn workspaces(
+    ui: &mut egui::Ui,
+    tool: &mut Tool,
+    rail: &mut Rail,
+    playing: bool,
+    server: bool,
+    popped: &[Tool],
+    world: bool,
+) {
     let in_world = tool.surface() != Surface::Middle;
     ui.spacing_mut().item_spacing.x = 2.0;
+    if !world {
+        draw_workspaces(ui, tool, playing, server, popped);
+        return;
+    }
     let world = ui
         .add_enabled(!playing, egui::Button::selectable(in_world, "World"))
         .on_hover_text(
@@ -598,6 +615,11 @@ pub fn workspaces(ui: &mut egui::Ui, tool: &mut Tool, rail: &mut Rail, playing: 
             Some(_) => Tool::Select,
         };
     }
+    draw_workspaces(ui, tool, playing, server, popped);
+}
+
+/// The workspace buttons and menus of [`workspaces`], after World.
+fn draw_workspaces(ui: &mut egui::Ui, tool: &mut Tool, playing: bool, server: bool, popped: &[Tool]) {
     for subject in &WORKSPACES {
         // A workspace of several parts is available when any part is.
         let open = match subject.tool.parts() {
@@ -611,7 +633,8 @@ pub fn workspaces(ui: &mut egui::Ui, tool: &mut Tool, rail: &mut Rail, playing: 
             Some(_) => None,
             None => held(subject.tool, playing, server),
         };
-        let lit = tool.workspace() == subject.tool;
+        let in_window = popped.iter().any(|popped| popped.workspace() == subject.tool);
+        let lit = tool.workspace() == subject.tool || in_window;
         if subject.tool.parts().is_empty() {
             let response = ui.add_enabled(
                 why.is_none(),
@@ -621,7 +644,7 @@ pub fn workspaces(ui: &mut egui::Ui, tool: &mut Tool, rail: &mut Rail, playing: 
                 Some(_) => response.on_disabled_hover_text(tooltip(subject, why)),
                 None => response.on_hover_text(tooltip(subject, None)),
             };
-            if response.clicked() && !lit {
+            if response.clicked() && (!lit || in_window) {
                 *tool = open.unwrap_or(subject.tool);
             }
             continue;
@@ -637,7 +660,7 @@ pub fn workspaces(ui: &mut egui::Ui, tool: &mut Tool, rail: &mut Rail, playing: 
                 for &(_, part_tool) in subject.tool.parts() {
                     let Some(entry) = part(part_tool) else { continue };
                     let blocked = held(part_tool, playing, server);
-                    let on = *tool == part_tool;
+                    let on = *tool == part_tool || popped.contains(&part_tool);
                     let item = ui.add_enabled(blocked.is_none(), egui::Button::selectable(on, entry.name));
                     let item = match blocked {
                         Some(_) => item.on_disabled_hover_text(tooltip(entry, blocked)),

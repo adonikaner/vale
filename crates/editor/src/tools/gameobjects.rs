@@ -1511,11 +1511,12 @@ fn rebuild_created(
     mut objects: ResMut<GameObjects>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
+    popout: Res<crate::popout::Popout>,
     state: Res<crate::playtest::Playtest>,
 ) {
-    // Under the Game Objects workspace too: Discard there finds the created
-    // template in `templates`.
-    if !state.editing() || !matches!(*tool, Tool::GameObjects | Tool::GameObjectData) {
+    // Under the Game Objects workspace too, in either window: Discard there
+    // finds the created template in `templates`.
+    if !state.editing() || !(*tool == Tool::GameObjects || popout.shows(*tool, Tool::GameObjectData)) {
         return;
     }
     let Some(session) = session else { return };
@@ -1762,7 +1763,7 @@ fn aim(
     state: Res<crate::playtest::Playtest>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) {
     if !state.editing() || *tool != Tool::GameObjects {
@@ -1819,7 +1820,7 @@ fn place_one(
     cursor: &crate::pick::Cursor,
     viewport: &crate::ui::Viewport,
     wants: &bevy_egui::input::EguiWantsInput,
-    windows: &Query<&Window>,
+    windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: &Query<&GlobalTransform, With<WorldCamera>>,
     time: &Time,
 ) {
@@ -1867,7 +1868,7 @@ pub fn press(
     state: Res<crate::playtest::Playtest>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<&GlobalTransform, With<WorldCamera>>,
     gizmo: Res<super::gizmo::Gizmo>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -1937,7 +1938,7 @@ fn enclose(
     mut marquee: ResMut<super::group::Marquee>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) {
     if *tool != Tool::GameObjects {
@@ -1988,7 +1989,7 @@ fn drag(
     time: Res<Time>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) {
     if !state.editing() || *tool != Tool::GameObjects {
         objects.drag = None;
@@ -2293,7 +2294,7 @@ fn ghost(
     keys: Res<ButtonInput<KeyCode>>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<&GlobalTransform, With<WorldCamera>>,
     mut standing: Query<(Entity, &Ghost, &mut Transform)>,
 ) {
@@ -2389,7 +2390,10 @@ pub fn fetch_rows(
     session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
     tool: Res<Tool>,
+    popout: Res<crate::popout::Popout>,
     state: Res<crate::playtest::Playtest>,
+    // The world subject the workspace last followed. See below.
+    mut followed: Local<Option<u32>>,
 ) {
     if let Some(task) = objects.template_task.as_mut() {
         if let Some(done) = block_on(future::poll_once(task)) {
@@ -2409,7 +2413,8 @@ pub fn fetch_rows(
             }
         }
     }
-    if !state.editing() || !matches!(*tool, Tool::GameObjects | Tool::GameObjectData) {
+    let workspace = popout.shows(*tool, Tool::GameObjectData);
+    if !state.editing() || !(*tool == Tool::GameObjects || workspace) {
         return;
     }
     // A row is made again when the database has been written since it was
@@ -2417,12 +2422,24 @@ pub fn fetch_rows(
     // `crate::server::fresh`.
     let writes = session.as_ref().map_or(0, |session| session.database_writes);
     let Some((at, _)) = settings.resolve() else { return };
+    // The workspace in the pop-out window follows the game object tool in
+    // the main one, as `tools::creatures::fetch_rows` does for creatures.
+    if workspace && *tool == Tool::GameObjects {
+        let world = session
+            .as_ref()
+            .and_then(|session| objects.template_subject(&session.server_edits))
+            .map(|subject| subject.entry);
+        if world.is_some() && world != *followed {
+            objects.listed.open = world;
+        }
+        *followed = world;
+    }
     // The template half follows the window's subject: the picker's object in
     // Place, the selected spawn's template in Select, and the open row under
     // the Game Objects workspace.
-    let subject = session.as_ref().and_then(|session| match *tool {
-        Tool::GameObjectData => objects.listed.subject(&session.server_edits),
-        _ => objects.template_subject(&session.server_edits),
+    let subject = session.as_ref().and_then(|session| match workspace {
+        true => objects.listed.subject(&session.server_edits),
+        false => objects.template_subject(&session.server_edits),
     });
     if let Some(subject) = subject {
         let wants_template = objects.template_task.is_none()

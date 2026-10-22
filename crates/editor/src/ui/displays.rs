@@ -49,6 +49,11 @@ pub fn window(
     let Some(mut open) = pick.take() else {
         return;
     };
+    // Drawn in the window it was opened in only. See `super::dialog_home`.
+    if !super::dialog_home(&mut open.home, ctx) {
+        *pick = Some(open);
+        return;
+    }
     let mut close = false;
     let mut chosen: Option<u32> = None;
     let showing: u32 = session

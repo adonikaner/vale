@@ -1114,7 +1114,7 @@ fn aim(
     state: Res<crate::playtest::Playtest>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) {
     if !active(&tool, &state) {
@@ -1164,7 +1164,7 @@ fn press(
     state: Res<crate::playtest::Playtest>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     cursor: Res<crate::pick::Cursor>,
     mut session: Option<ResMut<EditSession>>,
 ) {
@@ -1216,7 +1216,7 @@ fn drag(
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
     time: Res<Time>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     mut session: Option<ResMut<EditSession>>,
 ) {

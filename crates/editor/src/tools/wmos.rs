@@ -229,7 +229,7 @@ pub(crate) fn select(
     buttons: Res<ButtonInput<MouseButton>>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     viewport: Res<crate::ui::Viewport>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     parts: Query<(&ChildOf, &GlobalTransform, &Aabb), With<WmoPart>>,
     placements: Query<&WmoPlacement>,
@@ -369,7 +369,7 @@ fn enclose(
     mut marquee: ResMut<super::group::Marquee>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     placements: Query<&WmoPlacement>,
 ) {

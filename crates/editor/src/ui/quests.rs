@@ -2181,15 +2181,19 @@ pub(super) fn picker(
     open: Option<&Open>,
     now: f64,
 ) {
-    // Once a pass, whichever panel asks first; see `Quests::picker_pass`.
-    let pass = ctx.cumulative_pass_nr();
-    if quests.picker_pass == Some(pass) {
-        return;
-    }
-    quests.picker_pass = Some(pass);
     let Some(mut picker) = quests.picker.take() else {
         return;
     };
+    // Drawn in the window it was opened in only, and there once a pass,
+    // whichever panel asks first; see `Quests::picker_pass` and
+    // `super::dialog_home`. The pass number is a window's own, so the home
+    // is settled first.
+    let pass = ctx.cumulative_pass_nr();
+    if !super::dialog_home(&mut picker.home, ctx) || quests.picker_pass == Some(pass) {
+        quests.picker = Some(picker);
+        return;
+    }
+    quests.picker_pass = Some(pass);
     search_a_table(session, assets, &mut picker);
 
     let mut close = false;

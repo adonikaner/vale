@@ -1697,11 +1697,12 @@ fn rebuild_created(
     mut creatures: ResMut<Creatures>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
+    popout: Res<crate::popout::Popout>,
     state: Res<crate::playtest::Playtest>,
 ) {
-    // Under the Creatures workspace too: Discard there finds the created
-    // template in `templates`.
-    if !state.editing() || !matches!(*tool, Tool::Creatures | Tool::CreatureData) {
+    // Under the Creatures workspace too, in either window: Discard there finds
+    // the created template in `templates`.
+    if !state.editing() || !(*tool == Tool::Creatures || popout.shows(*tool, Tool::CreatureData)) {
         return;
     }
     let Some(session) = session else { return };
@@ -2213,7 +2214,7 @@ fn aim(
     state: Res<crate::playtest::Playtest>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) {
     if !state.editing() || *tool != Tool::Creatures {
@@ -2310,7 +2311,7 @@ fn place_one(
     cursor: &crate::pick::Cursor,
     viewport: &crate::ui::Viewport,
     wants: &bevy_egui::input::EguiWantsInput,
-    windows: &Query<&Window>,
+    windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: &Query<&GlobalTransform, With<WorldCamera>>,
     time: &Time,
 ) {
@@ -2377,7 +2378,7 @@ pub fn press(
     waypoints: Res<super::waypoints::Waypoints>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<&GlobalTransform, With<WorldCamera>>,
     gizmo: Res<super::gizmo::Gizmo>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -2491,7 +2492,7 @@ fn enclose(
     mut marquee: ResMut<super::group::Marquee>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) {
     if *tool != Tool::Creatures {
@@ -2553,7 +2554,7 @@ fn drag(
     time: Res<Time>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) {
     if !state.editing() || *tool != Tool::Creatures {
         creatures.drag = None;
@@ -3073,7 +3074,7 @@ fn ghost(
     keys: Res<ButtonInput<KeyCode>>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<&GlobalTransform, With<WorldCamera>>,
     mut standing: Query<(Entity, &Ghost, &mut Transform)>,
 ) {
@@ -3590,7 +3591,10 @@ pub fn fetch_rows(
     session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
     tool: Res<Tool>,
+    popout: Res<crate::popout::Popout>,
     state: Res<crate::playtest::Playtest>,
+    // The world subject the workspace last followed. See below.
+    mut followed: Local<Option<u32>>,
 ) {
     if let Some(task) = creatures.template_task.as_mut() {
         if let Some(done) = block_on(future::poll_once(task)) {
@@ -3610,7 +3614,8 @@ pub fn fetch_rows(
             }
         }
     }
-    if !state.editing() || !matches!(*tool, Tool::Creatures | Tool::CreatureData) {
+    let workspace = popout.shows(*tool, Tool::CreatureData);
+    if !state.editing() || !(*tool == Tool::Creatures || workspace) {
         return;
     }
     // A row is made again when the database has been written since it was
@@ -3620,12 +3625,27 @@ pub fn fetch_rows(
     let Some((at, _)) = settings.resolve() else {
         return;
     };
+    // With the workspace in the pop-out window and the creature tool in the
+    // main one, the two share this template row, so the workspace follows
+    // the tool: a creature selected or picked in the world opens in the
+    // workspace, and a row opened in the workspace stays until the next one.
+    // See `crate::popout`.
+    if workspace && *tool == Tool::Creatures {
+        let world = session
+            .as_ref()
+            .and_then(|session| creatures.template_subject(&session.server_edits))
+            .map(|subject| subject.entry);
+        if world.is_some() && world != *followed {
+            creatures.listed.open = world;
+        }
+        *followed = world;
+    }
     // The template half follows the window's subject, which in Place is the
     // picker's creature and in Select the selected spawn's template; under
     // the Creatures workspace it is the row open there.
-    let subject = session.as_ref().and_then(|session| match *tool {
-        Tool::CreatureData => creatures.listed.subject(&session.server_edits),
-        _ => creatures.template_subject(&session.server_edits),
+    let subject = session.as_ref().and_then(|session| match workspace {
+        true => creatures.listed.subject(&session.server_edits),
+        false => creatures.template_subject(&session.server_edits),
     });
     if let Some(subject) = subject {
         let wants_template = creatures.template_task.is_none()

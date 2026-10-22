@@ -1553,6 +1553,7 @@ fn read_the_table(
     session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
     tool: Res<Tool>,
+    popout: Res<crate::popout::Popout>,
     state: Res<crate::playtest::Playtest>,
 ) {
     // Collect a finished read whatever the tool is, so switching away and back
@@ -1610,7 +1611,7 @@ fn read_the_table(
     // table there would leave it empty. It must not read when the tool is not
     // chosen, which is the guard below.
     let _ = &state;
-    if *tool != Tool::Items {
+    if !popout.shows(*tool, Tool::Items) {
         return;
     }
     let Some(session) = session else { return };
@@ -1653,6 +1654,7 @@ fn read_the_row(
     session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
     tool: Res<Tool>,
+    popout: Res<crate::popout::Popout>,
 ) {
     if let Some(task) = items.row_task.as_mut() {
         if let Some(done) = block_on(future::poll_once(task)) {
@@ -1664,7 +1666,7 @@ fn read_the_row(
         }
         return;
     }
-    if *tool != Tool::Items {
+    if !popout.shows(*tool, Tool::Items) {
         return;
     }
     let Some(entry) = items.open else { return };

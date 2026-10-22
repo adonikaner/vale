@@ -548,7 +548,7 @@ fn ray_to_segment(origin: Vec3, direction: Vec3, a: Vec3, b: Vec3) -> Option<(f3
 }
 
 pub(super) fn aim_of(
-    windows: &Query<&Window>,
+    windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) -> Option<Aim> {
     let (origin, direction) = crate::pick::ray(windows, camera)?;
@@ -593,7 +593,7 @@ fn aim(
     state: Res<crate::playtest::Playtest>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) {
     if !active(&tool, &state) {
@@ -670,7 +670,7 @@ fn press(
     state: Res<crate::playtest::Playtest>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     cursor: Res<crate::pick::Cursor>,
     mut session: Option<ResMut<EditSession>>,
 ) {
@@ -744,7 +744,7 @@ fn drag(
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
     time: Res<Time>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     mut session: Option<ResMut<EditSession>>,
 ) {
@@ -865,7 +865,7 @@ fn placed_line(session: &EditSession, draft: &Draft, at: Vec3) -> String {
 fn lift(
     flights: &mut Flightpaths,
     buttons: &ButtonInput<MouseButton>,
-    windows: &Query<&Window>,
+    windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     session: Option<&mut EditSession>,
 ) {

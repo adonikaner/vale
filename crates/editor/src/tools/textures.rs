@@ -271,7 +271,7 @@ fn stroke(
     scroll: Res<AccumulatedMouseScroll>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     viewport: Res<crate::ui::Viewport>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     state: Res<crate::playtest::Playtest>,
     time: Res<Time>,
     pressure: crate::tablet::Pressure,

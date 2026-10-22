@@ -344,7 +344,7 @@ fn aim(
     state: Res<crate::playtest::Playtest>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) {
     if !state.editing() || *tool != Tool::Lights {
@@ -474,7 +474,7 @@ fn press(
     mut browser: Option<ResMut<super::tables::Browser>>,
     cursor: Res<crate::pick::Cursor>,
     focus: Res<WorldFocus>,
-    over: (Res<crate::ui::Viewport>, Res<bevy_egui::input::EguiWantsInput>, Query<&Window>),
+    over: (Res<crate::ui::Viewport>, Res<bevy_egui::input::EguiWantsInput>, Query<&Window, With<bevy::window::PrimaryWindow>>),
 ) {
     if !state.editing() || *tool != Tool::Lights {
         return;
@@ -717,7 +717,7 @@ fn drag(
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
     time: Res<Time>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     mut session: Option<ResMut<EditSession>>,
 ) {

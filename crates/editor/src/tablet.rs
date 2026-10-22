@@ -366,7 +366,7 @@ fn meter(
     state: Res<crate::playtest::Playtest>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) -> Result {
     use crate::tools::Tool;
     let scales = tablet.pressure_strength || tablet.pressure_radius;

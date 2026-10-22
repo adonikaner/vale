@@ -137,6 +137,7 @@ fn take(
     tiles: Query<&vale_client::render::terrain::TerrainTile>,
     mut quit: MessageWriter<AppExit>,
     mut asked_at: Local<Option<f32>>,
+    popout: Res<crate::popout::Popout>,
 ) {
     use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 
@@ -164,6 +165,17 @@ fn take(
             tiles.iter().count(),
         ),
         None => info!("--shot: too few frames before the shutter to report a frame time"),
+    }
+    // Each pop-out window, beside the main window's picture as
+    // `<name>-popout<slot>.<ext>`.
+    for (slot, window) in crate::popout::windows(&popout) {
+        let at = std::path::Path::new(&path);
+        let stem = at.file_stem().and_then(|stem| stem.to_str()).unwrap_or("shot");
+        let extension = at.extension().and_then(|ext| ext.to_str()).unwrap_or("png");
+        let beside = at.with_file_name(format!("{stem}-popout{slot}.{extension}"));
+        commands
+            .spawn(Screenshot::window(window))
+            .observe(save_to_disk(beside));
     }
     commands
         .spawn(Screenshot::primary_window())

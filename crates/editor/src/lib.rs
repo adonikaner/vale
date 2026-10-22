@@ -23,6 +23,8 @@
 //!              carry no offset and the game stores it in the file
 //! stage.rs     the spell preview: two units and the values a cast changes, so
 //!              the client's own passes draw it
+//! popout.rs    a workspace in an OS window of its own, beside the main
+//!              window's world
 //! portraits.rs a picture of any model the archives name, one per slot per
 //!              frame into a small image, for the pickers' rows
 //! favourites.rs the models a person starred and the ones they placed last,
@@ -95,6 +97,7 @@ pub mod navmesh;
 pub mod pick;
 pub mod places;
 pub mod playtest;
+pub mod popout;
 pub mod portraits;
 pub mod server;
 pub mod session;
@@ -254,7 +257,7 @@ impl Plugin for EditorPlugins {
             ui::PanelPlugin,
         ));
         // Outside the tuple, which Bevy implements for at most fifteen plugins.
-        app.add_plugins(tablet::TabletPlugin);
+        app.add_plugins((tablet::TabletPlugin, popout::PopoutPlugin));
         app.init_resource::<favourites::Favourites>()
             .init_resource::<bookmarks::Bookmarks>();
     }
@@ -430,6 +433,13 @@ pub struct Args {
     /// is itself two presses in, so without this flag a scripted run cannot
     /// photograph its list, its preview pane or its two kept lists.
     pub browse: bool,
+    /// `--pop-out [workspace,...]`: open the workspace `--tool` names in a
+    /// window of its own, with the main window on the world, and each
+    /// workspace listed (by the names `--tool` takes) in another. With
+    /// `--shot`, each window is photographed too, beside the main window's
+    /// picture. See `crate::popout`.
+    pub pop_out: bool,
+    pub pop_out_also: Vec<tools::Tool>,
     /// `--story`: open the data workspace on the Storyboard view rather than
     /// on the fields.
     ///
@@ -906,6 +916,8 @@ impl Default for Args {
             table: None,
             lab: false,
             browse: false,
+            pop_out: false,
+            pop_out_also: Vec::new(),
             shell: false,
             reload: None,
             revert: false,
@@ -1112,6 +1124,13 @@ impl Args {
                 }
                 "--lab" => parsed.lab = true,
                 "--browse" => parsed.browse = true,
+                "--pop-out" => {
+                    parsed.pop_out = true;
+                    // The list is optional, so a following flag is not eaten.
+                    if let Some(listed) = args.next_if(|next| !next.starts_with("--")) {
+                        parsed.pop_out_also = listed.split(',').filter_map(parse_tool).collect();
+                    }
+                }
                 "--story" => parsed.story = true,
                 "--seek" => {
                     parsed.seek = args.next().as_deref().and_then(|v| v.trim().parse().ok());

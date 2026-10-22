@@ -61,6 +61,9 @@ pub struct Fact {
 /// The picker while it is open.
 #[derive(Debug)]
 pub struct DisplayPick {
+    /// The window the dialog was opened in. Several windows can draw it, and
+    /// it is drawn in this one only. See `crate::ui::dialog_home`.
+    pub home: Option<bevy_egui::egui::Context>,
     pub table: Table,
     /// The column a choice is written to.
     pub target: ColumnTarget,
@@ -103,6 +106,7 @@ impl DisplayPick {
             hits: Vec::new(),
             built: None,
             worn: HashMap::new(),
+            home: None,
         }
     }
 

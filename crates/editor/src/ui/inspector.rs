@@ -99,6 +99,24 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
                 .size(13.0)
                 .color(theme::INK),
         );
+        // A workspace in the main window can be moved to a window of its own.
+        // See `crate::popout`.
+        if tool.covers_viewport() && !editing.popout.holds(tool) {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let pop = ui
+                    .add_enabled(editing.popout.editing, egui::Button::new("Pop Out").small())
+                    .on_hover_text(
+                        "Open this workspace in a window of its own, and return this window \
+                         to the world. Dock or close that window to bring it back. Each \
+                         workspace can have a window, except that the table workspaces share \
+                         one.",
+                    )
+                    .on_disabled_hover_text("Not during a playtest.");
+                if pop.clicked() {
+                    editing.popout.asks.push(crate::popout::Ask::Open(tool));
+                }
+            });
+        }
     });
     ui.add_space(2.0);
     if tool.edits() {

@@ -430,7 +430,7 @@ fn aim(
     cursor: Res<Cursor>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut session: Option<ResMut<EditSession>>,
 ) {
     if *current != super::Tool::Road || !state.editing() {

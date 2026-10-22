@@ -505,6 +505,9 @@ pub enum PickFor {
 /// The reference picker's state — see [`crate::ui::quests`], which draws it.
 #[derive(Debug)]
 pub struct Picker {
+    /// The window the dialog was opened in. Several windows can draw it, and
+    /// it is drawn in this one only. See `crate::ui::dialog_home`.
+    pub home: Option<bevy_egui::egui::Context>,
     pub target: Target,
     pub purpose: PickFor,
     /// For a column whose sign picks the table: the two targets, positive
@@ -533,6 +536,7 @@ impl Picker {
             built: None,
             built_at: None,
             task: None,
+            home: None,
         }
     }
 
@@ -1339,6 +1343,7 @@ fn read_the_tables(
     session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
     tool: Res<Tool>,
+    popout: Res<crate::popout::Popout>,
 ) {
     if let Some(task) = quests.task.as_mut() {
         if let Some(done) = block_on(future::poll_once(task)) {
@@ -1382,7 +1387,8 @@ fn read_the_tables(
     //
     // The item workspace reads it too: it shows `start_quest` as the quest's
     // title rather than its number, and its picker searches this list.
-    let wanted = matches!(*tool, Tool::Quests | Tool::Items)
+    let wanted = popout.shows(*tool, Tool::Quests)
+        || popout.shows(*tool, Tool::Items)
         || (matches!(*tool, Tool::Creatures | Tool::GameObjects) && quests.window_for.is_some());
     if !wanted {
         return;
@@ -1448,6 +1454,7 @@ fn read_the_row(
     session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
     tool: Res<Tool>,
+    popout: Res<crate::popout::Popout>,
 ) {
     if let Some(task) = quests.row_task.as_mut() {
         if let Some(done) = block_on(future::poll_once(task)) {
@@ -1459,7 +1466,7 @@ fn read_the_row(
         }
         return;
     }
-    if *tool != Tool::Quests {
+    if !popout.shows(*tool, Tool::Quests) {
         return;
     }
     let Some(entry) = quests.open else { return };

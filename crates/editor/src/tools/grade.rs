@@ -183,7 +183,7 @@ pub fn aim(
     cursor: Res<Cursor>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) {
     if *tool != super::Tool::Grade || !state.editing() {
         return;

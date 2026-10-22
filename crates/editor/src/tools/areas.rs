@@ -296,7 +296,7 @@ fn aim(
     scroll: Res<AccumulatedMouseScroll>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     viewport: Res<crate::ui::Viewport>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) {
     areas.at = None;
@@ -353,7 +353,7 @@ fn stroke(
     buttons: Res<ButtonInput<MouseButton>>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     viewport: Res<crate::ui::Viewport>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) {
     let Some(session) = session.as_mut() else {

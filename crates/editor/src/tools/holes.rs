@@ -123,7 +123,7 @@ fn aim(
     state: Res<crate::playtest::Playtest>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     viewport: Res<crate::ui::Viewport>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) {
     state_of.at = None;
@@ -261,7 +261,7 @@ fn stamp(
 /// which is also what makes a drag continuous.
 fn under(
     session: &EditSession,
-    windows: &Query<&Window>,
+    windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) -> Option<Square> {
     let at = crate::pick::solid_under(session, windows, camera)?;

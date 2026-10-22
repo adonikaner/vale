@@ -375,7 +375,7 @@ pub fn fly(
     scroll: Res<AccumulatedMouseScroll>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     viewport: Res<crate::ui::Viewport>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     // Whether the right-drag now in progress was started over the world.
     mut steering: Local<bool>,
     time: Res<Time>,
@@ -530,7 +530,7 @@ fn top_down(
     keys: &ButtonInput<KeyCode>,
     motion: &Pointer,
     scroll: &AccumulatedMouseScroll,
-    windows: &Query<&Window>,
+    windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
     time: &Time,
     in_world: bool,
     steering: bool,

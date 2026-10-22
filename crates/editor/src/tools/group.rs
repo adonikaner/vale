@@ -474,7 +474,7 @@ fn track(
     mut marquee: ResMut<Marquee>,
     buttons: Res<ButtonInput<MouseButton>>,
     tool: Res<Tool>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) {
     let Some(mut held) = marquee.held else {
         return;
@@ -559,7 +559,7 @@ pub fn on_screen(
 /// The camera and window [`on_screen`] needs, from the queries a tool holds.
 pub fn view<'a>(
     camera: &'a Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
-    windows: &'a Query<&Window>,
+    windows: &'a Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) -> Option<(&'a Camera, &'a GlobalTransform, &'a Window)> {
     let (camera, eye) = camera.single().ok()?;
     let window = windows.single().ok()?;

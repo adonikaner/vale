@@ -2828,6 +2828,7 @@ const STOP_SECS: f32 = 0.25;
 fn listen(
     browser: Option<ResMut<Browser>>,
     tool: Res<super::Tool>,
+    popout: Res<crate::popout::Popout>,
     playtest: Res<crate::playtest::Playtest>,
     assets: Res<GameAssets>,
     mut voices: vale_client::sound::mixer::Voices,
@@ -2843,7 +2844,7 @@ fn listen(
             browser.hearing = None;
         }
     }
-    let away = tool.table().is_none() || !playtest.editing();
+    let away = popout.browser_tool(*tool).table().is_none() || !playtest.editing();
     let ask = match away {
         true => {
             browser.listen = None;
@@ -2886,6 +2887,9 @@ fn listen(
 /// is open.
 pub fn open_tables(
     tool: Res<super::Tool>,
+    // A table workspace in a pop-out window has the browser unless the main
+    // window's tool has a table. See `crate::popout`.
+    popout: Res<crate::popout::Popout>,
     assets: Res<GameAssets>,
     args: Res<crate::Args>,
     session: Option<ResMut<EditSession>>,
@@ -2900,7 +2904,7 @@ pub fn open_tables(
     let (Some(mut session), Some(mut browser)) = (session, browser) else {
         return;
     };
-    let Some(wanted) = tool.table() else {
+    let Some(wanted) = popout.browser_tool(*tool).table() else {
         // Clear the stage here when no table tool is chosen. The panel sets
         // `showing`, and the panel is not drawn once the rail moves to a World
         // tool. Without this the stage stays up, the actors stay in the world

@@ -314,7 +314,7 @@ pub(crate) fn select(
     buttons: Res<ButtonInput<MouseButton>>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     viewport: Res<crate::ui::Viewport>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     drawn: Query<(&Doodad, &GlobalTransform, &Aabb)>,
     // The narrow phase's meshes — see [`nearest`]. `ResMut` because a
@@ -432,7 +432,7 @@ pub(crate) fn select(
 /// The pointer's ray through the world camera, in Bevy's axes. Physical
 /// pixels, for the reason `crate::pick::aim` gives beside its own copy.
 pub(crate) fn pointer_ray(
-    windows: &Query<&Window>,
+    windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) -> Option<(Vec3, Vec3)> {
     let window = windows.single().ok()?;
@@ -456,7 +456,7 @@ fn enclose(
     mut marquee: ResMut<super::group::Marquee>,
     session: Option<Res<EditSession>>,
     tool: Res<Tool>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     drawn: Query<&Doodad>,
 ) {
@@ -957,7 +957,7 @@ fn nudge(
     scroll: Res<AccumulatedMouseScroll>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     viewport: Res<crate::ui::Viewport>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     time: Res<Time>,
 ) {
     if *tool != Tool::Doodads || !state.editing() || wants.wants_keyboard_input() {

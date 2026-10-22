@@ -2793,6 +2793,8 @@ pub fn publish_for_the_preview(
     time: Res<Time>,
     stage: Res<crate::stage::Stage>,
     tool: Res<crate::tools::Tool>,
+    // The workspace in the pop-out window draws displays too.
+    popout: Res<crate::popout::Popout>,
     session: Option<ResMut<EditSession>>,
     // The revision last seen, when it changed, the revision last published,
     // and whether the stage was open last frame. The third makes this run
@@ -2829,17 +2831,20 @@ pub fn publish_for_the_preview(
     // nothing, and a new skin showed on nothing, until a playtest published
     // the tables.
     use crate::tools::Tool;
-    let draws_displays = matches!(
-        *tool,
-        Tool::CreatureDisplays
-            | Tool::ObjectDisplays
-            | Tool::ItemDisplays
-            | Tool::CreatureData
-            | Tool::GameObjectData
-            | Tool::Items
-            | Tool::Creatures
-            | Tool::GameObjects
-    );
+    let draws = |tool: Tool| {
+        matches!(
+            tool,
+            Tool::CreatureDisplays
+                | Tool::ObjectDisplays
+                | Tool::ItemDisplays
+                | Tool::CreatureData
+                | Tool::GameObjectData
+                | Tool::Items
+                | Tool::Creatures
+                | Tool::GameObjects
+        )
+    };
+    let draws_displays = draws(*tool) || popout.tools().any(draws);
     let previewing = stage.is_open() || *tool == Tool::Lights || draws_displays;
     if !previewing {
         // Nothing is being previewed. The next thing that needs the tables is

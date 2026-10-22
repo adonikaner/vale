@@ -1176,7 +1176,7 @@ fn pose_character(
 /// login screen must not change where the last session's camera was pointing.
 fn aim_camera(
     mut scene: ResMut<GlueScene>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut camera: Query<
         (&mut Transform, &mut Projection, &mut Camera),
         With<crate::world::camera::WorldCamera>,

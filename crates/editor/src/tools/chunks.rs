@@ -1619,7 +1619,7 @@ fn aim(
     state: Res<crate::playtest::Playtest>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     viewport: Res<crate::ui::Viewport>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) {
     let chunks = chunks.bypass_change_detection();

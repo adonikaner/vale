@@ -561,7 +561,7 @@ fn aim(
     state: Res<crate::playtest::Playtest>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) {
     if !state.editing() || *tool != Tool::Creatures || waypoints.open.is_none() {
@@ -630,7 +630,7 @@ fn press(
     state: Res<crate::playtest::Playtest>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) {
     if !state.editing() || *tool != Tool::Creatures || waypoints.open.is_none() {
         return;
@@ -718,7 +718,7 @@ fn drag(
     time: Res<Time>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) {
     if !state.editing() || *tool != Tool::Creatures {
         waypoints.drag = None;

@@ -158,7 +158,7 @@ pub fn draw(
         // returns to the last rail tool; the other three replace the viewport.
         // See [`super::rail`], which holds the world tools' rail too.
         let server = playing.server.resolve().is_some();
-        super::rail::workspaces(ui, subjects.tool, subjects.rail, in_world, server);
+        super::rail::workspaces(ui, subjects.tool, subjects.rail, in_world, server, &subjects.popped, true);
 
         // The playtest controls sit at the far right, apart from the rest,
         // because they are the only controls here that take the editor out of
@@ -183,6 +183,8 @@ pub fn draw(
 pub struct Subjects<'a> {
     pub tool: &'a mut crate::tools::Tool,
     pub rail: &'a mut super::rail::Rail,
+    /// The workspaces in pop-out windows. See `crate::popout`.
+    pub popped: Vec<crate::tools::Tool>,
 }
 
 /// The right-hand end of the bar while a playtest is running: the playtest's

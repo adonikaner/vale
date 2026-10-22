@@ -494,7 +494,7 @@ fn aim(
     buttons: Res<ButtonInput<MouseButton>>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     viewport: Res<crate::ui::Viewport>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) {
     gizmo.hot = None;
@@ -559,7 +559,7 @@ fn drag(
     tool: Res<Tool>,
     time: Res<Time>,
     buttons: Res<ButtonInput<MouseButton>>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     mut settling: Settling,
 ) {
@@ -858,7 +858,7 @@ fn wrap(degrees: f32) -> f32 {
 /// pixels and `cursor_position` is logical, so on a 125% display the ray misses
 /// by a quarter of the distance from the screen's centre.
 fn ray(
-    windows: &Query<&Window>,
+    windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) -> Option<(Vec3, Vec3)> {
     let window = windows.single().ok()?;

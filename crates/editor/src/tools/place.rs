@@ -540,7 +540,7 @@ fn aim(
     scroll: Res<AccumulatedMouseScroll>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     viewport: Res<crate::ui::Viewport>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) {
     // Disarm when the tool changes or editing stops. A model left on the
     // cursor after a switch to the terrain brush would be placed by the next
@@ -758,7 +758,7 @@ fn commit(
     buttons: Res<ButtonInput<MouseButton>>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     viewport: Res<crate::ui::Viewport>,
-    windows: Query<&Window>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     parts: Query<(&GlobalTransform, &Aabb), With<Ghost>>,
     mut tiles: Query<(&TerrainTile, &mut PendingDoodads, &mut PendingWmos)>,
 ) {
