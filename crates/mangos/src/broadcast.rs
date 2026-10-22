@@ -22,17 +22,17 @@
 //! `entry` is the primary key. A text this project creates is numbered one
 //! above the highest entry the table holds.
 
-use crate::row::{Assignment, Key, Life};
+use crate::row::{Assignment, Key, Table};
 
 pub use crate::schema::{Column, Group, Kind, Row, RowValue};
 
 pub const TABLE: &str = "broadcast_text";
 
-/// The static name for the table, for a caller resolving a name read out of
-/// a file.
-pub fn table_named(name: &str) -> Option<&'static str> {
-    (name == TABLE).then_some(TABLE)
-}
+/// The one table.
+pub const TABLES: &[Table] = &[TEXTS];
+
+/// `broadcast_text`. Every row may be edited, created and removed.
+pub const TEXTS: Table = Table::new(TABLE, &COLUMNS);
 
 /// The twelve columns, in the loader's `SELECT` order.
 pub const COLUMNS: [Column; 12] = [
@@ -49,11 +49,6 @@ pub const COLUMNS: [Column; 12] = [
     Column { name: "emote_delay2", kind: Kind::Millis, group: Group::Behaviour, about: "milliseconds after the line before emote_id2 plays" },
     Column { name: "emote_delay3", kind: Kind::Millis, group: Group::Behaviour, about: "milliseconds after the line before emote_id3 plays" },
 ];
-
-/// One column, by name.
-pub fn column(name: &str) -> Option<&'static Column> {
-    COLUMNS.iter().find(|column| column.name == name)
-}
 
 /// The key of one row: the entry.
 pub fn key(entry: u32) -> Key {
@@ -160,11 +155,11 @@ impl Text {
         let number = || value.trim().parse::<i64>().ok().map(|n| n.max(0) as u32);
         let slot = match column {
             "male_text" => {
-                self.male = unquote(value);
+                self.male = crate::sql::unquote(value);
                 return true;
             }
             "female_text" => {
-                self.female = unquote(value);
+                self.female = crate::sql::unquote(value);
                 return true;
             }
             "chat_type" => &mut self.chat_type,
@@ -188,36 +183,6 @@ impl Text {
     }
 }
 
-/// The inside of a quoted SQL literal, or the text itself when it is not one.
-fn unquote(literal: &str) -> String {
-    let Some(inner) = literal.strip_prefix('\'').and_then(|rest| rest.strip_suffix('\'')) else {
-        return literal.to_string();
-    };
-    inner.replace("\\'", "'").replace("\\\\", "\\")
-}
-
-/// The statements a save emits for one row, on
-/// [`crate::eventai::statements`]' terms.
-pub fn statements(key: &Key, life: Life, changes: &[Assignment]) -> Vec<String> {
-    match life {
-        Life::Update => crate::row::update(TABLE, key, changes).into_iter().collect(),
-        Life::Insert => match crate::row::insert(TABLE, key, changes) {
-            Some(statement) => vec![crate::row::delete(TABLE, key), statement],
-            None => Vec::new(),
-        },
-        Life::Delete => vec![crate::row::delete(TABLE, key)],
-    }
-}
-
-/// The row a key names, which an undo is taken from.
-pub fn row_query(key: &Key) -> String {
-    format!("SELECT * FROM {} WHERE {} LIMIT 1", crate::sql::name(TABLE), key.where_clause())
-}
-
-/// Whether a row is already there, which an apply asks before it creates one.
-pub fn exists_query(key: &Key) -> String {
-    format!("SELECT 1 FROM {} WHERE {} LIMIT 1", crate::sql::name(TABLE), key.where_clause())
-}
 
 /// Several rows by entry, or `None` for no entries.
 pub fn rows_query(entries: &[u32]) -> Option<String> {
@@ -255,6 +220,7 @@ pub fn max_entry_query() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::row::Life;
 
     /// The schema is the loader's `SELECT`, column for column.
     #[test]
@@ -281,7 +247,7 @@ mod tests {
         assert!(text.set("emote_delay1", "500"));
         assert!(!text.set("emote_delay1", "soon"));
         assert!(!text.set("entry", "5"));
-        let created = statements(&text.key(), Life::Insert, &text.assignments());
+        let created = TEXTS.statements(&text.key(), Life::Insert, &text.assignments());
         assert_eq!(created[0], "DELETE FROM `broadcast_text` WHERE `entry` = 1234;");
         assert!(created[1].contains("'Stand fast!'") && created[1].contains("'Hold the line'"), "{}", created[1]);
         assert_eq!(text.assignments().len(), 11);

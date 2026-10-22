@@ -26,6 +26,8 @@
 //! skills.rs     which page of the spellbook a spell goes on
 //! book.rs       the spellbook itself, in the client's two sort orders
 //! trainer.rs    the training window, laid out the same way
+//! teaching.rs   which spell teaches a spell, the talent ranks no trainer
+//!               teaches, and the skill lines a trainer row may require
 //! tradeskill.rs the two profession windows: the recipe thresholds, the
 //!               difficulty formula, the sort, and which window a cast opens
 //! item/         ItemDisplayInfo: what a garment paints and what it adds
@@ -121,6 +123,7 @@ pub mod emotetext;
 pub mod enchant;
 pub mod stationery;
 pub mod talent;
+pub mod teaching;
 pub mod taxi;
 pub mod territory;
 pub mod transport;

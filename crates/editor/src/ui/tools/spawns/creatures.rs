@@ -118,6 +118,11 @@ pub struct Subject<'a> {
     /// A panel that reports an edit as not applied must be able to open the
     /// panel that applies it. See [`crate::ui::shell::sync`].
     pub server_panel: &'a mut crate::ui::shell::popover::Popover,
+    /// Where each server subject stands, held for half a second: the
+    /// creatures' line in [`edits_block`] and whether the selected spawn is
+    /// applied are read from it rather than planned each frame. See
+    /// [`crate::server::sync::Standings`].
+    pub standings: &'a mut crate::server::sync::Standings,
     /// The archives, for what a display id looks like and for the client
     /// tables a reference resolves through.
     pub assets: &'a GameAssets,
@@ -178,14 +183,22 @@ fn panel(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     }
 
     // What this project changes and how much of it is in the database are
-    // worked out once a frame and passed to both the block and the selected
-    // spawn's sentence. Each value is a walk of the store or a file read.
+    // read from the held standing, which is recomputed at most every half
+    // second, and passed to both the block and the selected spawn's sentence.
+    // Computing them is a walk of the store and a file read.
     //
     // Drawn above the mode switch because it is about the project rather than
     // about either mode. See [`edits_block`].
-    let plan = crate::server::creatures::plan(subject.session);
-    let on_server = crate::server::creatures::OnTheServer::read_with(subject.session, &plan);
-    edits_block(ui, subject, &plan, &on_server);
+    let on_server = subject
+        .standings
+        .of(
+            crate::server::sync::Half::Row(crate::server::stack::Subject::Creatures),
+            subject.session,
+            subject.assets,
+            subject.now,
+        )
+        .clone();
+    edits_block(ui, subject, &on_server);
 
     // Select or Place, the placement tools' own switch. See
     // `crate::tools::placements::place::Mode` for why this is a mode rather than a second
@@ -459,33 +472,22 @@ fn nothing_to_show(ui: &mut egui::Ui, subject: &Subject<'_>) {
 /// panel. This block shows only the state, so that a person looking at a
 /// creature can tell whether what they see is in the database without opening
 /// another panel.
-fn edits_block(
-    ui: &mut egui::Ui,
-    subject: &mut Subject<'_>,
-    plan: &crate::server::creatures::Plan,
-    on_server: &crate::server::creatures::OnTheServer,
-) {
-    let undoable = on_server.rows();
-    if plan.is_empty() && undoable == 0 {
+///
+/// `on_server` is the creatures' held [`crate::server::sync::Standing`]. Its
+/// `outstanding` counts this project's rows and paths not yet in the
+/// database; without that count the line below read the same whether nothing
+/// had been applied or everything had.
+fn edits_block(ui: &mut egui::Ui, subject: &mut Subject<'_>, on_server: &crate::server::sync::Standing) {
+    let undoable = on_server.applied;
+    let empty = on_server.changed == 0;
+    if empty && undoable == 0 {
         return;
     }
-    // How many of this project's rows and paths are not yet in the database.
-    // Without this count the line below read the same whether nothing had
-    // been applied or everything had.
-    let outstanding = plan
-        .rows
-        .iter()
-        .filter(|row| !on_server.covers(row.table, &row.key))
-        .count()
-        + plan
-            .paths
-            .iter()
-            .filter(|path| !on_server.covers(path.which.table(), &path.key()))
-            .count();
+    let outstanding = on_server.outstanding;
 
     ui.separator();
     theme::heading(ui, "This project");
-    if !plan.is_empty() {
+    if !empty {
         // Amber while something is not yet applied, dim once all of it is in
         // the database. A warning colour that is always on stops being read
         // as a warning.
@@ -494,19 +496,19 @@ fn edits_block(
             false => theme::WARN,
         };
         ui.label(
-            egui::RichText::new(format!("{} — {}", plan.line(), SQL))
+            egui::RichText::new(format!("{} — {}", on_server.summary, SQL))
                 .small()
                 .color(colour),
         );
     }
-    for refused in &plan.refused {
+    for refused in &on_server.refused {
         ui.label(egui::RichText::new(refused).small().color(theme::BAD));
     }
 
     // The project's state is two independent facts, and the line states both.
     // A revert puts the database back and leaves the project still claiming
     // the rows, so the editor goes on drawing the edited values.
-    match (undoable, outstanding, plan.is_empty()) {
+    match (undoable, outstanding, empty) {
         (0, _, false) => theme::note(
             ui,
             "Not applied. The database still holds its previous values; the editor \
@@ -515,13 +517,13 @@ fn edits_block(
         // Everything this project claims is in the database. This case has
         // its own sentence so that it can be told from the case above.
         (n, 0, false) => {
-            let line = match on_server.current() {
+            let line = match on_server.current {
                 true => format!(
                     "Applied — all {n} row(s) are in the database. Restart the server to \
                      see them; Restore reverts them."
                 ),
                 // The signature is per process, so a project also reads this
-                // way after a relaunch. See `EditSession::applied_creatures`.
+                // way after a relaunch. See `EditSession::applied`.
                 false => format!(
                     "Applied — all {n} row(s) are in the database, possibly with older \
                      values: an edit was made since, or this is a later session. Apply \
@@ -745,7 +747,7 @@ fn picker(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
 /// has the same row.
 fn template_actions(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     let now = subject.now;
-    let patch = crate::tools::spawns::creatures::server_patch(subject.server);
+    let patch = crate::server::settings::server_patch(subject.server);
     let shown = subject
         .creatures
         .template_subject(&subject.session.server_edits);
@@ -919,7 +921,7 @@ fn claim(
     ui: &mut egui::Ui,
     subject: &mut Subject<'_>,
     spawn: &Spawn,
-    on_server: &crate::server::creatures::OnTheServer,
+    on_server: &crate::server::sync::Standing,
 ) {
     let now = subject.now;
     // Whether this project has written this row to the database. Without it
@@ -1679,13 +1681,15 @@ pub(in crate::ui) fn groups(
 ) {
     page_spacing(ui);
     let mut seen: Vec<Group> = Vec::new();
-    for column in creature::columns_of(table) {
+    let all: &'static [Column] =
+        vale_mangos::row::table_named(creature::TABLES, table).map_or(&[], |table| table.columns);
+    for column in all {
         if !seen.contains(&column.group) {
             seen.push(column.group);
         }
     }
     for group in seen {
-        let columns: Vec<&'static Column> = creature::columns_of(table)
+        let columns: Vec<&'static Column> = all
             .iter()
             .filter(|column| column.group == group)
             .collect();
@@ -1792,7 +1796,7 @@ fn field(
                 .server_edits
                 .get(table, key, "npc_flags")
                 .map(str::to_string)
-                .or_else(|| creature::column(table, "npc_flags").and_then(|flags| flags.literal(row)))
+                .or_else(|| creature::TEMPLATE_TABLE.column("npc_flags").and_then(|flags| flags.literal(row)))
                 .and_then(|flags| flags.trim().parse::<u32>().ok())
                 .unwrap_or(0);
             let menu = showing.trim().parse().unwrap_or(0);

@@ -139,7 +139,7 @@ impl EditSession {
     /// so does keeping a spawn that was marked for removal.
     ///
     /// Nothing is sent anywhere. The project's file is written and the database
-    /// is reached by [`crate::server::creatures::apply`], which is a button.
+    /// is reached by an Apply on the Server panel, which is a button.
     pub fn set_server_row(
         &mut self,
         table: &str,
@@ -184,7 +184,7 @@ impl EditSession {
     /// the edit that deletes the path. The two are kept distinct on purpose.
     ///
     /// Nothing is sent anywhere. The project's file is written and the database
-    /// is reached by [`crate::server::creatures::apply`], which is a button.
+    /// is reached by an Apply on the Server panel, which is a button.
     pub fn set_server_path(
         &mut self,
         which: vale_mangos::path::Which,
@@ -504,7 +504,7 @@ impl EditSession {
     /// container: a DBC is bytes in the overlay and this is a text file nothing
     /// but this editor and a person reads.
     pub fn save_server_edits(&mut self) -> bool {
-        let path = crate::server::creatures::EDITS_VPATH;
+        let path = crate::server::subject::EDITS_VPATH;
         if self.server_edits.is_empty() {
             if let Some(disk) = self.project.path_for(path) {
                 let _ = std::fs::remove_file(disk);
@@ -563,7 +563,7 @@ impl EditSession {
 /// as empty rather than failing the open: the alternative is a project that
 /// cannot be opened at all because of a file no other tool reads.
 pub(super) fn read_server_edits(project: &vale_edit::project::Project) -> vale_mangos::row::Edits {
-    let Some(bytes) = project.read(crate::server::creatures::EDITS_VPATH) else {
+    let Some(bytes) = project.read(crate::server::subject::EDITS_VPATH) else {
         return vale_mangos::row::Edits::default();
     };
     match String::from_utf8(bytes) {
@@ -575,13 +575,13 @@ pub(super) fn read_server_edits(project: &vale_edit::project::Project) -> vale_m
             for line in refused {
                 warn!(
                     "{}: not read, because its key or value is not a SQL literal: {line}",
-                    crate::server::creatures::EDITS_VPATH
+                    crate::server::subject::EDITS_VPATH
                 );
             }
             edits
         }
         Err(e) => {
-            warn!("{}: {e}", crate::server::creatures::EDITS_VPATH);
+            warn!("{}: {e}", crate::server::subject::EDITS_VPATH);
             vale_mangos::row::Edits::default()
         }
     }

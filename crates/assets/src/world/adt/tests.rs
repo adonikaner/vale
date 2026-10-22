@@ -1702,3 +1702,70 @@ fn seam_mismatches(adt: &Adt) -> usize {
         })
         .count()
 }
+
+/// The vertex layout: nine outer rows interleaved with eight inner ones,
+/// running along decreasing world x and y from the chunk origin.
+#[test]
+fn the_vertex_grid_is_nine_by_nine_interleaved_with_eight_by_eight() {
+    assert_eq!(HEIGHTS_PER_CHUNK, 145);
+    assert_eq!(outer_index(0, 0), 0);
+    assert_eq!(inner_index(0, 0), 9);
+    assert_eq!(outer_index(1, 0), 17);
+    assert_eq!(outer_index(8, 8), 144);
+
+    assert_eq!(vertex_offset(0), (0.0, 0.0));
+    let (dx, dy) = vertex_offset(inner_index(0, 0));
+    assert!((dx - 0.5 * UNIT_SIZE).abs() < 1e-3 && (dy - 0.5 * UNIT_SIZE).abs() < 1e-3);
+    let (dx, dy) = vertex_offset(outer_index(8, 8));
+    assert!((dx - 8.0 * UNIT_SIZE).abs() < 1e-3 && (dy - 8.0 * UNIT_SIZE).abs() < 1e-3);
+    let (dx, dy) = vertex_offset(inner_index(3, 5));
+    assert!((dx - 3.5 * UNIT_SIZE).abs() < 1e-3 && (dy - 5.5 * UNIT_SIZE).abs() < 1e-3);
+
+    for row in 0..OUTER_SIDE {
+        for col in 0..OUTER_SIDE {
+            assert_eq!(outer_row_col(outer_index(row, col)), Some((row, col)));
+        }
+    }
+    assert_eq!(outer_row_col(inner_index(2, 3)), None);
+}
+
+/// Chunk numbers run along `indexX` first: chunk 1 is `(1, 0)` and chunk 16
+/// is `(0, 1)`. A step off the grid has no chunk.
+#[test]
+fn a_chunk_number_is_y_times_sixteen_plus_x() {
+    assert_eq!(chunk_xy(0), (0, 0));
+    assert_eq!(chunk_xy(1), (1, 0));
+    assert_eq!(chunk_xy(16), (0, 1));
+    assert_eq!(chunk_xy(255), (15, 15));
+    for index in 0..CHUNKS_PER_SIDE * CHUNKS_PER_SIDE {
+        let (x, y) = chunk_xy(index);
+        assert_eq!(chunk_index(x, y), index);
+        assert_eq!(chunk_on_grid(x as i32, y as i32), Some(index));
+    }
+    assert_eq!(chunk_on_grid(-1, 0), None);
+    assert_eq!(chunk_on_grid(0, 16), None);
+}
+
+/// [`encode_shadow_map`] packs in the order [`decode_shadow_map`] unpacks.
+/// The decoder copies texel 62 into 63 on each axis, so the fixture leaves
+/// the last row and column lit and the round trip is exact.
+#[test]
+fn a_shadow_map_encodes_in_the_order_it_decodes() {
+    let mut texels = vec![0u8; ALPHA_LEN];
+    for (i, texel) in texels.iter_mut().enumerate() {
+        let (row, col) = (i / ALPHA_SIDE, i % ALPHA_SIDE);
+        if row < ALPHA_SIDE - 1 && col < ALPHA_SIDE - 1 && (row * 7 + col * 3) % 5 == 0 {
+            *texel = 255;
+        }
+    }
+    let bits = encode_shadow_map(&texels);
+    assert_eq!(bits.len(), SHADOW_MAP_BYTES);
+    assert_eq!(encode_shadow_map(&[255])[0], 0x01, "texel 0 is bit 0");
+    let mut back = decode_shadow_map(&bits);
+    let last = ALPHA_SIDE - 1;
+    for t in 0..ALPHA_SIDE {
+        back[t * ALPHA_SIDE + last] = 0;
+        back[last * ALPHA_SIDE + t] = 0;
+    }
+    assert_eq!(back, texels);
+}

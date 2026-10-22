@@ -2,7 +2,7 @@
 //! falloff, and the noise that roughens a stroke.
 
 use crate::adt::{heights, AdtFile};
-use vale_assets::world::adt::CHUNK_SIZE;
+use vale_assets::world::adt::{vertex_offset, CHUNK_SIZE};
 use super::{Edit, reshade, vertices};
 
 /// **What a brush's footprint is**, as a distance rather than as a mask.
@@ -387,7 +387,7 @@ impl Brush {
     ) -> Vec<f32> {
         // Where a vertex is, which both the falloff and the noise need.
         let world = |i: usize| {
-            let (dx, dy) = heights::vertex_offset(i);
+            let (dx, dy) = vertex_offset(i);
             (origin[0] - dx, origin[1] - dy)
         };
         // …and how far out it is, **in the brush's own shape** — see [`Shape`],
@@ -484,7 +484,7 @@ impl Brush {
             };
             let origin = chunk.head().position();
             for (i, h) in heights::heights(chunk).iter().enumerate() {
-                let (dx, dy) = heights::vertex_offset(i);
+                let (dx, dy) = vertex_offset(i);
                 let (x, y) = (origin[0] - dx, origin[1] - dy);
                 let t = self.shape.distance(x - at[0], y - at[1]) / self.radius;
                 let w = self.falloff.over(t, self.core) as f64;

@@ -160,14 +160,7 @@ pub fn publish(
     session.save_all();
     session.save_all_tables();
     crate::server::datadir::repair_project_wdts(session);
-    crate::server::creatures::save(session);
-    crate::server::gameobjects::save(session);
-    crate::server::items::save(session);
-    crate::server::quests::save(session);
-    crate::server::loot::save(session);
-    crate::server::services::save(session);
-    crate::server::behaviour::save(session);
-    crate::server::places::save(session);
+    crate::server::subject::save_all(session);
 
     let mut head = Head {
         name: name.to_string(),
@@ -617,23 +610,14 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64, u64)>) -> Result<()
             .strip_prefix(root)
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or(name);
-        out.push((rel, bytes.len() as u64, fnv1a(&bytes)));
+        out.push((rel, bytes.len() as u64, vale_edit::project::fnv1a(&bytes)));
     }
     Ok(())
 }
 
-fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
-}
-
 /// `--publish [name]`: runs the bar's Publish button from the command line.
 /// Runs once, after every scripted edit has been applied, for the same reason
-/// `creatures::on_the_command_line` waits.
+/// `super::super::subject::flags::on_the_command_line` waits.
 pub fn on_the_command_line(
     args: Res<crate::args::Args>,
     session: Option<ResMut<EditSession>>,

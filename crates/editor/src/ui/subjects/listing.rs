@@ -151,16 +151,26 @@ pub fn row_menu(
     });
 }
 
+/// The Server… button's hover text for a subject the server reads at startup:
+/// the Creatures and Game Objects workspaces' [`edits_block`].
+pub const TABLE_LIVE: &str = "Opens the Server panel, which applies, restores or discards these \
+     rows. The server reads this table at startup, so restart it after Apply.";
+
 /// What the project changes in one subject's rows, and the way to the panel
 /// that applies it. Nothing is drawn when the project changes nothing.
+///
+/// `standing` is the subject's held answer from
+/// [`crate::server::sync::Standings`]. `about` is the Server… button's hover
+/// text, which says when an applied row of the subject is live. `reload` is
+/// the state of the last `.reload` an apply sent, for the subjects that have
+/// one, drawn beside the button.
 pub fn edits_block(
     ui: &mut egui::Ui,
-    half: crate::ui::shell::sync::Half,
-    session: &crate::session::EditSession,
-    assets: &vale_client::assets::GameAssets,
+    standing: &crate::server::sync::Standing,
+    about: &str,
+    reload: Option<String>,
     server_panel: &mut crate::ui::shell::popover::Popover,
 ) {
-    let standing = crate::ui::shell::sync::standing(half, session, assets);
     if standing.quiet() {
         return;
     }
@@ -174,16 +184,14 @@ pub fn edits_block(
         ui.label(egui::RichText::new(refused).small().color(theme::BAD));
     }
     ui.add_space(4.0);
-    if ui
-        .button("Server\u{2026}")
-        .on_hover_text(
-            "Opens the Server panel, which applies, restores or discards these rows. The \
-             server reads this table at startup, so restart it after Apply.",
-        )
-        .clicked()
-    {
-        server_panel.show();
-    }
+    ui.horizontal(|ui| {
+        if ui.button("Server\u{2026}").on_hover_text(about).clicked() {
+            server_panel.show();
+        }
+        if let Some(status) = reload {
+            ui.label(egui::RichText::new(status).small().color(theme::INK_DIM));
+        }
+    });
     ui.add_space(6.0);
 }
 

@@ -183,9 +183,9 @@ impl MapView {
     fn reread_edited(&mut self, session: &EditSession) {
         self.edited.clear();
         for vpath in session.project.files() {
-            if let Some((map, x, y)) = crate::server::datadir::parse_tile_vpath(&vpath) {
-                if map.eq_ignore_ascii_case(&session.map) {
-                    self.edited.insert((x, y));
+            if let Some(key) = vale_edit::TileKey::from_vpath(&vpath) {
+                if key.map.eq_ignore_ascii_case(&session.map) {
+                    self.edited.insert((key.x, key.y));
                 }
             }
         }

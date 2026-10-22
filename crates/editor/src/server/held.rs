@@ -14,7 +14,8 @@
 //! deleted is usually not the open one.
 
 use super::stack::Subject;
-use super::{creatures, dbcs, rows};
+use super::reconcile::Undo;
+use super::{dbcs, rows};
 use vale_edit::project::Project;
 
 /// The label the client-table rows are held under, beside the five subjects'
@@ -61,13 +62,13 @@ impl Held {
 pub fn held_by(project: &Project) -> Held {
     let mut out = Held::default();
     for subject in Subject::ORDER {
-        match creatures::Undo::open_at(project, subject.revert_vpath()) {
+        match Undo::open_at(project, subject.revert_vpath()) {
             Ok(undo) if undo.entries.is_empty() => {}
             Ok(undo) => out.rows.push((subject.name(), Some(undo.entries.len()))),
             Err(_) => out.rows.push((subject.name(), None)),
         }
     }
-    match rows::Undo::open_at(project) {
+    match Undo::open_at(project, rows::REVERT_VPATH) {
         Ok(undo) if undo.entries.is_empty() => {}
         Ok(undo) => out.rows.push((CLIENT_TABLES, Some(undo.entries.len()))),
         Err(_) => out.rows.push((CLIENT_TABLES, None)),
@@ -105,7 +106,7 @@ mod tests {
         let (root, project) = project("full");
         project
             .write(
-                creatures::REVERT_VPATH,
+                super::super::creatures::REVERT_VPATH,
                 b"-- p\n-- row creature guid=10000005\nDELETE FROM `creature` WHERE `guid` = 10000005;\n-- end\n",
             )
             .unwrap();

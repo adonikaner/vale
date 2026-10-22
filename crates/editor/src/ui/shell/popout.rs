@@ -124,6 +124,7 @@ pub(crate) fn draw<const SLOT: usize>(
                         now,
                         server: &playing.server,
                         server_panel: &mut popovers.server,
+                        standings: &mut playing.standings,
                         guides: &mut viewing.guides,
                     },
                     &mut editing,

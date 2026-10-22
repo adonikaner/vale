@@ -11,6 +11,9 @@
 //!                area_template, AreaTrigger.dbc to areatrigger_template
 //! mod.rs         `save`, the one function every subject's SQL is written by,
 //!                and the statements run when the Server panel's switch is on
+//! subject/       what the twelve row subjects share: the RowSubject trait,
+//!                the plan, the SQL file, Apply and Put back, and the
+//!                --apply and --revert flags
 //! creatures.rs   creature_template and creature, which have no client file,
 //!                kept in the project's own store. No reload makes a change
 //!                live; a restart does
@@ -31,11 +34,11 @@
 //!                eleven *_scripts tables as whole scripts under an id, since a
 //!                script row has no key; live on a reload of the events, the
 //!                lists and five of the script tables
-//! places.rs      three row subjects over one set of row rules: maps (a new
-//!                map's map_template row), area triggers (their template's
-//!                script columns, teleports, inns, quest objectives,
-//!                battleground entrances) and graveyards (which safe place
-//!                serves which zone, and its facing)
+//! places.rs      five row subjects over one set of row rules: conditions,
+//!                gossip, maps (a new map's map_template row), area triggers
+//!                (their template's script columns, teleports, inns, quest
+//!                objectives, battleground entrances) and graveyards (which
+//!                safe place serves which zone, and its facing)
 //! fresh.rs       keeping what was read from the database no longer than it
 //!                is true: one counter every apply and put back moves, a cache
 //!                that empties when it does, and the test that every read checks
@@ -45,8 +48,9 @@
 //! reconcile.rs   the order every apply runs in: what the project applied
 //!                before is put back, then each row is read, its undo kept and
 //!                its statements run, so the database always holds what it
-//!                held before plus what the project says now
-//! stack.rs       the order the ten row subjects stand in the database: to
+//!                held before plus what the project says now; and the revert
+//!                file every subject keeps, read and written
+//! stack.rs       the order the twelve row subjects stand in the database: to
 //!                apply or put back one, every applied subject after it is put
 //!                back first and applied again after, so each revert file runs
 //!                against the database it was read from
@@ -68,12 +72,15 @@
 //!                into a patch folder by a publish
 //! publish/       what a publish writes for a server: the patch folder, and
 //!                the rows and DBCs it gives the server
+//! sync.rs        the Server panel's subjects and its four operations: where
+//!                each subject stands (changed, applied, refused), held for
+//!                half a second, and Save, Apply, Put back and Discard
 //! ```
 //!
 //! ## How the subjects are written and applied
 //!
 //! The subjects are written differently and applied the same way. [`save`] is
-//! everything a save does to the server, and [`crate::ui::shell::sync`] is everything
+//! everything a save does to the server, and [`sync`] is everything
 //! a person can ask of it. Each writer here answers a plan, an apply and a
 //! revert, and neither of those two files knows anything about a subject beyond
 //! what the writer answers.
@@ -157,6 +164,8 @@ pub mod services;
 pub mod rows;
 pub mod settings;
 pub mod stack;
+pub mod subject;
+pub mod sync;
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -197,16 +206,8 @@ pub fn save(
     server: &settings::ServerSettings,
     queue: &mut queue::ServerQueue,
 ) {
-    // The store and the creature SQL. The store is shared, so this writes the
-    // item rows too; see `creatures::save`.
-    creatures::save(session);
-    gameobjects::save(session);
-    items::save(session);
-    quests::save(session);
-    loot::save(session);
-    services::save(session);
-    behaviour::save(session);
-    places::save(session);
+    // The three stores and every row subject's SQL, in the stack's order.
+    subject::save_all(session);
     // The client-table rows, which are a diff of two files rather than a
     // store, and which return their own apply under the same switch.
     if let Some(work) = rows::save(session, assets, server) {
@@ -304,13 +305,7 @@ impl Plugin for ServerPlugin {
                 (
                     fresh::watch_the_database,
                     rows::on_the_command_line,
-                    creatures::on_the_command_line,
-                    gameobjects::on_the_command_line,
-                    items::on_the_command_line,
-                    quests::on_the_command_line,
-                    loot::on_the_command_line,
-                    services::on_the_command_line,
-                    behaviour::on_the_command_line,
+                    subject::flags::on_the_command_line,
                     publish::patch::on_the_command_line,
                     publish::release::migration_on_the_command_line,
                     datadir::on_the_command_line,

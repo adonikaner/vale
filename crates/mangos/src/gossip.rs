@@ -37,7 +37,7 @@
 //! `.reload npc_text` and `.reload points_of_interest` (`Chat.cpp:847`, `868`,
 //! `880`).
 
-use crate::row::{Assignment, Key};
+use crate::row::{Assignment, Key, Table};
 use crate::schema::{Column, Group, Kind, Value};
 
 pub const MENU: &str = "gossip_menu";
@@ -47,13 +47,13 @@ pub const POI: &str = "points_of_interest";
 
 /// The four tables, in the order a plan writes them: a text before the menu
 /// rows that name it, a point of interest and the menu before the options
-/// that name them.
-pub const TABLES: [&str; 4] = [NPC_TEXT, POI, MENU, OPTION];
-
-/// The static name for one of [`TABLES`] read out of a file, or `None`.
-pub fn table_named(name: &str) -> Option<&'static str> {
-    TABLES.into_iter().find(|table| *table == name)
-}
+/// that name them. Every row of each may be edited, created and removed.
+pub const TABLES: &[Table] = &[
+    Table::new(NPC_TEXT, &NPC_TEXT_COLUMNS),
+    Table::new(POI, &POI_COLUMNS),
+    Table::new(MENU, &MENU_COLUMNS),
+    Table::new(OPTION, &OPTION_COLUMNS),
+];
 
 /// How many lines an `npc_text` row holds.
 pub const LINES: usize = 8;
@@ -182,22 +182,6 @@ pub const POI_COLUMNS: [Column; 7] = [
     Column { name: "icon_name", kind: Kind::Text, group: Group::Text, about: "the name shown with the marker" },
 ];
 
-/// Every column of one of [`TABLES`].
-pub fn columns_of(table: &str) -> &'static [Column] {
-    match table {
-        MENU => &MENU_COLUMNS,
-        OPTION => &OPTION_COLUMNS,
-        NPC_TEXT => &NPC_TEXT_COLUMNS,
-        POI => &POI_COLUMNS,
-        _ => &[],
-    }
-}
-
-/// One column, by name, of one of [`TABLES`].
-pub fn column(table: &str, name: &str) -> Option<&'static Column> {
-    columns_of(table).iter().find(|column| column.name == name)
-}
-
 pub fn menu_key(entry: u32, text_id: u32) -> Key {
     Key::two(("entry", u64::from(entry)), ("text_id", u64::from(text_id)))
 }
@@ -219,11 +203,6 @@ pub fn point_key(entry: u32) -> Key {
 pub const POI_ICON: u32 = 6;
 pub const POI_FLAGS: u32 = 99;
 pub const POI_DATA: u32 = 0;
-
-/// How far from the centre of the world a coordinate may be, in yards:
-/// 32 tiles of 533.33 yards. `MaNGOS::IsValidMapCoord` refuses a point
-/// outside it, and the loader skips the row.
-pub const MAP_HALF_SIZE: f32 = 17066.666;
 
 /// One `points_of_interest` row: a place an option marks on the map.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -273,7 +252,7 @@ impl Point {
 
     /// Why the loader would skip the row.
     pub fn check(&self) -> Vec<String> {
-        match self.x.abs() <= MAP_HALF_SIZE && self.y.abs() <= MAP_HALF_SIZE {
+        match self.x.abs() <= crate::MAP_REACH && self.y.abs() <= crate::MAP_REACH {
             true => Vec::new(),
             false => vec![format!("point {}, {} is outside the map; the server skips it", self.x, self.y)],
         }
@@ -569,7 +548,7 @@ mod tests {
         assert_eq!(read.name, "Lion's Pride Inn");
         assert!(read.check().is_empty());
         assert_eq!(Point::new(1, 20000.0, 0.0, "").check().len(), 1);
-        assert_eq!(columns_of(POI).len(), 7);
+        assert_eq!(POI_COLUMNS.len(), 7);
     }
 
     #[test]

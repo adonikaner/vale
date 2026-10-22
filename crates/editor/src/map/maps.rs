@@ -34,6 +34,7 @@ use vale_assets::tables::map::{self as map_table, fields as mf};
 use vale_client::assets::GameAssets;
 use vale_edit::dbc::places::{self, MapSpec};
 use vale_mangos::map::Template;
+use vale_mangos::sql::unquote;
 use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::future, Task};
 
@@ -374,33 +375,56 @@ pub fn make(
     })
 }
 
-/// The database read of an edited map's server row: which map, and the
-/// row the server uses with its key, or `None` for no row.
-type RowRead = (u32, Task<Result<Option<(Template, vale_mangos::row::Key)>, String>>);
+/// The database read of an edited map's server row: which map, the
+/// `EditSession::database_writes` it was started at, whether its answer
+/// fills the form's fields, and the row the server uses with its key, or
+/// `None` for no row.
+type RowRead = (u32, u64, bool, Task<Result<Option<(Template, vale_mangos::row::Key)>, String>>);
 
 /// Fill a form that edits a map from what the map is now: its `Map.dbc` row,
 /// its WDT, and its `map_template` row from the project or the database.
+///
+/// The database row follows the rule in [`crate::server::fresh`]: it is kept
+/// while `EditSession::database_writes` is what it was read at, and read
+/// again when the counter moves. The first answer fills the form's server
+/// fields. A later one replaces only the row those fields are laid over, so
+/// an Apply made while the form is open does not undo what was typed into it.
 pub fn read_edited_map(
     mut tiles: ResMut<super::tiles::Tiles>,
     session: Option<ResMut<EditSession>>,
     assets: Res<GameAssets>,
     settings: Res<crate::server::settings::ServerSettings>,
     mut reading: Local<Option<RowRead>>,
+    mut asked_at: Local<Option<(u32, u64)>>,
 ) {
     let Some(mut session) = session else { return };
     let editing = tiles.new_map.as_ref().and_then(|form| form.editing);
+    let writes = session.database_writes;
+
+    // A read started before the database was last written is dropped. One
+    // that was to fill the form leaves the form unread, so it starts again.
+    if let Some(&(id, at, fill, _)) = reading.as_ref() {
+        if at != writes {
+            *reading = None;
+            if let Some(form) = tiles.new_map.as_mut().filter(|form| fill && form.editing == Some(id)) {
+                form.server = ServerRow::Unread;
+            }
+        }
+    }
 
     // A database read finishes into the form it was started for, and is
     // dropped if that form has gone.
-    if let Some((id, task)) = reading.as_mut() {
-        let id = *id;
+    if let Some((id, _, fill, task)) = reading.as_mut() {
+        let (id, fill) = (*id, *fill);
         if let Some(done) = block_on(future::poll_once(task)) {
             *reading = None;
             if let Some(form) = tiles.new_map.as_mut().filter(|form| form.editing == Some(id)) {
                 form.server = match done {
                     Ok(Some((template, key))) => {
                         let template = with_project_edits(&session, template, &key);
-                        fill_server_fields(form, &template);
+                        if fill {
+                            fill_server_fields(form, &template);
+                        }
                         ServerRow::Found {
                             template,
                             key,
@@ -447,7 +471,18 @@ pub fn read_edited_map(
         form.loaded = true;
     }
 
-    if form.server == ServerRow::Unread {
+    // Whether to look for the row, and whether the answer fills the fields:
+    // an unread form is filled, and a row looked for at an older counter is
+    // looked for again without touching them. A row this project creates was
+    // not read from the database and is not looked for again.
+    let fill = match &form.server {
+        ServerRow::Unread => Some(true),
+        ServerRow::Found { created: true, .. } => None,
+        _ if reading.is_none() && *asked_at != Some((id, writes)) => Some(false),
+        _ => None,
+    };
+    if let Some(fill) = fill {
+        *asked_at = Some((id, writes));
         // A row this project creates is the project's, whatever the database
         // holds.
         let created_key = vale_mangos::map::key(id, 0);
@@ -461,7 +496,9 @@ pub fn read_edited_map(
             for (column, literal) in &row.columns {
                 set_from_literal(&mut template, column, literal);
             }
-            fill_server_fields(form, &template);
+            if fill {
+                fill_server_fields(form, &template);
+            }
             form.server = ServerRow::Found {
                 template,
                 key: created_key,
@@ -473,10 +510,14 @@ pub fn read_edited_map(
             form.server = ServerRow::Unreachable("no server database is set".to_string());
             return;
         };
-        let patch = crate::tools::spawns::creatures::server_patch(&settings);
-        form.server = ServerRow::Reading;
+        let patch = crate::server::settings::server_patch(&settings);
+        if fill {
+            form.server = ServerRow::Reading;
+        }
         *reading = Some((
             id,
+            writes,
+            fill,
             crate::server::queue::read(async move {
                 use vale_mangos::schema::RowValue;
                 let mut db = vale_mangos::conn::Db::open(&at)?;
@@ -535,34 +576,9 @@ fn set_from_literal(template: &mut Template, column: &str, literal: &str) {
         "ghost_entrance_map" => template.ghost_map = int().map_or(template.ghost_map, |v| v as i32),
         "ghost_entrance_x" => template.ghost_at[0] = float().unwrap_or(template.ghost_at[0]),
         "ghost_entrance_y" => template.ghost_at[1] = float().unwrap_or(template.ghost_at[1]),
-        "map_name" => template.name = unquote(literal),
+        "map_name" => template.name = unquote(literal.trim()),
         _ => {}
     }
-}
-
-/// The text a SQL string literal holds: `vale_mangos::sql::text` undone.
-fn unquote(literal: &str) -> String {
-    let inner = literal.trim();
-    let inner = inner
-        .strip_prefix('\'')
-        .and_then(|s| s.strip_suffix('\''))
-        .unwrap_or(inner);
-    let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(ch) = chars.next() {
-        if ch != '\\' {
-            out.push(ch);
-            continue;
-        }
-        match chars.next() {
-            Some('n') => out.push('\n'),
-            Some('r') => out.push('\r'),
-            Some('t') => out.push('\t'),
-            Some(other) => out.push(other),
-            None => {}
-        }
-    }
-    out
 }
 
 /// **Write the edited map's fields**: its `Map.dbc` row and its server row

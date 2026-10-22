@@ -269,7 +269,7 @@ pub struct Behaviour {
     /// Why the last read answered nothing, when it answered nothing.
     pub trouble: Option<String>,
     /// Whether the scripted flags have been acted on; see
-    /// `crate::server::behaviour::on_the_command_line`, which waits on this.
+    /// `crate::server::subject::flags::on_the_command_line`, which waits on this.
     pub scripted_done: bool,
     /// The texts another window shows, which this tool reads with its own:
     /// the gossip window's lines and option labels. Written by that window
@@ -602,14 +602,7 @@ impl Behaviour {
         if row.life != Life::Insert {
             return None;
         }
-        let mut whole = broadcast::Row::new();
-        for (column, value) in &key.0 {
-            whole.insert(column.clone(), Some(value.clone()));
-        }
-        for (column, value) in &row.columns {
-            whole.insert(column.clone(), Some(unquoted(column, value)));
-        }
-        let text = Text::from_row(&whole)?;
+        let text = Text::from_row(&row.whole(&key))?;
         Some(ShownText { text, life: Life::Insert, in_database: None })
     }
 
@@ -841,14 +834,7 @@ fn event_with_edits(event: &Event, edits: &Edits) -> Event {
 
 /// An event this project creates, read back out of its claim.
 fn event_of(key: &Key, row: &RowEdit) -> Option<Event> {
-    let mut whole = eventai::Row::new();
-    for (column, value) in &key.0 {
-        whole.insert(column.clone(), Some(value.clone()));
-    }
-    for (column, value) in &row.columns {
-        whole.insert(column.clone(), Some(unquoted(column, value)));
-    }
-    Event::from_row(&whole)
+    Event::from_row(&row.whole(key))
 }
 
 /// A database list with the project's column edits over it.
@@ -865,29 +851,7 @@ fn list_with_edits(list: &List, edits: &Edits) -> List {
 
 /// A list this project creates, read back out of its claim.
 fn list_of(key: &Key, row: &RowEdit) -> Option<List> {
-    let mut whole = creaturespells::Row::new();
-    for (column, value) in &key.0 {
-        whole.insert(column.clone(), Some(value.clone()));
-    }
-    for (column, value) in &row.columns {
-        whole.insert(column.clone(), Some(unquoted(column, value)));
-    }
-    List::from_row(&whole)
-}
-
-/// The store holds a text column as a quoted SQL literal; a row read from the
-/// database holds the plain text. This turns a stored value of a text column
-/// (`comment`, `name`, `male_text`, `female_text`) back into plain text and
-/// returns any other column's value unchanged.
-fn unquoted(column: &str, value: &str) -> String {
-    match column {
-        "comment" | "name" | "male_text" | "female_text" => value
-            .strip_prefix('\'')
-            .and_then(|rest| rest.strip_suffix('\''))
-            .map(|inner| inner.replace("\\'", "'").replace("\\\\", "\\"))
-            .unwrap_or_else(|| value.to_string()),
-        _ => value.to_string(),
-    }
+    List::from_row(&row.whole(key))
 }
 
 /// Rows of several scripts, each with the id it is under.
@@ -1160,7 +1124,7 @@ fn read_the_rows(
         Reading::List(
             entry,
             crate::server::queue::read(async move {
-                Ok(open()?.row(&creaturespells::row_query(entry))?.as_ref().and_then(List::from_row))
+                Ok(open()?.row(&vale_mangos::row::row_query(creaturespells::TABLE, &creaturespells::key(entry)))?.as_ref().and_then(List::from_row))
             }),
         )
     } else if let Some((table, id)) = want_script {

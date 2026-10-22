@@ -12,7 +12,7 @@ use crate::ui::widgets::theme;
 /// A table with no schema: every field, numbered, with what it might be.
 ///
 /// Each field is four bytes and is drawn as the number they hold. Where the
-/// column holds the offsets of strings (`tables::labels::text_fields`), a text box
+/// column holds the offsets of strings (`vale_edit::dbc::names::text_fields`), a text box
 /// edits the string; where the bytes read as a float of ordinary size, a
 /// second box edits the float. Both are readings of the same four bytes, and the number
 /// box always writes them as they are, so a field that is neither can still

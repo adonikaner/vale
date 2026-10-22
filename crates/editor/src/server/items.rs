@@ -27,7 +27,7 @@
 //! cannot.
 //!
 //! An item change is applied from the Server panel, or by a save when the
-//! switch is on, through [`crate::server::save`] and [`crate::ui::shell::sync`]. Every
+//! switch is on, through [`crate::server::save`] and [`crate::server::sync`]. Every
 //! other subject here uses the same two entry points.
 //!
 //! [`apply`] asks for that reload itself. The request is kept when the apply
@@ -48,7 +48,7 @@
 //! because the two subjects are applied by two separate actions, and a single
 //! file would make the Apply for one subject apply the other as well. Each
 //! writer skips the rows the other owns rather than refusing them; see
-//! [`plan_from`].
+//! [`super::subject::plan_from`].
 //!
 //! ## A removal is applied without the reload
 //!
@@ -64,13 +64,11 @@
 //! apply while the removal is in the plan, since any reload after it is the
 //! same reload.
 
-use crate::session::EditSession;
+use super::stack::Subject;
+use super::subject::{self, Plan, Row, RowSubject};
 use vale_mangos::conn::Db;
 use vale_mangos::item;
-use vale_mangos::row::{self, Assignment, Key, Life};
-use bevy::prelude::*;
-
-pub use super::creatures::Undo;
+use vale_mangos::row::{self, Edits};
 
 /// The project file holding the project's item changes as SQL.
 pub const SQL_VPATH: &str = "sql\\items.sql";
@@ -81,670 +79,123 @@ pub const REVERT_VPATH: &str = "sql\\items-revert.sql";
 /// The table `.reload` is asked for after an apply.
 pub const RELOAD_TABLE: &str = item::TEMPLATE;
 
-/// One row's worth of change: what is to become of it, and the columns it sets.
-#[derive(Debug, Clone)]
-pub struct Row {
-    pub table: &'static str,
-    pub key: Key,
-    pub life: Life,
-    pub changes: Vec<Assignment>,
-    /// Where the database has the row. This is [`Self::key`] unless the
-    /// project changes the item's entry; see
-    /// `vale_mangos::row::RowEdit::from`.
-    pub at: Key,
-}
+/// The item subject: `item_template`.
+pub struct Items;
 
-impl Row {
-    /// The statements it becomes: one `UPDATE`, the `DELETE`/`INSERT` pair a
-    /// creation is, or the move of an item whose entry changes with every
-    /// column that names it — see `vale_mangos::item::REFERENCES`.
-    pub fn statements(&self) -> Vec<String> {
-        if self.moves() {
-            return row::move_statements(
-                self.table,
-                &self.at,
-                &self.key,
-                &self.changes,
-                &item::REFERENCES,
-            );
-        }
-        item::statements(self.table, &self.key, self.life, &self.changes)
+impl RowSubject for Items {
+    fn subject(&self) -> Subject {
+        Subject::Items
     }
 
-    /// Whether the project changes this item's entry.
-    pub fn moves(&self) -> bool {
-        self.life == Life::Update && self.at != self.key
+    fn name(&self) -> &'static str {
+        "items"
     }
 
-    /// How it is named in a file's marker and in a status line.
-    pub fn names(&self) -> String {
-        format!("{} {}", self.table, self.key.text())
-    }
-}
-
-/// Everything a project changes about the server's items.
-#[derive(Debug, Default)]
-pub struct Plan {
-    pub rows: Vec<Row>,
-    /// What the store asked for and this writer would not write, each as a
-    /// sentence. [`super::creatures::Plan::refused`] gives the reason.
-    pub refused: Vec<String>,
-}
-
-impl Plan {
-    pub fn is_empty(&self) -> bool {
-        self.rows.is_empty()
+    fn label(&self) -> &'static str {
+        "Items"
     }
 
-    /// How many rows it creates, edits and removes.
-    pub fn counts(&self) -> (usize, usize, usize) {
-        let of = |life: Life| self.rows.iter().filter(|row| row.life == life).count();
-        (of(Life::Insert), of(Life::Update), of(Life::Delete))
+    fn word(&self) -> &'static str {
+        "items"
     }
 
-    /// Whether `.reload item_template` may follow an apply of this plan — see
-    /// the module comment.
-    pub fn reload_is_safe(&self) -> bool {
-        item::reload_is_safe(self.rows.iter().map(|row| &row.life))
+    fn noun(&self) -> &'static str {
+        "item"
     }
 
-    /// One line for a panel.
-    pub fn line(&self) -> String {
-        let (new, edited, removed) = self.counts();
-        let mut parts: Vec<String> = Vec::new();
-        if new > 0 {
-            parts.push(format!("{new} new"));
-        }
-        if edited > 0 {
-            parts.push(format!("{edited} edited"));
-        }
-        if removed > 0 {
-            parts.push(format!("{removed} removed"));
-        }
-        match parts.is_empty() {
-            true => "no item edits".to_string(),
-            false => format!("{} item(s): {}", self.rows.len(), parts.join(", ")),
-        }
+    fn tables(&self) -> &'static [row::Table] {
+        item::TABLES
     }
 
-    /// What this plan would do to the database, as one number. It serves the
-    /// same purpose as [`super::creatures::Plan::signature`] for the item
-    /// tables.
-    pub fn signature(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        for statement in self.statements() {
-            statement.hash(&mut hasher);
-        }
-        hasher.finish()
+    fn table_list(&self) -> &'static str {
+        "item_template"
     }
 
-    /// Every statement this plan comes to.
-    pub fn statements(&self) -> Vec<String> {
-        self.rows.iter().flat_map(Row::statements).collect()
+    fn sql_vpath(&self) -> &'static str {
+        SQL_VPATH
     }
-}
 
-/// The plan the project's store comes to.
-pub fn plan(session: &EditSession) -> Plan {
-    plan_from(&session.server_edits)
-}
+    fn revert_vpath(&self) -> &'static str {
+        REVERT_VPATH
+    }
 
-/// The plan for a store on its own, so it can be checked without a session, a
-/// project folder or a database.
-pub fn plan_from(edits: &vale_mangos::row::Edits) -> Plan {
-    let mut out = Plan::default();
-    for (table, key, row) in edits.rows() {
-        let Some(table) = item::table_named(table) else {
-            // Another subject's row: the creature half's, or a table nothing
-            // here writes. It is skipped without a message. This writer does
-            // not know whether `creature` is an editable table, and reporting
-            // it here as well would put the same complaint on two panels.
-            // `super::creatures::plan_from` does the same in the other
-            // direction.
-            continue;
-        };
-        if !item::can_live(table, row.life) {
-            out.refused.push(format!(
-                "{table} {} cannot be {}d — this editor writes that only for \
-                 item_template",
-                key.text(),
-                row.life.word()
-            ));
-            continue;
-        }
-        let mut changes = Vec::new();
-        for (column, value) in &row.columns {
-            let Some(known) = item::column(table, column) else {
-                out.refused.push(format!(
-                    "{table}.{column} is not a column this editor writes"
-                ));
-                continue;
-            };
-            // A key column is what the `WHERE` names and is never a column of
-            // an edit. An item's entry is changed by re-keying its claim (see
-            // `crate::subjects::items::Items::rekey`), and a store written before
-            // that held the move as a column is read back as a re-key. A key
-            // column here was therefore typed into the store by hand.
-            if !known.editable() {
-                out.refused.push(format!(
-                    "{table}.{column} is part of the key and is not written"
-                ));
-                continue;
-            }
-            changes.push(Assignment {
-                column: known.name,
-                value: value.clone(),
-            });
-        }
-        match row.life {
-            // A creation must name every column or it is not written, the
-            // same rule as in `super::creatures`: a column an `INSERT` leaves out
-            // takes the table's default, which for this table is a row the
-            // server loads and the client draws as nothing.
-            Life::Insert => {
-                let missing: Vec<&str> = item::columns_of(table)
-                    .iter()
-                    .filter(|column| column.editable())
-                    .map(|column| column.name)
-                    .filter(|name| !changes.iter().any(|change| change.column == *name))
-                    .collect();
-                if !missing.is_empty() {
-                    out.refused.push(format!(
-                        "{table} {} is created without {} — the row is not written",
-                        key.text(),
-                        missing.join(", ")
-                    ));
-                    continue;
-                }
-            }
-            // A removal carries no columns, and one that had any would be
-            // columns of a row that is not there afterwards.
-            Life::Delete => changes.clear(),
-            Life::Update => {
-                if changes.is_empty() && row.from.is_none() {
-                    continue;
-                }
-            }
-        }
-        let at = row.from.clone().unwrap_or_else(|| key.clone());
-        out.rows.push(Row {
-            table,
-            key: key.clone(),
-            life: row.life,
-            changes,
-            at,
-        });
+    fn sql_about(&self) -> &'static str {
+        "the server's items"
     }
-    out
-}
 
-/// Writes `sql\items.sql`, or removes it when the project changes nothing.
-///
-/// Called by every save. It writes a file and touches no database.
-pub fn write_sql(session: &mut EditSession) -> Result<usize, String> {
-    let plan = plan(session);
-    for refused in &plan.refused {
-        warn!("{}: {refused}", super::creatures::EDITS_VPATH);
-    }
-    if plan.is_empty() {
-        remove(&session.project, SQL_VPATH);
-        return Ok(0);
-    }
-    let count = plan.rows.len();
-    let mut body = format!(
-        "-- {} — what this project changes about the server's items.\n\
-         -- Rewritten on every save from the project's own edits, so it is the\n\
-         -- whole of what the project does rather than an increment of it.\n\
-         --\n\
-         -- Nothing applies this by itself. Apply it from the editor's item\n\
+    fn sql_note(&self) -> String {
+        "-- Nothing applies this by itself. Apply it from the editor's item\n\
          -- workspace, or run it by hand and then say `.reload item_template`:\n\
          -- LoadItemPrototypes clears its map before it reads, and Item::GetProto\n\
-         -- is a lookup per call, so an item change is live with no restart.\n\n",
-        session.project.name
-    );
-    for row in &plan.rows {
-        body.push_str(&format!("-- {}\n", row.names()));
-        for statement in row.statements() {
-            body.push_str(&statement);
-            body.push('\n');
-        }
-        body.push('\n');
+         -- is a lookup per call, so an item change is live with no restart."
+            .to_string()
     }
-    session
-        .project
-        .write(SQL_VPATH, body.as_bytes())
-        .map_err(|e| format!("{SQL_VPATH}: {e}"))?;
-    Ok(count)
-}
 
-/// The item part of a save: the project's store, and the SQL it comes to.
-///
-/// The store itself is written by [`super::creatures::save`], which is called
-/// on the same save and writes the one file both halves keep their rows in.
-/// This writes only the SQL.
-pub fn save(session: &mut EditSession) {
-    match write_sql(session) {
-        Ok(0) => {}
-        Ok(rows) => session.status = format!("{rows} item change(s) written to {SQL_VPATH}"),
-        Err(e) => {
-            warn!("items: {e}");
-            session.status = format!("saved, but writing {SQL_VPATH} failed: {e}");
+    fn going_live(&self) -> &'static str {
+        "Live on `.reload item_template`, which an apply sends when it is made \
+         with the panels open over a playtest \u{2014} for every copy of the item \
+         already in a bag, in the world and on the auction house, with no relog. \
+         Applied at any other time, it is live after a restart. A removed item \
+         needs a restart, and the apply sends no reload while one is in the \
+         plan: a reload would leave every copy already loaded with no \
+         prototype, which the server does not check for."
+    }
+
+    fn reloads(&self) -> Vec<&'static str> {
+        vec![RELOAD_TABLE]
+    }
+
+    /// No reload while the plan removes an item; see the module comment and
+    /// `vale_mangos::item::reload_is_safe`.
+    fn reloads_for(&self, plan: &Plan) -> Vec<&'static str> {
+        match item::reload_is_safe(plan.rows.iter().map(|row| &row.life)) {
+            true => self.reloads(),
+            false => Vec::new(),
         }
     }
-}
 
-/// What an apply did.
-#[derive(Debug, Default)]
-pub struct Applied {
-    pub rows: usize,
-    pub affected: u64,
-    /// How many rows the revert file covers after this apply.
-    pub newly_undoable: usize,
-    /// How many rows the project had applied and no longer claims, which were
-    /// put back and not written again — see [`super::reconcile`].
-    pub taken_back: usize,
-    /// Whether the reload was asked for. It is not asked for when the plan
-    /// removes an item, because a removal is live only once the server has
-    /// been restarted.
-    pub reloaded: bool,
-}
+    fn restart_note(&self) -> &'static str {
+        "restart the server: .reload item_template does not apply an item removal"
+    }
 
-impl Applied {
-    pub fn line(&self) -> String {
-        let taken_back = match self.taken_back {
-            0 => String::new(),
-            n => format!(", restored {n} row(s) the project no longer changes"),
+    fn refuse_arrival(&self, db: &mut Db, row: &Row, own: &Edits) -> Result<(), String> {
+        subject::refuse_a_taken_id(db, row, own, None)
+    }
+
+    /// Everything a removed item takes with it, as the statements that put it
+    /// back: every content-patch version of the template, then the rows of
+    /// each of `item::DEPENDENTS`. `None` when the item is not in the
+    /// database. The `DELETE`s come first, so the entry can be run against an
+    /// item it has already restored; see [`super::reconcile`].
+    fn undo_of_a_removal(&self, db: &mut Db, row: &Row) -> Result<Option<Vec<String>>, String> {
+        let Some(entry) = row.key.first() else {
+            return Ok(None);
         };
-        let then = match self.reloaded {
-            true => "reloading item_template",
-            false => "restart the server: .reload item_template does not apply an item removal",
-        };
-        format!(
-            "{} item row(s) applied, {} affected{taken_back} — {then}",
-            self.rows, self.affected
-        )
-    }
-}
-
-/// An Apply with everything it needs to run off the main thread: the
-/// plan, the project handle its revert file is written through, and where the
-/// database is. See [`super::queue`].
-pub struct ApplyJob {
-    plan: Plan,
-    project: vale_edit::project::Project,
-    at: vale_mangos::conn::Where,
-    /// The project's store as it stood when the Apply was asked for — see
-    /// [`super::reconcile::refuse_a_taken_id`].
-    own: vale_mangos::row::Edits,
-    /// Whether the plan may be made live by a reload — see
-    /// [`Applied::reloaded`]. Decided here, from the plan, because the finish
-    /// needs it whatever the run answered.
-    reloaded: bool,
-}
-
-/// The result of running an [`ApplyJob`], handed back to the main thread.
-pub struct ApplyDone {
-    signature: u64,
-    reloaded: bool,
-    pub result: Result<Applied, String>,
-}
-
-impl ApplyDone {
-    /// What the status line says about it.
-    pub fn line(&self) -> String {
-        match &self.result {
-            Ok(done) if done.rows == 0 && done.taken_back == 0 => "nothing to apply".to_string(),
-            Ok(done) => done.line(),
-            Err(e) => format!("items: {e}"),
+        let versions = db.rows(&row::rows_where(item::TEMPLATE, "entry", entry))?;
+        if versions.is_empty() {
+            return Ok(None);
         }
-    }
-}
-
-/// The main thread's first half of an Apply: the plan, and whether there is
-/// anything to do. `None` when the project claims no item and has applied none.
-pub fn prepare_apply(
-    session: &EditSession,
-    server: &super::settings::ServerSettings,
-) -> Result<Option<ApplyJob>, String> {
-    let plan = plan(session);
-    if plan.is_empty() && !super::reconcile::has_applied(session, REVERT_VPATH) {
-        return Ok(None);
-    }
-    let (at, _source) = server
-        .resolve()
-        .ok_or_else(vale_mangos::conn::Where::absent)?;
-    let reloaded = plan.reload_is_safe();
-    Ok(Some(ApplyJob {
-        plan,
-        project: session.project.clone(),
-        at,
-        own: session.server_edits.clone(),
-        reloaded,
-    }))
-}
-
-impl ApplyJob {
-    /// The worker thread's half: writes the database and the revert file in
-    /// [`super::reconcile`]'s order, and that order is what makes the apply
-    /// safe. What the project applied before is put back, then each row is
-    /// read as it stands, its undo is written, and its own statements run.
-    pub fn run(self) -> ApplyDone {
-        let signature = self.plan.signature();
-        let result = (|| {
-            let mut db = Db::open(&self.at)?;
-            let steps: Vec<super::reconcile::Step> = self
-                .plan
-                .rows
-                .iter()
-                .map(|row| super::reconcile::Step {
-                    table: row.table.to_string(),
-                    key: row.key.clone(),
-                    statements: row.statements(),
-                })
-                .collect();
-            let done = super::reconcile::apply(
-                &self.project,
-                &mut db,
-                REVERT_VPATH,
-                "the server's items",
-                &steps,
-                |db, index| undo_of_a_row(db, &self.plan.rows[index], &self.own),
-            )?;
-            Ok(Applied {
-                rows: self.plan.rows.len(),
-                affected: done.affected,
-                newly_undoable: done.undoable,
-                taken_back: done.taken_back,
-                reloaded: self.reloaded,
-            })
-        })();
-        ApplyDone {
-            signature,
-            reloaded: self.reloaded,
-            result,
+        let mut out = item::delete_statements(entry);
+        for held in &versions {
+            out.extend(row::insert_from_row(item::TEMPLATE, held));
         }
-    }
-}
-
-/// The main thread's second half: brings what the editor keeps about the
-/// database up to date.
-///
-/// The table has changed whether or not the run succeeded, so what the tool
-/// read out of it is stale either way, and so is the server's copy. The reload
-/// is therefore asked for in both cases, and kept only for an apply made with
-/// the panels open over a playtest. See
-/// `super::reload::Reloads::when_there_is_a_session`. The signature is
-/// kept only for a run that finished, so a failure leaves the project saying it
-/// has applied nothing rather than claiming a change that did not land.
-pub fn finish_apply(
-    session: &mut EditSession,
-    reloads: &mut super::reload::Reloads,
-    done: &ApplyDone,
-) {
-    session.wrote_the_database();
-    session.applied_items = done.result.as_ref().ok().map(|_| done.signature);
-    // The reload makes the change live, which the creature half cannot do
-    // (see the module comment). It is skipped when the plan removes an item.
-    if done.reloaded {
-        reloads.when_there_is_a_session(RELOAD_TABLE);
-    }
-}
-
-/// An Apply as one step of [`super::stack`], which is the only way an Apply
-/// runs. `None` when there is nothing to apply.
-pub fn apply_step(
-    session: &EditSession,
-    server: &super::settings::ServerSettings,
-) -> Result<Option<super::stack::Step>, String> {
-    let Some(job) = prepare_apply(session, server)? else {
-        return Ok(None);
-    };
-    Ok(Some(super::stack::Step::new("applying items", move || {
-        let done = job.run();
-        let ok = done.result.is_ok();
-        let finish: super::queue::Finish = Box::new(move |session: &mut EditSession, reloads: &mut super::reload::Reloads| {
-            finish_apply(session, reloads, &done);
-            session.status = done.line();
-        });
-        (ok, finish)
-    })))
-}
-
-/// One row's undo, read immediately before the row is written. This is the
-/// item module's part of [`super::reconcile`]'s step 3.
-fn undo_of_a_row(
-    db: &mut Db,
-    row: &Row,
-    own: &vale_mangos::row::Edits,
-) -> Result<Option<Vec<String>>, String> {
-    if row.life == Life::Insert || row.moves() {
-        super::reconcile::refuse_a_taken_id(db, row.table, &row.key, &item::REFERENCES, own)?;
-    }
-    Ok(match row.life {
-        // A row this project creates is undone by removing it. The check
-        // above establishes that the row was not there before, so it is this
-        // project's own and removing it unmakes only what the `INSERT` made.
-        Life::Insert => Some(vec![row::delete(row.table, &row.key)]),
-        // `None` when the row is not there. A key that matches nothing names a
-        // row somebody else removed, and inventing an `INSERT` for it would
-        // write a row this project never saw.
-        Life::Update => {
-            let now = db.row(&item::row_query(row.table, &row.at))?;
-            super::reconcile::undo_of_an_update(
-                row.table,
-                &row.at,
-                &row.key,
-                &row.changes,
-                &item::REFERENCES,
-                now.as_ref(),
-            )?
+        for dependent in &item::DEPENDENTS {
+            for held in db.rows(&dependent.select(entry))? {
+                out.extend(row::insert_from_row(dependent.table, &held));
+            }
         }
-        // `None` when the item is not in the database: nothing to put back.
-        Life::Delete => snapshot_the_item(db, &row.key)?,
-    })
-}
-
-/// Everything a removed item takes with it, as the statements that put it
-/// back: every content-patch version of the template, then the rows of each
-/// of `item::DEPENDENTS`. `None` when the item is not in the database.
-///
-/// The `DELETE`s come first, so the entry can be run against an item it has
-/// already restored — see [`super::reconcile`].
-fn snapshot_the_item(db: &mut Db, key: &Key) -> Result<Option<Vec<String>>, String> {
-    let Some(entry) = key.first() else {
-        return Ok(None);
-    };
-    let versions = db.rows(&format!(
-        "SELECT * FROM {} WHERE `entry` = {entry}",
-        vale_mangos::sql::name(item::TEMPLATE)
-    ))?;
-    if versions.is_empty() {
-        return Ok(None);
-    }
-    let mut out = item::delete_statements(entry);
-    for held in &versions {
-        out.extend(row::insert_from_row(item::TEMPLATE, held));
-    }
-    for dependent in &item::DEPENDENTS {
-        for held in db.rows(&dependent.select(entry))? {
-            out.extend(row::insert_from_row(dependent.table, &held));
-        }
-    }
-    Ok(Some(out))
-}
-
-/// A Put back with everything it needs to run off the main thread.
-pub struct RevertJob {
-    project: vale_edit::project::Project,
-    at: vale_mangos::conn::Where,
-}
-
-/// The main thread's first half of a Put back: `None` when this project has
-/// applied nothing.
-pub fn prepare_revert(
-    session: &EditSession,
-    server: &super::settings::ServerSettings,
-) -> Result<Option<RevertJob>, String> {
-    if !super::reconcile::has_applied(session, REVERT_VPATH) {
-        return Ok(None);
-    }
-    let (at, _source) = server
-        .resolve()
-        .ok_or_else(vale_mangos::conn::Where::absent)?;
-    Ok(Some(RevertJob {
-        project: session.project.clone(),
-        at,
-    }))
-}
-
-impl RevertJob {
-    /// The worker's half: run the revert file, and forget it. Answers how many
-    /// rows it covered.
-    pub fn run(self) -> Result<usize, String> {
-        let mut db = Db::open(&self.at)?;
-        super::reconcile::put_back(&self.project, &mut db, REVERT_VPATH)
-    }
-}
-
-/// The main thread's second half: nothing this project says is in the
-/// database any more, the table has moved, and the server's copy with it.
-pub fn finish_revert(session: &mut EditSession, reloads: &mut super::reload::Reloads) {
-    session.applied_items = None;
-    session.wrote_the_database();
-    reloads.when_there_is_a_session(RELOAD_TABLE);
-}
-
-/// A Put back as one step of [`super::stack`]: `None` when this project has
-/// applied nothing.
-pub fn revert_step(
-    session: &EditSession,
-    server: &super::settings::ServerSettings,
-) -> Result<Option<super::stack::Step>, String> {
-    let Some(job) = prepare_revert(session, server)? else {
-        return Ok(None);
-    };
-    Ok(Some(super::stack::Step::new("restoring items", move || {
-        let done = job.run();
-        let ok = done.is_ok();
-        let finish: super::queue::Finish = Box::new(move |session: &mut EditSession, reloads: &mut super::reload::Reloads| {
-            session.status = match done {
-                Ok(rows) => {
-                    finish_revert(session, reloads);
-                    format!("{rows} item row(s) restored")
-                }
-                Err(e) => format!("items: {e}"),
-            };
-        });
-        (ok, finish)
-    })))
-}
-
-/// Which of this project's item rows are in the database, as the two
-/// questions a panel asks. The item counterpart of
-/// [`super::creatures::OnTheServer`].
-pub struct OnTheServer {
-    undo: Undo,
-    current: bool,
-}
-
-impl OnTheServer {
-    /// The revert file alone.
-    pub fn read(session: &EditSession) -> OnTheServer {
-        OnTheServer {
-            undo: Undo::open_at(&session.project, REVERT_VPATH).unwrap_or(Undo {
-                entries: Vec::new(),
-            }),
-            current: false,
-        }
-    }
-
-    /// The revert file, with [`Self::current`] answered from the plan.
-    pub fn read_with(session: &EditSession, plan: &Plan) -> OnTheServer {
-        OnTheServer {
-            current: session
-                .applied_items
-                .is_some_and(|had| had == plan.signature()),
-            ..OnTheServer::read(session)
-        }
-    }
-
-    /// How many rows this project has applied and can take back.
-    pub fn rows(&self) -> usize {
-        self.undo.entries.len()
-    }
-
-    /// Whether this project has applied that row.
-    pub fn covers(&self, table: &str, key: &Key) -> bool {
-        self.undo.covers(table, key)
-    }
-
-    /// Whether what the project says now is what it applied. `false` after a
-    /// relaunch even for a project that applied everything last session, so a
-    /// caller uses it only to add a caveat, never to remove one.
-    pub fn current(&self) -> bool {
-        self.current
-    }
-}
-
-/// Runs `--apply-items` and `--revert-items`, the command-line forms of the
-/// workspace's two buttons. See [`crate::args::Args::apply_items`].
-///
-/// Fires once, on the first frame there is a session to read the project out
-/// of, and after any scripted edit has landed. A flag that fired repeatedly
-/// would re-apply after every save.
-pub fn on_the_command_line(
-    args: Res<crate::args::Args>,
-    session: Option<ResMut<EditSession>>,
-    server: Res<super::settings::ServerSettings>,
-    mut reloads: ResMut<super::reload::Reloads>,
-    items: Res<crate::subjects::items::Items>,
-    mut done: Local<bool>,
-) {
-    if *done || !(args.apply_items || args.revert_items) {
-        return;
-    }
-    // Wait for a scripted edit to land, as `super::creatures` does: this
-    // system fires on the first frame there is a session, and `--item-new`
-    // fires when the table read has come back, several seconds later. Without
-    // the wait the apply ran against an empty store and reported that.
-    if !items.scripted_done {
-        return;
-    }
-    let Some(mut session) = session else { return };
-    *done = true;
-    // The store is written first, so the flag applies what the project holds
-    // rather than what its last save happened to have written.
-    super::creatures::save(&mut session);
-    save(&mut session);
-    // Run through [`super::stack`], as the Server panel's buttons are, so a
-    // flag also puts back and applies the later subjects with this one.
-    let wanted = [
-        (args.revert_items, "--revert-items", super::stack::Wanted::PutBack(super::stack::Subject::Items)),
-        (args.apply_items, "--apply-items", super::stack::Wanted::Apply(super::stack::Subject::Items)),
-    ];
-    for (asked, flag, wanted) in wanted {
-        if !asked {
-            continue;
-        }
-        match super::stack::now(wanted, &mut session, &server, &mut reloads) {
-            Ok(line) => info!("{flag}: {line}"),
-            Err(e) => warn!("{flag}: {e}"),
-        }
-    }
-}
-
-/// Take a file out of the project, if it is there.
-fn remove(project: &vale_edit::project::Project, vpath: &str) {
-    if let Some(disk) = project.path_for(vpath) {
-        let _ = std::fs::remove_file(disk);
+        Ok(Some(out))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vale_mangos::row::{Edits, RowEdit};
+    use vale_mangos::row::{Key, Life, RowEdit};
+
+    fn plan_from(edits: &Edits) -> Plan {
+        subject::plan_of(&Items, edits)
+    }
 
     fn store_one(key: &Key, row: &RowEdit) -> Edits {
         let mut edits = Edits::default();
@@ -824,11 +275,11 @@ mod tests {
         let plan = plan_from(&edits);
         assert!(plan.refused.is_empty(), "{:?}", plan.refused);
         assert_eq!(plan.counts(), (0, 0, 1));
-        assert!(!plan.reload_is_safe());
+        assert!(Items.reloads_for(&plan).is_empty());
         let sql = plan.statements();
         assert_eq!(sql[0], "DELETE FROM `item_template` WHERE `entry` = 2589;");
         assert_eq!(sql.len(), 1 + item::DEPENDENTS.len());
-        assert_eq!(plan.line(), "1 item(s): 1 removed");
+        assert_eq!(plan.line(), "1 row(s): 1 removed");
     }
 
     /// An item whose entry changes is one claim at the new entry, and it
@@ -939,7 +390,7 @@ mod tests {
         assert_eq!(items.rows.len(), 1, "only the item");
         assert!(items.refused.is_empty(), "{:?}", items.refused);
 
-        let creatures = super::super::creatures::plan_from(&edits, &Default::default());
+        let creatures = subject::plan_of(&super::super::creatures::Creatures, &edits);
         assert_eq!(creatures.rows.len(), 1, "only the creature");
         assert!(creatures.refused.is_empty(), "{:?}", creatures.refused);
     }

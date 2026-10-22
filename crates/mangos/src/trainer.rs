@@ -61,20 +61,19 @@
 //! list first, so a removed row is gone from the server. The client asks for
 //! the list each time the window is opened.
 
-use crate::row::{Assignment, Key, Life};
+use crate::row::{Assignment, Key, Table};
 
 pub use crate::schema::{money_words, Column, Group, Kind, Row, RowValue};
 
 pub const TRAINER: &str = "npc_trainer";
 pub const TEMPLATE: &str = "npc_trainer_template";
 
-/// Both tables, in the order the server reloads them.
-pub const TABLES: [&str; 2] = [TEMPLATE, TRAINER];
+/// Both tables, in the order the server reloads them. Every row of each may
+/// be edited, created and removed.
+pub const TABLES: &[Table] = &[TEMPLATE_TABLE, TRAINER_TABLE];
 
-/// The static name for a table read out of a file, or `None`.
-pub fn table_named(name: &str) -> Option<&'static str> {
-    TABLES.into_iter().find(|table| *table == name)
-}
+pub const TEMPLATE_TABLE: Table = Table::new(TEMPLATE, &COLUMNS);
+pub const TRAINER_TABLE: Table = Table::new(TRAINER, &COLUMNS);
 
 /// What an `entry` of each table is, for a window's heading.
 pub fn keyed_by(table: &str) -> &'static str {
@@ -97,14 +96,8 @@ pub const COLUMNS: [Column; 8] = [
     Column { name: "build_max", kind: Kind::Key, group: Group::Identity, about: "the last client build the row is loaded at" },
 ];
 
-/// One column, by name, of either table.
-pub fn column(table: &str, name: &str) -> Option<&'static Column> {
-    table_named(table)?;
-    COLUMNS.iter().find(|column| column.name == name)
-}
-
 /// The build a vmangos for 1.12.1 loads rows at: `SUPPORTED_CLIENT_BUILD`.
-pub const BUILD: u32 = crate::datadir::CLIENT_BUILD;
+pub const BUILD: u32 = crate::CLIENT_BUILD;
 
 /// The build range a row made here is written with: every build.
 pub const EVERY_BUILD: (u32, u32) = (0, BUILD);
@@ -322,12 +315,6 @@ pub fn race_word(race: u32) -> Option<&'static str> {
     })
 }
 
-/// The statements a save emits for one row this project claims, on
-/// [`crate::vendor::statements`]' terms.
-pub fn statements(table: &str, key: &Key, life: Life, changes: &[Assignment]) -> Vec<String> {
-    crate::vendor::statements(table, key, life, changes)
-}
-
 // ---------------------------------------------------------------------------
 // The queries
 // ---------------------------------------------------------------------------
@@ -341,16 +328,6 @@ pub fn rows_query(table: &str, entry: u32) -> String {
     )
 }
 
-/// The row a key names — what an undo is taken from.
-pub fn row_query(table: &str, key: &Key) -> String {
-    crate::vendor::row_query(table, key)
-}
-
-/// Whether a row is already there, which an apply asks before it creates one.
-pub fn exists_query(table: &str, key: &Key) -> String {
-    crate::vendor::exists_query(table, key)
-}
-
 /// The creatures that name a template list, one line per entry.
 pub fn users_query(trainer_id: u32) -> String {
     format!(
@@ -362,6 +339,7 @@ pub fn users_query(trainer_id: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::row::Life;
 
     /// The columns are `LoadTrainers`' `SELECT`, with the two build columns
     /// its `WHERE` reads after them, and the key names four of them.
@@ -417,7 +395,7 @@ mod tests {
     #[test]
     fn a_row_becomes_the_statements_it_means() {
         let lesson = Lesson { cost: 100, ..Lesson::new(328, 1173) };
-        let created = statements(TRAINER, &lesson.key(), Life::Insert, &lesson.assignments());
+        let created = TRAINER_TABLE.statements(&lesson.key(), Life::Insert, &lesson.assignments());
         assert_eq!(
             created[1],
             "INSERT INTO `npc_trainer` (`entry`, `spell`, `build_min`, `build_max`, `spellcost`, \

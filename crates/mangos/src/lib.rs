@@ -64,12 +64,13 @@
 //!              described in: what a column is, how it is read, and which part
 //!              of a form it is drawn in
 //! row.rs       what an edit to a row is when there is no file to diff: the key,
-//!              the assignment, the undo, and the file a project keeps them in
+//!              the assignment, the undo, the file a project keeps them in, and
+//!              the table a row is in with the rules a store's row is planned by
 //! path.rs      a waypoint path, the one subject whose edit is a set of rows
 //!              rather than a set of columns. The server renumbers a path's
 //!              points at every start, so a path is written whole
-//! conn.rs      the only module that connects to anything: where the world
-//!              database is, and running statements on it
+//! conn.rs      the only module that connects to the database: where the
+//!              world database is, and running statements on it
 //! sql.rs       how a value is written into one of those statements
 //! migration.rs the form a set of those statements is handed to a server in:
 //!              vmangos' own `add_migration` file, stamped and applied once;
@@ -111,6 +112,28 @@
 //! The rule is the same as the editor's: the renderer is a 1.12 client and
 //! knows nothing about the server's database. The editor and the CLI are the
 //! two hosts that use this crate.
+
+/// The client build as a literal, for a statement written as a `&'static str`
+/// with [`concat!`]. Everything else names [`CLIENT_BUILD`].
+macro_rules! client_build {
+    () => {
+        5875
+    };
+}
+
+/// The client build a vmangos for 1.12.1 serves: `SUPPORTED_CLIENT_BUILD`.
+///
+/// It names the folder under `DataDir` the server reads its DBC files from,
+/// and it is the build a row copied from a client file is written at: each
+/// loader of such a table takes the highest row at or below this build, so a
+/// row written here wins over every shipped one, and one written above it is
+/// never read.
+pub const CLIENT_BUILD: u32 = client_build!();
+
+/// How far from a map's centre a point may be on either axis, in yards: half
+/// of 64 grids of 533⅓ yards, less half a yard. vmangos' `IsValidMapCoord`
+/// (`GridDefines.h`) refuses a coordinate outside it.
+pub const MAP_REACH: f32 = 64.0 * 533.333_3 / 2.0 - 0.5;
 
 pub mod area;
 pub mod broadcast;

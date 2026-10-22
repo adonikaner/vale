@@ -69,7 +69,7 @@
 //! removed item is deleted from every character who carries it on the next
 //! start, which is what removing an item means and is said on the button.
 //!
-//! [`can_live`] therefore allows a removal, [`reload_is_safe`] is what an apply
+//! [`TEMPLATE_TABLE`] therefore allows a removal, [`reload_is_safe`] is what an apply
 //! asks before it sends `.reload item_template`, and [`delete_statements`]
 //! takes every content-patch version with the rows of [`DEPENDENTS`], which are
 //! the rows that exist to describe the item or to hand it out.
@@ -103,7 +103,7 @@
 //! vmangos' own headers, which is what the *server* believes, and they are
 //! named as such.
 
-use crate::row::{Assignment, Key, Life};
+use crate::row::{Assignment, Key, Life, Table};
 
 pub use crate::schema::{
     mask_words, millis_words, money_words, seconds_words, value_word, Bit, Column, Group, Kind,
@@ -113,14 +113,22 @@ pub use crate::schema::{
 /// What an item is.
 pub const TEMPLATE: &str = "item_template";
 
-/// Every table this module writes, for a caller that has to resolve a name read
-/// out of a file back to one of these constants — see
-/// [`crate::creature::TABLES`], where the reason is.
-pub const TABLES: [&str; 1] = [TEMPLATE];
+/// The one table.
+pub const TABLES: &[Table] = &[TEMPLATE_TABLE];
 
-/// The static name for a table read out of a file, or `None`.
-pub fn table_named(name: &str) -> Option<&'static str> {
-    TABLES.into_iter().find(|table| *table == name)
+/// `item_template`: edited, created and removed. A removal names the entry
+/// alone and takes every content-patch version with the rows of
+/// [`DEPENDENTS`]; see [`delete_statements`]. It is safe on a restart only:
+/// see [`reload_is_safe`].
+pub const TEMPLATE_TABLE: Table = Table {
+    references: &REFERENCES,
+    cascade: Some(delete_by_key),
+    ..Table::new(TEMPLATE, &TEMPLATE_COLUMNS)
+};
+
+/// [`delete_statements`] for the entry a key names.
+fn delete_by_key(key: &Key) -> Vec<String> {
+    key.first().map(delete_statements).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -691,20 +699,6 @@ pub const TEMPLATE_COLUMNS: [Column; 129] = [
     Column { name: "other_team_entry", kind: Kind::Ref(TEMPLATE), group: Group::Advanced, about: "the other faction's version of this item" },
 ];
 
-/// The columns of the table, or an empty slice for a name this module does not
-/// know.
-pub fn columns_of(table: &str) -> &'static [Column] {
-    match table {
-        TEMPLATE => &TEMPLATE_COLUMNS,
-        _ => &[],
-    }
-}
-
-/// One column, by name.
-pub fn column(table: &str, name: &str) -> Option<&'static Column> {
-    columns_of(table).iter().find(|column| column.name == name)
-}
-
 /// The key an edit to an item row is written under — see the module comment on
 /// why the patch is half of it.
 pub fn template_key(entry: u32, patch: u32) -> Key {
@@ -728,6 +722,15 @@ pub const RESERVED_ENTRY_BASE: u32 = 2_000_000;
 
 /// …and the highest entry the column can hold — `mediumint unsigned`.
 pub const MAX_ENTRY: u32 = 0x00FF_FFFF;
+
+/// How a new template is numbered and when one may move; see
+/// [`crate::row::Numbering`].
+pub const NUMBERING: crate::row::Numbering = crate::row::Numbering {
+    table: TEMPLATE,
+    noun: "item",
+    reserved_base: RESERVED_ENTRY_BASE,
+    max_entry: MAX_ENTRY,
+};
 
 /// Every column of a new item, as the values a row created here starts
 /// from.
@@ -788,35 +791,6 @@ pub fn new_item(name: &str) -> Vec<Assignment> {
     out.into_iter()
         .map(|(column, value)| Assignment { column, value })
         .collect()
-}
-
-/// The statements a save emits for one row this project claims.
-///
-/// One `UPDATE` for a row it edits and a `DELETE`/`INSERT` pair for a row it
-/// creates — the pair for [`crate::creature::statements`]' reason, which is
-/// that applying twice then means the same as applying once.
-///
-/// A removal is [`delete_statements`]: every version of the item and the
-/// rows of [`DEPENDENTS`]. It is safe on a restart and not on a reload — see
-/// the module comment and [`reload_is_safe`].
-pub fn statements(table: &str, key: &Key, life: Life, changes: &[Assignment]) -> Vec<String> {
-    if !can_live(table, life) {
-        return Vec::new();
-    }
-    match life {
-        Life::Update => crate::row::update(table, key, changes).into_iter().collect(),
-        Life::Insert => vec![
-            crate::row::delete(table, key),
-            match crate::row::insert(table, key, changes) {
-                Some(statement) => statement,
-                None => return Vec::new(),
-            },
-        ],
-        Life::Delete => match key.first() {
-            Some(entry) => delete_statements(entry),
-            None => Vec::new(),
-        },
-    }
 }
 
 /// The rows removed with an item, as the column each names it in.
@@ -948,18 +922,6 @@ pub const REFERENCES: [crate::row::Reference; 55] = {
     ]
 };
 
-/// Whether this table can hold a row that is created or removed at all.
-///
-/// Both, for `item_template`. A removal is written only as the whole item —
-/// see [`delete_statements`] — and is safe on a restart only: see
-/// [`reload_is_safe`].
-pub fn can_live(table: &str, life: Life) -> bool {
-    match life {
-        Life::Update => true,
-        Life::Insert | Life::Delete => table == TEMPLATE,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // The queries
 // ---------------------------------------------------------------------------
@@ -1017,28 +979,28 @@ pub fn winning_template_query(entry: u32, wow_patch: u32) -> String {
     )
 }
 
-/// The row a key names — what an undo is taken from.
-pub fn row_query(table: &str, key: &Key) -> String {
-    format!(
-        "SELECT * FROM {} WHERE {} LIMIT 1",
-        crate::sql::name(table),
-        key.where_clause()
-    )
-}
-
-/// Whether a row is already there, which is what an apply asks before it
-/// creates one — see [`crate::creature::exists_query`], where the reason is.
-pub fn exists_query(table: &str, key: &Key) -> String {
-    format!(
-        "SELECT 1 FROM {} WHERE {} LIMIT 1",
-        crate::sql::name(table),
-        key.where_clause()
-    )
-}
-
 /// The highest entry the table holds, which is where a new one is numbered
 /// from when the reserved base is already in use.
 pub const MAX_ENTRY_QUERY: &str = "SELECT MAX(`entry`) AS `entry` FROM `item_template`";
+
+/// The dimmer second line of an item's list row: what type of item it is,
+/// where it is worn, and its item level. Shared by the item list and the
+/// reference picker, which draw an item alike.
+pub fn sub_line(class: u32, subclass: u32, inventory_type: u32, item_level: u32) -> String {
+    let class_word = value_word(&CLASSES, class);
+    let subclass_word = value_word(subclasses(class), subclass);
+    let worn = match inventory_type {
+        0 => String::new(),
+        other => format!(
+            " \u{b7} {}",
+            value_word(&INVENTORY_TYPES, other)
+        ),
+    };
+    match item_level {
+        0 => format!("{class_word} \u{b7} {subclass_word}{worn}"),
+        level => format!("{class_word} \u{b7} {subclass_word}{worn} \u{b7} ilvl {level}"),
+    }
+}
 
 /// Which items point at a display id, for the picker's own question: is
 /// this appearance already in use, and by what.
@@ -1108,7 +1070,7 @@ mod tests {
             .map(|column| column.name)
             .collect();
         assert_eq!(keys, vec!["entry"]);
-        assert!(column(TEMPLATE, "patch").is_none());
+        assert!(TEMPLATE_TABLE.column("patch").is_none());
         let key = template_key(2589, 0);
         assert_eq!(key.text(), "entry=2589;patch=0");
         assert_eq!(key.where_clause(), "`entry` = 2589 AND `patch` = 0");
@@ -1151,8 +1113,8 @@ mod tests {
     /// rows that hand the item out with it.
     #[test]
     fn a_removed_item_takes_every_version_and_its_dependents() {
-        assert!(can_live(TEMPLATE, Life::Delete));
-        let sql = statements(TEMPLATE, &template_key(835, 10), Life::Delete, &[]);
+        assert!(TEMPLATE_TABLE.can_live(Life::Delete));
+        let sql = TEMPLATE_TABLE.statements(&template_key(835, 10), Life::Delete, &[]);
         assert_eq!(sql.len(), 1 + DEPENDENTS.len());
         assert_eq!(sql[0], "DELETE FROM `item_template` WHERE `entry` = 835;");
         assert!(sql.contains(&"DELETE FROM `npc_vendor` WHERE `item` = 835;".to_string()));
@@ -1194,7 +1156,7 @@ mod tests {
     fn a_creation_is_idempotent() {
         let key = template_key(2_000_000, 0);
         let changes = new_item("Test Item");
-        let sql = statements(TEMPLATE, &key, Life::Insert, &changes);
+        let sql = TEMPLATE_TABLE.statements(&key, Life::Insert, &changes);
         assert_eq!(sql.len(), 2);
         assert!(sql[0].starts_with("DELETE FROM `item_template` WHERE `entry` = 2000000"), "{}", sql[0]);
         assert!(sql[1].starts_with("INSERT INTO `item_template` (`entry`, `patch`,"), "{}", sql[1]);
@@ -1205,7 +1167,7 @@ mod tests {
     fn an_edit_names_both_key_columns() {
         let key = template_key(2589, 0);
         let changes = vec![Assignment { column: "quality", value: "3".to_string() }];
-        let sql = statements(TEMPLATE, &key, Life::Update, &changes);
+        let sql = TEMPLATE_TABLE.statements(&key, Life::Update, &changes);
         assert_eq!(
             sql,
             vec!["UPDATE `item_template` SET `quality` = 3 WHERE `entry` = 2589 AND `patch` = 0;"]

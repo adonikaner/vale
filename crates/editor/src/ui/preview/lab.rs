@@ -225,7 +225,7 @@ pub fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: 
             let column = slot.and_then(|(_, field, _)| {
                 schema::for_table("SpellVisualKit").and_then(|schema| schema.column(field))
             });
-            let (colour, note) = match (slot, column, tables::visuals::slot_for_point(lab.point)) {
+            let (colour, note) = match (slot, column, vale_assets::tables::spell::slot_for_point(lab.point)) {
                 (Some((_, _, kit)), Some(column), Some(_)) => (
                     theme::INK_FAINT,
                     format!(
@@ -254,7 +254,7 @@ pub fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: 
             // same, so a choice that changed no table looked like a choice
             // that did not stick. See [`point_combo`], which groups the list
             // for the same reason.
-            let writes = slot.is_some() && tables::visuals::slot_for_point(lab.point).is_some();
+            let writes = slot.is_some() && vale_assets::tables::spell::slot_for_point(lab.point).is_some();
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 5.0;
                 let (word, mark) = match writes {
@@ -349,7 +349,7 @@ fn point_combo(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab) {
     // choosing a point that does not write looked the same as choosing one
     // that does, and finding the old point on return was read as the choice
     // not sticking.
-    let writes = |id: u32| slot.is_some() && tables::visuals::slot_for_point(id).is_some();
+    let writes = |id: u32| slot.is_some() && vale_assets::tables::spell::slot_for_point(id).is_some();
     let (mut kit_slots, mut preview_only): (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
     for (id, _) in &lab.points {
         match writes(*id) {
@@ -395,14 +395,14 @@ fn point_combo(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab) {
     }
     lab.point = point;
     // If both the old and the new point are kit columns, the tables move too.
-    let (Some((record, from, kit)), Some(to)) = (slot, tables::visuals::slot_for_point(point)) else {
+    let (Some((record, from, kit)), Some(to)) = (slot, vale_assets::tables::spell::slot_for_point(point)) else {
         return;
     };
     // Two columns share the base point. `BaseEffect` and `GroundEffect` both
     // hang at the feet (see `spell::fields::EFFECTS`), so an effect already in
     // one of them, chosen again as the base, would otherwise be moved into the
     // other without being asked.
-    if tables::visuals::point_for_slot(from) == Some(point) {
+    if vale_assets::tables::spell::point_for_slot(from) == Some(point) {
         return;
     }
     let Some(effect) = lab.effect else { return };

@@ -6,6 +6,7 @@ use vale_edit::dbc::{cell, chain, Cell, Row};
 use bevy::prelude::*;
 use super::browser::Browser;
 use super::fields::table_mut;
+use vale_assets::tables::schema::blank_defaults;
 
 /// `ItemSet.dbc`'s seventeen item columns.
 pub const SET_ITEMS: std::ops::Range<usize> = 10..27;
@@ -271,34 +272,6 @@ pub const CHAIN_DEEP: [&str; 2] = ["SpellVisualKit", "SpellVisualEffectName"];
 /// original.
 pub const COPY_SUFFIX: &str = " (copy)";
 
-/// What a blank row of a table holds beyond zeros: `(field, value)` pairs.
-///
-/// A kit's model columns and its four procedural slots are `-1` for none in
-/// the shipped rows (`build_backrefs` treats 0 and -1 alike), and a blank kit
-/// with 0 in `Animation` would resolve to Stand; see the schema's note on that
-/// column. In every other table, zero means none.
-pub fn blank_defaults(table: &str) -> &'static [(usize, u32)] {
-    const KIT: &[(usize, u32)] = &[
-        (vale_assets::tables::spell::fields::ANIMATION, u32::MAX),
-        (3, u32::MAX),
-        (4, u32::MAX),
-        (5, u32::MAX),
-        (6, u32::MAX),
-        (7, u32::MAX),
-        (8, u32::MAX),
-        (9, u32::MAX),
-        (10, u32::MAX),
-        (12, u32::MAX),
-        (15, u32::MAX),
-        (16, u32::MAX),
-        (17, u32::MAX),
-        (18, u32::MAX),
-    ];
-    match table {
-        "SpellVisualKit" => KIT,
-        _ => &[],
-    }
-}
 
 /// Add a blank row to an open table under the next id, as one undo entry.
 /// Returns its record index.

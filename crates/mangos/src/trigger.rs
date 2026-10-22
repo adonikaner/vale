@@ -71,7 +71,7 @@
 //! [`check_created`] make the checks a row alone can show; a target map that
 //! does not exist is the form's to refuse.
 
-use crate::row::{self, Assignment, Key, Life};
+use crate::row::{self, Assignment, Key, Life, Table};
 use crate::schema::{Column, Group, Kind};
 use std::collections::HashMap;
 use vale_edit::dbc::places::Trigger;
@@ -84,20 +84,27 @@ pub const QUEST: &str = "areatrigger_involvedrelation";
 pub const BG_ENTRANCE: &str = "areatrigger_bg_entrance";
 
 /// The tables a project edits as rows of its own store, in the order a plan
-/// writes them. The template is here for its five server columns only.
-pub const TABLES: [&str; 5] = [TEMPLATE, TELEPORT, TAVERN, QUEST, BG_ENTRANCE];
+/// writes them. The template is here for its five server columns only, and
+/// is only ever edited: its row follows `AreaTrigger.dbc`, and an edit is
+/// written by [`row_statements`] on a dev row [`copy_forward`] makes. Every
+/// row of the other four may be edited, created and removed.
+pub const TABLES: &[Table] = &[
+    Table {
+        lives: row::EDITED,
+        ..Table::new(TEMPLATE, &TEMPLATE_COLUMNS_OF_THE_SERVER)
+    },
+    Table::new(TELEPORT, &TELEPORT_COLUMNS),
+    Table::new(TAVERN, &TAVERN_COLUMNS),
+    Table::new(QUEST, &QUEST_COLUMNS),
+    Table::new(BG_ENTRANCE, &BG_ENTRANCE_COLUMNS),
+];
 
 /// The three of them with a `.reload`, in the order the server is asked.
 pub const RELOADS: [&str; 3] = [TELEPORT, TAVERN, QUEST];
 
-/// The static name for one of [`TABLES`] read out of a file, or `None`.
-pub fn table_named(name: &str) -> Option<&'static str> {
-    TABLES.into_iter().find(|table| *table == name)
-}
-
 /// The build a template edit is written at. `LoadAreaTriggers` takes the
 /// highest build at or below `SUPPORTED_CLIENT_BUILD`, 5875, so this row wins.
-pub const BUILD: u32 = 5875;
+pub const BUILD: u32 = crate::CLIENT_BUILD;
 
 /// The largest id `areatrigger_template.id`, a `smallint unsigned`, holds.
 pub const MAX_ID: u32 = vale_edit::dbc::places::MAX_TRIGGER_ID;
@@ -303,24 +310,6 @@ pub const QUEST_COLUMNS: [Column; 2] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the AreaTrigger.dbc id" },
     Column { name: "quest", kind: REF_QUEST, group: Group::Objectives, about: "the quest whose exploration objective is completed by entering the trigger" },
 ];
-
-/// Every column of one of [`TABLES`]. For the template, the key and the five
-/// columns the client's file does not have.
-pub fn columns_of(table: &str) -> &'static [Column] {
-    match table {
-        TEMPLATE => &TEMPLATE_COLUMNS_OF_THE_SERVER,
-        TELEPORT => &TELEPORT_COLUMNS,
-        TAVERN => &TAVERN_COLUMNS,
-        QUEST => &QUEST_COLUMNS,
-        BG_ENTRANCE => &BG_ENTRANCE_COLUMNS,
-        _ => &[],
-    }
-}
-
-/// One column, by name, of one of [`TABLES`].
-pub fn column(table: &str, name: &str) -> Option<&'static Column> {
-    columns_of(table).iter().find(|column| column.name == name)
-}
 
 /// The key of a battleground entrance row.
 pub fn bg_entrance_key(id: u32) -> Key {
@@ -599,11 +588,6 @@ pub fn winning_template_query(id: u32) -> String {
     )
 }
 
-/// The row a key names, which an undo is taken from.
-pub fn row_query(table: &str, key: &Key) -> String {
-    format!("SELECT * FROM {} WHERE {} LIMIT 1", crate::sql::name(table), key.where_clause())
-}
-
 /// The statements one row of [`TABLES`] becomes: an `UPDATE` for an edit, a
 /// `DELETE` and an `INSERT` for a created row, a `DELETE` for a removed one.
 /// A template row is only ever edited: its dev row is made first with
@@ -618,13 +602,9 @@ pub fn row_statements(table: &str, key: &Key, life: Life, changes: &[Assignment]
         };
         return vec![copy_forward(id as u32), update];
     }
-    match life {
-        Life::Update => row::update(table, key, changes).into_iter().collect(),
-        Life::Insert => match row::insert(table, key, changes) {
-            Some(statement) => vec![row::delete(table, key), statement],
-            None => Vec::new(),
-        },
-        Life::Delete => vec![row::delete(table, key)],
+    match row::table_named(TABLES, table) {
+        Some(table) => table.statements(key, life, changes),
+        None => Vec::new(),
     }
 }
 

@@ -189,8 +189,8 @@ fn tabs(ui: &mut egui::Ui, subject: &mut Subject<'_>, window: &crate::subjects::
         .sets
         .iter()
         .map(|set| match set.entry {
-            0 => format!("{} \u{b7} none", set.table().word),
-            entry => format!("{} \u{b7} {entry}", set.table().word),
+            0 => format!("{} \u{b7} none", set.heading().word),
+            entry => format!("{} \u{b7} {entry}", set.heading().word),
         })
         .collect();
     if labels.len() == 1 {
@@ -214,7 +214,7 @@ fn tabs(ui: &mut egui::Ui, subject: &mut Subject<'_>, window: &crate::subjects::
 /// with it: the column names nothing, or the set has no rows. `false` when
 /// there is no set to draw.
 fn set_head(ui: &mut egui::Ui, subject: &mut Subject<'_>, set: Set, fix: Option<Fix>) -> bool {
-    let table = set.table();
+    let table = set.heading();
     if set.entry == 0 {
         ui.label(
             egui::RichText::new(format!(

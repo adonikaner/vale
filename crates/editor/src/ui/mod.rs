@@ -237,8 +237,8 @@ pub struct Playing<'w> {
     /// [`vale_client::world::session::QueryCaches`].
     caches: ResMut<'w, vale_client::world::session::QueryCaches>,
     /// The last known state of each server subject, which the Server panel
-    /// draws and does not recompute every frame. See [`shell::sync::Standings`].
-    standings: ResMut<'w, shell::sync::Standings>,
+    /// draws and does not recompute every frame. See [`crate::server::sync::Standings`].
+    standings: ResMut<'w, crate::server::sync::Standings>,
     /// The database writes waiting and running, which the Server panel queues
     /// and the toast in the corner reports. See [`crate::server::queue`].
     queue: ResMut<'w, crate::server::queue::ServerQueue>,
@@ -404,7 +404,7 @@ impl Plugin for PanelPlugin {
             .init_resource::<shell::topbar::GoTo>()
             .init_resource::<shell::topbar::Projects>()
             .init_resource::<shell::popover::Popovers>()
-            .init_resource::<shell::sync::Standings>()
+            .init_resource::<crate::server::sync::Standings>()
             .init_resource::<Viewport>()
             .init_resource::<shell::rail::Rail>()
             .add_plugins((widgets::thumbnails::ThumbnailPlugin, shell::icons::IconPlugin))
@@ -733,6 +733,7 @@ fn draw(
                         // panel is the one user of it here.
                         server: &playing.server,
                         server_panel: &mut popovers.server,
+                        standings: &mut playing.standings,
                         guides: &mut viewing.guides,
                     },
                     &mut editing,
@@ -931,6 +932,7 @@ fn draw(
                 gossip: &mut editing.gossip,
                 server: &playing.server,
                 server_panel: &mut popovers.server,
+                standings: &mut playing.standings,
                 assets: &assets,
                 portraits: &mut editing.portraits,
                 thumbnails: &mut editing.thumbnails,
@@ -952,6 +954,7 @@ fn draw(
                 loot: &mut editing.loot,
                 server: &playing.server,
                 server_panel: &mut popovers.server,
+                standings: &mut playing.standings,
                 assets: &assets,
                 portraits: &mut editing.portraits,
                 thumbnails: &mut editing.thumbnails,

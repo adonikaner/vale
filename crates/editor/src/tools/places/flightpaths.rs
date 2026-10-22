@@ -522,29 +522,9 @@ impl Aim {
 
     /// How far a segment is from the ray in pixels, at its nearest.
     fn to_segment(&self, a: Vec3, b: Vec3) -> Option<f32> {
-        let (along, off) = ray_to_segment(self.origin, self.direction, a, b)?;
+        let (along, off) = crate::pick::ray_to_segment(self.origin, self.direction, a, b)?;
         Some(self.pixels(off, along))
     }
-}
-
-/// The closest approach between a ray and a segment: how far down the ray it
-/// is, and how far apart the two are there. `None` when it is behind the eye.
-fn ray_to_segment(origin: Vec3, direction: Vec3, a: Vec3, b: Vec3) -> Option<(f32, f32)> {
-    let u = b - a;
-    let w = origin - a;
-    let (uu, ud, uw, dw) = (u.dot(u), u.dot(direction), u.dot(w), direction.dot(w));
-    // With a unit direction, the two lines' parameters at their closest.
-    let denominator = uu - ud * ud;
-    let s = match denominator.abs() > 1e-6 {
-        true => ((uw - ud * dw) / denominator).clamp(0.0, 1.0),
-        false => 0.0,
-    };
-    let on_segment = a + u * s;
-    let t = (on_segment - origin).dot(direction);
-    if t <= 0.0 {
-        return None;
-    }
-    Some((t, (origin + direction * t - on_segment).length()))
 }
 
 pub(super) fn aim_of(
@@ -782,7 +762,7 @@ fn drag(
     };
     let hit = match vertical {
         false => crate::pick::meets_plane(origin, direction, from.z),
-        true => meets_upright_plane(origin, direction, from),
+        true => crate::pick::meets_upright_plane(origin, direction, from),
     };
     let Some(hit) = hit else { return };
     let grab = match held.grab {
@@ -885,7 +865,7 @@ fn lift(
         return;
     };
     let point = held.at.extend(draft.height);
-    let Some(hit) = meets_upright_plane(origin, direction, point) else {
+    let Some(hit) = crate::pick::meets_upright_plane(origin, direction, point) else {
         return;
     };
     match held.grab {
@@ -921,18 +901,6 @@ fn finish_draft(session: &mut EditSession, flights: &mut Flightpaths, to: u32) -
     let with_return = flights.with_return;
     flights.disarm();
     make_path(session, flights, &a, &b, &points, with_return, "Draw flight path")
-}
-
-/// Where the ray meets the upright plane through `at` that faces the camera
-/// across the ground: the plane a vertical drag moves in.
-pub(super) fn meets_upright_plane(origin: Vec3, direction: Vec3, at: Vec3) -> Option<Vec3> {
-    let normal = Vec3::new(direction.x, direction.y, 0.0).normalize_or_zero();
-    let facing = direction.dot(normal);
-    if normal == Vec3::ZERO || facing.abs() < 1e-4 {
-        return None;
-    }
-    let t = (at - origin).dot(normal) / facing;
-    (t > 0.0).then(|| origin + direction * t)
 }
 
 /// Write a node's position, and the ends of its paths when they are carried,
@@ -1829,32 +1797,6 @@ mod tests {
         ];
         assert_eq!(suggested_cost(&routes, 2000.0), 400);
         assert_eq!(suggested_cost(&[], 2000.0), 0);
-    }
-
-    #[test]
-    fn the_ray_meets_a_segment_where_they_pass_closest() {
-        let origin = Vec3::new(0.0, 0.0, 100.0);
-        let down = Vec3::new(0.0, 0.0, -1.0);
-        let (along, off) =
-            ray_to_segment(origin, down, Vec3::new(-10.0, 3.0, 0.0), Vec3::new(10.0, 3.0, 0.0))
-                .unwrap();
-        assert!((along - 100.0).abs() < 1e-3);
-        assert!((off - 3.0).abs() < 1e-3);
-        // A segment behind the eye is not picked.
-        assert!(ray_to_segment(origin, -down, Vec3::new(-1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0))
-            .is_none());
-    }
-
-    #[test]
-    fn an_upright_drag_plane_faces_the_camera() {
-        let origin = Vec3::new(-100.0, 0.0, 50.0);
-        let direction = Vec3::new(1.0, 0.0, -0.2).normalize();
-        let at = Vec3::new(0.0, 0.0, 20.0);
-        let hit = meets_upright_plane(origin, direction, at).unwrap();
-        assert!(hit.x.abs() < 1e-3, "the plane passes through the handle");
-        assert!((hit.z - 30.0).abs() < 1e-2, "{hit:?}");
-        // Looking straight down there is no upright plane to meet.
-        assert!(meets_upright_plane(origin, Vec3::new(0.0, 0.0, -1.0), at).is_none());
     }
 
     /// A drawn path runs from the start node through the placed points, in

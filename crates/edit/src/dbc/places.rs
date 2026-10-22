@@ -5,6 +5,7 @@
 //! AreaTrigger    a sphere or a box on a map that the client reports standing in
 //! WorldSafeLocs  a place a dead character's spirit appears
 //! Map            a map: its id, its folder, its name and what kind of place it is
+//! AreaTable      an area: the explore bit a new row takes
 //! ```
 //!
 //! The field indices are `vale_assets::tables::{areatrigger, safeloc, map}`'s.
@@ -35,6 +36,18 @@ use std::collections::HashMap;
 use vale_assets::tables::areatrigger::fields as tf;
 use vale_assets::tables::map::fields as mf;
 use vale_assets::tables::safeloc::fields as sf;
+
+/// The lowest explore bit above every one `AreaTable.dbc` uses. The shipped
+/// rows use 0 to 1076 with no gap, so a new area takes 1077. Two areas that
+/// share a bit are discovered together, which is why a new row does not reuse
+/// one.
+pub fn next_explore_bit(areas: &DbcFile) -> u32 {
+    use vale_assets::tables::area::fields::AREA_BIT;
+    (0..areas.record_count())
+        .filter_map(|record| areas.u32_at(record, AREA_BIT))
+        .max()
+        .map_or(0, |highest| highest.saturating_add(1))
+}
 
 /// The three tables, by the names the caller's table map uses.
 pub const TRIGGERS: &str = "AreaTrigger";
@@ -393,6 +406,18 @@ mod tests {
         }
         buf.push(0);
         DbcFile::parse(&buf).unwrap()
+    }
+
+    /// A new area's explore bit is one past the highest in use, and 0 in a
+    /// table with no rows.
+    #[test]
+    fn a_new_area_takes_the_bit_after_the_highest() {
+        use vale_assets::tables::area::fields::AREA_BIT;
+        let mut areas = table(AREA_BIT + 1, &[(12, 0), (9, 0)]);
+        areas.set_u32(0, AREA_BIT, 126);
+        areas.set_u32(1, AREA_BIT, 125);
+        assert_eq!(next_explore_bit(&areas), 127);
+        assert_eq!(next_explore_bit(&table(AREA_BIT + 1, &[])), 0);
     }
 
     fn open_with(name: &str, file: DbcFile) -> HashMap<String, DbcFile> {

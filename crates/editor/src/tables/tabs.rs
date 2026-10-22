@@ -1,90 +1,9 @@
-//! Which tables each workspace reaches: the tabs, the tables a subject opens
-//! beside its own, and a table named in any case.
+//! Which tables each workspace reaches: the tabs, and a table named in any
+//! case. The tables opened beside a subject's own are
+//! `vale_assets::tables::schema::chain_for`'s.
 
 use vale_assets::tables::schema;
 
-/// The tables a subject needs in addition to its own root table.
-///
-/// There are three chains (the spell chain, the light chain and the flight
-/// path tables) and the tables a skill table or an item set is labelled
-/// from. A spell's form can be drawn from `Spell.dbc` alone, but its
-/// storyboard cannot, and neither can a followed reference or a row labelled
-/// from the rows it references. These tables are opened one per frame after
-/// the subject's own; together they are smaller than `Spell.dbc`'s string
-/// block, so opening them has no noticeable cost.
-pub fn chain_for(table: &str) -> &'static [&'static str] {
-    match table {
-        "Spell" => &[
-            "SpellVisual",
-            "SpellVisualKit",
-            "SpellVisualEffectName",
-            "AnimationData",
-            "SpellIcon",
-            "SpellCastTimes",
-            "SpellDuration",
-            "SpellRadius",
-            "SpellRange",
-            "SoundEntries",
-            "SpellEffectCameraShakes",
-            // The skill tables, which are tabs of the spell workspace. With
-            // `SkillLineAbility` open, a spell's reverse references list the
-            // skill lines it is in.
-            "SkillLine",
-            "SkillLineAbility",
-            "SkillRaceClassInfo",
-            "SkillLineCategory",
-        ],
-        "Light" => &[
-            "LightParams",
-            "LightIntBand",
-            "LightFloatBand",
-            "LightSkybox",
-            // `Map` is not part of the light chain but is opened with it. It is
-            // not edited here and has no tab; it is read so a light's label
-            // can show `Azeroth` instead of `map 0`. `Light` rows have no
-            // names, so the map is most of what the label shows.
-            "Map",
-        ],
-        // The paths and their points, which a node's form lists, and `Map` for
-        // the same reason the light chain opens it.
-        "TaxiNodes" => &["TaxiPath", "TaxiPathNode", "Map"],
-        // A set's bonuses are spells and its requirement is a skill line.
-        "ItemSet" => &["Spell", "SkillLine"],
-        // The creature display chain: what a display's model and extra
-        // columns name, which are its two other tabs, and the items an extra
-        // row dresses the creature in.
-        "CreatureDisplayInfo" | "CreatureDisplayInfoExtra" | "CreatureModelData" => &[
-            "CreatureDisplayInfo",
-            "CreatureDisplayInfoExtra",
-            "CreatureModelData",
-            "ItemDisplayInfo",
-        ],
-        // A game object's ten sounds.
-        "GameObjectDisplayInfo" => &["SoundEntries"],
-        // The visual an item's glow is.
-        "ItemDisplayInfo" => &["SpellVisual"],
-        // The skill tables, for when one is opened from the Tables
-        // workspace and the spell chain is not open: each is labelled from
-        // the others.
-        "SkillLine" => &["SkillLineCategory", "SpellIcon"],
-        "SkillLineAbility" | "SkillRaceClassInfo" => &["SkillLine", "Spell"],
-        // `Map`, which an area's label names, and the five tables its sound
-        // and liquid columns refer to, so each reference is drawn as a name.
-        //
-        // `SoundEntries` as well, which the music, intro and ambience rows
-        // name, so a sound's play button says which sound it plays.
-        "AreaTable" => &[
-            "Map",
-            "ZoneMusic",
-            "ZoneIntroMusicTable",
-            "SoundAmbience",
-            "SoundProviderPreferences",
-            "LiquidType",
-            "SoundEntries",
-        ],
-        _ => &[],
-    }
-}
 
 /// The flight path tables, in the order a flight is read: the node, the path
 /// from it, the points of the path.

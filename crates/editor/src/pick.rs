@@ -340,6 +340,89 @@ pub fn meets_plane(origin: Vec3, direction: Vec3, z: f32) -> Option<Vec3> {
         .then(|| origin + direction * distance)
 }
 
+/// Where a ray enters an axis-aligned box, or `None` if it misses.
+///
+/// `pub(crate)` because the doodad and WMO tools pick their models with it.
+///
+/// The standard slab test. A ray that starts inside the box answers zero
+/// rather than nothing, which is what a click from a camera parked inside a
+/// tree should do.
+pub(crate) fn ray_enters_box(origin: Vec3, direction: Vec3, centre: Vec3, half: Vec3) -> Option<f32> {
+    let (lower, upper) = (centre - half, centre + half);
+    let mut near = f32::NEG_INFINITY;
+    let mut far = f32::INFINITY;
+    for axis in 0..3 {
+        let d = direction[axis];
+        if d.abs() < 1e-6 {
+            // Parallel to this pair of planes: a miss unless it is already
+            // between them.
+            if origin[axis] < lower[axis] || origin[axis] > upper[axis] {
+                return None;
+            }
+            continue;
+        }
+        let a = (lower[axis] - origin[axis]) / d;
+        let b = (upper[axis] - origin[axis]) / d;
+        near = near.max(a.min(b));
+        far = far.min(a.max(b));
+    }
+    (far >= near.max(0.0)).then(|| near.max(0.0))
+}
+
+/// Where a ray enters a box turned by `yaw` about up, or `None` if it misses.
+/// The ray is taken into the box's own frame and given to [`ray_enters_box`].
+pub(crate) fn ray_enters_turned_box(origin: Vec3, direction: Vec3, centre: Vec3, half: Vec3, yaw: f32) -> Option<f32> {
+    let (s, c) = yaw.sin_cos();
+    let local = |v: Vec3| Vec3::new(v.x * c + v.y * s, -v.x * s + v.y * c, v.z);
+    ray_enters_box(local(origin - centre), local(direction), Vec3::ZERO, half)
+}
+
+/// How far down a unit ray it first meets a sphere, or `None` when it misses or
+/// the sphere is behind the eye. A ray that starts inside answers zero.
+pub(crate) fn ray_meets_sphere(origin: Vec3, direction: Vec3, centre: Vec3, radius: f32) -> Option<f32> {
+    let to = centre - origin;
+    let along = to.dot(direction);
+    let off = to.length_squared() - along * along;
+    let r2 = radius * radius;
+    if off > r2 {
+        return None;
+    }
+    let half = (r2 - off).sqrt();
+    (along + half >= 0.0).then(|| (along - half).max(0.0))
+}
+
+/// The closest approach between a ray and a segment: how far down the ray it
+/// is, and how far apart the two are there. `None` when it is behind the eye.
+pub(crate) fn ray_to_segment(origin: Vec3, direction: Vec3, a: Vec3, b: Vec3) -> Option<(f32, f32)> {
+    let u = b - a;
+    let w = origin - a;
+    let (uu, ud, uw, dw) = (u.dot(u), u.dot(direction), u.dot(w), direction.dot(w));
+    // With a unit direction, the two lines' parameters at their closest.
+    let denominator = uu - ud * ud;
+    let s = match denominator.abs() > 1e-6 {
+        true => ((uw - ud * dw) / denominator).clamp(0.0, 1.0),
+        false => 0.0,
+    };
+    let on_segment = a + u * s;
+    let t = (on_segment - origin).dot(direction);
+    if t <= 0.0 {
+        return None;
+    }
+    Some((t, (origin + direction * t - on_segment).length()))
+}
+
+/// Where the ray meets the upright plane through `at` that faces the camera
+/// across the ground: the plane a vertical drag moves in.
+pub(crate) fn meets_upright_plane(origin: Vec3, direction: Vec3, at: Vec3) -> Option<Vec3> {
+    let normal = Vec3::new(direction.x, direction.y, 0.0).normalize_or_zero();
+    let facing = direction.dot(normal);
+    if normal == Vec3::ZERO || facing.abs() < 1e-4 {
+        return None;
+    }
+    let t = (at - origin).dot(normal) / facing;
+    (t > 0.0).then(|| origin + direction * t)
+}
+
 /// The pointer's ray, in the world's own axes.
 ///
 /// Physical pixels, for the reason [`aim`] gives beside its own copy of this
@@ -569,5 +652,61 @@ mod tests {
         assert!(meets_plane(Vec3::new(0.0, 0.0, 100.0), graze, 40.0).is_none());
         // The same ray does answer for a plane it reaches inside the range.
         assert!(meets_plane(Vec3::new(0.0, 0.0, 100.0), graze, 99.5).is_some());
+    }
+
+    /// A ray that misses answers nothing and one that starts inside answers
+    /// zero. Both are the cases a click actually makes: the pointer is usually
+    /// over empty ground, and the camera is sometimes inside the tree it is
+    /// looking at.
+    #[test]
+    fn the_slab_test_answers_where_a_ray_enters() {
+        let centre = Vec3::ZERO;
+        let half = Vec3::splat(1.0);
+        let hit = ray_enters_box(Vec3::new(0.0, 0.0, -5.0), Vec3::Z, centre, half);
+        assert!(hit.is_some_and(|d| (d - 4.0).abs() < 1e-4), "{hit:?}");
+        assert_eq!(ray_enters_box(Vec3::new(5.0, 5.0, -5.0), Vec3::Z, centre, half), None);
+        assert_eq!(ray_enters_box(Vec3::ZERO, Vec3::Z, centre, half), Some(0.0));
+        // Parallel and outside is a miss; parallel and inside is not.
+        assert_eq!(ray_enters_box(Vec3::new(9.0, 0.0, 0.0), Vec3::Z, centre, half), None);
+    }
+
+    /// The nearer of two boxes on one ray is the one picked: clicking selects
+    /// whatever is in front.
+    #[test]
+    fn the_nearer_box_is_the_one_the_ray_finds() {
+        let near = ray_enters_box(Vec3::new(0.0, 0.0, -10.0), Vec3::Z, Vec3::ZERO, Vec3::ONE);
+        let far = ray_enters_box(
+            Vec3::new(0.0, 0.0, -10.0),
+            Vec3::Z,
+            Vec3::new(0.0, 0.0, 20.0),
+            Vec3::ONE,
+        );
+        assert!(near < far);
+    }
+
+    #[test]
+    fn the_ray_meets_a_segment_where_they_pass_closest() {
+        let origin = Vec3::new(0.0, 0.0, 100.0);
+        let down = Vec3::new(0.0, 0.0, -1.0);
+        let (along, off) =
+            ray_to_segment(origin, down, Vec3::new(-10.0, 3.0, 0.0), Vec3::new(10.0, 3.0, 0.0))
+                .unwrap();
+        assert!((along - 100.0).abs() < 1e-3);
+        assert!((off - 3.0).abs() < 1e-3);
+        // A segment behind the eye is not picked.
+        assert!(ray_to_segment(origin, -down, Vec3::new(-1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0))
+            .is_none());
+    }
+
+    #[test]
+    fn an_upright_drag_plane_faces_the_camera() {
+        let origin = Vec3::new(-100.0, 0.0, 50.0);
+        let direction = Vec3::new(1.0, 0.0, -0.2).normalize();
+        let at = Vec3::new(0.0, 0.0, 20.0);
+        let hit = meets_upright_plane(origin, direction, at).unwrap();
+        assert!(hit.x.abs() < 1e-3, "the plane passes through the handle");
+        assert!((hit.z - 30.0).abs() < 1e-2, "{hit:?}");
+        // Looking straight down there is no upright plane to meet.
+        assert!(meets_upright_plane(origin, Vec3::new(0.0, 0.0, -1.0), at).is_none());
     }
 }

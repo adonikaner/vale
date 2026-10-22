@@ -40,7 +40,9 @@ use crate::ui::widgets::thumbnails::Thumbnails;
 use crate::session::EditSession;
 use crate::subjects::items::Items;
 use crate::subjects::quests::{PickFor, Picker, Quests, Target};
-use crate::subjects::services::{self, About, Kind, List, Services, ShownLesson, ShownWare};
+use crate::subjects::services::{About, Kind, List, Services, ShownLesson, ShownWare};
+use vale_assets::tables::talent::Talents;
+use vale_assets::tables::teaching;
 use vale_client::assets::GameAssets;
 use vale_mangos::row::Life;
 use vale_mangos::schema::{money_words, seconds_words};
@@ -138,8 +140,13 @@ fn add_chosen(subject: &mut Subject<'_>, table: &'static str, entry: u32, id: u3
             let Some(spells) = subject.session.table("Spell") else {
                 return;
             };
-            let (spell, replaced) = services::resolve_teaching(spells, &talents, id);
-            let facts = services::taught(spells, &talents, spell);
+            let (spell, replaced) = teaching::resolve_teaching(spells, id);
+            let facts = teaching::spell_facts(spells, spell).map(|f| Taught {
+                effect: f.effect,
+                teaches: f.teaches,
+                level: f.level,
+                talent: talents.contains(&spell),
+            });
             let done = subject.services.add_spell(subject.session, list, other, spell, facts, now);
             match (done, replaced) {
                 (Ok(line), Some(chosen)) => Ok(format!(
@@ -163,7 +170,9 @@ fn open_spell_tables(subject: &mut Subject<'_>) -> bool {
         && subject.session.open_table(subject.assets, "TalentTab");
     if opened && subject.services.talents.is_none() {
         subject.services.talents = match (subject.session.table("Talent"), subject.session.table("TalentTab")) {
-            (Some(talent), Some(tab)) => services::talent_spells(talent, tab),
+            (Some(talent), Some(tab)) => {
+                Talents::parse(&talent.write(), &tab.write()).map(|t| teaching::talent_spells(&t))
+            }
             _ => None,
         };
     }
@@ -686,7 +695,13 @@ fn trainer_rows(ui: &mut egui::Ui, subject: &mut Subject<'_>, about: &About, own
             let facts = subject
                 .session
                 .table("Spell")
-                .and_then(|spells| services::taught(spells, &talents, shown.lesson.spell));
+                .and_then(|spells| teaching::spell_facts(spells, shown.lesson.spell))
+                .map(|f| Taught {
+                    effect: f.effect,
+                    teaches: f.teaches,
+                    level: f.level,
+                    talent: talents.contains(&shown.lesson.spell),
+                });
             let level = shown.lesson.level_needed(facts.map_or(0, |facts| facts.level));
             let name = ability_name(subject, shown.lesson.spell, facts);
             (shown, facts, level, name)
@@ -711,7 +726,7 @@ fn trainer_rows(ui: &mut egui::Ui, subject: &mut Subject<'_>, about: &About, own
                     Some(facts) if !facts.is_teaching() => subject
                         .session
                         .table("Spell")
-                        .and_then(|spells| services::teaching_spell(spells, shown.lesson.spell)),
+                        .and_then(|spells| teaching::teaching_spell(spells, shown.lesson.spell)),
                     _ => None,
                 };
                 let mut faults = shown.lesson.check();
@@ -849,7 +864,7 @@ fn trainer_row(
                         0 => "free".to_string(),
                         copper => money_words(copper as u64),
                     })
-                    .custom_parser(parse_money),
+                    .custom_parser(vale_mangos::schema::parse_money),
             )
             .on_hover_text(
                 "spellcost, in copper. Enter 150, 1s 50c or 2g. The server applies the player's \
@@ -895,7 +910,7 @@ fn open_skill_lines(subject: &mut Subject<'_>) {
     let Some(lines) = subject.session.table("SkillLine") else {
         return;
     };
-    subject.services.skill_lines = Some(services::skill_groups(lines, subject.session.table("SkillLineCategory")));
+    subject.services.skill_lines = Some(teaching::skill_groups(lines, subject.session.table("SkillLineCategory")));
 }
 
 /// `reqskill` as a menu of `SkillLine.dbc`'s lines, grouped by category with
@@ -907,10 +922,10 @@ fn open_skill_lines(subject: &mut Subject<'_>) {
 /// The menu stays open while the filter is typed into, and closes on a
 /// choice or a click outside it. The filter is kept in egui's memory under
 /// the menu's id, and is emptied on a choice.
-fn skill_cell(ui: &mut egui::Ui, menu: egui::Id, groups: &[services::SkillGroup], skill: u32) -> Option<u32> {
+fn skill_cell(ui: &mut egui::Ui, menu: egui::Id, groups: &[teaching::LineGroup], skill: u32) -> Option<u32> {
     let shown = match skill {
         0 => "no skill".to_string(),
-        id => match services::skill_name(groups, id) {
+        id => match teaching::skill_name(groups, id) {
             Some(name) => format!("{name} ({id})"),
             None => format!("skill line {id}"),
         },
@@ -943,7 +958,7 @@ fn skill_cell(ui: &mut egui::Ui, menu: egui::Id, groups: &[services::SkillGroup]
             // A typed number is offered as it is, whether or not the table
             // holds it.
             if let Ok(id) = filter.trim().parse::<u32>() {
-                let label = match services::skill_name(groups, id) {
+                let label = match teaching::skill_name(groups, id) {
                     Some(name) => format!("Use {id}, {name}"),
                     None => format!("Use {id} (not in SkillLine.dbc)"),
                 };
@@ -955,7 +970,7 @@ fn skill_cell(ui: &mut egui::Ui, menu: egui::Id, groups: &[services::SkillGroup]
                 chosen = Some(0);
             }
             for group in groups {
-                let hits: Vec<&services::SkillLine> = group.lines.iter().filter(|line| line.matches(&filter)).collect();
+                let hits: Vec<&teaching::NamedLine> = group.lines.iter().filter(|line| line.matches(&filter)).collect();
                 if hits.is_empty() {
                     continue;
                 }
@@ -979,41 +994,6 @@ fn skill_cell(ui: &mut egui::Ui, menu: egui::Id, groups: &[services::SkillGroup]
          to filter it, or enter an id to use that id directly.",
     );
     chosen
-}
-
-/// A price typed as a person writes one: a bare number of copper, or coins
-/// with `g`, `s` and `c` after them (`1g 20s`, `75c`).
-fn parse_money(text: &str) -> Option<f64> {
-    let text = text.trim().to_ascii_lowercase();
-    if text == "free" {
-        return Some(0.0);
-    }
-    if let Ok(copper) = text.parse::<f64>() {
-        return Some(copper);
-    }
-    let mut total = 0.0;
-    let mut digits = String::new();
-    for c in text.chars() {
-        match c {
-            '0'..='9' | '.' => digits.push(c),
-            'g' | 's' | 'c' => {
-                let value: f64 = digits.parse().ok()?;
-                digits.clear();
-                total += value
-                    * match c {
-                        'g' => 10_000.0,
-                        's' => 100.0,
-                        _ => 1.0,
-                    };
-            }
-            ' ' => {}
-            _ => return None,
-        }
-    }
-    match digits.is_empty() {
-        true => Some(total),
-        false => None,
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1060,21 +1040,4 @@ fn remove_or_keep(
             }
         }
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A price reads as copper, as coins, or as the word the cell shows for 0.
-    #[test]
-    fn a_price_is_typed_as_coins_or_copper() {
-        assert_eq!(parse_money("150"), Some(150.0));
-        assert_eq!(parse_money("1s 50c"), Some(150.0));
-        assert_eq!(parse_money("2g"), Some(20_000.0));
-        assert_eq!(parse_money("1g 2s 3c"), Some(10_203.0));
-        assert_eq!(parse_money("free"), Some(0.0));
-        assert_eq!(parse_money("1g 2"), None);
-        assert_eq!(parse_money("lots"), None);
-    }
 }

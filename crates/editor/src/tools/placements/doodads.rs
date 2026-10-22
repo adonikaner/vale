@@ -610,7 +610,7 @@ pub(crate) fn boxes_hit<'a>(
         let inverse = at.affine().inverse();
         let from = inverse.transform_point3(origin);
         let along = inverse.transform_vector3(direction);
-        let Some(distance) = slab(
+        let Some(distance) = crate::pick::ray_enters_box(
             from,
             along,
             Vec3::from(aabb.center),
@@ -625,35 +625,6 @@ pub(crate) fn boxes_hit<'a>(
     }
     found.sort_by(|a, b| a.0.total_cmp(&b.0));
     found
-}
-
-/// Where a ray enters an axis-aligned box, or `None` if it misses.
-///
-/// `pub(crate)` for the same reason [`boxes_hit`] is.
-///
-/// The standard slab test. A ray that starts inside the box answers zero
-/// rather than nothing, which is what a click from a camera parked inside a
-/// tree should do.
-pub(crate) fn slab(origin: Vec3, direction: Vec3, centre: Vec3, half: Vec3) -> Option<f32> {
-    let (lower, upper) = (centre - half, centre + half);
-    let mut near = f32::NEG_INFINITY;
-    let mut far = f32::INFINITY;
-    for axis in 0..3 {
-        let d = direction[axis];
-        if d.abs() < 1e-6 {
-            // Parallel to this pair of planes: a miss unless it is already
-            // between them.
-            if origin[axis] < lower[axis] || origin[axis] > upper[axis] {
-                return None;
-            }
-            continue;
-        }
-        let a = (lower[axis] - origin[axis]) / d;
-        let b = (upper[axis] - origin[axis]) / d;
-        near = near.max(a.min(b));
-        far = far.min(a.max(b));
-    }
-    (far >= near.max(0.0)).then(|| near.max(0.0))
 }
 
 /// Find the open tile and list position a unique id belongs to.
@@ -1595,36 +1566,6 @@ pub(crate) const LOCKED: Color = Color::srgba(1.0, 0.35, 0.3, 0.8);
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A ray that misses answers nothing and one that starts inside answers
-    /// zero. Both are the cases a click actually makes: the pointer is usually
-    /// over empty ground, and the camera is sometimes inside the tree it is
-    /// looking at.
-    #[test]
-    fn the_slab_test_answers_where_a_ray_enters() {
-        let centre = Vec3::ZERO;
-        let half = Vec3::splat(1.0);
-        let hit = slab(Vec3::new(0.0, 0.0, -5.0), Vec3::Z, centre, half);
-        assert!(hit.is_some_and(|d| (d - 4.0).abs() < 1e-4), "{hit:?}");
-        assert_eq!(slab(Vec3::new(5.0, 5.0, -5.0), Vec3::Z, centre, half), None);
-        assert_eq!(slab(Vec3::ZERO, Vec3::Z, centre, half), Some(0.0));
-        // Parallel and outside is a miss; parallel and inside is not.
-        assert_eq!(slab(Vec3::new(9.0, 0.0, 0.0), Vec3::Z, centre, half), None);
-    }
-
-    /// The nearer of two boxes on one ray is the one picked: clicking selects
-    /// whatever is in front.
-    #[test]
-    fn the_nearer_box_is_the_one_the_ray_finds() {
-        let near = slab(Vec3::new(0.0, 0.0, -10.0), Vec3::Z, Vec3::ZERO, Vec3::ONE);
-        let far = slab(
-            Vec3::new(0.0, 0.0, -10.0),
-            Vec3::Z,
-            Vec3::new(0.0, 0.0, 20.0),
-            Vec3::ONE,
-        );
-        assert!(near < far);
-    }
 
     /// The broad phase answers every box the ray enters, nearest first; the
     /// narrow phase depends on that order.

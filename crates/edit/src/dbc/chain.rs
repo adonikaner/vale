@@ -126,7 +126,7 @@ fn copy_row(
     out.rows.push((table.to_string(), Row::added(file, at)?));
     out.ids.push((table.to_string(), id, new_id));
 
-    if let (Some(suffix), Some(field)) = (suffix, label_field(table)) {
+    if let (Some(suffix), Some(field)) = (suffix, super::names::name_field(table, file)) {
         if let Some(name) = file.string_at(at, field) {
             let renamed = match name.is_empty() {
                 true => String::new(),
@@ -187,15 +187,6 @@ fn copy_deep(
         }
     }
     Some(new_id)
-}
-
-/// The column a row of `table` is named by: its schema's first text column.
-fn label_field(table: &str) -> Option<usize> {
-    schema::for_table(table)?
-        .columns
-        .iter()
-        .find(|column| column.kind == Kind::Text)
-        .map(|column| column.field)
 }
 
 #[cfg(test)]

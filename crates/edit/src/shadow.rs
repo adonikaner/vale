@@ -47,10 +47,9 @@
 use crate::adt::file::{AdtFile, Region, SubChunk};
 use crate::adt::header::at;
 use crate::adt::heights;
-use vale_assets::world::adt::{mcnk_flags, ALPHA_SIDE, CHUNKS_PER_SIDE, CHUNK_SIZE};
-
-/// Bytes an `MCSH` comes to: 64x64 bits, one per texel.
-pub const SHADOW_BYTES: usize = ALPHA_SIDE * ALPHA_SIDE / 8;
+use vale_assets::world::adt::{
+    decode_shadow_map, encode_shadow_map, mcnk_flags, ALPHA_LEN, ALPHA_SIDE, CHUNKS_PER_SIDE, CHUNK_SIZE,
+};
 
 /// How far from the ground to look for something in the way, in yards.
 ///
@@ -312,9 +311,9 @@ pub fn bake_chunk(
     occluder: &dyn Occluder,
     reach: f32,
 ) -> Vec<u8> {
-    let mut bits = vec![0u8; SHADOW_BYTES];
+    let mut texels = vec![0u8; ALPHA_LEN];
     let Some(chunk) = tile.chunks.get(chunk_index) else {
-        return bits;
+        return encode_shadow_map(&texels);
     };
     let origin = chunk.head().position();
     let ground = heights::ground(chunk);
@@ -331,16 +330,11 @@ pub fn bake_chunk(
             };
             let from = [x, y, z + LIFT];
             if occluder.blocked(from, sun, reach) {
-                let i = ty * ALPHA_SIDE + tx;
-                // LSB first within each byte — the order `decode_shadow_map`
-                // reads, and the order `MCAL`'s nibbles run in. Backwards, this
-                // mirrors every group of eight texels inside its own byte,
-                // which reads as a comb rather than as an error.
-                bits[i / 8] |= 1 << (i % 8);
+                texels[ty * ALPHA_SIDE + tx] = 255;
             }
         }
     }
-    bits
+    encode_shadow_map(&texels)
 }
 
 /// **Recompute every chunk's `MCSH`, and put the header in step with it.**
@@ -427,8 +421,8 @@ pub fn set_shadow(tile: &mut AdtFile, chunk_index: usize, bits: Option<&[u8]>) -
     true
 }
 
-/// A chunk's `MCSH` as one byte per texel, `255` in shadow — the same shape
-/// `vale_assets`' reader answers with, for a caller comparing the two.
+/// A chunk's `MCSH` as one byte per texel, `255` in shadow, decoded by
+/// `vale_assets`' reader, for a caller comparing the two.
 ///
 /// `None` when the chunk declares no shadow, which is the honest answer and not
 /// an empty grid: *no shadow declared* and *a shadow that happens to be empty*
@@ -438,15 +432,7 @@ pub fn shadow_texels(tile: &AdtFile, chunk_index: usize) -> Option<Vec<u8>> {
     if u32_at(&chunk.header, at::FLAGS) & mcnk_flags::HAS_MCSH == 0 {
         return None;
     }
-    let bits = &chunk.region(Region::Shadow)?.data;
-    Some(
-        (0..ALPHA_SIDE * ALPHA_SIDE)
-            .map(|i| match bits.get(i / 8) {
-                Some(&byte) if byte >> (i % 8) & 1 != 0 => 255,
-                _ => 0,
-            })
-            .collect(),
-    )
+    Some(decode_shadow_map(&chunk.region(Region::Shadow)?.data))
 }
 
 fn normalise(v: [f32; 3]) -> [f32; 3] {
@@ -511,7 +497,7 @@ mod tests {
         assert_eq!(baked.changed, 256);
         for (i, chunk) in tile.chunks.iter().enumerate() {
             let sub = chunk.region(Region::Shadow).expect("region");
-            assert_eq!(sub.data.len(), SHADOW_BYTES);
+            assert_eq!(sub.data.len(), vale_assets::world::adt::SHADOW_MAP_BYTES);
             assert!(sub.data.iter().all(|&b| b == 0xFF), "chunk {i}");
             assert_ne!(chunk.head().flags() & mcnk_flags::HAS_MCSH, 0);
         }

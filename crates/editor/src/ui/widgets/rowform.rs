@@ -174,7 +174,7 @@ pub fn text_field_wide(
     width: f32,
 ) -> Option<String> {
     // The stored value is a quoted literal; the box shows what is inside it.
-    let mut text = draft_or(ui, id, unquote(showing));
+    let mut text = draft_or(ui, id, vale_mangos::sql::unquote(showing));
     let response = ui.add(
         egui::TextEdit::singleline(&mut text)
             .id(id)
@@ -185,45 +185,6 @@ pub fn text_field_wide(
     let text = finished(ui, id, &response, text)?;
     let literal = vale_mangos::sql::text(&text);
     (literal != showing).then_some(literal)
-}
-
-/// The inside of a SQL string literal, for a box to show.
-///
-/// The escapes `sql::text` writes are undone so that a name typed with a quote
-/// in it reads as itself rather than as `Gnomish Death Ray\'s`. A value that is
-/// not a quoted literal, such as a number or a column read straight out of the
-/// database, is returned as it is.
-pub fn unquote(literal: &str) -> String {
-    let Some(inner) = literal
-        .strip_prefix('\'')
-        .and_then(|rest| rest.strip_suffix('\''))
-    else {
-        return literal.to_string();
-    };
-    let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(ch) = chars.next() {
-        match (ch, chars.clone().next()) {
-            ('\\', Some('n')) => {
-                chars.next();
-                out.push('\n');
-            }
-            ('\\', Some('r')) => {
-                chars.next();
-                out.push('\r');
-            }
-            ('\\', Some('t')) => {
-                chars.next();
-                out.push('\t');
-            }
-            ('\\', Some(next)) => {
-                chars.next();
-                out.push(next);
-            }
-            _ => out.push(ch),
-        }
-    }
-    out
 }
 
 /// A menu of ticks that stays open while they are ticked.
@@ -419,7 +380,7 @@ pub fn paragraph_cell(
     showing: &str,
     rows: usize,
 ) -> Option<String> {
-    let mut text = draft_or(ui, id, unquote(showing));
+    let mut text = draft_or(ui, id, vale_mangos::sql::unquote(showing));
     let width = (FORM_TEXT * 1.4).min((ui.available_width() - 40.0).max(140.0));
     let response = ui.add(
         egui::TextEdit::multiline(&mut text)
@@ -618,32 +579,6 @@ pub fn row_menu(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A name round-trips through the box. The stored value is a SQL literal,
-    /// the box shows what is inside it, and what comes back out is the literal
-    /// again, so a creature called `Gnomish Death Ray's` is not renamed by
-    /// being looked at.
-    #[test]
-    fn a_name_round_trips_through_the_field() {
-        for name in [
-            "Kobold Vermin",
-            "Gnomish Death Ray's",
-            r"a\backslash",
-            "two\nlines",
-        ] {
-            let literal = vale_mangos::sql::text(name);
-            assert_eq!(unquote(&literal), name, "{literal}");
-        }
-    }
-
-    /// A value that is not a quoted literal is left alone, which is what a
-    /// column read straight out of the database is.
-    #[test]
-    fn a_bare_value_is_not_unquoted() {
-        assert_eq!(unquote("55"), "55");
-        assert_eq!(unquote(""), "");
-        assert_eq!(unquote("'"), "'");
-    }
 
     /// An unsigned column cannot be dragged below zero or past 32 bits.
     #[test]

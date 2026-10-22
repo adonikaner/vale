@@ -332,3 +332,23 @@ impl DbcFile {
             .unwrap_or(0)
     }
 }
+
+/// The questions `vale_assets`' table rules ask, answered from the edited
+/// bytes, so a rule reads a table as it stands in the session.
+impl vale_assets::tables::dbc::Rows for DbcFile {
+    fn record_count(&self) -> usize {
+        DbcFile::record_count(self)
+    }
+
+    fn u32_at(&self, record: usize, field: usize) -> Option<u32> {
+        DbcFile::u32_at(self, record, field)
+    }
+
+    fn string_at(&self, record: usize, field: usize) -> Option<String> {
+        DbcFile::string_at(self, record, field)
+    }
+
+    fn row_of(&self, id: u32) -> Option<usize> {
+        DbcFile::row_of(self, id)
+    }
+}

@@ -74,7 +74,7 @@
 use crate::pick::Cursor;
 use crate::session::EditSession;
 use crate::tools::Tool;
-use vale_assets::world::adt::{self as rules, ALPHA_LEN, ALPHA_SIDE, CHUNKS_PER_SIDE};
+use vale_assets::world::adt::{self as rules, ALPHA_LEN, ALPHA_SIDE};
 use vale_client::assets::GameAssets;
 use vale_client::render::terrain::{
     GroundKey, TerrainGround, TerrainMaterial, TerrainTile, TileAlpha, TileGround, TileTint,
@@ -680,7 +680,7 @@ fn cell_of(chunk: &vale_edit::adt::MapChunk, index: usize, atlas: &[u8]) -> Vec<
     let mut cell = rules::alpha_atlas_cell(&maps, &[]);
 
     let side = rules::ATLAS_SIDE;
-    let (cell_x, cell_y) = (index % CHUNKS_PER_SIDE, index / CHUNKS_PER_SIDE);
+    let (cell_x, cell_y) = rules::chunk_xy(index);
     for texel in 0..ALPHA_LEN {
         let (tx, ty) = (texel % ALPHA_SIDE, texel / ALPHA_SIDE);
         let at = ((cell_y * ALPHA_SIDE + ty) * side + cell_x * ALPHA_SIDE + tx) * 4 + 3;
@@ -1327,13 +1327,9 @@ mod tests {
     #[test]
     fn a_brush_names_every_tile_its_circle_reaches() {
         let middle = vale_assets::world::adt::TILE_SIZE * 0.5;
-        let origin = vale_assets::world::adt::MAP_ORIGIN;
         // The centre of tile (32, 32), which is the middle of the map.
-        let at = Vec3::new(
-            origin - 32.0 * 533.33333 - middle,
-            origin - 32.0 * 533.33333 - middle,
-            0.0,
-        );
+        let centre = vale_assets::world::terrain::tile_centre(32, 32);
+        let at = Vec3::new(centre[0], centre[1], 0.0);
         assert_eq!(tiles_under(10.0, at).len(), 1);
         // The tile's far corner, where four tiles meet.
         let corner = Vec3::new(at.x + middle, at.y + middle, 0.0);

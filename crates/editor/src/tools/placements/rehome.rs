@@ -304,13 +304,8 @@ mod tests {
     /// of a file.
     #[test]
     fn a_placement_belongs_to_the_tile_its_origin_is_in() {
-        let origin = vale_assets::world::adt::MAP_ORIGIN;
         let side = vale_assets::world::adt::TILE_SIZE;
-        let middle = [
-            origin - 32.0 * side - side * 0.5,
-            origin - 32.0 * side - side * 0.5,
-            0.0,
-        ];
+        let middle = vale_assets::world::terrain::tile_centre(32, 32);
         let here = vale_assets::tile_for_position(middle[0], middle[1]);
         let record = vale_assets::world::adt::placement_from_world(middle);
         assert_eq!(home_of(record), here, "still in its own tile");
@@ -349,13 +344,8 @@ mod tests {
         let project = vale_edit::project::Project::open(&install, "default").unwrap();
         let mut session = EditSession::for_tests(project);
 
-        let origin = vale_assets::world::adt::MAP_ORIGIN;
         let side = vale_assets::world::adt::TILE_SIZE;
-        let middle = [
-            origin - 32.0 * side - side * 0.5,
-            origin - 32.0 * side - side * 0.5,
-            0.0,
-        ];
+        let middle = vale_assets::world::terrain::tile_centre(32, 32);
         let here = vale_assets::tile_for_position(middle[0], middle[1]);
         let there = vale_assets::tile_for_position(middle[0] + side, middle[1]);
         for coord in [here, there] {

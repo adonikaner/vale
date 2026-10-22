@@ -54,20 +54,19 @@
 //! the window is opened, so no relog is needed. A vendor's current count of a
 //! limited item is kept on the creature and is not reset by the reload.
 
-use crate::row::{Assignment, Key, Life};
+use crate::row::{Assignment, Key, Table};
 
 pub use crate::schema::{mask_words, seconds_words, Bit, Column, Group, Kind, Row, RowValue};
 
 pub const VENDOR: &str = "npc_vendor";
 pub const TEMPLATE: &str = "npc_vendor_template";
 
-/// Both tables, in the order the server reloads them.
-pub const TABLES: [&str; 2] = [TEMPLATE, VENDOR];
+/// Both tables, in the order the server reloads them. Every row of each may
+/// be edited, created and removed.
+pub const TABLES: &[Table] = &[TEMPLATE_TABLE, VENDOR_TABLE];
 
-/// The static name for a table read out of a file, or `None`.
-pub fn table_named(name: &str) -> Option<&'static str> {
-    TABLES.into_iter().find(|table| *table == name)
-}
+pub const TEMPLATE_TABLE: Table = Table::new(TEMPLATE, &COLUMNS);
+pub const VENDOR_TABLE: Table = Table::new(VENDOR, &COLUMNS);
 
 /// What an `entry` of each table is, for a window's heading.
 pub fn keyed_by(table: &str) -> &'static str {
@@ -94,12 +93,6 @@ pub const COLUMNS: [Column; 7] = [
     Column { name: "itemflags", kind: Kind::Flags(&FLAGS), group: Group::Services, about: "flags: how the restock delay varies" },
     Column { name: "condition_id", kind: Kind::Unsigned, group: Group::Services, about: "a row of `conditions` the player must meet to see the item, or 0" },
 ];
-
-/// One column, by name, of either table.
-pub fn column(table: &str, name: &str) -> Option<&'static Column> {
-    table_named(table)?;
-    COLUMNS.iter().find(|column| column.name == name)
-}
 
 /// The most `maxcount` holds: the column is a `tinyint unsigned`.
 pub const MAX_COUNT: u32 = 255;
@@ -198,21 +191,6 @@ impl Ware {
     }
 }
 
-/// The statements a save emits for one row this project claims: an `UPDATE`
-/// for a row it edits, a `DELETE`/`INSERT` pair for one it creates, so that
-/// applying twice means the same as applying once, and a `DELETE` for one it
-/// removes.
-pub fn statements(table: &str, key: &Key, life: Life, changes: &[Assignment]) -> Vec<String> {
-    match life {
-        Life::Update => crate::row::update(table, key, changes).into_iter().collect(),
-        Life::Insert => match crate::row::insert(table, key, changes) {
-            Some(statement) => vec![crate::row::delete(table, key), statement],
-            None => Vec::new(),
-        },
-        Life::Delete => vec![crate::row::delete(table, key)],
-    }
-}
-
 // ---------------------------------------------------------------------------
 // The queries
 // ---------------------------------------------------------------------------
@@ -239,16 +217,6 @@ pub fn rows_query(table: &str, entry: u32, wow_patch: u32) -> String {
     )
 }
 
-/// The row a key names — what an undo is taken from.
-pub fn row_query(table: &str, key: &Key) -> String {
-    format!("SELECT * FROM {} WHERE {} LIMIT 1", crate::sql::name(table), key.where_clause())
-}
-
-/// Whether a row is already there, which an apply asks before it creates one.
-pub fn exists_query(table: &str, key: &Key) -> String {
-    format!("SELECT 1 FROM {} WHERE {} LIMIT 1", crate::sql::name(table), key.where_clause())
-}
-
 /// The creatures that name a template list, one line per entry: every one of
 /// them sells what the list holds.
 pub fn users_query(vendor_id: u32) -> String {
@@ -261,6 +229,7 @@ pub fn users_query(vendor_id: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::row::Life;
 
     /// The columns are `LoadVendors`' `SELECT`, with `slot`, which it orders
     /// by, after `entry` where the table's DDL has it.
@@ -270,8 +239,7 @@ mod tests {
         assert_eq!(ours, ["entry", "slot", "item", "maxcount", "incrtime", "itemflags", "condition_id"]);
         let keyed: Vec<&str> = COLUMNS.iter().filter(|c| !c.editable()).map(|c| c.name).collect();
         assert_eq!(keyed, ["entry", "item"], "the primary key of both tables");
-        assert!(column(TEMPLATE, "slot").is_some());
-        assert!(column("npc_trainer", "slot").is_none());
+        assert!(TEMPLATE_TABLE.column("slot").is_some());
     }
 
     /// `IsVendorItemValid`'s stock check: both or neither.
@@ -294,7 +262,7 @@ mod tests {
     #[test]
     fn a_row_becomes_the_statements_it_means() {
         let ware = Ware::new(54, 2488, 9);
-        let created = statements(VENDOR, &ware.key(), Life::Insert, &ware.assignments());
+        let created = VENDOR_TABLE.statements(&ware.key(), Life::Insert, &ware.assignments());
         assert_eq!(
             created,
             vec![
@@ -304,8 +272,7 @@ mod tests {
                     .to_string(),
             ]
         );
-        let edited = statements(
-            TEMPLATE,
+        let edited = TEMPLATE_TABLE.statements(
             &key(1279501, 5565),
             Life::Update,
             &[Assignment { column: "slot", value: "4".into() }],

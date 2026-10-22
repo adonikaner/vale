@@ -37,18 +37,16 @@
 //! ghost enter this dungeon when its corpse lies in the parent, for a dungeon
 //! reached through another; no shipped row sets it.
 
-use crate::row::{Assignment, Key};
+use crate::row::{Assignment, Key, Table};
 use crate::schema::{Column, Group, Kind, Value};
 
 pub const TEMPLATE: &str = "map_template";
 
 /// The one table, as the row subjects list their tables.
-pub const TABLES: [&str; 1] = [TEMPLATE];
+pub const TABLES: &[Table] = &[TEMPLATE_TABLE];
 
-/// The static name for [`TEMPLATE`] read out of a file, or `None`.
-pub fn table_named(name: &str) -> Option<&'static str> {
-    TABLES.into_iter().find(|table| *table == name)
-}
+/// `map_template`. Every row may be edited, created and removed.
+pub const TEMPLATE_TABLE: Table = Table::new(TEMPLATE, &COLUMNS);
 
 /// `map_type`'s values, vmangos' `MAP_COMMON` to `MAP_BATTLEGROUND`.
 pub const MAP_TYPES: [Value; 4] = [
@@ -74,19 +72,6 @@ pub const COLUMNS: [Column; 12] = [
     Column { name: "script_name", kind: Kind::Text, group: Group::Behaviour, about: "the instance script the server runs, or empty" },
 ];
 
-/// Every column of [`TEMPLATE`].
-pub fn columns_of(table: &str) -> &'static [Column] {
-    match table {
-        TEMPLATE => &COLUMNS,
-        _ => &[],
-    }
-}
-
-/// One column, by name.
-pub fn column(table: &str, name: &str) -> Option<&'static Column> {
-    columns_of(table).iter().find(|column| column.name == name)
-}
-
 /// The key of a row.
 pub fn key(entry: u32, patch: u32) -> Key {
     Key::two(("entry", u64::from(entry)), ("patch", u64::from(patch)))
@@ -95,10 +80,6 @@ pub fn key(entry: u32, patch: u32) -> Key {
 /// The two continents, the only maps a ghost entrance may be on and the two a
 /// dungeon's parent may not be.
 pub const CONTINENTS: [u32; 2] = [0, 1];
-
-/// How far from a map's centre a point may be on either axis, in yards: half
-/// of 64 grids of 533⅓ yards, less half a yard.
-pub const GRID_REACH: f32 = 64.0 * 533.333_3 / 2.0 - 0.5;
 
 /// One row, as a new map's is written.
 #[derive(Debug, Clone, PartialEq)]
@@ -167,7 +148,7 @@ impl Template {
             if !CONTINENTS.contains(&(self.ghost_map as u32)) {
                 out.push(format!("the ghost entrance is on map {}, which is not a continent", self.ghost_map));
             }
-            if !self.ghost_at.iter().all(|c| c.is_finite() && c.abs() <= GRID_REACH) {
+            if !self.ghost_at.iter().all(|c| c.is_finite() && c.abs() <= crate::MAP_REACH) {
                 out.push("the ghost entrance is outside its map's grid".to_string());
             }
         }

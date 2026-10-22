@@ -102,6 +102,34 @@ impl Dbc {
     }
 }
 
+/// A client table read by record and field: the questions a rule in this
+/// crate asks of a table. [`Dbc`] answers them, and so can any container
+/// that holds the same bytes, so a rule written against this trait reads an
+/// edited table without writing it out first.
+pub trait Rows {
+    fn record_count(&self) -> usize;
+    fn u32_at(&self, record: usize, field: usize) -> Option<u32>;
+    fn string_at(&self, record: usize, field: usize) -> Option<String>;
+    /// The record whose field 0 is `id`. The default walks the table.
+    fn row_of(&self, id: u32) -> Option<usize> {
+        (0..self.record_count()).find(|&record| self.u32_at(record, 0) == Some(id))
+    }
+}
+
+impl Rows for Dbc {
+    fn record_count(&self) -> usize {
+        self.record_count
+    }
+
+    fn u32_at(&self, record: usize, field: usize) -> Option<u32> {
+        Dbc::u32_at(self, record, field)
+    }
+
+    fn string_at(&self, record: usize, field: usize) -> Option<String> {
+        Dbc::string_at(self, record, field)
+    }
+}
+
 /// `Map.dbc`: map id -> the directory name used under `World\Maps\`.
 ///
 /// Field 0 is the id and field 1 the directory string; the localised display

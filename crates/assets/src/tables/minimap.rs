@@ -337,6 +337,13 @@ impl MinimapTiles {
     }
 }
 
+/// The left half of a terrain picture's line in the index:
+/// `<directory>\map<col>_<row>.blp`. The inverse of the name [`MinimapTiles::parse`]
+/// reads, for a writer adding a line for a tile the index does not carry.
+pub fn index_name(directory: &str, col: u32, row: u32) -> String {
+    format!(r"{directory}\map{col}_{row}.blp")
+}
+
 /// `map32_48.blp` -> `(32, 48)`, and `None` for anything else in the file.
 fn parse_tile_name(name: &str) -> Option<(u32, u32)> {
     let name = name.strip_suffix(".blp").unwrap_or(name);
@@ -795,6 +802,15 @@ mod tests {
         assert_eq!(tiles.texture("Azeroth", 32, 49), None, "a tile with no picture");
         assert_eq!(tiles.directories(), vec!["azeroth", "kalimdor"]);
         assert_eq!(tiles.tiles_of("kalimdor"), vec![(1, 2)]);
+    }
+
+    /// A line written under [`index_name`] reads back as the same tile.
+    #[test]
+    fn an_index_name_reads_back_as_its_tile() {
+        assert_eq!(index_name("Azeroth", 32, 48), r"Azeroth\map32_48.blp");
+        let line = format!("{}\tcccc.blp\r\n", index_name("Vale", 10, 11));
+        let tiles = MinimapTiles::parse(line.as_bytes());
+        assert_eq!(tiles.tiles_of("vale"), vec![(10, 11)]);
     }
 
     /// A chain without the file is an empty index and not a failure — see

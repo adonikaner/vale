@@ -18,7 +18,8 @@ use crate::ui::tools::spawns::gameobjects::Subject;
 use super::listing;
 use crate::ui::widgets::rowform::page_spacing;
 use crate::ui::widgets::theme;
-use crate::tools::spawns::creatures::{server_patch, TemplateSubject};
+use crate::server::settings::server_patch;
+use crate::tools::spawns::creatures::TemplateSubject;
 use crate::tools::spawns::gameobjects::Known;
 use crate::tools::Tool;
 use vale_mangos::gameobject;
@@ -179,13 +180,13 @@ fn form(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             page_spacing(ui);
-            listing::edits_block(
-                ui,
-                crate::ui::shell::sync::Half::GameObjects,
+            let standing = subject.standings.of(
+                crate::server::sync::Half::Row(crate::server::stack::Subject::GameObjects),
                 subject.session,
                 subject.assets,
-                subject.server_panel,
+                subject.now,
             );
+            listing::edits_block(ui, standing, listing::TABLE_LIVE, None, subject.server_panel);
             let Some(shown) = subject.objects.listed.subject(&subject.session.server_edits) else {
                 listing::nothing_open(ui, &subject.objects.listed, "game object");
                 return;

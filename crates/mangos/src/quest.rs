@@ -79,7 +79,7 @@
 //!
 //! [`Kind::Either`] and [`Kind::SignedMoney`] are how the schema says so.
 
-use crate::row::{Assignment, Key, Life};
+use crate::row::{Assignment, Key, Table};
 
 pub use crate::schema::{
     mask_words, money_words, seconds_words, value_word, Bit, Column, Group, Kind, Row, RowValue,
@@ -102,21 +102,41 @@ pub const OBJECT_TAKES: &str = "gameobject_involvedrelation";
 /// The four relation tables.
 pub const RELATIONS: [&str; 4] = [CREATURE_GIVES, CREATURE_TAKES, OBJECT_GIVES, OBJECT_TAKES];
 
-/// Every table this module writes, for a caller that has to resolve a name read
-/// out of a file back to one of these constants — see
-/// [`crate::creature::TABLES`], where the reason is.
-pub const TABLES: [&str; 5] = [
-    TEMPLATE,
-    CREATURE_GIVES,
-    CREATURE_TAKES,
-    OBJECT_GIVES,
-    OBJECT_TAKES,
+/// Every table this module writes, in the order they are reloaded. Every
+/// row of each may be edited, created and removed, and is live on a reload;
+/// see the module comment.
+pub const TABLES: &[Table] = &[
+    TEMPLATE_TABLE,
+    relation(CREATURE_GIVES),
+    relation(CREATURE_TAKES),
+    relation(OBJECT_GIVES),
+    relation(OBJECT_TAKES),
 ];
+
+/// `quest_template`. A removal names the entry alone and takes the rows of
+/// [`DEPENDENTS`]; see [`delete_statements`]. A move takes [`REFERENCES`].
+pub const TEMPLATE_TABLE: Table = Table {
+    references: &REFERENCES,
+    cascade: Some(delete_by_key),
+    ..Table::new(TEMPLATE, &TEMPLATE_COLUMNS)
+};
+
+/// One of the four relation tables. Its key is not an id anything names, so a
+/// move takes no references, and a removal is its own `DELETE`.
+const fn relation(name: &'static str) -> Table {
+    Table::new(name, &RELATION_COLUMNS)
+}
+
+/// [`delete_statements`] for the entry a key names.
+fn delete_by_key(key: &Key) -> Vec<String> {
+    key.first().map(|entry| delete_statements(entry as u32)).unwrap_or_default()
+}
 
 /// The order the tables are reloaded in: the templates first, because the
 /// relation loader drops a row whose quest it cannot find — see the module
 /// comment.
-pub const RELOAD_ORDER: [&str; 5] = TABLES;
+pub const RELOAD_ORDER: [&str; 5] =
+    [TEMPLATE, CREATURE_GIVES, CREATURE_TAKES, OBJECT_GIVES, OBJECT_TAKES];
 
 /// Every table that names a quest by id and is removed with it, as the
 /// table and the column the id is in.
@@ -176,18 +196,68 @@ pub const REFERENCES: [crate::row::Reference; 19] = {
     ]
 };
 
-/// The references a move of a row of `table` takes along: a quest's, and
-/// nothing for a relation, whose key is not an id anything names.
-pub fn references(table: &str) -> &'static [crate::row::Reference] {
-    match table == TEMPLATE {
-        true => &REFERENCES,
-        false => &[],
+/// Whether a relation's `id` is a creature's entry or a game object's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Holder {
+    Creature,
+    Object,
+}
+
+impl Holder {
+    pub fn word(self) -> &'static str {
+        match self {
+            Holder::Creature => "creature",
+            Holder::Object => "game object",
+        }
+    }
+
+    /// The template table its name is in.
+    pub fn template(self) -> &'static str {
+        match self {
+            Holder::Creature => crate::creature::TEMPLATE,
+            Holder::Object => crate::gameobject::TEMPLATE,
+        }
     }
 }
 
-/// The static name for a table read out of a file, or `None`.
-pub fn table_named(name: &str) -> Option<&'static str> {
-    TABLES.into_iter().find(|table| *table == name)
+/// Which end of a quest a relation is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Role {
+    /// Hands the quest out: `*_questrelation`.
+    Gives,
+    /// Takes it back: `*_involvedrelation`.
+    Takes,
+}
+
+impl Role {
+    pub fn word(self) -> &'static str {
+        match self {
+            Role::Gives => "gives",
+            Role::Takes => "takes",
+        }
+    }
+}
+
+/// The table a holder's role is kept in.
+pub fn relation_table(holder: Holder, role: Role) -> &'static str {
+    match (holder, role) {
+        (Holder::Creature, Role::Gives) => CREATURE_GIVES,
+        (Holder::Creature, Role::Takes) => CREATURE_TAKES,
+        (Holder::Object, Role::Gives) => OBJECT_GIVES,
+        (Holder::Object, Role::Takes) => OBJECT_TAKES,
+    }
+}
+
+/// The holder and role a relation table is for: the inverse of [`relation_table`],
+/// for a table name read out of the store.
+pub fn relation_of_table(table: &str) -> Option<(Holder, Role)> {
+    match table {
+        CREATURE_GIVES => Some((Holder::Creature, Role::Gives)),
+        CREATURE_TAKES => Some((Holder::Creature, Role::Takes)),
+        OBJECT_GIVES => Some((Holder::Object, Role::Gives)),
+        OBJECT_TAKES => Some((Holder::Object, Role::Takes)),
+        _ => None,
+    }
 }
 
 /// Whether a table is one of the four relations.
@@ -417,21 +487,6 @@ pub const RELATION_COLUMNS: [Column; 4] = [
     Column { name: "patch_max", kind: Kind::Unsigned, group: Group::Identity, about: "the last content patch the row is loaded at" },
 ];
 
-/// The columns of a table, or an empty slice for a name this module does not
-/// know.
-pub fn columns_of(table: &str) -> &'static [Column] {
-    match table {
-        TEMPLATE => &TEMPLATE_COLUMNS,
-        table if is_relation(table) => &RELATION_COLUMNS,
-        _ => &[],
-    }
-}
-
-/// One column, by name.
-pub fn column(table: &str, name: &str) -> Option<&'static Column> {
-    columns_of(table).iter().find(|column| column.name == name)
-}
-
 /// The four numbered groups an objective is spread across, as the column
 /// stems a form walks to draw one objective per line: the creature or object,
 /// its count, the spell cast on it and what the log calls it.
@@ -459,6 +514,15 @@ pub const RESERVED_ENTRY_BASE: u32 = 2_000_000;
 
 /// The highest entry the column can hold.
 pub const MAX_ENTRY: u32 = 0x00FF_FFFF;
+
+/// How a new template is numbered and when one may move; see
+/// [`crate::row::Numbering`].
+pub const NUMBERING: crate::row::Numbering = crate::row::Numbering {
+    table: TEMPLATE,
+    noun: "quest",
+    reserved_base: RESERVED_ENTRY_BASE,
+    max_entry: MAX_ENTRY,
+};
 
 /// Every column of a new quest, as the values a row created here starts
 /// from.
@@ -513,32 +577,6 @@ pub fn delete_statements(entry: u32) -> Vec<String> {
     out
 }
 
-/// The statements a save emits for one row this project claims.
-///
-/// One `UPDATE` for a row it edits, a `DELETE`/`INSERT` pair for one it creates
-/// — so applying twice means the same as applying once — and for a removal the
-/// template's [`delete_statements`] or the relation's one `DELETE`.
-pub fn statements(table: &str, key: &Key, life: Life, changes: &[Assignment]) -> Vec<String> {
-    match life {
-        Life::Update => crate::row::update(table, key, changes).into_iter().collect(),
-        Life::Insert => match crate::row::insert(table, key, changes) {
-            Some(statement) => vec![crate::row::delete(table, key), statement],
-            None => Vec::new(),
-        },
-        Life::Delete if table == TEMPLATE => match key.first() {
-            Some(entry) => delete_statements(entry as u32),
-            None => Vec::new(),
-        },
-        Life::Delete => vec![crate::row::delete(table, key)],
-    }
-}
-
-/// Whether a table can hold a row that is created or removed. Every table
-/// here can, and every one is live on a reload — see the module comment.
-pub fn can_live(table: &str, _life: Life) -> bool {
-    table_named(table).is_some()
-}
-
 // ---------------------------------------------------------------------------
 // The queries
 // ---------------------------------------------------------------------------
@@ -572,24 +610,6 @@ pub fn winning_template_query(entry: u32, wow_patch: u32) -> String {
         "SELECT * FROM `quest_template` t1 WHERE `entry` = {entry} AND `patch` = \
          (SELECT MAX(t2.`patch`) FROM `quest_template` t2 \
           WHERE t2.`entry` = t1.`entry` AND t2.`patch` <= {wow_patch})"
-    )
-}
-
-/// The row a key names — what an undo is taken from.
-pub fn row_query(table: &str, key: &Key) -> String {
-    format!(
-        "SELECT * FROM {} WHERE {} LIMIT 1",
-        crate::sql::name(table),
-        key.where_clause()
-    )
-}
-
-/// Whether a row is already there, which an apply asks before it creates one.
-pub fn exists_query(table: &str, key: &Key) -> String {
-    format!(
-        "SELECT 1 FROM {} WHERE {} LIMIT 1",
-        crate::sql::name(table),
-        key.where_clause()
     )
 }
 
@@ -716,6 +736,7 @@ pub fn item_search_query(term: &str, wow_patch: u32, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::row::Life;
 
     /// The schema is `LoadQuests`' `SELECT`, column for column. The list is
     /// the query at `ObjectMgr.cpp:5318` with the backticks taken off.
@@ -771,7 +792,7 @@ mod tests {
             .map(|column| column.name)
             .collect();
         assert_eq!(keys, vec!["entry"]);
-        assert!(column(TEMPLATE, "patch").is_none());
+        assert!(TEMPLATE_TABLE.column("patch").is_none());
         assert_eq!(template_key(783, 0).where_clause(), "`entry` = 783 AND `patch` = 0");
     }
 
@@ -799,7 +820,7 @@ mod tests {
     /// dependent tables with it.
     #[test]
     fn a_removed_quest_takes_every_version_and_its_dependents() {
-        let sql = statements(TEMPLATE, &template_key(783, 5), Life::Delete, &[]);
+        let sql = TEMPLATE_TABLE.statements(&template_key(783, 5), Life::Delete, &[]);
         assert_eq!(sql.len(), 1 + DEPENDENTS.len());
         assert_eq!(sql[0], "DELETE FROM `quest_template` WHERE `entry` = 783;");
         assert!(sql.contains(&"DELETE FROM `creature_questrelation` WHERE `quest` = 783;".to_string()));
@@ -811,7 +832,7 @@ mod tests {
     #[test]
     fn a_relation_is_a_key_and_a_patch_band() {
         let key = relation_key(197, 783);
-        let made = statements(CREATURE_GIVES, &key, Life::Insert, &new_relation());
+        let made = TABLES[1].statements(&key, Life::Insert, &new_relation());
         assert_eq!(
             made,
             vec![
@@ -821,7 +842,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            statements(CREATURE_TAKES, &key, Life::Delete, &[]),
+            TABLES[2].statements(&key, Life::Delete, &[]),
             vec!["DELETE FROM `creature_involvedrelation` WHERE `id` = 197 AND `quest` = 783;"]
         );
     }
@@ -842,8 +863,9 @@ mod tests {
     #[test]
     fn no_table_is_shared_with_another_subject() {
         for table in TABLES {
-            assert!(crate::creature::table_named(table).is_none(), "{table}");
-            assert!(crate::item::table_named(table).is_none(), "{table}");
+            let name = table.name;
+            assert!(crate::row::table_named(crate::creature::TABLES, name).is_none(), "{name}");
+            assert!(crate::row::table_named(crate::item::TABLES, name).is_none(), "{name}");
         }
     }
 
@@ -851,10 +873,21 @@ mod tests {
     /// id would offer area 4,294,967,274.
     #[test]
     fn the_signed_columns_are_marked() {
-        let kind = |name: &str| column(TEMPLATE, name).map(|column| column.kind);
+        let kind = |name: &str| TEMPLATE_TABLE.column(name).map(|column| column.kind);
         assert_eq!(kind("ZoneOrSort"), Some(Kind::Either("AreaTable", "QuestSort")));
         assert_eq!(kind("RewOrReqMoney"), Some(Kind::SignedMoney));
         assert!(matches!(kind("ReqCreatureOrGOId3"), Some(Kind::Either(_, "gameobject_template"))));
         assert!(matches!(kind("PrevQuestId"), Some(Kind::Either(_, _))));
+    }
+
+    /// The four tables are the two holders by the two roles, and
+    /// [`relation_table`] and [`relation_of_table`] are inverses.
+    #[test]
+    fn a_relation_table_is_a_holder_and_a_role() {
+        for table in RELATIONS {
+            let (holder, role) = relation_of_table(table).expect(table);
+            assert_eq!(relation_table(holder, role), table);
+        }
+        assert_eq!(relation_of_table(TEMPLATE), None);
     }
 }

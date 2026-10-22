@@ -15,6 +15,7 @@ path = "src/lib.rs"
 # shipped file. `vale-edit` has no renderer or window dependency, which is why
 # it is a separate crate.
 vale-edit.workspace = true
-# The database connection, the only part of this crate that talks to another
-# process. See `conn.rs` for why it is not behind a feature.
+# The database connection, the only part of this crate that connects to the
+# database. See `conn.rs` for why it is not behind a feature. `datadir/` is the
+# other part that talks to another process: it runs vmangos' extractor tools.
 mysql.workspace = true

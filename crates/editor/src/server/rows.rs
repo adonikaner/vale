@@ -57,7 +57,7 @@
 //! only for a row this project added. An area is an `area_template` row
 //! keyed by its entry alone, with no build, on the same terms. An area trigger
 //! is an `areatrigger_template` dev row at build 5875, on the flight node's
-//! terms. See [`Undo`], and `vale_mangos::spell::undo`,
+//! terms. See [`super::reconcile::Undo`], and `vale_mangos::spell::undo`,
 //! `vale_mangos::taxi::undo`, `vale_mangos::skills::undo`,
 //! `vale_mangos::area::undo` and `vale_mangos::trigger::undo`, which hold the
 //! rule.
@@ -77,6 +77,7 @@
 //! have equal field values and equal strings, and only a record whose bytes
 //! differ can be a change.
 
+use super::reconcile::Undo;
 use crate::session::EditSession;
 use vale_client::assets::GameAssets;
 use vale_edit::dbc::DbcFile;
@@ -95,7 +96,7 @@ use std::path::PathBuf;
 pub const VPATH: &str = "sql\\world.sql";
 
 /// Where the file that puts the server back lives, beside [`VPATH`]. See
-/// [`Undo`].
+/// [`super::reconcile::Undo`].
 pub const REVERT_VPATH: &str = "sql\\revert.sql";
 
 /// The client tables whose rows the server reads from its own SQL table, as
@@ -655,15 +656,9 @@ pub fn apply_at(
     at: &vale_mangos::conn::Where,
 ) -> Result<Applied, String> {
     let mut db = Db::open(at)?;
-    let had = Undo::open_at(project)?;
+    let had = Undo::open_at(project, REVERT_VPATH)?;
     if !had.entries.is_empty() {
-        let back: Vec<String> = had
-            .entries
-            .iter()
-            .rev()
-            .map(|(_, _, sql)| sql.clone())
-            .collect();
-        db.run(&back).map_err(|e| {
+        db.run(&had.put_back()).map_err(|e| {
             format!("could not restore the rows this project applied earlier: {e}")
         })?;
         forget_revert_file(project)?;
@@ -710,7 +705,7 @@ pub fn apply_at(
         undo.add(row.table, &row.key, &statement);
         out.newly_undoable += 1;
     }
-    undo.write(project)?;
+    undo.write_finished_at(project, REVERT_VPATH, "the server's client-table rows")?;
 
     let statements: Vec<String> = plan
         .rows
@@ -730,12 +725,12 @@ pub fn revert_at(
     project: &vale_edit::project::Project,
     at: &vale_mangos::conn::Where,
 ) -> Result<Reverted, String> {
-    let undo = Undo::open_at(project)?;
+    let undo = Undo::open_at(project, REVERT_VPATH)?;
     if undo.entries.is_empty() {
         return Ok(Reverted::default());
     }
     let mut db = Db::open(at)?;
-    let statements: Vec<String> = undo.entries.iter().map(|(_, _, sql)| sql.clone()).collect();
+    let statements: Vec<String> = undo.entries.iter().flat_map(|(_, _, sql)| sql.iter().cloned()).collect();
     // Removals are counted from the statements before they run, not from what
     // the database reports: a `DELETE` and an `UPDATE` each affect one row, so
     // only the verb distinguishes them. See [`Reverted::removals`] for why the
@@ -842,7 +837,7 @@ pub fn revert_work(
     session: &EditSession,
     server: &crate::server::settings::ServerSettings,
 ) -> Result<Option<crate::server::queue::Work>, String> {
-    let applied = Undo::open(session).is_ok_and(|undo| !undo.entries.is_empty());
+    let applied = Undo::open_at(&session.project, REVERT_VPATH).is_ok_and(|undo| !undo.entries.is_empty());
     if !applied {
         return Ok(None);
     }
@@ -905,127 +900,6 @@ impl Reverted {
                  the server keeps the row in memory until it restarts"
             ),
         }
-    }
-}
-
-/// `sql\revert.sql`, the statements that put the server back.
-///
-/// The file is plain SQL with a marker line before each statement naming the
-/// table and the row. An apply reads the markers to learn which rows it has
-/// already snapshotted. A side file in another serialisation would be a second
-/// format, and the undo would no longer be a file a person can read and run by
-/// hand, which is what lets the person check it.
-///
-/// ```text
-/// -- row spell_template entry=133;build=5875
-/// -- row creature_template entry=68;patch=0
-/// -- entry 133                    (what this file said before creatures)
-/// ```
-///
-/// The third form is read and never written. A project applied by an earlier
-/// build of this editor has a file of them, and each means `spell_template`,
-/// the only table that build wrote. Failing to recognise one would re-snapshot
-/// a row that is already edited, and Revert would then restore the edit
-/// instead of removing it.
-pub struct Undo {
-    /// `(table, key, statement)`, oldest first.
-    pub entries: Vec<(String, Key, String)>,
-}
-
-impl Undo {
-    const MARKER: &'static str = "-- row ";
-    /// The marker used before the file named a table. Read, never written.
-    const OLD_MARKER: &'static str = "-- entry ";
-
-    pub fn open(session: &EditSession) -> Result<Undo, String> {
-        Undo::open_at(&session.project)
-    }
-
-    /// [`Undo::open`] from a project handle, which is what a write running off
-    /// the main thread holds. See [`crate::server::queue`].
-    pub fn open_at(project: &vale_edit::project::Project) -> Result<Undo, String> {
-        let Some(text) = project.read(REVERT_VPATH) else {
-            return Ok(Undo {
-                entries: Vec::new(),
-            });
-        };
-        let text = String::from_utf8(text).map_err(|e| format!("{REVERT_VPATH}: {e}"))?;
-        Ok(Undo::from_text(&text))
-    }
-
-    /// The parse on its own, so it can be tested without a project on disk.
-    pub fn from_text(text: &str) -> Undo {
-        let mut entries = Vec::new();
-        let mut at: Option<(String, Key)> = None;
-        for line in text.lines() {
-            let line = line.trim();
-            if let Some(rest) = line.strip_prefix(Self::MARKER) {
-                at = rest
-                    .split_once(' ')
-                    .and_then(|(table, key)| Some((table.trim().to_string(), Key::parse(key)?)));
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix(Self::OLD_MARKER) {
-                // The old form: an entry with no table and no build, which was
-                // always a spell's dev row.
-                at = rest.trim().parse::<u64>().ok().map(|entry| {
-                    (
-                        spell::TABLE.to_string(),
-                        Key::two(("entry", entry), ("build", u64::from(spell::BUILD))),
-                    )
-                });
-                continue;
-            }
-            // A comment that is not a marker clears nothing and carries
-            // nothing, so the file's own header cannot become an entry.
-            if line.is_empty() || line.starts_with("--") {
-                continue;
-            }
-            if let Some((table, key)) = at.take() {
-                entries.push((table, key, line.to_string()));
-            }
-        }
-        Undo { entries }
-    }
-
-    /// Whether this row has already been snapshotted.
-    ///
-    /// The check uses the table and the key together. `creature_template` entry
-    /// 68 and `spell_template` entry 68 are different rows, and a check on the
-    /// id alone would give the second of them the first one's undo.
-    pub fn covers(&self, table: &str, key: &Key) -> bool {
-        self.entries
-            .iter()
-            .any(|(had_table, had_key, _)| had_table == table && had_key == key)
-    }
-
-    pub fn add(&mut self, table: &str, key: &Key, statement: &str) {
-        self.entries
-            .push((table.to_string(), key.clone(), statement.to_string()));
-    }
-
-    pub fn write(&self, project: &vale_edit::project::Project) -> Result<(), String> {
-        if self.entries.is_empty() {
-            return Ok(());
-        }
-        let mut body = format!(
-            "-- {} — statements that put the server back.\n\
-             -- Written before each apply, only for rows not already listed, so\n\
-             -- running this restores each row to its values before this project\n\
-             -- first changed it. Plain SQL: it can be run by hand.\n\n",
-            project.name
-        );
-        for (table, key, statement) in &self.entries {
-            body.push_str(&format!(
-                "{}{table} {}\n{statement}\n\n",
-                Self::MARKER,
-                key.text()
-            ));
-        }
-        project
-            .write(REVERT_VPATH, body.as_bytes())
-            .map_err(|e| format!("{REVERT_VPATH}: {e}"))?;
-        Ok(())
     }
 }
 
@@ -1102,76 +976,6 @@ fn removed_entries(shipped: &DbcFile, edited: &DbcFile) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The undo file reads back the entries it wrote, through its marker.
-    ///
-    /// This is the only parsing in this module. The marker is what stops a
-    /// second apply from overwriting the first snapshot: a marker that was no
-    /// longer recognised would read as "this row has no undo yet", re-snapshot
-    /// the already-edited row, and leave Revert restoring the edit instead of
-    /// removing it, with no error reported.
-    #[test]
-    fn the_undo_file_reads_back_what_it_wrote() {
-        let written = "-- a project — how to put the server back.\n\
-             -- a second comment line that is not a marker\n\n\
-             -- row spell_template entry=133;build=5875\n\
-             UPDATE `spell_template` SET `effectBasePoints1` = 13 WHERE `entry` = 133;\n\n\
-             -- row spell_template entry=2136;build=5875\n\
-             DELETE FROM `spell_template` WHERE `entry` = 2136 AND `build` = 5875;\n";
-        let undo = Undo::from_text(written);
-        assert_eq!(undo.entries.len(), 2);
-        assert_eq!(undo.entries[0].0, spell::TABLE);
-        assert!(undo.entries[0].2.starts_with("UPDATE"));
-        assert!(undo.entries[1].2.starts_with("DELETE"));
-        assert!(undo.covers(spell::TABLE, &Key::two(("entry", 133), ("build", 5875))));
-        assert!(!undo.covers(spell::TABLE, &Key::two(("entry", 1), ("build", 5875))));
-    }
-
-    /// An undo covers a row by its whole key and its table. A dev row is
-    /// `(entry, build)`, and an undo matched on the entry alone would treat a
-    /// row at another build as covered by this one's snapshot.
-    #[test]
-    fn the_whole_key_is_part_of_what_an_undo_covers() {
-        let mut undo = Undo {
-            entries: Vec::new(),
-        };
-        undo.add(
-            spell::TABLE,
-            &Key::two(("entry", 133), ("build", 5875)),
-            "UPDATE `spell_template` …;",
-        );
-        assert!(!undo.covers(spell::TABLE, &Key::two(("entry", 133), ("build", 5464))));
-        assert!(!undo.covers(
-            "creature_template",
-            &Key::two(("entry", 133), ("build", 5875))
-        ));
-    }
-
-    /// A file written before the marker named a table is still read.
-    ///
-    /// The old marker was `-- entry <id>`, and its table was always
-    /// `spell_template`. A project applied by an earlier build has a file of
-    /// them. Failing to recognise one would re-snapshot a row that is already
-    /// edited, and Revert would then restore the edit rather than remove it.
-    #[test]
-    fn the_old_marker_is_still_read_as_a_spell() {
-        let undo = Undo::from_text(
-            "-- entry 133\n\
-             UPDATE `spell_template` SET `effectBasePoints1` = 13 WHERE `entry` = 133;\n",
-        );
-        assert_eq!(undo.entries.len(), 1);
-        assert_eq!(undo.entries[0].0, spell::TABLE);
-        assert!(undo.covers(spell::TABLE, &Key::two(("entry", 133), ("build", 5875))));
-    }
-
-    /// A comment that is not a marker carries no statement with it, so a header
-    /// cannot become an entry.
-    #[test]
-    fn a_comment_is_not_an_entry() {
-        assert!(Undo::from_text("-- just a note\nUPDATE x;\n")
-            .entries
-            .is_empty());
-    }
 
     /// Two plans with the same statements have the same signature. This stops
     /// a playtest from re-applying an unchanged project and sending a `.reload`

@@ -269,11 +269,29 @@ pub struct Args {
     pub reload: Option<String>,
     /// `--revert`: put the server back, then carry on.
     ///
-    /// The scripted form of the Server panel's Put back button, and the way
-    /// out of a project that has applied something and can no longer be
-    /// opened. It runs the project's own `sql\revert.sql` and then deletes it;
-    /// with nothing applied it does nothing and prints that.
+    /// The scripted form of the Server panel's Put back button for the
+    /// client-table rows, and the way out of a project that has applied
+    /// something and can no longer be opened. It runs the project's own
+    /// `sql\revert.sql` and then deletes it; with nothing applied it does
+    /// nothing and prints that. Followed by a subject's word it is
+    /// [`Self::revert_subjects`] instead.
     pub revert: bool,
+    /// `--apply <subject>` and `--revert <subject>`: the Server panel's Apply
+    /// and Put back on one row subject, from the command line, named by
+    /// `crate::server::subject::RowSubject::word` (`creatures`, `gameobjects`,
+    /// `items`, `quests`, `loot`, `services`, `behaviour`, `conditions`,
+    /// `gossip`, `maps`, `triggers`, `graveyards`). Each may be given more
+    /// than once. `--apply-creatures` and `--revert-creatures`, and the same
+    /// for the other six subjects that had flags of their own, are the same
+    /// flags.
+    ///
+    /// Applying is the one action on a subject that writes to a database, it
+    /// is only a press on a panel, and without a flag no script can run it, so
+    /// nothing checks it. Under `--playtest` with `--shell`, an Apply also asks
+    /// the server for the subject's reloads. The flags run once, after every
+    /// scripted edit has landed; see `crate::server::subject::flags`.
+    pub apply_subjects: Vec<crate::server::stack::Subject>,
+    pub revert_subjects: Vec<crate::server::stack::Subject>,
     /// `--server`: open the Server panel, for photographing it.
     ///
     /// Same reason as `--projects`: the panel is a button and a popover in, and
@@ -338,11 +356,6 @@ pub struct Args {
     /// needs it: the store, the SQL, the apply and the revert. Implies
     /// `--loot`.
     pub loot_add: Option<u32>,
-    /// `--apply-loot` / `--revert-loot`: the Server panel's two buttons for
-    /// the loot half. Under `--playtest` with `--shell`, the apply also asks
-    /// the server to reload each loot table.
-    pub apply_loot: bool,
-    pub revert_loot: bool,
     /// `--vendor` and `--trainer`: open the Vendor or the Trainer window on
     /// `--spawn`'s creature. Each follows the selection, so it needs
     /// `--spawn`.
@@ -364,12 +377,6 @@ pub struct Args {
     /// Each implies its window.
     pub vendor_find: Option<String>,
     pub trainer_find: Option<String>,
-    /// `--apply-services` / `--revert-services`: the Server panel's two
-    /// buttons for the vendor and trainer lists. Under `--playtest` with
-    /// `--shell`, the apply also sends `.reload npc_vendor` and `.reload
-    /// npc_trainer`.
-    pub apply_services: bool,
-    pub revert_services: bool,
     /// `--events`: open the events window on `--spawn`'s creature;
     /// `--event-add`: add an event to it, which is the gesture a scripted run
     /// cannot make and every check downstream needs. `--spells`: open the
@@ -384,25 +391,6 @@ pub struct Args {
     /// `--find-event <text>`: open the events window and the chooser that
     /// adds an existing event, with `text` searched.
     pub find_event: Option<String>,
-    /// `--apply-behaviour` / `--revert-behaviour`: the Server panel's two
-    /// buttons for the behaviour half. Under `--playtest` with `--shell`, the
-    /// apply also asks the server to reload the events, the spell lists and
-    /// the script tables that have a reload.
-    pub apply_behaviour: bool,
-    pub revert_behaviour: bool,
-    /// `--apply-creatures` / `--revert-creatures`: the Server panel's two
-    /// buttons, from the command line.
-    ///
-    /// Same reason as `--revert`: applying is the one action in the creature
-    /// tool that writes to a database, it is only a press on a panel, and
-    /// without a flag no script can run it, so nothing checks it.
-    /// `--apply-creatures` runs the project's `sql\creatures.sql` after writing
-    /// the statements that put it back; `--revert-creatures` runs those.
-    ///
-    /// Each runs once, on the first frame that has a session to read the
-    /// project from.
-    pub apply_creatures: bool,
-    pub revert_creatures: bool,
     /// `--object <guid>`: open the game-object tool on that spawn, and move the
     /// camera to it. It is `--spawn` for the `gameobject` table. `--template`
     /// and `--quests` open the same two windows on it. It implies
@@ -424,10 +412,6 @@ pub struct Args {
     /// `--tool objects`.
     pub object_new: bool,
     pub object_entry: Option<u32>,
-    /// `--apply-gameobjects` / `--revert-gameobjects`: the Server panel's two
-    /// buttons for the game-object half. See `--apply-creatures`.
-    pub apply_gameobjects: bool,
-    pub revert_gameobjects: bool,
     /// `--item <entry or name>`: open the item workspace on that row.
     ///
     /// `--row` for items. It takes a name as well as an entry because items
@@ -466,15 +450,6 @@ pub struct Args {
     /// project created it. It is the item list's Remove button, for a scripted
     /// run. See `crate::subjects::items::Items::remove`.
     pub item_remove: bool,
-    /// `--apply-items` / `--revert-items`: the Server panel's two buttons for
-    /// the item half, from the command line. They are `--apply-creatures` and
-    /// `--revert-creatures` for items, and exist for the same reason.
-    ///
-    /// Under `--playtest` with `--shell`, the apply also sends `.reload
-    /// item_template`, which is what makes an item edit live without a
-    /// restart.
-    pub apply_items: bool,
-    pub revert_items: bool,
     /// `--quest <entry or title>`: open the quest workspace on that row. It is
     /// `--item` for quests, and takes a title for the same reason. It implies
     /// `--tool quests`.
@@ -511,12 +486,6 @@ pub struct Args {
     /// takes a click on a creature and then a press on its panel, two gestures
     /// a scripted run cannot make. It implies `--tool quests`.
     pub quests_of: Option<u32>,
-    /// `--apply-quests` / `--revert-quests`: the Server panel's two buttons for
-    /// the quest half. Under `--playtest` with `--shell`, the apply also asks
-    /// the server to reload `quest_template` and each relation table it wrote,
-    /// in that order.
-    pub apply_quests: bool,
-    pub revert_quests: bool,
     /// `--spawn <guid>`: open the creature tool on that spawn, and move the
     /// camera to it.
     ///
@@ -661,6 +630,8 @@ impl Default for Args {
             shell: false,
             reload: None,
             revert: false,
+            apply_subjects: Vec::new(),
+            revert_subjects: Vec::new(),
             server: false,
             publish: false,
             publish_name: None,
@@ -691,8 +662,6 @@ impl Default for Args {
             creature_quests: false,
             loot_window: false,
             loot_add: None,
-            apply_loot: false,
-            revert_loot: false,
             vendor_window: false,
             gossip_window: false,
             condition: None,
@@ -701,33 +670,23 @@ impl Default for Args {
             trainer_add: None,
             vendor_find: None,
             trainer_find: None,
-            apply_services: false,
-            revert_services: false,
             events_window: false,
             event_add: false,
             spells_window: false,
             script_window: None,
             find_event: None,
-            apply_behaviour: false,
-            revert_behaviour: false,
-            apply_creatures: false,
-            revert_creatures: false,
             object: None,
             object_add: None,
             object_delete: None,
             object_pick: None,
             object_new: false,
             object_entry: None,
-            apply_gameobjects: false,
-            revert_gameobjects: false,
             item: None,
             item_new: false,
             item_picker: false,
             item_display: None,
             item_entry: None,
             item_remove: false,
-            apply_items: false,
-            revert_items: false,
             quest: None,
             creature_data: None,
             import_texture: None,
@@ -736,8 +695,6 @@ impl Default for Args {
             quest_new: false,
             quest_entry: None,
             quests_of: None,
-            apply_quests: false,
-            revert_quests: false,
             story: false,
             seek: None,
             projects: false,
@@ -957,7 +914,21 @@ impl Args {
                 "--reload" => {
                     parsed.reload = args.next().filter(|list| !list.trim().is_empty());
                 }
-                "--revert" => parsed.revert = true,
+                "--revert" => {
+                    // A following subject's word makes it that subject's Put
+                    // back; bare, it is the client-table rows'.
+                    match args.peek().and_then(|word| crate::server::stack::Subject::named(word)) {
+                        Some(subject) => {
+                            args.next();
+                            parsed.revert_subjects.push(subject);
+                        }
+                        None => parsed.revert = true,
+                    }
+                }
+                "--apply" => match args.next().as_deref().and_then(crate::server::stack::Subject::named) {
+                    Some(subject) => parsed.apply_subjects.push(subject),
+                    None => warn!("--apply needs a subject: creatures, gameobjects, items, quests, loot, services, behaviour, conditions, gossip, maps, triggers or graveyards"),
+                },
                 "--template" => parsed.template = true,
                 "--template-new" => {
                     parsed.template_new = true;
@@ -985,8 +956,8 @@ impl Args {
                     parsed.loot_add = args.next().as_deref().and_then(|v| v.trim().parse().ok());
                     parsed.loot_window = true;
                 }
-                "--apply-loot" => parsed.apply_loot = true,
-                "--revert-loot" => parsed.revert_loot = true,
+                "--apply-loot" => parsed.apply_subjects.push(crate::server::stack::Subject::Loot),
+                "--revert-loot" => parsed.revert_subjects.push(crate::server::stack::Subject::Loot),
                 "--vendor" => parsed.vendor_window = true,
                 "--gossip" => parsed.gossip_window = true,
                 "--condition" => parsed.condition = args.next().as_deref().and_then(|v| v.trim().parse().ok()),
@@ -1007,8 +978,8 @@ impl Args {
                     parsed.trainer_find = args.next().filter(|text| !text.trim().is_empty());
                     parsed.trainer_window = true;
                 }
-                "--apply-services" => parsed.apply_services = true,
-                "--revert-services" => parsed.revert_services = true,
+                "--apply-services" => parsed.apply_subjects.push(crate::server::stack::Subject::Services),
+                "--revert-services" => parsed.revert_subjects.push(crate::server::stack::Subject::Services),
                 "--events" => parsed.events_window = true,
                 "--event-add" => {
                     parsed.event_add = true;
@@ -1025,12 +996,12 @@ impl Args {
                         Some((vale_mangos::scripts::table_named(table.trim())?, id.trim().parse().ok()?))
                     });
                 }
-                "--apply-behaviour" => parsed.apply_behaviour = true,
-                "--revert-behaviour" => parsed.revert_behaviour = true,
-                "--apply-creatures" => parsed.apply_creatures = true,
-                "--revert-creatures" => parsed.revert_creatures = true,
-                "--apply-gameobjects" => parsed.apply_gameobjects = true,
-                "--revert-gameobjects" => parsed.revert_gameobjects = true,
+                "--apply-behaviour" => parsed.apply_subjects.push(crate::server::stack::Subject::Behaviour),
+                "--revert-behaviour" => parsed.revert_subjects.push(crate::server::stack::Subject::Behaviour),
+                "--apply-creatures" => parsed.apply_subjects.push(crate::server::stack::Subject::Creatures),
+                "--revert-creatures" => parsed.revert_subjects.push(crate::server::stack::Subject::Creatures),
+                "--apply-gameobjects" => parsed.apply_subjects.push(crate::server::stack::Subject::GameObjects),
+                "--revert-gameobjects" => parsed.revert_subjects.push(crate::server::stack::Subject::GameObjects),
                 "--object" => {
                     parsed.object = args.next().as_deref().and_then(|v| v.trim().parse().ok());
                     parsed.tool = Some(tools::Tool::GameObjects);
@@ -1090,8 +1061,8 @@ impl Args {
                     parsed.item_remove = true;
                     parsed.tool = Some(tools::Tool::Items);
                 }
-                "--apply-items" => parsed.apply_items = true,
-                "--revert-items" => parsed.revert_items = true,
+                "--apply-items" => parsed.apply_subjects.push(crate::server::stack::Subject::Items),
+                "--revert-items" => parsed.revert_subjects.push(crate::server::stack::Subject::Items),
                 "--quest" => {
                     parsed.quest = args.next().filter(|which| !which.trim().is_empty());
                     parsed.tool = Some(tools::Tool::Quests);
@@ -1135,8 +1106,8 @@ impl Args {
                     parsed.quests_of = args.next().as_deref().and_then(|v| v.trim().parse().ok());
                     parsed.tool = Some(tools::Tool::Quests);
                 }
-                "--apply-quests" => parsed.apply_quests = true,
-                "--revert-quests" => parsed.revert_quests = true,
+                "--apply-quests" => parsed.apply_subjects.push(crate::server::stack::Subject::Quests),
+                "--revert-quests" => parsed.revert_subjects.push(crate::server::stack::Subject::Quests),
                 "--server" => parsed.server = true,
                 "--publish" => {
                     parsed.publish = true;

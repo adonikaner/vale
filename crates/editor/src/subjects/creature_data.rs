@@ -22,7 +22,7 @@ use super::listing::{ListRead, Listed};
 use crate::tools::Tool;
 use crate::session::EditSession;
 use crate::tools::spawns::creatures::{self, Creatures, Known};
-use crate::subjects::items::unquote;
+use vale_mangos::sql::unquote;
 use vale_mangos::creature::{self as table, RowValue};
 use vale_mangos::row::{Edits, Key, RowEdit};
 use bevy::prelude::*;
@@ -156,7 +156,7 @@ fn read_the_list(
             .unreadable(vale_mangos::conn::Where::absent());
         return;
     };
-    let patch = creatures::server_patch(&settings);
+    let patch = crate::server::settings::server_patch(&settings);
     creatures.listed.reading_with(crate::server::queue::read(async move {
         let mut db = vale_mangos::conn::Db::open(&at)?;
         let rows = db.rows(&table::all_templates_query(patch))?;

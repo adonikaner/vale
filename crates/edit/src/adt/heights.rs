@@ -5,9 +5,9 @@
 //! A map chunk holds nine rows of nine outer vertices interleaved with eight
 //! rows of eight inner ones, in the order
 //! `9, 8, 9, 8, … 9` — 145 in all. The layout rule is
-//! `vale_assets::world::adt`'s and is not restated here: [`vertex_offset`]
-//! is the one place this crate converts an index to a position, and it agrees
-//! with `wedge_in` by construction. Rows run along decreasing world x from
+//! `vale_assets::world::adt`'s and is not restated here: its `outer_index`,
+//! `inner_index` and `vertex_offset` are the only conversions between an index
+//! and a position. Rows run along decreasing world x from
 //! the chunk origin and columns along decreasing world y, because the origin is
 //! the chunk's maximum corner.
 //!
@@ -31,40 +31,10 @@
 //! new shape, which reads as a hill lit from the wrong side.
 
 use super::{AdtFile, Region};
-use vale_assets::world::adt::{INNER_SIDE, OUTER_SIDE, UNIT_SIZE};
-
-/// Heights, and normals, per map chunk.
-pub const VERTICES: usize = OUTER_SIDE * OUTER_SIDE + INNER_SIDE * INNER_SIDE;
-
-/// Vertices in one interleaved pair of rows: nine outer then eight inner.
-const STRIDE: usize = OUTER_SIDE + INNER_SIDE;
-
-/// Where a vertex sits, as a distance from the chunk origin along decreasing
-/// world x and y. Both are positive and at most [`CHUNK_SIZE`].
-///
-/// [`CHUNK_SIZE`]: vale_assets::world::adt::CHUNK_SIZE
-pub fn vertex_offset(index: usize) -> (f32, f32) {
-    let row = index / STRIDE;
-    let within = index % STRIDE;
-    if within < OUTER_SIDE {
-        (row as f32 * UNIT_SIZE, within as f32 * UNIT_SIZE)
-    } else {
-        (
-            (row as f32 + 0.5) * UNIT_SIZE,
-            (within - OUTER_SIDE) as f32 * UNIT_SIZE + 0.5 * UNIT_SIZE,
-        )
-    }
-}
-
-/// The index of an outer vertex, or `None` off the 9x9 grid.
-pub fn outer(row: usize, col: usize) -> Option<usize> {
-    (row < OUTER_SIDE && col < OUTER_SIDE).then(|| row * STRIDE + col)
-}
-
-/// The index of an inner vertex, or `None` off the 8x8 grid.
-pub fn inner(row: usize, col: usize) -> Option<usize> {
-    (row < INNER_SIDE && col < INNER_SIDE).then(|| row * STRIDE + OUTER_SIDE + col)
-}
+use vale_assets::world::adt::{
+    chunk_on_grid, chunk_xy, inner_index, outer_index, vertex_offset, HEIGHTS_PER_CHUNK, INNER_SIDE,
+    OUTER_SIDE, UNIT_SIZE,
+};
 
 /// The world position of one vertex of one chunk.
 pub fn vertex_position(origin: [f32; 3], index: usize, height: f32) -> [f32; 3] {
@@ -80,7 +50,7 @@ pub fn heights(chunk: &super::MapChunk) -> Vec<f32> {
         return Vec::new();
     };
     let base = chunk.head().position()[2];
-    (0..VERTICES)
+    (0..HEIGHTS_PER_CHUNK)
         .map(|i| {
             let at = i * 4;
             if at + 4 > mcvt.data.len() {
@@ -100,8 +70,8 @@ pub fn heights(chunk: &super::MapChunk) -> Vec<f32> {
 /// changes the length of anything and nothing after it moves.
 pub fn set_heights(chunk: &mut super::MapChunk, heights: &[f32]) {
     let base = chunk.head().position()[2];
-    let mut data = Vec::with_capacity(VERTICES * 4);
-    for i in 0..VERTICES {
+    let mut data = Vec::with_capacity(HEIGHTS_PER_CHUNK * 4);
+    for i in 0..HEIGHTS_PER_CHUNK {
         let h = heights.get(i).copied().unwrap_or(base) - base;
         data.extend_from_slice(&h.to_le_bytes());
     }
@@ -148,16 +118,16 @@ pub fn recompute_normals_with(
     if chunk.region(Region::Normals).is_none() {
         return;
     }
-    let (ix, iy) = (chunk_index % 16, chunk_index / 16);
+    let (ix, iy) = chunk_xy(chunk_index);
 
     // The tile-wide outer grid this chunk needs: its own 9x9 plus one ring, so
     // a central difference at row 8 or column 8 has something to reach for.
     let own = heights(chunk);
     let neighbour = |dx: i32, dy: i32| -> Option<Vec<f32>> {
         let (x, y) = (ix as i32 + dx, iy as i32 + dy);
-        match (0..16).contains(&x) && (0..16).contains(&y) {
-            true => tile.chunk(y as usize * 16 + x as usize).map(heights),
-            false => beyond(x, y),
+        match chunk_on_grid(x, y) {
+            Some(index) => tile.chunk(index).map(heights),
+            None => beyond(x, y),
         }
     };
     // `index_x` grows along decreasing world y, and +Y is west, so the chunk one
@@ -190,10 +160,10 @@ pub fn recompute_normals_with(
         // Only one of the two can leave this chunk in one step: a diagonal
         // neighbour is never asked for, because a central difference moves along
         // one axis at a time.
-        outer(row as usize, col as usize).and_then(|i| grid.get(i).copied())
+        grid.get(outer_index(row as usize, col as usize)).copied()
     };
 
-    let mut normals = vec![0i8; VERTICES * 3];
+    let mut normals = vec![0i8; HEIGHTS_PER_CHUNK * 3];
     let mut put = |index: usize, n: [f32; 3]| {
         let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-6);
         for k in 0..3 {
@@ -211,7 +181,7 @@ pub fn recompute_normals_with(
             // the grid runs the other way, so the two heights go in backwards.
             let dzdx = slope(at(r - 1, c), here, at(r + 1, c));
             let dzdy = slope(at(r, c - 1), here, at(r, c + 1));
-            put(outer(row, col).unwrap(), [-dzdx, -dzdy, 1.0]);
+            put(outer_index(row, col), [-dzdx, -dzdy, 1.0]);
         }
     }
     for row in 0..INNER_SIDE {
@@ -224,7 +194,7 @@ pub fn recompute_normals_with(
                 / (2.0 * UNIT_SIZE);
             let dzdy = ((corner(0, 0) + corner(1, 0)) - (corner(0, 1) + corner(1, 1)))
                 / (2.0 * UNIT_SIZE);
-            put(inner(row, col).unwrap(), [-dzdx, -dzdy, 1.0]);
+            put(inner_index(row, col), [-dzdx, -dzdy, 1.0]);
         }
     }
 

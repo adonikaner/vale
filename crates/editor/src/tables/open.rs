@@ -8,7 +8,8 @@ use vale_client::assets::GameAssets;
 use bevy::prelude::*;
 use super::Modal;
 use super::browser::Browser;
-use super::tabs::{ANY, chain_for, table_named};
+use super::tabs::{ANY, table_named};
+use vale_assets::tables::schema::chain_for;
 use super::fields::set_field;
 
 /// Open the tables the chosen subject needs, one table per frame.

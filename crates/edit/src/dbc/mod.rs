@@ -16,6 +16,8 @@
 //!             AreaTrigger, WorldSafeLocs and Map, a trigger kept inside its
 //!             map's block of rows
 //! diff.rs     what one table changes against another, row by row, by id
+//! names.rs    which columns hold text and which column names a row, from the
+//!             schema or guessed from the file
 //! ```
 //!
 //! ## Why a container and not a model
@@ -75,6 +77,7 @@ pub mod cell;
 pub mod chain;
 pub mod diff;
 pub mod file;
+pub mod names;
 pub mod places;
 pub mod row;
 pub mod taxi;

@@ -173,6 +173,9 @@ pub struct Workspace<'a> {
     /// …and the bar's Server…, which is where every server operation is.
     /// See [`crate::ui::shell::sync`].
     pub server_panel: &'a mut crate::ui::shell::popover::Popover,
+    /// Where each server subject stands, held for half a second; the items'
+    /// line in the form is read from it. See [`crate::server::sync::Standings`].
+    pub standings: &'a mut crate::server::sync::Standings,
     /// Which content patch the server is configured for — half the key a new
     /// row is written under.
     pub patch: u32,
@@ -583,44 +586,28 @@ fn form(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
 /// the state here, where the thing being edited is, and the verbs on the bar's
 /// Server… with the other two subjects'. See [`crate::ui::shell::sync`], whose module
 /// comment is the argument for one panel.
+///
+/// A project that changes nothing says nothing. The block is about what is
+/// waiting to be applied, and a standing sentence explaining that there is
+/// none is a line of chrome above every item anybody ever opens.
 fn edits_block(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
-    let standing = crate::ui::shell::sync::standing(crate::ui::shell::sync::Half::Items, work.session, work.assets);
-
-    // A project that changes nothing says nothing. The block is about what
-    // is waiting to be applied, and a standing sentence explaining that there
-    // is none is a line of chrome above every item anybody ever opens.
-    if standing.quiet() {
-        return;
-    }
-    theme::heading(ui, "This project");
-    let colour = match standing.outstanding {
-        0 => theme::INK_DIM,
-        _ => theme::WARN,
-    };
-    ui.label(egui::RichText::new(standing.line()).color(colour));
-    for refused in &standing.refused {
-        ui.label(egui::RichText::new(refused).small().color(theme::BAD));
-    }
-
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        if ui
-            .button("Server\u{2026}")
-            .on_hover_text(
-                "Opens the Server panel, which applies, restores or discards these rows \
-                 together with the spell and creature rows. An item applied during a \
-                 playtest takes effect through `.reload item_template`, including copies \
-                 already in the world; applied at any other time, it takes effect after a \
-                 server restart.",
-            )
-            .clicked()
-        {
-            work.server_panel.show();
-        }
-        if let Some(status) = work.reloads.status() {
-            ui.label(egui::RichText::new(status).small().color(theme::INK_DIM));
-        }
-    });
+    let standing = work.standings.of(
+        crate::server::sync::Half::Row(crate::server::stack::Subject::Items),
+        work.session,
+        work.assets,
+        work.now,
+    );
+    super::listing::edits_block(
+        ui,
+        standing,
+        "Opens the Server panel, which applies, restores or discards these rows \
+         together with the spell and creature rows. An item applied during a \
+         playtest takes effect through `.reload item_template`, including copies \
+         already in the world; applied at any other time, it takes effect after a \
+         server restart.",
+        work.reloads.status(),
+        work.server_panel,
+    );
 }
 
 /// The head of the form: the icon, the name in its colour, and what the row is.

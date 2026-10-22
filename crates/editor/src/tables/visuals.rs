@@ -189,31 +189,14 @@ pub fn effect_slot(
     found
 }
 
-/// The kit column that hangs a model from this attachment point, if there is
-/// one. Only the six points in [`vale_assets::tables::spell::fields::EFFECTS`]
-/// have a column. Every other point a body carries can hold a model in a
-/// preview, but no column names it.
-pub fn slot_for_point(point: u32) -> Option<usize> {
-    vale_assets::tables::spell::fields::EFFECTS
-        .iter()
-        .find(|(_, at)| *at == point)
-        .map(|(field, _)| *field)
-}
 
-/// The attachment point a kit column hangs its model from, if it has one.
-pub fn point_for_slot(field: usize) -> Option<u32> {
-    vale_assets::tables::spell::fields::EFFECTS
-        .iter()
-        .find(|(column, _)| *column == field)
-        .map(|(_, point)| *point)
-}
 
 /// Move an effect from one column of a kit to another, which changes its
 /// attachment point. One entry on the undo stack.
 ///
 /// The old column is written with `-1` rather than 0. Both mean no effect (see
 /// `SpellVisuals::build`, "the table's two ways of saying nothing"), and `-1`
-/// is what the shipped rows and [`blank_defaults`](super::rows::blank_defaults)
+/// is what the shipped rows and [`blank_defaults`](vale_assets::tables::schema::blank_defaults)
 /// use.
 ///
 /// Returns `false` when the two columns are the same or the table is not open.

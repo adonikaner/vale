@@ -37,7 +37,7 @@
 //! on the Server panel writes. Links are live on `.reload game_graveyard_zone`;
 //! a facing needs a restart.
 
-use super::flightpaths::{aim_of, eye, meets_upright_plane, DRAG_PIXELS, HANDLE_PIXELS, MARKER_RADIUS};
+use super::flightpaths::{aim_of, eye, DRAG_PIXELS, HANDLE_PIXELS, MARKER_RADIUS};
 use super::triggers::{create_row, remove_row, shipped_ids, shown};
 use crate::tools::Tool;
 use crate::marks::{Look, Marks};
@@ -429,7 +429,7 @@ fn read_the_rows(
         graveyards.trouble = Some(vale_mangos::conn::Where::absent());
         return;
     };
-    let patch = crate::tools::spawns::creatures::server_patch(&settings);
+    let patch = crate::server::settings::server_patch(&settings);
     graveyards.reading = Some(crate::server::queue::read(async move {
         use vale_mangos::schema::RowValue;
         let mut db = vale_mangos::conn::Db::open(&at)?;
@@ -578,7 +578,7 @@ fn drag(
     };
     let hit = match vertical {
         false => crate::pick::meets_plane(origin, direction, from.z),
-        true => meets_upright_plane(origin, direction, from),
+        true => crate::pick::meets_upright_plane(origin, direction, from),
     };
     let Some(hit) = hit else { return };
     let grab = match held.grab {

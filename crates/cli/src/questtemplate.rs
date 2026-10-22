@@ -263,16 +263,14 @@ fn one(entry: u32) -> Result<(), String> {
 
     let key = quest::template_key(entry, at_patch);
     println!("\n  the statement an edit to its level becomes");
-    for statement in quest::statements(
-        quest::TEMPLATE,
-        &key,
+    for statement in quest::TEMPLATE_TABLE.statements(&key,
         Life::Update,
         &[Assignment { column: "QuestLevel", value: "60".to_string() }],
     ) {
         println!("    {statement}");
     }
     println!("  …and a removal, which names the entry alone so that no older version is left to load");
-    for statement in quest::statements(quest::TEMPLATE, &key, Life::Delete, &[]) {
+    for statement in quest::TEMPLATE_TABLE.statements(&key, Life::Delete, &[]) {
         println!("    {statement}");
     }
     println!("\n  nothing was written: this command only reads");

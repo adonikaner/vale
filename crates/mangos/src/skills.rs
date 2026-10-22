@@ -62,7 +62,7 @@ use vale_edit::dbc::DbcFile;
 pub const TABLE: &str = "skill_line_ability";
 
 /// The build an edit is written at, and the only one the loader reads.
-pub const BUILD: u32 = 5875;
+pub const BUILD: u32 = crate::CLIENT_BUILD;
 
 const ID: &str = "id";
 const BUILD_COLUMN: &str = "build";

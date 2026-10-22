@@ -18,6 +18,8 @@
 //!              and read back
 //! vertices.rs  a set of vertices chosen first and moved together, or kept
 //!              from a brush
+//! chunks.rs    a selection of map chunks on the map's chunk grid: its census,
+//!              its stitch to the ground around it, and copy, turn and paste
 //! tests.rs     what a stroke leaves behind, measured on a real tile
 //! ```
 //!
@@ -722,13 +724,10 @@ fn reshade(tile: &mut AdtFile, edits: &mut Vec<Edit>) {
 
 /// A chunk and the four next to it inside the same tile, by `MCIN` index.
 fn with_neighbours(index: usize) -> Vec<usize> {
-    let (x, y) = ((index % 16) as i32, (index / 16) as i32);
+    let (x, y) = vale_assets::world::adt::chunk_xy(index);
     [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)]
         .into_iter()
-        .filter_map(|(dx, dy)| {
-            let (x, y) = (x + dx, y + dy);
-            ((0..16).contains(&x) && (0..16).contains(&y)).then(|| y as usize * 16 + x as usize)
-        })
+        .filter_map(|(dx, dy)| vale_assets::world::adt::chunk_on_grid(x as i32 + dx, y as i32 + dy))
         .collect()
 }
 
@@ -763,6 +762,9 @@ pub mod image;
 
 /// A set of vertices chosen first and moved together, or kept from a brush.
 pub mod vertices;
+
+/// A selection of map chunks: its census, its stitch, and copy and paste.
+pub mod chunks;
 
 #[cfg(test)]
 mod tests;

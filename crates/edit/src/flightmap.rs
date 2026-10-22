@@ -41,7 +41,8 @@
 use crate::dbc::{Cell, DbcFile, Row};
 use std::collections::HashMap;
 use vale_assets::tables::taxi::continent_fields as cf;
-use vale_assets::world::adt::{MAP_ORIGIN, TILE_SIZE};
+use vale_assets::world::adt::TILE_SIZE;
+use vale_assets::world::terrain::{position_on_tile, tile_corner};
 
 /// The table the row is in, by the name the caller's table map uses.
 pub const TABLE: &str = "WorldMapContinent";
@@ -97,10 +98,8 @@ pub fn taxi_box(tiles: &[(u32, u32)], nodes: &[[f32; 2]]) -> Option<[f32; 4]> {
         high = [high[0].max(x), high[1].max(y)];
     };
     for &(col, row) in tiles {
-        // A tile's north edge is at the origin less `row` tiles, and its west
-        // edge at the origin less `col` tiles.
-        let north = MAP_ORIGIN - row as f32 * TILE_SIZE;
-        let west = MAP_ORIGIN - col as f32 * TILE_SIZE;
+        // A tile's corner is its north-west one.
+        let [north, west] = tile_corner(col, row);
         take(north, west);
         take(north - TILE_SIZE, west - TILE_SIZE);
     }
@@ -232,23 +231,20 @@ pub fn picture(taxi_box: [f32; 4], mut tile: impl FnMut(u32, u32) -> Option<Vec<
                     // east (falling y).
                     let x = taxi_box[2] - fv * span[0];
                     let y = taxi_box[3] - fu * span[1];
-                    let across = (MAP_ORIGIN - y) / TILE_SIZE;
-                    let down = (MAP_ORIGIN - x) / TILE_SIZE;
-                    let colour = match (across >= 0.0 && across < 64.0, down >= 0.0 && down < 64.0) {
-                        (true, true) => {
-                            let at = (across as u32, down as u32);
+                    let colour = match position_on_tile(x, y) {
+                        Some((at, [across, down])) => {
                             let pixels = tiles.entry(at).or_insert_with(|| tile(at.0, at.1));
                             match pixels {
                                 Some(pixels) if pixels.len() == (TILE_SIDE * TILE_SIDE * 4) as usize => {
-                                    let tu = ((across.fract() * TILE_SIDE as f32) as u32).min(TILE_SIDE - 1);
-                                    let tv = ((down.fract() * TILE_SIDE as f32) as u32).min(TILE_SIDE - 1);
+                                    let tu = ((across * TILE_SIDE as f32) as u32).min(TILE_SIDE - 1);
+                                    let tv = ((down * TILE_SIDE as f32) as u32).min(TILE_SIDE - 1);
                                     let i = ((tv * TILE_SIDE + tu) * 4) as usize;
                                     [pixels[i], pixels[i + 1], pixels[i + 2]]
                                 }
                                 _ => BACKGROUND,
                             }
                         }
-                        _ => BACKGROUND,
+                        None => BACKGROUND,
                     };
                     for (total, value) in sum.iter_mut().zip(colour) {
                         *total += u32::from(value);
@@ -269,6 +265,7 @@ pub fn picture(taxi_box: [f32; 4], mut tile: impl FnMut(u32, u32) -> Option<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vale_assets::world::adt::MAP_ORIGIN;
     use vale_assets::tables::taxi::continent_fields::COUNT;
 
     /// A table of 13 fields with the two shipped rows' ids and maps.

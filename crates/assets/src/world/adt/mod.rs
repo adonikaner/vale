@@ -2078,6 +2078,52 @@ pub fn inner_index(row: usize, col: usize) -> usize {
     row * (OUTER_SIDE + INNER_SIDE) + OUTER_SIDE + col
 }
 
+/// Where vertex `index` of a chunk's 145 sits, as a distance from the chunk
+/// origin along decreasing world x and decreasing world y. Both are at least 0
+/// and at most [`CHUNK_SIZE`]. The inverse of [`outer_index`] and
+/// [`inner_index`] combined.
+pub fn vertex_offset(index: usize) -> (f32, f32) {
+    let stride = OUTER_SIDE + INNER_SIDE;
+    let row = index / stride;
+    let within = index % stride;
+    if within < OUTER_SIDE {
+        (row as f32 * UNIT_SIZE, within as f32 * UNIT_SIZE)
+    } else {
+        (
+            (row as f32 + 0.5) * UNIT_SIZE,
+            (within - OUTER_SIDE) as f32 * UNIT_SIZE + 0.5 * UNIT_SIZE,
+        )
+    }
+}
+
+/// The `(row, col)` of vertex `index` on the 9x9 outer grid, or `None` for an
+/// inner vertex. The inverse of [`outer_index`].
+pub fn outer_row_col(index: usize) -> Option<(usize, usize)> {
+    let stride = OUTER_SIDE + INNER_SIDE;
+    let (row, col) = (index / stride, index % stride);
+    (col < OUTER_SIDE && row < OUTER_SIDE).then_some((row, col))
+}
+
+/// A map chunk's `(x, y)` on its tile's 16x16 grid from its number in `MCIN`
+/// order. `x` is the header's `indexX` and grows along decreasing world y; `y`
+/// is `indexY` and grows along decreasing world x.
+pub fn chunk_xy(index: usize) -> (usize, usize) {
+    (index % CHUNKS_PER_SIDE, index / CHUNKS_PER_SIDE)
+}
+
+/// The chunk number at `(x, y)` on a tile's 16x16 grid: the inverse of
+/// [`chunk_xy`].
+pub fn chunk_index(x: usize, y: usize) -> usize {
+    y * CHUNKS_PER_SIDE + x
+}
+
+/// The chunk number at `(x, y)`, or `None` when either is off the tile's grid.
+/// For walking to a neighbouring chunk, where a step can leave the tile.
+pub fn chunk_on_grid(x: i32, y: i32) -> Option<usize> {
+    let side = CHUNKS_PER_SIDE as i32;
+    ((0..side).contains(&x) && (0..side).contains(&y)).then(|| chunk_index(x as usize, y as usize))
+}
+
 /// Which of a chunk's 256 triangles a world position falls in, and where in it.
 ///
 /// **The one implementation**, taken by the three fields rather than by a
@@ -2504,7 +2550,7 @@ fn parse_mcnk(payload: &[u8]) -> Option<Mcnk> {
 /// map does — the pre-Cataclysm client stretches a 64x64 map so that texels 0
 /// and 62 sit on the chunk's edges and never reads 63 — and without it every
 /// chunk's far edge draws an unwritten strip of shadow.
-fn decode_shadow_map(src: &[u8]) -> Vec<u8> {
+pub fn decode_shadow_map(src: &[u8]) -> Vec<u8> {
     let mut out = vec![0u8; ALPHA_LEN];
     for i in 0..ALPHA_LEN {
         let Some(&byte) = src.get(i / 8) else { break };
@@ -2512,6 +2558,21 @@ fn decode_shadow_map(src: &[u8]) -> Vec<u8> {
     }
     fix_alpha_edge(&mut out);
     out
+}
+
+/// Bytes an `MCSH` occupies: one bit per texel of a 64x64 map.
+pub const SHADOW_MAP_BYTES: usize = ALPHA_LEN / 8;
+
+/// Pack a 64x64 shadow map, one byte per texel with any non-zero value in
+/// shadow, into the [`SHADOW_MAP_BYTES`] of an `MCSH`: the inverse of
+/// [`decode_shadow_map`]. Texel `i` is bit `i % 8` of byte `i / 8`, LSB first.
+/// Texels past [`ALPHA_LEN`] are ignored and missing ones are lit.
+pub fn encode_shadow_map(texels: &[u8]) -> Vec<u8> {
+    let mut bits = vec![0u8; SHADOW_MAP_BYTES];
+    for (i, _) in texels.iter().take(ALPHA_LEN).enumerate().filter(|(_, &t)| t != 0) {
+        bits[i / 8] |= 1 << (i % 8);
+    }
+    bits
 }
 
 /// Parse a chunk's `MCLQ` into one grid per declared liquid.

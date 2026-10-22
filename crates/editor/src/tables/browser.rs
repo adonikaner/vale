@@ -6,7 +6,8 @@ use vale_assets::tables::schema;
 use bevy::prelude::*;
 use std::collections::HashMap;
 use super::{Modal, RowLabel, Shown, Use};
-use super::labels::{describe, guess_name_field, label_field, text_fields};
+use super::labels::describe;
+use vale_edit::dbc::names::{guess_name_field, text_fields};
 use super::visuals::search_words;
 use super::sounds::{Heard, Listen};
 
@@ -348,7 +349,7 @@ impl Browser {
     /// not open and for one with no such column.
     pub fn name_field(&mut self, session: &EditSession, table: &str) -> Option<usize> {
         if let Some(schema) = schema::for_table(table) {
-            return label_field(schema);
+            return schema.name_field();
         }
         if let Some(known) = self.guessed.get(table) {
             return *known;

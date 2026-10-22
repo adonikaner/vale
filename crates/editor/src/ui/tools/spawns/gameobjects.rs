@@ -45,7 +45,7 @@ use crate::tools::placements::place;
 use crate::subjects::quests::{ColumnTarget, Holder};
 use vale_assets::tables::lock::{KeyKind, Locks};
 use vale_client::assets::GameAssets;
-use vale_mangos::gameobject::{self, Column, Group, Kind, RowValue};
+use vale_mangos::gameobject::{self, Column, Group, Kind};
 use vale_mangos::row::{Key, Life};
 
 use crate::ui::widgets::rowform::{
@@ -67,6 +67,9 @@ pub struct Subject<'a> {
     pub server: &'a crate::server::settings::ServerSettings,
     /// The top bar's Server… panel, which holds every server operation.
     pub server_panel: &'a mut crate::ui::shell::popover::Popover,
+    /// Where each server subject stands, held for half a second. See
+    /// `super::creatures::Subject::standings`.
+    pub standings: &'a mut crate::server::sync::Standings,
     /// The archives, for what a display id looks like, what a lock needs and
     /// the client tables a reference resolves through.
     pub assets: &'a GameAssets,
@@ -192,9 +195,17 @@ fn panel(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         return;
     }
 
-    let plan = crate::server::gameobjects::plan(subject.session);
-    let on_server = crate::server::gameobjects::OnTheServer::read_with(subject.session, &plan);
-    edits_block(ui, subject, &plan, &on_server);
+    // Read from the held standing, as on the creature panel.
+    let on_server = subject
+        .standings
+        .of(
+            crate::server::sync::Half::Row(crate::server::stack::Subject::GameObjects),
+            subject.session,
+            subject.assets,
+            subject.now,
+        )
+        .clone();
+    edits_block(ui, subject, &on_server);
 
     let mut mode = subject.objects.mode;
     theme::segmented(ui, &mut mode, &place::MODES, |a, b| a == b);
@@ -336,46 +347,38 @@ fn nothing_to_show(ui: &mut egui::Ui, subject: &Subject<'_>) {
 /// What this project changes in the server's game objects, and the button
 /// that opens the panel that applies it. The game-object counterpart of
 /// `super::creatures::edits_block`.
-fn edits_block(
-    ui: &mut egui::Ui,
-    subject: &mut Subject<'_>,
-    plan: &crate::server::gameobjects::Plan,
-    on_server: &crate::server::gameobjects::OnTheServer,
-) {
-    let undoable = on_server.rows();
-    if plan.is_empty() && undoable == 0 {
+fn edits_block(ui: &mut egui::Ui, subject: &mut Subject<'_>, on_server: &crate::server::sync::Standing) {
+    let undoable = on_server.applied;
+    let empty = on_server.changed == 0;
+    if empty && undoable == 0 {
         return;
     }
-    let outstanding = plan
-        .rows
-        .iter()
-        .filter(|row| !on_server.covers(row.table, &row.key))
-        .count();
+    let outstanding = on_server.outstanding;
 
     ui.separator();
     theme::heading(ui, "This project");
-    if !plan.is_empty() {
+    if !empty {
         let colour = match outstanding == 0 {
             true => theme::INK_DIM,
             false => theme::WARN,
         };
         ui.label(
-            egui::RichText::new(format!("{} — {}", plan.line(), SQL))
+            egui::RichText::new(format!("{} — {}", on_server.summary, SQL))
                 .small()
                 .color(colour),
         );
     }
-    for refused in &plan.refused {
+    for refused in &on_server.refused {
         ui.label(egui::RichText::new(refused).small().color(theme::BAD));
     }
-    match (undoable, outstanding, plan.is_empty()) {
+    match (undoable, outstanding, empty) {
         (0, _, false) => theme::note(
             ui,
             "Not applied. The database holds its original values; the editor draws this \
              project's values.",
         ),
         (n, 0, false) => {
-            let line = match on_server.current() {
+            let line = match on_server.current {
                 true => format!(
                     "Applied — all {n} row(s) are in the database. Restart the server to load \
                      them; Restore reverts them."
@@ -598,7 +601,7 @@ const MATCH_LIST_HEIGHT: f32 = 260.0;
 /// same row.
 fn template_actions(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     let now = subject.now;
-    let patch = crate::tools::spawns::creatures::server_patch(subject.server);
+    let patch = crate::server::settings::server_patch(subject.server);
     let shown = subject.objects.template_subject(&subject.session.server_edits);
     let row_read = shown.as_ref().is_some_and(|shown| {
         subject.objects.template.as_ref().is_some_and(|held| held.entry == shown.entry)
@@ -726,7 +729,7 @@ fn claim(
     ui: &mut egui::Ui,
     subject: &mut Subject<'_>,
     spawn: &Spawn,
-    on_server: &crate::server::gameobjects::OnTheServer,
+    on_server: &crate::server::sync::Standing,
 ) {
     let now = subject.now;
     let written = on_server.covers(gameobject::SPAWN, &spawn.key());
@@ -1268,22 +1271,15 @@ impl Form<'_> {
     /// one, otherwise the database's. It names the `data` columns, so an edit
     /// to `type` renames them on the next frame.
     fn shown_type(&self, session: &EditSession) -> u32 {
-        session
-            .server_edits
-            .get(self.table, self.key, "type")
-            .and_then(|value| value.trim().parse().ok())
-            .or_else(|| self.row.integer("type").map(|kind| kind as u32))
-            .unwrap_or(0)
+        self.shown_number(session, "type") as u32
     }
 
     /// What one column holds right now, as a number.
     fn shown_number(&self, session: &EditSession, column: &str) -> i64 {
         session
             .server_edits
-            .get(self.table, self.key, column)
-            .and_then(|value| value.trim().parse::<f64>().ok())
-            .or_else(|| self.row.number(column))
-            .unwrap_or(0.0) as i64
+            .shown_integer(self.table, self.key, column, Some(self.row))
+            .unwrap_or(0)
     }
 }
 
@@ -1333,13 +1329,15 @@ pub(in crate::ui) fn groups(ui: &mut egui::Ui, subject: &mut Subject<'_>, form: 
     page_spacing(ui);
     let kind = form.shown_type(subject.session);
     let mut seen: Vec<Group> = Vec::new();
-    for column in gameobject::columns_of(form.table) {
+    let all: &'static [Column] =
+        vale_mangos::row::table_named(gameobject::TABLES, form.table).map_or(&[], |table| table.columns);
+    for column in all {
         if !seen.contains(&column.group) {
             seen.push(column.group);
         }
     }
     for group in seen {
-        let columns: Vec<Drawn> = gameobject::columns_of(form.table)
+        let columns: Vec<Drawn> = all
             .iter()
             .filter(|column| column.group == group)
             .map(|column| drawn(form.table, column, kind))
@@ -1617,7 +1615,7 @@ mod tests {
     use super::*;
 
     fn column(name: &str) -> &'static Column {
-        gameobject::column(gameobject::TEMPLATE, name).expect("a column")
+        gameobject::TEMPLATE_TABLE.column(name).expect("a column")
     }
 
     /// A data column is drawn under the type's name for it and written under
@@ -1649,7 +1647,7 @@ mod tests {
     /// `gameobject` has no column called `data0`.
     #[test]
     fn a_spawn_column_is_never_renamed() {
-        for column in gameobject::columns_of(gameobject::SPAWN) {
+        for column in gameobject::SPAWN_TABLE.columns {
             let shown = drawn(gameobject::SPAWN, column, gameobject::TYPE_CHEST);
             assert_eq!(shown.title, column.name);
             assert_eq!(shown.kind, column.kind);

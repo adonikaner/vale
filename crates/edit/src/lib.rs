@@ -138,3 +138,32 @@ impl std::fmt::Display for TileKey {
         write!(f, "{} {} {}", self.map, self.x, self.y)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A tile path reads back to its map and numbers with either separator,
+    /// and the file name's map is matched in any case. Any other path is no
+    /// tile.
+    #[test]
+    fn a_tile_path_is_read_back_to_its_map_and_numbers() {
+        assert_eq!(
+            TileKey::from_vpath(r"World\Maps\Azeroth\Azeroth_32_48.adt"),
+            Some(TileKey::new("Azeroth", 32, 48))
+        );
+        assert_eq!(
+            TileKey::from_vpath("World/Maps/Kalimdor/Kalimdor_3_57.adt"),
+            Some(TileKey::new("Kalimdor", 3, 57))
+        );
+        assert_eq!(
+            TileKey::from_vpath(r"world\maps\Azeroth\azeroth_32_48.ADT"),
+            Some(TileKey::new("Azeroth", 32, 48))
+        );
+        assert_eq!(TileKey::from_vpath(r"World\Maps\Azeroth\Azeroth.wdt"), None);
+        assert_eq!(TileKey::from_vpath(r"DBFilesClient\Spell.dbc"), None);
+        assert_eq!(TileKey::from_vpath(r"World\Maps\Azeroth\Other_32_48.adt"), None);
+        let key = TileKey::new("Azeroth", 32, 48);
+        assert_eq!(TileKey::from_vpath(&key.vpath()), Some(key));
+    }
+}

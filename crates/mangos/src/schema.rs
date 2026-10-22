@@ -190,6 +190,41 @@ pub fn money_words(copper: u64) -> String {
     out.join(" ")
 }
 
+/// A price typed as a person writes one: a bare number of copper, or coins
+/// with `g`, `s` and `c` after them (`1g 20s`, `75c`).
+pub fn parse_money(text: &str) -> Option<f64> {
+    let text = text.trim().to_ascii_lowercase();
+    if text == "free" {
+        return Some(0.0);
+    }
+    if let Ok(copper) = text.parse::<f64>() {
+        return Some(copper);
+    }
+    let mut total = 0.0;
+    let mut digits = String::new();
+    for c in text.chars() {
+        match c {
+            '0'..='9' | '.' => digits.push(c),
+            'g' | 's' | 'c' => {
+                let value: f64 = digits.parse().ok()?;
+                digits.clear();
+                total += value
+                    * match c {
+                        'g' => 10_000.0,
+                        's' => 100.0,
+                        _ => 1.0,
+                    };
+            }
+            ' ' => {}
+            _ => return None,
+        }
+    }
+    match digits.is_empty() {
+        true => Some(total),
+        false => None,
+    }
+}
+
 /// A duration in milliseconds, in words. `2600` is a swing timer and
 /// `1800000` is half an hour, and the same column holds both.
 pub fn millis_words(millis: i64) -> String {
@@ -495,5 +530,17 @@ mod tests {
         ];
         assert_eq!(value_word(&SOME, 1), "One");
         assert_eq!(value_word(&SOME, 9), "9");
+    }
+
+    /// A price reads as copper, as coins, or as the word the cell shows for 0.
+    #[test]
+    fn a_price_is_typed_as_coins_or_copper() {
+        assert_eq!(parse_money("150"), Some(150.0));
+        assert_eq!(parse_money("1s 50c"), Some(150.0));
+        assert_eq!(parse_money("2g"), Some(20_000.0));
+        assert_eq!(parse_money("1g 2s 3c"), Some(10_203.0));
+        assert_eq!(parse_money("free"), Some(0.0));
+        assert_eq!(parse_money("1g 2"), None);
+        assert_eq!(parse_money("lots"), None);
     }
 }

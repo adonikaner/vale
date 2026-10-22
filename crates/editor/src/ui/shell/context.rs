@@ -785,7 +785,7 @@ fn holes(ui: &mut egui::Ui, session: &mut EditSession, tile: Option<(u32, u32)>,
     };
     caption(ui, &format!("Chunk {chunk} of tile {}, {}", coord.0, coord.1));
     let cells: std::collections::BTreeSet<Cell> =
-        [Cell::of(coord, ((chunk % 16) as u32, (chunk / 16) as u32))].into_iter().collect();
+        [Cell::of_chunk(coord, chunk)].into_iter().collect();
     if item(ui, "Cut the whole chunk", true, "Cut every hole square of this chunk.", "") {
         crate::tools::ground::chunks::set_holes(session, &cells, true);
         chosen = true;
@@ -855,14 +855,6 @@ fn road(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing, at:
         chosen = true;
     }
     chosen
-}
-
-/// Whether a spawn's `npc_flags` carries the bit vmangos names `name`.
-fn has_npc_flag(npc_flags: u32, name: &str) -> bool {
-    vale_mangos::creature::NPC_FLAGS
-        .iter()
-        .find(|flag| flag.name == name)
-        .is_some_and(|flag| npc_flags & flag.bit != 0)
 }
 
 /// The selected spawns of the tool the menu is for, primary first, as the
@@ -959,7 +951,7 @@ fn creature(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing,
         editing.behaviour.events_open = true;
         chosen = true;
     }
-    if has_npc_flag(spawn.npc_flags, "GOSSIP")
+    if vale_mangos::creature::has_npc_flag(spawn.npc_flags, "GOSSIP")
         && item(ui, "Gossip\u{2026}", true, "The gossip menu the template's gossip_menu_id names.", "")
     {
         editing.gossip.open = true;
@@ -967,7 +959,7 @@ fn creature(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing,
         editing.gossip.trail.clear();
         chosen = true;
     }
-    if has_npc_flag(spawn.npc_flags, "VENDOR")
+    if vale_mangos::creature::has_npc_flag(spawn.npc_flags, "VENDOR")
         && item(ui, "Vendor\u{2026}", true, "What the creature sells: npc_vendor and its vendor_id's list.", "")
     {
         if !editing.services.is_open(Service::Vendor) {
@@ -975,7 +967,7 @@ fn creature(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing,
         }
         chosen = true;
     }
-    if has_npc_flag(spawn.npc_flags, "TRAINER")
+    if vale_mangos::creature::has_npc_flag(spawn.npc_flags, "TRAINER")
         && item(ui, "Trainer\u{2026}", true, "What the creature teaches: npc_trainer and its trainer_id's list.", "")
     {
         if !editing.services.is_open(Service::Trainer) {

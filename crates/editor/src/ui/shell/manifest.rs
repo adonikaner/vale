@@ -67,7 +67,7 @@ fn server_lines(project: &vale_edit::project::Project) -> Vec<(String, String)> 
     };
 
     let edits = project
-        .read(crate::server::creatures::EDITS_VPATH)
+        .read(crate::server::subject::EDITS_VPATH)
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .map(|text| vale_mangos::row::Edits::read(&text).0)
         .unwrap_or_default();
@@ -363,7 +363,7 @@ mod tests {
         let entry = vale_mangos::row::Key::two(("entry", 852), ("patch", 0));
         edits.set("item_template", &entry, "name", Some("'Cloak'".to_string()));
         project
-            .write(crate::server::creatures::EDITS_VPATH, edits.to_text("p").as_bytes())
+            .write(crate::server::subject::EDITS_VPATH, edits.to_text("p").as_bytes())
             .unwrap();
         project
             .write(

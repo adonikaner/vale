@@ -63,7 +63,7 @@ pub const TABLE: &str = "taxi_nodes";
 
 /// The build an edit is written at. `LoadTaxiNodes` takes the highest row at
 /// or below `SUPPORTED_CLIENT_BUILD`, which is 5875, so a row here wins.
-pub const BUILD: u32 = 5875;
+pub const BUILD: u32 = crate::CLIENT_BUILD;
 
 const ID: &str = "id";
 const BUILD_COLUMN: &str = "build";

@@ -66,6 +66,7 @@ use vale_client::world::camera::WorldCamera;
 use vale_client::world::session::{ObjectType, WorldEntity};
 use vale_mangos::creature::{self, RowValue};
 use vale_mangos::row::{Edits, Key, Life, RowEdit};
+use vale_mangos::sql::unquote;
 use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::future, Task};
 use std::collections::{HashMap, HashSet};
@@ -235,36 +236,6 @@ impl Spawn {
     }
 }
 
-/// The inside of a SQL string literal. The store keeps a name as a literal.
-///
-/// `vale_mangos::sql::text` is the one place a value is escaped, and this is
-/// the one place the drawing reads one back. A value that is not a quoted
-/// literal is returned as it is.
-fn unquote(literal: &str) -> String {
-    let Some(inner) = literal
-        .strip_prefix('\'')
-        .and_then(|rest| rest.strip_suffix('\''))
-    else {
-        return literal.to_string();
-    };
-    let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(ch) = chars.next() {
-        match (ch, chars.clone().next()) {
-            ('\\', Some('n')) => {
-                chars.next();
-                out.push('\n');
-            }
-            ('\\', Some(next)) => {
-                chars.next();
-                out.push(next);
-            }
-            _ => out.push(ch),
-        }
-    }
-    out
-}
-
 /// The columns of a creature entry that a marker, a model and a panel heading
 /// need.
 ///
@@ -322,11 +293,7 @@ impl Known {
     /// entry and patch.
     pub(crate) fn from_store(key: &Key, row: &RowEdit) -> Option<Known> {
         let entry = key.first()? as u32;
-        let patch = key
-            .0
-            .iter()
-            .find(|(column, _)| column == "patch")
-            .and_then(|(_, value)| value.parse::<u32>().ok())?;
+        let patch = key.patch()?;
         let number = |column: &str| -> u32 {
             row.columns
                 .get(column)
@@ -957,7 +924,7 @@ impl Creatures {
         ) {
             row.columns.insert(change.column.to_string(), change.value);
         }
-        for column in creature::columns_of(creature::SPAWN) {
+        for column in creature::SPAWN_TABLE.columns {
             if !column.editable() {
                 continue;
             }
@@ -1087,7 +1054,7 @@ impl Creatures {
         // discarded item edits and counted them as creatures. The waypoint
         // paths are discarded too, since only this subject has any; see
         // `EditSession::forget_server_edits`.
-        session.forget_server_edits(|table| creature::table_named(table).is_some(), true)
+        session.forget_server_edits(|table| vale_mangos::row::table_named(creature::TABLES, table).is_some(), true)
     }
 
     /// The entry a new template gets.
@@ -1100,15 +1067,7 @@ impl Creatures {
     /// templates can be created between two reads of the map. See
     /// `vale_mangos::creature::RESERVED_ENTRY_BASE`.
     pub fn next_entry(&self, edits: &Edits) -> u32 {
-        let in_database = self.max_entry.map(|highest| highest + 1).unwrap_or(0);
-        let claimed = edits
-            .rows()
-            .filter(|(table, _, row)| *table == creature::TEMPLATE && row.life == Life::Insert)
-            .filter_map(|(_, key, _)| key.first())
-            .max()
-            .map(|highest| highest as u32 + 1)
-            .unwrap_or(0);
-        creature::RESERVED_ENTRY_BASE.max(in_database).max(claimed)
+        creature::NUMBERING.next_entry(self.max_entry, edits)
     }
 
     /// Make a new template, choose it in the picker and open the template
@@ -1449,11 +1408,7 @@ impl Creatures {
         let moves: Vec<(u32, u32, u32)> = edits
             .moves(creature::TEMPLATE)
             .filter_map(|(from, to)| {
-                let patch = from
-                    .0
-                    .iter()
-                    .find(|(column, _)| column == "patch")
-                    .and_then(|(_, value)| value.parse::<u32>().ok())?;
+                let patch = from.patch()?;
                 Some((from.first()? as u32, patch, to.first()? as u32))
             })
             .collect();
@@ -1556,53 +1511,13 @@ pub fn plan_template_move(
     to: u32,
     taken: bool,
 ) -> Result<Option<(Key, Key)>, String> {
-    if to == subject.entry {
-        return Ok(None);
-    }
-    if to == 0 {
-        return Err("0 is not a creature entry".to_string());
-    }
-    if to > creature::MAX_ENTRY {
-        return Err(format!(
-            "{to} is above {}, the largest value `entry` can hold",
-            creature::MAX_ENTRY
-        ));
-    }
-    if taken && to != subject.read_entry {
-        return Err(format!("creature_template entry {to} already exists"));
-    }
-    Ok(Some((
-        subject.key(),
-        creature::template_key(to, subject.patch),
-    )))
-}
-
-/// The content patch this machine's server reads its rows at, found from the
-/// same settings that locate the server.
-///
-/// The patch is half the key a template edit is written under. Reading it
-/// from the wrong place produces an edit that applies cleanly to a row the
-/// running server does not use. It is read from the same `mangosd.conf` the
-/// connection is; with only `VALE_WORLDDB` set there is no conf and the
-/// default is used.
-pub fn server_patch(settings: &crate::server::settings::ServerSettings) -> u32 {
-    use vale_mangos::conn;
-    let conf = match settings.resolve() {
-        Some((_, crate::server::settings::Source::Env("VALE_MANGOSD"))) => {
-            std::env::var("VALE_MANGOSD").ok()
-        }
-        Some((_, crate::server::settings::Source::Panel)) => Some(settings.conf.clone()),
-        _ => None,
+    let row = vale_mangos::row::Numbered {
+        entry: subject.entry,
+        read_entry: subject.read_entry,
+        patch: subject.patch,
+        life: subject.claim,
     };
-    let Some(conf) = conf else {
-        return conn::DEFAULT_WOW_PATCH;
-    };
-    let at = std::path::PathBuf::from(conf);
-    let file = match at.is_dir() {
-        true => at.join("mangosd.conf"),
-        false => at,
-    };
-    conn::wow_patch_from_conf(file).unwrap_or(conn::DEFAULT_WOW_PATCH)
+    vale_mangos::row::plan_rekey(&creature::NUMBERING, row, to, taken)
 }
 
 pub struct CreatureToolPlugin;
@@ -1833,7 +1748,7 @@ fn learn_the_created(
     let Some((at, _)) = settings.resolve() else {
         return;
     };
-    let patch = server_patch(&settings);
+    let patch = crate::server::settings::server_patch(&settings);
     // Recorded before the read, not after. Otherwise two frames with a read
     // in flight would start two reads, and an entry the database has no row
     // for would start a read on every frame.
@@ -1934,7 +1849,7 @@ fn search_creatures(
         creatures.new_spawn.trouble = Some(vale_mangos::conn::Where::absent());
         return;
     };
-    let patch = server_patch(&settings);
+    let patch = crate::server::settings::server_patch(&settings);
     creatures.new_spawn.task = Some(crate::server::queue::read(async move {
         let mut db = vale_mangos::conn::Db::open(&at)?;
         let sql = creature::search_query(&term, patch, MATCHES);
@@ -1989,7 +1904,7 @@ fn read_the_map(
     let Some(session) = session else { return };
     // Keyed on `EditSession::database_writes`, which every apply and every
     // Put back of any subject increments. It was keyed on
-    // `EditSession::applied_creatures`, which a Put back sets to `None`; in a
+    // `EditSession::applied`, which a Put back sets to `None`; in a
     // session that did not make the apply it was already `None`, so the key
     // did not change and spawns the Put back had deleted stayed on the map.
     // It is not keyed on the spell tables' signature either: a spell save
@@ -2008,7 +1923,7 @@ fn read_the_map(
         creatures.trouble = Some(vale_mangos::conn::Where::absent());
         return;
     };
-    let patch = server_patch(&settings);
+    let patch = crate::server::settings::server_patch(&settings);
     let map = session.map_id;
     creatures.trouble = None;
     creatures.task = Some(crate::server::queue::read(async move {
@@ -3459,7 +3374,7 @@ fn template_on_the_command_line(
     let now = time.elapsed_secs_f64();
     if args.template_new && !*made {
         *made = true;
-        let patch = server_patch(&settings);
+        let patch = crate::server::settings::server_patch(&settings);
         let entry = creatures.create_template(session, "New Creature", patch, now);
         info!("--template-new: creature_template {entry} created at patch {patch}");
         session.status = format!("creature_template {entry} created");
@@ -3533,7 +3448,7 @@ fn display_on_the_command_line(
         return;
     };
     const COLUMN: &str = "display_id1";
-    let column = creature::column(creature::TEMPLATE, COLUMN).expect("a template column");
+    let column = creature::TEMPLATE_TABLE.column(COLUMN).expect("a template column");
     let key = subject.key();
     let in_database = match subject.is_new() {
         true => None,
@@ -3678,10 +3593,7 @@ pub fn fetch_rows(
                     // does not hold is an empty row, which the form shows as
                     // NULL in every column; answering nothing instead left
                     // the row unread and asked for again on every frame.
-                    let sql = format!(
-                        "SELECT * FROM `creature_template` WHERE `entry` = {read_entry} AND `patch` = {patch}"
-                    );
-                    let row = db.row(&sql)?.unwrap_or_default();
+                    let row = db.row(&creature::template_query(read_entry, patch))?.unwrap_or_default();
                     Ok(Some(TemplateRow { entry, patch, row }))
                 }));
             }

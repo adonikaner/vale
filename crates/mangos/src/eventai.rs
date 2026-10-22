@@ -39,17 +39,17 @@
 //! spawns or resets. A creature already in the world keeps the events it was
 //! given until it respawns.
 
-use crate::row::{Assignment, Key, Life};
+use crate::row::{Assignment, Key, Table};
 
 pub use crate::schema::{mask_words, value_word, Bit, Column, Group, Kind, Row, RowValue, Value};
 
 pub const TABLE: &str = "creature_ai_events";
 
-/// The static name for the table, for a caller resolving a name read out of
-/// a file.
-pub fn table_named(name: &str) -> Option<&'static str> {
-    (name == TABLE).then_some(TABLE)
-}
+/// The one table.
+pub const TABLES: &[Table] = &[EVENTS];
+
+/// `creature_ai_events`. Every row may be edited, created and removed.
+pub const EVENTS: Table = Table::new(TABLE, &COLUMNS);
 
 /// One event parameter: its name for one event type, and what a form draws
 /// it as.
@@ -204,11 +204,6 @@ pub const COLUMNS: [Column; 15] = [
     Column { name: "comment", kind: Kind::Text, group: Group::Advanced, about: "a label for editors; not read by the server" },
 ];
 
-/// One column, by name.
-pub fn column(name: &str) -> Option<&'static Column> {
-    COLUMNS.iter().find(|column| column.name == name)
-}
-
 /// The key of one row: the id.
 pub fn key(id: u32) -> Key {
     Key::one("id", u64::from(id))
@@ -349,7 +344,7 @@ impl Event {
             "action1_script" => self.scripts[0] = match count() { Some(n) => n, None => return false },
             "action2_script" => self.scripts[1] = match count() { Some(n) => n, None => return false },
             "action3_script" => self.scripts[2] = match count() { Some(n) => n, None => return false },
-            "comment" => self.comment = unquote(value),
+            "comment" => self.comment = crate::sql::unquote(value),
             _ => return false,
         }
         true
@@ -520,14 +515,6 @@ pub fn renamed(comment: &str, label: &str) -> String {
     }
 }
 
-/// The inside of a quoted SQL literal, or the text itself when it is not one.
-/// The store holds a text column as the literal `sql::text` wrote.
-fn unquote(literal: &str) -> String {
-    let Some(inner) = literal.strip_prefix('\'').and_then(|rest| rest.strip_suffix('\'')) else {
-        return literal.to_string();
-    };
-    inner.replace("\\'", "'").replace("\\\\", "\\")
-}
 
 /// The next free id for a creature's event, on the reference database's own
 /// convention: `creature_id * 100 + n`, the first `n` from 1 to 99 not in
@@ -541,20 +528,6 @@ pub fn next_id(creature_id: u32, taken: &[u32]) -> u32 {
             return id;
         }
         n += 1;
-    }
-}
-
-/// The statements a save emits for one row: an `UPDATE` for a row it edits,
-/// a `DELETE`/`INSERT` pair for one it creates, and a `DELETE` for one it
-/// removes.
-pub fn statements(key: &Key, life: Life, changes: &[Assignment]) -> Vec<String> {
-    match life {
-        Life::Update => crate::row::update(TABLE, key, changes).into_iter().collect(),
-        Life::Insert => match crate::row::insert(TABLE, key, changes) {
-            Some(statement) => vec![crate::row::delete(TABLE, key), statement],
-            None => Vec::new(),
-        },
-        Life::Delete => vec![crate::row::delete(TABLE, key)],
     }
 }
 
@@ -580,19 +553,10 @@ pub fn search_query(term: &str, limit: usize) -> String {
     )
 }
 
-/// The row a key names, which an undo is taken from.
-pub fn row_query(key: &Key) -> String {
-    format!("SELECT * FROM {} WHERE {} LIMIT 1", crate::sql::name(TABLE), key.where_clause())
-}
-
-/// Whether a row is already there, which an apply asks before it creates one.
-pub fn exists_query(key: &Key) -> String {
-    format!("SELECT 1 FROM {} WHERE {} LIMIT 1", crate::sql::name(TABLE), key.where_clause())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::row::Life;
 
     /// The schema is the loader's `SELECT`, column for column, with `comment`
     /// after it.
@@ -639,14 +603,14 @@ mod tests {
     #[test]
     fn a_row_becomes_the_statements_it_means() {
         let event = Event::new(6803, 68);
-        let created = statements(&event.key(), Life::Insert, &event.assignments());
+        let created = EVENTS.statements(&event.key(), Life::Insert, &event.assignments());
         assert_eq!(created.len(), 2);
         assert_eq!(created[0], "DELETE FROM `creature_ai_events` WHERE `id` = 6803;");
         assert!(created[1].starts_with("INSERT INTO `creature_ai_events` (`id`, `creature_id`, `condition_id`, `event_type`"), "{}", created[1]);
         assert!(created[1].contains("VALUES (6803, 68, 0, 0, 0, 100, 1, 5000, 10000, 5000, 10000, 0, 0, 0, '');"), "{}", created[1]);
-        let edited = statements(&key(6801), Life::Update, &[Assignment { column: "event_chance", value: "50".into() }]);
+        let edited = EVENTS.statements(&key(6801), Life::Update, &[Assignment { column: "event_chance", value: "50".into() }]);
         assert_eq!(edited, vec!["UPDATE `creature_ai_events` SET `event_chance` = 50 WHERE `id` = 6801;"]);
-        assert_eq!(statements(&key(6801), Life::Delete, &[]), vec!["DELETE FROM `creature_ai_events` WHERE `id` = 6801;"]);
+        assert_eq!(EVENTS.statements(&key(6801), Life::Delete, &[]), vec!["DELETE FROM `creature_ai_events` WHERE `id` = 6801;"]);
     }
 
     /// A trigger reads as a sentence with its references named, and the

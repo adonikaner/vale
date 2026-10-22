@@ -1059,12 +1059,6 @@ pub fn texture_path(md5_name: &str) -> String {
     format!(r"{}\{md5_name}", vale_assets::tables::minimap::TEXTURE_DIR)
 }
 
-/// …and the name the index gives a tile, for building an entry for one it does
-/// not carry: `<Map>\map<col>_<row>.blp`.
-pub fn index_name(map: &str, tile_x: u32, tile_y: u32) -> String {
-    format!(r"{map}\map{tile_x}_{tile_y}.blp")
-}
-
 /// The index with entries added for tiles it does not carry: each is a map
 /// directory, a tile, and the picture's file name in [`texture_path`]'s
 /// directory. An entry goes at the end of its map's `dir:` section, and a map
@@ -1082,7 +1076,7 @@ pub fn with_entries(index: &[u8], entries: &[(String, u32, u32, String)]) -> Vec
         lines.pop();
     }
     for (map, x, y, file) in entries {
-        let entry = format!("{}\t{file}", index_name(map, *x, *y));
+        let entry = format!("{}\t{file}", vale_assets::tables::minimap::index_name(map, *x, *y));
         let heading = |line: &str| {
             line.strip_prefix("dir:")
                 .map(|name| name.trim().to_ascii_lowercase())
@@ -1512,7 +1506,6 @@ mod tests {
 
     #[test]
     fn the_paths_are_the_games_own() {
-        assert_eq!(index_name("Azeroth", 32, 48), r"Azeroth\map32_48.blp");
         assert_eq!(
             texture_path("ea283abc0bf9637c3fad5e840a65b38b.blp"),
             r"textures\Minimap\ea283abc0bf9637c3fad5e840a65b38b.blp"

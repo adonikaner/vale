@@ -150,7 +150,7 @@ impl ServerQueue {
         self.testing = Some(read(async move {
             let mut db = vale_mangos::conn::Db::open(&at)?;
             let rows = db
-                .row("SELECT COUNT(*) AS n FROM `spell_template`")?
+                .row(vale_mangos::spell::COUNT_QUERY)?
                 .and_then(|row| row.get("n").cloned().flatten())
                 .ok_or_else(|| "connected, but the database has no spell_template table".to_string())?;
             Ok(format!("{rows} rows in spell_template"))
@@ -190,7 +190,7 @@ fn run(
     mut queue: ResMut<ServerQueue>,
     session: Option<ResMut<EditSession>>,
     mut reloads: ResMut<Reloads>,
-    mut standings: ResMut<crate::ui::shell::sync::Standings>,
+    mut standings: ResMut<crate::server::sync::Standings>,
 ) {
     if let Some((_, live, task)) = queue.running.as_mut() {
         let Some(finish) = block_on(future::poll_once(task)) else {

@@ -549,8 +549,10 @@ fn stroke(
 /// inside the tile. `chunk` is the chunk's place in the file, which is row by
 /// row.
 fn side_cell(coord: (u32, u32), chunk: usize) -> Option<Cell> {
-    let (x, y) = ((chunk % 16) as u32, (chunk / 16) as u32);
-    (x == 0 || x == 15 || y == 0 || y == 15).then(|| Cell::of(coord, (x, y)))
+    let cell = Cell::of_chunk(coord, chunk);
+    let (x, y) = cell.within();
+    let last = vale_assets::world::adt::CHUNKS_PER_SIDE as u32 - 1;
+    (x == 0 || x == last || y == 0 || y == last).then_some(cell)
 }
 
 /// Shade the chunks in `sides`, and the chunks across each tile side from
@@ -559,14 +561,14 @@ fn side_cell(coord: (u32, u32), chunk: usize) -> Option<Cell> {
 ///
 /// A stroke's own shading reads one tile, so a vertex on a tile's side is
 /// shaded from one side of it and the two tiles disagree there: a line of
-/// light or shadow along the border. This is `chunks::reshade_across`, which
+/// light or shadow along the border. This is `vale_edit::ops::chunks::reshade_across`, which
 /// the stitch uses, run over the border chunks a stroke moved.
 fn shade_seams(session: &mut EditSession, sides: &BTreeSet<Cell>) {
     if sides.is_empty() {
         return;
     }
     let mut edits: BTreeMap<(u32, u32), Vec<Edit>> = BTreeMap::new();
-    super::chunks::reshade_across(session, sides, &mut edits);
+    vale_edit::ops::chunks::reshade_across(session, sides, &mut edits);
     for (coord, edits) in edits {
         if edits.is_empty() {
             continue;

@@ -65,7 +65,7 @@
 
 use crate::ui::widgets::rowform::{
     choice_cell, draft_or, finished, flags_cell, meaning, number_cell, number_means, page_row,
-    page_spacing, paragraph_cell, revert_button, section, text_cell, unquote, RowAct, FORM_ROW,
+    page_spacing, paragraph_cell, revert_button, section, text_cell, RowAct, FORM_ROW,
 };
 use crate::ui::widgets::theme;
 use crate::ui::widgets::thumbnails::Thumbnails;
@@ -115,6 +115,9 @@ pub struct Shell<'a> {
     pub reloads: &'a mut crate::server::reload::Reloads,
     /// The bar's Server…, which is where every server operation is.
     pub server_panel: &'a mut crate::ui::shell::popover::Popover,
+    /// Where each server subject stands, held for half a second; the quests'
+    /// line in the form is read from it. See [`crate::server::sync::Standings`].
+    pub standings: &'a mut crate::server::sync::Standings,
     /// Which content patch the server is configured for — half the key a new
     /// row is written under.
     pub patch: u32,
@@ -164,16 +167,17 @@ fn shown(session: &EditSession, open: &Open, column: &Column) -> Shown {
 
 /// The value of a column by name, as a number.
 fn number_of(session: &EditSession, open: &Open, name: &str) -> i64 {
-    quest::column(quest::TEMPLATE, name)
-        .map(|column| shown(session, open, column).showing)
-        .and_then(|showing| showing.trim().parse().ok())
+    session
+        .server_edits
+        .shown_integer(quest::TEMPLATE, &open.known.key(), name, Some(&open.row))
         .unwrap_or(0)
 }
 
 /// The value of a column by name, as unquoted text.
 fn text_of(session: &EditSession, open: &Open, name: &str) -> String {
-    quest::column(quest::TEMPLATE, name)
-        .map(|column| unquote(&shown(session, open, column).showing))
+    session
+        .server_edits
+        .shown_text(quest::TEMPLATE, &open.known.key(), name, Some(&open.row))
         .unwrap_or_default()
 }
 
@@ -672,36 +676,22 @@ fn form(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>, open
 /// What this project changes about the server's quests, and the way to the
 /// panel that applies it — the same block [`super::items`] draws for items.
 fn edits_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>) {
-    let standing = crate::ui::shell::sync::standing(crate::ui::shell::sync::Half::Quests, work.session, work.assets);
-    if standing.quiet() {
-        return;
-    }
-    theme::heading(ui, "This project");
-    let colour = match standing.outstanding {
-        0 => theme::INK_DIM,
-        _ => theme::WARN,
-    };
-    ui.label(egui::RichText::new(standing.line()).color(colour));
-    for refused in &standing.refused {
-        ui.label(egui::RichText::new(refused).small().color(theme::BAD));
-    }
-    ui.horizontal(|ui| {
-        if ui
-            .button("Server\u{2026}")
-            .on_hover_text(
-                "Open the server panel, where these rows are applied, restored or \
-                 discarded. A quest change applied during a playtest takes effect on a \
-                 reload of quest_template and of each relation table written; applied at \
-                 any other time, it takes effect after a server restart.",
-            )
-            .clicked()
-        {
-            shell.server_panel.show();
-        }
-        if let Some(status) = shell.reloads.status() {
-            ui.label(egui::RichText::new(status).small().color(theme::INK_DIM));
-        }
-    });
+    let standing = shell.standings.of(
+        crate::server::sync::Half::Row(crate::server::stack::Subject::Quests),
+        work.session,
+        work.assets,
+        work.now,
+    );
+    super::listing::edits_block(
+        ui,
+        standing,
+        "Open the server panel, where these rows are applied, restored or \
+         discarded. A quest change applied during a playtest takes effect on a \
+         reload of quest_template and of each relation table written; applied at \
+         any other time, it takes effect after a server restart.",
+        shell.reloads.status(),
+        shell.server_panel,
+    );
 }
 
 /// The head of the form: the title, then the key and what kind of quest it is.
@@ -1213,7 +1203,7 @@ fn quest_link(ui: &mut egui::Ui, work: &mut Workspace<'_>, entry: u32) {
 /// A column of the template by a composed name, or `None` for a name the schema
 /// does not have — which draws nothing rather than panicking on a typo.
 fn numbered(stem: &str, slot: usize) -> Option<&'static Column> {
-    quest::column(quest::TEMPLATE, &format!("{stem}{slot}"))
+    quest::TEMPLATE_TABLE.column(&format!("{stem}{slot}"))
 }
 
 /// How many slots of a numbered run to draw: every used one and one free
@@ -1419,8 +1409,8 @@ fn objective_lines(
          accepted.",
     );
     if let (Some(item), Some(count)) = (
-        quest::column(quest::TEMPLATE, "SrcItemId"),
-        quest::column(quest::TEMPLATE, "SrcItemCount"),
+        quest::TEMPLATE_TABLE.column("SrcItemId"),
+        quest::TEMPLATE_TABLE.column("SrcItemCount"),
     ) {
         pair_row(ui, work, open, "Given item", item, "\u{d7}", count, drawn);
     }
@@ -1431,8 +1421,8 @@ fn objective_lines(
          limit) and SrcSpell (a spell cast on the character on accept).",
     );
     if let (Some(faction), Some(value)) = (
-        quest::column(quest::TEMPLATE, "RepObjectiveFaction"),
-        quest::column(quest::TEMPLATE, "RepObjectiveValue"),
+        quest::TEMPLATE_TABLE.column("RepObjectiveFaction"),
+        quest::TEMPLATE_TABLE.column("RepObjectiveValue"),
     ) {
         pair_row(
             ui,
@@ -1528,8 +1518,8 @@ fn requirement_lines(
         ),
     ] {
         if let (Some(first), Some(second)) = (
-            quest::column(quest::TEMPLATE, first),
-            quest::column(quest::TEMPLATE, second),
+            quest::TEMPLATE_TABLE.column(first),
+            quest::TEMPLATE_TABLE.column(second),
         ) {
             pair_row(ui, work, open, label, first, joiner, second, drawn);
         }
@@ -1867,7 +1857,7 @@ fn relations(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
                     .on_hover_text(format!(
                         "Add a row to {}: a {} that {} this quest. The row names a template \
                          entry, so it applies to every spawn of that template.",
-                        crate::subjects::quests::table_of(holder, role),
+                        vale_mangos::quest::relation_table(holder, role),
                         holder.word(),
                         role.word()
                     ))
@@ -2328,7 +2318,7 @@ pub(in crate::ui) fn picker(
     }
     match (&picker.purpose, chosen, clear) {
         (PickFor::Column { column, negated }, picked, cleared) if picked.is_some() || cleared => {
-            if let (Some(open), Some(column)) = (open, quest::column(quest::TEMPLATE, column)) {
+            if let (Some(open), Some(column)) = (open, quest::TEMPLATE_TABLE.column(column)) {
                 let value = match (picked, negated) {
                     (None, _) => "0".to_string(),
                     (Some(hit), true) => format!("-{}", hit.id),
@@ -2549,7 +2539,7 @@ pub fn holder_window(ctx: &egui::Context, mut subject: HolderQuests<'_>) -> Opti
                             .small_button("+ quest\u{2026}")
                             .on_hover_text(format!(
                                 "Add a row to {}: a quest this {noun} {}.",
-                                crate::subjects::quests::table_of(holder, role),
+                                vale_mangos::quest::relation_table(holder, role),
                                 role.word()
                             ))
                             .clicked()
@@ -2831,7 +2821,7 @@ mod tests {
             "NextQuestId",
             "NextQuestInChain",
         ] {
-            assert!(quest::column(quest::TEMPLATE, name).is_some(), "{name}");
+            assert!(quest::TEMPLATE_TABLE.column(name).is_some(), "{name}");
         }
     }
 

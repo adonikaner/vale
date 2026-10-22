@@ -16,7 +16,7 @@
 //! A reference whose column is part of the claim's *key* — a quest relation is
 //! keyed by `(id, quest)` — re-keys that claim, with no origin recorded: by the
 //! time such a row's statements run the database has already followed, because
-//! a plan writes the moved rows first. See `super::quests::Plan::ordered`.
+//! a plan writes the moved rows first. See `super::subject::Plan::rows`.
 //!
 //! Every write goes through the session under one gesture, so the move and
 //! everything that followed it are one entry on the undo stack.

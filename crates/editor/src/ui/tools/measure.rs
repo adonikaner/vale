@@ -176,7 +176,8 @@ fn probe_rows(
     }
     if let Some(chunk) = probe.chunk {
         theme::row(ui, "chunk", |ui| {
-            ui.label(theme::number(format!("{chunk}  ({}, {})", chunk % 16, chunk / 16)))
+            let (x, y) = vale_assets::world::adt::chunk_xy(chunk);
+            ui.label(theme::number(format!("{chunk}  ({x}, {y})")))
                 .on_hover_text("The MCNK index, then its column and row in the tile's 16x16 grid.");
         });
     }

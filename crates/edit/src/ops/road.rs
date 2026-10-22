@@ -38,7 +38,7 @@
 
 use super::{reshade, brush::{wobble, Falloff}, Edit, paint::{PaintBrush, Painted, Working}};
 use crate::adt::{heights, AdtFile};
-use vale_assets::world::adt::CHUNK_SIZE;
+use vale_assets::world::adt::{vertex_offset, CHUNK_SIZE};
 
 /// Yards between two samples of the centre line.
 ///
@@ -256,7 +256,7 @@ impl Road {
             }
             let mut after = before.clone();
             for (i, height) in after.iter_mut().enumerate() {
-                let (dx, dy) = heights::vertex_offset(i);
+                let (dx, dy) = vertex_offset(i);
                 *height = self.applied(path, &segments, origin[0] - dx, origin[1] - dy, *height);
             }
             if after == before {
@@ -575,7 +575,7 @@ fn edge(d: f32, inner: f32, soft: f32) -> f32 {
 }
 
 /// A chunk's square as `[min x, min y, max x, max y]`. A chunk runs back from
-/// its origin along both axes; see [`heights::vertex_offset`].
+/// its origin along both axes; see [`vertex_offset`].
 fn chunk_box(origin: [f32; 3]) -> [f32; 4] {
     [origin[0] - CHUNK_SIZE, origin[1] - CHUNK_SIZE, origin[0], origin[1]]
 }

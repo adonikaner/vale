@@ -3,46 +3,14 @@
 use super::*;
 use crate::session::EditSession;
 use super::browser::Browser;
-use super::labels::{basename, describe, guess_name_field, string_started_at, text_fields};
+use super::labels::{basename, describe};
 use super::tabs::table_named;
 use super::learning::{INSTANT_CAST, abilities_of, ability, add_ability, add_race_class_row, add_teaching_spell, race_class, race_class_rows_of, teachers_of};
-use super::zones::{add_sub_area, add_zone, area, next_explore_bit, sub_areas_of};
+use super::zones::{add_sub_area, add_zone, area, sub_areas_of};
+use vale_edit::dbc::places::next_explore_bit;
 use super::rows::{SET_ITEMS, add_light, copy_light_params, move_between_sets, set_lists};
 use super::commands::{Command, command_label, commands};
-use super::visuals::{first_model, point_for_slot, slot_for_point};
-
-/// Every one of the six kit columns round-trips through its point. The
-/// lab's drop-down depends on this: it chooses a point, and
-/// `slot_for_point` must return the column. A point that returned `None`
-/// would make a choice that changed nothing. That was the fault reported
-/// against the drop-down.
-#[test]
-fn the_six_kit_columns_and_their_points_agree_both_ways() {
-    use vale_assets::tables::spell::fields::EFFECTS;
-    use vale_assets::world::m2::attach;
-    for (field, point) in EFFECTS {
-        assert_eq!(point_for_slot(field), Some(point), "column {field}");
-        assert!(slot_for_point(point).is_some(), "point {point}");
-    }
-    // The five named points, listed explicitly, so a reordering of the
-    // table fails here instead of moving an effect to the wrong limb.
-    assert_eq!(slot_for_point(attach::HEAD), Some(3));
-    assert_eq!(slot_for_point(attach::CHEST), Some(4));
-    assert_eq!(slot_for_point(attach::SPELL_HAND_LEFT), Some(6));
-    assert_eq!(slot_for_point(attach::SPELL_HAND_RIGHT), Some(7));
-    // The base point has two columns, `BaseEffect` and `GroundEffect`, and
-    // the point maps to the first. For that reason `point_combo` refuses
-    // a move whose source column already hangs from the chosen point;
-    // otherwise choosing the base for a ground effect would move it from
-    // column 12 to column 5 with no change requested.
-    assert_eq!(slot_for_point(attach::BASE), Some(5));
-    assert_eq!(point_for_slot(12), Some(attach::BASE));
-    // A point that no column names has no slot. That is most of the
-    // thirty points a body carries.
-    assert_eq!(slot_for_point(attach::HAND_LEFT), None);
-    assert_eq!(slot_for_point(attach::HELM), None);
-    assert_eq!(point_for_slot(2), None);
-}
+use super::visuals::first_model;
 
 #[test]
 fn a_basename_is_the_last_component_whichever_way_the_slashes_go() {
@@ -55,52 +23,6 @@ fn a_basename_is_the_last_component_whichever_way_the_slashes_go() {
         "Spell_Fire_FlameBolt"
     );
     assert_eq!(basename("bare"), "bare");
-}
-
-/// Which column of a kit hangs from which attachment, checked by name
-/// rather than by position in the table this reads.
-///
-/// A wrong mapping writes an effect into the wrong column and nothing
-/// reports it: the row is valid, the spell still casts, and the model
-/// hangs off the wrong part of the body. The six columns are
-/// `SpellVisualKit`'s `HeadEffect`, `ChestEffect`, `BaseEffect`,
-/// `LeftHandEffect`, `RightHandEffect` and the second base column.
-#[test]
-fn a_point_maps_to_the_kit_column_that_hangs_from_it() {
-    use vale_assets::world::m2::attach;
-    assert_eq!(slot_for_point(attach::HEAD), Some(3));
-    assert_eq!(slot_for_point(attach::CHEST), Some(4));
-    assert_eq!(slot_for_point(attach::SPELL_HAND_LEFT), Some(6));
-    assert_eq!(slot_for_point(attach::SPELL_HAND_RIGHT), Some(7));
-    // Two columns hang from the feet and the first is the one written, so
-    // a move to the ground always targets the same column.
-    assert_eq!(slot_for_point(attach::BASE), Some(5));
-    assert_eq!(point_for_slot(12), Some(attach::BASE));
-
-    // Every other point a body carries is used only by the preview.
-    assert_eq!(slot_for_point(attach::HELM), None);
-    assert_eq!(
-        point_for_slot(2),
-        None,
-        "the animation column hangs nothing"
-    );
-    assert_eq!(point_for_slot(0), None, "nor does the id");
-}
-
-/// Every column the mapping offers is one the client reads, and every
-/// point it offers maps back to a column, so the drop-down cannot offer a
-/// move that writes to a column the client ignores.
-#[test]
-fn every_mapped_column_is_one_the_client_reads() {
-    for (field, point) in vale_assets::tables::spell::fields::EFFECTS {
-        assert_eq!(point_for_slot(field), Some(point), "column {field}");
-        let back = slot_for_point(point).expect("a point with a column");
-        assert_eq!(
-            point_for_slot(back),
-            Some(point),
-            "point {point} maps to column {back}, which must hang from it"
-        );
-    }
 }
 
 /// An empty table of `fields` columns, for a test to add rows to.
@@ -283,9 +205,9 @@ fn a_teaching_spell_is_made_for_a_spell_and_found_again() {
     assert_eq!(table.string_at(at, spell_fields::RANK).as_deref(), Some("Rank 2"));
     assert_eq!(table.f32_at(at, 167), Some(1.0));
     assert_eq!(teachers_of(&mut browser, &session, 143), vec![(1, false), (at, true)]);
-    // What `services::teaching_spell` answers for a trainer's list is the
+    // What `teaching::teaching_spell` answers for a trainer's list is the
     // instant one.
-    assert_eq!(crate::subjects::services::teaching_spell(table, 143), Some(id));
+    assert_eq!(vale_assets::tables::teaching::teaching_spell(table, 143), Some(id));
     assert_eq!(add_teaching_spell(&mut session, 9999), None, "no such spell");
 
     undo(&mut session);
@@ -554,30 +476,14 @@ fn a_record_is_found_by_its_id_through_the_index() {
     let _ = std::fs::remove_dir_all(&install);
 }
 
-/// The name column of a table with no schema is the first whose values
-/// are the offsets of differing strings. A column of ones is the offset
-/// of the block's first string on every row and is not a name.
+/// A table with no schema is named by the column guessed from the file, and
+/// a described table by its schema, through the browser's cache.
 #[test]
 fn a_table_with_no_schema_is_named_by_its_first_column_of_strings() {
     let mut table = empty(4);
     add(&mut table, 1, &[(1, 1), (2, 40)], &[(3, "Alpha")]);
     add(&mut table, 2, &[(1, 1), (2, 41)], &[(3, "Beta")]);
     add(&mut table, 3, &[(1, 1), (2, 42)], &[(3, "Gamma")]);
-    assert_eq!(string_started_at(&table, 1).as_deref(), Some("Alpha"));
-    assert_eq!(string_started_at(&table, 2), None, "inside a string");
-    assert_eq!(string_started_at(&table, 0), None, "the empty string");
-    assert_eq!(string_started_at(&table, 4000), None, "past the block");
-    assert_eq!(guess_name_field(&table), Some(3));
-    assert_eq!(guess_name_field(&empty(4)), None);
-    // Field 1 holds 1 on every row, the offset of the first string, and
-    // field 2 holds numbers that are no string's offset.
-    assert_eq!(text_fields(&table), vec![false, false, false, true]);
-    // A column that holds a string's offset on one row and another
-    // number on the next is numbers.
-    let mut mixed = empty(3);
-    add(&mut mixed, 1, &[(1, 1)], &[(2, "Alpha")]);
-    add(&mut mixed, 2, &[(1, 3)], &[(2, "Beta")]);
-    assert_eq!(text_fields(&mixed), vec![false, false, true]);
 
     let (mut session, install) = session("guess");
     session.tables.insert("Lock".to_string(), table);

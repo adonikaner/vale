@@ -79,7 +79,11 @@ pub const TABLE: &str = "spell_template";
 /// `LoadSpells` takes the highest row at or below `SUPPORTED_CLIENT_BUILD`, and
 /// 5875 is that number, so a row here beats every shipped one. Writing *above*
 /// it would be invisible instead.
-pub const BUILD: u32 = 5875;
+pub const BUILD: u32 = crate::CLIENT_BUILD;
+
+/// How many rows `spell_template` holds: the question a connection test asks,
+/// since a world database without the table is not one this editor can use.
+pub const COUNT_QUERY: &str = "SELECT COUNT(*) AS n FROM `spell_template`";
 
 /// **The largest spell id `spell_template` can hold.**
 ///

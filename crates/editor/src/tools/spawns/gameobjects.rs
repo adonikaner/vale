@@ -103,11 +103,7 @@ impl Known {
     /// entry and patch.
     pub(crate) fn from_store(key: &Key, row: &RowEdit) -> Option<Known> {
         let entry = key.first()? as u32;
-        let patch = key
-            .0
-            .iter()
-            .find(|(column, _)| column == "patch")
-            .and_then(|(_, value)| value.parse::<u32>().ok())?;
+        let patch = key.patch()?;
         let number = |column: &str| -> i64 {
             row.columns
                 .get(column)
@@ -122,7 +118,7 @@ impl Known {
             name: row
                 .columns
                 .get("name")
-                .map(|literal| crate::ui::widgets::rowform::unquote(literal))
+                .map(|literal| vale_mangos::sql::unquote(literal))
                 .unwrap_or_default(),
             kind: number("type") as u32,
             display_id: number("displayId") as u32,
@@ -353,7 +349,7 @@ impl Spawn {
                 }
             }
             if let Some(name) = edits.get(gameobject::TEMPLATE, &template_key, "name") {
-                known.name = crate::ui::widgets::rowform::unquote(name);
+                known.name = vale_mangos::sql::unquote(name);
             }
         }
         Some(out)
@@ -625,15 +621,7 @@ impl GameObjects {
     /// project has already claimed. These are the same three as
     /// `tools::spawns::creatures::Creatures::next_entry`, for the reasons given there.
     pub fn next_entry(&self, edits: &Edits) -> u32 {
-        let in_database = self.max_entry.map(|highest| highest + 1).unwrap_or(0);
-        let claimed = edits
-            .rows()
-            .filter(|(table, _, row)| *table == gameobject::TEMPLATE && row.life == Life::Insert)
-            .filter_map(|(_, key, _)| key.first())
-            .max()
-            .map(|highest| highest as u32 + 1)
-            .unwrap_or(0);
-        gameobject::RESERVED_ENTRY_BASE.max(in_database).max(claimed)
+        gameobject::NUMBERING.next_entry(self.max_entry, edits)
     }
 
     /// Make a new template, choose it in the picker and open the template
@@ -755,7 +743,7 @@ impl GameObjects {
         let named = row
             .columns
             .get("name")
-            .map(|literal| crate::ui::widgets::rowform::unquote(literal))
+            .map(|literal| vale_mangos::sql::unquote(literal))
             .unwrap_or_default();
         row.columns
             .insert("name".to_string(), vale_mangos::sql::text(&format!("{named} (copy)")));
@@ -912,11 +900,7 @@ impl GameObjects {
         let moves: Vec<(u32, u32, u32)> = edits
             .moves(gameobject::TEMPLATE)
             .filter_map(|(from, to)| {
-                let patch = from
-                    .0
-                    .iter()
-                    .find(|(column, _)| column == "patch")
-                    .and_then(|(_, value)| value.parse::<u32>().ok())?;
+                let patch = from.patch()?;
                 Some((from.first()? as u32, patch, to.first()? as u32))
             })
             .collect();
@@ -1146,7 +1130,7 @@ impl GameObjects {
         {
             row.columns.insert(change.column.to_string(), change.value);
         }
-        for column in gameobject::columns_of(gameobject::SPAWN) {
+        for column in gameobject::SPAWN_TABLE.columns {
             if !column.editable() {
                 continue;
             }
@@ -1256,7 +1240,7 @@ impl GameObjects {
     /// Throw away every edit this project makes to game objects: this
     /// subject's tables only, not the whole store, which every subject shares.
     pub fn discard(session: &mut EditSession) -> (usize, usize) {
-        session.forget_server_edits(|table| gameobject::table_named(table).is_some(), false)
+        session.forget_server_edits(|table| vale_mangos::row::table_named(gameobject::TABLES, table).is_some(), false)
     }
 
     pub fn fly_to(&mut self, at: Vec3) {
@@ -1318,22 +1302,13 @@ pub fn plan_template_move(
     to: u32,
     taken: bool,
 ) -> Result<Option<(Key, Key)>, String> {
-    if to == subject.entry {
-        return Ok(None);
-    }
-    if to == 0 {
-        return Err("0 is not a game object entry".to_string());
-    }
-    if to > gameobject::MAX_ENTRY {
-        return Err(format!(
-            "{to} is above {}, the largest value `entry` can hold",
-            gameobject::MAX_ENTRY
-        ));
-    }
-    if taken && to != subject.read_entry {
-        return Err(format!("gameobject_template entry {to} already exists"));
-    }
-    Ok(Some((subject.key(), gameobject::template_key(to, subject.patch))))
+    let row = vale_mangos::row::Numbered {
+        entry: subject.entry,
+        read_entry: subject.read_entry,
+        patch: subject.patch,
+        life: subject.claim,
+    };
+    vale_mangos::row::plan_rekey(&gameobject::NUMBERING, row, to, taken)
 }
 
 pub struct GameObjectToolPlugin;
@@ -1485,7 +1460,7 @@ fn read_the_map(
         objects.trouble = Some(vale_mangos::conn::Where::absent());
         return;
     };
-    let patch = super::creatures::server_patch(&settings);
+    let patch = crate::server::settings::server_patch(&settings);
     let map = session.map_id;
     objects.trouble = None;
     objects.task = Some(crate::server::queue::read(async move {
@@ -1620,7 +1595,7 @@ fn learn_the_created(
         return;
     }
     let Some((at, _)) = settings.resolve() else { return };
-    let patch = super::creatures::server_patch(&settings);
+    let patch = crate::server::settings::server_patch(&settings);
     // Remembered before the read, so an entry with no row does not start one
     // on every frame.
     for entry in &missing {
@@ -1700,7 +1675,7 @@ fn search_objects(
         objects.new_spawn.trouble = Some(vale_mangos::conn::Where::absent());
         return;
     };
-    let patch = super::creatures::server_patch(&settings);
+    let patch = crate::server::settings::server_patch(&settings);
     objects.new_spawn.task = Some(crate::server::queue::read(async move {
         let mut db = vale_mangos::conn::Db::open(&at)?;
         let sql = gameobject::search_query(&term, of_type, patch, MATCHES);
@@ -2535,7 +2510,7 @@ fn template_on_the_command_line(
     let now = time.elapsed_secs_f64();
     if args.object_new && !*made {
         *made = true;
-        let patch = super::creatures::server_patch(&settings);
+        let patch = crate::server::settings::server_patch(&settings);
         let entry = objects.create_template(session, "New Game Object", patch, now);
         info!("--object-new: gameobject_template {entry} created at patch {patch}");
         session.status = format!("gameobject_template {entry} created");
@@ -2591,7 +2566,7 @@ fn display_on_the_command_line(
         return;
     };
     const COLUMN: &str = "displayId";
-    let column = gameobject::column(gameobject::TEMPLATE, COLUMN).expect("a template column");
+    let column = gameobject::TEMPLATE_TABLE.column(COLUMN).expect("a template column");
     let key = subject.key();
     let in_database = match subject.is_new() {
         true => None,

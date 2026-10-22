@@ -209,7 +209,7 @@ pub(super) fn field_menu(
         if named && ui.button("Set to none").clicked() {
             // A kit's slots hold -1 for nothing and every other reference 0,
             // which is what a blank row of the table holds in the field.
-            let none = tables::rows::blank_defaults(table_name)
+            let none = vale_assets::tables::schema::blank_defaults(table_name)
                 .iter()
                 .find(|(field, _)| *field == column.field)
                 .map(|(_, value)| *value)

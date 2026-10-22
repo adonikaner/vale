@@ -35,6 +35,36 @@ pub fn text(value: &str) -> String {
     out
 }
 
+/// The text a string literal holds: [`text`] undone.
+///
+/// The escapes [`text`] writes for a control character, a quote or a
+/// backslash come back as the character, and any other escaped character as
+/// itself, which is how MySQL reads one. A value that is not a quoted literal
+/// (a number, `NULL`, a column read straight out of the database) is returned
+/// as it is, and so is a backslash at the very end, which [`text`] never
+/// writes.
+pub fn unquote(literal: &str) -> String {
+    let Some(inner) = literal.strip_prefix('\'').and_then(|rest| rest.strip_suffix('\'')) else {
+        return literal.to_string();
+    };
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
 /// **A float as a MySQL literal.**
 ///
 /// `{}` on an `f32` prints the shortest text that round-trips, which is what is
@@ -132,6 +162,27 @@ mod tests {
         assert_eq!(text(r"a\b"), r"'a\\b'");
         // …so a trailing backslash cannot escape the closing quote.
         assert_eq!(text(r"end\"), r"'end\\'");
+    }
+
+    /// [`unquote`] reads back what [`text`] writes, quotes, backslashes and
+    /// control characters included, and leaves a bare value alone.
+    #[test]
+    fn unquote_undoes_text() {
+        for value in [
+            "Rend",
+            "Gnomish Death Ray's",
+            r"a\b",
+            r"end\",
+            "two\twords\nand a line\r",
+            "x'; DROP TABLE spell_template; --",
+            "",
+        ] {
+            assert_eq!(unquote(&text(value)), value, "{value:?}");
+        }
+        assert_eq!(unquote("55"), "55");
+        assert_eq!(unquote("NULL"), "NULL");
+        assert_eq!(unquote(""), "");
+        assert_eq!(unquote("'"), "'");
     }
 
     #[test]

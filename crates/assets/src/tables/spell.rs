@@ -734,6 +734,25 @@ impl CastEffects {
 /// second copy of them.
 pub const EFFECT_POINTS: [(usize, u32); 6] = fields::EFFECTS;
 
+/// The kit column that hangs a model from this attachment point, if there is
+/// one. Only the six points in [`fields::EFFECTS`]
+/// have a column. Every other point a body carries can hold a model, but no
+/// column names it.
+pub fn slot_for_point(point: u32) -> Option<usize> {
+    fields::EFFECTS
+        .iter()
+        .find(|(_, at)| *at == point)
+        .map(|(field, _)| *field)
+}
+
+/// The attachment point a kit column hangs its model from, if it has one.
+pub fn point_for_slot(field: usize) -> Option<u32> {
+    fields::EFFECTS
+        .iter()
+        .find(|(column, _)| *column == field)
+        .map(|(_, point)| *point)
+}
+
 /// Every column index this module measured, public.
 ///
 /// [`crate::tables::schema`] also reads these tables, to describe them to a
@@ -1937,6 +1956,84 @@ impl SpellVisuals {
 mod tests {
     use super::*;
     use crate::tables::dbc::testing;
+
+    /// Every one of the six kit columns round-trips through its point. A
+    /// caller that chooses a point needs `slot_for_point` to return the
+    /// column; a point that returned `None` would make a choice that changes
+    /// nothing.
+    #[test]
+    fn the_six_kit_columns_and_their_points_agree_both_ways() {
+        use super::fields::EFFECTS;
+        use crate::world::m2::attach;
+        for (field, point) in EFFECTS {
+            assert_eq!(point_for_slot(field), Some(point), "column {field}");
+            assert!(slot_for_point(point).is_some(), "point {point}");
+        }
+        // The five named points, listed explicitly, so a reordering of the
+        // table fails here instead of moving an effect to the wrong limb.
+        assert_eq!(slot_for_point(attach::HEAD), Some(3));
+        assert_eq!(slot_for_point(attach::CHEST), Some(4));
+        assert_eq!(slot_for_point(attach::SPELL_HAND_LEFT), Some(6));
+        assert_eq!(slot_for_point(attach::SPELL_HAND_RIGHT), Some(7));
+        // The base point has two columns, `BaseEffect` and `GroundEffect`, and
+        // the point maps to the first. A caller moving an effect to a point
+        // refuses the move when its source column already hangs from that
+        // point; otherwise choosing the base for a ground effect would move it
+        // from column 12 to column 5 with no change requested.
+        assert_eq!(slot_for_point(attach::BASE), Some(5));
+        assert_eq!(point_for_slot(12), Some(attach::BASE));
+        // A point that no column names has no slot. That is most of the
+        // thirty points a body carries.
+        assert_eq!(slot_for_point(attach::HAND_LEFT), None);
+        assert_eq!(slot_for_point(attach::HELM), None);
+        assert_eq!(point_for_slot(2), None);
+    }
+
+    /// Which column of a kit hangs from which attachment, checked by name
+    /// rather than by position in the table this reads.
+    ///
+    /// A wrong mapping writes an effect into the wrong column and nothing
+    /// reports it: the row is valid, the spell still casts, and the model
+    /// hangs off the wrong part of the body. The six columns are
+    /// `SpellVisualKit`'s `HeadEffect`, `ChestEffect`, `BaseEffect`,
+    /// `LeftHandEffect`, `RightHandEffect` and the second base column.
+    #[test]
+    fn a_point_maps_to_the_kit_column_that_hangs_from_it() {
+        use crate::world::m2::attach;
+        assert_eq!(slot_for_point(attach::HEAD), Some(3));
+        assert_eq!(slot_for_point(attach::CHEST), Some(4));
+        assert_eq!(slot_for_point(attach::SPELL_HAND_LEFT), Some(6));
+        assert_eq!(slot_for_point(attach::SPELL_HAND_RIGHT), Some(7));
+        // Two columns hang from the feet and the first is the one written, so
+        // a move to the ground always targets the same column.
+        assert_eq!(slot_for_point(attach::BASE), Some(5));
+        assert_eq!(point_for_slot(12), Some(attach::BASE));
+
+        // No other point a body carries has a kit column.
+        assert_eq!(slot_for_point(attach::HELM), None);
+        assert_eq!(
+            point_for_slot(2),
+            None,
+            "the animation column hangs nothing"
+        );
+        assert_eq!(point_for_slot(0), None, "nor does the id");
+    }
+
+    /// Every column the mapping offers is one the client reads, and every
+    /// point it offers maps back to a column, so a move by point cannot write
+    /// to a column the client ignores.
+    #[test]
+    fn every_mapped_column_is_one_the_client_reads() {
+        for (field, point) in fields::EFFECTS {
+            assert_eq!(point_for_slot(field), Some(point), "column {field}");
+            let back = slot_for_point(point).expect("a point with a column");
+            assert_eq!(
+                point_for_slot(back),
+                Some(point),
+                "point {point} maps to column {back}, which must hang from it"
+            );
+        }
+    }
 
     /// One row per table, wired so that spell 133 reaches animation 53.
     fn chain() -> Option<SpellVisuals> {

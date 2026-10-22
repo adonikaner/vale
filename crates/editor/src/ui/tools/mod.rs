@@ -110,6 +110,10 @@ pub struct Subject<'a> {
     /// The bar's Server… popover, which holds every server operation. The
     /// same panels link to it; see [`crate::ui::shell::sync`].
     pub server_panel: &'a mut crate::ui::shell::popover::Popover,
+    /// Where each server subject stands, held for half a second. The creature
+    /// and object panels read their subject's line from it. See
+    /// [`crate::server::sync::Standings`].
+    pub standings: &'a mut crate::server::sync::Standings,
     /// The ground guides, for the one a tool's panel repeats: the texture
     /// brush shows the full chunks. See [`crate::tools::guides`].
     pub guides: &'a mut crate::tools::guides::Guides,
@@ -126,6 +130,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
         now,
         server,
         server_panel,
+        standings,
         guides,
     } = subject;
     ui.add_space(6.0);
@@ -303,6 +308,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
                 gossip: &mut editing.gossip,
                 server,
                 server_panel,
+                standings,
                 assets,
                 portraits: &mut editing.portraits,
                 thumbnails: &mut editing.thumbnails,
@@ -321,6 +327,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
                 loot: &mut editing.loot,
                 server,
                 server_panel,
+                standings,
                 assets,
                 portraits: &mut editing.portraits,
                 thumbnails: &mut editing.thumbnails,
@@ -384,6 +391,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
                 gossip: &mut editing.gossip,
                 server,
                 server_panel,
+                standings,
                 assets,
                 portraits: &mut editing.portraits,
                 thumbnails: &mut editing.thumbnails,
@@ -400,6 +408,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
                 loot: &mut editing.loot,
                 server,
                 server_panel,
+                standings,
                 assets,
                 portraits: &mut editing.portraits,
                 thumbnails: &mut editing.thumbnails,

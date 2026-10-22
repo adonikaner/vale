@@ -73,7 +73,6 @@
 //! written, and [`undo_of_an_update`] refuses a renumber whose row is gone,
 //! whose other statements would otherwise run with nothing to put them back.
 
-use super::creatures::Undo;
 use crate::session::EditSession;
 use vale_edit::project::Project;
 use vale_mangos::conn::Db;
@@ -299,6 +298,289 @@ pub fn refuse_a_guid_past_the_limit(table: &str, key: &Key, limit: u64) -> Resul
     }
 }
 
+/// A revert file: how to put a subject's rows back. Every row subject keeps
+/// one (`sql\<subject>-revert.sql`), and the client-table rows keep
+/// `sql\revert.sql`; all of them are read and written here.
+///
+/// Plain SQL with a marker line before each statement naming the table and the
+/// row. The marker is read, not decorative: it is how an apply knows which rows
+/// it has already snapshotted. The alternative, a side file in some
+/// serialisation, would be a second format and would stop the undo being a
+/// file a person can read and run by hand, which is the property that makes an
+/// automatic write to a database checkable.
+///
+/// ```text
+/// -- row creature_template entry=68;patch=0
+/// UPDATE `creature_template` SET `name` = 'Stormwind City Guard' WHERE …;
+///
+/// -- row creature_movement id=12345
+/// DELETE FROM `creature_movement` WHERE `id` = 12345;
+/// INSERT INTO `creature_movement` (...) VALUES (12345, 1, ...);
+/// INSERT INTO `creature_movement` (...) VALUES (12345, 2, ...);
+/// ```
+///
+/// An entry runs to the next marker, which is what lets a path's undo be
+/// several statements. Reading one line per marker restored a path as its
+/// `DELETE` and none of its nodes, so the undo emptied the path it was meant
+/// to put back.
+pub struct Undo {
+    /// `(table, key, statements)`, oldest first.
+    ///
+    /// Several statements per entry, because a waypoint path's undo is a
+    /// `DELETE` and an `INSERT` a node rather than one `UPDATE`. A row's entry
+    /// holds exactly one and reads back as one.
+    pub entries: Vec<(String, Key, Vec<String>)>,
+}
+
+impl Undo {
+    const MARKER: &'static str = "-- row ";
+    /// The client-table marker before the file named a table, `-- entry <id>`,
+    /// which always meant a `spell_template` dev row. Read, never written: a
+    /// project applied by an earlier build has a file of them, and failing to
+    /// recognise one would re-snapshot a row that is already edited.
+    const OLD_MARKER: &'static str = "-- entry ";
+    /// The line a finished file carries to say its entries are newest first.
+    /// A file without it is oldest first, which is every file written before
+    /// the order mattered and any file an apply was stopped in the middle of.
+    const NEWEST_FIRST: &'static str = "-- order: newest first";
+    /// The line that closes an entry. See [`Self::from_text`].
+    const END: &'static str = "-- end";
+
+    /// One of the project's revert files; empty when it is not there.
+    ///
+    /// The marker format is one format, which is why the path is a parameter
+    /// rather than a second parser: each subject keeps a revert file of its
+    /// own because each is applied by its own gesture, and a second reading of
+    /// `-- row <table> <key>` would be a place for the two to drift apart
+    /// silently.
+    pub fn open_at(project: &Project, vpath: &str) -> Result<Undo, String> {
+        let Some(text) = project.read(vpath) else {
+            return Ok(Undo {
+                entries: Vec::new(),
+            });
+        };
+        let text = String::from_utf8(text).map_err(|e| format!("{vpath}: {e}"))?;
+        Ok(Undo::from_text(&text))
+    }
+
+    /// The parse on its own, so it can be tested without a project on disk.
+    ///
+    /// An entry without its [`Self::END`] line is not read, when the file has
+    /// any. An entry is appended before its row's statements run, so one cut
+    /// short by a failed or interrupted append is a row that was never
+    /// written; running what survived of it would be half an undo (the
+    /// `DELETE`s of a removed spawn's snapshot without the `INSERT`s that
+    /// restore it) against a row that is still there. A file with no `END`
+    /// line at all predates them and is read as it always was.
+    pub fn from_text(text: &str) -> Undo {
+        let mut entries: Vec<(String, Key, Vec<String>)> = Vec::new();
+        let mut ended: Vec<bool> = Vec::new();
+        let mut any_end = false;
+        let mut at: Option<(String, Key)> = None;
+        let mut newest_first = false;
+        for line in text.lines() {
+            let line = line.trim();
+            if line == Self::NEWEST_FIRST {
+                newest_first = true;
+                continue;
+            }
+            if line == Self::END {
+                any_end = true;
+                if let Some(last) = ended.last_mut() {
+                    *last = true;
+                }
+                at = None;
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix(Self::MARKER) {
+                at = rest
+                    .split_once(' ')
+                    .and_then(|(table, key)| Some((table.trim().to_string(), Key::parse(key)?)));
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix(Self::OLD_MARKER) {
+                at = rest.trim().parse::<u64>().ok().map(|entry| {
+                    (
+                        vale_mangos::spell::TABLE.to_string(),
+                        Key::two(("entry", entry), ("build", u64::from(vale_mangos::spell::BUILD))),
+                    )
+                });
+                continue;
+            }
+            // A comment that is not a marker clears nothing and carries
+            // nothing, so the file's own header cannot become an entry.
+            if line.is_empty() || line.starts_with("--") {
+                continue;
+            }
+            // The marker is not taken, so every statement until the next one
+            // joins this entry. See the type's own doc.
+            let Some((table, key)) = at.as_ref() else {
+                continue;
+            };
+            match (entries.last_mut(), ended.last()) {
+                (Some((had_table, had_key, statements)), Some(false))
+                    if had_table == table && had_key == key =>
+                {
+                    statements.push(line.to_string());
+                }
+                _ => {
+                    entries.push((table.clone(), key.clone(), vec![line.to_string()]));
+                    ended.push(false);
+                }
+            }
+        }
+        if any_end {
+            let mut ended = ended.into_iter();
+            entries.retain(|_| ended.next().unwrap_or(false));
+        }
+        if newest_first {
+            entries.reverse();
+        }
+        Undo { entries }
+    }
+
+    /// Whether this row has already been snapshotted.
+    ///
+    /// By table and key together. `creature_template` entry 68 and
+    /// `creature` guid 68 are different rows, and `(68, patch 0)` and
+    /// `(68, patch 3)` are two more; a check on the id alone would give the
+    /// second of any pair the first's statement.
+    pub fn covers(&self, table: &str, key: &Key) -> bool {
+        self.entries
+            .iter()
+            .any(|(had_table, had_key, _)| had_table == table && had_key == key)
+    }
+
+    pub fn add(&mut self, table: &str, key: &Key, statement: &str) {
+        self.add_many(table, key, &[statement.to_string()]);
+    }
+
+    /// The same for the several statements a path's undo is.
+    pub fn add_many(&mut self, table: &str, key: &Key, statements: &[String]) {
+        self.entries
+            .push((table.to_string(), key.clone(), statements.to_vec()));
+    }
+
+    /// Every statement, in the order that puts the database back: the newest
+    /// entry first, and each entry's own statements in the order it holds
+    /// them.
+    ///
+    /// Newest first because entries are written in the order the plan ran and
+    /// each is the inverse of its own step given the steps before it; see
+    /// [`super::reconcile`]. A row created at an id another row was moved away
+    /// from has to go before that row can come back.
+    pub fn put_back(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .rev()
+            .flat_map(|(_, _, statements)| statements.iter().cloned())
+            .collect()
+    }
+
+    /// Add the newest entry to the file, which is [`Self::write_at`] for a
+    /// caller that adds one entry per row of a plan: rewriting the whole file
+    /// each time is quadratic in the plan, and a project that moves two
+    /// thousand spawns is four hundred megabytes of it.
+    ///
+    /// The file is the same text either way. The first entry writes the whole
+    /// file, header included.
+    pub fn append_newest_at(
+        &self,
+        project: &Project,
+        vpath: &str,
+        subject: &str,
+    ) -> Result<(), String> {
+        let (Some((table, key, statements)), true) = (self.entries.last(), self.entries.len() > 1)
+        else {
+            return self.write_at(project, vpath, subject);
+        };
+        let Some(disk) = project.path_for(vpath) else {
+            return self.write_at(project, vpath, subject);
+        };
+        let body = Self::entry_text(&(table.clone(), key.clone(), statements.clone()));
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&disk)
+            .and_then(|mut file| file.write_all(body.as_bytes()))
+            .map_err(|e| format!("{vpath}: {e}"))
+    }
+
+    /// Write to any of the project's revert files. See [`Undo::open_at`].
+    ///
+    /// Oldest entry first, which is the order an apply adds them in and the
+    /// order [`Self::append_newest_at`] continues. It is the file as it stands
+    /// while an apply is running; [`Self::write_finished_at`] is what replaces
+    /// it when the apply is done.
+    pub fn write_at(
+        &self,
+        project: &Project,
+        vpath: &str,
+        subject: &str,
+    ) -> Result<(), String> {
+        if self.entries.is_empty() {
+            return Ok(());
+        }
+        let mut body = format!(
+            "-- {} — how to put {subject} back.\n\
+             -- An apply is writing this file: one entry per row, each added\n\
+             -- immediately before that row's own statements run. Run the entries\n\
+             -- from the LAST to the first. Every statement can be run twice.\n\n",
+            project.name
+        );
+        for entry in &self.entries {
+            body.push_str(&Self::entry_text(entry));
+        }
+        project
+            .write(vpath, body.as_bytes())
+            .map_err(|e| format!("{vpath}: {e}"))?;
+        Ok(())
+    }
+
+    /// The file as a finished apply leaves it: newest entry first, so that
+    /// running it top to bottom by hand is [`Self::put_back`]. The
+    /// [`Self::NEWEST_FIRST`] line is what tells [`Self::from_text`] which way
+    /// round it is.
+    pub fn write_finished_at(
+        &self,
+        project: &Project,
+        vpath: &str,
+        subject: &str,
+    ) -> Result<(), String> {
+        if self.entries.is_empty() {
+            return Ok(());
+        }
+        let mut body = format!(
+            "-- {} — how to put {subject} back.\n\
+             -- One entry per row this project applied, each read from the database\n\
+             -- immediately before that row was written. Run top to bottom, it\n\
+             -- returns the database to what it was before this project. Every\n\
+             -- statement can be run twice. Plain SQL: it can be run by hand.\n\
+             {}\n\n",
+            project.name,
+            Self::NEWEST_FIRST
+        );
+        for entry in self.entries.iter().rev() {
+            body.push_str(&Self::entry_text(entry));
+        }
+        project
+            .write(vpath, body.as_bytes())
+            .map_err(|e| format!("{vpath}: {e}"))?;
+        Ok(())
+    }
+
+    pub(crate) fn entry_text((table, key, statements): &(String, Key, Vec<String>)) -> String {
+        let mut body = format!("{}{table} {}\n", Self::MARKER, key.text());
+        for statement in statements {
+            body.push_str(statement);
+            body.push('\n');
+        }
+        body.push_str(Self::END);
+        body.push_str("\n\n");
+        body
+    }
+}
+
 /// Remove a revert file whose statements have run. **A failure is an error**:
 /// a file left behind would be put back again on every later Apply.
 fn remove(project: &Project, vpath: &str) -> Result<(), String> {
@@ -340,6 +622,115 @@ mod tests {
             .expect("a row that is there")
             .expect("an undo");
         assert!(undo.len() > 2, "the references are followed back too");
+    }
+
+    /// The revert file round-trips through its own marker.
+    ///
+    /// That property is what stops a second apply from overwriting the first
+    /// snapshot. A marker that stopped being recognised would read as "this
+    /// row has no undo yet", re-snapshot the already-edited row, and leave
+    /// Revert restoring the edit instead of removing it, with no error
+    /// reported.
+    #[test]
+    fn the_revert_file_reads_back_what_it_wrote() {
+        let written = "-- a project — how to put the server's creatures back.\n\
+             -- a second comment line that is not a marker\n\n\
+             -- row creature_template entry=68;patch=0\n\
+             UPDATE `creature_template` SET `level_min` = 55 WHERE `entry` = 68;\n\n\
+             -- row creature guid=19272\n\
+             UPDATE `creature` SET `position_z` = 98.7 WHERE `guid` = 19272;\n";
+        let undo = Undo::from_text(written);
+        assert_eq!(undo.entries.len(), 2);
+        assert_eq!(undo.entries[0].0, vale_mangos::creature::TEMPLATE);
+        assert_eq!(undo.entries[1].0, vale_mangos::creature::SPAWN);
+        assert!(undo.covers(vale_mangos::creature::TEMPLATE, &Key::two(("entry", 68), ("patch", 0))));
+        assert!(undo.covers(vale_mangos::creature::SPAWN, &Key::one("guid", 19272)));
+        assert!(!undo.covers(vale_mangos::creature::SPAWN, &Key::one("guid", 1)));
+    }
+
+    /// An entry cut short by an interrupted append is not run. Its row's
+    /// statements never ran either, and half a removal's snapshot (the
+    /// `DELETE`s without the `INSERT`s) would delete a spawn that is still
+    /// there.
+    #[test]
+    fn an_entry_without_its_end_is_not_read() {
+        let mut undo = Undo {
+            entries: Vec::new(),
+        };
+        undo.add_many(
+            vale_mangos::creature::SPAWN,
+            &Key::one("guid", 1),
+            &["DELETE FROM `creature` WHERE `guid` = 1;".into(), "INSERT INTO `creature` …;".into()],
+        );
+        undo.add_many(
+            vale_mangos::creature::SPAWN,
+            &Key::one("guid", 2),
+            &["DELETE FROM `creature` WHERE `guid` = 2;".into(), "INSERT INTO `creature` …;".into()],
+        );
+        let whole: String = undo.entries.iter().map(Undo::entry_text).collect();
+        assert_eq!(Undo::from_text(&whole).entries, undo.entries);
+        // The second entry torn after its `DELETE`.
+        let cut = whole.find("INSERT INTO `creature` …;\n-- end\n\n-- row creature guid=2").unwrap();
+        let torn = format!(
+            "{}-- row creature guid=2\nDELETE FROM `creature` WHERE `guid` = 2;\n",
+            &whole[..cut + "INSERT INTO `creature` …;\n-- end\n\n".len()]
+        );
+        let read = Undo::from_text(&torn);
+        assert_eq!(read.entries.len(), 1);
+        assert!(read.covers(vale_mangos::creature::SPAWN, &Key::one("guid", 1)));
+        assert!(!read.covers(vale_mangos::creature::SPAWN, &Key::one("guid", 2)));
+    }
+
+    /// The same id in two tables is two rows, and so is the same entry at
+    /// two patches.
+    #[test]
+    fn the_table_and_the_whole_key_are_what_an_undo_covers() {
+        let mut undo = Undo {
+            entries: Vec::new(),
+        };
+        let key = Key::two(("entry", 68), ("patch", 0));
+        undo.add(vale_mangos::creature::TEMPLATE, &key, "UPDATE `creature_template` …;");
+        assert!(undo.covers(vale_mangos::creature::TEMPLATE, &key));
+        assert!(!undo.covers(vale_mangos::creature::SPAWN, &key));
+        assert!(!undo.covers(vale_mangos::creature::TEMPLATE, &Key::two(("entry", 68), ("patch", 3))));
+    }
+
+    /// A comment that is not a marker carries no statement with it, so the
+    /// file's own header cannot become an entry.
+    #[test]
+    fn a_comment_is_not_an_entry() {
+        assert!(Undo::from_text("-- just a note\nUPDATE x;\n")
+            .entries
+            .is_empty());
+    }
+
+    /// A file written before the marker named a table is still read: the old
+    /// marker was `-- entry <id>`, and its table was always `spell_template`.
+    #[test]
+    fn the_old_marker_is_still_read_as_a_spell() {
+        let undo = Undo::from_text(
+            "-- entry 133\n\
+             UPDATE `spell_template` SET `effectBasePoints1` = 13 WHERE `entry` = 133;\n",
+        );
+        assert_eq!(undo.entries.len(), 1);
+        assert_eq!(undo.entries[0].0, vale_mangos::spell::TABLE);
+        assert!(undo.covers(vale_mangos::spell::TABLE, &Key::two(("entry", 133), ("build", 5875))));
+    }
+
+    /// A client-table file of one statement per marker reads back one entry
+    /// per row, each its own statement.
+    #[test]
+    fn a_file_of_one_statement_per_row_reads_back() {
+        let written = "-- a project — how to put the server back.\n\n\
+             -- row spell_template entry=133;build=5875\n\
+             UPDATE `spell_template` SET `effectBasePoints1` = 13 WHERE `entry` = 133;\n\n\
+             -- row spell_template entry=2136;build=5875\n\
+             DELETE FROM `spell_template` WHERE `entry` = 2136 AND `build` = 5875;\n";
+        let undo = Undo::from_text(written);
+        assert_eq!(undo.entries.len(), 2);
+        assert!(undo.entries[0].2[0].starts_with("UPDATE"));
+        assert!(undo.entries[1].2[0].starts_with("DELETE"));
+        assert!(!undo.covers(vale_mangos::spell::TABLE, &Key::two(("entry", 133), ("build", 5464))));
     }
 
     #[test]

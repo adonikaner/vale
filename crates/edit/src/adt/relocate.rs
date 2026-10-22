@@ -14,7 +14,7 @@
 //! A chunk position is **world** space, where a tile's `x` is its *row* and its
 //! `y` is its *column* — see [`super::blank`], where that is measured off a real
 //! tile. A placement is `MDDF`/`MODF` space, which is an offset back from
-//! [`MAP_ORIGIN`] with the axes swapped, and
+//! [`MAP_ORIGIN`](vale_assets::world::adt::MAP_ORIGIN) with the axes swapped, and
 //! [`vale_assets::world::adt::placement_from_world`] is the statement of it.
 //! Move a tile one column east and the world `y` of every chunk falls by
 //! [`TILE_SIZE`] while the *first* component of every placement rises by it.
@@ -36,7 +36,7 @@
 use super::file::AdtFile;
 use super::header::at;
 use super::place::{Building, Doodad};
-use vale_assets::world::adt::{MAP_ORIGIN, TILE_SIZE};
+use vale_assets::world::adt::TILE_SIZE;
 
 /// **Rewrite a tile to sit at different coordinates.**
 ///
@@ -94,18 +94,6 @@ pub fn relocate(tile: &mut AdtFile, from: (u32, u32), to: (u32, u32)) -> (usize,
     (chunks, moved_doodads, moved_buildings)
 }
 
-/// Where a tile's own origin is — its maximum corner, in world axes.
-///
-/// The same numbers [`super::blank::chunk_origin`] gives for chunk 0, named
-/// separately because a caller reasoning about whole tiles should not have to
-/// know that chunk 0 is the corner one.
-pub fn tile_origin(tile_x: u32, tile_y: u32) -> [f32; 2] {
-    [
-        MAP_ORIGIN - tile_y as f32 * TILE_SIZE,
-        MAP_ORIGIN - tile_x as f32 * TILE_SIZE,
-    ]
-}
-
 /// Set every chunk's `indexX`/`indexY` to match its slot.
 ///
 /// Not part of [`relocate`], because the indices are *within* a tile and do not
@@ -113,11 +101,10 @@ pub fn tile_origin(tile_x: u32, tile_y: u32) -> [f32; 2] {
 /// building a tile out of parts has to get right, and because a tile assembled
 /// with them wrong loads and draws transposed.
 pub fn renumber(tile: &mut AdtFile) {
-    use vale_assets::world::adt::CHUNKS_PER_SIDE;
-
     for (index, chunk) in tile.chunks.iter_mut().enumerate() {
-        put_u32(&mut chunk.header, at::INDEX_X, (index % CHUNKS_PER_SIDE) as u32);
-        put_u32(&mut chunk.header, at::INDEX_Y, (index / CHUNKS_PER_SIDE) as u32);
+        let (index_x, index_y) = vale_assets::world::adt::chunk_xy(index);
+        put_u32(&mut chunk.header, at::INDEX_X, index_x as u32);
+        put_u32(&mut chunk.header, at::INDEX_Y, index_y as u32);
     }
 }
 
@@ -273,7 +260,7 @@ mod tests {
     #[test]
     fn a_tiles_origin_is_its_first_chunks() {
         for (x, y) in [(0u32, 0u32), (32, 48), (63, 63)] {
-            let origin = tile_origin(x, y);
+            let origin = vale_assets::world::terrain::tile_corner(x, y);
             let chunk = chunk_origin(x, y, 0);
             assert!((origin[0] - chunk[0]).abs() < 0.001);
             assert!((origin[1] - chunk[1]).abs() < 0.001);

@@ -31,7 +31,7 @@
 //! key is shaped that way.
 
 use crate::session::EditSession;
-use vale_mangos::loot::{self, Entry, Table};
+use vale_mangos::loot::{self, Entry, Heading};
 use vale_mangos::row::{Edits, Key, Life, RowEdit};
 use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::future, Task};
@@ -50,8 +50,8 @@ impl Set {
     }
 
     /// What the table is, for its heading and what it is keyed to.
-    pub fn table(&self) -> Table {
-        loot::table(self.table).unwrap_or(loot::ALL[0])
+    pub fn heading(&self) -> Heading {
+        loot::heading(self.table).unwrap_or(loot::HEADINGS[0])
     }
 }
 
@@ -160,7 +160,7 @@ pub struct Loot {
     /// What is typed into the reference box beside **+ reference**.
     pub reference_box: String,
     /// Whether the scripted flags have been acted on — see
-    /// `crate::server::loot::on_the_command_line`, which waits on this.
+    /// `crate::server::subject::flags::on_the_command_line`, which waits on this.
     pub scripted_done: bool,
 }
 
@@ -428,14 +428,7 @@ fn with_edits(entry: &Entry, table: &str, edits: &Edits) -> Entry {
 
 /// A row this project creates, read back out of its claim.
 fn entry_of(key: &Key, row: &RowEdit) -> Option<Entry> {
-    let mut whole = loot::Row::new();
-    for (column, value) in &key.0 {
-        whole.insert(column.clone(), Some(value.clone()));
-    }
-    for (column, value) in &row.columns {
-        whole.insert(column.clone(), Some(value.clone()));
-    }
-    Entry::from_row(&whole)
+    Entry::from_row(&row.whole(key))
 }
 
 /// Reads the set the window shows on a task, when it has not been read yet.
@@ -481,7 +474,7 @@ fn read_the_rows(
         loot.trouble = Some(vale_mangos::conn::Where::absent());
         return;
     };
-    let patch = crate::tools::spawns::creatures::server_patch(&settings);
+    let patch = crate::server::settings::server_patch(&settings);
     loot.reading = Some((
         set,
         crate::server::queue::read(async move {

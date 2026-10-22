@@ -112,14 +112,7 @@ impl EditSession {
         // A different project's rows are a different set of statements, so
         // what the last one applied says nothing about whether this one has to.
         self.applied_signature = None;
-        self.applied_creatures = None;
-        self.applied_items = None;
-        self.applied_quests = None;
-        self.applied_gameobjects = None;
-        self.applied_loot = None;
-        self.applied_behaviour = None;
-        self.applied_services = None;
-        self.applied_places = [None; 5];
+        self.applied = [None; crate::server::stack::Subject::COUNT];
         // Every path the overlay answers now comes out of a different folder.
         self.republished_all = true;
         self.tables_republished = true;

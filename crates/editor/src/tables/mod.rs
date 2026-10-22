@@ -4,8 +4,8 @@
 //! browser.rs   the browser's state: the open table and row, the search, the
 //!              text being typed, and the reverse references
 //! labels.rs    what a row is called, built per table from the rows around it
-//! tabs.rs      the tables each workspace reaches, as tabs, and the tables a
-//!              subject opens beside its own
+//! tabs.rs      the tables each workspace reaches, as tabs, and a table named
+//!              in any case
 //! fields.rs    writing a field of a row, as one undo entry
 //! rows.rs      adding, copying and removing rows, the light chain's new rows,
 //!              and an item's place in the item sets
@@ -75,7 +75,7 @@
 //!
 //! A table with a schema is named by its first text column. A table without one
 //! is named by a column guessed from the file
-//! ([`guess_name_field`](labels::guess_name_field)): the first in which the
+//! ([`guess_name_field`](vale_edit::dbc::names::guess_name_field)): the first in which the
 //! rows hold the offsets of strings.
 //!
 //! `SpellVisual` row 67 has no name column, and a list of 2,167 bare ids cannot
@@ -136,7 +136,7 @@
 //! ([`sub_areas_of`](zones::sub_areas_of)). [`add_zone`](zones::add_zone) and
 //! [`add_sub_area`](zones::add_sub_area) make a row with the columns a blank
 //! row would get wrong: the map, the parent, and an explore bit no other row
-//! holds ([`next_explore_bit`](zones::next_explore_bit)). A sub-area also
+//! holds ([`next_explore_bit`](vale_edit::dbc::places::next_explore_bit)). A sub-area also
 //! starts with its zone's flags, reverb, ambience and music. A row is put on
 //! the ground by the Areas tool, which [`Browser::paint_area`] asks the shell
 //! to switch to.
@@ -162,7 +162,7 @@
 //!
 //! The contents of a blank row are the only table-specific rule here: a kit's
 //! effect and procedural slots are `-1` for none
-//! ([`blank_defaults`](rows::blank_defaults)), which is the convention the
+//! ([`blank_defaults`](vale_assets::tables::schema::blank_defaults)), which is the convention the
 //! shipped rows use.
 
 use bevy::prelude::*;

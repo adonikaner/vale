@@ -5,8 +5,8 @@
 //!
 //! `LootStore::LoadLootTable` (`LootMgr.cpp:93`) reads every one of them with
 //! the same `SELECT`, so there is one column list here and nine names. What
-//! differs is what an `entry` is keyed to — see [`Table`] and
-//! [`Table::keyed_by`]:
+//! differs is what an `entry` is keyed to — see [`Heading`] and
+//! [`Heading::keyed_by`]:
 //!
 //! ```text
 //! creature_loot_template       creature_template.loot_id            what it drops
@@ -68,7 +68,7 @@
 //! server's patch, and any row outside `patch_min..=patch_max`. A row made here
 //! is written `0..10`, every patch, which is the DDL's default.
 
-use crate::row::{Assignment, Key, Life};
+use crate::row::{Assignment, Key, Table};
 
 pub use crate::schema::{value_word, Column, Group, Kind, Row, RowValue};
 
@@ -82,52 +82,47 @@ pub const FISHING: &str = "fishing_loot_template";
 pub const MAIL: &str = "mail_loot_template";
 pub const REFERENCE: &str = "reference_loot_template";
 
-/// Every table this module writes, for a caller that has to resolve a name
-/// read out of a file back to one of these constants.
-pub const TABLES: [&str; 9] = [
-    CREATURE,
-    PICKPOCKETING,
-    SKINNING,
-    GAMEOBJECT,
-    ITEM,
-    DISENCHANT,
-    FISHING,
-    MAIL,
-    REFERENCE,
+/// The nine tables, one schema under nine names. Every row of each may be
+/// edited, created and removed, and is live on its table's reload.
+pub const TABLES: &[Table] = &[
+    Table::new(CREATURE, &COLUMNS),
+    Table::new(PICKPOCKETING, &COLUMNS),
+    Table::new(SKINNING, &COLUMNS),
+    Table::new(GAMEOBJECT, &COLUMNS),
+    Table::new(ITEM, &COLUMNS),
+    Table::new(DISENCHANT, &COLUMNS),
+    Table::new(FISHING, &COLUMNS),
+    Table::new(MAIL, &COLUMNS),
+    Table::new(REFERENCE, &COLUMNS),
 ];
 
-/// The static name for a table read out of a file, or `None`.
-pub fn table_named(name: &str) -> Option<&'static str> {
-    TABLES.into_iter().find(|table| *table == name)
-}
-
-/// **What one of the nine tables is**: its name, the word a window heads it
-/// with, and what an `entry` of it is keyed to.
+/// **How a window heads one of the nine tables**: its name, the word it is
+/// headed with, and what an `entry` of it is keyed to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Table {
+pub struct Heading {
     pub name: &'static str,
-    /// The heading: `Drops`, `Pickpocket`, `Skinning`, `Holds`…
+    /// The heading: `Creature loot`, `Pickpocketing loot`…
     pub word: &'static str,
     /// The column, in the server's own words, whose value names an entry.
     pub keyed_by: &'static str,
 }
 
 /// The nine, in [`TABLES`]' order.
-pub const ALL: [Table; 9] = [
-    Table { name: CREATURE, word: "Creature loot", keyed_by: "creature_template.loot_id" },
-    Table { name: PICKPOCKETING, word: "Pickpocketing loot", keyed_by: "creature_template.pickpocket_loot_id" },
-    Table { name: SKINNING, word: "Skinning loot", keyed_by: "creature_template.skinning_loot_id" },
-    Table { name: GAMEOBJECT, word: "Game object loot", keyed_by: "the lootId data column of gameobject_template" },
-    Table { name: ITEM, word: "Item loot", keyed_by: "item_template.entry of an item with the LOOTABLE flag" },
-    Table { name: DISENCHANT, word: "Disenchant loot", keyed_by: "item_template.disenchant_id" },
-    Table { name: FISHING, word: "Fishing loot", keyed_by: "the AreaTable.dbc zone id" },
-    Table { name: MAIL, word: "Mail loot", keyed_by: "the MailTemplate.dbc id" },
-    Table { name: REFERENCE, word: "Reference loot", keyed_by: "a negative mincountOrRef in any other loot table" },
+pub const HEADINGS: [Heading; 9] = [
+    Heading { name: CREATURE, word: "Creature loot", keyed_by: "creature_template.loot_id" },
+    Heading { name: PICKPOCKETING, word: "Pickpocketing loot", keyed_by: "creature_template.pickpocket_loot_id" },
+    Heading { name: SKINNING, word: "Skinning loot", keyed_by: "creature_template.skinning_loot_id" },
+    Heading { name: GAMEOBJECT, word: "Game object loot", keyed_by: "the lootId data column of gameobject_template" },
+    Heading { name: ITEM, word: "Item loot", keyed_by: "item_template.entry of an item with the LOOTABLE flag" },
+    Heading { name: DISENCHANT, word: "Disenchant loot", keyed_by: "item_template.disenchant_id" },
+    Heading { name: FISHING, word: "Fishing loot", keyed_by: "the AreaTable.dbc zone id" },
+    Heading { name: MAIL, word: "Mail loot", keyed_by: "the MailTemplate.dbc id" },
+    Heading { name: REFERENCE, word: "Reference loot", keyed_by: "a negative mincountOrRef in any other loot table" },
 ];
 
-/// One of the nine, by name.
-pub fn table(name: &str) -> Option<Table> {
-    ALL.into_iter().find(|table| table.name == name)
+/// One of the nine headings, by table name.
+pub fn heading(name: &str) -> Option<Heading> {
+    HEADINGS.into_iter().find(|heading| heading.name == name)
 }
 
 /// **The columns every loot table has**, in `LoadLootTable`'s `SELECT` order
@@ -146,20 +141,6 @@ pub const COLUMNS: [Column; 9] = [
     Column { name: "patch_min", kind: Kind::Key, group: Group::Identity, about: "the first content patch the row is loaded at" },
     Column { name: "patch_max", kind: Kind::Key, group: Group::Identity, about: "the last content patch the row is loaded at" },
 ];
-
-/// The columns of a table, or an empty slice for a name this module does not
-/// know.
-pub fn columns_of(table: &str) -> &'static [Column] {
-    match table_named(table) {
-        Some(_) => &COLUMNS,
-        None => &[],
-    }
-}
-
-/// One column, by name, of any loot table.
-pub fn column(table: &str, name: &str) -> Option<&'static Column> {
-    columns_of(table).iter().find(|column| column.name == name)
-}
 
 /// The most a group may be numbered: seven bits (`LootMgr.cpp:281`).
 pub const MAX_GROUP: u32 = 127;
@@ -361,21 +342,6 @@ pub fn new_reference(entry: u32, reference: u32) -> Vec<Assignment> {
     Entry::reference(entry, reference).assignments()
 }
 
-/// **The statements a save emits for one row this project claims**: an
-/// `UPDATE` for a row it edits, a `DELETE`/`INSERT` pair for one it creates —
-/// so applying twice means the same as applying once — and a `DELETE` for one
-/// it removes.
-pub fn statements(table: &str, key: &Key, life: Life, changes: &[Assignment]) -> Vec<String> {
-    match life {
-        Life::Update => crate::row::update(table, key, changes).into_iter().collect(),
-        Life::Insert => match crate::row::insert(table, key, changes) {
-            Some(statement) => vec![crate::row::delete(table, key), statement],
-            None => Vec::new(),
-        },
-        Life::Delete => vec![crate::row::delete(table, key)],
-    }
-}
-
 // ---------------------------------------------------------------------------
 // The queries
 // ---------------------------------------------------------------------------
@@ -387,24 +353,6 @@ pub fn rows_query(table: &str, entry: u32, wow_patch: u32) -> String {
         "SELECT * FROM {} WHERE `entry` = {entry} AND {wow_patch} BETWEEN `patch_min` AND `patch_max` \
          ORDER BY `groupid`, `item`",
         crate::sql::name(table)
-    )
-}
-
-/// The row a key names — what an undo is taken from.
-pub fn row_query(table: &str, key: &Key) -> String {
-    format!(
-        "SELECT * FROM {} WHERE {} LIMIT 1",
-        crate::sql::name(table),
-        key.where_clause()
-    )
-}
-
-/// Whether a row is already there, which an apply asks before it creates one.
-pub fn exists_query(table: &str, key: &Key) -> String {
-    format!(
-        "SELECT 1 FROM {} WHERE {} LIMIT 1",
-        crate::sql::name(table),
-        key.where_clause()
     )
 }
 
@@ -421,6 +369,7 @@ pub fn entries_query(table: &str, wow_patch: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::row::Life;
 
     /// **The schema is `LoadLootTable`'s `SELECT`, column for column**, with
     /// the two patch columns its `WHERE` filters on after them.
@@ -511,7 +460,8 @@ mod tests {
     #[test]
     fn a_row_becomes_the_statements_it_means() {
         let key = Entry::item(1502, 2770).key();
-        let created = statements(GAMEOBJECT, &key, Life::Insert, &new_item(1502, 2770));
+        let table = |name: &str| crate::row::table_named(TABLES, name).expect("a loot table");
+        let created = table(GAMEOBJECT).statements(&key, Life::Insert, &new_item(1502, 2770));
         assert_eq!(created.len(), 2);
         assert_eq!(
             created[1],
@@ -519,8 +469,7 @@ mod tests {
              `patch_max`, `ChanceOrQuestChance`, `mincountOrRef`, `maxcount`, `condition_id`) \
              VALUES (1502, 2770, 0, 0, 10, 100, 1, 1, 0);"
         );
-        let edited = statements(
-            CREATURE,
+        let edited = table(CREATURE).statements(
             &key,
             Life::Update,
             &[Assignment { column: "ChanceOrQuestChance", value: "-25".into() }],
@@ -533,7 +482,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            statements(CREATURE, &key, Life::Delete, &[]),
+            table(CREATURE).statements(&key, Life::Delete, &[]),
             vec![
                 "DELETE FROM `creature_loot_template` WHERE `entry` = 1502 AND `item` = 2770 AND \
                  `groupid` = 0 AND `patch_min` = 0 AND `patch_max` = 10;"
@@ -551,14 +500,14 @@ mod tests {
     /// Every table is named once, resolves to itself, and has a heading.
     #[test]
     fn the_nine_tables_are_named_once() {
-        assert_eq!(ALL.len(), TABLES.len());
-        for name in TABLES {
-            assert_eq!(table_named(name), Some(name));
-            assert_eq!(table(name).map(|t| t.name), Some(name));
+        assert_eq!(HEADINGS.len(), TABLES.len());
+        for table in TABLES {
+            let name = table.name;
+            assert_eq!(crate::row::table_named(TABLES, name).map(|t| t.name), Some(name));
+            assert_eq!(heading(name).map(|h| h.name), Some(name));
             assert!(name.ends_with("_loot_template"));
         }
-        assert!(table_named("creature_template").is_none());
-        assert!(columns_of("npc_vendor").is_empty());
+        assert!(crate::row::table_named(TABLES, "creature_template").is_none());
     }
 
     /// The read filters on the patch band and orders by group, so a window

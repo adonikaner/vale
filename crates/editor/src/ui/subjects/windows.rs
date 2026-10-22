@@ -91,12 +91,10 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
                     .as_ref()
                     .filter(|held| held.entry == spawn.entry);
                 let column = |name: &str| -> Option<u32> {
-                    use vale_mangos::creature::RowValue;
+                    let row = template.map(|held| &held.row);
                     session
                         .server_edits
-                        .get(vale_mangos::creature::TEMPLATE, &key, name)
-                        .and_then(|value| value.trim().parse::<i64>().ok())
-                        .or_else(|| template?.row.integer(name))
+                        .shown_integer(vale_mangos::creature::TEMPLATE, &key, name, row)
                         .map(|value| value.max(0) as u32)
                 };
                 let sets = match template {
@@ -184,20 +182,11 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
                 }
             }),
         Tool::Items => editing.items.open_item(&session.server_edits).map(|known| {
-            use vale_mangos::item::RowValue;
             let key = known.key();
+            let row = editing.items.row.as_ref().filter(|held| held.entry == known.entry);
             let disenchant = session
                 .server_edits
-                .get(vale_mangos::item::TEMPLATE, &key, "disenchant_id")
-                .and_then(|value| value.trim().parse::<i64>().ok())
-                .or_else(|| {
-                    editing
-                        .items
-                        .row
-                        .as_ref()
-                        .filter(|held| held.entry == known.entry)
-                        .and_then(|held| held.row.integer("disenchant_id"))
-                })
+                .shown_integer(vale_mangos::item::TEMPLATE, &key, "disenchant_id", row.map(|held| &held.row))
                 .map(|value| value.max(0) as u32);
             // `ITEM_FLAG_LOOTABLE`, the bit `LoadLootTemplates_Item` reads.
             const LOOTABLE: u32 = 0x4;
@@ -269,12 +258,10 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
                     .as_ref()
                     .filter(|held| held.entry == spawn.entry);
                 let column = |name: &str| -> String {
-                    use vale_mangos::creature::RowValue;
+                    let row = template.map(|held| &held.row);
                     session
                         .server_edits
-                        .get(vale_mangos::creature::TEMPLATE, &key, name)
-                        .map(|value| crate::ui::widgets::rowform::unquote(value))
-                        .or_else(|| template.and_then(|held| held.row.text(name).map(str::to_string)))
+                        .shown_text(vale_mangos::creature::TEMPLATE, &key, name, row)
                         .unwrap_or_default()
                 };
                 crate::subjects::behaviour::About {
@@ -301,12 +288,9 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
                     .as_ref()
                     .filter(|held| held.entry == spawn.entry)?;
                 let column = |name: &str| -> u32 {
-                    use vale_mangos::creature::RowValue;
                     session
                         .server_edits
-                        .get(vale_mangos::creature::TEMPLATE, &key, name)
-                        .and_then(|value| value.trim().parse::<i64>().ok())
-                        .or_else(|| template.row.integer(name))
+                        .shown_integer(vale_mangos::creature::TEMPLATE, &key, name, Some(&template.row))
                         .map_or(0, |value| value.max(0) as u32)
                 };
                 Some(crate::subjects::services::About {
@@ -334,15 +318,15 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
                 .template
                 .as_ref()
                 .filter(|held| held.entry == services.entry);
-            let gossip_menu_id = {
-                use vale_mangos::creature::RowValue;
-                session
-                    .server_edits
-                    .get(vale_mangos::creature::TEMPLATE, &services.template_key, "gossip_menu_id")
-                    .and_then(|value| value.trim().parse::<i64>().ok())
-                    .or_else(|| template.and_then(|held| held.row.integer("gossip_menu_id")))
-                    .map_or(0, |value| value.max(0) as u32)
-            };
+            let gossip_menu_id = session
+                .server_edits
+                .shown_integer(
+                    vale_mangos::creature::TEMPLATE,
+                    &services.template_key,
+                    "gossip_menu_id",
+                    template.map(|held| &held.row),
+                )
+                .map_or(0, |value| value.max(0) as u32);
             crate::subjects::gossip::About {
                 entry: services.entry,
                 label: services.label.clone(),

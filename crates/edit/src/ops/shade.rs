@@ -1,7 +1,7 @@
 //! The shading brush: the vertex colours painted onto the ground, `MCCV`.
 
-use crate::adt::{heights, AdtFile, Region};
-use vale_assets::world::adt::CHUNK_SIZE;
+use crate::adt::{AdtFile, Region};
+use vale_assets::world::adt::{vertex_offset, CHUNK_SIZE};
 use super::Edit;
 use super::brush::{Falloff, Shape};
 use super::paint::Working;
@@ -130,7 +130,7 @@ impl Shading {
             let live = working.shading(index, || read_shading(tile, index));
             let mut moved = false;
             for i in 0..vale_assets::world::adt::HEIGHTS_PER_CHUNK {
-                let (dx, dy) = heights::vertex_offset(i);
+                let (dx, dy) = vertex_offset(i);
                 let (x, y) = (origin[0] - dx, origin[1] - dy);
                 let w = self
                     .falloff
@@ -201,7 +201,7 @@ impl Shading {
             let origin = chunk.head().position();
             let live = read_shading(tile, index);
             for i in 0..vale_assets::world::adt::HEIGHTS_PER_CHUNK {
-                let (dx, dy) = heights::vertex_offset(i);
+                let (dx, dy) = vertex_offset(i);
                 let (x, y) = (origin[0] - dx, origin[1] - dy);
                 let w = self
                     .falloff

@@ -67,7 +67,9 @@
 
 use super::{reshade, ChunkPaint, Edit};
 use crate::adt::{alpha, heights, AdtFile};
-use vale_assets::world::adt::{ALPHA_LEN, ALPHA_SIDE, CHUNKS_PER_SIDE};
+use vale_assets::world::adt::{
+    chunk_index, chunk_xy, inner_index, outer_index, ALPHA_LEN, ALPHA_SIDE, CHUNKS_PER_SIDE, HEIGHTS_PER_CHUNK,
+};
 
 /// Pixels along one side of a height map: two per cell of the vertex grid,
 /// and one more.
@@ -107,9 +109,7 @@ fn vertices_at(column: usize, row: usize) -> Vec<(usize, usize)> {
     match (column % 2, row % 2) {
         (1, 1) => {
             let (cx, cy) = (column / 16, row / 16);
-            if let Some(vertex) = heights::inner((row % 16) / 2, (column % 16) / 2) {
-                found.push((cy * CHUNKS_PER_SIDE + cx, vertex));
-            }
+            found.push((chunk_index(cx, cy), inner_index((row % 16) / 2, (column % 16) / 2)));
         }
         (0, 0) => {
             // An outer vertex on a chunk's last row or column is also the
@@ -127,9 +127,7 @@ fn vertices_at(column: usize, row: usize) -> Vec<(usize, usize)> {
             };
             for (cy, vertex_row) in owners(row) {
                 for (cx, vertex_column) in owners(column) {
-                    if let Some(vertex) = heights::outer(vertex_row, vertex_column) {
-                        found.push((cy * CHUNKS_PER_SIDE + cx, vertex));
-                    }
+                    found.push((chunk_index(cx, cy), outer_index(vertex_row, vertex_column)));
                 }
             }
         }
@@ -143,7 +141,7 @@ fn all_heights(tile: &AdtFile) -> Option<Vec<Vec<f32>>> {
     (0..CHUNKS_PER_SIDE * CHUNKS_PER_SIDE)
         .map(|index| {
             let found = heights::heights(tile.chunk(index)?);
-            (found.len() == heights::VERTICES).then_some(found)
+            (found.len() == HEIGHTS_PER_CHUNK).then_some(found)
         })
         .collect()
 }
@@ -317,7 +315,7 @@ pub fn export_blend(tile: &AdtFile) -> Vec<u8> {
             continue;
         };
         let paint = alpha::paint(chunk);
-        let (cx, cy) = (index % CHUNKS_PER_SIDE, index / CHUNKS_PER_SIDE);
+        let (cx, cy) = chunk_xy(index);
         for (channel, map) in paint.maps.iter().skip(1).take(3).enumerate() {
             for texel in 0..ALPHA_LEN.min(map.len()) {
                 let (tx, ty) = (texel % ALPHA_SIDE, texel / ALPHA_SIDE);
@@ -347,7 +345,7 @@ pub fn import_blend(tile: &mut AdtFile, rgb: &[u8]) -> Vec<Edit> {
         if paint.len() < 2 {
             continue;
         }
-        let (cx, cy) = (index % CHUNKS_PER_SIDE, index / CHUNKS_PER_SIDE);
+        let (cx, cy) = chunk_xy(index);
         let mut moved = false;
         for (channel, map) in paint.maps.iter_mut().skip(1).take(3).enumerate() {
             for texel in 0..ALPHA_LEN.min(map.len()) {

@@ -170,7 +170,7 @@ pub fn draw(
     bookmarks: &mut crate::prefs::bookmarks::Bookmarks,
     server: &mut crate::server::settings::ServerSettings,
     queue: &mut crate::server::queue::ServerQueue,
-    standings: &mut super::sync::Standings,
+    standings: &mut crate::server::sync::Standings,
     now: f64,
     // Whether a playtest is running, which disables the two buttons that
     // rebuild the project's archive; and the step a tile regeneration is on.
@@ -466,8 +466,8 @@ fn the_server(
     queue: &mut crate::server::queue::ServerQueue,
     // Where each subject last stood, cached between frames: the panel is drawn
     // sixty times a second and one of its answers reads a whole DBC. See
-    // [`super::sync::Standings`].
-    standings: &mut super::sync::Standings,
+    // [`crate::server::sync::Standings`].
+    standings: &mut crate::server::sync::Standings,
     now: f64,
     playing: bool,
     step: &crate::server::datadir::Step,
@@ -528,7 +528,7 @@ fn this_project(
     assets: &vale_client::assets::GameAssets,
     server: &mut crate::server::settings::ServerSettings,
     queue: &mut crate::server::queue::ServerQueue,
-    standings: &mut super::sync::Standings,
+    standings: &mut crate::server::sync::Standings,
     now: f64,
     playing: bool,
     step: &crate::server::datadir::Step,
@@ -537,7 +537,7 @@ fn this_project(
     // module comment says why they are in one panel.
     super::sync::project(
         ui,
-        &mut super::sync::Work {
+        &mut crate::server::sync::Work {
             session,
             assets,
             server,

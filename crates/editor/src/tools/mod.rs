@@ -553,7 +553,7 @@ impl Tool {
     pub fn for_table(table: &str) -> Tool {
         let in_spells = table == "Spell"
             || crate::tables::tabs::SPELL_TABS.iter().any(|&(_, name)| name == table)
-            || crate::tables::tabs::chain_for("Spell").contains(&table);
+            || vale_assets::tables::schema::chain_for("Spell").contains(&table);
         match table {
             "ItemSet" => Tool::ItemSets,
             "AreaTable" => Tool::Zones,

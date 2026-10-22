@@ -35,10 +35,11 @@
 //! creature's template list, a list already at 254 items, a spell that is not
 //! in `Spell.dbc` or is a talent. A spell that is not a teaching spell is
 //! replaced by the spell that teaches it when `Spell.dbc` has one
-//! ([`teaching_spell`]), since that is what the loader's log line asks for.
+//! ([`teaching::teaching_spell`]), since that is what the loader's log line asks for.
 
 use crate::session::{EditSession, rows::Gesture};
-use vale_edit::dbc::DbcFile;
+use vale_assets::tables::talent::Talents;
+use vale_assets::tables::teaching::{self, LineGroup};
 use vale_mangos::row::{Assignment, Edits, Key, Life, RowEdit};
 use vale_mangos::trainer::{self, Lesson, Taught};
 use vale_mangos::vendor::{self, Ware};
@@ -95,7 +96,7 @@ impl List {
     }
 
     pub fn kind(&self) -> Kind {
-        match vendor::table_named(self.table) {
+        match vale_mangos::row::table_named(vendor::TABLES, self.table) {
             Some(_) => Kind::Vendor,
             None => Kind::Trainer,
         }
@@ -203,9 +204,9 @@ pub struct Services {
     pub talents: Option<HashSet<u32>>,
     /// Every row of `SkillLine.dbc` in the groups the `reqskill` menu lists;
     /// `None` until the trainer window has opened the table.
-    pub skill_lines: Option<Vec<SkillGroup>>,
+    pub skill_lines: Option<Vec<LineGroup>>,
     /// Whether the scripted flags have been acted on; see
-    /// `crate::server::services::on_the_command_line`, which waits on this.
+    /// `crate::server::subject::flags::on_the_command_line`, which waits on this.
     pub scripted_done: bool,
     /// `--vendor-find` or `--trainer-find`: the window whose add-picker is
     /// to be opened, and the text to search, taken by the window the first
@@ -306,7 +307,7 @@ impl Services {
             if row.life != Life::Insert || table != list.table {
                 continue;
             }
-            let Some(ware) = Ware::from_row(&whole_row(key, row)) else {
+            let Some(ware) = Ware::from_row(&row.whole(key)) else {
                 continue;
             };
             if ware.entry != list.entry || out.iter().any(|shown| shown.ware.key() == *key) {
@@ -342,7 +343,7 @@ impl Services {
             if row.life != Life::Insert || table != list.table {
                 continue;
             }
-            let Some(lesson) = Lesson::from_row(&whole_row(key, row)) else {
+            let Some(lesson) = Lesson::from_row(&row.whole(key)) else {
                 continue;
             };
             if lesson.entry != list.entry || out.iter().any(|shown| shown.lesson.key() == *key) {
@@ -619,17 +620,6 @@ pub(crate) fn write_column(
     }
 }
 
-/// A claim's key and columns as one row, for reading it back.
-fn whole_row(key: &Key, row: &RowEdit) -> vale_mangos::schema::Row {
-    let mut whole = vale_mangos::schema::Row::new();
-    for (column, value) in &key.0 {
-        whole.insert(column.clone(), Some(value.clone()));
-    }
-    for (column, value) in &row.columns {
-        whole.insert(column.clone(), Some(value.clone()));
-    }
-    whole
-}
 
 /// A value of the store read as a number.
 fn number(edits: &Edits, table: &str, key: &Key, column: &str) -> Option<u32> {
@@ -662,167 +652,6 @@ fn lesson_with_edits(lesson: &Lesson, table: &str, edits: &Edits) -> Lesson {
         level: at("reqlevel", lesson.level),
         ..lesson.clone()
     }
-}
-
-// ---------------------------------------------------------------------------
-// What Spell.dbc and Talent.dbc say about a spell
-// ---------------------------------------------------------------------------
-
-/// What `Spell.dbc` says about one spell, with whether it is a talent, or
-/// `None` for a spell the table does not hold.
-pub fn taught(spells: &DbcFile, talents: &HashSet<u32>, spell: u32) -> Option<Taught> {
-    use vale_assets::tables::spellbook::spell_fields;
-    let record = spells.row_of(spell)?;
-    Some(Taught {
-        effect: spells.u32_at(record, spell_fields::EFFECT).unwrap_or(0),
-        teaches: spells.u32_at(record, spell_fields::EFFECT_TRIGGER_SPELL).unwrap_or(0),
-        level: spells.u32_at(record, spell_fields::SPELL_LEVEL).unwrap_or(0),
-        talent: talents.contains(&spell),
-    })
-}
-
-/// `CastingTimeIndex` 1, `SpellCastTimes.dbc`'s row for an instant cast.
-const INSTANT: u32 = 1;
-
-/// The teaching spell for `spell`: a row of `Spell.dbc` whose first effect is
-/// `LEARN_SPELL` and whose `EffectTriggerSpell[0]` is `spell`, which is the
-/// search `LoadTrainers` makes for its log line.
-///
-/// 522 spells have more than one teaching spell. Fireball rank 2 (143) has
-/// two: 483, which has a cast time and is the one a book casts, and 1173,
-/// which is instant and is the one both mage trainer lists name. On the
-/// reference database 1,821 of the 1,826 teaching spells that trainer lists
-/// name are instant, and 468 of the 522 have exactly one instant teacher, so
-/// an instant teacher is preferred, then the first in the file.
-pub fn teaching_spell(spells: &DbcFile, spell: u32) -> Option<u32> {
-    use vale_assets::tables::spellbook::spell_fields;
-    let teachers: Vec<(u32, bool)> = (0..spells.record_count())
-        .filter_map(|record| {
-            let teaches = spells.u32_at(record, spell_fields::EFFECT_TRIGGER_SPELL)? == spell;
-            let learns = spells.u32_at(record, spell_fields::EFFECT)? == trainer::LEARN_SPELL;
-            let instant = spells.u32_at(record, spell_fields::CASTING_TIME_INDEX) == Some(INSTANT);
-            (teaches && learns).then(|| Some((spells.u32_at(record, 0)?, instant))).flatten()
-        })
-        .collect();
-    teachers
-        .iter()
-        .find(|(_, instant)| *instant)
-        .or(teachers.first())
-        .map(|(id, _)| *id)
-}
-
-/// The spell a trainer row should name for a spell a person chose: the spell
-/// itself when it teaches, otherwise the spell that teaches it, when there is
-/// one. Returns the spell and, when it was replaced, the spell chosen.
-pub fn resolve_teaching(spells: &DbcFile, talents: &HashSet<u32>, chosen: u32) -> (u32, Option<u32>) {
-    match taught(spells, talents, chosen) {
-        Some(facts) if !facts.is_teaching() => match teaching_spell(spells, chosen) {
-            Some(teacher) => (teacher, Some(chosen)),
-            None => (chosen, None),
-        },
-        _ => (chosen, None),
-    }
-}
-
-/// One skill line, as the `reqskill` menu lists it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SkillLine {
-    pub id: u32,
-    pub name: String,
-}
-
-impl SkillLine {
-    /// Whether the line answers what is typed into the menu's filter: part of
-    /// its name, in any case, or its id. An empty filter answers every line.
-    pub fn matches(&self, filter: &str) -> bool {
-        let filter = filter.trim();
-        filter.is_empty()
-            || self.id.to_string() == filter
-            || self.name.to_ascii_lowercase().contains(&filter.to_ascii_lowercase())
-    }
-}
-
-/// The skill lines of one `SkillLineCategory.dbc` row, under its name.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SkillGroup {
-    pub category: u32,
-    pub name: String,
-    pub lines: Vec<SkillLine>,
-}
-
-/// `SkillLine.dbc`'s category and enUS name, and `SkillLineCategory.dbc`'s
-/// enUS name and sort order: the fields `vale_assets::tables::skills` reads.
-const LINE_CATEGORY: usize = 1;
-const LINE_NAME: usize = 3;
-const CATEGORY_NAME: usize = 1;
-const CATEGORY_SORT: usize = 10;
-
-/// `SkillLineCategory.dbc` rows 11, Professions, and 9, Secondary Skills:
-/// the lines a trainer's `reqskill` names. They are listed first.
-pub const TRAINED_CATEGORIES: [u32; 2] = [11, 9];
-
-/// Every named skill line, grouped by category: the two trained categories
-/// first, then the others in the category table's own sort order, and by name
-/// inside a group. A category the table does not name is headed by its id.
-pub fn skill_groups(lines: &DbcFile, categories: Option<&DbcFile>) -> Vec<SkillGroup> {
-    let mut groups: Vec<SkillGroup> = Vec::new();
-    for record in 0..lines.record_count() {
-        let (Some(id), Some(name)) = (lines.u32_at(record, 0), lines.string_at(record, LINE_NAME)) else {
-            continue;
-        };
-        if name.is_empty() {
-            continue;
-        }
-        let category = lines.u32_at(record, LINE_CATEGORY).unwrap_or(0);
-        let line = SkillLine { id, name };
-        match groups.iter_mut().find(|group| group.category == category) {
-            Some(group) => group.lines.push(line),
-            None => groups.push(SkillGroup {
-                category,
-                name: String::new(),
-                lines: vec![line],
-            }),
-        }
-    }
-    let category_row = |category: u32| categories.and_then(|table| Some((table, table.row_of(category)?)));
-    for group in &mut groups {
-        group.name = category_row(group.category)
-            .and_then(|(table, record)| table.string_at(record, CATEGORY_NAME))
-            .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| format!("category {}", group.category));
-        group.lines.sort_by(|a, b| a.name.cmp(&b.name));
-    }
-    let sort = |category: u32| {
-        let trained = TRAINED_CATEGORIES.iter().position(|c| *c == category);
-        let order = category_row(category).and_then(|(table, record)| table.u32_at(record, CATEGORY_SORT));
-        (trained.is_none(), trained, order.unwrap_or(u32::MAX), category)
-    };
-    groups.sort_by_key(|group| sort(group.category));
-    groups
-}
-
-/// What a skill line id is called, out of the groups.
-pub fn skill_name(groups: &[SkillGroup], id: u32) -> Option<&str> {
-    groups
-        .iter()
-        .flat_map(|group| &group.lines)
-        .find(|line| line.id == id)
-        .map(|line| line.name.as_str())
-}
-
-/// Every spell id that is a rank of a talent, out of `Talent.dbc` and
-/// `TalentTab.dbc` as `vale_assets::tables::talent` reads them. `None` when
-/// either table is missing.
-pub fn talent_spells(talent: &DbcFile, talent_tab: &DbcFile) -> Option<HashSet<u32>> {
-    let talents = vale_assets::tables::talent::Talents::parse(&talent.write(), &talent_tab.write())?;
-    Some(
-        talents
-            .talents()
-            .iter()
-            .flat_map(|row| row.ranks)
-            .filter(|spell| *spell != 0)
-            .collect(),
-    )
 }
 
 // ---------------------------------------------------------------------------
@@ -888,7 +717,7 @@ fn read_the_rows(
         services.trouble = Some(vale_mangos::conn::Where::absent());
         return;
     };
-    let patch = crate::tools::spawns::creatures::server_patch(&settings);
+    let patch = crate::server::settings::server_patch(&settings);
     services.reading = Some((
         list,
         crate::server::queue::read(async move {
@@ -994,14 +823,21 @@ fn on_the_command_line(
             }
             if services.talents.is_none() {
                 services.talents = match (session.table("Talent"), session.table("TalentTab")) {
-                    (Some(talent), Some(tab)) => talent_spells(talent, tab),
+                    (Some(talent), Some(tab)) => {
+                        Talents::parse(&talent.write(), &tab.write()).map(|t| teaching::talent_spells(&t))
+                    }
                     _ => None,
                 };
             }
             let talents = services.talents.clone().unwrap_or_default();
             let Some(spells) = session.table("Spell") else { return };
-            let (spell, replaced) = resolve_teaching(spells, &talents, value);
-            let facts = taught(spells, &talents, spell);
+            let (spell, replaced) = teaching::resolve_teaching(spells, value);
+            let facts = teaching::spell_facts(spells, spell).map(|f| Taught {
+                effect: f.effect,
+                teaches: f.teaches,
+                level: f.level,
+                talent: talents.contains(&spell),
+            });
             if let Some(chosen) = replaced {
                 info!("--trainer-add {chosen}: not a teaching spell; spell {spell} teaches it");
             }
@@ -1050,18 +886,6 @@ mod tests {
     fn held_wares(services: &mut Services, list: List, wares: &[Ware]) {
         let rows = wares.iter().map(|ware| HeldWare { ware: ware.clone(), forbidden: false }).collect();
         services.wares.insert(list, rows);
-    }
-
-    /// The filter answers part of a name in any case, or the whole id.
-    #[test]
-    fn a_skill_line_is_found_by_name_or_id() {
-        let line = SkillLine { id: 165, name: "Leatherworking".into() };
-        assert!(line.matches(""));
-        assert!(line.matches("leather"));
-        assert!(line.matches("WORK"));
-        assert!(line.matches("165"));
-        assert!(!line.matches("16"), "an id matches only in full");
-        assert!(!line.matches("tailor"));
     }
 
     /// The tabs are the creature's own list and its template's, and a

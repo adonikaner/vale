@@ -63,8 +63,9 @@ pub(super) fn workspace(ui: &mut egui::Ui, tool: Tool, bench: Bench<'_, '_, '_>)
                 loot: &mut editing.loot,
                 server: &playing.server,
                 server_panel: &mut popovers.server,
+                standings: &mut playing.standings,
                 reloads: &mut playing.reloads,
-                patch: crate::tools::spawns::creatures::server_patch(&playing.server),
+                patch: crate::server::settings::server_patch(&playing.server),
                 now,
             },
         );
@@ -102,6 +103,7 @@ pub(super) fn workspace(ui: &mut egui::Ui, tool: Tool, bench: Bench<'_, '_, '_>)
                 gossip: &mut editing.gossip,
                 server: &playing.server,
                 server_panel: &mut popovers.server,
+                standings: &mut playing.standings,
                 assets: &assets,
                 portraits: &mut editing.portraits,
                 thumbnails: &mut editing.thumbnails,
@@ -121,6 +123,7 @@ pub(super) fn workspace(ui: &mut egui::Ui, tool: Tool, bench: Bench<'_, '_, '_>)
                 loot: &mut editing.loot,
                 server: &playing.server,
                 server_panel: &mut popovers.server,
+                standings: &mut playing.standings,
                 assets: &assets,
                 portraits: &mut editing.portraits,
                 thumbnails: &mut editing.thumbnails,
@@ -146,7 +149,8 @@ pub(super) fn workspace(ui: &mut egui::Ui, tool: Tool, bench: Bench<'_, '_, '_>)
             subjects::quests::Shell {
                 reloads: &mut playing.reloads,
                 server_panel: &mut popovers.server,
-                patch: crate::tools::spawns::creatures::server_patch(&playing.server),
+                standings: &mut playing.standings,
+                patch: crate::server::settings::server_patch(&playing.server),
                 switch_to,
             },
         );

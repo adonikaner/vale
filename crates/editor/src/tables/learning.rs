@@ -61,7 +61,7 @@ pub fn race_class_rows_of(browser: &mut Browser, session: &EditSession, skill: u
 }
 
 /// `SpellCastTimes.dbc`'s row for an instant cast, which is what both mage
-/// trainer lists' teaching spells use; see `crate::subjects::services::teaching_spell`.
+/// trainer lists' teaching spells use; see `vale_assets::tables::teaching::teaching_spell`.
 pub(super) const INSTANT_CAST: u32 = 1;
 
 /// The teaching spells of `spell`, as the record of each and whether it is

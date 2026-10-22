@@ -951,7 +951,7 @@ fn link(from: &Path, to: &Path) -> Result<(), String> {
 
 /// The client build vmangos is built for. It names the folder under
 /// `DataDir` the server reads its DBC files from; see [`dbc_dir`].
-pub const CLIENT_BUILD: u32 = 5875;
+pub use crate::CLIENT_BUILD;
 
 /// The folder the server reads its DBC files from: `DataDir\5875\dbc\`.
 ///

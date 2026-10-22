@@ -296,11 +296,7 @@ pub fn fold_moves<K: Listed>(rows: &mut [K], edits: &Edits) {
     let moves: Vec<(u32, u32, u32)> = edits
         .moves(K::TABLE)
         .filter_map(|(from, to)| {
-            let patch = from
-                .0
-                .iter()
-                .find(|(column, _)| column == "patch")
-                .and_then(|(_, value)| value.parse::<u32>().ok())?;
+            let patch = from.patch()?;
             Some((from.first()? as u32, patch, to.first()? as u32))
         })
         .collect();

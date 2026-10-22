@@ -91,16 +91,11 @@ pub fn claimed(edits: &Edits, table: &str, entry: u32, column: &str) -> Option<S
             *claimed == table && key.first() == Some(entry as u64) && row.life != Life::Delete
         })
         .filter_map(|(_, key, row)| {
-            let patch: u64 = key
-                .0
-                .iter()
-                .find(|(name, _)| name == "patch")
-                .and_then(|(_, value)| value.parse().ok())
-                .unwrap_or(0);
+            let patch = key.patch().unwrap_or(0);
             Some((patch, row.columns.get(column)?))
         })
         .max_by_key(|(patch, _)| *patch)
-        .map(|(_, value)| crate::subjects::items::unquote(value))
+        .map(|(_, value)| vale_mangos::sql::unquote(value))
 }
 
 /// The creatures that name a shared row through one `creature_template`

@@ -8,6 +8,7 @@
 use super::*;
 use crate::adt::file::{FIRST_REGION, REGIONS};
 use crate::adt::heights;
+use vale_assets::world::adt::{outer_index, vertex_offset, HEIGHTS_PER_CHUNK};
 
 /// The tiles the checks below run over, when the archives are on this machine.
 /// Two maps, and one tile that is mostly water.
@@ -422,7 +423,7 @@ fn a_shading_stroke_darkens_what_is_under_it() {
     let after = colours::colours(chunk);
     let mut darkened = 0;
     for (i, colour) in after.iter().enumerate() {
-        let (dx, dy) = crate::adt::heights::vertex_offset(i);
+        let (dx, dy) = vertex_offset(i);
         let (x, y) = (origin[0] - dx, origin[1] - dy);
         let far = ((x - at[0]).powi(2) + (y - at[1]).powi(2)).sqrt();
         match far <= brush.radius {
@@ -626,7 +627,7 @@ fn recomputed_normals_point_away_from_the_slope() {
     let mut tile = AdtFile::parse(bytes).unwrap();
 
     // Flat: every vertex at one height.
-    let flat = vec![100.0f32; heights::VERTICES];
+    let flat = vec![100.0f32; HEIGHTS_PER_CHUNK];
     heights::set_heights(tile.chunk_mut(70).unwrap(), &flat);
     heights::recompute_normals(&mut tile, 70);
     let normals = &tile.chunk(70).unwrap().region(Region::Normals).unwrap().data;
@@ -636,7 +637,7 @@ fn recomputed_normals_point_away_from_the_slope() {
     // its neighbours were flat too.
     for row in 1..8 {
         for col in 1..8 {
-            let i = heights::outer(row, col).unwrap();
+            let i = outer_index(row, col);
             let n = [
                 normals[i * 3] as i8,
                 normals[i * 3 + 1] as i8,
@@ -648,13 +649,13 @@ fn recomputed_normals_point_away_from_the_slope() {
 
     // A ramp rising toward decreasing world x: the ground climbs as the row
     // index grows, so the normal leans toward increasing x, which is +x.
-    let ramp: Vec<f32> = (0..heights::VERTICES)
-        .map(|i| 100.0 + heights::vertex_offset(i).0)
+    let ramp: Vec<f32> = (0..HEIGHTS_PER_CHUNK)
+        .map(|i| 100.0 + vertex_offset(i).0)
         .collect();
     heights::set_heights(tile.chunk_mut(70).unwrap(), &ramp);
     heights::recompute_normals(&mut tile, 70);
     let normals = &tile.chunk(70).unwrap().region(Region::Normals).unwrap().data;
-    let centre = heights::outer(4, 4).unwrap();
+    let centre = outer_index(4, 4);
     let n = [
         normals[centre * 3] as i8,
         normals[centre * 3 + 1] as i8,
@@ -677,7 +678,7 @@ fn normals_at_the_tile_edge_reach_into_the_tile_beyond() {
         let data = &tile.chunk(chunk).unwrap().region(Region::Normals).unwrap().data;
         [data[index * 3] as i8, data[index * 3 + 1] as i8, data[index * 3 + 2] as i8]
     };
-    let edge = heights::outer(4, 8).unwrap();
+    let edge = outer_index(4, 8);
 
     heights::recompute_normals(&mut tile, chunk);
     assert_eq!(normal(&tile, edge), [0, 0, 127], "flat ground, nothing beyond");
@@ -688,7 +689,7 @@ fn normals_at_the_tile_edge_reach_into_the_tile_beyond() {
     let asked = std::cell::RefCell::new(Vec::new());
     let beyond = |x: i32, y: i32| -> Option<Vec<f32>> {
         asked.borrow_mut().push((x, y));
-        ((x, y) == (16, 0)).then(|| vec![50.0; heights::VERTICES])
+        ((x, y) == (16, 0)).then(|| vec![50.0; HEIGHTS_PER_CHUNK])
     };
     heights::recompute_normals_with(&mut tile, chunk, &beyond);
     let n = normal(&tile, edge);
@@ -700,7 +701,7 @@ fn normals_at_the_tile_edge_reach_into_the_tile_beyond() {
     assert_eq!(asked, vec![(15, -1), (16, 0)]);
 
     // An interior vertex is the same either way.
-    let inside = heights::outer(4, 4).unwrap();
+    let inside = outer_index(4, 4);
     assert_eq!(normal(&tile, inside), [0, 0, 127]);
 }
 
@@ -739,26 +740,6 @@ fn removing_a_doodad_renumbers_the_references() {
     for i in 0..256 {
         assert_eq!(again.refs(i), tile.refs(i), "chunk {i}");
     }
-}
-
-/// The vertex layout agrees with `vale_assets`: nine outer rows interleaved
-/// with eight inner ones, running along decreasing world x and y.
-#[test]
-fn the_vertex_grid_is_nine_by_nine_interleaved_with_eight_by_eight() {
-    use vale_assets::world::adt::UNIT_SIZE;
-    assert_eq!(heights::VERTICES, 145);
-    assert_eq!(heights::outer(0, 0), Some(0));
-    assert_eq!(heights::inner(0, 0), Some(9));
-    assert_eq!(heights::outer(1, 0), Some(17));
-    assert_eq!(heights::outer(8, 8), Some(144));
-    assert_eq!(heights::outer(9, 0), None);
-    assert_eq!(heights::inner(8, 0), None);
-
-    assert_eq!(heights::vertex_offset(0), (0.0, 0.0));
-    let (dx, dy) = heights::vertex_offset(heights::inner(0, 0).unwrap());
-    assert!((dx - 0.5 * UNIT_SIZE).abs() < 1e-3 && (dy - 0.5 * UNIT_SIZE).abs() < 1e-3);
-    let (dx, dy) = heights::vertex_offset(heights::outer(8, 8).unwrap());
-    assert!((dx - 8.0 * UNIT_SIZE).abs() < 1e-3 && (dy - 8.0 * UNIT_SIZE).abs() < 1e-3);
 }
 
 /// The three size fields, and which of them counts the sub-chunk header.

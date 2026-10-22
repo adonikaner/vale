@@ -64,7 +64,8 @@
 //! them, and its entry comes from [`RESERVED_ENTRY_BASE`]. A removal is not
 //! offered: `.reload creature_template` adds and overwrites and never drops an
 //! entry it has already read, so a removal cannot be made live at all.
-//! [`can_live`] is the one place that asymmetry is written down.
+//! [`TEMPLATE_TABLE`]'s lives are the one place that asymmetry is written
+//! down.
 //!
 //! ## Neither a created nor a removed spawn reaches a running server
 //!
@@ -80,7 +81,7 @@
 //! editor's panel says so rather than offering a reload that would report a
 //! change the game does not show.
 
-use crate::row::{Assignment, Key, Life};
+use crate::row::{Assignment, Key, Table};
 
 /// What a creature is.
 pub const TEMPLATE: &str = "creature_template";
@@ -88,18 +89,25 @@ pub const TEMPLATE: &str = "creature_template";
 /// One spawn of a creature: where it stands.
 pub const SPAWN: &str = "creature";
 
-/// Every table this module writes, for a caller that has to resolve a name read
-/// out of a file back to one of these constants.
-///
-/// A table name in a project's edits file is text somebody may have typed. This
-/// is what says whether it is a table this crate knows how to write, and a name
-/// that is not on the list is reported rather than passed into a statement.
-pub const TABLES: [&str; 2] = [TEMPLATE, SPAWN];
+/// Both tables.
+pub const TABLES: &[Table] = &[TEMPLATE_TABLE, SPAWN_TABLE];
 
-/// The static name for a table read out of a file, or `None`.
-pub fn table_named(name: &str) -> Option<&'static str> {
-    TABLES.into_iter().find(|table| *table == name)
-}
+/// `creature_template`: edited and created, never removed.
+/// `.reload creature_template` adds and overwrites and never drops an entry it
+/// has already read, so a removal cannot be made live at all.
+pub const TEMPLATE_TABLE: Table = Table {
+    references: &TEMPLATE_REFERENCES,
+    lives: crate::row::EDITED_OR_CREATED,
+    ..Table::new(TEMPLATE, &TEMPLATE_COLUMNS)
+};
+
+/// `creature`: edited, created and removed. A removal takes the five tables
+/// keyed by the spawn's guid; see [`delete_statements`].
+pub const SPAWN_TABLE: Table = Table {
+    references: &SPAWN_REFERENCES,
+    cascade: Some(delete_statements),
+    ..Table::new(SPAWN, &SPAWN_COLUMNS)
+};
 
 /// The column vocabulary, re-exported from [`crate::schema`].
 ///
@@ -130,6 +138,15 @@ pub const NPC_FLAGS: [Bit; 15] = [
     Bit { bit: 0x00002000, name: "STABLEMASTER", about: "stables a hunter's pet" },
     Bit { bit: 0x00004000, name: "REPAIR", about: "repairs equipment" },
 ];
+
+/// Whether an `npcflag` value carries the bit vmangos names `name` in
+/// [`NPC_FLAGS`]. `false` for a name the list does not hold.
+pub fn has_npc_flag(npc_flags: u32, name: &str) -> bool {
+    NPC_FLAGS
+        .iter()
+        .find(|flag| flag.name == name)
+        .is_some_and(|flag| npc_flags & flag.bit != 0)
+}
 
 /// `CreatureType`, from `CreatureDefines.h:41`. The same values as
 /// `CreatureType.dbc`.
@@ -525,18 +542,14 @@ pub fn winning_template_query(entry: u32, wow_patch: u32) -> String {
     )
 }
 
+/// One template row, by its whole key.
+pub fn template_query(entry: u32, patch: u32) -> String {
+    format!("SELECT * FROM `creature_template` WHERE `entry` = {entry} AND `patch` = {patch}")
+}
+
 /// One spawn, by guid.
 pub fn spawn_query(guid: u64) -> String {
     format!("SELECT * FROM `creature` WHERE `guid` = {guid}")
-}
-
-/// The row a key names, whichever table it is in. An undo is taken from it.
-pub fn row_query(table: &str, key: &Key) -> String {
-    format!(
-        "SELECT * FROM {} WHERE {} LIMIT 1",
-        crate::sql::name(table),
-        key.where_clause()
-    )
 }
 
 /// The key an edit to a template row is written under.
@@ -582,6 +595,15 @@ pub const RESERVED_ENTRY_BASE: u32 = 2_000_000;
 
 /// The highest entry the column can hold: `mediumint unsigned`.
 pub const MAX_ENTRY: u32 = 0x00FF_FFFF;
+
+/// How a new template is numbered and when one may move; see
+/// [`crate::row::Numbering`].
+pub const NUMBERING: crate::row::Numbering = crate::row::Numbering {
+    table: TEMPLATE,
+    noun: "creature",
+    reserved_base: RESERVED_ENTRY_BASE,
+    max_entry: MAX_ENTRY,
+};
 
 /// The highest entry the whole table holds, at any patch. A new template
 /// numbered from the rows the server loads alone would collide with a row that
@@ -743,15 +765,6 @@ pub const SPAWN_REFERENCES: [crate::row::Reference; 11] = {
     ]
 };
 
-/// The references a move of a row of `table` takes along.
-pub fn references(table: &str) -> &'static [crate::row::Reference] {
-    match table {
-        TEMPLATE => &TEMPLATE_REFERENCES,
-        SPAWN => &SPAWN_REFERENCES,
-        _ => &[],
-    }
-}
-
 /// Every column of a new spawn, as the values a row created here starts from.
 ///
 /// The `guid` is not among them: it is the key, and [`crate::row::insert`]
@@ -802,20 +815,6 @@ pub fn new_spawn(entry: u32, map: u32, at: (f32, f32, f32), orientation: f32) ->
         .into_iter()
         .map(|(column, value)| Assignment { column, value })
         .collect()
-}
-
-/// Whether a row is already there. An apply asks this before it creates one.
-///
-/// A guid this project allocated can still be taken, by another project, by a
-/// GM's `.npc add`, or by an upstream update applied since the spawn was
-/// placed, and an `INSERT` onto an occupied key fails the whole apply. Asking
-/// first lets the apply report the occupied guid instead.
-pub fn exists_query(table: &str, key: &Key) -> String {
-    format!(
-        "SELECT 1 FROM {} WHERE {} LIMIT 1",
-        crate::sql::name(table),
-        key.where_clause()
-    )
 }
 
 /// The highest guid the `creature` table holds. A new guid is numbered from it
@@ -885,69 +884,6 @@ pub fn all_templates_query(wow_patch: u32) -> String {
     format!("SELECT {BRIEF} {} ORDER BY t.`entry`", winning_join(wow_patch))
 }
 
-/// The columns of whichever of the two tables, or an empty slice for a name
-/// this module does not know.
-pub fn columns_of(table: &str) -> &'static [Column] {
-    match table {
-        TEMPLATE => &TEMPLATE_COLUMNS,
-        SPAWN => &SPAWN_COLUMNS,
-        _ => &[],
-    }
-}
-
-/// One column of one of the two tables, by name.
-pub fn column(table: &str, name: &str) -> Option<&'static Column> {
-    columns_of(table).iter().find(|column| column.name == name)
-}
-
-/// The statements a save emits for one row this project claims.
-///
-/// One `UPDATE` for a row it edits, a `DELETE` and an `INSERT` for a row it
-/// creates, and six `DELETE`s for a spawn it removes: the row and the five
-/// tables keyed by its guid. See [`Life`] and [`DEPENDENTS`].
-///
-/// Only a spawn can be removed. `creature_template` cannot:
-/// `.reload creature_template` adds and overwrites and never drops an entry it
-/// has already read, so a removal cannot be made live at all. A life this
-/// table cannot carry produces no statement, and [`can_live`] is what a caller
-/// asks before it offers one.
-pub fn statements(table: &str, key: &Key, life: Life, changes: &[Assignment]) -> Vec<String> {
-    match life {
-        Life::Update => crate::row::update(table, key, changes).into_iter().collect(),
-        // A `DELETE` of the key, then the `INSERT`. `Creature::SaveToDB` writes
-        // the same pair (`Creature.cpp:1646`), for the same reason: applying
-        // twice then means the same as applying once. A bare `INSERT` on the
-        // second apply fails the whole transaction with a duplicate-key error.
-        //
-        // The pair is safe only because the caller has already established
-        // that the row is this project's; see the editor's `apply`, which
-        // refuses a guid that is in the database and not in the project's own
-        // revert file. Without that check this pair would delete somebody
-        // else's row.
-        Life::Insert if can_live(table, life) => vec![
-            crate::row::delete(table, key),
-            match crate::row::insert(table, key, changes) {
-                Some(statement) => statement,
-                None => return Vec::new(),
-            },
-        ],
-        Life::Delete if can_live(table, life) => delete_statements(key),
-        _ => Vec::new(),
-    }
-}
-
-/// Whether this table can hold a row that is created or removed at all.
-///
-/// Both tables can hold a created row. Only the spawn table can hold a removed
-/// one; see [`statements`] for the reason.
-pub fn can_live(table: &str, life: Life) -> bool {
-    match life {
-        Life::Update => true,
-        Life::Insert => table == SPAWN || table == TEMPLATE,
-        Life::Delete => table == SPAWN,
-    }
-}
-
 /// The statements that take back a row this project created, once its
 /// `INSERT` has run.
 ///
@@ -987,6 +923,7 @@ pub fn delete_statements(key: &Key) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::row::Life;
 
     /// A new spawn names every column the table has but its key.
     ///
@@ -1045,23 +982,23 @@ mod tests {
     }
 
     /// A template can be created and not removed, and the asymmetry is written
-    /// down once, in [`can_live`]. A removal statement for one would be a
+    /// down once, in [`TEMPLATE_TABLE`]. A removal statement for one would be a
     /// change that cannot be made live on the server at all.
     #[test]
     fn a_template_can_be_created_and_not_removed() {
         let key = template_key(68, 0);
-        assert!(can_live(TEMPLATE, Life::Insert));
-        assert!(!can_live(TEMPLATE, Life::Delete));
-        assert!(statements(TEMPLATE, &key, Life::Delete, &[]).is_empty());
+        assert!(TEMPLATE_TABLE.can_live(Life::Insert));
+        assert!(!TEMPLATE_TABLE.can_live(Life::Delete));
+        assert!(TEMPLATE_TABLE.statements(&key, Life::Delete, &[]).is_empty());
         for life in [Life::Insert, Life::Delete] {
-            assert!(can_live(SPAWN, life));
+            assert!(SPAWN_TABLE.can_live(life));
         }
         // An ordinary edit is the same on both.
         let change = [Assignment { column: "level_min", value: "57".into() }];
-        assert_eq!(statements(TEMPLATE, &key, Life::Update, &change).len(), 1);
+        assert_eq!(TEMPLATE_TABLE.statements(&key, Life::Update, &change).len(), 1);
         // A creation is the `DELETE` and `INSERT` pair, keyed by both columns.
         let made = template_key(RESERVED_ENTRY_BASE, 10);
-        let sql = statements(TEMPLATE, &made, Life::Insert, &new_template("Test Subject"));
+        let sql = TEMPLATE_TABLE.statements(&made, Life::Insert, &new_template("Test Subject"));
         assert_eq!(sql.len(), 2);
         assert_eq!(
             sql[0],
@@ -1197,8 +1134,8 @@ mod tests {
     fn no_column_is_named_twice() {
         for table in TABLES {
             let mut seen = std::collections::HashSet::new();
-            for column in columns_of(table) {
-                assert!(seen.insert(column.name), "{table} names {} twice", column.name);
+            for column in table.columns {
+                assert!(seen.insert(column.name), "{} names {} twice", table.name, column.name);
                 assert!(!column.about.is_empty(), "{} says nothing", column.name);
             }
         }
@@ -1230,10 +1167,10 @@ mod tests {
     /// the row it is about.
     #[test]
     fn a_key_column_is_not_editable() {
-        assert!(!column(TEMPLATE, "entry").expect("entry").editable());
-        assert!(column(TEMPLATE, "name").expect("name").editable());
-        assert!(!column(SPAWN, "guid").expect("guid").editable());
-        assert!(column(SPAWN, "position_x").expect("position_x").editable());
+        assert!(!TEMPLATE_TABLE.column("entry").expect("entry").editable());
+        assert!(TEMPLATE_TABLE.column("name").expect("name").editable());
+        assert!(!SPAWN_TABLE.column("guid").expect("guid").editable());
+        assert!(SPAWN_TABLE.column("position_x").expect("position_x").editable());
     }
 
     /// A named mask is one bit per row and no repeats. A hand transcription can
@@ -1313,20 +1250,21 @@ mod tests {
         row.insert("name".into(), Some("Kobold Vermin".into()));
         row.insert("level_min".into(), Some("1".into()));
         assert_eq!(
-            column(TEMPLATE, "name").expect("name").literal(&row),
+            TEMPLATE_TABLE.column("name").expect("name").literal(&row),
             Some("'Kobold Vermin'".to_string())
         );
         assert_eq!(
-            column(TEMPLATE, "level_min").expect("level_min").literal(&row),
+            TEMPLATE_TABLE.column("level_min").expect("level_min").literal(&row),
             Some("1".to_string())
         );
     }
 
     #[test]
     fn a_table_name_from_a_file_resolves_to_a_constant_or_to_nothing() {
-        assert_eq!(table_named("creature_template"), Some(TEMPLATE));
-        assert_eq!(table_named("creature"), Some(SPAWN));
-        assert_eq!(table_named("creature_template; DROP TABLE x"), None);
-        assert_eq!(table_named(""), None);
+        let named = |name: &str| crate::row::table_named(TABLES, name).map(|table| table.name);
+        assert_eq!(named("creature_template"), Some(TEMPLATE));
+        assert_eq!(named("creature"), Some(SPAWN));
+        assert_eq!(named("creature_template; DROP TABLE x"), None);
+        assert_eq!(named(""), None);
     }
 }

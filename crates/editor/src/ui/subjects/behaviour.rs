@@ -53,8 +53,9 @@ use std::collections::HashSet;
 use crate::ui::widgets::reference;
 use crate::ui::widgets::rowform::{
     choice_cell, flags_cell, meaning, number_cell, number_means, page_row, page_spacing, text_cell,
-    unquote, FORM_ROW,
+    FORM_ROW,
 };
+use vale_mangos::sql::unquote;
 use crate::ui::widgets::theme;
 use crate::session::EditSession;
 use crate::subjects::behaviour::{

@@ -141,7 +141,7 @@ impl Known {
         let zone_or_sort = number("ZoneOrSort", self.zone_or_sort as i64) as i32;
         Some(Known {
             title: get("Title")
-                .map(crate::ui::widgets::rowform::unquote)
+                .map(vale_mangos::sql::unquote)
                 .unwrap_or_else(|| self.title.clone()),
             method: number("Method", self.method as i64) as u32,
             zone_or_sort,
@@ -195,47 +195,7 @@ pub struct QuestRow {
     pub row: quest::Row,
 }
 
-/// Whether a relation's `id` is a creature's entry or a game object's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Holder {
-    Creature,
-    Object,
-}
-
-impl Holder {
-    pub fn word(self) -> &'static str {
-        match self {
-            Holder::Creature => "creature",
-            Holder::Object => "game object",
-        }
-    }
-
-    /// The template table its name is in.
-    pub fn template(self) -> &'static str {
-        match self {
-            Holder::Creature => vale_mangos::creature::TEMPLATE,
-            Holder::Object => vale_mangos::gameobject::TEMPLATE,
-        }
-    }
-}
-
-/// Which end of a quest a relation is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Role {
-    /// Hands the quest out: `*_questrelation`.
-    Gives,
-    /// Takes it back: `*_involvedrelation`.
-    Takes,
-}
-
-impl Role {
-    pub fn word(self) -> &'static str {
-        match self {
-            Role::Gives => "gives",
-            Role::Takes => "takes",
-        }
-    }
-}
+pub use vale_mangos::quest::{Holder, Role};
 
 /// One row of one of the four relation tables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -250,33 +210,11 @@ pub struct Relation {
 impl Relation {
     /// Which of the four tables the row is in.
     pub fn table(&self) -> &'static str {
-        table_of(self.holder, self.role)
+        quest::relation_table(self.holder, self.role)
     }
 
     pub fn key(&self) -> Key {
         quest::relation_key(self.id, self.quest)
-    }
-}
-
-/// The table a holder's role is kept in.
-pub fn table_of(holder: Holder, role: Role) -> &'static str {
-    match (holder, role) {
-        (Holder::Creature, Role::Gives) => quest::CREATURE_GIVES,
-        (Holder::Creature, Role::Takes) => quest::CREATURE_TAKES,
-        (Holder::Object, Role::Gives) => quest::OBJECT_GIVES,
-        (Holder::Object, Role::Takes) => quest::OBJECT_TAKES,
-    }
-}
-
-/// The holder and role a relation table is for: the inverse of [`table_of`],
-/// for a table name read out of the store.
-fn relation_of_table(table: &str) -> Option<(Holder, Role)> {
-    match table {
-        quest::CREATURE_GIVES => Some((Holder::Creature, Role::Gives)),
-        quest::CREATURE_TAKES => Some((Holder::Creature, Role::Takes)),
-        quest::OBJECT_GIVES => Some((Holder::Object, Role::Gives)),
-        quest::OBJECT_TAKES => Some((Holder::Object, Role::Takes)),
-        _ => None,
     }
 }
 
@@ -657,7 +595,7 @@ pub struct Quests {
     /// Whether the headings have been named — see [`Self::name_the_zones`].
     zones_named: bool,
     /// Whether the scripted flags have been acted on — see
-    /// `crate::server::quests::on_the_command_line`, which waits on this.
+    /// `crate::server::subject::flags::on_the_command_line`, which waits on this.
     pub scripted_done: bool,
     seeded: bool,
 }
@@ -810,15 +748,7 @@ impl Quests {
     /// The entry a new quest gets: the highest of the reserved base, one
     /// past what the table holds, and one past what this project has claimed.
     pub fn next_entry(&self, edits: &Edits) -> u32 {
-        let in_database = self.max_entry.map(|highest| highest + 1).unwrap_or(0);
-        let claimed = edits
-            .rows()
-            .filter(|(table, _, row)| *table == quest::TEMPLATE && row.life == Life::Insert)
-            .filter_map(|(_, key, _)| key.first())
-            .max()
-            .map(|highest| highest as u32 + 1)
-            .unwrap_or(0);
-        quest::RESERVED_ENTRY_BASE.max(in_database).max(claimed)
+        quest::NUMBERING.next_entry(self.max_entry, edits)
     }
 
     /// Whether an entry is already a quest, by the entry the project gives
@@ -849,24 +779,16 @@ impl Quests {
         to: u32,
         now: f64,
     ) -> Result<(), String> {
-        if to == known.entry {
+        let row = vale_mangos::row::Numbered {
+            entry: known.entry,
+            read_entry: known.read_entry,
+            patch: known.patch,
+            life: known.claim,
+        };
+        let taken = self.entry_taken(to);
+        let Some((from, to_key)) = vale_mangos::row::plan_rekey(&quest::NUMBERING, row, to, taken)? else {
             return Ok(());
-        }
-        if to == 0 {
-            return Err("0 is not a valid quest entry".to_string());
-        }
-        if to > quest::MAX_ENTRY {
-            return Err(format!(
-                "{to} is above {}, the largest value `entry` can hold",
-                quest::MAX_ENTRY
-            ));
-        }
-        if known.claim == Life::Delete {
-            return Err("this quest is marked for removal; click Keep first".to_string());
-        }
-        if self.entry_taken(to) && to != known.read_entry {
-            return Err(format!("entry {to} is already used by another quest"));
-        }
+        };
         let subject = format!("quest {} entry", known.entry);
         let gesture = crate::session::rows::Gesture {
             label: "Move quest entry",
@@ -876,8 +798,8 @@ impl Quests {
         crate::server::follow::rekey(
             session,
             quest::TEMPLATE,
-            &known.key(),
-            &quest::template_key(to, known.patch),
+            &from,
+            &to_key,
             Some(&quest::template_key(known.read_entry, known.patch)),
             &quest::REFERENCES,
             gesture,
@@ -957,7 +879,7 @@ impl Quests {
         let titled = row
             .columns
             .get("Title")
-            .map(|literal| crate::ui::widgets::rowform::unquote(literal))
+            .map(|literal| vale_mangos::sql::unquote(literal))
             .unwrap_or_default();
         row.columns.insert(
             "Title".to_string(),
@@ -1083,7 +1005,7 @@ impl Quests {
             if row.life != Life::Insert {
                 continue;
             }
-            let Some((holder, role)) = relation_of_table(table) else {
+            let Some((holder, role)) = quest::relation_of_table(table) else {
                 continue;
             };
             let part = |at: usize| {
@@ -1405,7 +1327,7 @@ fn read_the_tables(
         quests.trouble = Some(vale_mangos::conn::Where::absent());
         return;
     };
-    let patch = crate::tools::spawns::creatures::server_patch(&settings);
+    let patch = crate::server::settings::server_patch(&settings);
     quests.trouble = None;
     quests.task = Some(crate::server::queue::read(async move {
         let mut db = vale_mangos::conn::Db::open(&at)?;
@@ -1416,7 +1338,7 @@ fn read_the_tables(
             .map(|entry| entry as u32);
         let mut relations = Vec::new();
         for table in quest::RELATIONS {
-            let Some((holder, role)) = relation_of_table(table) else {
+            let Some((holder, role)) = quest::relation_of_table(table) else {
                 continue;
             };
             for row in db.rows(&quest::relations_query(table, patch))? {
@@ -1492,7 +1414,7 @@ fn read_the_row(
     let Some((at, _)) = settings.resolve() else {
         return;
     };
-    let patch = crate::tools::spawns::creatures::server_patch(&settings);
+    let patch = crate::server::settings::server_patch(&settings);
     // Read from where the database has it — see [`Known::read_entry`].
     let read_at = quests
         .by_entry(entry)
@@ -1589,12 +1511,7 @@ fn rebuild_created(mut quests: ResMut<Quests>, session: Option<Res<EditSession>>
         {
             continue;
         }
-        let patch = key
-            .0
-            .iter()
-            .find(|(column, _)| column == "patch")
-            .and_then(|(_, value)| value.parse::<u32>().ok())
-            .unwrap_or(0);
+        let patch = key.patch().unwrap_or(0);
         quests.created.push(Known {
             entry,
             read_entry: entry,
@@ -1602,7 +1519,7 @@ fn rebuild_created(mut quests: ResMut<Quests>, session: Option<Res<EditSession>>
             title: row
                 .columns
                 .get("Title")
-                .map(|literal| crate::ui::widgets::rowform::unquote(literal))
+                .map(|literal| vale_mangos::sql::unquote(literal))
                 .unwrap_or_default(),
             method: number("Method") as u32,
             zone_or_sort: number("ZoneOrSort") as i32,
@@ -1688,7 +1605,7 @@ fn fetch_the_names(
         }
         return;
     };
-    let patch = crate::tools::spawns::creatures::server_patch(&settings);
+    let patch = crate::server::settings::server_patch(&settings);
     let items: Vec<u32> = quests.wanted_items.drain().collect();
     let holders: Vec<(Holder, u32)> = quests.wanted_holders.drain().collect();
     let lists: Vec<(&'static str, u32)> = quests.wanted_lists.drain().collect();
@@ -1930,7 +1847,7 @@ fn describe_item(hit: &mut Hit, facts: ItemFacts) {
     hit.item = Some(facts);
     hit.quality = Some(facts.quality);
     hit.picture = (facts.display_id != 0).then_some(Picture::ItemDisplay(facts.display_id));
-    hit.sub = crate::subjects::items::sub_line(
+    hit.sub = vale_mangos::item::sub_line(
         facts.class,
         facts.subclass,
         facts.inventory_type,
@@ -2016,7 +1933,7 @@ fn search_the_picker(
             let Some((at, _)) = settings.resolve() else {
                 return;
             };
-            let patch = crate::tools::spawns::creatures::server_patch(&settings);
+            let patch = crate::server::settings::server_patch(&settings);
             picker.task = Some(crate::server::queue::read(async move {
                 let mut db = vale_mangos::conn::Db::open(&at)?;
                 let filter = vale_mangos::lists::Filter::Search(&query);
@@ -2069,7 +1986,7 @@ fn search_the_picker(
             let Some((at, _)) = settings.resolve() else {
                 return;
             };
-            let patch = crate::tools::spawns::creatures::server_patch(&settings);
+            let patch = crate::server::settings::server_patch(&settings);
             let target = picker.target;
             picker.task = Some(crate::server::queue::read(async move {
                 let mut db = vale_mangos::conn::Db::open(&at)?;
@@ -2152,7 +2069,7 @@ fn on_the_command_line(
         quests.open = first;
     }
     if args.quest_new {
-        let patch = crate::tools::spawns::creatures::server_patch(&settings);
+        let patch = crate::server::settings::server_patch(&settings);
         let entry = quests.create(session, "New Quest", patch, time.elapsed_secs_f64());
         info!("--quest-new: quest {entry} created at patch {patch}");
     }
@@ -2339,14 +2256,9 @@ mod tests {
         );
     }
 
-    /// The four tables are the two holders by the two roles, and
-    /// [`table_of`] and [`relation_of_table`] are inverses.
+    /// A relation row names the table its holder and role are kept in.
     #[test]
     fn a_relation_names_its_own_table() {
-        for table in quest::RELATIONS {
-            let (holder, role) = relation_of_table(table).expect(table);
-            assert_eq!(table_of(holder, role), table);
-        }
         assert_eq!(WILLEM_GIVES.table(), "creature_questrelation");
         assert_eq!(MCBRIDE_TAKES.table(), "creature_involvedrelation");
         assert_eq!(WILLEM_GIVES.key().text(), "id=823;quest=783");

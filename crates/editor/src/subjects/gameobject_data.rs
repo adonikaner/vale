@@ -12,9 +12,9 @@
 use super::listing::{ListRead, Listed};
 use crate::tools::Tool;
 use crate::session::EditSession;
-use crate::tools::spawns::creatures::server_patch;
+use crate::server::settings::server_patch;
 use crate::tools::spawns::gameobjects::{self, GameObjects, Known};
-use crate::subjects::items::unquote;
+use vale_mangos::sql::unquote;
 use vale_mangos::gameobject::{self as table, RowValue};
 use vale_mangos::row::{Edits, Key, RowEdit};
 use bevy::prelude::*;

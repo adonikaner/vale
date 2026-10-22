@@ -20,17 +20,17 @@
 //! `.reload creature_spells` re-reads the table (`ServerCommands.cpp:1049`).
 //! A creature already in combat keeps the list it started with.
 
-use crate::row::{Assignment, Key, Life};
+use crate::row::{Assignment, Key, Table};
 
 pub use crate::schema::{mask_words, value_word, Bit, Column, Group, Kind, Row, RowValue, Value};
 
 pub const TABLE: &str = "creature_spells";
 
-/// The static name for the table, for a caller resolving a name read out of
-/// a file.
-pub fn table_named(name: &str) -> Option<&'static str> {
-    (name == TABLE).then_some(TABLE)
-}
+/// The one table.
+pub const TABLES: &[Table] = &[LISTS];
+
+/// `creature_spells`. Every row may be edited, created and removed.
+pub const LISTS: Table = Table::new(TABLE, &COLUMNS);
 
 /// How many slots a list has.
 pub const SLOTS: usize = 8;
@@ -125,11 +125,6 @@ pub const COLUMNS: [Column; 2 + 11 * SLOTS] = {
     }
     out
 };
-
-/// One column, by name.
-pub fn column(name: &str) -> Option<&'static Column> {
-    COLUMNS.iter().find(|column| column.name == name)
-}
 
 /// The columns of one slot, 0-based.
 pub fn slot_columns(slot: usize) -> &'static [Column] {
@@ -320,29 +315,6 @@ pub fn split(column: &str) -> Option<(usize, usize)> {
     (1..=SLOTS).contains(&slot).then_some((field, slot - 1))
 }
 
-/// The statements a save emits for one row, on [`crate::eventai::statements`]'
-/// terms.
-pub fn statements(key: &Key, life: Life, changes: &[Assignment]) -> Vec<String> {
-    match life {
-        Life::Update => crate::row::update(TABLE, key, changes).into_iter().collect(),
-        Life::Insert => match crate::row::insert(TABLE, key, changes) {
-            Some(statement) => vec![crate::row::delete(TABLE, key), statement],
-            None => Vec::new(),
-        },
-        Life::Delete => vec![crate::row::delete(TABLE, key)],
-    }
-}
-
-/// The one row a list is.
-pub fn row_query(entry: u32) -> String {
-    format!("SELECT * FROM {} WHERE `entry` = {entry} LIMIT 1", crate::sql::name(TABLE))
-}
-
-/// Whether a row is already there, which an apply asks before it creates one.
-pub fn exists_query(key: &Key) -> String {
-    format!("SELECT 1 FROM {} WHERE {} LIMIT 1", crate::sql::name(TABLE), key.where_clause())
-}
-
 /// Every list whose name holds `term`, or whose entry is `term`: the search
 /// behind choosing an existing list.
 pub fn search_query(term: &str, limit: usize) -> String {
@@ -375,6 +347,7 @@ pub fn max_entry_query() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::row::Life;
 
     /// The ninety columns are the loader's, slot by slot, and each is named
     /// once.
@@ -391,7 +364,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), 90);
-        assert_eq!(column("castFlags_3").map(|c| c.kind), Some(Kind::Flags(&crate::scripts::CAST_FLAGS)));
+        assert_eq!(LISTS.column("castFlags_3").map(|c| c.kind), Some(Kind::Flags(&crate::scripts::CAST_FLAGS)));
     }
 
     /// A row reads back slot by slot, and a created list names every column.
@@ -411,7 +384,7 @@ mod tests {
         assert_eq!(list.filled(), 2);
         let changes = list.assignments();
         assert_eq!(changes.len(), 89);
-        let created = statements(&list.key(), Life::Insert, &changes);
+        let created = LISTS.statements(&list.key(), Life::Insert, &changes);
         assert_eq!(created[0], "DELETE FROM `creature_spells` WHERE `entry` = 680;");
         assert!(created[1].contains("`spellId_1`") && created[1].contains("6660"), "{}", created[1]);
         assert!(created[1].contains("'Stormwind City Guard'"), "{}", created[1]);

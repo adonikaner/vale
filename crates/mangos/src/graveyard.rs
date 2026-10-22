@@ -26,19 +26,15 @@
 //! 469 (Alliance). [`Link::check`] makes the last check; the first two need
 //! the tables and are the form's.
 
-use crate::row::{Assignment, Key};
+use crate::row::{Assignment, Key, Table};
 use crate::schema::{Column, Group, Kind, Value};
 
 pub const ZONE: &str = "game_graveyard_zone";
 pub const FACING: &str = "world_safe_locs_facing";
 
-/// Both tables, in the order a plan writes them.
-pub const TABLES: [&str; 2] = [ZONE, FACING];
-
-/// The static name for one of [`TABLES`] read out of a file, or `None`.
-pub fn table_named(name: &str) -> Option<&'static str> {
-    TABLES.into_iter().find(|table| *table == name)
-}
+/// Both tables, in the order a plan writes them. Every row of each may be
+/// edited, created and removed.
+pub const TABLES: &[Table] = &[Table::new(ZONE, &ZONE_COLUMNS), Table::new(FACING, &FACING_COLUMNS)];
 
 /// The three values the loader accepts in `faction`: vmangos' `TEAM_NONE`,
 /// `HORDE` and `ALLIANCE`.
@@ -66,20 +62,6 @@ pub const FACING_COLUMNS: [Column; 2] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the WorldSafeLocs.dbc id of the graveyard" },
     Column { name: "orientation", kind: Kind::Float, group: Group::Place, about: "the facing a released spirit takes at the graveyard, in radians" },
 ];
-
-/// Every column of one of [`TABLES`].
-pub fn columns_of(table: &str) -> &'static [Column] {
-    match table {
-        ZONE => &ZONE_COLUMNS,
-        FACING => &FACING_COLUMNS,
-        _ => &[],
-    }
-}
-
-/// One column, by name, of one of [`TABLES`].
-pub fn column(table: &str, name: &str) -> Option<&'static Column> {
-    columns_of(table).iter().find(|column| column.name == name)
-}
 
 /// The key of a link: the table's primary key.
 pub fn link_key(safe_loc: u32, zone: u32, patch_max: u32) -> Key {

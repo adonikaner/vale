@@ -38,7 +38,7 @@
 //! how long somebody waited.
 
 use crate::adt::{heights, AdtFile};
-use vale_assets::world::adt::CHUNK_SIZE;
+use vale_assets::world::adt::{vertex_offset, CHUNK_SIZE};
 
 /// One end of a grade.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -187,7 +187,7 @@ impl Grade {
             };
             let origin = chunk.head().position();
             // A chunk's square runs back from its origin along both axes — see
-            // [`heights::vertex_offset`] — so this is its box against the
+            // [`vertex_offset`] — so this is its box against the
             // grade's. A chunk the grade cannot reach is skipped whole rather
             // than asked 145 times.
             if origin[0] < x0
@@ -203,7 +203,7 @@ impl Grade {
             }
             let mut after = before.clone();
             for (i, height) in after.iter_mut().enumerate() {
-                let (dx, dy) = heights::vertex_offset(i);
+                let (dx, dy) = vertex_offset(i);
                 *height = self.applied(origin[0] - dx, origin[1] - dy, *height);
             }
             if after == before {

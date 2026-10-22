@@ -135,7 +135,7 @@ pub struct Waypoints {
     pub movement_type: u32,
     /// Whether `--waypoint-add` has finished, or was never asked for.
     ///
-    /// `crate::server::creatures::on_the_command_line` waits on it. Without
+    /// `crate::server::subject::flags::on_the_command_line` waits on it. Without
     /// that, `--apply-creatures` fires on the first frame there is a session
     /// and this fires several seconds later, when the map query and the path
     /// query have both come back — so the apply ran against an empty store and

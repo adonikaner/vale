@@ -116,8 +116,11 @@ pub static LISTS: [List; 9] = [
         table: crate::trainer::TEMPLATE,
         noun: "trainer list",
         counts: "spell",
-        rows: "SELECT `entry` AS id, COUNT(*) AS n FROM `npc_trainer_template` \
-               WHERE 5875 BETWEEN `build_min` AND `build_max` GROUP BY `entry`",
+        rows: concat!(
+            "SELECT `entry` AS id, COUNT(*) AS n FROM `npc_trainer_template` WHERE ",
+            client_build!(),
+            " BETWEEN `build_min` AND `build_max` GROUP BY `entry`"
+        ),
         joins: "",
         title: "''",
         matches: "",
@@ -307,7 +310,7 @@ mod tests {
             "pickpocket_loot_id",
             "skinning_loot_id",
         ] {
-            let kind = crate::creature::column(crate::creature::TEMPLATE, column).unwrap().kind;
+            let kind = crate::creature::TEMPLATE_TABLE.column(column).unwrap().kind;
             match kind {
                 crate::schema::Kind::Ref(table) => {
                     assert!(super::list(table).is_some(), "{column} names {table}")

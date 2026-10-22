@@ -11,7 +11,8 @@
 //!               the project dialog
 //! sync.rs       what this project has changed on the server: one block per
 //!               subject, the same four verbs for each. Drawn inside the top
-//!               bar's Server… popover, which holds every server operation
+//!               bar's Server… popover, which holds every server operation;
+//!               the state and the operations are `crate::server::sync`
 //! rail.rs       the subject list: what the editor edits now and what it will
 //!               edit
 //! viewbar.rs    every toggle that changes what the viewport shows

@@ -43,12 +43,12 @@
 //!   create a spawn at 10,000,000 collide at the second patch.
 
 use crate::server::stack::Subject;
-use crate::server::{behaviour, creatures, gameobjects, items, loot, quests, rows, services};
+use crate::server::reconcile::Undo;
+use crate::server::rows;
 use crate::session::EditSession;
 use vale_client::assets::GameAssets;
 use vale_edit::project::Project;
 use vale_mangos::migration::{self, Contents, Entry, Released};
-use vale_mangos::row::Key;
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 
@@ -60,104 +60,39 @@ pub fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<Entry>,
     let project = &session.project;
     let mut out: Vec<Entry> = Vec::new();
     for subject in Subject::ORDER {
-        let undo = creatures::Undo::open_at(project, revert_vpath(subject))?;
-        let find = |table: &str, key: &Key| -> Option<Vec<String>> {
-            let statements: Vec<String> = undo
+        let undo = Undo::open_at(project, subject.revert_vpath())?;
+        let plan = crate::server::subject::plan(session, subject.row_subject());
+        for unit in plan.units() {
+            if unit.statements.is_empty() {
+                continue;
+            }
+            let put_back: Vec<String> = undo
                 .entries
                 .iter()
-                .filter(|(had_table, had_key, _)| had_table == table && had_key == key)
+                .filter(|(had_table, had_key, _)| *had_table == unit.table && *had_key == unit.key)
                 .flat_map(|(_, _, statements)| statements.iter().cloned())
                 .collect();
-            match statements.is_empty() {
-                true => None,
-                false => Some(statements),
-            }
-        };
-        let name = subject.name().to_string();
-        let push = |out: &mut Vec<Entry>, table: &str, key: Key, statements: Vec<String>| {
-            if statements.is_empty() {
-                return;
-            }
             out.push(Entry {
-                subject: name.clone(),
-                table: table.to_string(),
-                undo: find(table, &key),
-                key,
-                statements,
+                subject: subject.name().to_string(),
+                table: unit.table,
+                undo: match put_back.is_empty() {
+                    true => None,
+                    false => Some(put_back),
+                },
+                key: unit.key,
+                statements: unit.statements,
             });
-        };
-        match subject {
-            Subject::Creatures => {
-                let plan = creatures::plan(session);
-                for row in &plan.rows {
-                    push(&mut out, row.table, row.key.clone(), row.statements());
-                }
-                for path in &plan.paths {
-                    push(
-                        &mut out,
-                        path.which.table(),
-                        path.key(),
-                        vale_mangos::path::statements(path),
-                    );
-                }
-            }
-            Subject::GameObjects => {
-                for row in &gameobjects::plan(session).rows {
-                    push(&mut out, row.table, row.key.clone(), row.statements());
-                }
-            }
-            Subject::Items => {
-                for row in &items::plan(session).rows {
-                    push(&mut out, row.table, row.key.clone(), row.statements());
-                }
-            }
-            Subject::Quests => {
-                for row in &quests::plan(session).rows {
-                    push(&mut out, row.table, row.key.clone(), row.statements());
-                }
-            }
-            Subject::Loot => {
-                for row in loot::plan(session).ordered() {
-                    push(&mut out, row.table, row.key.clone(), row.statements());
-                }
-            }
-            Subject::Services => {
-                for row in services::plan(session).ordered() {
-                    push(&mut out, row.table, row.key.clone(), row.statements());
-                }
-            }
-            Subject::Conditions | Subject::Gossip | Subject::Maps | Subject::Triggers | Subject::Graveyards => {
-                if let Some(group) = subject.group() {
-                    for row in crate::server::places::plan(session, group).ordered() {
-                        push(&mut out, row.table, row.key.clone(), row.statements());
-                    }
-                }
-            }
-            Subject::Behaviour => {
-                let plan = behaviour::plan(session);
-                for row in &plan.rows {
-                    push(&mut out, row.table, row.key.clone(), row.statements());
-                }
-                for script in &plan.scripts {
-                    push(
-                        &mut out,
-                        script.table,
-                        script.key(),
-                        vale_mangos::scripts::statements(script),
-                    );
-                }
-            }
         }
     }
     // The client-table rows (spells, flight nodes, skill line abilities, areas
     // and area triggers), whose revert file holds one statement per entry.
-    let undo = rows::Undo::open_at(project)?;
+    let undo = Undo::open_at(project, rows::REVERT_VPATH)?;
     for row in rows::plan(session, assets)?.rows {
         let put_back: Vec<String> = undo
             .entries
             .iter()
             .filter(|(table, key, _)| *table == row.table && *key == row.key)
-            .map(|(_, _, statement)| statement.clone())
+            .flat_map(|(_, _, statements)| statements.iter().cloned())
             .collect();
         out.push(Entry {
             subject: match row.table {
@@ -178,10 +113,6 @@ pub fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<Entry>,
         });
     }
     Ok(out)
-}
-
-fn revert_vpath(subject: Subject) -> &'static str {
-    subject.revert_vpath()
 }
 
 /// The record of the last migration — see `vale_mangos::migration`.
@@ -267,14 +198,7 @@ pub fn copy_server_dbcs(project: &Project, data_dir: &Path) -> Result<Vec<String
 /// the migration reads what the panel shows. Returns the status line.
 pub fn migrate(session: &mut EditSession, assets: &GameAssets) -> String {
     session.save_all_tables();
-    crate::server::creatures::save(session);
-    crate::server::gameobjects::save(session);
-    crate::server::items::save(session);
-    crate::server::quests::save(session);
-    crate::server::loot::save(session);
-    crate::server::services::save(session);
-    crate::server::behaviour::save(session);
-    crate::server::places::save(session);
+    crate::server::subject::save_all(session);
     let Some(into) = session.project.path_for(migration::MIGRATIONS_DIR) else {
         return format!("{}: path is outside the project folder", migration::MIGRATIONS_DIR);
     };

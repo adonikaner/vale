@@ -1,5 +1,6 @@
-//! What a row is called: the label built per table from the rows around it,
-//! and the name column of a table with or without a schema.
+//! What a row is called: the label built per table from the rows around it.
+//! The name column of a table with or without a schema is
+//! `vale_edit::dbc::names`'.
 
 use crate::session::EditSession;
 use vale_assets::tables::schema;
@@ -297,7 +298,7 @@ pub fn describe(
         }
         "LightSkybox" => (basename(&text(1)).to_string(), String::new()),
         // A category has no name column. `SpellCategory.dbc` is 166 records of
-        // two fields, an id and a flags word, so [`label_field`] finds nothing
+        // two fields, an id and a flags word, so [`schema::name_field`] finds nothing
         // and the list would read `row 1`, `row 2`, `row 4`. `vale dbc
         // SpellCategory` confirms the file has no name to read.
         //
@@ -445,67 +446,6 @@ fn mask_words(table: &Schema, field: usize, value: u32) -> String {
     schema::named_bits(value, bits).join(", ")
 }
 
-/// The string a field's value starts, when the value is the offset of a
-/// string's first byte in the table's string block: past the block's
-/// opening NUL, directly after another NUL, and printable. `None` for a
-/// value that is a number.
-pub fn string_started_at(table: &vale_edit::dbc::DbcFile, raw: u32) -> Option<String> {
-    let offset = raw as usize;
-    if offset == 0 || offset >= table.string_size() {
-        return None;
-    }
-    if table.text_at(offset - 1).as_deref() != Some("") {
-        return None;
-    }
-    table
-        .text_at(offset)
-        .filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
-}
-
-/// How many rows the guesses about a table with no schema read.
-const GUESS_ROWS: usize = 64;
-
-/// Whether a column of a table with no schema holds strings, and in how
-/// many of the sampled rows: every sampled row holds zero or the offset of
-/// a string, and the strings are not all one string.
-///
-/// The test is on the column and not on one value. A small number can be
-/// the offset of a string's first byte: `Faction.dbc`'s field 1 holds 1 on
-/// some rows, which is where the block's first string starts. A column of
-/// such numbers fails on the rows that hold any other number, and a
-/// column that holds one number throughout fails the last condition.
-fn strings_in(table: &vale_edit::dbc::DbcFile, field: usize) -> Option<usize> {
-    let rows = table.record_count().min(GUESS_ROWS);
-    let mut texts: Vec<String> = Vec::new();
-    for record in 0..rows {
-        match table.u32_at(record, field).unwrap_or(0) {
-            0 => {}
-            raw => texts.push(string_started_at(table, raw)?),
-        }
-    }
-    let held = texts.len();
-    texts.sort();
-    texts.dedup();
-    (texts.len() > 1 || (rows == 1 && held == 1)).then_some(held)
-}
-
-/// Which columns of a table with no schema hold strings, by field. Field 0
-/// is the id and never does.
-pub fn text_fields(table: &vale_edit::dbc::DbcFile) -> Vec<bool> {
-    (0..table.field_count())
-        .map(|field| field > 0 && strings_in(table, field).is_some())
-        .collect()
-}
-
-/// The column a table with no schema is named by, guessed from the file:
-/// the first column of strings in which at least half the sampled rows
-/// hold one.
-pub fn guess_name_field(table: &vale_edit::dbc::DbcFile) -> Option<usize> {
-    let rows = table.record_count().min(GUESS_ROWS);
-    (1..table.field_count())
-        .find(|&field| strings_in(table, field).is_some_and(|held| held * 2 >= rows))
-}
-
 /// The spells that reference a row of `target`, as a phrase such as
 /// `Fireball (+8)`.
 fn spells_using(browser: &mut Browser, session: &EditSession, target: &str, id: u32) -> String {
@@ -574,13 +514,4 @@ fn kit_slot(browser: &mut Browser, session: &EditSession, kit: u32) -> Option<St
 /// The last component of an archive path.
 pub fn basename(path: &str) -> &str {
     path.rsplit(['\\', '/']).next().unwrap_or(path)
-}
-
-/// The column a row is named by: the first string in the table's own locale.
-pub fn label_field(schema: &Schema) -> Option<usize> {
-    schema
-        .columns
-        .iter()
-        .find(|column| column.kind == Kind::Text)
-        .map(|column| column.field)
 }

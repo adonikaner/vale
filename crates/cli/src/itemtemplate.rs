@@ -456,9 +456,7 @@ fn one(cfg: &Config, entry: u32) -> Result<(), String> {
         value: "4".to_string(),
     }];
     println!("\n  an edit to `quality` would be:");
-    for statement in item::statements(
-        item::TEMPLATE,
-        &key,
+    for statement in item::TEMPLATE_TABLE.statements(&key,
         vale_mangos::row::Life::Update,
         &changes,
     ) {

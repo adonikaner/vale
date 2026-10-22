@@ -30,6 +30,7 @@
 //! answer now and has no frame to protect — the CLI's checks.
 
 use crate::world::adt::{Adt, MAP_ORIGIN, TILE_SIZE};
+use crate::world::wdt::MAP_TILES;
 use crate::{adt_path, Assets};
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Sender};
@@ -66,6 +67,33 @@ pub fn tile_centre(tile_x: u32, tile_y: u32) -> [f32; 3] {
         MAP_ORIGIN - (tile_x as f32 + 0.5) * TILE_SIZE,
         0.0,
     ]
+}
+
+/// The world `(x, y)` of a tile's origin, its maximum corner. The tile column
+/// `tile_x` sets world y and the tile row `tile_y` sets world x, as in
+/// [`tile_for_position`]. Chunk 0 of the tile has the same origin.
+pub fn tile_corner(tile_x: u32, tile_y: u32) -> [f32; 2] {
+    [
+        MAP_ORIGIN - tile_y as f32 * TILE_SIZE,
+        MAP_ORIGIN - tile_x as f32 * TILE_SIZE,
+    ]
+}
+
+/// The tile a world position falls on and where on it, or `None` off the
+/// 64x64 map. The pair is the fraction of a tile from the tile's origin, 0 to
+/// below 1: the first across the tile's columns (falling world y), the second
+/// down its rows (falling world x). Computed in `f64` for the reason
+/// [`tile_for_position`] gives, so the tile is the one that function names.
+pub fn position_on_tile(x: f32, y: f32) -> Option<((u32, u32), [f32; 2])> {
+    let (origin, size) = (MAP_ORIGIN as f64, TILE_SIZE as f64);
+    let across = (origin - y as f64) / size;
+    let down = (origin - x as f64) / size;
+    let tiles = MAP_TILES as f64;
+    if !(0.0..tiles).contains(&across) || !(0.0..tiles).contains(&down) {
+        return None;
+    }
+    let tile = (across.floor() as u32, down.floor() as u32);
+    Some((tile, [across.fract() as f32, down.fract() as f32]))
 }
 
 /// Whether a tile that is not loaded yet is read on the asking thread or on
@@ -711,6 +739,23 @@ mod tests {
         assert_eq!(slots.retain((32, 48), 2), 2, "(0, 0) and (40, 40) go");
         assert!(!slots.finish((40, 40), Some(empty_tile())));
         assert!(matches!(slots.find((40, 40)), Found::Missing));
+    }
+
+    /// A tile's corner is the corner of its chunk 0 and lies on the tile; the
+    /// position half a tile in from it is the tile's centre, half way across.
+    #[test]
+    fn a_tile_corner_and_a_position_on_it_agree_with_the_tile() {
+        let [x, y] = tile_corner(32, 48);
+        assert_eq!(tile_for_position(x, y), (32, 48));
+        let centre = tile_centre(32, 48);
+        let (tile, at) = position_on_tile(centre[0], centre[1]).unwrap();
+        assert_eq!(tile, (32, 48));
+        assert!((at[0] - 0.5).abs() < 1e-4 && (at[1] - 0.5).abs() < 1e-4);
+        // A position on a seam is on the tile `tile_for_position` names.
+        let seam = tile_corner(31, 31);
+        assert_eq!(position_on_tile(seam[0], seam[1]).unwrap().0, tile_for_position(seam[0], seam[1]));
+        assert_eq!(position_on_tile(MAP_ORIGIN + 1.0, 0.0), None);
+        assert_eq!(position_on_tile(0.0, -MAP_ORIGIN - 1.0), None);
     }
 
     #[test]

@@ -46,6 +46,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::schema::Column;
+
 /// One column and the value it is to hold.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Assignment {
@@ -202,6 +204,17 @@ impl Key {
     /// report — a status line, a sort, the entry a creature's row is about.
     pub fn first(&self) -> Option<u64> {
         self.0.first()?.1.parse().ok()
+    }
+
+    /// The `patch` column's value, for a template keyed by `(entry, patch)`.
+    /// `None` when the key has no such column.
+    pub fn patch(&self) -> Option<u32> {
+        self.0
+            .iter()
+            .find(|(column, _)| column == "patch")?
+            .1
+            .parse()
+            .ok()
     }
 }
 
@@ -412,6 +425,40 @@ impl Reference {
             self.names(id)
         )
     }
+}
+
+/// The row a key names, whichever table it is in. An undo is taken from it.
+pub fn row_query(table: &str, key: &Key) -> String {
+    format!(
+        "SELECT * FROM {} WHERE {} LIMIT 1",
+        crate::sql::name(table),
+        key.where_clause()
+    )
+}
+
+/// Whether a row is already there. An apply asks this before it creates one.
+///
+/// A key this project allocated can still be taken, by another project, by a
+/// GM's `.npc add`, or by an upstream update applied since the row was made,
+/// and an `INSERT` onto an occupied key fails the whole apply. Asking first
+/// lets the apply report the occupied key instead.
+pub fn exists_query(table: &str, key: &Key) -> String {
+    format!(
+        "SELECT 1 FROM {} WHERE {} LIMIT 1",
+        crate::sql::name(table),
+        key.where_clause()
+    )
+}
+
+/// Every row of a table whose `column` holds `id`: every content-patch version
+/// of a template, or the rows of a dependent table that name a spawn or a
+/// quest. What the undo of a removal is read from.
+pub fn rows_where(table: &str, column: &str, id: u64) -> String {
+    format!(
+        "SELECT * FROM {} WHERE {} = {id}",
+        crate::sql::name(table),
+        crate::sql::name(column)
+    )
 }
 
 /// **Whether any row holds this key's id**, at any content patch.
@@ -745,6 +792,30 @@ impl RowEdit {
         }
         RowEdit { life, columns, from }
     }
+
+    /// The key and this claim's columns as one row, as the database would
+    /// return it. See [`whole`].
+    pub fn whole(&self, key: &Key) -> crate::schema::Row {
+        whole(key, self.columns.iter().map(|(column, value)| (column.as_str(), value.as_str())))
+    }
+}
+
+/// A key and a set of columns as one row, as the database would return it:
+/// the key's columns, then each column's literal with [`crate::sql::unquote`]
+/// undoing its quoting. What a created row is read back from, for a check or a
+/// list.
+pub fn whole<'a>(
+    key: &Key,
+    columns: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> crate::schema::Row {
+    let mut row = crate::schema::Row::new();
+    for (column, value) in &key.0 {
+        row.insert(column.clone(), Some(value.clone()));
+    }
+    for (column, value) in columns {
+        row.insert(column.to_string(), Some(crate::sql::unquote(value)));
+    }
+    row
 }
 
 /// **Every row edit a project carries**, in the order they will be written.
@@ -895,6 +966,44 @@ impl Edits {
         self.row(table, key)?.columns.get(column).map(String::as_str)
     }
 
+    /// What a column shows as text: this project's value where it sets one,
+    /// with its quoting undone, and the database row's otherwise. `None` when
+    /// neither has the column.
+    pub fn shown_text(
+        &self,
+        table: &str,
+        key: &Key,
+        column: &str,
+        database: Option<&crate::schema::Row>,
+    ) -> Option<String> {
+        use crate::schema::RowValue;
+        match self.get(table, key, column) {
+            Some(value) => Some(crate::sql::unquote(value)),
+            None => database?.text(column).map(str::to_string),
+        }
+    }
+
+    /// …and as an integer. A value that is not a number on the project's side
+    /// falls back to the database's, and a float is truncated, as
+    /// [`crate::schema::RowValue::integer`] reads one.
+    pub fn shown_integer(
+        &self,
+        table: &str,
+        key: &Key,
+        column: &str,
+        database: Option<&crate::schema::Row>,
+    ) -> Option<i64> {
+        use crate::schema::RowValue;
+        let edited = self.get(table, key, column).and_then(|value| {
+            let value = value.trim();
+            value
+                .parse::<i64>()
+                .ok()
+                .or_else(|| value.parse::<f64>().ok().map(|value| value as i64))
+        });
+        edited.or_else(|| database?.integer(column))
+    }
+
     /// Whether this project says anything at all about that row.
     pub fn touches(&self, table: &str, key: &Key) -> bool {
         self.rows.contains_key(&(table.to_string(), key.clone()))
@@ -910,8 +1019,8 @@ impl Edits {
     /// counting what it dropped as its own.
     ///
     /// `wanted` is asked the table's name, which is the same test each writer
-    /// already applies to decide whether a row is its to write — see
-    /// `crate::creature::table_named` and `crate::item::table_named`.
+    /// already applies to decide whether a row is its to write: [`table_named`]
+    /// over the subject's `TABLES`.
     pub fn forget_where(&mut self, mut wanted: impl FnMut(&str) -> bool) -> usize {
         let before = self.rows.len();
         self.rows.retain(|(table, _), _| !wanted(table));
@@ -1084,6 +1193,302 @@ impl Edits {
     }
 }
 
+// ---------------------------------------------------------------------------
+// The table
+// ---------------------------------------------------------------------------
+
+/// The lives a row may carry when it is only ever edited.
+pub const EDITED: &[Life] = &[Life::Update];
+
+/// …when it may be edited and created, and not removed.
+pub const EDITED_OR_CREATED: &[Life] = &[Life::Update, Life::Insert];
+
+/// …and when it may be edited, created and removed.
+pub const ANY_LIFE: &[Life] = &[Life::Update, Life::Insert, Life::Delete];
+
+/// **One of the server's tables as this crate writes it**: its name, its
+/// columns, the columns elsewhere that name its rows, the lives a row of it
+/// may carry, and what a removal takes with it.
+///
+/// Constant data. Each module about a subject exports its tables as
+/// `TABLES`, and [`table_named`], [`Table::column`], [`Table::statements`]
+/// and [`plan`] read them, so a rule about a table's rows is written once here
+/// rather than once per module.
+#[derive(Debug, Clone, Copy)]
+pub struct Table {
+    /// Its name, as vmangos spells it.
+    pub name: &'static str,
+    /// Every column a row of it is described by, the key's included.
+    pub columns: &'static [Column],
+    /// The columns of other tables that name a row of this one by its id.
+    /// They follow a row whose id changes; see [`move_statements`].
+    pub references: &'static [Reference],
+    /// The lives a row may carry. [`Life::Update`] is always among them.
+    pub lives: &'static [Life],
+    /// The statements a removal comes to when it is more than the row's own
+    /// `DELETE`: a spawn with the tables keyed by its guid, an item with every
+    /// version of it and the rows that hand it out.
+    pub cascade: Option<fn(&Key) -> Vec<String>>,
+}
+
+impl Table {
+    /// A table whose rows may be edited, created and removed, with no
+    /// references and no cascade.
+    pub const fn new(name: &'static str, columns: &'static [Column]) -> Table {
+        Table { name, columns, references: &[], lives: ANY_LIFE, cascade: None }
+    }
+
+    /// One column, by name.
+    pub fn column(&self, name: &str) -> Option<&'static Column> {
+        self.columns.iter().find(|column| column.name == name)
+    }
+
+    /// Whether a row of this table may carry `life`.
+    pub fn can_live(&self, life: Life) -> bool {
+        self.lives.contains(&life)
+    }
+
+    /// **The statements a save emits for one row this project claims.**
+    ///
+    /// One `UPDATE` for a row it edits. A `DELETE` and an `INSERT` for a row
+    /// it creates: the pair `Creature::SaveToDB` writes, so that applying
+    /// twice means the same as applying once. It is safe only because the
+    /// caller has established that the key is this project's; see the
+    /// editor's apply, which refuses a key in the database that is not in the
+    /// project's own revert file. For a row it removes, the [`Self::cascade`]
+    /// or one `DELETE`. A life the table cannot carry produces no statement.
+    pub fn statements(&self, key: &Key, life: Life, changes: &[Assignment]) -> Vec<String> {
+        if !self.can_live(life) {
+            return Vec::new();
+        }
+        match life {
+            Life::Update => update(self.name, key, changes).into_iter().collect(),
+            Life::Insert => match insert(self.name, key, changes) {
+                Some(statement) => vec![delete(self.name, key), statement],
+                None => Vec::new(),
+            },
+            Life::Delete => match self.cascade {
+                Some(cascade) => cascade(key),
+                None => vec![delete(self.name, key)],
+            },
+        }
+    }
+
+    /// The editable columns a creation leaves out, in table order.
+    fn missing(&self, changes: &[Assignment]) -> Vec<&'static str> {
+        self.columns
+            .iter()
+            .filter(|column| column.editable())
+            .map(|column| column.name)
+            .filter(|name| !changes.iter().any(|change| change.column == *name))
+            .collect()
+    }
+
+    /// What a refusal says the table allows.
+    fn lives_words(&self) -> &'static str {
+        match (self.can_live(Life::Insert), self.can_live(Life::Delete)) {
+            (false, false) => "only edited",
+            (true, false) => "edited and created, not removed",
+            (false, true) => "edited and removed, not created",
+            (true, true) => "edited, created and removed",
+        }
+    }
+}
+
+/// The table of `tables` a name read out of a file names, or `None`.
+///
+/// A table name in a project's store is text somebody may have typed. This is
+/// what says whether it is a table this crate knows how to write; a name that
+/// is not in the list is reported rather than passed into a statement.
+pub fn table_named(tables: &'static [Table], name: &str) -> Option<&'static Table> {
+    tables.iter().find(|table| table.name == name)
+}
+
+/// **One row of a store, passed by its table's rules**: the key the statement
+/// names, where the database has the row, and the columns it sets.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Planned {
+    /// The key the statement names. For a removal this is [`Self::at`].
+    pub key: Key,
+    /// Where the database has the row: the claim's [`RowEdit::from`], or its
+    /// key when the project does not move it.
+    pub at: Key,
+    pub changes: Vec<Assignment>,
+}
+
+/// **What one row of a store comes to under its table's rules**, and every
+/// refusal on the way, each as a sentence.
+///
+/// The rules, in the order they are applied:
+///
+/// 1. The row's life is one the table allows ([`Table::lives`]); otherwise
+///    the row is refused whole.
+/// 2. Each column is one the table has, and not part of the key. A key column
+///    is what the `WHERE` names; a row's id is changed by re-keying its claim
+///    ([`Edits::rekey`]), never by a column. A column that fails is refused
+///    and the rest of the row is still written.
+/// 3. A creation names every editable column, or the row is refused whole: a
+///    column an `INSERT` leaves out takes the table's default instead of a
+///    value somebody chose.
+/// 4. A removal carries no columns and names the row where the database has
+///    it. A row the project moved and then removed is at its old id, and a
+///    `DELETE` naming the new one would match nothing and report no error.
+///
+/// `None` with no refusal is an edit that says nothing: no columns and no
+/// move.
+pub fn plan(table: &Table, key: &Key, row: &RowEdit) -> (Option<Planned>, Vec<String>) {
+    let mut refused = Vec::new();
+    if !table.can_live(row.life) {
+        refused.push(format!(
+            "{} {} cannot be {}d: rows of {} are {}",
+            table.name,
+            key.text(),
+            row.life.word(),
+            table.name,
+            table.lives_words()
+        ));
+        return (None, refused);
+    }
+    let mut changes = Vec::new();
+    for (column, value) in &row.columns {
+        let Some(known) = table.column(column) else {
+            refused.push(format!("{}.{column} is not a column this editor writes", table.name));
+            continue;
+        };
+        if !known.editable() {
+            refused.push(format!("{}.{column} is part of the key and is not written", table.name));
+            continue;
+        }
+        changes.push(Assignment { column: known.name, value: value.clone() });
+    }
+    match row.life {
+        Life::Insert => {
+            let missing = table.missing(&changes);
+            if !missing.is_empty() {
+                refused.push(format!(
+                    "{} {} is created without {} and is not written",
+                    table.name,
+                    key.text(),
+                    missing.join(", ")
+                ));
+                return (None, refused);
+            }
+        }
+        Life::Delete => changes.clear(),
+        Life::Update => {
+            if changes.is_empty() && row.from.is_none() {
+                return (None, refused);
+            }
+        }
+    }
+    let at = row.from.clone().unwrap_or_else(|| key.clone());
+    let key = match row.life {
+        Life::Delete => at.clone(),
+        _ => key.clone(),
+    };
+    (Some(Planned { key, at, changes }), refused)
+}
+
+// ---------------------------------------------------------------------------
+// Numbering a template
+// ---------------------------------------------------------------------------
+
+/// **How the rows of a template table keyed by `(entry, patch)` are
+/// numbered**: `creature_template`, `gameobject_template`, `item_template`,
+/// `quest_template`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Numbering {
+    pub table: &'static str,
+    /// What one row is called in a refusal: `creature`, `item`.
+    pub noun: &'static str,
+    /// The first entry a row this project creates is numbered from, clear of
+    /// anything upstream will reach.
+    pub reserved_base: u32,
+    /// The highest entry the column holds.
+    pub max_entry: u32,
+}
+
+impl Numbering {
+    /// The key of one row.
+    pub fn key(&self, entry: u32, patch: u32) -> Key {
+        Key::two(("entry", u64::from(entry)), ("patch", u64::from(patch)))
+    }
+
+    /// **The entry a new row gets**: the highest of the reserved base, one
+    /// past the highest the table holds at any patch (`in_database`), and one
+    /// past the highest this project already creates.
+    ///
+    /// The second is needed because the reserved base is only a floor: once a
+    /// project has applied a row at the base, the table's own maximum is the
+    /// base. The third is needed because several rows can be created between
+    /// two reads of the table.
+    pub fn next_entry(&self, in_database: Option<u32>, edits: &Edits) -> u32 {
+        let in_database = in_database.map(|highest| highest + 1).unwrap_or(0);
+        let claimed = edits
+            .rows()
+            .filter(|(table, _, row)| *table == self.table && row.life == Life::Insert)
+            .filter_map(|(_, key, _)| key.first())
+            .max()
+            .map(|highest| highest as u32 + 1)
+            .unwrap_or(0);
+        self.reserved_base.max(in_database).max(claimed)
+    }
+}
+
+/// One template row a renumbering is asked of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Numbered {
+    /// The entry the project gives the row.
+    pub entry: u32,
+    /// The entry the database has it at.
+    pub read_entry: u32,
+    pub patch: u32,
+    /// What the project says becomes of it.
+    pub life: Life,
+}
+
+/// **Whether a template row may move to another entry**, as the key its claim
+/// is under and the key it goes to.
+///
+/// `Ok(None)` is a move to the entry the row already has, which is what a form
+/// answers on every frame somebody looks at it and must not become an edit.
+/// `taken` is whether the caller knows of a row at `to`.
+///
+/// The refusals are the ones that have to be caught before anything is
+/// written: a removed row has no row to move, an `INSERT` onto an occupied key
+/// fails the apply, and an `UPDATE` onto one fails on the primary key. Moving
+/// a row back to where the database has it is always allowed: the entry is
+/// taken, and by this row.
+pub fn plan_rekey(
+    numbering: &Numbering,
+    row: Numbered,
+    to: u32,
+    taken: bool,
+) -> Result<Option<(Key, Key)>, String> {
+    if to == row.entry {
+        return Ok(None);
+    }
+    if row.life == Life::Delete {
+        return Err(format!(
+            "this project removes this {}; press Keep before changing its entry",
+            numbering.noun
+        ));
+    }
+    if to == 0 {
+        return Err(format!("0 is not a valid {} entry", numbering.noun));
+    }
+    if to > numbering.max_entry {
+        return Err(format!(
+            "{to} is above {}, the largest value `entry` can hold",
+            numbering.max_entry
+        ));
+    }
+    if taken && to != row.read_entry {
+        return Err(format!("{} entry {to} already exists", numbering.table));
+    }
+    Ok(Some((numbering.key(row.entry, row.patch), numbering.key(to, row.patch))))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1104,7 +1509,7 @@ mod tests {
         edits.set("item_template", &item, "Quality", Some("4".into()));
         assert_eq!(edits.len(), 3);
 
-        let creature = |table: &str| crate::creature::table_named(table).is_some();
+        let creature = |table: &str| table_named(crate::creature::TABLES, table).is_some();
         assert_eq!(edits.count_where(creature), 2);
         assert_eq!(edits.forget_where(creature), 2);
 
@@ -1539,5 +1944,115 @@ mod tests {
         let edits = Edits::from_text(text);
         assert_eq!(edits.len(), 1);
         assert_eq!(edits.get("creature", &Key::one("guid", 1), "position_y"), Some("2"));
+    }
+
+    /// The `patch` half of a template key, and nothing for a key without one.
+    #[test]
+    fn a_key_says_its_patch() {
+        assert_eq!(item(852).patch(), Some(10));
+        assert_eq!(Key::one("guid", 7).patch(), None);
+    }
+
+    /// A claim read back as a row carries the key and its columns' text.
+    #[test]
+    fn a_claim_reads_back_as_a_whole_row() {
+        use crate::schema::RowValue;
+        let mut row = RowEdit { life: Life::Insert, ..RowEdit::default() };
+        row.columns.insert("name".into(), crate::sql::text("Gnomish Death Ray's"));
+        row.columns.insert("quality".into(), "3".into());
+        let whole = row.whole(&item(852));
+        assert_eq!(whole.text("entry"), Some("852"));
+        assert_eq!(whole.text("patch"), Some("10"));
+        assert_eq!(whole.text("name"), Some("Gnomish Death Ray's"));
+        assert_eq!(whole.integer("quality"), Some(3));
+    }
+
+    /// A column shows the project's value over the database's, as text with
+    /// its quoting undone and as a number.
+    #[test]
+    fn an_edit_is_shown_over_the_database_row() {
+        let mut database = crate::schema::Row::new();
+        database.insert("name".into(), Some("Axe".into()));
+        database.insert("quality".into(), Some("1".into()));
+        let mut edits = Edits::default();
+        let key = item(852);
+        assert_eq!(edits.shown_text("item_template", &key, "name", Some(&database)).as_deref(), Some("Axe"));
+        edits.set("item_template", &key, "name", Some(crate::sql::text("Hand Axe")));
+        edits.set("item_template", &key, "quality", Some("2.0".into()));
+        assert_eq!(edits.shown_text("item_template", &key, "name", Some(&database)).as_deref(), Some("Hand Axe"));
+        assert_eq!(edits.shown_integer("item_template", &key, "quality", Some(&database)), Some(2));
+        assert_eq!(edits.shown_integer("item_template", &key, "flags", None), None);
+    }
+
+    const COLUMNS: [Column; 3] = [
+        Column { name: "entry", kind: crate::schema::Kind::Key, group: crate::schema::Group::Identity, about: "the key" },
+        Column { name: "name", kind: crate::schema::Kind::Text, group: crate::schema::Group::Identity, about: "a name" },
+        Column { name: "quality", kind: crate::schema::Kind::Unsigned, group: crate::schema::Group::Identity, about: "a number" },
+    ];
+    const TABLE: Table = Table { lives: EDITED_OR_CREATED, ..Table::new("thing", &COLUMNS) };
+
+    /// The four rules of a plan: the life, the column, the whole creation,
+    /// and a removal at the row's source.
+    #[test]
+    fn a_store_row_is_planned_by_its_tables_rules() {
+        let key = Key::one("entry", 5);
+        let removed = RowEdit { life: Life::Delete, ..RowEdit::default() };
+        let (planned, refused) = plan(&TABLE, &key, &removed);
+        assert!(planned.is_none());
+        assert!(refused[0].contains("cannot be deleted"), "{refused:?}");
+
+        let mut edited = RowEdit::default();
+        edited.columns.insert("quality".into(), "3".into());
+        edited.columns.insert("entry".into(), "6".into());
+        edited.columns.insert("colour".into(), "1".into());
+        let (planned, refused) = plan(&TABLE, &key, &edited);
+        assert_eq!(refused.len(), 2, "{refused:?}");
+        let planned = planned.expect("the good column is still written");
+        assert_eq!(planned.changes, vec![Assignment { column: "quality", value: "3".into() }]);
+
+        let mut created = RowEdit { life: Life::Insert, ..RowEdit::default() };
+        created.columns.insert("quality".into(), "3".into());
+        let (planned, refused) = plan(&TABLE, &key, &created);
+        assert!(planned.is_none());
+        assert!(refused[0].contains("created without name"), "{refused:?}");
+
+        assert_eq!(plan(&TABLE, &key, &RowEdit::default()), (None, Vec::new()));
+
+        let any = Table::new("thing", &COLUMNS);
+        let moved_and_removed = RowEdit { life: Life::Delete, from: Some(Key::one("entry", 4)), ..RowEdit::default() };
+        let (planned, _) = plan(&any, &key, &moved_and_removed);
+        assert_eq!(planned.expect("a removal").key, Key::one("entry", 4));
+    }
+
+    const NUMBERING: Numbering = Numbering {
+        table: "item_template",
+        noun: "item",
+        reserved_base: 2_000_000,
+        max_entry: 0x00FF_FFFF,
+    };
+
+    /// The renumbering refusals, in their one order.
+    #[test]
+    fn a_renumbering_is_refused_for_the_four_reasons() {
+        let row = Numbered { entry: 852, read_entry: 852, patch: 10, life: Life::Update };
+        assert_eq!(plan_rekey(&NUMBERING, row, 852, true), Ok(None));
+        assert_eq!(plan_rekey(&NUMBERING, row, 900, false), Ok(Some((item(852), item(900)))));
+        let removed = Numbered { life: Life::Delete, ..row };
+        assert!(plan_rekey(&NUMBERING, removed, 900, false).unwrap_err().contains("removes this item"));
+        assert!(plan_rekey(&NUMBERING, row, 0, false).unwrap_err().contains("0 is not a valid"));
+        assert!(plan_rekey(&NUMBERING, row, 0x0100_0000, false).unwrap_err().contains("largest value"));
+        assert!(plan_rekey(&NUMBERING, row, 900, true).unwrap_err().contains("already exists"));
+        let moved = Numbered { entry: 900, ..row };
+        assert_eq!(plan_rekey(&NUMBERING, moved, 852, true), Ok(Some((item(900), item(852)))));
+    }
+
+    /// A new entry is past the base, the table and the project's own rows.
+    #[test]
+    fn a_new_entry_is_past_everything_already_numbered() {
+        let mut edits = Edits::default();
+        assert_eq!(NUMBERING.next_entry(None, &edits), 2_000_000);
+        assert_eq!(NUMBERING.next_entry(Some(2_000_040), &edits), 2_000_041);
+        edits.set_life("item_template", &item(2_000_100), Life::Insert);
+        assert_eq!(NUMBERING.next_entry(Some(2_000_040), &edits), 2_000_101);
     }
 }

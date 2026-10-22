@@ -10,7 +10,7 @@
 
 use crate::adt::{heights, AdtFile};
 use crate::ops::{brush::{Brush, Falloff, Mode, Shape}, Edit};
-use vale_assets::world::adt::{ALPHA_LEN, ALPHA_SIDE};
+use vale_assets::world::adt::{outer_index, vertex_offset, ALPHA_LEN, ALPHA_SIDE};
 
 /// The tile these run on, and where on it.
 const TILE: (&str, u32, u32) = ("Azeroth", 32, 48);
@@ -46,9 +46,9 @@ fn shared() -> Vec<(usize, usize, usize, usize)> {
                 for col in 0..9 {
                     pairs.push((
                         here,
-                        heights::outer(8, col).unwrap(),
+                        outer_index(8, col),
                         below,
-                        heights::outer(0, col).unwrap(),
+                        outer_index(0, col),
                     ));
                 }
             }
@@ -57,9 +57,9 @@ fn shared() -> Vec<(usize, usize, usize, usize)> {
                 for row in 0..9 {
                     pairs.push((
                         here,
-                        heights::outer(row, 8).unwrap(),
+                        outer_index(row, 8),
                         across,
-                        heights::outer(row, 0).unwrap(),
+                        outer_index(row, 0),
                     ));
                 }
             }
@@ -176,7 +176,7 @@ fn a_smooth_converges_on_one_height_across_chunks() {
         let origin = chunk.head().position();
         let (mut sum, mut count) = (0.0, 0);
         for (i, h) in heights::heights(chunk).iter().enumerate() {
-            let (dx, dy) = heights::vertex_offset(i);
+            let (dx, dy) = vertex_offset(i);
             let (x, y) = (origin[0] - dx, origin[1] - dy);
             if ((x - at[0]).powi(2) + (y - at[1]).powi(2)).sqrt() <= brush.radius {
                 sum += h;
@@ -243,15 +243,15 @@ fn a_stroke_leaves_no_vertex_stranded() {
             let field = heights::heights(tile.chunk(chunk).unwrap());
             for row in 0..9 {
                 for col in 0..8 {
-                    let a = field[heights::outer(row, col).unwrap()];
-                    let b = field[heights::outer(row, col + 1).unwrap()];
+                    let a = field[outer_index(row, col)];
+                    let b = field[outer_index(row, col + 1)];
                     worst = worst.max((a - b).abs());
                 }
             }
             for row in 0..8 {
                 for col in 0..9 {
-                    let a = field[heights::outer(row, col).unwrap()];
-                    let b = field[heights::outer(row + 1, col).unwrap()];
+                    let a = field[outer_index(row, col)];
+                    let b = field[outer_index(row + 1, col)];
                     worst = worst.max((a - b).abs());
                 }
             }
@@ -890,7 +890,7 @@ fn a_grade_leaves_the_height_it_asked_for() {
         };
         let chunk_origin = chunk.head().position();
         for (i, height) in heights::heights(chunk).iter().enumerate() {
-            let (dx, dy) = heights::vertex_offset(i);
+            let (dx, dy) = vertex_offset(i);
             let (x, y) = (chunk_origin[0] - dx, chunk_origin[1] - dy);
             let Some((wanted, weight)) = grade.at(x, y) else {
                 continue;
@@ -1353,7 +1353,7 @@ fn a_height_map_reads_back_as_the_tile_it_came_from() {
         .collect();
     assert_eq!(moved, vec![0, 1, 16, 17], "the four chunks at that corner");
     let corner = |chunk: usize, row: usize, column: usize| {
-        heights::heights(tile.chunk(chunk).unwrap())[heights::outer(row, column).unwrap()]
+        heights::heights(tile.chunk(chunk).unwrap())[outer_index(row, column)]
     };
     let height = corner(0, 8, 8);
     assert_eq!(height, corner(1, 8, 0));
@@ -1529,8 +1529,8 @@ fn a_selection_of_vertices_moves_together_and_can_be_kept_from_a_brush() {
     let at = [origin[0], origin[1]];
     let mut selected = Selected::default();
     assert_eq!(selected.mark(&tile, at, 1.0, Shape::Circle, true), 4, "one vertex, in four chunks");
-    assert!(selected.holds(0, heights::outer(8, 8).unwrap()));
-    assert!(selected.holds(17, heights::outer(0, 0).unwrap()));
+    assert!(selected.holds(0, outer_index(8, 8)));
+    assert!(selected.holds(17, outer_index(0, 0)));
     assert_eq!(selected.count(), 4);
     assert_eq!(selected.positions(&tile).len(), 4);
 
@@ -1538,7 +1538,7 @@ fn a_selection_of_vertices_moves_together_and_can_be_kept_from_a_brush() {
     let was = (sum[2] / count as f64) as f32;
     let edits = selected.shift(&mut tile, 5.0);
     let corner = |tile: &AdtFile, chunk: usize, row: usize, column: usize| {
-        heights::heights(tile.chunk(chunk).unwrap())[heights::outer(row, column).unwrap()]
+        heights::heights(tile.chunk(chunk).unwrap())[outer_index(row, column)]
     };
     assert!((corner(&tile, 0, 8, 8) - was - 5.0).abs() < 1e-4);
     assert_eq!(corner(&tile, 0, 8, 8), corner(&tile, 17, 0, 0), "still welded");
@@ -1593,7 +1593,7 @@ fn locked_vertices_are_held_through_any_edit() {
     let mut locked = Selected::default();
     locked.mark(&tile, at, 6.0, Shape::Circle, true);
     let corner = |tile: &AdtFile, chunk: usize, row: usize, column: usize| {
-        heights::heights(tile.chunk(chunk).unwrap())[heights::outer(row, column).unwrap()]
+        heights::heights(tile.chunk(chunk).unwrap())[outer_index(row, column)]
     };
     let was = corner(&tile, 17, 0, 0);
     let beside = corner(&tile, 17, 4, 4);
@@ -1688,7 +1688,7 @@ fn a_selection_tilts_smooths_and_confines_a_brush() {
     assert!(welded.windows(2).all(|pair| (pair[0] - pair[1]).abs() < 1e-3), "still welded: {welded:?}");
 
     // A brush confined to the selection raises it and nothing round it.
-    let outside = |tile: &AdtFile| heights::heights(tile.chunk(17).unwrap())[heights::outer(4, 4).unwrap()];
+    let outside = |tile: &AdtFile| heights::heights(tile.chunk(17).unwrap())[outer_index(4, 4)];
     let left = outside(&tile);
     let (inside_was, _) = selected.weighed(&tile);
     let brush = Brush {

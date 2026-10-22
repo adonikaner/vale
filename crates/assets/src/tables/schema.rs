@@ -155,6 +155,15 @@ impl Schema {
         self.columns.get(field)
     }
 
+    /// The column a row is named by: the first text column, which is the
+    /// name in the table's own locale.
+    pub fn name_field(&self) -> Option<usize> {
+        self.columns
+            .iter()
+            .find(|column| column.kind == Kind::Text)
+            .map(|column| column.field)
+    }
+
     /// Every field that points at `table`, for a reverse lookup.
     pub fn references_to(&self, table: &str) -> Vec<usize> {
         self.columns
@@ -196,6 +205,121 @@ pub fn for_table(name: &str) -> Option<&'static Schema> {
     ALL.iter()
         .find(|schema| schema.table.eq_ignore_ascii_case(name))
         .copied()
+}
+
+/// The column a row of `table` is named by: its schema's first text column.
+/// `None` for a table with no schema and for a schema with no text column.
+pub fn name_field(table: &str) -> Option<usize> {
+    for_table(table)?.name_field()
+}
+
+/// The tables a table's rows are read with, beyond the table itself: the
+/// tables its reference columns lead to and the tables its rows are labelled
+/// from.
+///
+/// There are three chains (the spell chain, the light chain and the flight
+/// path tables) and the tables a skill table or an item set is labelled
+/// from. A spell can be read from `Spell.dbc` alone, but its visual cannot,
+/// and neither can a followed reference or a row labelled from the rows it
+/// references. Together these tables are smaller than `Spell.dbc`'s string
+/// block.
+pub fn chain_for(table: &str) -> &'static [&'static str] {
+    match table {
+        "Spell" => &[
+            "SpellVisual",
+            "SpellVisualKit",
+            "SpellVisualEffectName",
+            "AnimationData",
+            "SpellIcon",
+            "SpellCastTimes",
+            "SpellDuration",
+            "SpellRadius",
+            "SpellRange",
+            "SoundEntries",
+            "SpellEffectCameraShakes",
+            // The skill tables. With `SkillLineAbility` read, a spell's
+            // reverse references list the skill lines it is in.
+            "SkillLine",
+            "SkillLineAbility",
+            "SkillRaceClassInfo",
+            "SkillLineCategory",
+        ],
+        "Light" => &[
+            "LightParams",
+            "LightIntBand",
+            "LightFloatBand",
+            "LightSkybox",
+            // `Map` is not part of the light chain but is read with it, so a
+            // light's label can show `Azeroth` instead of `map 0`. `Light`
+            // rows have no names, so the map is most of what the label shows.
+            "Map",
+        ],
+        // The paths and their points, which a node lists, and `Map` for the
+        // same reason the light chain reads it.
+        "TaxiNodes" => &["TaxiPath", "TaxiPathNode", "Map"],
+        // A set's bonuses are spells and its requirement is a skill line.
+        "ItemSet" => &["Spell", "SkillLine"],
+        // The creature display chain: what a display's model and extra
+        // columns name, and the items an extra row dresses the creature in.
+        "CreatureDisplayInfo" | "CreatureDisplayInfoExtra" | "CreatureModelData" => &[
+            "CreatureDisplayInfo",
+            "CreatureDisplayInfoExtra",
+            "CreatureModelData",
+            "ItemDisplayInfo",
+        ],
+        // A game object's ten sounds.
+        "GameObjectDisplayInfo" => &["SoundEntries"],
+        // The visual an item's glow is.
+        "ItemDisplayInfo" => &["SpellVisual"],
+        // The skill tables, read without the spell chain: each is labelled
+        // from the others.
+        "SkillLine" => &["SkillLineCategory", "SpellIcon"],
+        "SkillLineAbility" | "SkillRaceClassInfo" => &["SkillLine", "Spell"],
+        // `Map`, which an area's label names, and the five tables its sound
+        // and liquid columns refer to, so each reference is drawn as a name.
+        //
+        // `SoundEntries` as well, which the music, intro and ambience rows
+        // name, so a sound reference reads as the sound's name.
+        "AreaTable" => &[
+            "Map",
+            "ZoneMusic",
+            "ZoneIntroMusicTable",
+            "SoundAmbience",
+            "SoundProviderPreferences",
+            "LiquidType",
+            "SoundEntries",
+        ],
+        _ => &[],
+    }
+}
+
+/// What a blank row of a table holds beyond zeros: `(field, value)` pairs.
+///
+/// A kit's model columns and its four procedural slots are `-1` for none in
+/// the shipped rows (a reverse reference treats 0 and -1 alike), and a blank kit
+/// with 0 in `Animation` would resolve to Stand; see the schema's note on that
+/// column. In every other table, zero means none.
+pub fn blank_defaults(table: &str) -> &'static [(usize, u32)] {
+    const KIT: &[(usize, u32)] = &[
+        (super::spell::fields::ANIMATION, u32::MAX),
+        (3, u32::MAX),
+        (4, u32::MAX),
+        (5, u32::MAX),
+        (6, u32::MAX),
+        (7, u32::MAX),
+        (8, u32::MAX),
+        (9, u32::MAX),
+        (10, u32::MAX),
+        (12, u32::MAX),
+        (15, u32::MAX),
+        (16, u32::MAX),
+        (17, u32::MAX),
+        (18, u32::MAX),
+    ];
+    match table {
+        "SpellVisualKit" => KIT,
+        _ => &[],
+    }
 }
 
 /// Every table this crate can describe.

@@ -31,7 +31,9 @@
 use super::{reshade, Edit, brush::Shape};
 use crate::adt::{heights, AdtFile};
 use std::collections::BTreeMap;
-use vale_assets::world::adt::CHUNK_SIZE;
+use vale_assets::world::adt::{
+    outer_index, vertex_offset, CHUNK_SIZE, HEIGHTS_PER_CHUNK, OUTER_SIDE, TILE_SIZE, UNIT_SIZE,
+};
 
 /// The selected vertices of one tile: per chunk, one flag per vertex.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -73,8 +75,8 @@ impl Selected {
             if !near(origin[0], at[0]) || !near(origin[1], at[1]) {
                 continue;
             }
-            for vertex in 0..heights::VERTICES {
-                let (dx, dy) = heights::vertex_offset(vertex);
+            for vertex in 0..HEIGHTS_PER_CHUNK {
+                let (dx, dy) = vertex_offset(vertex);
                 let (x, y) = (origin[0] - dx, origin[1] - dy);
                 if shape.distance(x - at[0], y - at[1]) > radius {
                     continue;
@@ -85,7 +87,7 @@ impl Selected {
                 let flags = self
                     .chunks
                     .entry(index)
-                    .or_insert_with(|| vec![false; heights::VERTICES]);
+                    .or_insert_with(|| vec![false; HEIGHTS_PER_CHUNK]);
                 if flags[vertex] != on {
                     flags[vertex] = on;
                     changed += 1;
@@ -191,7 +193,7 @@ impl Selected {
     ) -> Plan {
         // The spacing of the vertex grid. An outer vertex's four neighbours
         // are outer vertices and an inner one's are inner.
-        const STEP: f32 = CHUNK_SIZE / 8.0;
+        const STEP: f32 = UNIT_SIZE;
         self.plan(tile, |at| {
             let (mut sum, mut count) = (0.0, 0);
             for (dx, dy) in [(STEP, 0.0), (-STEP, 0.0), (0.0, STEP), (0.0, -STEP)] {
@@ -215,7 +217,7 @@ impl Selected {
             let mine = self
                 .chunks
                 .entry(index)
-                .or_insert_with(|| vec![false; heights::VERTICES]);
+                .or_insert_with(|| vec![false; HEIGHTS_PER_CHUNK]);
             for (vertex, &on) in flags.iter().enumerate() {
                 if on && !mine[vertex] {
                     mine[vertex] = true;
@@ -265,21 +267,19 @@ impl Selected {
         ) else {
             return set;
         };
-        let side = 16.0 * CHUNK_SIZE;
+        let side = TILE_SIZE;
         let (low_x, low_y) = (top_x - side, top_y - side);
         let on_side = |p: f32, top: f32, low: f32| (p - top).abs() < EPSILON || (p - low).abs() < EPSILON;
         for (index, origin) in origins {
-            for row in 0..9 {
-                for col in 0..9 {
-                    let Some(vertex) = heights::outer(row, col) else {
-                        continue;
-                    };
-                    let (dx, dy) = heights::vertex_offset(vertex);
+            for row in 0..OUTER_SIDE {
+                for col in 0..OUTER_SIDE {
+                    let vertex = outer_index(row, col);
+                    let (dx, dy) = vertex_offset(vertex);
                     let (x, y) = (origin[0] - dx, origin[1] - dy);
                     if on_side(x, top_x, low_x) || on_side(y, top_y, low_y) {
                         set.chunks
                             .entry(index)
-                            .or_insert_with(|| vec![false; heights::VERTICES])[vertex] = true;
+                            .or_insert_with(|| vec![false; HEIGHTS_PER_CHUNK])[vertex] = true;
                     }
                 }
             }
@@ -422,7 +422,7 @@ impl Selected {
             let flags = set
                 .chunks
                 .entry(index)
-                .or_insert_with(|| vec![false; heights::VERTICES]);
+                .or_insert_with(|| vec![false; HEIGHTS_PER_CHUNK]);
             for word in words {
                 let (first, last) = match word.split_once('-') {
                     Some((a, b)) => (a.parse::<usize>(), b.parse::<usize>()),
@@ -431,7 +431,7 @@ impl Selected {
                 let (Ok(first), Ok(last)) = (first, last) else {
                     return Err(bad());
                 };
-                if first > last || last >= heights::VERTICES {
+                if first > last || last >= HEIGHTS_PER_CHUNK {
                     return Err(bad());
                 }
                 for vertex in first..=last {
@@ -514,14 +514,14 @@ mod tests {
     fn a_set_survives_its_text_form() {
         let mut set = Selected::default();
         set.chunks.insert(17, {
-            let mut flags = vec![false; heights::VERTICES];
+            let mut flags = vec![false; HEIGHTS_PER_CHUNK];
             for vertex in [0, 1, 2, 3, 40, 144] {
                 flags[vertex] = true;
             }
             flags
         });
         set.chunks.insert(255, {
-            let mut flags = vec![false; heights::VERTICES];
+            let mut flags = vec![false; HEIGHTS_PER_CHUNK];
             flags[9] = true;
             flags
         });

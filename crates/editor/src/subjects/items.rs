@@ -53,6 +53,7 @@ use crate::session::EditSession;
 use vale_client::assets::GameAssets;
 use vale_mangos::item::{self, RowValue};
 use vale_mangos::row::{Key, Life, RowEdit};
+use vale_mangos::sql::unquote;
 use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::future, Task};
 use std::collections::{HashMap, HashSet};
@@ -104,9 +105,9 @@ impl Known {
         format!("{} ({})", self.name, self.entry)
     }
 
-    /// The dimmer second line of a list row. See [`sub_line`].
+    /// The dimmer second line of a list row. See [`item::sub_line`].
     pub fn sub(&self) -> String {
-        sub_line(self.class, self.subclass, self.inventory_type, self.item_level)
+        item::sub_line(self.class, self.subclass, self.inventory_type, self.item_level)
     }
 
     /// What the search box is matched against: the name and the second
@@ -160,36 +161,6 @@ impl Known {
             ..self.clone()
         })
     }
-}
-
-/// The inside of a SQL string literal, for a list row to show.
-///
-/// It reads a literal the same way as `crate::ui::tools::spawns::creatures::unquote`, and is
-/// kept separate because that one belongs to a panel and this one to the list.
-/// The store holds every value as a literal, and a name drawn with its quotes
-/// looks like a bug in the list.
-pub fn unquote(literal: &str) -> String {
-    let Some(inner) = literal
-        .strip_prefix('\'')
-        .and_then(|rest| rest.strip_suffix('\''))
-    else {
-        return literal.to_string();
-    };
-    let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' => match chars.next() {
-                Some('n') => out.push('\n'),
-                Some('r') => out.push('\r'),
-                Some('t') => out.push('\t'),
-                Some(other) => out.push(other),
-                None => {}
-            },
-            other => out.push(other),
-        }
-    }
-    out
 }
 
 /// One row of the brief query.
@@ -485,7 +456,7 @@ pub struct Items {
     /// Whether the scripted flags have been acted on. They name a row that
     /// is not read on the frame the flag is read, so they are applied once the
     /// table arrives rather than at startup. See
-    /// `crate::server::items::on_the_command_line`, which waits on this.
+    /// `crate::server::subject::flags::on_the_command_line`, which waits on this.
     pub scripted_done: bool,
     seeded: bool,
     /// A client table's row that a reference on the form was clicked through
@@ -629,11 +600,7 @@ impl Items {
             .rows()
             .filter(|(table, _, _)| *table == item::TEMPLATE)
             .filter_map(|(_, key, _)| {
-                let patch = key
-                    .0
-                    .iter()
-                    .find(|(column, _)| column == "patch")
-                    .and_then(|(_, value)| value.parse::<u32>().ok())?;
+                let patch = key.patch()?;
                 Some((key.first()? as u32, patch))
             })
             .collect();
@@ -675,15 +642,7 @@ impl Items {
     /// tool uses the same arithmetic for the same reasons. See
     /// `vale_mangos::item::RESERVED_ENTRY_BASE`.
     pub fn next_entry(&self, edits: &vale_mangos::row::Edits) -> u32 {
-        let in_database = self.max_entry.map(|highest| highest + 1).unwrap_or(0);
-        let claimed = edits
-            .rows()
-            .filter(|(table, _, row)| *table == item::TEMPLATE && row.life == Life::Insert)
-            .filter_map(|(_, key, _)| key.first())
-            .max()
-            .map(|highest| highest as u32 + 1)
-            .unwrap_or(0);
-        item::RESERVED_ENTRY_BASE.max(in_database).max(claimed)
+        item::NUMBERING.next_entry(self.max_entry, edits)
     }
 
     /// Make a new item, and open it.
@@ -1095,29 +1054,6 @@ impl Items {
     }
 }
 
-/// An archive path with the extension a BLP is stored under.
-///
-/// The display row names the icon and the directory table names the folder;
-/// neither says `.blp`, and the archives are keyed by the whole file name.
-/// The dimmer second line of an item's list row: what kind of item it is,
-/// where it is worn, and its item level. Shared by the item list and the
-/// reference picker, which draw an item alike.
-pub fn sub_line(class: u32, subclass: u32, inventory_type: u32, item_level: u32) -> String {
-    let class_word = item::value_word(&item::CLASSES, class);
-    let subclass_word = item::value_word(item::subclasses(class), subclass);
-    let worn = match inventory_type {
-        0 => String::new(),
-        other => format!(
-            " \u{b7} {}",
-            item::value_word(&item::INVENTORY_TYPES, other)
-        ),
-    };
-    match item_level {
-        0 => format!("{class_word} \u{b7} {subclass_word}{worn}"),
-        level => format!("{class_word} \u{b7} {subclass_word}{worn} \u{b7} ilvl {level}"),
-    }
-}
-
 /// The archive path of an item's bag icon, from its display id, or `None`
 /// when the display row names none.
 ///
@@ -1270,29 +1206,13 @@ fn directory_of(held: &[(&'static str, HashSet<String>)], model: &str) -> Option
 /// fails the apply, and an `UPDATE` onto one fails on the primary key with the
 /// database's own words.
 pub fn plan_move(known: &Known, to: u32, taken: bool) -> Result<Option<(Key, Key)>, String> {
-    if to == known.entry {
-        return Ok(None);
-    }
-    // A removed item is not moved: the claim is a `Delete` row, which
-    // carries no columns and names the entry it removes.
-    if known.claim == Life::Delete {
-        return Err("this project removes this item; press Keep before changing its entry".to_string());
-    }
-    if to == 0 {
-        return Err("0 is not an item entry".to_string());
-    }
-    if to > item::MAX_ENTRY {
-        return Err(format!(
-            "{to} is above {}, the largest value `entry` can hold",
-            item::MAX_ENTRY
-        ));
-    }
-    // Moving a row back to where the database has it is always allowed: the
-    // entry is taken, and by this row.
-    if taken && to != known.read_entry {
-        return Err(format!("item_template entry {to} already exists"));
-    }
-    Ok(Some((known.key(), item::template_key(to, known.patch))))
+    let row = vale_mangos::row::Numbered {
+        entry: known.entry,
+        read_entry: known.read_entry,
+        patch: known.patch,
+        life: known.claim,
+    };
+    vale_mangos::row::plan_rekey(&item::NUMBERING, row, to, taken)
 }
 
 /// Resolve a [`Look`] from the archives: their side of the `display_id` column.
@@ -1526,7 +1446,7 @@ impl Items {
                 .get(item::TEMPLATE, &key, column)
                 .map(str::to_string)
                 .or_else(|| {
-                    item::column(item::TEMPLATE, column).and_then(|found| found.literal(&row.row))
+                    item::TEMPLATE_TABLE.column(column).and_then(|found| found.literal(&row.row))
                 }),
         )
     }
@@ -1629,7 +1549,7 @@ fn read_the_table(
         items.trouble = Some(vale_mangos::conn::Where::absent());
         return;
     };
-    let patch = crate::tools::spawns::creatures::server_patch(&settings);
+    let patch = crate::server::settings::server_patch(&settings);
     items.trouble = None;
     items.task = Some(crate::server::queue::read(async move {
         let mut db = vale_mangos::conn::Db::open(&at)?;
@@ -1697,7 +1617,7 @@ fn read_the_row(
     let Some((at, _)) = settings.resolve() else {
         return;
     };
-    let patch = crate::tools::spawns::creatures::server_patch(&settings);
+    let patch = crate::server::settings::server_patch(&settings);
     // Read from where the database has it, which is not the entry the
     // panel opened while the project moves the item and has not applied it.
     let read_at = items
@@ -1741,11 +1661,7 @@ pub fn fold_the_store_in(all: &mut [Known], edits: &vale_mangos::row::Edits) {
     let moves: Vec<(u32, u32, u32)> = edits
         .moves(item::TEMPLATE)
         .filter_map(|(from, to)| {
-            let patch = from
-                .0
-                .iter()
-                .find(|(column, _)| column == "patch")
-                .and_then(|(_, value)| value.parse::<u32>().ok())?;
+            let patch = from.patch()?;
             Some((from.first()? as u32, patch, to.first()? as u32))
         })
         .collect();
@@ -1792,12 +1708,7 @@ fn rebuild_created(mut items: ResMut<Items>, session: Option<Res<EditSession>>) 
         if items.all.iter().any(|known| known.entry == entry) {
             continue;
         }
-        let patch = key
-            .0
-            .iter()
-            .find(|(column, _)| column == "patch")
-            .and_then(|(_, value)| value.parse::<u32>().ok())
-            .unwrap_or(0);
+        let patch = key.patch().unwrap_or(0);
         items.created.push(Known {
             entry,
             read_entry: entry,
@@ -1831,12 +1742,7 @@ fn rebuild_created(mut items: ResMut<Items>, session: Option<Res<EditSession>>) 
         if items.all.iter().any(|known| known.entry == entry) {
             continue;
         }
-        let patch = key
-            .0
-            .iter()
-            .find(|(column, _)| column == "patch")
-            .and_then(|(_, value)| value.parse::<u32>().ok())
-            .unwrap_or(0);
+        let patch = key.patch().unwrap_or(0);
         items.created.push(Known {
             entry,
             read_entry: entry,
@@ -1890,7 +1796,7 @@ fn on_the_command_line(
         return;
     };
     if args.item_new {
-        let patch = crate::tools::spawns::creatures::server_patch(&settings);
+        let patch = crate::server::settings::server_patch(&settings);
         let entry = items.create(session, "New Item", patch, time.elapsed_secs_f64());
         info!("--item-new: item {entry} created at patch {patch}");
     }
@@ -2124,15 +2030,6 @@ mod tests {
         assert_eq!(shown.name, "Linen Bandage");
         assert_eq!(shown.quality, 3);
         assert_eq!(shown.entry, 2589, "the key is not moved by an edit");
-    }
-
-    /// A name is stored as a SQL literal and drawn as itself, with its escapes
-    /// resolved, so a list row never shows `'Gnomish Death Ray\'s'`.
-    #[test]
-    fn a_stored_name_is_unquoted_for_the_list() {
-        assert_eq!(unquote("'Linen Cloth'"), "Linen Cloth");
-        assert_eq!(unquote("'Gnomish Death Ray\\'s'"), "Gnomish Death Ray's");
-        assert_eq!(unquote("2589"), "2589", "a number is not a literal");
     }
 
     /// The second line says what the item is in words, which is why a

@@ -65,7 +65,7 @@
 //! startup only, and the teleport, inn and quest tables on their own
 //! `.reload`.
 
-use super::flightpaths::{aim_of, eye, meets_upright_plane, DRAG_PIXELS, HANDLE_PIXELS};
+use super::flightpaths::{aim_of, eye, DRAG_PIXELS, HANDLE_PIXELS};
 use crate::tools::Tool;
 use crate::marks::{Look, Marks};
 use crate::session::{EditSession, rows::Gesture};
@@ -315,7 +315,7 @@ impl Triggers {
                 let mut row = Row::new();
                 row.insert("id".to_string(), Some(id.to_string()));
                 for (column, value) in &claim.columns {
-                    row.insert(column.clone(), Some(crate::ui::widgets::rowform::unquote(value)));
+                    row.insert(column.clone(), Some(vale_mangos::sql::unquote(value)));
                 }
                 Some((trigger::Template::from_row(&row)?, false))
             }
@@ -444,7 +444,7 @@ pub(crate) fn shown(edits: &Edits, table: &str, key: &Key, held: Option<&[Assign
         row.insert(column.clone(), Some(value.clone()));
     }
     let mut put = |column: &str, literal: &str| {
-        row.insert(column.to_string(), Some(crate::ui::widgets::rowform::unquote(literal)));
+        row.insert(column.to_string(), Some(vale_mangos::sql::unquote(literal)));
     };
     // A row the project creates is shown as its creation even when the
     // database also holds it, which it does once the creation is applied.
@@ -488,7 +488,7 @@ pub(crate) fn shown(edits: &Edits, table: &str, key: &Key, held: Option<&[Assign
 
 /// The columns of one of the tables `crate::server::places` writes.
 fn columns_of(table: &str) -> &'static [vale_mangos::schema::Column] {
-    crate::server::places::columns_of(table)
+    crate::server::places::table_named(table).map_or(&[], |table| table.columns)
 }
 
 /// The columns a row the project creates does not carry, which the plan
@@ -1007,7 +1007,7 @@ fn read_the_rows(
         triggers.trouble = Some(vale_mangos::conn::Where::absent());
         return;
     };
-    let patch = crate::tools::spawns::creatures::server_patch(&settings);
+    let patch = crate::server::settings::server_patch(&settings);
     triggers.reading = Some(crate::server::queue::read(async move {
         use vale_mangos::schema::RowValue;
         let mut db = vale_mangos::conn::Db::open(&at)?;
@@ -1051,44 +1051,13 @@ fn read_the_rows(
 /// misses or the volume is behind the eye.
 pub fn ray_meets(trigger: &Trigger, origin: Vec3, direction: Vec3) -> Option<f32> {
     let centre = Vec3::from(trigger.at);
-    if trigger.is_sphere() {
-        let to = centre - origin;
-        let along = to.dot(direction);
-        let off = to.length_squared() - along * along;
-        let r2 = trigger.radius * trigger.radius;
-        if off > r2 {
-            return None;
-        }
-        let half = (r2 - off).sqrt();
-        return (along + half >= 0.0).then(|| (along - half).max(0.0));
-    }
-    let local = into_box(trigger.yaw);
-    let (o, d) = (local(origin - centre), local(direction));
-    let half = Vec3::from(trigger.extent) * 0.5;
-    let (mut near, mut far) = (f32::NEG_INFINITY, f32::INFINITY);
-    for axis in 0..3 {
-        let (oa, da, ha) = (o[axis], d[axis], half[axis]);
-        if da.abs() < 1e-6 {
-            if oa.abs() > ha {
-                return None;
-            }
-            continue;
-        }
-        let (a, b) = ((-ha - oa) / da, (ha - oa) / da);
-        near = near.max(a.min(b));
-        far = far.min(a.max(b));
-        if near > far {
-            return None;
+    match trigger.is_sphere() {
+        true => crate::pick::ray_meets_sphere(origin, direction, centre, trigger.radius),
+        false => {
+            let half = Vec3::from(trigger.extent) * 0.5;
+            crate::pick::ray_enters_turned_box(origin, direction, centre, half, trigger.yaw)
         }
     }
-    (far >= 0.0).then(|| near.max(0.0))
-}
-
-/// A vector in the world's axes taken into a box's own frame, turned by `yaw`
-/// about up.
-fn into_box(yaw: f32) -> impl Fn(Vec3) -> Vec3 {
-    let (s, c) = yaw.sin_cos();
-    move |v: Vec3| Vec3::new(v.x * c + v.y * s, -v.x * s + v.y * c, v.z)
 }
 
 /// A box trigger's eight corners in the world's axes: the four of the bottom
@@ -1271,7 +1240,7 @@ fn drag(
     };
     let hit = match vertical {
         false => crate::pick::meets_plane(origin, direction, from.z),
-        true => meets_upright_plane(origin, direction, from),
+        true => crate::pick::meets_upright_plane(origin, direction, from),
     };
     let Some(hit) = hit else { return };
     let grab = match held.grab {

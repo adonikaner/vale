@@ -50,9 +50,8 @@
 
 use super::file::{AdtFile, MapChunk, Region, SubChunk, MCNK_HEADER};
 use super::header::at;
-use vale_assets::world::adt::{
-    CHUNKS_PER_SIDE, CHUNK_SIZE, HEIGHTS_PER_CHUNK, MAP_ORIGIN, TILE_SIZE,
-};
+use vale_assets::world::adt::{chunk_xy, CHUNKS_PER_SIDE, CHUNK_SIZE, HEIGHTS_PER_CHUNK};
+use vale_assets::world::terrain::tile_corner;
 
 /// How many map chunks a tile has.
 pub const CHUNKS: usize = CHUNKS_PER_SIDE * CHUNKS_PER_SIDE;
@@ -112,11 +111,11 @@ pub fn blank_tile(tile_x: u32, tile_y: u32, texture: &str, height: f32, area: u3
 /// Where map chunk `index` of tile `(tile_x, tile_y)` sits — see the module
 /// comment, where the measurement is.
 pub fn chunk_origin(tile_x: u32, tile_y: u32, index: usize) -> [f32; 2] {
-    let ix = (index % CHUNKS_PER_SIDE) as f32;
-    let iy = (index / CHUNKS_PER_SIDE) as f32;
+    let (ix, iy) = chunk_xy(index);
+    let corner = tile_corner(tile_x, tile_y);
     [
-        MAP_ORIGIN - tile_y as f32 * TILE_SIZE - iy * CHUNK_SIZE,
-        MAP_ORIGIN - tile_x as f32 * TILE_SIZE - ix * CHUNK_SIZE,
+        corner[0] - iy as f32 * CHUNK_SIZE,
+        corner[1] - ix as f32 * CHUNK_SIZE,
     ]
 }
 
@@ -124,8 +123,9 @@ fn blank_chunk(tile_x: u32, tile_y: u32, index: usize, height: f32, area: u32) -
     let mut header = [0u8; MCNK_HEADER];
     let origin = chunk_origin(tile_x, tile_y, index);
 
-    put_u32(&mut header, at::INDEX_X, (index % CHUNKS_PER_SIDE) as u32);
-    put_u32(&mut header, at::INDEX_Y, (index / CHUNKS_PER_SIDE) as u32);
+    let (index_x, index_y) = chunk_xy(index);
+    put_u32(&mut header, at::INDEX_X, index_x as u32);
+    put_u32(&mut header, at::INDEX_Y, index_y as u32);
     put_u32(&mut header, at::LAYER_COUNT, 1);
     put_u32(&mut header, at::AREA_ID, area);
     put_f32(&mut header, at::POSITION, origin[0]);

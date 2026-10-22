@@ -67,6 +67,7 @@ use crate::session::EditSession;
 use vale_client::assets::GameAssets;
 use vale_edit::adt::AdtFile;
 use vale_edit::project::Project;
+use vale_edit::TileKey;
 use vale_assets::archive::{ChainPool, PooledChain};
 use vale_mangos::datadir::{self, Outcome, Reach, Request, Tile, Tools};
 use bevy::prelude::*;
@@ -161,21 +162,6 @@ pub struct Dirty {
     pub hash: Option<u64>,
 }
 
-/// `World\Maps\<Map>\<Map>_<x>_<y>.adt` to `(map name, x, y)`.
-pub fn parse_tile_vpath(vpath: &str) -> Option<(String, u32, u32)> {
-    let parts: Vec<&str> = vpath.split(['\\', '/']).collect();
-    let [world, maps, map, file] = parts[..] else {
-        return None;
-    };
-    if !world.eq_ignore_ascii_case("World") || !maps.eq_ignore_ascii_case("Maps") {
-        return None;
-    }
-    let stem = file.strip_suffix(".adt").or_else(|| file.strip_suffix(".ADT"))?;
-    let rest = stem.strip_prefix(map)?.strip_prefix('_')?;
-    let (x, y) = rest.split_once('_')?;
-    Some((map.to_string(), x.parse().ok()?, y.parse().ok()?))
-}
-
 /// What the comparison of tiles reads: the project folder, the archive chain,
 /// and `Map.dbc`'s `(id, directory)` list. It owns all three and is `Send`, so
 /// [`dirty`] runs on a worker as well as on the main thread.
@@ -266,7 +252,7 @@ impl TileReader {
             vpath,
             tile: Tile::new(id, x, y),
             reach,
-            hash: Some(fnv1a(&bytes)),
+            hash: Some(vale_edit::project::fnv1a(&bytes)),
         }))
     }
 }
@@ -287,7 +273,7 @@ pub fn dirty(
         .project
         .files()
         .into_iter()
-        .filter(|vpath| parse_tile_vpath(vpath).is_some())
+        .filter(|vpath| TileKey::from_vpath(vpath).is_some())
         .collect();
     // Tiles the record has and the project no longer carries.
     let gone: Vec<String> = record
@@ -303,7 +289,7 @@ pub fn dirty(
     let mut skipped: Vec<String> = Vec::new();
     for (done, vpath) in carried.iter().chain(&gone).enumerate() {
         progress(done, total);
-        let Some((map, x, y)) = parse_tile_vpath(vpath) else {
+        let Some(TileKey { map, x, y }) = TileKey::from_vpath(vpath) else {
             continue;
         };
         let left_the_project = done >= carried.len();
@@ -344,16 +330,6 @@ pub fn dirty_for(
         }
     }
     (out, skipped)
-}
-
-/// FNV-1a 64, the hash `vale_edit::project` records archives by.
-fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
 }
 
 /// Where the tools are, from the environment or the panel, or the sentence to
@@ -841,21 +817,6 @@ pub fn on_the_command_line(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_tile_path_is_read_back_to_its_map_and_numbers() {
-        assert_eq!(
-            parse_tile_vpath(r"World\Maps\Azeroth\Azeroth_32_48.adt"),
-            Some(("Azeroth".to_string(), 32, 48))
-        );
-        assert_eq!(
-            parse_tile_vpath("World/Maps/Kalimdor/Kalimdor_3_57.adt"),
-            Some(("Kalimdor".to_string(), 3, 57))
-        );
-        assert_eq!(parse_tile_vpath(r"World\Maps\Azeroth\Azeroth.wdt"), None);
-        assert_eq!(parse_tile_vpath(r"DBFilesClient\Spell.dbc"), None);
-        assert_eq!(parse_tile_vpath(r"World\Maps\Azeroth\Other_32_48.adt"), None);
-    }
 
     /// The record round-trips, and a line that is not a path and a hash is
     /// not an entry.

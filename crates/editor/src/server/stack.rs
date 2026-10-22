@@ -62,6 +62,7 @@
 
 use super::queue::{Finish, Work};
 use super::settings::ServerSettings;
+use super::subject::{self, RowSubject};
 use super::{behaviour, creatures, gameobjects, items, loot, places, quests, services};
 use crate::session::EditSession;
 
@@ -141,72 +142,53 @@ impl Subject {
         Subject::Graveyards,
     ];
 
-    /// The `places` group behind one of the three subjects that module holds.
-    pub fn group(self) -> Option<places::Group> {
+    /// The number of row subjects, which sizes every per-subject array.
+    pub const COUNT: usize = Self::ORDER.len();
+
+    /// The writer that holds everything about the subject. The one place a
+    /// subject is matched to its module.
+    pub fn row_subject(self) -> &'static dyn RowSubject {
         match self {
-            Subject::Conditions => Some(places::Group::Conditions),
-            Subject::Gossip => Some(places::Group::Gossip),
-            Subject::Maps => Some(places::Group::Maps),
-            Subject::Triggers => Some(places::Group::Triggers),
-            Subject::Graveyards => Some(places::Group::Graveyards),
-            _ => None,
+            Subject::Creatures => &creatures::Creatures,
+            Subject::GameObjects => &gameobjects::GameObjects,
+            Subject::Items => &items::Items,
+            Subject::Quests => &quests::Quests,
+            Subject::Loot => &loot::Loot,
+            Subject::Services => &services::Services,
+            Subject::Behaviour => &behaviour::Behaviour,
+            Subject::Conditions => &places::Group::Conditions,
+            Subject::Gossip => &places::Group::Gossip,
+            Subject::Maps => &places::Group::Maps,
+            Subject::Triggers => &places::Group::Triggers,
+            Subject::Graveyards => &places::Group::Graveyards,
         }
     }
 
-    fn index(self) -> usize {
+    /// Its place in [`Self::ORDER`], which indexes every per-subject array.
+    pub fn index(self) -> usize {
         Self::ORDER.iter().position(|s| *s == self).unwrap_or(0)
+    }
+
+    /// The subject `--apply` and `--revert` name by `word`, or `None`.
+    pub fn named(word: &str) -> Option<Subject> {
+        Self::ORDER.into_iter().find(|subject| subject.row_subject().word() == word)
     }
 
     /// The word a label and a status line use.
     pub fn name(self) -> &'static str {
-        match self {
-            Subject::Creatures => "creatures",
-            Subject::GameObjects => "game objects",
-            Subject::Items => "items",
-            Subject::Quests => "quests",
-            Subject::Loot => "loot",
-            Subject::Services => "vendors and trainers",
-            Subject::Behaviour => "behaviour",
-            Subject::Conditions => "conditions",
-            Subject::Gossip => "gossip menus",
-            Subject::Maps => "maps",
-            Subject::Triggers => "area triggers",
-            Subject::Graveyards => "graveyards",
-        }
+        self.row_subject().name()
     }
 
     /// Where the subject's revert file is, under the project. Public because
     /// `super::held` reads the revert files to say what a project has applied.
     pub fn revert_vpath(self) -> &'static str {
-        match self {
-            Subject::Creatures => creatures::REVERT_VPATH,
-            Subject::GameObjects => gameobjects::REVERT_VPATH,
-            Subject::Items => items::REVERT_VPATH,
-            Subject::Quests => quests::REVERT_VPATH,
-            Subject::Loot => loot::REVERT_VPATH,
-            Subject::Services => services::REVERT_VPATH,
-            Subject::Behaviour => behaviour::REVERT_VPATH,
-            Subject::Conditions | Subject::Gossip | Subject::Maps | Subject::Triggers | Subject::Graveyards => {
-                self.group().map_or("", places::Group::revert_vpath)
-            }
-        }
+        self.row_subject().revert_vpath()
     }
 
     /// Whether a table read out of the project's row store is this subject's
     /// to write.
     pub fn owns(self, table: &str) -> bool {
-        match self {
-            Subject::Creatures => vale_mangos::creature::table_named(table).is_some(),
-            Subject::GameObjects => vale_mangos::gameobject::table_named(table).is_some(),
-            Subject::Items => vale_mangos::item::table_named(table).is_some(),
-            Subject::Quests => vale_mangos::quest::table_named(table).is_some(),
-            Subject::Loot => vale_mangos::loot::table_named(table).is_some(),
-            Subject::Services => services::owns(table),
-            Subject::Behaviour => behaviour::owns(table),
-            Subject::Conditions | Subject::Gossip | Subject::Maps | Subject::Triggers | Subject::Graveyards => {
-                self.group() == places::Group::of(table)
-            }
-        }
+        self.row_subject().owns(table)
     }
 
     /// Whether the project has rows of this subject in the database.
@@ -217,76 +199,16 @@ impl Subject {
     /// `(whether the project claims any row of it, whether the database holds
     /// exactly that plan)`.
     fn claims_and_current(self, session: &EditSession) -> (bool, bool) {
-        let (empty, signature, applied) = match self {
-            Subject::Creatures => {
-                let plan = creatures::plan(session);
-                (plan.is_empty(), plan.signature(), session.applied_creatures)
-            }
-            Subject::GameObjects => {
-                let plan = gameobjects::plan(session);
-                (plan.is_empty(), plan.signature(), session.applied_gameobjects)
-            }
-            Subject::Items => {
-                let plan = items::plan(session);
-                (plan.is_empty(), plan.signature(), session.applied_items)
-            }
-            Subject::Quests => {
-                let plan = quests::plan(session);
-                (plan.is_empty(), plan.signature(), session.applied_quests)
-            }
-            Subject::Loot => {
-                let plan = loot::plan(session);
-                (plan.is_empty(), plan.signature(), session.applied_loot)
-            }
-            Subject::Services => {
-                let plan = services::plan(session);
-                (plan.is_empty(), plan.signature(), session.applied_services)
-            }
-            Subject::Behaviour => {
-                let plan = behaviour::plan(session);
-                (plan.is_empty(), plan.signature(), session.applied_behaviour)
-            }
-            Subject::Conditions | Subject::Gossip | Subject::Maps | Subject::Triggers | Subject::Graveyards => {
-                let Some(group) = self.group() else {
-                    return (false, false);
-                };
-                let plan = places::plan(session, group);
-                (plan.is_empty(), plan.signature(), session.applied_places[group.index()])
-            }
-        };
-        (!empty, applied == Some(signature))
+        let plan = subject::plan(session, self.row_subject());
+        (!plan.is_empty(), session.applied[self.index()] == Some(plan.signature()))
     }
 
     fn apply_step(self, session: &EditSession, server: &ServerSettings) -> Result<Option<Step>, String> {
-        match self {
-            Subject::Creatures => creatures::apply_step(session, server),
-            Subject::GameObjects => gameobjects::apply_step(session, server),
-            Subject::Items => items::apply_step(session, server),
-            Subject::Quests => quests::apply_step(session, server),
-            Subject::Loot => loot::apply_step(session, server),
-            Subject::Services => services::apply_step(session, server),
-            Subject::Behaviour => behaviour::apply_step(session, server),
-            Subject::Conditions | Subject::Gossip | Subject::Maps | Subject::Triggers | Subject::Graveyards => match self.group() {
-                Some(group) => places::apply_step(session, server, group),
-                None => Ok(None),
-            },
-        }
+        subject::apply::apply_step(session, server, self.row_subject())
     }
 
     fn revert_step(self, session: &EditSession, server: &ServerSettings) -> Result<Option<Step>, String> {
-        match self {
-            Subject::Creatures => creatures::revert_step(session, server),
-            Subject::GameObjects => gameobjects::revert_step(session, server),
-            Subject::Items => items::revert_step(session, server),
-            Subject::Quests => quests::revert_step(session, server),
-            Subject::Loot => loot::revert_step(session, server),
-            Subject::Services => services::revert_step(session, server),
-            Subject::Behaviour => behaviour::revert_step(session, server),
-            Subject::Conditions | Subject::Gossip | Subject::Maps | Subject::Triggers | Subject::Graveyards => match self.group() {
-                Some(group) => places::revert_step(session, server, group),
-                None => Ok(None),
-            },
-        }
+        subject::apply::revert_step(session, server, self.row_subject())
     }
 }
 
@@ -306,7 +228,7 @@ pub struct Stands {
 ///
 /// Returns `(put back, apply)`: the first list newest first, the second in
 /// order. Both are empty when there is nothing to do.
-pub fn order(wanted: Wanted, stands: &[Stands; Subject::ORDER.len()]) -> (Vec<Subject>, Vec<Subject>) {
+pub fn order(wanted: Wanted, stands: &[Stands; Subject::COUNT]) -> (Vec<Subject>, Vec<Subject>) {
     let from = match wanted {
         Wanted::Apply(subject) | Wanted::PutBack(subject) => subject.index(),
         Wanted::Save => {
@@ -332,12 +254,12 @@ pub fn order(wanted: Wanted, stands: &[Stands; Subject::ORDER.len()]) -> (Vec<Su
             Wanted::Save => s.claims,
         }
     };
-    let put_back: Vec<Subject> = (from..Subject::ORDER.len())
+    let put_back: Vec<Subject> = (from..Subject::COUNT)
         .rev()
         .filter(|&index| stands[index].applied)
         .map(|index| Subject::ORDER[index])
         .collect();
-    let applied: Vec<Subject> = (from..Subject::ORDER.len())
+    let applied: Vec<Subject> = (from..Subject::COUNT)
         .filter(|&index| apply(index))
         .map(|index| Subject::ORDER[index])
         .collect();

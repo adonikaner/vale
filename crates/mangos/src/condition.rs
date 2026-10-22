@@ -41,18 +41,16 @@
 //!
 //! Live on `.reload conditions` (`Chat.cpp:818`).
 
-use crate::row::{Assignment, Key};
+use crate::row::{Assignment, Key, Table};
 use crate::schema::{Bit, Column, Group, Kind};
 
 pub const TABLE: &str = "conditions";
 
 /// The one table, as the row subjects list their tables.
-pub const TABLES: [&str; 1] = [TABLE];
+pub const TABLES: &[Table] = &[CONDITIONS];
 
-/// The static name for [`TABLE`] read out of a file, or `None`.
-pub fn table_named(name: &str) -> Option<&'static str> {
-    TABLES.into_iter().find(|table| *table == name)
-}
+/// `conditions`. Every row may be edited, created and removed.
+pub const CONDITIONS: Table = Table::new(TABLE, &COLUMNS);
 
 /// `flags`, `ConditionFlags` in `Conditions.h`.
 pub const FLAGS: [Bit; 2] = [
@@ -73,19 +71,6 @@ pub const COLUMNS: [Column; 7] = [
     Column { name: "value4", kind: Kind::Signed, group: Group::Requirements, about: "the fourth value; its meaning depends on the type" },
     Column { name: "flags", kind: Kind::Flags(&FLAGS), group: Group::Requirements, about: "reverse the result, or swap target and source" },
 ];
-
-/// Every column of [`TABLE`].
-pub fn columns_of(table: &str) -> &'static [Column] {
-    match table {
-        TABLE => &COLUMNS,
-        _ => &[],
-    }
-}
-
-/// One column, by name.
-pub fn column(table: &str, name: &str) -> Option<&'static Column> {
-    columns_of(table).iter().find(|column| column.name == name)
-}
 
 /// The key of a condition.
 pub fn key(entry: u32) -> Key {

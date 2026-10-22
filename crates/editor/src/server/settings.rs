@@ -423,6 +423,34 @@ fn follow(
     );
 }
 
+/// The content patch this machine's server reads its rows at, found from the
+/// same settings that locate the server.
+///
+/// The patch is half the key a template edit is written under. Reading it
+/// from the wrong place produces an edit that applies cleanly to a row the
+/// running server does not use. It is read from the same `mangosd.conf` the
+/// connection is; with only `VALE_WORLDDB` set there is no conf and the
+/// default is used.
+pub fn server_patch(settings: &ServerSettings) -> u32 {
+    use vale_mangos::conn;
+    let conf = match settings.resolve() {
+        Some((_, Source::Env("VALE_MANGOSD"))) => {
+            std::env::var("VALE_MANGOSD").ok()
+        }
+        Some((_, Source::Panel)) => Some(settings.conf.clone()),
+        _ => None,
+    };
+    let Some(conf) = conf else {
+        return conn::DEFAULT_WOW_PATCH;
+    };
+    let at = std::path::PathBuf::from(conf);
+    let file = match at.is_dir() {
+        true => at.join("mangosd.conf"),
+        false => at,
+    };
+    conn::wow_patch_from_conf(file).unwrap_or(conn::DEFAULT_WOW_PATCH)
+}
+
 pub struct SettingsPlugin;
 
 impl Plugin for SettingsPlugin {

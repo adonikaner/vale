@@ -356,43 +356,22 @@ pub struct EditSession {
     /// the database between one launch and the next is not this editor's to
     /// know, since a row may have been changed by hand or by another project.
     pub applied_signature: Option<u64>,
-    /// …and the same for the creature half, which is a different plan
-    /// applied by a different gesture — see `crate::server::creatures`.
+    /// …and the same for each row subject, indexed by
+    /// [`crate::server::stack::Subject::index`]: what the last Apply of that
+    /// subject that succeeded in this process put in the database, as
+    /// `crate::server::subject::Plan::signature` measures it.
     ///
-    /// Two fields and not one because the two are applied at different
-    /// moments: a spell reaches the database on every save and a creature row
-    /// when a person presses a button, so one number would report the other
-    /// half's state. The panel uses it to choose between "applied" and
-    /// "applied, and changed since", two states that look identical in a
-    /// revert file.
+    /// One slot per subject, apart from [`Self::applied_signature`], because
+    /// each is applied by its own gesture at its own moment, so one number
+    /// would report another subject's state on this one's block. The panel
+    /// uses it to choose between "applied" and "applied, and changed since",
+    /// two states that look identical in a revert file.
     ///
     /// Per process, for [`Self::applied_signature`]'s reason. `None` at the
     /// start of a session means the panel falls back to what the revert file
     /// says, which is that the rows in it were applied — because what happened
     /// in an earlier session is not this editor's to know beyond that.
-    pub applied_creatures: Option<u64>,
-    /// …and the same for the item half, which is a third plan applied
-    /// by a third gesture — see `crate::server::items`.
-    ///
-    /// Its own field for [`Self::applied_creatures`]' reason: the three are
-    /// applied at three different moments, so one number would report
-    /// another half's state on this half's panel.
-    pub applied_items: Option<u64>,
-    /// …and for the quest half — see `crate::server::quests`.
-    pub applied_quests: Option<u64>,
-    /// …and for the game-object half — see `crate::server::gameobjects`.
-    pub applied_gameobjects: Option<u64>,
-    /// …and for the loot half — see `crate::server::loot`.
-    pub applied_loot: Option<u64>,
-    /// …and for the behaviour half: events, scripts and spell lists. See
-    /// `crate::server::behaviour`.
-    pub applied_behaviour: Option<u64>,
-    /// …and for what creatures sell and teach. See `crate::server::services`.
-    pub applied_services: Option<u64>,
-    /// …and of the five subjects of [`crate::server::places`], by
-    /// `places::Group::index`: conditions, gossip, maps, area triggers,
-    /// graveyards.
-    pub applied_places: [Option<u64>; 5],
+    pub applied: [Option<u64>; crate::server::stack::Subject::COUNT],
     /// How many times this session has written the world database, applying
     /// or putting back any subject, or pointed at a different database. Every
     /// cache of what the database holds is keyed on it; see
@@ -405,7 +384,7 @@ pub struct EditSession {
     /// keyed on its own subject's counter went on showing the rows from before
     /// such a move. Bump it with [`Self::wrote_the_database`].
     ///
-    /// Not [`Self::applied_quests`] and its siblings, which cannot tell a
+    /// Not [`Self::applied`], which cannot tell a
     /// put-back from nothing in a session that did not make the apply.
     pub database_writes: u64,
     /// The undo entry every server-row write goes on while a group is being
@@ -479,14 +458,7 @@ impl EditSession {
             server_paths_unsaved: false,
             server_scripts_unsaved: false,
             applied_signature: None,
-            applied_creatures: None,
-            applied_items: None,
-            applied_quests: None,
-            applied_gameobjects: None,
-            applied_loot: None,
-            applied_behaviour: None,
-            applied_services: None,
-            applied_places: [None; 5],
+            applied: [None; crate::server::stack::Subject::COUNT],
             database_writes: 0,
             one_gesture: None,
             shipped: None,

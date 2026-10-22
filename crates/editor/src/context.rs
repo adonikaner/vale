@@ -172,7 +172,7 @@ fn open(
     // outside it selects that chunk alone.
     if *tool == Tool::Chunks {
         if let (Some(coord), Some(chunk)) = (cursor.tile, cursor.chunk) {
-            let cell = crate::tools::ground::chunks::Cell::of(coord, ((chunk % 16) as u32, (chunk / 16) as u32));
+            let cell = crate::tools::ground::chunks::Cell::of_chunk(coord, chunk);
             if !chunks.selected.contains(&cell) {
                 chunks.select([cell]);
             }
