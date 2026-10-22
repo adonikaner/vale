@@ -21,26 +21,32 @@
 //! is saved through [`EditSession::save_bytes`], so it is undone by removing
 //! it, not by `Ctrl+Z`.
 //!
-//! ## A ground texture is two files
+//! ## The dialog asks what a texture is for, not where it goes
 //!
-//! A texture imported under `Tileset\` is written as the game ships its
-//! ground: `<name>.blp` in DXT1 with no alpha, and `<name>_s.blp` in DXT3, the
-//! same picture with the gloss mask in its alpha. The 1.12 client opens the
-//! `_s` file in place of the plain one whenever its `specular` setting is on,
-//! and has no fallback to the plain file, so a ground texture without one is
-//! drawn as a missing texture. Every shipped tileset has both, and none is
-//! larger than 256x256, which the dialog scales a larger picture down to
-//! unless asked not to. See [`Import::ground`].
+//! A [`Purpose`] decides the folder, the size, the compression and the files
+//! written, so a person chooses Ground texture rather than typing `Tileset\`.
+//! The folder is shown and, for Other, typed; for a ground texture only the
+//! folder under `Tileset\` is typed.
+//!
+//! A ground texture is two files, as the game ships its ground: `<name>.blp`
+//! in DXT1 with no alpha, and `<name>_s.blp` in DXT3, the same picture with
+//! the gloss mask in its alpha. The 1.12 client opens the `_s` file in place
+//! of the plain one whenever its `specular` setting is on, and has no fallback
+//! to the plain file, so a ground texture without one is drawn as a missing
+//! texture. Every shipped tileset has both, and none is larger than 256x256;
+//! every shipped icon is 64x64. The dialog scales a larger picture down to its
+//! purpose's size unless asked not to.
 //!
 //! An import can be asked for by a form field (a creature display's skin):
 //! the dialog then starts in that field's folder, and the field is set to the
-//! imported texture's name once it is written. See [`FieldTarget`].
+//! imported texture's name once it is written. See [`FieldTarget`]. The
+//! texture tool's panel asks for a ground texture, and the brush takes it once
+//! it is written ([`Assets::imported`]).
 //!
 //! The file dialog is the system's own and blocks while it is open, so it is
 //! run by [`answer`], outside the panel, as the tile tool runs its picture
 //! dialogs.
 
-use super::Tool;
 use crate::session::EditSession;
 use vale_assets::world::blp::{self, Encoding};
 use vale_edit::manifest::Kind;
@@ -48,17 +54,79 @@ use vale_edit::project::Project;
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 
-/// The folders a texture is commonly imported into, offered by the dialog.
-/// Any other folder can be typed.
-///
-/// A creature's or an item's skin is not among them: a display finds its
-/// skins in its model's own folder, so a skin is imported from the display's
-/// field, which starts the dialog there.
-pub const FOLDERS: [(&str, &str); 3] = [
-    ("Ground textures", "Tileset\\Custom\\"),
-    ("Textures", "Textures\\Custom\\"),
-    ("Item and spell icons", "Interface\\Icons\\"),
-];
+/// Where a ground texture goes, and the folder under it the dialog starts in.
+pub const GROUND_ROOT: &str = "Tileset\\";
+pub const GROUND_FOLDER: &str = "Tileset\\Custom\\";
+/// Where an icon goes.
+pub const ICON_FOLDER: &str = "Interface\\Icons\\";
+/// Where any other texture starts.
+pub const OTHER_FOLDER: &str = "Textures\\Custom\\";
+
+/// What an imported texture is for. It decides where the texture is written,
+/// how large it is and which files are written. See the module comment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    /// Ground, painted with the texture tool: under `Tileset\`, as a pair with
+    /// its `_s` gloss file, at most 256x256.
+    Ground,
+    /// A bag, spell or button icon: in `Interface\Icons\`, 64x64.
+    Icon,
+    /// The texture a form field names, in the folder the field's file is found
+    /// in. Only a field asks for this; see [`FieldTarget`].
+    Field,
+    /// Any other texture, in a folder typed in the dialog.
+    Other,
+}
+
+impl Purpose {
+    /// The purposes the dialog offers a choice between. A field's import is
+    /// its field's.
+    pub const OFFERED: [Purpose; 3] = [Purpose::Ground, Purpose::Icon, Purpose::Other];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Purpose::Ground => "Ground texture",
+            Purpose::Icon => "Icon",
+            Purpose::Field => "For the field",
+            Purpose::Other => "Other",
+        }
+    }
+
+    /// One line on what it is for and what is written.
+    pub fn hint(self) -> &'static str {
+        match self {
+            Purpose::Ground => "Painted on the terrain with the texture tool. Written as the \
+                                texture and its _s gloss file, as the game's ground is.",
+            Purpose::Icon => "An item, spell or button icon in Interface\\Icons\\, 64x64 as \
+                              every shipped icon is.",
+            Purpose::Field => "Named by the field that asked, in the folder it is read from.",
+            Purpose::Other => "Any other texture, in the folder below: a model's skin, a \
+                               loading screen, a particle.",
+        }
+    }
+
+    /// The side the purpose's shipped textures are at most, which an import
+    /// is scaled down to unless the dialog says otherwise.
+    pub fn largest(self) -> Option<u32> {
+        match self {
+            Purpose::Ground => Some(GROUND_SIDE),
+            Purpose::Icon => Some(ICON_SIDE),
+            Purpose::Field | Purpose::Other => None,
+        }
+    }
+
+    /// What a texture at `vpath` is for, from its folder.
+    pub fn of_path(vpath: &str) -> Purpose {
+        let lower = vpath.replace('/', "\\").to_ascii_lowercase();
+        if lower.starts_with("tileset\\") {
+            Purpose::Ground
+        } else if lower.starts_with("interface\\icons\\") {
+            Purpose::Icon
+        } else {
+            Purpose::Other
+        }
+    }
+}
 
 /// A form field an import was asked for by, which is set to the imported
 /// texture's name once it is written.
@@ -103,6 +171,8 @@ impl FieldTarget {
 
 /// The largest side of any ground texture the archives ship.
 pub const GROUND_SIDE: u32 = 256;
+/// The side of every icon the archives ship.
+pub const ICON_SIDE: u32 = 64;
 
 /// What a ground texture's `_s` file carries in its alpha, which the client
 /// reads as the gloss mask: where the sun's highlight lies on the ground.
@@ -130,7 +200,11 @@ pub struct Import {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
-    /// The archive folder it is written into, ending in a backslash.
+    /// What it is for. See [`Purpose`].
+    pub purpose: Purpose,
+    /// The archive folder it is written into, ending in a backslash. Under
+    /// `Tileset\` for a ground texture and `Interface\Icons\` for an icon;
+    /// [`Self::set_purpose`] keeps it so.
     pub folder: String,
     /// The file name, without `.blp`.
     pub name: String,
@@ -140,7 +214,7 @@ pub struct Import {
     pub resize: bool,
     /// For a ground texture, what its `_s` file's alpha is.
     pub gloss: Gloss,
-    /// For a ground texture, scale it down to [`GROUND_SIDE`] on a side.
+    /// Scale it down to its purpose's largest side ([`Purpose::largest`]).
     pub shrink: bool,
     pub for_field: Option<FieldTarget>,
 }
@@ -158,7 +232,12 @@ impl Import {
         for_field: Option<FieldTarget>,
     ) -> Import {
         let alpha = rgba.chunks_exact(4).any(|pixel| pixel[3] != 255);
+        let purpose = match for_field {
+            Some(_) => Purpose::Field,
+            None => Purpose::of_path(&folder),
+        };
         Import {
+            purpose,
             source,
             width,
             height,
@@ -177,10 +256,25 @@ impl Import {
         }
     }
 
-    /// Whether it is a ground texture: in a folder under `Tileset\`, where
-    /// the terrain's textures are. See the module comment.
+    /// Whether it is a ground texture. See the module comment.
     pub fn ground(&self) -> bool {
-        folder_of(&self.folder).to_ascii_lowercase().starts_with("tileset\\")
+        self.purpose == Purpose::Ground
+    }
+
+    /// Change what it is for, and the folder with it: a ground texture keeps
+    /// a folder under `Tileset\` it already has, an icon goes to
+    /// `Interface\Icons\`, and Other leaves either of those for its own
+    /// folder.
+    pub fn set_purpose(&mut self, purpose: Purpose) {
+        let now = Purpose::of_path(&folder_of(&self.folder));
+        self.folder = match purpose {
+            Purpose::Ground if now == Purpose::Ground => folder_of(&self.folder),
+            Purpose::Ground => GROUND_FOLDER.to_string(),
+            Purpose::Icon => ICON_FOLDER.to_string(),
+            Purpose::Other if now != Purpose::Other => OTHER_FOLDER.to_string(),
+            Purpose::Other | Purpose::Field => folder_of(&self.folder),
+        };
+        self.purpose = purpose;
     }
 
     /// The size the texture is written at.
@@ -189,9 +283,9 @@ impl Import {
             true => (self.width.next_power_of_two(), self.height.next_power_of_two()),
             false => (self.width, self.height),
         };
-        match self.ground() && self.shrink {
-            true => (width.min(GROUND_SIDE), height.min(GROUND_SIDE)),
-            false => (width, height),
+        match (self.shrink, self.purpose.largest()) {
+            (true, Some(side)) => (width.min(side), height.min(side)),
+            _ => (width, height),
         }
     }
 
@@ -245,6 +339,9 @@ impl Import {
         if width > blp::MAX_SIDE || height > blp::MAX_SIDE {
             out.push(format!("{width}x{height} is larger than {0}x{0}.", blp::MAX_SIDE));
         }
+        if self.ground() && !folder_of(&self.folder).to_ascii_lowercase().starts_with("tileset\\") {
+            out.push("A ground texture's folder must be under Tileset\\.".to_string());
+        }
         if self.ground() && name.to_ascii_lowercase().ends_with("_s") {
             out.push(
                 "A ground texture's name may not end in _s: the client opens <name>_s.blp in \
@@ -288,6 +385,16 @@ impl Import {
             (gloss_vpath, encode(&glossed, Encoding::Dxt3)?),
         ])
     }
+}
+
+/// The `_s` gloss file beside a ground texture at `vpath`, or `None` for a
+/// path that is not a ground texture's plain file.
+pub fn gloss_of(vpath: &str) -> Option<String> {
+    let lower = vpath.to_ascii_lowercase();
+    let plain = Purpose::of_path(vpath) == Purpose::Ground
+        && lower.ends_with(".blp")
+        && !lower.ends_with("_s.blp");
+    plain.then(|| format!("{}_s.blp", &vpath[..vpath.len() - 4]))
 }
 
 /// The folder part of a typed folder: backslashes, no leading separator, one
@@ -376,10 +483,11 @@ pub enum Ask {
     },
     /// Write the open import.
     Import,
-    /// Open the import dialog on one of the project's own BLP files, at its
-    /// own path, to write it again: a ground texture imported without its
-    /// `_s` file is rewritten as the pair this way.
-    Rewrite(String),
+    /// Open the import dialog on one of the project's own BLP files, to write
+    /// it again: at its own path for what its folder says it is for, or for
+    /// `purpose` (a texture imported elsewhere made a ground texture). A
+    /// ground texture without its `_s` file is written as the pair this way.
+    Rewrite { vpath: String, purpose: Option<Purpose> },
     /// Remove one of the project's files.
     Remove(String),
 }
@@ -397,6 +505,9 @@ pub struct Assets {
     /// A texture imported for a form field, and its name, for the form to
     /// write into the field. Taken by the form.
     pub imported_for: Option<(FieldTarget, String)>,
+    /// The texture an import last wrote and what it is for, for the shell:
+    /// a ground texture goes on the texture tool's brush. Taken by the shell.
+    pub imported: Option<(String, Purpose)>,
     /// The folder the last picture was chosen from, where the file dialog
     /// opens next.
     pub picture_dir: Option<PathBuf>,
@@ -459,6 +570,26 @@ fn on_the_command_line(
         return;
     }
     *done = true;
+    if let Some((picture, purpose)) = args.import_dialog.clone() {
+        let purpose = match purpose.to_ascii_lowercase().as_str() {
+            "ground" => Purpose::Ground,
+            "icon" => Purpose::Icon,
+            _ => Purpose::Other,
+        };
+        match read_picture(Path::new(&picture)) {
+            Ok(read) => {
+                let name = Path::new(&picture)
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("Texture")
+                    .to_string();
+                let mut import = Import::new(PathBuf::from(&picture), read, OTHER_FOLDER.to_string(), name, None);
+                import.set_purpose(purpose);
+                assets.import = Some(import);
+            }
+            Err(why) => warn!("--import-dialog: {why}"),
+        }
+    }
     let Some((picture, vpath)) = args.import_texture.clone() else { return };
     let vpath = vpath.replace('/', "\\");
     let (folder, file) = match vpath.rfind('\\') {
@@ -491,7 +622,6 @@ fn on_the_command_line(
 fn answer(
     mut assets: ResMut<Assets>,
     mut session: Option<ResMut<EditSession>>,
-    mut tool: ResMut<Tool>,
     mut thumbnails: ResMut<crate::ui::thumbnails::Thumbnails>,
 ) {
     let Some(ask) = assets.ask.take() else { return };
@@ -516,12 +646,9 @@ fn answer(
                         Some(target) => target.file_name(&name),
                         None => name,
                     };
+                    // The shell draws the dialog under any tool, so the tool
+                    // that asked (the workspace, a form, the texture tool) stays.
                     assets.import = Some(Import::new(path, (width, height, rgba), folder, name, for_field));
-                    // The dialog is drawn by the Assets workspace and by a
-                    // form that asked; a form keeps its own workspace.
-                    if assets.import.as_ref().is_some_and(|import| import.for_field.is_none()) {
-                        *tool = Tool::Assets;
-                    }
                 }
                 Err(why) => session.status = why,
             }
@@ -560,14 +687,15 @@ fn answer(
                     ),
                     None => format!("imported {vpath}: {width}x{height}, {}{mips}", import.encoding().name()),
                 };
-                assets.selected = Some(vpath);
+                assets.selected = Some(vpath.clone());
+                assets.imported = Some((vpath, import.purpose));
                 if let Some(target) = import.for_field {
                     let text = target.field_text(import.name.trim());
                     assets.imported_for = Some((target, text));
                 }
             }
         }
-        Ask::Rewrite(vpath) => {
+        Ask::Rewrite { vpath, purpose } => {
             let decoded = session
                 .project
                 .read(&vpath)
@@ -580,20 +708,35 @@ fn answer(
                         None => (String::new(), vpath.as_str()),
                     };
                     let name = file.get(..file.len().saturating_sub(4)).unwrap_or(file).to_string();
-                    assets.import = Some(Import::new(
+                    let mut import = Import::new(
                         PathBuf::from(&vpath),
                         (picture.width, picture.height, picture.rgba),
                         folder,
                         name,
                         None,
-                    ));
+                    );
+                    if let Some(purpose) = purpose {
+                        import.set_purpose(purpose);
+                    }
+                    assets.import = Some(import);
                 }
                 Err(why) => session.status = why,
             }
         }
         Ask::Remove(vpath) => {
-            thumbnails.forget(&vpath);
-            if session.remove_file(&vpath) && assets.selected.as_deref() == Some(vpath.as_str()) {
+            // A ground texture goes with its `_s` file: either alone is a
+            // texture the client cannot draw as the other expects.
+            let mut gone = vec![vpath.clone()];
+            if let Some(gloss) = gloss_of(&vpath) {
+                if session.project.has(&gloss) {
+                    gone.push(gloss);
+                }
+            }
+            for path in gone {
+                thumbnails.forget(&path);
+                session.remove_file(&path);
+            }
+            if assets.selected.as_deref() == Some(vpath.as_str()) {
                 assets.selected = None;
             }
         }
@@ -651,6 +794,7 @@ mod tests {
             None,
         );
         assert!(ground.ground());
+        assert_eq!(ground.purpose, Purpose::Ground);
         assert_eq!(ground.gloss, Gloss::FromAlpha);
         assert_eq!(ground.written_size(), (GROUND_SIDE, GROUND_SIDE));
         let files = ground.encode().expect("encoded");
@@ -678,6 +822,34 @@ mod tests {
         assert_eq!(import(64, 64).vpath(), "Textures\\Custom\\Grass.blp");
         assert_eq!(folder_of("\\Creature\\Wolf\\"), "Creature\\Wolf\\");
         assert_eq!(folder_of("  "), "");
+    }
+
+    /// Choosing what a texture is for moves it: a ground texture under
+    /// `Tileset\`, an icon to `Interface\Icons\` at 64x64, and Other out of
+    /// both. The pair is removed together.
+    #[test]
+    fn the_purpose_decides_the_folder_and_the_size() {
+        let mut texture = import(512, 512);
+        assert_eq!(texture.purpose, Purpose::Other);
+        texture.set_purpose(Purpose::Ground);
+        assert_eq!(texture.vpath(), "Tileset\\Custom\\Grass.blp");
+        assert_eq!(texture.written_size(), (256, 256));
+        texture.folder = "Tileset\\Moor\\".to_string();
+        texture.set_purpose(Purpose::Ground);
+        assert_eq!(texture.vpath(), "Tileset\\Moor\\Grass.blp", "a ground folder is kept");
+        texture.set_purpose(Purpose::Icon);
+        assert_eq!(texture.vpath(), "Interface\\Icons\\Grass.blp");
+        assert_eq!(texture.written_size(), (64, 64));
+        assert_eq!(texture.gloss_vpath(), None);
+        texture.set_purpose(Purpose::Other);
+        assert_eq!(texture.vpath(), "Textures\\Custom\\Grass.blp");
+        assert_eq!(texture.written_size(), (512, 512));
+        assert_eq!(
+            gloss_of("Tileset\\Custom\\Grass.blp").as_deref(),
+            Some("Tileset\\Custom\\Grass_s.blp")
+        );
+        assert_eq!(gloss_of("Tileset\\Custom\\Grass_s.blp"), None);
+        assert_eq!(gloss_of("Textures\\Custom\\Grass.blp"), None);
     }
 
     /// A side that is not a power of two is refused until the dialog resizes

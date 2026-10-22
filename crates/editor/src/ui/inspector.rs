@@ -3815,6 +3815,18 @@ fn paint(
     if !tileset_picker(ui, textures, thumbnails, session) {
         return;
     }
+    // A picture of the person's own, written as a ground texture and put on
+    // the brush. See `crate::tools::assets`.
+    if ui
+        .add_sized(egui::vec2(ui.available_width(), 22.0), egui::Button::new("Import Ground Texture\u{2026}"))
+        .on_hover_text(
+            "Choose a PNG, TGA or BLP picture and write it under Tileset\\ as a ground texture \
+             with its _s file. The brush takes it once it is written.",
+        )
+        .clicked()
+    {
+        textures.import_asked = true;
+    }
 
     ui.add_space(4.0);
     theme::heading(ui, "Brush");

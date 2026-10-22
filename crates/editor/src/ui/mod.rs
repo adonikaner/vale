@@ -1675,6 +1675,30 @@ fn draw(
             for_field: Some(target),
         });
     }
+    // The texture tool's Import Ground Texture: the dialog, for a ground
+    // texture…
+    if std::mem::take(&mut editing.textures.import_asked) {
+        editing.assets.ask = Some(crate::tools::assets::Ask::Choose {
+            folder: crate::tools::assets::GROUND_FOLDER.to_string(),
+            name: None,
+            for_field: None,
+        });
+    }
+    // …and once a ground texture is written under the texture tool, the brush
+    // takes it, opened in its folder. The catalogue lists it once it reads the
+    // project's files again.
+    if let Some((vpath, purpose)) = editing.assets.imported.take() {
+        if purpose == crate::tools::assets::Purpose::Ground && *tool == Tool::Textures {
+            let path = vpath.to_ascii_lowercase();
+            editing.textures.brush.effect_id = 0;
+            editing.textures.folder = match path.rfind('\\') {
+                Some(at) => path[..=at].to_string(),
+                None => crate::tools::textures::ROOT.to_string(),
+            };
+            editing.textures.search.clear();
+            editing.textures.brush.texture = path;
+        }
+    }
     // …and once it is written, the field is set to its name. A field whose
     // table has been closed since is left.
     if let Some((target, name)) = editing.assets.imported_for.take() {

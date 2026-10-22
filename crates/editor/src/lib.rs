@@ -735,10 +735,16 @@ pub struct Args {
     pub creature_data: Option<u32>,
     /// `--import-texture <picture> <archive path>`: import a PNG, TGA or BLP
     /// picture as a BLP at that path, as the Import Texture dialog would with
-    /// its defaults (automatic compression, mipmaps, resized up to powers of
-    /// two), and open the Assets workspace on it. It implies the Assets
-    /// workspace as the tool. See `crate::tools::assets`.
+    /// its defaults for what the path's folder is for (a ground texture under
+    /// `Tileset\` is written with its `_s` file), and open the Assets workspace
+    /// on it. It implies the Assets workspace as the tool. See
+    /// `crate::tools::assets`.
     pub import_texture: Option<(String, String)>,
+    /// `--import-dialog <picture> [purpose]`: open the Import Texture dialog on
+    /// a picture without writing anything, for `ground`, `icon` or `other` (the
+    /// default). The dialog is otherwise behind the system's file dialog, which
+    /// a scripted `--shot` cannot answer.
+    pub import_dialog: Option<(String, String)>,
     /// `--object-data <entry>`: the same for the Game Objects workspace and
     /// `gameobject_template`.
     pub object_data: Option<u32>,
@@ -973,6 +979,7 @@ impl Default for Args {
             quest: None,
             creature_data: None,
             import_texture: None,
+            import_dialog: None,
             object_data: None,
             quest_new: false,
             quest_entry: None,
@@ -1337,6 +1344,17 @@ impl Args {
                 "--import-texture" => {
                     if let (Some(picture), Some(vpath)) = (args.next(), args.next()) {
                         parsed.import_texture = Some((picture, vpath));
+                    }
+                    parsed.tool = Some(tools::Tool::Assets);
+                }
+                "--import-dialog" => {
+                    // The purpose is optional, so a following flag is not eaten.
+                    if let Some(picture) = args.next() {
+                        let purpose = match args.peek() {
+                            Some(next) if !next.starts_with("--") => args.next().unwrap_or_default(),
+                            _ => String::new(),
+                        };
+                        parsed.import_dialog = Some((picture, purpose));
                     }
                     parsed.tool = Some(tools::Tool::Assets);
                 }

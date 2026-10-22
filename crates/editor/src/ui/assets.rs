@@ -5,9 +5,11 @@
 //!
 //! ```text
 //! left       which file    every game file of the project but its tiles and
-//!                          tables, searched by path, with Import Texture
-//! middle     what it is    its path, its size, a texture's dimensions and
-//!                          compression, Copy Path, Replace and Remove
+//!                          tables, filtered by sort and searched by path,
+//!                          with Import
+//! middle     what it is    its path, what it is used as, a texture's
+//!                          dimensions and compression, and what can be done
+//!                          to it
 //! inspector  what it is like  the texture, or the model, drawn
 //! ```
 //!
@@ -16,20 +18,35 @@
 //! [`crate::tools::assets`] for what an import writes and why a file listed
 //! here is in every picker.
 //!
+//! ## Sorts, not file types
+//!
+//! The list is filtered by what a file is to the game ([`Sort`]): a ground
+//! texture, an icon, another texture, a model, a minimap picture. The sorts
+//! offered are the ones the project has, so the filter grows with the kinds of
+//! file the project adds rather than listing every kind there could be. A
+//! ground texture's `_s` file is its pair's, not a file of its own, and is
+//! shown on its plain file's row.
+//!
+//! Import takes a file and decides from what it is which dialog follows. A
+//! picture is the only kind it takes now, and the texture's purpose is chosen
+//! in that dialog, not by its folder.
+//!
 //! ## The import dialog is not the workspace's alone
 //!
-//! A creature display's skin field opens the same dialog, in the folder of the
-//! display's model, so a new skin is imported where the display finds it and
-//! the field is set to it. The dialog is drawn by the shell whatever the tool
-//! is ([`import_dialog`]), and the workspace and the field each only ask for
-//! it.
+//! A display form's texture field opens the same dialog, in the folder its
+//! file is read from, and the texture tool's panel opens it for a ground
+//! texture. The dialog is drawn by the shell whatever the tool is
+//! ([`import_dialog`]), and the workspace, the field and the panel each only
+//! ask for it.
 
 use bevy_egui::egui;
 
 use super::listing;
 use super::theme;
 use crate::session::EditSession;
-use crate::tools::assets::{Ask, Assets, Choice, Gloss, Import, Own, FOLDERS, GROUND_SIDE};
+use crate::tools::assets::{
+    gloss_of, Ask, Assets, Choice, Gloss, Import, Own, Purpose, GROUND_ROOT, OTHER_FOLDER,
+};
 use vale_assets::world::blp::Encoding;
 use vale_edit::manifest::Kind;
 
@@ -42,11 +59,60 @@ pub struct Work<'a> {
     pub portraits: &'a mut crate::portraits::Portraits,
 }
 
-/// Where Import Texture starts when nothing else chose a folder.
-const DEFAULT_FOLDER: &str = "Textures\\Custom\\";
-
 /// How large the inspector draws a texture, at most.
 const PICTURE: f32 = 256.0;
+
+/// What a project file is to the game, as the list filters it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sort {
+    Ground,
+    Icon,
+    Texture,
+    Model,
+    Minimap,
+    Other,
+}
+
+impl Sort {
+    const ALL: [Sort; 6] = [Sort::Ground, Sort::Icon, Sort::Texture, Sort::Model, Sort::Minimap, Sort::Other];
+
+    fn of(own: &Own) -> Sort {
+        match own.kind {
+            Kind::Texture => match Purpose::of_path(&own.vpath) {
+                Purpose::Ground => Sort::Ground,
+                Purpose::Icon => Sort::Icon,
+                Purpose::Field | Purpose::Other => Sort::Texture,
+            },
+            Kind::Model => Sort::Model,
+            Kind::Minimap => Sort::Minimap,
+            _ => Sort::Other,
+        }
+    }
+
+    /// The filter's name for the sort.
+    fn plural(self) -> &'static str {
+        match self {
+            Sort::Ground => "Ground",
+            Sort::Icon => "Icons",
+            Sort::Texture => "Textures",
+            Sort::Model => "Models",
+            Sort::Minimap => "Minimaps",
+            Sort::Other => "Other",
+        }
+    }
+
+    /// What one file of the sort is, in its row and its details.
+    fn word(self) -> &'static str {
+        match self {
+            Sort::Ground => "ground texture",
+            Sort::Icon => "icon",
+            Sort::Texture => "texture",
+            Sort::Model => "model",
+            Sort::Minimap => "minimap picture",
+            Sort::Other => "file",
+        }
+    }
+}
 
 /// Draw the workspace into the region the panels left.
 pub fn draw(ui: &mut egui::Ui, mut work: Work<'_>) {
@@ -75,12 +141,35 @@ fn size_words(bytes: u64) -> String {
     }
 }
 
-/// The left column: the project's files and Import Texture.
+/// The project's files as the list shows them: a ground texture's `_s` file
+/// is left out when its plain file is in the project, since it is shown on
+/// that file's row.
+fn shown_files(files: &[Own]) -> Vec<Own> {
+    let has = |vpath: &str| files.iter().any(|own| own.vpath.eq_ignore_ascii_case(vpath));
+    files
+        .iter()
+        .filter(|own| {
+            let lower = own.vpath.to_ascii_lowercase();
+            let paired = Sort::of(own) == Sort::Ground
+                && lower.ends_with("_s.blp")
+                && has(&format!("{}.blp", &own.vpath[..own.vpath.len() - 6]));
+            !paired
+        })
+        .cloned()
+        .collect()
+}
+
+/// The left column: Import, the sorts the project has, the search and the
+/// files.
 fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
-    let files: Vec<Own> = work.assets.files(work.session).to_vec();
+    let all: Vec<Own> = work.assets.files(work.session).to_vec();
+    let files = shown_files(&all);
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Assets").strong().size(15.0).color(theme::INK));
-        ui.label(theme::number(format!("{} files", files.len())));
+        ui.label(theme::number(match files.len() {
+            1 => "1 file".to_string(),
+            count => format!("{count} files"),
+        }));
     })
     .response
     .on_hover_text(
@@ -90,21 +179,53 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     );
     ui.add_space(4.0);
     if ui
-        .add_sized(egui::vec2(ui.available_width(), 24.0), egui::Button::new("Import Texture\u{2026}"))
+        .add_sized(egui::vec2(ui.available_width(), 24.0), egui::Button::new("Import\u{2026}"))
         .on_hover_text(
-            "Choose a PNG, TGA or BLP picture and write it into the project as a BLP: \
-             DXT1, DXT1 with 1-bit alpha or DXT3, with mipmaps. Both sides must be powers \
-             of two, or the picture is resized to them.",
+            "Choose a PNG, TGA or BLP picture. The next step asks what it is for: a ground \
+             texture, an icon or another texture.",
         )
         .clicked()
     {
         work.assets.ask = Some(Ask::Choose {
-            folder: DEFAULT_FOLDER.to_string(),
+            folder: OTHER_FOLDER.to_string(),
             name: None,
             for_field: None,
         });
     }
     ui.add_space(4.0);
+    // The sorts the project has, and All. The choice is the viewer's own and
+    // is kept in egui's memory.
+    let filter_id = egui::Id::new("assets-filter");
+    let mut filter: Option<Sort> = ui.data(|data| data.get_temp::<Option<Sort>>(filter_id)).flatten();
+    let present: Vec<(Sort, usize)> = Sort::ALL
+        .iter()
+        .map(|sort| (*sort, files.iter().filter(|own| Sort::of(own) == *sort).count()))
+        .filter(|(_, count)| *count > 0)
+        .collect();
+    if filter.is_some_and(|sort| !present.iter().any(|(had, _)| *had == sort)) {
+        filter = None;
+    }
+    if present.len() > 1 {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if ui
+                .selectable_label(filter.is_none(), format!("All {}", files.len()))
+                .clicked()
+            {
+                filter = None;
+            }
+            for (sort, count) in &present {
+                if ui
+                    .selectable_label(filter == Some(*sort), format!("{} {count}", sort.plural()))
+                    .clicked()
+                {
+                    filter = Some(*sort);
+                }
+            }
+        });
+        ui.add_space(4.0);
+    }
+    ui.data_mut(|data| data.insert_temp(filter_id, filter));
     let width = ui.available_width();
     ui.add(
         egui::TextEdit::singleline(&mut work.assets.query)
@@ -120,6 +241,7 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
         .collect();
     let shown: Vec<&Own> = files
         .iter()
+        .filter(|own| filter.is_none_or(|sort| Sort::of(own) == sort))
         .filter(|own| {
             let path = own.vpath.to_ascii_lowercase();
             words.iter().all(|word| path.contains(word.as_str()))
@@ -132,7 +254,7 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     );
     ui.add_space(4.0);
     if files.is_empty() {
-        theme::note(ui, "The project adds no files yet. Import Texture writes the first.");
+        theme::note(ui, "The project adds no files yet. Import writes the first.");
         return;
     }
     let height = listing::ROW_HEIGHT;
@@ -140,10 +262,19 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     theme::list_area(ui, None, height).show_rows(ui, height, shown.len(), |ui, range| {
         for own in &shown[range] {
             let chosen = work.assets.selected.as_deref() == Some(own.vpath.as_str());
+            let sort = Sort::of(own);
+            // A ground texture says whether its pair is there, since without it
+            // the client draws nothing. See `tools::assets`.
+            let unpaired = gloss_of(&own.vpath).is_some_and(|gloss| !all.iter().any(|o| o.vpath.eq_ignore_ascii_case(&gloss)));
+            let pair = match (sort, unpaired) {
+                (Sort::Ground, false) => " \u{b7} with _s",
+                (Sort::Ground, true) => " \u{b7} no _s file",
+                _ => "",
+            };
             let sub = format!(
-                "{} \u{b7} {} \u{b7} {}",
+                "{} \u{b7} {}{pair} \u{b7} {}",
                 folder(&own.vpath).trim_end_matches('\\'),
-                kind_word(own.kind),
+                sort.word(),
                 size_words(own.bytes)
             );
             let shape = theme::list_row(
@@ -152,7 +283,10 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
                     title: basename(&own.vpath),
                     sub: &sub,
                     trailing: "",
-                    tint: theme::INK,
+                    tint: match unpaired {
+                        true => theme::WARN,
+                        false => theme::INK,
+                    },
                     picture: true,
                 },
                 chosen,
@@ -165,17 +299,6 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     });
     if clicked.is_some() {
         work.assets.selected = clicked;
-    }
-}
-
-/// What a file is, in a list row.
-fn kind_word(kind: Kind) -> &'static str {
-    match kind {
-        Kind::Texture => "texture",
-        Kind::Minimap => "minimap",
-        Kind::Model => "model",
-        Kind::Wdt => "WDT",
-        _ => "file",
     }
 }
 
@@ -241,15 +364,27 @@ fn header(bytes: &[u8]) -> Option<Header> {
     })
 }
 
-/// The middle: the selected file's path, size and what it holds, and what can
-/// be done to it.
+/// What a sort of file is used for, in the details.
+fn used_as(sort: Sort) -> &'static str {
+    match sort {
+        Sort::Ground => "Listed in the texture tool's tilesets and painted on the terrain.",
+        Sort::Icon => "Named by an item's display or a spell's icon row.",
+        Sort::Texture => "Read wherever a model, a table or the interface names its path.",
+        Sort::Model => "Listed in the placement tools and the model browser.",
+        Sort::Minimap => "Drawn by the minimap and the map for its tile.",
+        Sort::Other => "Read wherever the game asks for its path.",
+    }
+}
+
+/// The middle: the selected file's path, what it is, what it holds, and what
+/// can be done to it.
 fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
     let Some(vpath) = work.assets.selected.clone() else {
         theme::heading(ui, "No file chosen");
         theme::note(
             ui,
-            "Choose a file on the left, or import a texture. A file here is read in place \
-             of the archives' file at its path and is published with the project.",
+            "Choose a file on the left, or import one. A file here is read in place of the \
+             archives' file at its path and is published with the project.",
         );
         return;
     };
@@ -264,6 +399,21 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
         theme::note(ui, "The chosen file is no longer in the project.");
         return;
     };
+    let sort = Sort::of(&own);
+    // A ground texture's pair: its `_s` file, in the project or the archives.
+    let gloss = gloss_of(&own.vpath);
+    let gloss_own = gloss.as_ref().and_then(|gloss| {
+        work.assets
+            .files(work.session)
+            .iter()
+            .find(|other| other.vpath.eq_ignore_ascii_case(gloss))
+            .cloned()
+    });
+    let gloss_shipped = gloss
+        .as_ref()
+        .is_some_and(|gloss| gloss_own.is_none() && in_archives(ui.ctx(), work.game, gloss));
+    let unpaired = gloss.is_some() && gloss_own.is_none() && !gloss_shipped;
+
     ui.label(egui::RichText::new(basename(&own.vpath)).strong().size(17.0).color(theme::INK));
     ui.label(egui::RichText::new(&own.vpath).small().color(theme::INK_DIM));
     ui.add_space(6.0);
@@ -272,10 +422,15 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
         .spacing([12.0, 4.0])
         .show(ui, |ui| {
             ui.label(egui::RichText::new("Type").color(theme::INK_DIM));
-            ui.label(kind_word(own.kind));
+            let mut word = sort.word().to_string();
+            word[..1].make_ascii_uppercase();
+            ui.label(&word).on_hover_text(used_as(sort));
             ui.end_row();
             ui.label(egui::RichText::new("Size").color(theme::INK_DIM));
-            ui.label(size_words(own.bytes));
+            ui.label(match &gloss_own {
+                Some(pair) => format!("{}, and {} for its _s file", size_words(own.bytes), size_words(pair.bytes)),
+                None => size_words(own.bytes),
+            });
             ui.end_row();
             if matches!(own.kind, Kind::Texture | Kind::Minimap) {
                 if let Some(head) = work.session.project.read(&own.vpath).and_then(|bytes| header(&bytes)) {
@@ -293,6 +448,15 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
                     ui.end_row();
                 }
             }
+            if let Some(gloss) = &gloss {
+                ui.label(egui::RichText::new("Gloss file").color(theme::INK_DIM));
+                match (&gloss_own, gloss_shipped) {
+                    (Some(_), _) => ui.label(basename(gloss)),
+                    (None, true) => ui.label(format!("{} (the archives')", basename(gloss))),
+                    (None, false) => ui.label(egui::RichText::new("missing").color(theme::BAD)),
+                };
+                ui.end_row();
+            }
             let shipped = in_archives(ui.ctx(), work.game, &own.vpath);
             ui.label(egui::RichText::new("Archives").color(theme::INK_DIM));
             ui.label(match shipped {
@@ -301,40 +465,46 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
             });
             ui.end_row();
         });
-    // A ground texture the client cannot draw: imported before the importer
-    // wrote the _s file, or put in the project some other way.
-    let lower = own.vpath.to_ascii_lowercase();
-    let ground = own.kind == Kind::Texture
-        && lower.starts_with("tileset\\")
-        && !lower.ends_with("_s.blp");
-    let gloss = format!("{}_s.blp", &own.vpath[..own.vpath.len().saturating_sub(4)]);
-    let unglossed = ground
-        && !work.session.project.has(&gloss)
-        && !in_archives(ui.ctx(), work.game, &gloss);
-    if unglossed {
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new(used_as(sort)).small().color(theme::INK_DIM));
+    if unpaired {
         ui.add_space(6.0);
         theme::note(
             ui,
-            &format!(
-                "No {} beside it. With its specular setting on, the 1.12 client opens that file \
-                 in place of this one and draws the ground as a missing texture. Rewrite it as a \
-                 ground texture to write both.",
-                basename(&gloss)
-            ),
+            "This ground texture has no _s file. With its specular setting on, the 1.12 client \
+             opens that file in place of this one and draws the ground as a missing texture. \
+             Write Its _s File writes both again.",
         );
     }
     ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        if ground
+    ui.horizontal_wrapped(|ui| {
+        if unpaired
             && ui
-                .button("Rewrite as Ground Texture\u{2026}")
+                .button("Write Its _s File\u{2026}")
                 .on_hover_text(
-                    "Open the import dialog on this file, to write it again as the plain file \
-                     and its _s file, at most 256x256.",
+                    "Open the import dialog on this texture to write it again with its _s \
+                     gloss file, at most 256x256.",
                 )
                 .clicked()
         {
-            work.assets.ask = Some(Ask::Rewrite(own.vpath.clone()));
+            work.assets.ask = Some(Ask::Rewrite {
+                vpath: own.vpath.clone(),
+                purpose: None,
+            });
+        }
+        if sort == Sort::Texture
+            && ui
+                .button("Use as Ground Texture\u{2026}")
+                .on_hover_text(
+                    "Open the import dialog on this texture to write a ground texture from it \
+                     under Tileset\\, with its _s file. This file is kept.",
+                )
+                .clicked()
+        {
+            work.assets.ask = Some(Ask::Rewrite {
+                vpath: own.vpath.clone(),
+                purpose: Some(Purpose::Ground),
+            });
         }
         if ui
             .button("Copy Path")
@@ -364,10 +534,17 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
             false => {
                 if ui
                     .button(egui::RichText::new("Remove").color(theme::BAD))
-                    .on_hover_text(
-                        "Delete the file from the project. The archives' file at this path, \
-                         if there is one, is read again. Undo does not restore it.",
-                    )
+                    .on_hover_text(match gloss_own {
+                        Some(_) => {
+                            "Delete the texture and its _s file from the project. The archives' \
+                             files at these paths, if there are any, are read again. Undo does \
+                             not restore them."
+                        }
+                        None => {
+                            "Delete the file from the project. The archives' file at this path, \
+                             if there is one, is read again. Undo does not restore it."
+                        }
+                    })
                     .clicked()
                 {
                     ui.data_mut(|data| data.insert_temp(confirm_id, true));
@@ -460,19 +637,47 @@ pub(super) fn checker(ui: &egui::Ui, rect: egui::Rect) {
 }
 
 /// The Import Texture dialog, when one is open. Drawn by the shell under any
-/// tool, since a form field opens it too.
+/// tool, since a form field and the texture tool's panel open it too.
+///
+/// The first choice is what the texture is for ([`Purpose`]); the folder, the
+/// size and the files written follow from it, and the rows under it are only
+/// the ones that purpose has.
 pub fn import_dialog(ctx: &egui::Context, assets: &mut Assets, session: &EditSession, game: &vale_client::assets::GameAssets) {
     let Some(import) = assets.import.as_mut() else { return };
     let mut close = false;
     let mut write = false;
     let response = egui::Modal::new(egui::Id::new("import-texture")).show(ctx, |ui| {
-        ui.set_width(560.0);
+        ui.set_width(580.0);
         ui.label(egui::RichText::new("Import Texture").strong().size(15.0));
         ui.label(
             egui::RichText::new(import.source.display().to_string())
                 .small()
                 .color(theme::INK_DIM),
         );
+        ui.add_space(6.0);
+        // What it is for, first: everything under it follows from this. A
+        // field's import is for its field and offers no other purpose.
+        match &import.for_field {
+            Some(target) => {
+                let column = vale_assets::tables::schema::for_table(&target.table)
+                    .and_then(|schema| schema.column(target.field))
+                    .map(|column| column.name)
+                    .unwrap_or("the field");
+                ui.label(format!("For {} {column}", target.table));
+            }
+            None => {
+                let mut purpose = import.purpose;
+                let options: Vec<(&str, Purpose)> =
+                    Purpose::OFFERED.iter().map(|purpose| (purpose.name(), *purpose)).collect();
+                ui.allocate_ui(egui::vec2(ui.available_width(), 24.0), |ui| {
+                    theme::segmented(ui, &mut purpose, &options, |a, b| a == b);
+                });
+                if purpose != import.purpose {
+                    import.set_purpose(purpose);
+                }
+            }
+        }
+        ui.label(egui::RichText::new(import.purpose.hint()).small().color(theme::INK_DIM));
         ui.add_space(6.0);
         ui.horizontal_top(|ui| {
             source_picture(ui, import);
@@ -487,114 +692,19 @@ pub fn import_dialog(ctx: &egui::Context, assets: &mut Assets, session: &EditSes
                 egui::Grid::new("import-texture-form")
                     .num_columns(2)
                     .spacing([10.0, 6.0])
-                    .show(ui, |ui| {
-                        ui.label(egui::RichText::new("Folder").color(theme::INK_DIM));
-                        ui.horizontal(|ui| {
-                            ui.add(egui::TextEdit::singleline(&mut import.folder).desired_width(200.0));
-                            ui.menu_button("\u{2026}", |ui| {
-                                for (name, path) in FOLDERS {
-                                    if ui.button(format!("{name}  {path}")).clicked() {
-                                        import.folder = path.to_string();
-                                        ui.close();
-                                    }
-                                }
-                            });
-                        });
-                        ui.end_row();
-                        ui.label(egui::RichText::new("Name").color(theme::INK_DIM));
-                        ui.add(egui::TextEdit::singleline(&mut import.name).desired_width(200.0));
-                        ui.end_row();
-                        ui.label(egui::RichText::new("Compression").color(theme::INK_DIM));
-                        if import.ground() {
-                            ui.label("DXT1, and DXT3 for its _s file").on_hover_text(
-                                "As every shipped ground texture is: the plain file has no \
-                                 alpha, and the _s file carries the gloss in its alpha.",
-                            );
-                            ui.end_row();
-                        } else {
-                            let shown = match import.choice {
-                                Choice::Auto => {
-                                    format!("Automatic: {}", Encoding::for_pixels(&import.rgba).name())
-                                }
-                                Choice::Fixed(encoding) => encoding.name().to_string(),
-                            };
-                            egui::ComboBox::from_id_salt("import-texture-compression")
-                                .selected_text(shown)
-                                .width(200.0)
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut import.choice, Choice::Auto, "Automatic")
-                                        .on_hover_text("The least that keeps the picture's alpha.");
-                                    for encoding in [Encoding::Dxt1, Encoding::Dxt1Alpha, Encoding::Dxt3] {
-                                        ui.selectable_value(&mut import.choice, Choice::Fixed(encoding), encoding.name());
-                                    }
-                                });
-                            ui.end_row();
-                        }
-                        ui.label(egui::RichText::new("Mipmaps").color(theme::INK_DIM));
-                        ui.checkbox(&mut import.mips, "Write the mip chain")
-                            .on_hover_text(
-                                "Every smaller level down to 1x1. Without them a texture \
-                                 shimmers when drawn small. Most shipped textures have them.",
-                            );
-                        ui.end_row();
-                        let odd = !import.width.is_power_of_two() || !import.height.is_power_of_two();
-                        ui.label(egui::RichText::new("Resize").color(theme::INK_DIM));
-                        ui.add_enabled(odd, egui::Checkbox::new(&mut import.resize, "Up to powers of two"))
-                            .on_hover_text("Each side up to the next power of two, by bilinear filtering.")
-                            .on_disabled_hover_text("Both sides are already powers of two.");
-                        ui.end_row();
-                        // A ground texture's two choices. See the note under
-                        // the form and `tools::assets`.
-                        if import.ground() {
-                            let large = import.width.max(import.height) > GROUND_SIDE;
-                            ui.label(egui::RichText::new("Size").color(theme::INK_DIM));
-                            ui.add_enabled(
-                                large,
-                                egui::Checkbox::new(
-                                    &mut import.shrink,
-                                    format!("Down to {GROUND_SIDE}x{GROUND_SIDE}"),
-                                ),
-                            )
-                            .on_hover_text(
-                                "No ground texture the game ships is larger than 256x256, and \
-                                 a larger one is not known to draw in the 1.12 client.",
-                            )
-                            .on_disabled_hover_text("The picture is no larger than 256x256.");
-                            ui.end_row();
-                            ui.label(egui::RichText::new("Gloss").color(theme::INK_DIM));
-                            ui.horizontal(|ui| {
-                                ui.radio_value(&mut import.gloss, Gloss::Matte, "Matte")
-                                    .on_hover_text("No highlight from the sun on this ground.");
-                                ui.radio_value(&mut import.gloss, Gloss::FromAlpha, "From the alpha")
-                                    .on_hover_text(
-                                        "The picture's alpha is the gloss: where it is high, the \
-                                         sun's highlight shows. Shipped ground averages about 10%.",
-                                    );
-                            });
-                            ui.end_row();
-                        }
-                    });
+                    .show(ui, |ui| form(ui, import));
             });
         });
         ui.add_space(6.0);
-        let vpath = import.vpath();
         let (width, height) = import.written_size();
         let mips = match import.mips {
             true => ", with mips",
             false => "",
         };
+        let vpath = import.vpath();
         match import.gloss_vpath() {
             Some(gloss) => {
-                ui.label(format!("Writes {vpath} and {gloss}: {width}x{height}{mips}"));
-                ui.label(
-                    egui::RichText::new(
-                        "A ground texture is two files. With its specular setting on, the 1.12 \
-                         client opens the _s file in place of the plain one, and draws ground \
-                         without one as a missing texture.",
-                    )
-                    .small()
-                    .color(theme::INK_DIM),
-                );
+                ui.label(format!("Writes {vpath} (DXT1) and {gloss} (DXT3): {width}x{height}{mips}"));
             }
             None => {
                 ui.label(format!("Writes {vpath}: {width}x{height}, {}{mips}", import.encoding().name()));
@@ -647,6 +757,113 @@ pub fn import_dialog(ctx: &egui::Context, assets: &mut Assets, session: &EditSes
     }
 }
 
+/// The dialog's rows: where, under what name, and the choices the purpose has.
+fn form(ui: &mut egui::Ui, import: &mut Import) {
+    ui.label(egui::RichText::new("Folder").color(theme::INK_DIM));
+    match import.purpose {
+        // Only the folder under `Tileset\` is typed, so a ground texture
+        // cannot be put where the texture tool does not look.
+        Purpose::Ground => {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.label(egui::RichText::new(GROUND_ROOT).color(theme::INK_DIM));
+                let root = GROUND_ROOT.len();
+                let mut under = import
+                    .folder
+                    .get(root..)
+                    .unwrap_or("")
+                    .trim_end_matches('\\')
+                    .to_string();
+                let typed = ui.add(
+                    egui::TextEdit::singleline(&mut under)
+                        .desired_width(160.0)
+                        .hint_text("Custom"),
+                );
+                if typed.changed() {
+                    let under = under.trim().trim_matches(['\\', '/']);
+                    import.folder = match under.is_empty() {
+                        true => GROUND_ROOT.to_string(),
+                        false => format!("{GROUND_ROOT}{under}\\"),
+                    };
+                }
+            });
+        }
+        // An icon's folder is the one every icon is in, and a field's is the
+        // one its file is read from: neither is typed.
+        Purpose::Icon | Purpose::Field => {
+            ui.label(egui::RichText::new(&import.folder).color(theme::INK_DIM));
+        }
+        Purpose::Other => {
+            ui.add(egui::TextEdit::singleline(&mut import.folder).desired_width(220.0));
+        }
+    }
+    ui.end_row();
+    ui.label(egui::RichText::new("Name").color(theme::INK_DIM));
+    ui.add(egui::TextEdit::singleline(&mut import.name).desired_width(220.0));
+    ui.end_row();
+    ui.label(egui::RichText::new("Compression").color(theme::INK_DIM));
+    if import.ground() {
+        ui.label("DXT1, and DXT3 for its _s file").on_hover_text(
+            "As every shipped ground texture is: the plain file has no alpha, and the _s file \
+             carries the gloss in its alpha.",
+        );
+    } else {
+        let shown = match import.choice {
+            Choice::Auto => format!("Automatic: {}", Encoding::for_pixels(&import.rgba).name()),
+            Choice::Fixed(encoding) => encoding.name().to_string(),
+        };
+        egui::ComboBox::from_id_salt("import-texture-compression")
+            .selected_text(shown)
+            .width(220.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut import.choice, Choice::Auto, "Automatic")
+                    .on_hover_text("The least that keeps the picture's alpha.");
+                for encoding in [Encoding::Dxt1, Encoding::Dxt1Alpha, Encoding::Dxt3] {
+                    ui.selectable_value(&mut import.choice, Choice::Fixed(encoding), encoding.name());
+                }
+            });
+    }
+    ui.end_row();
+    ui.label(egui::RichText::new("Mipmaps").color(theme::INK_DIM));
+    ui.checkbox(&mut import.mips, "Write the mip chain").on_hover_text(
+        "Every smaller level down to 1x1. Without them a texture shimmers when drawn small. \
+         Most shipped textures have them.",
+    );
+    ui.end_row();
+    let odd = !import.width.is_power_of_two() || !import.height.is_power_of_two();
+    if odd {
+        ui.label(egui::RichText::new("Resize").color(theme::INK_DIM));
+        ui.checkbox(&mut import.resize, "Up to powers of two")
+            .on_hover_text("Each side up to the next power of two, by bilinear filtering.");
+        ui.end_row();
+    }
+    // The purpose's size, where it has one and the picture is larger.
+    if let Some(side) = import.purpose.largest() {
+        if import.width.max(import.height) > side {
+            ui.label(egui::RichText::new("Size").color(theme::INK_DIM));
+            ui.checkbox(&mut import.shrink, format!("Down to {side}x{side}"))
+                .on_hover_text(match import.purpose {
+                    Purpose::Icon => "Every icon the game ships is 64x64, and the interface draws them at that size.",
+                    _ => "No ground texture the game ships is larger than 256x256, and a larger one is \
+                          not known to draw in the 1.12 client.",
+                });
+            ui.end_row();
+        }
+    }
+    if import.ground() {
+        ui.label(egui::RichText::new("Gloss").color(theme::INK_DIM));
+        ui.horizontal(|ui| {
+            ui.radio_value(&mut import.gloss, Gloss::Matte, "Matte")
+                .on_hover_text("No highlight from the sun on this ground.");
+            ui.radio_value(&mut import.gloss, Gloss::FromAlpha, "From the alpha").on_hover_text(
+                "The picture's alpha is the gloss: where it is high, the sun's highlight shows. \
+                 Shipped ground averages about 10%.",
+            );
+        });
+        ui.end_row();
+    }
+}
+
 /// The picture being imported, as it was read, scaled into a square.
 fn source_picture(ui: &mut egui::Ui, import: &Import) {
     const SIDE: f32 = 160.0;
@@ -693,5 +910,29 @@ mod tests {
         assert!(head.mips);
         assert_eq!(basename("Tileset\\Custom\\Grass.blp"), "Grass.blp");
         assert_eq!(folder("Tileset\\Custom\\Grass.blp"), "Tileset\\Custom\\");
+    }
+
+    /// A ground texture's `_s` file is shown on its plain file's row, and an
+    /// `_s` file whose plain file is not in the project is listed itself.
+    #[test]
+    fn a_gloss_file_is_shown_with_its_pair() {
+        let own = |vpath: &str| Own {
+            vpath: vpath.to_string(),
+            kind: Kind::Texture,
+            bytes: 1,
+        };
+        let files = vec![
+            own("Tileset\\Custom\\Grass.blp"),
+            own("Tileset\\Custom\\Grass_s.blp"),
+            own("Tileset\\Custom\\Moss_s.blp"),
+            own("Interface\\Icons\\Sword.blp"),
+        ];
+        let shown: Vec<String> = shown_files(&files).into_iter().map(|own| own.vpath).collect();
+        assert_eq!(
+            shown,
+            ["Tileset\\Custom\\Grass.blp", "Tileset\\Custom\\Moss_s.blp", "Interface\\Icons\\Sword.blp"]
+        );
+        assert_eq!(Sort::of(&files[0]), Sort::Ground);
+        assert_eq!(Sort::of(&files[3]), Sort::Icon);
     }
 }

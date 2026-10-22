@@ -133,6 +133,10 @@ pub struct Textures {
     /// the chunk that refused it, which is the case the list exists for. The
     /// panel then already shows why the stroke stopped.
     pub pinned: Option<((u32, u32), usize)>,
+    /// The panel's Import Ground Texture asked for the import dialog. The
+    /// shell opens it, and puts the texture on the brush once it is written.
+    /// See `crate::tools::assets::Assets::imported`.
+    pub import_asked: bool,
 }
 
 impl Default for Textures {
@@ -148,6 +152,7 @@ impl Default for Textures {
             // would begin with a click into that folder.
             folder: ROOT.to_string(),
             pinned: None,
+            import_asked: false,
         }
     }
 }
