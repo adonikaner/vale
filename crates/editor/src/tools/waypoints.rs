@@ -215,7 +215,11 @@ pub struct NodeDrag {
 const DRAG_PIXELS: f32 = 6.0;
 
 /// How near the pointer has to be to a node to pick it, in pixels.
-const GRAB_PIXELS: f32 = 14.0;
+///
+/// About twice the size a node is drawn at editing distance. At 14 a press a
+/// little off a node missed it and went to the creature tool instead, which
+/// selected the creature under the pointer or began a selection rectangle.
+const GRAB_PIXELS: f32 = 28.0;
 
 /// A node's radius in yards, from which its dome and facing arrow are sized.
 const NODE_RADIUS: f32 = 0.8;
@@ -358,22 +362,22 @@ pub struct WaypointToolPlugin;
 impl Plugin for WaypointToolPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Waypoints>()
+            // Which node is under the pointer is decided before the creature
+            // tool's press, which gives way to a hovered node. Run after it,
+            // the press read the last frame's answer, and a press on a node the
+            // pointer had just reached selected a creature or began a selection
+            // rectangle instead. It reads the path as the last frame left it.
             .add_systems(
                 Update,
-                // After the pick, like every tool here, and after the creature
-                // tool's own press so that a click cannot be taken by both.
-                (
-                    follow_the_selection,
-                    read_the_path,
-                    aim,
-                    press,
-                    drag,
-                    draw,
-                    fly,
-                )
+                aim.after(crate::pick::aim).before(super::creatures::press),
+            )
+            .add_systems(
+                Update,
+                // After the creature tool's own press, which is what moves the
+                // selection this follows, so that a click cannot be taken by
+                // both.
+                (follow_the_selection, read_the_path, press, drag, draw, fly)
                     .chain()
-                    // After the creature tool's own press, which is what moves the
-                    // selection this follows.
                     .after(super::creatures::press),
             )
             .add_systems(

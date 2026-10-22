@@ -254,14 +254,12 @@ fn passes(line: &Line, least: Level, needle: &str) -> bool {
             || line.target.to_ascii_lowercase().contains(needle))
 }
 
-/// The height kept under the log for the command line and its two buttons.
-const COMMAND_LINE_HEIGHT: f32 = 104.0;
-
 /// The tab.
 ///
 /// The caller draws this outside the panel's own scroll area, so that the log
-/// scrolls and the command line stays at the bottom of the window. `focus`
-/// gives the command line the keyboard on this draw.
+/// scrolls and the command line stays at the bottom of the window. The tab
+/// takes the window's size and never sets it, so the window can be resized.
+/// `focus` gives the command line the keyboard on this draw.
 pub fn show(
     ui: &mut egui::Ui,
     ring: &LogRing,
@@ -316,11 +314,20 @@ pub fn show(
         );
     });
 
-    let height = (ui.available_height() - COMMAND_LINE_HEIGHT).max(80.0);
+    // The command line is docked at the bottom first, and the log fills what
+    // is left. The log's height was the available height less a fixed 104
+    // points for the command line; the command line took more than that, so
+    // the window's content was always taller than the window, egui grew the
+    // window to fit, the available height grew with it, and the window ended
+    // at the screen's full height whatever size it was dragged to.
+    egui::Panel::bottom("console-command-line")
+        .resizable(false)
+        .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 4)))
+        .show(ui, |ui| interface::command_line(ui, params, console, focus));
+
     let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
     egui::ScrollArea::both()
         .id_salt("console-log")
-        .max_height(height)
         .auto_shrink([false, false])
         .stick_to_bottom(true)
         // Only the rows in view are laid out, so the cost of a full ring is
@@ -348,9 +355,6 @@ pub fn show(
                 );
             }
         });
-
-    ui.separator();
-    interface::command_line(ui, params, console, focus);
 }
 
 #[cfg(test)]
