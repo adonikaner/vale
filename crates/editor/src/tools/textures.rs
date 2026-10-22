@@ -98,9 +98,12 @@ pub const RATE: std::ops::RangeInclusive<f32> = 0.0..=1_000.0;
 #[derive(Resource, Debug, Clone)]
 pub struct Textures {
     pub brush: PaintBrush,
-    /// Every `Tileset\` path the archives name, sorted. Read once, lazily. See
+    /// Every `Tileset\` path the archives and the project name, sorted. Read
+    /// lazily, and again when the project's files change. See
     /// [`read_catalogue`].
     pub catalogue: Vec<String>,
+    /// The `EditSession::files_revision` [`Self::catalogue`] was read at.
+    catalogue_for: Option<u64>,
     /// What the panel's search box holds. Held here rather than in the panel so
     /// that it survives the tool being switched away from and back.
     pub search: String,
@@ -137,6 +140,7 @@ impl Default for Textures {
         Textures {
             brush: PaintBrush::default(),
             catalogue: Vec::new(),
+            catalogue_for: None,
             search: String::new(),
             // [`ROOT`], not the empty string a derived default would give. An
             // empty prefix matches every path, so the picker would open on one
@@ -213,26 +217,32 @@ struct Held {
 /// It is read lazily rather than at startup. The read walks the whole listing
 /// of nineteen archives, and a session that never opens this tool should not
 /// pay for it.
-fn read_catalogue(mut textures: ResMut<Textures>, tool: Res<Tool>, assets: Res<GameAssets>) {
-    if !matches!(*tool, Tool::Textures | Tool::Chunks | Tool::Road) || !textures.catalogue.is_empty() {
+fn read_catalogue(
+    mut textures: ResMut<Textures>,
+    tool: Res<Tool>,
+    assets: Res<GameAssets>,
+    session: Option<Res<EditSession>>,
+) {
+    if !matches!(*tool, Tool::Textures | Tool::Chunks | Tool::Road) {
         return;
     }
-    let found = assets.with_archive(|chain| Ok(chain.list_prefix("Tileset\\")));
-    let mut found: Vec<String> = match found {
-        Ok(found) => found
-            .into_iter()
-            .filter(|path| path.ends_with(".blp"))
-            // The `_s` files are the specular masks that sit beside every
-            // tileset. See `vale_assets::world::adt`, which resolves them
-            // from the base name. Offering them would list each texture
-            // twice, once as itself and once as its gloss mask.
-            .filter(|path| !path.trim_end_matches(".blp").ends_with("_s"))
-            .collect(),
-        Err(e) => {
-            warn!("the tileset list could not be read: {e}");
-            Vec::new()
-        }
-    };
+    let Some(session) = session else { return };
+    // Read again when the project's files change, so a tileset imported in
+    // the Assets workspace is offered. See `EditSession::listed`.
+    if textures.catalogue_for == Some(session.files_revision) && !textures.catalogue.is_empty() {
+        return;
+    }
+    textures.catalogue_for = Some(session.files_revision);
+    let mut found: Vec<String> = session
+        .listed(&assets, "Tileset\\")
+        .into_iter()
+        .filter(|path| path.ends_with(".blp"))
+        // The `_s` files are the specular masks that sit beside every
+        // tileset. See `vale_assets::world::adt`, which resolves them from
+        // the base name. Offering them would list each texture twice, once as
+        // itself and once as its gloss mask.
+        .filter(|path| !path.trim_end_matches(".blp").ends_with("_s"))
+        .collect();
     found.sort();
     found.dedup();
     // A marker so a failed read is not retried every frame for the rest of the

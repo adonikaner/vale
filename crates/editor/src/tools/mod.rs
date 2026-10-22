@@ -50,6 +50,9 @@
 //!                `gameobject_template`, over the game object tool's state
 //! listing.rs     a server table read whole and searched in memory: the list
 //!                the two workspaces above draw, written once over any row type
+//! assets.rs      the Assets workspace: the textures and models the project
+//!                adds to the archives, and a picture turned into a BLP file
+//!                the 1.12.1 client reads
 //! loot.rs        the nine loot tables. No workspace and no rail entry: a set
 //!                is reached from the creature, the object or the item whose
 //!                column names it, in a window that follows the selection.
@@ -148,6 +151,7 @@
 //! the function sits here, shared by both.
 
 pub mod areas;
+pub mod assets;
 pub mod behaviour;
 pub mod chunks;
 pub mod conditions;
@@ -306,6 +310,21 @@ pub enum Tool {
     /// The Game Objects workspace: every `gameobject_template` row, on
     /// [`Tool::CreatureData`]'s terms — see [`gameobject_data`].
     GameObjectData,
+    /// `CreatureDisplayInfo.dbc` with `CreatureDisplayInfoExtra` and
+    /// `CreatureModelData` as two more tabs: what a creature looks like. A
+    /// part of the Creatures workspace, edited in the table browser.
+    CreatureDisplays,
+    /// `GameObjectDisplayInfo.dbc`: a game object's model and sounds. A part
+    /// of the Game Objects workspace.
+    ObjectDisplays,
+    /// `ItemDisplayInfo.dbc`: an item's icon, models and body textures. A
+    /// part of the Items workspace.
+    ItemDisplays,
+    /// The files the project adds to the archives: imported textures, baked
+    /// models and the rest — see [`assets`]. A workspace, since a file has no
+    /// place in the world; it has no table, because its subject is the
+    /// project folder.
+    Assets,
     /// A find-and-replace over every tile of the map — see [`sweep`].
     ///
     /// The second subject whose document is not a place: it edits the map's
@@ -381,7 +400,7 @@ pub enum Surface {
 /// [`Tool::at`] enforces the list: an exhaustive `match` that does not compile
 /// until a new variant has an index, plus a test that this list is exactly
 /// those indices in order.
-pub const ALL: [Tool; 28] = [
+pub const ALL: [Tool; 32] = [
     Tool::Select,
     Tool::Terrain,
     Tool::Grade,
@@ -410,6 +429,10 @@ pub const ALL: [Tool; 28] = [
     Tool::Road,
     Tool::CreatureData,
     Tool::GameObjectData,
+    Tool::CreatureDisplays,
+    Tool::ObjectDisplays,
+    Tool::ItemDisplays,
+    Tool::Assets,
 ];
 
 impl Tool {
@@ -450,6 +473,10 @@ impl Tool {
             Tool::Road => 25,
             Tool::CreatureData => 26,
             Tool::GameObjectData => 27,
+            Tool::CreatureDisplays => 28,
+            Tool::ObjectDisplays => 29,
+            Tool::ItemDisplays => 30,
+            Tool::Assets => 31,
         }
     }
 
@@ -470,6 +497,9 @@ impl Tool {
             Tool::Zones => Some(tables::area::TABLE),
             Tool::Triggers => Some(vale_edit::dbc::places::TRIGGERS),
             Tool::Graveyards => Some(vale_edit::dbc::places::SAFE_LOCS),
+            Tool::CreatureDisplays => Some("CreatureDisplayInfo"),
+            Tool::ObjectDisplays => Some("GameObjectDisplayInfo"),
+            Tool::ItemDisplays => Some("ItemDisplayInfo"),
             // No one table: the workspace starts on the list of them.
             Tool::Tables => Some(tables::ANY),
             _ => None,
@@ -523,10 +553,22 @@ impl Tool {
     /// workspaces replace the viewport but do not survive either: the server
     /// reads both template tables at startup, so an edit made during a
     /// playtest is not seen in it.
+    ///
+    /// The three display tables are client files like `Spell.dbc`, and the
+    /// Assets workspace edits files, so the four survive for the spells'
+    /// reason.
     pub fn survives_playtest(self) -> bool {
         matches!(
             self,
-            Tool::Spells | Tool::Items | Tool::ItemSets | Tool::Quests | Tool::Tables
+            Tool::Spells
+                | Tool::Items
+                | Tool::ItemSets
+                | Tool::Quests
+                | Tool::Tables
+                | Tool::CreatureDisplays
+                | Tool::ObjectDisplays
+                | Tool::ItemDisplays
+                | Tool::Assets
         )
     }
 
@@ -553,7 +595,11 @@ impl Tool {
             | Tool::Tables
             | Tool::Zones
             | Tool::CreatureData
-            | Tool::GameObjectData => Surface::Middle,
+            | Tool::GameObjectData
+            | Tool::CreatureDisplays
+            | Tool::ObjectDisplays
+            | Tool::ItemDisplays
+            | Tool::Assets => Surface::Middle,
             // A light's row, a flight path node or point, a creature's spawn
             // row and a game object's are each a place in the world, so each
             // is picked with the pointer and puts its form where every other
@@ -595,6 +641,9 @@ impl Tool {
             Tool::Zones => &tables::ZONE_TABS,
             Tool::Triggers => &tables::TRIGGER_TABS,
             Tool::Graveyards => &tables::SAFE_LOC_TABS,
+            Tool::CreatureDisplays => &tables::CREATURE_DISPLAY_TABS,
+            Tool::ObjectDisplays => &tables::OBJECT_DISPLAY_TABS,
+            Tool::ItemDisplays => &tables::ITEM_DISPLAY_TABS,
             _ => &[],
         }
     }
@@ -610,7 +659,19 @@ impl Tool {
     /// since they are tables in the same browser.
     pub fn parts(self) -> &'static [(&'static str, Tool)] {
         match self {
-            Tool::Items | Tool::ItemSets => &[("Items", Tool::Items), ("Sets", Tool::ItemSets)],
+            Tool::Items | Tool::ItemSets | Tool::ItemDisplays => &[
+                ("Items", Tool::Items),
+                ("Sets", Tool::ItemSets),
+                ("Displays", Tool::ItemDisplays),
+            ],
+            Tool::CreatureData | Tool::CreatureDisplays => &[
+                ("Templates", Tool::CreatureData),
+                ("Displays", Tool::CreatureDisplays),
+            ],
+            Tool::GameObjectData | Tool::ObjectDisplays => &[
+                ("Templates", Tool::GameObjectData),
+                ("Displays", Tool::ObjectDisplays),
+            ],
             _ => &[],
         }
     }
@@ -632,6 +693,11 @@ impl Tool {
         match table {
             "ItemSet" => Tool::ItemSets,
             "AreaTable" => Tool::Zones,
+            "CreatureDisplayInfo" | "CreatureDisplayInfoExtra" | "CreatureModelData" => {
+                Tool::CreatureDisplays
+            }
+            "GameObjectDisplayInfo" => Tool::ObjectDisplays,
+            "ItemDisplayInfo" => Tool::ItemDisplays,
             _ if in_spells => Tool::Spells,
             _ => Tool::Tables,
         }
@@ -684,6 +750,10 @@ impl Tool {
             // and the rail's spawn tools are already Creatures and Objects.
             Tool::CreatureData => "Creature Data",
             Tool::GameObjectData => "Game Object Data",
+            Tool::CreatureDisplays => "Creature Display Info",
+            Tool::ObjectDisplays => "Game Object Display Info",
+            Tool::ItemDisplays => "Item Display Info",
+            Tool::Assets => "Assets",
         }
     }
 }
@@ -819,6 +889,7 @@ impl Plugin for ToolPlugin {
                 items::ItemToolPlugin,
                 creature_data::CreatureDataPlugin,
                 gameobject_data::GameObjectDataPlugin,
+                assets::AssetsPlugin,
             ),
             quests::QuestToolPlugin,
             loot::LootToolPlugin,
@@ -1261,6 +1332,10 @@ fn modes(
         | Tool::Quests
         | Tool::CreatureData
         | Tool::GameObjectData
+        | Tool::CreatureDisplays
+        | Tool::ObjectDisplays
+        | Tool::ItemDisplays
+        | Tool::Assets
         | Tool::Tables
         | Tool::Zones
         | Tool::Triggers
@@ -1533,7 +1608,9 @@ mod tests {
     #[test]
     fn only_a_placeless_subject_covers_the_viewport() {
         for tool in ALL {
-            if tool.covers_viewport() {
+            // The Assets workspace's subject is the project folder, not a
+            // table.
+            if tool.covers_viewport() && tool != Tool::Assets {
                 assert!(
                     tool.table().is_some() || tool.server_table().is_some(),
                     "{} covers the viewport with no table to put there",
@@ -1580,6 +1657,8 @@ mod tests {
                     tool.name(),
                     tool.table()
                 ),
+                // The Assets workspace's subject is the project folder.
+                Surface::Middle if tool == Tool::Assets => {}
                 // A client table or a server one. The subject has to be a row
                 // either way. `server_table` says which side of the wire it
                 // lives on, and that decides whether the tool survives a

@@ -183,6 +183,11 @@ pub enum Modal {
     },
     /// Choose a model path from the archives for the text at `(record, field)`.
     Models { record: usize, field: usize },
+    /// Choose a texture for the display-table text field at `(record,
+    /// field)`: a creature's skin, an item model's skin, a bag icon or a body
+    /// texture, from the folder the field's file is found in, or a picture
+    /// imported into it. See `ui::appearance`.
+    Textures { record: usize, field: usize },
     /// Choose a row of `table` and open it. No reference is written.
     ///
     /// The counterpart of [`Modal::Pick`] for a subject whose panel is not a
@@ -226,6 +231,21 @@ struct Backrefs {
     revision: u64,
     open_tables: usize,
     by_id: HashMap<u32, Vec<Use>>,
+}
+
+/// What a row of a display table looks like: the model it draws, dressed as
+/// the row dresses it, and an item's bag icon.
+#[derive(Debug, Clone, Default)]
+pub struct Shown {
+    /// The model, or for an item that has none, a body wearing it.
+    pub worn: Option<crate::portraits::Worn>,
+    /// Whether [`Self::worn`] is a body wearing the row rather than the row's
+    /// own model.
+    pub on_a_body: bool,
+    /// An `ItemDisplayInfo` row's bag icon, as an archive path.
+    pub icon: Option<String>,
+    /// Why nothing is drawn, when [`Self::worn`] is `None`.
+    pub why: &'static str,
 }
 
 /// What table is open, at which row, and what has been typed into it.
@@ -296,8 +316,27 @@ pub struct Browser {
     /// browser; the text typed into the browser's search box; and the index of
     /// the folder it is narrowed to.
     pub models: Option<Vec<String>>,
+    /// The `EditSession::files_revision` [`Self::models`] was read at, so a
+    /// model the project adds is listed. See `EditSession::listed`.
+    pub models_for: Option<u64>,
     pub model_query: String,
     pub model_folder: usize,
+    /// The texture browser's folder, the `EditSession::files_revision` it
+    /// was listed at, and the textures in it as each one's name and path.
+    pub textures: Option<(String, u64, Vec<(String, String)>)>,
+    /// The texture the browser previews, by path, and its search and page.
+    pub texture_preview: Option<String>,
+    pub texture_query: String,
+    pub texture_page: usize,
+    /// An import the texture browser asks for, taken by the shell, which
+    /// opens the Import Texture dialog on it: the folder, and the field to set
+    /// to the imported texture's name. See `crate::tools::assets`.
+    pub import_texture: Option<(String, crate::tools::assets::FieldTarget)>,
+    /// What rows of the display tables the client reads look like, by table
+    /// and id, and the `GameAssets::tables_generation` they were resolved at.
+    /// A picker draws a page of them every frame. See `ui::appearance`.
+    pub shown: HashMap<(&'static str, u32), Shown>,
+    pub shown_at: u64,
     /// `SoundEntries` ids a panel has asked to play.
     ///
     /// A kit names a `SoundEntries` id, and outside a playtest the only way to
@@ -697,6 +736,15 @@ const VISUAL_SLOTS: [(usize, &str); 5] = [
 /// The kit's model columns, in the order a label reads them.
 const KIT_MODELS: [usize; 9] = [6, 7, 3, 4, 5, 12, 8, 9, 10];
 
+/// A path's file name without its extension.
+fn stem(path: &str) -> &str {
+    let file = basename(path);
+    match file.rfind('.') {
+        Some(at) => &file[..at],
+        None => file,
+    }
+}
+
 /// The label of one row, with a rule per table; see the module comment.
 ///
 /// This is a free function rather than a method so that [`Browser::index`] can
@@ -857,6 +905,37 @@ pub fn describe(
             String::new(),
         ),
         "SpellChainEffects" => (basename(&text(7)).to_string(), String::new()),
+        // The display tables have no name column. A creature display is
+        // called by its model and its skins, which is how the shipped rows are
+        // told apart: `WolfSkinGrey` against `WolfSkinBlack` on one wolf.
+        "CreatureDisplayInfo" => {
+            let model = session
+                .table("CreatureModelData")
+                .and_then(|models| models.string_at(models.row_of(num(1))?, 2))
+                .map(|path| stem(&path).to_string())
+                .unwrap_or_else(|| format!("model {}", num(1)));
+            let skins: Vec<String> = (6..=8).map(text).filter(|skin| !skin.is_empty()).collect();
+            let sub = match (skins.is_empty(), num(3)) {
+                (false, _) => skins.join(", "),
+                (true, 0) => String::new(),
+                (true, extra) => format!("baked appearance {extra}"),
+            };
+            (model, sub)
+        }
+        "CreatureModelData" => (stem(&text(2)).to_string(), format!("scale {:.2}", float(4))),
+        "CreatureDisplayInfoExtra" => (
+            format!(
+                "race {} {}",
+                num(1),
+                match num(2) {
+                    0 => "male",
+                    _ => "female",
+                }
+            ),
+            text(18),
+        ),
+        "GameObjectDisplayInfo" => (stem(&text(1)).to_string(), String::new()),
+        "ItemDisplayInfo" => (text(5), stem(&text(1)).to_string()),
         // A light is labelled by its map and position. The table has no name
         // column, and a list of 374 bare ids cannot be searched by meaning;
         // `SpellVisual` has the same problem and is labelled the same way.
@@ -1254,6 +1333,19 @@ pub fn chain_for(table: &str) -> &'static [&'static str] {
         "TaxiNodes" => &["TaxiPath", "TaxiPathNode", "Map"],
         // A set's bonuses are spells and its requirement is a skill line.
         "ItemSet" => &["Spell", "SkillLine"],
+        // The creature display chain: what a display's model and extra
+        // columns name, which are its two other tabs, and the items an extra
+        // row dresses the creature in.
+        "CreatureDisplayInfo" | "CreatureDisplayInfoExtra" | "CreatureModelData" => &[
+            "CreatureDisplayInfo",
+            "CreatureDisplayInfoExtra",
+            "CreatureModelData",
+            "ItemDisplayInfo",
+        ],
+        // A game object's ten sounds.
+        "GameObjectDisplayInfo" => &["SoundEntries"],
+        // The visual an item's glow is.
+        "ItemDisplayInfo" => &["SpellVisual"],
         // The skill tables, for when one is opened from the Tables
         // workspace and the spell chain is not open: each is labelled from
         // the others.
@@ -1313,6 +1405,22 @@ pub const TAB_ROW: usize = 4;
 /// The Sets part of the Items workspace: one table. A single tab is not
 /// drawn; the strip above it switches between the workspace's parts.
 pub const SET_TABS: [(&str, &str); 1] = [("Sets", "ItemSet")];
+
+/// The Displays part of the Creatures workspace: a display, the extra
+/// appearance a character-model display names, and the model data a display
+/// names, in the order a display is resolved.
+pub const CREATURE_DISPLAY_TABS: [(&str, &str); 3] = [
+    ("Display Info", "CreatureDisplayInfo"),
+    ("Extra", "CreatureDisplayInfoExtra"),
+    ("Model Data", "CreatureModelData"),
+];
+
+/// The Displays part of the Game Objects workspace: one table, so no tab is
+/// drawn.
+pub const OBJECT_DISPLAY_TABS: [(&str, &str); 1] = [("Display Info", "GameObjectDisplayInfo")];
+
+/// The Displays part of the Items workspace: one table, so no tab is drawn.
+pub const ITEM_DISPLAY_TABS: [(&str, &str); 1] = [("Display Info", "ItemDisplayInfo")];
 
 /// The Zones workspace: one table, so no tab is drawn. The zones and their
 /// sub-areas are rows of the same table.
@@ -2969,7 +3077,35 @@ pub fn open_tables(
                             browser.pick_query.clear();
                             browser.pick_focus = true;
                         }
-                        None => warn!("--choose {wanted}: {open} has no reference by that name"),
+                        None => {
+                            // A display table's file field opens its browser.
+                            use crate::ui::appearance::{file_field, FileField};
+                            let file = schema::for_table(&open).and_then(|schema| {
+                                schema.columns.iter().find_map(|column| {
+                                    let named = column.name.eq_ignore_ascii_case(wanted.trim());
+                                    named
+                                        .then(|| file_field(&open, column.field).map(|of| (column.field, of)))
+                                        .flatten()
+                                })
+                            });
+                            match file {
+                                Some((field, FileField::Texture(_))) => {
+                                    browser.modal = Some(Modal::Textures { record, field });
+                                    browser.texture_preview = None;
+                                    browser.texture_query.clear();
+                                    browser.texture_page = 0;
+                                    browser.pick_focus = true;
+                                }
+                                Some((field, _)) => {
+                                    browser.modal = Some(Modal::Models { record, field });
+                                    browser.model_query.clear();
+                                    browser.pick_focus = true;
+                                }
+                                None => warn!(
+                                    "--choose {wanted}: {open} has no reference or file field by that name"
+                                ),
+                            }
+                        }
                     }
                 }
                 // `--like <spell id>` opens the dialog that takes another

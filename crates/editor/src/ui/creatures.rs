@@ -583,6 +583,11 @@ fn edits_block(
 /// lookup, a string build and a `Dressing`, and a picker row asks for it on
 /// every frame it is drawn.
 pub(super) fn worn(subject: &mut Subject<'_>, display_id: u32) -> Option<crate::portraits::Worn> {
+    let generation = subject.assets.tables_generation();
+    if subject.creatures.worn_at != generation {
+        subject.creatures.worn.clear();
+        subject.creatures.worn_at = generation;
+    }
     if let Some(had) = subject.creatures.worn.get(&display_id) {
         return had.clone();
     }

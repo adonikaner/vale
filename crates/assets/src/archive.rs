@@ -27,12 +27,24 @@
 //! this crate.
 //!
 //! It costs one `Option` check per read when nothing is installed.
+//!
+//! ## A deleted file is absent
+//!
+//! A patch archive removes a file from the archives under it with an entry
+//! flagged [`DELETE_MARKER`], which states zero bytes. `patch.MPQ` deletes
+//! 5,454 textures and `SpellEffectNames.dbc` this way, among others. The chain
+//! treats such an entry as the end of the lookup: the path is not found, the
+//! copy in a lower archive is not read, and the listing leaves the path out.
 
 use crate::AssetError;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use wow_mpq::Archive;
+
+/// The block flag of an entry that deletes the file from the archives below
+/// it. See the module comment.
+pub const DELETE_MARKER: u32 = 0x0200_0000;
 
 /// The largest file size a read accepts: an upper bound on any file in a 1.12
 /// install, with a wide margin.
@@ -87,7 +99,9 @@ pub struct Assets {
     /// written; a host that reads this field without one of them reports only
     /// part of the damaged entries.
     pub damaged: Vec<(String, String, u64)>,
-    listing: Option<HashMap<String, usize>>,
+    /// Every listed path and the index of the archive that answers it, `None`
+    /// where that archive deletes it.
+    listing: Option<HashMap<String, Option<usize>>>,
     /// The install root whose `Interface\AddOns\` is read before the archives,
     /// or `None` for a chain that answers from the archives alone.
     loose: Option<PathBuf>,
@@ -320,6 +334,8 @@ impl Assets {
             // does not hold the path it replaces a `read_file` that would fail
             // late with a hash lookup, and a chain miss walks every archive.
             match mounted.archive.find_file(&normalised) {
+                // Deleted here, so absent from every archive under this one.
+                Ok(Some(info)) if info.flags & DELETE_MARKER != 0 => break,
                 Ok(Some(info)) if info.file_size > MAX_FILE_BYTES => {
                     refused = Some((mounted.name.clone(), info.file_size));
                     continue;
@@ -351,6 +367,20 @@ impl Assets {
         }
     }
 
+    /// Each archive's own entry for a path, in lookup order: the archive's
+    /// name, the stated size, the stored size and the block flags. A
+    /// diagnostic for `vale extract`; reading goes through [`Self::read`].
+    pub fn entries(&mut self, vpath: &str) -> Vec<(String, u64, u64, u32)> {
+        let normalised = vpath.replace('/', "\\");
+        self.archives
+            .iter_mut()
+            .filter_map(|mounted| {
+                let info = mounted.archive.find_file(&normalised).ok()??;
+                Some((mounted.name.clone(), info.file_size, info.compressed_size, info.flags))
+            })
+            .collect()
+    }
+
     /// Whether a file exists anywhere in the chain.
     ///
     /// A lookup, not a read. `self.read(vpath).is_ok()` would decompress the
@@ -373,19 +403,23 @@ impl Assets {
         }
         // Same rule as [`Self::read`], including the damaged-entry bound: a path
         // this chain would refuse to read counts as absent.
-        self.archives.iter().any(|mounted| {
-            matches!(
-                mounted.archive.find_file(&normalised),
-                Ok(Some(ref info)) if info.file_size <= MAX_FILE_BYTES
-            )
-        })
+        // The first archive with an entry decides when it deletes the path.
+        for mounted in &self.archives {
+            match mounted.archive.find_file(&normalised) {
+                Ok(Some(info)) if info.flags & DELETE_MARKER != 0 => return false,
+                Ok(Some(info)) if info.file_size <= MAX_FILE_BYTES => return true,
+                _ => {}
+            }
+        }
+        false
     }
 
     /// Build (once) a map of every listed file to the index of the archive that
-    /// wins for it. Used for prefix queries like "which maps exist".
-    fn listing(&mut self) -> &HashMap<String, usize> {
+    /// wins for it, `None` where that archive deletes it. Used for prefix
+    /// queries like "which maps exist".
+    fn listing(&mut self) -> &HashMap<String, Option<usize>> {
         if self.listing.is_none() {
-            let mut map: HashMap<String, usize> = HashMap::new();
+            let mut map: HashMap<String, Option<usize>> = HashMap::new();
             for (idx, mounted) in self.archives.iter_mut().enumerate() {
                 let Ok(entries) = mounted.archive.list() else {
                     continue;
@@ -393,7 +427,8 @@ impl Assets {
                 for entry in entries {
                     let key = entry.name.replace('/', "\\").to_ascii_lowercase();
                     // First writer wins: archives are already in priority order.
-                    map.entry(key).or_insert(idx);
+                    let deleted = entry.flags & DELETE_MARKER != 0;
+                    map.entry(key).or_insert((!deleted).then_some(idx));
                 }
             }
             self.listing = Some(map);
@@ -406,9 +441,9 @@ impl Assets {
         let needle = prefix.replace('/', "\\").to_ascii_lowercase();
         let mut out: Vec<String> = self
             .listing()
-            .keys()
-            .filter(|k| k.starts_with(&needle))
-            .cloned()
+            .iter()
+            .filter(|(k, at)| at.is_some() && k.starts_with(&needle))
+            .map(|(k, _)| k.clone())
             .collect();
         out.sort();
         out

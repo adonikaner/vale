@@ -20,6 +20,8 @@
 //! extract.rs     any file in the MPQ chain, written out or hexdumped
 //! catalogue.rs   the listing of what may be placed in the world, folder by
 //!                folder, with the listed paths that do not open
+//! blps.rs        the header shapes of every listed BLP, counted: what the
+//!                texture importer is allowed to write
 //! maps.rs        every map that has a WDT, with its tile count
 //! map.rs         the tile grid of one map
 //! tile.rs        one ADT: chunks, heights, and what it places
@@ -150,6 +152,7 @@ mod dress;
 mod emote;
 mod emotetext;
 mod bank;
+mod blps;
 mod extract;
 mod foliage;
 mod framexml;
@@ -224,6 +227,7 @@ const SUBCOMMANDS: &[&str] = &[
     "cursor",
     "maps",
     "catalogue",
+    "blps",
     "map",
     "tile",
     "mcnk",
@@ -308,6 +312,7 @@ fn main() {
         Some("cursor") => cursor::cmd_cursor(&cfg, arg(1)),
         Some("maps") => maps::cmd_maps(&cfg),
         Some("catalogue") => catalogue::cmd_catalogue(&cfg, arg(1)),
+        Some("blps") => blps::cmd_blps(&cfg, arg(1)),
         Some("map") => match arg(1) {
             Some(name) => map::cmd_map(&cfg, name),
             None => Err("usage: vale map <MapName>".to_string()),

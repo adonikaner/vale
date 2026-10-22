@@ -2,12 +2,11 @@
 //!
 //! Values follow vmangos' `SpellDefines.h` and `SpellAuraDefines.h`.
 //!
-//! **The client ships no names for either.**
-//! `DBFilesClient\SpellEffectNames.dbc` and `SpellAuraNames.dbc` are
-//! both zero bytes in 1.12.1 — see `vale dbc` — so `Spell.dbc`'s
-//! effect and aura columns are numbers with nothing in the archives to
-//! resolve them against. These are the server's names for the same
-//! numbers, which is the only authority there is for them.
+//! The patched client reads no names for either. 1.12.1's `patch.MPQ`
+//! deletes `DBFilesClient\SpellEffectNames.dbc` and `SpellAuraNames.dbc`
+//! (see `vale extract`), so `Spell.dbc`'s effect and aura columns are
+//! numbers with nothing the client reads to resolve them against. These are
+//! the server's names for the same numbers.
 
 /// `Spell.dbc`'s `Effect[3]` columns, by value.
 pub const SPELL_EFFECTS: [(u32, &str); 134] = [

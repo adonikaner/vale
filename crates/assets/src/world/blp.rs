@@ -1,12 +1,12 @@
-//! BLP2 — the texture format everything in 1.12 is stored in. Decodes to
-//! straight RGBA8, the top mip alone or the whole chain.
+//! BLP2, the texture format everything in 1.12 is stored in. Decodes to
+//! straight RGBA8, the top mip alone or the whole chain, and writes the three
+//! DXT shapes the shipped archives use.
 //!
-//! Ported from an earlier JavaScript implementation, which is known to render
-//! this game's textures correctly. Writing one from scratch is a bad
-//! trade: the format is simple but the DXT corner cases (1-bit alpha, the
-//! `c0 <= c1` branch, DXT5's 3-bit index stream straddling byte boundaries) are
-//! exactly where a fresh implementation produces *plausible* garbage — colours
-//! that look almost right, on some blocks, in some textures.
+//! The decoder is ported from an earlier JavaScript implementation that
+//! renders this game's textures correctly. The DXT corner cases (1-bit alpha,
+//! the `c0 <= c1` branch, DXT5's 3-bit index stream straddling byte
+//! boundaries) are where a new implementation produces colours that are wrong
+//! on some blocks of some textures, and the port avoids that.
 //!
 //! ```text
 //! 0x00 u32  magic "BLP2"
@@ -30,6 +30,7 @@ const OFF_TYPE: usize = 0x04;
 const OFF_COMPRESSION: usize = 0x08;
 const OFF_ALPHA_DEPTH: usize = 0x09;
 const OFF_ALPHA_TYPE: usize = 0x0A;
+const OFF_HAS_MIPS: usize = 0x0B;
 const OFF_WIDTH: usize = 0x0C;
 const OFF_HEIGHT: usize = 0x10;
 const OFF_MIP_OFFSETS: usize = 0x14;
@@ -86,8 +87,8 @@ pub fn decode(buf: &[u8]) -> Result<Blp, AssetError> {
 
 /// Decode a BLP2 texture and every mip level the file carries.
 ///
-/// **The mips are in the file already.** Blizzard authored them, so there is
-/// nothing to generate and nothing to get wrong: level `n` is
+/// The mips are in the file already, authored with the texture, so nothing is
+/// generated here: level `n` is
 /// `(width >> n).max(1)` by `(height >> n).max(1)`, and its bytes sit at
 /// `mipOffsets[n]`.
 ///
@@ -387,22 +388,22 @@ fn dxt5_alpha(data: &[u8], src: usize, texel: usize) -> u8 {
 
 // ---------------------------------------------------------------- the writer
 
-/// **Write a BLP2 the reference client reads.** DXT1, one level, no alpha.
+/// Write a minimap tile: DXT1, one level, no alpha.
 ///
-/// ## Why that shape and not another
+/// ## Why that shape
 ///
-/// It is the shape the game's own minimap tiles are in, measured rather than
-/// chosen: `textures\Minimap\ea283abc…blp` — Azeroth's tile 32, 48 — is
-/// **BLP2, type 1, compression 2, alphaDepth 0, alphaType 0, hasMips 0, 256x256,
-/// one mip of 32,768 bytes**, which at 0.5 bytes a pixel is DXT1 and nothing
-/// else. A 256x256 raw BGRA file would decode here and be eight times the size,
-/// and nothing in the archives looks like one.
+/// It is the shape the game's own minimap tiles are in:
+/// `textures\Minimap\ea283abc…blp`, Azeroth's tile 32, 48, is BLP2, type 1,
+/// compression 2, alphaDepth 0, alphaType 0, hasMips 0, 256x256, one mip of
+/// 32,768 bytes, which at 0.5 bytes a pixel is DXT1. A 256x256 raw BGRA file
+/// would decode here and be eight times the size, and the archives carry one
+/// raw file in 58,247 (`vale blps`).
 ///
-/// Only the writer this project actually needs exists: there is no palettized
-/// encoder and no DXT5, because nothing writes either. The decoder above reads
-/// all three because the game ships all three.
+/// [`encode`] writes the other shapes, for imported textures. There is no
+/// palettized encoder and no DXT5 writer: nothing in the editor needs the
+/// first, and the shipped archives hold no DXT5 file.
 ///
-/// ## The encoder is a bounding box, and that is a decision
+/// ## The encoder is a bounding box
 ///
 /// Each 4x4 block takes the per-channel minimum and maximum of its sixteen
 /// texels as the two endpoints and picks the nearest of the four interpolated
@@ -412,7 +413,7 @@ fn dxt5_alpha(data: &[u8], src: usize, texel: usize) -> u8 {
 /// writes it is the right trade: a minimap tile is broad regions of ground
 /// colour, which is the case a bounding box handles exactly.
 ///
-/// **`c0 > c1` is enforced**, which is what selects DXT1's opaque four-colour
+/// `c0 > c1` is enforced, which selects DXT1's opaque four-colour
 /// mode. The other branch reserves index 3 for transparent black, so a block
 /// that landed in it would punch holes in the ground.
 pub fn encode_dxt1(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, AssetError> {
@@ -525,6 +526,315 @@ fn dxt1_palette(c0: u16, c1: u16) -> [[u8; 3]; 4] {
         out
     };
     [a, b, mix(2, 3), mix(1, 3)]
+}
+
+/// How an imported texture is compressed: one of the three DXT shapes the
+/// shipped archives use, by `vale blps` over the 1.12.1 data.
+///
+/// ```text
+/// Dxt1       compression 2, alphaDepth 0, alphaType 0   16,164 files with mips
+/// Dxt1Alpha  compression 2, alphaDepth 1, alphaType 0    1,409 files with mips
+/// Dxt3       compression 2, alphaDepth 8, alphaType 1    5,500 files with mips
+/// ```
+///
+/// No shipped file is DXT5 (alphaType 7), so it is not offered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Encoding {
+    /// No alpha: half a byte a texel.
+    Dxt1,
+    /// Alpha that is on or off, half a byte a texel. A texel under half
+    /// alpha is transparent and every other texel opaque.
+    Dxt1Alpha,
+    /// Sixteen levels of alpha, a byte a texel.
+    Dxt3,
+}
+
+impl Encoding {
+    /// The encoding that keeps what `rgba` has and no more: DXT1 for a
+    /// texture with no alpha, DXT1 with 1-bit alpha for one whose alpha is
+    /// only fully on and fully off, DXT3 otherwise.
+    pub fn for_pixels(rgba: &[u8]) -> Encoding {
+        let mut cut_out = false;
+        for alpha in rgba.iter().skip(3).step_by(4) {
+            match alpha {
+                255 => {}
+                0 => cut_out = true,
+                _ => return Encoding::Dxt3,
+            }
+        }
+        match cut_out {
+            true => Encoding::Dxt1Alpha,
+            false => Encoding::Dxt1,
+        }
+    }
+
+    /// What to call it in an interface.
+    pub fn name(self) -> &'static str {
+        match self {
+            Encoding::Dxt1 => "DXT1",
+            Encoding::Dxt1Alpha => "DXT1, 1-bit alpha",
+            Encoding::Dxt3 => "DXT3",
+        }
+    }
+
+    /// `alphaDepth` and `alphaType` as the shipped files of this shape carry
+    /// them.
+    fn header_alpha(self) -> (u8, u8) {
+        match self {
+            Encoding::Dxt1 => (0, 0),
+            Encoding::Dxt1Alpha => (1, 0),
+            Encoding::Dxt3 => (8, 1),
+        }
+    }
+
+    fn block_bytes(self) -> usize {
+        match self {
+            Encoding::Dxt1 | Encoding::Dxt1Alpha => 8,
+            Encoding::Dxt3 => 16,
+        }
+    }
+}
+
+/// The largest side an imported texture may have: the largest the decoder
+/// accepts.
+pub const MAX_SIDE: u32 = 4096;
+
+/// Write an imported texture: BLP2, type 1, compression 2, in `encoding`,
+/// with the whole mip chain when `mips` is true.
+///
+/// Both sides must be powers of two, as every shipped texture's are (`vale
+/// blps` finds none that is not), and at most [`MAX_SIDE`]. The chain goes
+/// down to 1x1, each level the box average of the one above with colour
+/// weighted by alpha, so a transparent texel's colour does not darken the
+/// edge it borders. A level smaller than 4x4 is still a whole DXT block, as
+/// the decoder reads it: the texels outside the level are copies of its edge.
+pub fn encode(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    encoding: Encoding,
+    mips: bool,
+) -> Result<Vec<u8>, AssetError> {
+    let bad = |d: String| AssetError::malformed("BLP", d);
+    if !width.is_power_of_two() || !height.is_power_of_two() {
+        return Err(bad(format!("{width}x{height}: both sides must be powers of two")));
+    }
+    if width > MAX_SIDE || height > MAX_SIDE {
+        return Err(bad(format!("{width}x{height}: the largest side is {MAX_SIDE}")));
+    }
+    let want = (width as usize) * (height as usize) * 4;
+    if rgba.len() != want {
+        return Err(bad(format!("{} bytes of pixels, expected {want}", rgba.len())));
+    }
+
+    let mut levels: Vec<(u32, u32, Vec<u8>)> = vec![(width, height, rgba.to_vec())];
+    while mips && levels.len() < MAX_MIPS {
+        let (w, h, last) = levels.last().expect("the top level");
+        if *w == 1 && *h == 1 {
+            break;
+        }
+        let next = halve(last, *w, *h);
+        levels.push(((w / 2).max(1), (h / 2).max(1), next));
+    }
+
+    let (alpha_depth, alpha_type) = encoding.header_alpha();
+    let mut out = vec![0u8; HEADER_SIZE];
+    out[0..4].copy_from_slice(b"BLP2");
+    out[OFF_TYPE..OFF_TYPE + 4].copy_from_slice(&1u32.to_le_bytes());
+    out[OFF_COMPRESSION] = 2;
+    out[OFF_ALPHA_DEPTH] = alpha_depth;
+    out[OFF_ALPHA_TYPE] = alpha_type;
+    out[OFF_HAS_MIPS] = u8::from(mips);
+    out[OFF_WIDTH..OFF_WIDTH + 4].copy_from_slice(&width.to_le_bytes());
+    out[OFF_HEIGHT..OFF_HEIGHT + 4].copy_from_slice(&height.to_le_bytes());
+    for (level, (w, h, pixels)) in levels.iter().enumerate() {
+        let blocks = encode_level(pixels, *w as usize, *h as usize, encoding);
+        let at = OFF_MIP_OFFSETS + level * 4;
+        let offset = out.len() as u32;
+        out[at..at + 4].copy_from_slice(&offset.to_le_bytes());
+        let at = OFF_MIP_SIZES + level * 4;
+        out[at..at + 4].copy_from_slice(&(blocks.len() as u32).to_le_bytes());
+        out.extend_from_slice(&blocks);
+    }
+    Ok(out)
+}
+
+/// Resize RGBA pixels by bilinear filtering, for an imported picture whose
+/// sides are not powers of two. Alpha is filtered with the colour.
+pub fn resize(rgba: &[u8], width: u32, height: u32, to_width: u32, to_height: u32) -> Vec<u8> {
+    let (w, h) = (width as usize, height as usize);
+    let (tw, th) = (to_width.max(1) as usize, to_height.max(1) as usize);
+    let mut out = vec![0u8; tw * th * 4];
+    if w == 0 || h == 0 {
+        return out;
+    }
+    let texel = |x: usize, y: usize, c: usize| f32::from(rgba[(y * w + x) * 4 + c]);
+    for ty in 0..th {
+        // Texel centres map onto texel centres.
+        let sy = ((ty as f32 + 0.5) * h as f32 / th as f32 - 0.5).clamp(0.0, (h - 1) as f32);
+        let (y0, fy) = (sy.floor() as usize, sy.fract());
+        let y1 = (y0 + 1).min(h - 1);
+        for tx in 0..tw {
+            let sx = ((tx as f32 + 0.5) * w as f32 / tw as f32 - 0.5).clamp(0.0, (w - 1) as f32);
+            let (x0, fx) = (sx.floor() as usize, sx.fract());
+            let x1 = (x0 + 1).min(w - 1);
+            for c in 0..4 {
+                let top = texel(x0, y0, c) * (1.0 - fx) + texel(x1, y0, c) * fx;
+                let bottom = texel(x0, y1, c) * (1.0 - fx) + texel(x1, y1, c) * fx;
+                out[(ty * tw + tx) * 4 + c] = (top * (1.0 - fy) + bottom * fy).round() as u8;
+            }
+        }
+    }
+    out
+}
+
+/// The next mip level: each texel the average of the two by two above it,
+/// colour weighted by alpha. A side already at 1 stays at 1.
+fn halve(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let (w, h) = (width as usize, height as usize);
+    let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+    let mut out = vec![0u8; nw * nh * 4];
+    for y in 0..nh {
+        for x in 0..nw {
+            let mut sum = [0u32; 3];
+            let (mut alpha, mut plain, mut n) = (0u32, [0u32; 3], 0u32);
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                let (sx, sy) = ((x * 2 + dx).min(w - 1), (y * 2 + dy).min(h - 1));
+                let at = (sy * w + sx) * 4;
+                let a = u32::from(rgba[at + 3]);
+                for c in 0..3 {
+                    sum[c] += u32::from(rgba[at + c]) * a;
+                    plain[c] += u32::from(rgba[at + c]);
+                }
+                alpha += a;
+                n += 1;
+            }
+            let at = (y * nw + x) * 4;
+            for c in 0..3 {
+                out[at + c] = match alpha {
+                    0 => (plain[c] / n) as u8,
+                    _ => (sum[c] / alpha) as u8,
+                };
+            }
+            out[at + 3] = (alpha / n) as u8;
+        }
+    }
+    out
+}
+
+/// One level's blocks, left to right and top to bottom.
+fn encode_level(rgba: &[u8], width: usize, height: usize, encoding: Encoding) -> Vec<u8> {
+    let (bw, bh) = (width.div_ceil(4), height.div_ceil(4));
+    let mut out = Vec::with_capacity(bw * bh * encoding.block_bytes());
+    for by in 0..bh {
+        for bx in 0..bw {
+            // The block's sixteen texels, an edge texel repeated where the
+            // level is smaller than the block.
+            let mut texels = [[0u8; 4]; 16];
+            for y in 0..4 {
+                for x in 0..4 {
+                    let sx = (bx * 4 + x).min(width - 1);
+                    let sy = (by * 4 + y).min(height - 1);
+                    let at = (sy * width + sx) * 4;
+                    texels[y * 4 + x].copy_from_slice(&rgba[at..at + 4]);
+                }
+            }
+            match encoding {
+                Encoding::Dxt1 => out.extend_from_slice(&colour_block(&texels)),
+                Encoding::Dxt1Alpha => out.extend_from_slice(&cut_out_block(&texels)),
+                Encoding::Dxt3 => {
+                    out.extend_from_slice(&explicit_alpha(&texels));
+                    out.extend_from_slice(&colour_block(&texels));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A four-colour DXT1 block over sixteen texels: [`encode_block`]'s bounding
+/// box, for texels already gathered.
+fn colour_block(texels: &[[u8; 4]; 16]) -> [u8; 8] {
+    let mut flat = [0u8; 64];
+    for (i, t) in texels.iter().enumerate() {
+        flat[i * 4..i * 4 + 4].copy_from_slice(t);
+    }
+    encode_block(&flat, 4, 0, 0)
+}
+
+/// A DXT1 block in its three-colour mode: `c0 <= c1`, index 2 the average of
+/// the two, index 3 transparent. A texel under half alpha takes index 3; the
+/// endpoints are the bounding box of the others. The decoder reads index 3 as
+/// transparent only when the file's alphaDepth is 1, which [`Encoding::Dxt1Alpha`]
+/// writes.
+fn cut_out_block(texels: &[[u8; 4]; 16]) -> [u8; 8] {
+    let opaque: Vec<[u8; 3]> = texels
+        .iter()
+        .filter(|t| t[3] >= 128)
+        .map(|t| [t[0], t[1], t[2]])
+        .collect();
+    // Every texel opaque: the four-colour block, which is the same file to
+    // the decoder and keeps two more colours.
+    if opaque.len() == 16 {
+        return colour_block(texels);
+    }
+    let mut lo = [255u8; 3];
+    let mut hi = [0u8; 3];
+    for t in &opaque {
+        for c in 0..3 {
+            lo[c] = lo[c].min(t[c]);
+            hi[c] = hi[c].max(t[c]);
+        }
+    }
+    if opaque.is_empty() {
+        (lo, hi) = ([0; 3], [0; 3]);
+    }
+    let (mut c0, mut c1) = (to_565(lo), to_565(hi));
+    if c0 > c1 {
+        std::mem::swap(&mut c0, &mut c1);
+    }
+    let (a, b) = (from_565(c0), from_565(c1));
+    let middle = [
+        ((u16::from(a[0]) + u16::from(b[0])) / 2) as u8,
+        ((u16::from(a[1]) + u16::from(b[1])) / 2) as u8,
+        ((u16::from(a[2]) + u16::from(b[2])) / 2) as u8,
+    ];
+    let palette = [a, b, middle];
+    let mut indices = 0u32;
+    for (i, t) in texels.iter().enumerate() {
+        let index = match t[3] >= 128 {
+            false => 3,
+            true => palette
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, p)| {
+                    (0..3)
+                        .map(|c| {
+                            let d = i32::from(t[c]) - i32::from(p[c]);
+                            (d * d) as u32
+                        })
+                        .sum::<u32>()
+                })
+                .map_or(0, |(n, _)| n as u32),
+        };
+        indices |= index << (i * 2);
+    }
+    let mut block = [0u8; 8];
+    block[0..2].copy_from_slice(&c0.to_le_bytes());
+    block[2..4].copy_from_slice(&c1.to_le_bytes());
+    block[4..8].copy_from_slice(&indices.to_le_bytes());
+    block
+}
+
+/// DXT3's eight alpha bytes: four bits a texel, the even texel in the low
+/// nibble, as [`decode_dxt`] reads them.
+fn explicit_alpha(texels: &[[u8; 4]; 16]) -> [u8; 8] {
+    let mut out = [0u8; 8];
+    for (i, t) in texels.iter().enumerate() {
+        let nibble = (u16::from(t[3]) * 15 + 127) / 255;
+        out[i / 2] |= (nibble as u8) << ((i % 2) * 4);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -708,10 +1018,9 @@ mod tests {
 
     // ------------------------------------------------------------ the writer
 
-    /// **The encoder's only real check: what it writes, this file's own decoder
-    /// reads back.** A DXT encoder that is subtly wrong produces plausible
-    /// colours, which is exactly the failure mode the module comment opens by
-    /// warning about — so the assertion is on the pixels and not on the header.
+    /// What the encoder writes, this file's own decoder reads back. A DXT
+    /// encoder that is slightly wrong produces colours that are nearly right,
+    /// so the assertion is on the pixels and not on the header.
     #[test]
     fn a_flat_block_survives_the_round_trip_exactly() {
         // One colour the 565 quantisation can represent without loss.
@@ -749,9 +1058,9 @@ mod tests {
         assert_eq!(file.len(), HEADER_SIZE + 32768);
     }
 
-    /// **A two-colour block keeps both colours**, which is the case a bounding
-    /// box is chosen for and the one where an encoder that averaged would be
-    /// visibly wrong: half the block is ground and half is water.
+    /// A two-colour block keeps both colours. A bounding box is chosen for
+    /// this case, where an encoder that averaged would be visibly wrong: half
+    /// the block is ground and half is water.
     #[test]
     fn a_two_colour_block_keeps_both_colours() {
         let dark = [0x10u8, 0x20, 0x40];
@@ -798,6 +1107,87 @@ mod tests {
         assert!(encode_dxt1(&[], 0, 0).is_err());
         // …and so is a buffer that does not match the size it claims.
         assert!(encode_dxt1(&vec![0u8; 10], 4, 4).is_err());
+    }
+
+    /// A picture of every alpha kind: opaque, cut out and graded.
+    fn picture(width: u32, height: u32, alpha: impl Fn(usize, usize) -> u8) -> Vec<u8> {
+        let mut out = Vec::new();
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                out.extend_from_slice(&[(x * 8) as u8, (y * 8) as u8, 0x40, alpha(x, y)]);
+            }
+        }
+        out
+    }
+
+    /// The encoding is chosen by what the alpha holds.
+    #[test]
+    fn the_encoding_follows_the_alpha() {
+        assert_eq!(Encoding::for_pixels(&picture(8, 8, |_, _| 255)), Encoding::Dxt1);
+        assert_eq!(
+            Encoding::for_pixels(&picture(8, 8, |x, _| if x < 4 { 0 } else { 255 })),
+            Encoding::Dxt1Alpha
+        );
+        assert_eq!(Encoding::for_pixels(&picture(8, 8, |x, _| (x * 30) as u8)), Encoding::Dxt3);
+    }
+
+    /// An imported texture has its whole chain, down to 1x1, with the header
+    /// of the shipped files of its shape, and the decoder reads every level.
+    #[test]
+    fn an_imported_texture_has_its_whole_mip_chain() {
+        let rgba = picture(32, 8, |_, _| 255);
+        let file = encode(&rgba, 32, 8, Encoding::Dxt1, true).expect("encoded");
+        assert_eq!(file[OFF_HAS_MIPS], 1);
+        assert_eq!((file[OFF_ALPHA_DEPTH], file[OFF_ALPHA_TYPE]), (0, 0));
+        let back = decode_mipped(&file).expect("decoded");
+        assert_eq!((back.width, back.height), (32, 8));
+        // 32x8, 16x4, 8x2, 4x1, 2x1, 1x1.
+        assert_eq!(back.mips.len(), 5);
+        assert_eq!(back.level_size(5), (1, 1));
+        let file = encode(&rgba, 32, 8, Encoding::Dxt1, false).expect("encoded");
+        assert_eq!(file[OFF_HAS_MIPS], 0);
+        assert!(decode_mipped(&file).expect("decoded").mips.is_empty());
+    }
+
+    /// Cut-out alpha is transparent where the picture is under half alpha and
+    /// opaque elsewhere, at every level of the chain.
+    #[test]
+    fn cut_out_alpha_survives_the_round_trip() {
+        let rgba = picture(8, 8, |x, _| if x < 4 { 0 } else { 255 });
+        let file = encode(&rgba, 8, 8, Encoding::Dxt1Alpha, true).expect("encoded");
+        assert_eq!((file[OFF_ALPHA_DEPTH], file[OFF_ALPHA_TYPE]), (1, 0));
+        let back = decode_mipped(&file).expect("decoded");
+        for y in 0..8 {
+            for x in 0..8 {
+                let alpha = back.rgba[(y * 8 + x) * 4 + 3];
+                assert_eq!(alpha, if x < 4 { 0 } else { 255 }, "texel {x},{y}");
+            }
+        }
+    }
+
+    /// Graded alpha keeps sixteen levels: within one level of the original.
+    #[test]
+    fn graded_alpha_survives_the_round_trip() {
+        let rgba = picture(16, 4, |x, _| (x * 17) as u8);
+        let file = encode(&rgba, 16, 4, Encoding::Dxt3, true).expect("encoded");
+        assert_eq!((file[OFF_ALPHA_DEPTH], file[OFF_ALPHA_TYPE]), (8, 1));
+        let back = decode(&file).expect("decoded");
+        for x in 0..16 {
+            let alpha = i32::from(back.rgba[x * 4 + 3]);
+            assert!((alpha - (x as i32 * 17)).abs() <= 9, "texel {x}: {alpha}");
+        }
+    }
+
+    /// A side that is not a power of two is refused, and a resize to one keeps
+    /// a flat picture flat.
+    #[test]
+    fn a_side_that_is_not_a_power_of_two_is_refused_and_can_be_resized() {
+        let rgba = picture(12, 8, |_, _| 255);
+        assert!(encode(&rgba, 12, 8, Encoding::Dxt1, true).is_err());
+        let flat: Vec<u8> = std::iter::repeat_n([10u8, 20, 30, 255], 12 * 8).flatten().collect();
+        let resized = resize(&flat, 12, 8, 16, 8);
+        assert_eq!(resized.len(), 16 * 8 * 4);
+        assert!(resized.chunks(4).all(|t| t == [10, 20, 30, 255]));
     }
 
     #[test]

@@ -493,6 +493,9 @@ pub struct GameObjects {
     /// because the picker asks for every row on every frame it draws. `None` is
     /// an id `GameObjectDisplayInfo` does not resolve.
     pub models: HashMap<u32, Option<String>>,
+    /// The `GameAssets::tables_generation` [`Self::models`] was resolved at.
+    /// See `tools::creatures::Creatures::worn_at`.
+    pub models_at: u64,
     /// The display id picker, while it is open on the template's `displayId`.
     /// See `crate::tools::displays`.
     pub display_pick: Option<super::displays::DisplayPick>,
@@ -576,6 +579,7 @@ impl Default for GameObjects {
             known: Fresh::default(),
             known_task: None,
             models: HashMap::new(),
+            models_at: 0,
             display_pick: None,
             locks: None,
             mode: super::place::Mode::default(),
@@ -1283,6 +1287,11 @@ impl GameObjects {
         assets: &vale_client::assets::GameAssets,
         display_id: u32,
     ) -> Option<String> {
+        let generation = assets.tables_generation();
+        if self.models_at != generation {
+            self.models.clear();
+            self.models_at = generation;
+        }
         if let Some(had) = self.models.get(&display_id) {
             return had.clone();
         }

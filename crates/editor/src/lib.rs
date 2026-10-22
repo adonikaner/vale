@@ -733,6 +733,12 @@ pub struct Args {
     /// `creature_template` row. It implies the workspace as the tool. See
     /// `crate::tools::creature_data`.
     pub creature_data: Option<u32>,
+    /// `--import-texture <picture> <archive path>`: import a PNG, TGA or BLP
+    /// picture as a BLP at that path, as the Import Texture dialog would with
+    /// its defaults (automatic compression, mipmaps, resized up to powers of
+    /// two), and open the Assets workspace on it. It implies the Assets
+    /// workspace as the tool. See `crate::tools::assets`.
+    pub import_texture: Option<(String, String)>,
     /// `--object-data <entry>`: the same for the Game Objects workspace and
     /// `gameobject_template`.
     pub object_data: Option<u32>,
@@ -817,7 +823,8 @@ pub struct Args {
     /// cannot photograph the widest dialog added to the spell workspace.
     pub bits: Option<String>,
     /// `--choose <column>`: open the reference picker on that column of
-    /// `--row`, selecting the row the column holds.
+    /// `--row`, selecting the row the column holds. On a display table's
+    /// model or texture field it opens the model or texture browser.
     ///
     /// Same reason as `--bits`. On a column of the spell chain the picker
     /// plays the selected row, and this is how a scripted run photographs it.
@@ -965,6 +972,7 @@ impl Default for Args {
             revert_items: false,
             quest: None,
             creature_data: None,
+            import_texture: None,
             object_data: None,
             quest_new: false,
             quest_entry: None,
@@ -1325,6 +1333,12 @@ impl Args {
                 "--quest-new" => {
                     parsed.quest_new = true;
                     parsed.tool = Some(tools::Tool::Quests);
+                }
+                "--import-texture" => {
+                    if let (Some(picture), Some(vpath)) = (args.next(), args.next()) {
+                        parsed.import_texture = Some((picture, vpath));
+                    }
+                    parsed.tool = Some(tools::Tool::Assets);
                 }
                 "--creature-data" => {
                     parsed.creature_data =

@@ -312,6 +312,34 @@ pub struct Worn {
     /// is the one piece of equipment whose geometry is the body's and whose
     /// skin is the item's. Only set together with [`Self::look`].
     pub cloak: Option<String>,
+    /// The models hung on the body: a guard's helm and pauldrons, from
+    /// `look::dress::Dressing::attachments`. Each stands at its point's place
+    /// in the body's rest pose, which is the pose a portrait is drawn in.
+    pub hung: Vec<Hung>,
+}
+
+/// A model hung on a [`Worn`] body at one of its attachment points.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Hung {
+    /// The `vale_assets::world::m2::attach` id of the point.
+    pub point: u32,
+    pub path: String,
+    /// The skin the model wears in the object skin's slot, if any.
+    pub texture: Option<String>,
+}
+
+impl Hung {
+    /// The models a dressing hangs on its wearer.
+    pub fn all(attached: Vec<vale_assets::tables::item::AttachedModel>) -> Vec<Hung> {
+        attached
+            .into_iter()
+            .map(|attached| Hung {
+                point: attached.point,
+                path: attached.path,
+                texture: attached.texture,
+            })
+            .collect()
+    }
 }
 
 impl Worn {
@@ -347,10 +375,20 @@ impl Worn {
             }
             return key;
         }
-        match self.skins.iter().all(|skin| skin.is_empty()) {
+        let mut key = match self.skins.iter().all(|skin| skin.is_empty()) {
             true => key_of(&self.path),
             false => format!("{}|{}", key_of(&self.path), self.skins.join("|")),
+        };
+        // A guard with a helm and one without are two pictures.
+        for hung in &self.hung {
+            key.push_str(&format!(
+                "|@{}:{}:{}",
+                hung.point,
+                key_of(&hung.path),
+                hung.texture.as_deref().unwrap_or("")
+            ));
         }
+        key
     }
 }
 
@@ -384,6 +422,61 @@ fn dressed(
             materials,
         ),
     }
+}
+
+/// One batch of a picture and where it stands from the body's origin: at the
+/// origin for the body, at an attachment point for a hung model.
+type Placed = (vale_client::render::models::ModelDraw, Vec3);
+
+/// What a picture's caches answer: the batches to stand, or not yet, or
+/// never.
+enum Drawn {
+    Ready(Vec<Placed>),
+    Loading,
+    Failed,
+}
+
+impl Drawn {
+    /// A model's or a building's batches, all at the origin.
+    fn at_origin(draws: &[vale_client::render::models::ModelDraw]) -> Drawn {
+        Drawn::Ready(draws.iter().cloned().map(|draw| (draw, Vec3::ZERO)).collect())
+    }
+}
+
+/// [`dressed`] with the [`Worn::hung`] models stood on their points. The body
+/// is unposed, so a point's place is its offset in the model's rest pose, as
+/// the client's paper doll places a hung model on a bone with no pose. A hung
+/// model that will not read is left off, and the body is still drawn.
+fn worn_draws(
+    worn: &Worn,
+    models: &mut ModelCache,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Materials,
+) -> Drawn {
+    let body = match dressed(worn, models, meshes, materials) {
+        Lookup::Ready(assets) => assets,
+        Lookup::Loading => return Drawn::Loading,
+        Lookup::Failed => return Drawn::Failed,
+    };
+    let mut placed: Vec<Placed> = body.draws.iter().cloned().map(|draw| (draw, Vec3::ZERO)).collect();
+    for hung in &worn.hung {
+        let Some(point) = body.attachments.iter().find(|point| point.id == hung.point) else {
+            continue;
+        };
+        // An item model takes its skin in slot 4, as `ModelCache::attached`
+        // dresses it.
+        let mut skins = vec![String::new(); 5];
+        skins[4] = hung.texture.clone().unwrap_or_default();
+        match models.worn_unposed(&hung.path, &skins, None, Dress::Creature, meshes, materials) {
+            Lookup::Ready(assets) => {
+                let at = vale_client::render::axes::to_bevy(point.position);
+                placed.extend(assets.draws.iter().cloned().map(|draw| (draw, at)));
+            }
+            Lookup::Loading => return Drawn::Loading,
+            Lookup::Failed => {}
+        }
+    }
+    Drawn::Ready(placed)
 }
 
 /// The pictures, and what has been asked for.
@@ -709,27 +802,10 @@ fn take_pictures(
             .clone();
 
         // --- a job with no model yet asks the cache and places the model when it is ready ---
-        let draws = match key.ends_with(".wmo") {
-            true => match buildings.lookup(&key) {
-                wmo_render::Lookup::Ready(ready) => Some(ready.draws().to_vec()),
-                wmo_render::Lookup::Failed => None,
-                _ => continue,
-            },
-            // A creature is looked up with its skins, which is what [`Worn`]
-            // exists for. See the module comment and
-            // `ModelCache::worn_unposed`, the cache entry point this uses.
-            false => match portraits.worn.get(&key).cloned() {
-                Some(worn) => match dressed(&worn, &mut models, &mut meshes, &mut materials) {
-                    Lookup::Ready(assets) => Some(assets.draws.clone()),
-                    Lookup::Failed => None,
-                    Lookup::Loading => continue,
-                },
-                None => match models.lookup(&key) {
-                    Lookup::Ready(assets) => Some(assets.draws.clone()),
-                    Lookup::Failed => None,
-                    Lookup::Loading => continue,
-                },
-            },
+        let draws = match look_up(&key, &portraits.worn, &mut models, &mut buildings, &mut meshes, &mut materials) {
+            Drawn::Ready(draws) => Some(draws),
+            Drawn::Failed => None,
+            Drawn::Loading => continue,
         };
         let bounds = draws.as_deref().and_then(|draws| bounds_of(draws, &meshes));
         let (Some(draws), Some((lo, hi))) = (draws, bounds) else {
@@ -860,26 +936,10 @@ fn keep_the_large(
     }
 
     // --- no model placed yet: ask the caches, as a slot does ---
-    let draws = match shown.path.ends_with(".wmo") {
-        true => match buildings.lookup(&shown.path) {
-            wmo_render::Lookup::Ready(ready) => Some(ready.draws().to_vec()),
-            wmo_render::Lookup::Failed => None,
-            _ => return,
-        },
-        // A creature is looked up with its skins, as a row's is; see
-        // [`Worn`].
-        false => match portraits.worn.get(&shown.path).cloned() {
-            Some(worn) => match dressed(&worn, models, meshes, materials) {
-                Lookup::Ready(assets) => Some(assets.draws.clone()),
-                Lookup::Failed => None,
-                Lookup::Loading => return,
-            },
-            None => match models.lookup(&shown.path) {
-                Lookup::Ready(assets) => Some(assets.draws.clone()),
-                Lookup::Failed => None,
-                Lookup::Loading => return,
-            },
-        },
+    let draws = match look_up(&shown.path, &portraits.worn, models, buildings, meshes, materials) {
+        Drawn::Ready(draws) => Some(draws),
+        Drawn::Failed => None,
+        Drawn::Loading => return,
     };
     let bounds = draws.as_deref().and_then(|draws| bounds_of(draws, meshes));
     let (Some(draws), Some((lo, hi))) = (draws, bounds) else {
@@ -899,6 +959,37 @@ fn keep_the_large(
     shown.bounds = Some((lo, hi));
     shown.frames_left = settle;
     portraits.large_started = true;
+}
+
+/// Ask the caches for the picture a key names: a building, a [`Worn`] with
+/// its skins and hung models, or a plain model. The rows and the large
+/// preview ask the same way.
+fn look_up(
+    key: &str,
+    worn: &HashMap<String, Worn>,
+    models: &mut ModelCache,
+    buildings: &mut WmoCache,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Materials,
+) -> Drawn {
+    if key.ends_with(".wmo") {
+        return match buildings.lookup(key) {
+            wmo_render::Lookup::Ready(ready) => Drawn::at_origin(ready.draws()),
+            wmo_render::Lookup::Failed => Drawn::Failed,
+            _ => Drawn::Loading,
+        };
+    }
+    // A creature is looked up with its skins, which is what [`Worn`] exists
+    // for. See the module comment and `ModelCache::worn_unposed`, the cache
+    // entry point this uses.
+    match worn.get(key) {
+        Some(worn) => worn_draws(worn, models, meshes, materials),
+        None => match models.lookup(key) {
+            Lookup::Ready(assets) => Drawn::at_origin(&assets.draws),
+            Lookup::Failed => Drawn::Failed,
+            Lookup::Loading => Drawn::Loading,
+        },
+    }
 }
 
 /// Point one of the rig's cameras at a model's box, from an orbit off
@@ -932,7 +1023,7 @@ fn aim_at(
 /// Spawn one model's batches under a root of their own, on a layer.
 fn stand_model(
     commands: &mut Commands,
-    draws: &[vale_client::render::models::ModelDraw],
+    draws: &[Placed],
     layer: usize,
     stand: Vec3,
 ) -> Entity {
@@ -940,11 +1031,11 @@ fn stand_model(
     let root = commands
         .spawn((Transform::from_translation(stand), Visibility::default()))
         .id();
-    for draw in draws {
+    for (draw, at) in draws {
         let mut batch = commands.spawn((
             Mesh3d(draw.mesh.clone()),
             MeshMaterial3d(draw.material.clone()),
-            Transform::default(),
+            Transform::from_translation(*at),
             ChildOf(root),
             // On every drawn entity: `RenderLayers` is per entity and is not
             // inherited, and a part left off the layer is a part the world
@@ -1048,18 +1139,15 @@ fn spawn_rig(
 ///
 /// `None` for a model with no geometry at all, which is an effect that is all
 /// emitters — there is nothing to take a picture of.
-fn bounds_of(
-    draws: &[vale_client::render::models::ModelDraw],
-    meshes: &Assets<Mesh>,
-) -> Option<(Vec3, Vec3)> {
+fn bounds_of(draws: &[Placed], meshes: &Assets<Mesh>) -> Option<(Vec3, Vec3)> {
     let mut lo = Vec3::INFINITY;
     let mut hi = Vec3::NEG_INFINITY;
-    for draw in draws {
+    for (draw, at) in draws {
         let Some(aabb) = meshes.get(&draw.mesh).and_then(|mesh| mesh.compute_aabb()) else {
             continue;
         };
-        lo = lo.min(Vec3::from(aabb.min()));
-        hi = hi.max(Vec3::from(aabb.max()));
+        lo = lo.min(Vec3::from(aabb.min()) + *at);
+        hi = hi.max(Vec3::from(aabb.max()) + *at);
     }
     let finite = lo.is_finite() && hi.is_finite() && (hi - lo).max_element() > 1e-4;
     finite.then_some((lo, hi))
@@ -1454,7 +1542,24 @@ mod tests {
             dress: Dress::Creature,
             look: None,
             cloak: None,
+            hung: Vec::new(),
         }
+    }
+
+    /// A body with a helm on is a different picture from the bare body.
+    #[test]
+    fn a_hung_model_is_part_of_the_key() {
+        let bare = wolf(&["WolfSkinGrey"]);
+        let helmed = Worn {
+            hung: vec![Hung {
+                point: 11,
+                path: "Item\\ObjectComponents\\Head\\Helm_A.m2".into(),
+                texture: Some("Helm_A_Red".into()),
+            }],
+            ..bare.clone()
+        };
+        assert_ne!(bare.key(), helmed.key());
+        assert!(helmed.key().starts_with(&bare.key()));
     }
 
     /// Two display ids of one model are two pictures, so the key includes the

@@ -73,6 +73,10 @@ pub struct DisplayPick {
     /// Every row of the table that resolves to a model, built on the first
     /// frame the dialog is drawn.
     facts: Option<Vec<Fact>>,
+    /// The `GameAssets::tables_generation` the facts were built at. A
+    /// published display table is a new generation, and the picker offers a
+    /// row added to it.
+    facts_at: u64,
     hits: Vec<u32>,
     /// The query [`Self::hits`] was built for.
     built: Option<String>,
@@ -95,6 +99,7 @@ impl DisplayPick {
             preview: Some(showing),
             focus: true,
             facts: None,
+            facts_at: 0,
             hits: Vec::new(),
             built: None,
             worn: HashMap::new(),
@@ -103,6 +108,13 @@ impl DisplayPick {
 
     /// Every row the table resolves to a model.
     pub fn facts(&mut self, session: &mut EditSession, assets: &GameAssets) -> &[Fact] {
+        let generation = assets.tables_generation();
+        if self.facts.is_some() && self.facts_at != generation {
+            self.facts = None;
+            self.built = None;
+            self.worn.clear();
+        }
+        self.facts_at = generation;
         if self.facts.is_none() {
             self.facts = Some(build_facts(session, assets, self.table));
         }
@@ -223,6 +235,9 @@ pub fn resolve_worn(assets: &GameAssets, display_id: u32) -> Option<Worn> {
         // above name it. Only a player's is composed. See `Worn::look`.
         look: None,
         cloak: None,
+        // A character-model creature's helm and pauldrons, which its Extra
+        // row names and the bake does not hold.
+        hung: crate::portraits::Hung::all(dressed.attachments),
     })
 }
 

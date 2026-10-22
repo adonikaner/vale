@@ -478,6 +478,10 @@ pub struct Creatures {
     /// `None` is a display id the tables do not resolve, kept so it is not
     /// asked again.
     pub worn: HashMap<u32, Option<crate::portraits::Worn>>,
+    /// The `GameAssets::tables_generation` [`Self::worn`] was resolved at. A
+    /// published display table is a new generation, and an edited or new
+    /// display is resolved again.
+    pub worn_at: u64,
     /// The display id picker, while it is open on one of the template's five
     /// display columns. See `crate::tools::displays`.
     pub display_pick: Option<super::displays::DisplayPick>,
@@ -603,6 +607,7 @@ impl Default for Creatures {
             known: Fresh::default(),
             known_task: None,
             worn: HashMap::new(),
+            worn_at: 0,
             display_pick: None,
             mode: super::place::Mode::default(),
             new_spawn: NewSpawn::default(),

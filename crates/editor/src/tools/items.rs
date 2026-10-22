@@ -471,6 +471,10 @@ pub struct Items {
     /// Every display row's three facts, built once; see
     /// [`DisplayFacts`]. `None` until the archives have been asked.
     display_facts: Option<Vec<DisplayFacts>>,
+    /// The `GameAssets::tables_generation` [`Self::display_facts`], the looks
+    /// and the bodies were resolved at. A published `ItemDisplayInfo` is a new
+    /// generation: a new row is offered and an edited one is drawn again.
+    display_facts_at: u64,
     /// Which narrowing the picker is offering — see [`Filter`].
     pub filter: Filter,
     /// Which id the picker's preview pane is showing — the one under the
@@ -531,6 +535,7 @@ impl Default for Items {
             display_hits: Vec::new(),
             display_built: None,
             display_facts: None,
+            display_facts_at: 0,
             filter: Filter::default(),
             display_preview: None,
             display_focus: false,
@@ -955,6 +960,7 @@ impl Items {
         display_id: u32,
         inventory_type: u32,
     ) -> Option<Look> {
+        self.follow_generation(assets);
         let key = (display_id, inventory_type, self.race, self.gender);
         if let Some(had) = self.looks.get(&key) {
             return had.clone();
@@ -987,6 +993,7 @@ impl Items {
         display_id: u32,
         inventory_type: u32,
     ) -> Option<crate::portraits::Worn> {
+        self.follow_generation(assets);
         let key = (display_id, inventory_type, self.race, self.gender);
         if let Some(had) = self.bodies.get(&key) {
             return had.clone();
@@ -996,6 +1003,18 @@ impl Items {
         found
     }
 
+    /// Drop what was resolved from the display tables when they have been
+    /// published again since, so an edited row is drawn as it now is.
+    fn follow_generation(&mut self, assets: &GameAssets) {
+        let generation = assets.tables_generation();
+        if self.display_facts_at != generation {
+            self.display_facts = None;
+            self.looks.clear();
+            self.bodies.clear();
+            self.display_facts_at = generation;
+        }
+    }
+
     /// Every display row's facts, built once and kept.
     ///
     /// The whole table, which is 29,604 rows: three small fields each, built
@@ -1003,6 +1022,7 @@ impl Items {
     /// startup, because a session that never opens the picker should not pay
     /// for it at all.
     pub fn display_facts(&mut self, assets: &GameAssets) -> &[DisplayFacts] {
+        self.follow_generation(assets);
         if self.display_facts.is_none() {
             self.display_facts = Some(build_display_facts(assets));
         }
@@ -1282,7 +1302,7 @@ pub fn plan_move(known: &Known, to: u32, taken: bool) -> Result<Option<(Key, Key
 /// `vale_assets::tables::item::Slot`. A type with no slot (a ring, a
 /// trinket, a reagent) has no models at all, which is not a failure: those
 /// items are an icon and nothing else.
-fn resolve_look(
+pub(crate) fn resolve_look(
     assets: &GameAssets,
     display_id: u32,
     inventory_type: u32,
@@ -1324,6 +1344,7 @@ fn resolve_look(
             // about it is composed. See `Items::body`, which is the other kind.
             look: None,
             cloak: None,
+            hung: Vec::new(),
         })
         .collect();
 
@@ -1344,7 +1365,7 @@ fn resolve_look(
 /// tables and dressed in the one item, with nothing else on and nothing in its
 /// hands. The appearance is the first of everything: skin 0, face 0, hair
 /// style 1, because what is being looked at is the garment and not the model.
-fn resolve_body(
+pub(crate) fn resolve_body(
     assets: &GameAssets,
     display_id: u32,
     inventory_type: u32,
@@ -1384,6 +1405,7 @@ fn resolve_body(
         dress: dressed.dress,
         look: dressed.look,
         cloak: dressed.cloak,
+        hung: crate::portraits::Hung::all(dressed.attachments),
     })
 }
 

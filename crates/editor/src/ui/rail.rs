@@ -212,7 +212,7 @@ const GROUPS: [(&str, &[Subject]); 3] = [
 ];
 
 /// The workspaces after *World*, in the order the top bar draws them.
-const WORKSPACES: [Subject; 7] = [
+const WORKSPACES: [Subject; 8] = [
     s(
         "Spells",
         Tool::Spells,
@@ -223,10 +223,9 @@ const WORKSPACES: [Subject; 7] = [
     s(
         "Items",
         Tool::Items,
-        "item_template: an item's stats, effects and price, with a preview of its \
-         display id. Rows in vmangos' database, so this needs a database \
-         connection. The Sets part edits ItemSet.dbc: the items in each set and \
-         the set bonuses. ItemSet.dbc is a client file and needs no database.",
+        "Items, item sets and item display info: item_template rows in vmangos' \
+         database, and ItemSet.dbc and ItemDisplayInfo.dbc, which are client files \
+         and need no database.",
     ),
     s(
         "Quests",
@@ -238,19 +237,16 @@ const WORKSPACES: [Subject; 7] = [
     s(
         "Creatures",
         Tool::CreatureData,
-        "creature_template: every creature the server loads, searched by name, \
-         subname or entry, with every column of the open row, its model, and its \
-         quests, loot, events, spells, gossip, vendor and trainer windows. The same \
-         rows the rail's Creatures tool edits through a spawn. Rows in vmangos' \
-         database, so this needs a database connection.",
+        "Creature templates and creature display info: creature_template rows in \
+         vmangos' database, and the client's CreatureDisplayInfo, \
+         CreatureDisplayInfoExtra and CreatureModelData, which need no database.",
     ),
     s(
         "Game Objects",
         Tool::GameObjectData,
-        "gameobject_template: every game object the server loads, searched by name, \
-         type or entry, with every column of the open row, its model, and its quest \
-         and loot windows. The same rows the rail's Objects tool edits through a \
-         spawn. Rows in vmangos' database, so this needs a database connection.",
+        "Game object templates and game object display info: gameobject_template \
+         rows in vmangos' database, and the client's GameObjectDisplayInfo, which \
+         needs no database.",
     ),
     s(
         "Zones",
@@ -267,7 +263,74 @@ const WORKSPACES: [Subject; 7] = [
          table with a schema opens as named, typed fields and any other as numbered \
          fields. The workspace replaces the viewport.",
     ),
+    s(
+        "Assets",
+        Tool::Assets,
+        "The files this project adds to the archives: imported textures, baked \
+         models and the rest. Import Texture turns a PNG, TGA or BLP picture into a \
+         BLP the 1.12.1 client reads. Every file here is listed in the editor's \
+         pickers and published with the project.",
+    ),
 ];
+
+/// The entries of a workspace's menu: every part of a workspace of several
+/// parts, by the name the menu gives it. A workspace's menu lists its
+/// [`Tool::parts`] in their order, each under its name here.
+const PARTS: [Subject; 7] = [
+    s(
+        "Items",
+        Tool::Items,
+        "item_template: an item's stats, effects and price, with a preview of its \
+         display id. Rows in vmangos' database, so this needs a database connection.",
+    ),
+    s(
+        "Item Sets",
+        Tool::ItemSets,
+        "ItemSet.dbc: the items in each set and the set bonuses. A client file; it \
+         needs no database.",
+    ),
+    s(
+        "Item Display Info",
+        Tool::ItemDisplays,
+        "ItemDisplayInfo.dbc: an item's bag icon, the models it hangs on the wearer \
+         and the textures it paints on the body. A client file; it needs no database.",
+    ),
+    s(
+        "Creature Templates",
+        Tool::CreatureData,
+        "creature_template: every creature the server loads, searched by name, \
+         subname or entry, with every column of the open row, its model, and its \
+         quests, loot, events, spells, gossip, vendor and trainer windows. Rows in \
+         vmangos' database, so this needs a database connection.",
+    ),
+    s(
+        "Creature Display Info",
+        Tool::CreatureDisplays,
+        "CreatureDisplayInfo.dbc: a creature's model, scale and skins, with \
+         CreatureDisplayInfoExtra and CreatureModelData as two more tabs. A new skin \
+         for an existing model is a copied row with another texture. Client files; \
+         they need no database.",
+    ),
+    s(
+        "Game Object Templates",
+        Tool::GameObjectData,
+        "gameobject_template: every game object the server loads, searched by name, \
+         type or entry, with every column of the open row, its model, and its quest \
+         and loot windows. Rows in vmangos' database, so this needs a database \
+         connection.",
+    ),
+    s(
+        "Game Object Display Info",
+        Tool::ObjectDisplays,
+        "GameObjectDisplayInfo.dbc: a game object's model and its ten sounds. A \
+         client file; it needs no database.",
+    ),
+];
+
+/// A part's menu entry, from [`PARTS`].
+fn part(tool: Tool) -> Option<&'static Subject> {
+    PARTS.iter().find(|subject| subject.tool == tool)
+}
 
 /// The two tools that change nothing, drawn over the viewport's corner.
 const POINTER: [Subject; 2] = [
@@ -292,6 +355,7 @@ pub fn names() -> impl Iterator<Item = &'static str> {
         .iter()
         .flat_map(|(_, subjects)| subjects.iter())
         .chain(WORKSPACES.iter())
+        .chain(PARTS.iter())
         .chain(POINTER.iter())
         .map(|subject| subject.name)
 }
@@ -535,9 +599,7 @@ pub fn workspaces(ui: &mut egui::Ui, tool: &mut Tool, rail: &mut Rail, playing: 
         };
     }
     for subject in &WORKSPACES {
-        // A workspace of several parts is available when any part is, and a
-        // press opens the first part that is: Items with no database opens
-        // on Sets, which is a file.
+        // A workspace of several parts is available when any part is.
         let open = match subject.tool.parts() {
             [] => held(subject.tool, playing, server).is_none().then_some(subject.tool),
             parts => parts
@@ -550,17 +612,48 @@ pub fn workspaces(ui: &mut egui::Ui, tool: &mut Tool, rail: &mut Rail, playing: 
             None => held(subject.tool, playing, server),
         };
         let lit = tool.workspace() == subject.tool;
-        let response = ui.add_enabled(
-            why.is_none(),
-            egui::Button::selectable(lit, subject.name),
-        );
-        let response = match why {
-            Some(_) => response.on_disabled_hover_text(tooltip(subject, why)),
-            None => response.on_hover_text(tooltip(subject, None)),
-        };
-        if response.clicked() && !lit {
-            *tool = open.unwrap_or(subject.tool);
+        if subject.tool.parts().is_empty() {
+            let response = ui.add_enabled(
+                why.is_none(),
+                egui::Button::selectable(lit, subject.name),
+            );
+            let response = match why {
+                Some(_) => response.on_disabled_hover_text(tooltip(subject, why)),
+                None => response.on_hover_text(tooltip(subject, None)),
+            };
+            if response.clicked() && !lit {
+                *tool = open.unwrap_or(subject.tool);
+            }
+            continue;
         }
+        // A workspace of several parts is a menu of them, as WoWEdit's menu
+        // bar lists its editors under a subject. A part that cannot be used
+        // now is listed disabled with the reason, so the menu shows
+        // everything the workspace holds: with no database, Creatures still
+        // offers its display tables, which are files.
+        ui.add_enabled_ui(why.is_none(), |ui| {
+            let button = egui::Button::selectable(lit, format!("{} \u{23F7}", subject.name));
+            let (response, _) = egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
+                for &(_, part_tool) in subject.tool.parts() {
+                    let Some(entry) = part(part_tool) else { continue };
+                    let blocked = held(part_tool, playing, server);
+                    let on = *tool == part_tool;
+                    let item = ui.add_enabled(blocked.is_none(), egui::Button::selectable(on, entry.name));
+                    let item = match blocked {
+                        Some(_) => item.on_disabled_hover_text(tooltip(entry, blocked)),
+                        None => item.on_hover_text(entry.about),
+                    };
+                    if item.clicked() {
+                        *tool = part_tool;
+                        ui.close();
+                    }
+                }
+            });
+            match why {
+                Some(_) => response.on_disabled_hover_text(tooltip(subject, why)),
+                None => response.on_hover_text(tooltip(subject, None)),
+            };
+        });
     }
 }
 
@@ -696,6 +789,26 @@ mod tests {
                     subject.name
                 );
             }
+        }
+    }
+
+    /// Every part of a workspace of several parts has a menu entry, and
+    /// every menu entry is a part of a workspace on the bar.
+    #[test]
+    fn every_part_is_on_its_workspaces_menu() {
+        for subject in &WORKSPACES {
+            for &(_, tool) in subject.tool.parts() {
+                assert!(part(tool).is_some(), "{} has no menu entry", tool.name());
+            }
+        }
+        for entry in &PARTS {
+            assert!(
+                WORKSPACES
+                    .iter()
+                    .any(|subject| subject.tool.parts().iter().any(|&(_, tool)| tool == entry.tool)),
+                "{} is on no workspace's menu",
+                entry.name
+            );
         }
     }
 

@@ -132,6 +132,7 @@
 //! what the schema knows about the column are in the label's tooltip rather
 //! than a suffix on every label.
 
+use super::appearance::FileField;
 use super::storyboard::Show;
 use super::theme;
 use super::thumbnails::Thumbnails;
@@ -2551,8 +2552,14 @@ fn field_in(
                     .clone();
                 let mut editing = text.clone();
                 // Limited to the room left on the row. Beside the lab's pane
-                // the form is narrow, and a fixed width ran past its edge.
-                let width = TEXT.min((ui.available_width() - 90.0).max(140.0));
+                // the form is narrow, and a fixed width ran past its edge. A
+                // file field keeps room for its thumbnail and browse button.
+                let beside = match super::appearance::file_field(table_name, column.field) {
+                    Some(FileField::Texture(_)) => 130.0,
+                    Some(_) => 100.0,
+                    None => 90.0,
+                };
+                let width = TEXT.min((ui.available_width() - beside).max(140.0));
                 let response = match wide {
                     true => ui.add(
                         egui::TextEdit::multiline(&mut editing)
@@ -2614,10 +2621,74 @@ fn field_in(
                         work.browser.pick_focus = true;
                     }
                 }
+                // A display table's model and texture fields are chosen by
+                // looking at them. See `ui::appearance`.
+                match super::appearance::file_field(table_name, column.field) {
+                    Some(FileField::Model | FileField::ItemModel) => {
+                        if ui
+                            .small_button("browse\u{2026}")
+                            .on_hover_text(
+                                "Search every model in the archives and the project by path.",
+                            )
+                            .clicked()
+                        {
+                            work.browser.modal = Some(Modal::Models {
+                                record,
+                                field: column.field,
+                            });
+                            work.browser.model_query.clear();
+                            work.browser.pick_focus = true;
+                        }
+                    }
+                    Some(FileField::Texture(of)) => {
+                        super::appearance::texture_field(
+                            ui,
+                            work,
+                            table_name,
+                            record,
+                            column.field,
+                            of,
+                            &text,
+                        );
+                    }
+                    None => {}
+                }
             }
         }
     });
 }
+
+/// A model path as the display tables write it: with `.mdx`, as every
+/// shipped row of `CreatureModelData` and `GameObjectDisplayInfo` does. The
+/// readers resolve it to the `.m2` beside it.
+fn as_mdx(path: &str) -> String {
+    match path.len().checked_sub(3).filter(|&at| path[at..].eq_ignore_ascii_case(".m2")) {
+        Some(at) => format!("{}.mdx", &path[..at]),
+        None => path.to_string(),
+    }
+}
+
+/// The inspector's picture of the open row of a display table: the creature,
+/// the model or the item, drawn. Nothing for any other table.
+///
+/// A creature display is drawn as the client resolves it, through the tables
+/// the client reads. Those are the project's copies once they are published,
+/// which `session::publish_for_the_preview` does a moment after an edit
+/// while a display workspace is open, so a new or changed row is drawn as it
+/// now is. See `ui::appearance`.
+pub fn display_preview(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
+    let Some(table) = super::appearance::display_table(&work.browser.table) else {
+        return;
+    };
+    let Some(record) = work.browser.open else { return };
+    let Some(id) = work.session.table(table).and_then(|rows| rows.u32_at(record, 0)) else {
+        return;
+    };
+    // As wide as the inspector, as the item workspace's preview is.
+    let side = ui.available_width();
+    super::appearance::pane(ui, work, table, id, side);
+}
+
 
 /// An item column: the entry, a picker over `item_template`, and the item's
 /// name as a link to the item workspace.
@@ -3012,10 +3083,17 @@ fn presence(ui: &mut egui::Ui, present: Option<bool>) {
 /// The size of the preview inside a picker's dialog, in points.
 const DIALOG_PREVIEW: egui::Vec2 = egui::vec2(420.0, 440.0);
 
-/// Whether a picker over `points_at` plays the row it is about to choose: the
-/// three tables of the spell chain a reference can name. A visual and a kit
-/// are played on the stage, and an effect's model is shown in the model view.
+/// Whether a picker over `points_at` shows the row it is about to choose: the
+/// three tables of the spell chain a reference can name, and the display
+/// tables. A visual and a kit are played on the stage, an effect's model is
+/// shown in the model view, and a display row is drawn as a portrait.
 fn previews(points_at: &str) -> bool {
+    previews_on_stage(points_at) || super::appearance::display_table(points_at).is_some()
+}
+
+/// Whether the picker's preview of a row of `points_at` plays on the stage.
+/// The other previewing pickers, over the display tables, draw a portrait.
+fn previews_on_stage(points_at: &str) -> bool {
     matches!(
         points_at,
         "SpellVisual" | "SpellVisualKit" | "SpellVisualEffectName"
@@ -3142,7 +3220,7 @@ fn sound_buttons(
 /// draws a placeholder: the stage is one picture, sized for one rectangle.
 fn dialog_previews(work: &Workspace<'_>) -> bool {
     match &work.browser.modal {
-        Some(Modal::Pick { points_at, .. }) => previews(points_at),
+        Some(Modal::Pick { points_at, .. }) => previews_on_stage(points_at),
         Some(Modal::LooksLike { .. }) => true,
         _ => false,
     }
@@ -3222,6 +3300,14 @@ fn preview_of(
         empty_pane(ui, "click a row to preview it");
         return;
     };
+    // A display row is drawn as a portrait, as the display pickers elsewhere
+    // draw one. See `ui::appearance`.
+    if let Some(table) = super::appearance::display_table(table) {
+        stage.close();
+        let largest = DIALOG_PREVIEW.y - 90.0;
+        super::appearance::pane(ui, work, table, id, largest);
+        return;
+    }
     // An effect is a model and not a cast, so it is shown as the Effects tab
     // shows one: alone, in the model view.
     if table == "SpellVisualEffectName" {
@@ -3785,7 +3871,7 @@ fn field_menu(
 }
 
 /// What a list row's picture is drawn from.
-enum Picture {
+pub(super) enum Picture {
     /// An icon's archive path, drawn from the thumbnail cache.
     Icon(String),
     /// A model's archive path, drawn from the portrait rig.
@@ -3796,8 +3882,9 @@ enum Picture {
 }
 
 /// The picture for a row of a list: a spell's or a skill's icon in the open
-/// table's list, and for the three tables of the spell chain the first model
-/// the row draws, in any list.
+/// table's list, for the three tables of the spell chain the first model the
+/// row draws, and for a display table the model or the item's icon, in any
+/// list.
 fn row_picture(work: &mut Workspace<'_>, table: &str, record: usize) -> Option<Picture> {
     match table {
         "SpellVisual" | "SpellVisualKit" | "SpellVisualEffectName" => Some(
@@ -3809,7 +3896,8 @@ fn row_picture(work: &mut Workspace<'_>, table: &str, record: usize) -> Option<P
         {
             work.icon_of(record).map(Picture::Icon)
         }
-        _ => None,
+        _ => super::appearance::display_table(table)
+            .map(|table| super::appearance::row_picture(work, table, record)),
     }
 }
 
@@ -4182,14 +4270,25 @@ fn modals(
                 close = true;
             }
         }
+        Modal::Textures { record, field } => {
+            if super::appearance::textures(ui, work, &table_name, record, field) {
+                close = true;
+            }
+        }
         Modal::Models { record, field } => {
-            if work.browser.models.is_none() {
-                let all = work
-                    .assets
-                    .with_archive(|chain| Ok(chain.list_prefix("")))
-                    .unwrap_or_default();
+            // An item's model field names a file in one of the folders under
+            // `Item\ObjectComponents\`, without the folder, so the browser
+            // offers those folders alone. See `ui::appearance::item_model_path`.
+            let item = super::appearance::file_field(&table_name, field) == Some(FileField::ItemModel);
+            // Every model the archives and the project list, read again when
+            // the project's files change. See `EditSession::listed`.
+            let revision = work.session.files_revision;
+            if work.browser.models.is_none() || work.browser.models_for != Some(revision) {
+                work.browser.models_for = Some(revision);
                 work.browser.models = Some(
-                    all.into_iter()
+                    work.session
+                        .listed(work.assets, "")
+                        .into_iter()
                         .filter(|path| path.ends_with(".m2"))
                         .collect(),
                 );
@@ -4206,8 +4305,10 @@ fn modals(
                     .table(&table_name)
                     .and_then(|table| table.string_at(record, field))
                     .filter(|declared| !declared.trim().is_empty())
-                    .map(|declared| {
-                        vale_assets::world::m2::model_path(&declared).to_ascii_lowercase()
+                    .and_then(|declared| match item {
+                        true => super::appearance::item_model_path(work.assets, &declared)
+                            .map(|(_, path)| path.to_ascii_lowercase()),
+                        false => Some(vale_assets::world::m2::model_path(&declared).to_ascii_lowercase()),
                     });
                 work.browser.model_preview = current;
             }
@@ -4220,19 +4321,25 @@ fn modals(
                 .show(ui.ctx(), |ui| {
                     ui.set_width(PICKER_WIDTH + 200.0);
                     ui.label(egui::RichText::new("Model").strong().size(14.0));
-                    ui.allocate_ui(egui::vec2(ui.available_width(), 24.0), |ui| {
-                        // The archives' folders, then the person's two lists,
-                        // starred and recent; see `crate::favourites`.
-                        let mut options: Vec<(&str, usize)> =
-                            MODEL_FOLDERS.iter().enumerate().map(|(at, (name, _))| (*name, at)).collect();
-                        options.push(("Starred", STARRED_FOLDER));
-                        options.push(("Recent", RECENT_FOLDER));
-                        let before = work.browser.model_folder;
-                        theme::segmented(ui, &mut work.browser.model_folder, &options, |a, b| a == b);
-                        if before != work.browser.model_folder {
-                            work.browser.model_page = 0;
-                        }
-                    });
+                    // The archives' folders, then the person's two lists,
+                    // starred and recent; see `crate::favourites`. An item's
+                    // model has its own folders and is offered no others.
+                    if !item {
+                        ui.allocate_ui(egui::vec2(ui.available_width(), 24.0), |ui| {
+                            let mut options: Vec<(&str, usize)> = MODEL_FOLDERS
+                                .iter()
+                                .enumerate()
+                                .map(|(at, (name, _))| (*name, at))
+                                .collect();
+                            options.push(("Starred", STARRED_FOLDER));
+                            options.push(("Recent", RECENT_FOLDER));
+                            let before = work.browser.model_folder;
+                            theme::segmented(ui, &mut work.browser.model_folder, &options, |a, b| a == b);
+                            if before != work.browser.model_folder {
+                                work.browser.model_page = 0;
+                            }
+                        });
+                    }
                     let box_ = ui.add(
                         egui::TextEdit::singleline(&mut work.browser.model_query)
                             .hint_text("words in the model path")
@@ -4245,10 +4352,13 @@ fn modals(
                         box_.request_focus();
                         work.browser.pick_focus = false;
                     }
-                    let folder = MODEL_FOLDERS
-                        .get(work.browser.model_folder)
-                        .map(|(_, prefix)| *prefix)
-                        .unwrap_or("");
+                    let folder = match item {
+                        true => "item\\objectcomponents\\",
+                        false => MODEL_FOLDERS
+                            .get(work.browser.model_folder)
+                            .map(|(_, prefix)| *prefix)
+                            .unwrap_or(""),
+                    };
                     let words: Vec<String> = work
                         .browser
                         .model_query
@@ -4258,8 +4368,8 @@ fn modals(
                         .collect();
                     let kind = crate::favourites::Kind::Effect;
                     let source: Vec<String> = match work.browser.model_folder {
-                        STARRED_FOLDER => work.favourites.starred(kind),
-                        RECENT_FOLDER => work.favourites.recent(kind),
+                        STARRED_FOLDER if !item => work.favourites.starred(kind),
+                        RECENT_FOLDER if !item => work.favourites.recent(kind),
                         _ => work
                             .browser
                             .models
@@ -4320,12 +4430,23 @@ fn modals(
                     // dialog. It is the same pane the placement pickers use.
                     if let Some(path) = work.browser.model_preview.clone() {
                         ui.add_space(4.0);
-                        super::inspector::preview_pane(ui, work.portraits, &path);
+                        // An item's model is drawn wearing the row's skin for
+                        // it, which a bare item model does not carry.
+                        let key = match item {
+                            true => super::appearance::item_model_key(work, &table_name, record, field, &path),
+                            false => path,
+                        };
+                        super::inspector::preview_pane(ui, work.portraits, &key);
                     }
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
                         let chosen = work.browser.model_preview.clone();
-                        let name = chosen.as_deref().map(tables::basename).unwrap_or("nothing chosen");
+                        let written = chosen.as_deref().map(super::appearance::item_model_name);
+                        let name = match item {
+                            true => written.as_deref(),
+                            false => chosen.as_deref().map(tables::basename),
+                        }
+                        .unwrap_or("nothing chosen");
                         if ui
                             .add_enabled(
                                 chosen.is_some(),
@@ -4334,7 +4455,7 @@ fn modals(
                                 ))
                                 .fill(theme::ACCENT),
                             )
-                            .on_hover_text("set this effect's Model to the previewed model's path")
+                            .on_hover_text("Set the field to the previewed model's path.")
                             .clicked()
                         {
                             picked = chosen;
@@ -4352,16 +4473,23 @@ fn modals(
                     });
                 });
             if let Some(path) = picked {
+                work.favourites.used(crate::favourites::Kind::Effect, &path);
+                let written = match item {
+                    true => super::appearance::item_model_name(&path),
+                    false => match super::appearance::file_field(&table_name, field) {
+                        Some(FileField::Model) => as_mdx(&path),
+                        _ => path,
+                    },
+                };
                 tables::set_text(
                     work.session,
                     &table_name,
                     record,
                     field,
-                    &path,
+                    &written,
                     "Edit Model",
                     work.now,
                 );
-                work.favourites.used(crate::favourites::Kind::Effect, &path);
                 work.browser.forget_buffers();
                 close = true;
             }
@@ -4469,7 +4597,7 @@ pub(super) fn model_row(
 /// The page controls: first, back, `page 3 of 12 · 201–300 of 1,183`,
 /// forward, last; `PageUp` and `PageDown` on the keyboard. Clamps the page
 /// to the pages that exist and returns the range of the list on that page.
-fn pager(
+pub(super) fn pager(
     ui: &mut egui::Ui,
     page: &mut usize,
     total: usize,

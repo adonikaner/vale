@@ -1,30 +1,30 @@
 //! The pictures a panel draws: an archive texture, small enough to put in a row
 //! of a list.
 //!
-//! ## A list of 621 names is not a way to choose a texture
+//! ## Why a list of textures shows pictures
 //!
 //! The tileset picker offered `elwynn\grassbase.blp` against
-//! `elwynn\grassdark.blp` against `elwynn\grasslight.blp`, which is not a choice
-//! anybody can make by reading. The list needs to show the thing.
+//! `elwynn\grassdark.blp` against `elwynn\grasslight.blp`, which cannot be
+//! chosen between by reading. The list shows each texture.
 //!
-//! ## …and decoding 621 of them is not a way to draw one
+//! ## How decoding them is kept cheap
 //!
 //! A tileset is a 256x256 DXT image, so decoding the catalogue eagerly is 621
 //! archive reads and 40 MB of RGBA before the panel has drawn a row. Three
-//! things keep it to nothing:
+//! things keep the cost to the rows on screen:
 //!
-//! * **only the visible rows ask.** The list is drawn through
-//!   `ScrollArea::show_rows`, so the eight or so rows actually on screen are the
-//!   only ones that request a picture — scrolling requests the next eight.
-//! * **the mip chain is already in the file.** A thumbnail is [`SIDE`] pixels
-//!   and Blizzard authored a 32x32 level of every tileset, so the decode picks
-//!   the smallest level that is big enough instead of decoding the top one and
-//!   throwing 98% of it away.
-//! * **a few a frame.** [`BUDGET`] decodes per frame, which makes a scroll fill
-//!   in over three or four frames rather than stalling one.
+//! * Only the visible rows ask. The list is drawn through
+//!   `ScrollArea::show_rows`, so the eight or so rows on screen are the only
+//!   ones that request a picture; scrolling requests the next eight.
+//! * The mip chain is already in the file. A thumbnail is [`SIDE`] pixels and
+//!   every tileset carries a 32x32 level, so the decode picks the smallest
+//!   level that is big enough instead of decoding the top one.
+//! * A few a frame. [`BUDGET`] decodes per frame, so a scroll fills in over
+//!   three or four frames rather than stalling one.
 //!
-//! Cached for the session and never evicted: the whole catalogue at this size is
-//! 2.5 MB, which is less than one tile's alpha atlas.
+//! Cached for the session: the whole catalogue at this size is 2.5 MB, which is
+//! less than one tile's alpha atlas. A path the project writes again is
+//! forgotten by [`Thumbnails::forget`], so its next picture is the new file's.
 //!
 //! ## Why it is here and not in the tool
 //!
@@ -62,7 +62,7 @@ const BUDGET: usize = 4;
 
 /// The decoded previews, and what has been asked for.
 ///
-/// **Keyed by the path and the size**, because one picture is wanted at two
+/// Keyed by the path and the size, because one picture is wanted at two
 /// sizes by two panels — the list's row at [`SIDE`] and the picker's grid at
 /// [`ICON_SIDE`] — and a texture is one size once it is uploaded.
 #[derive(Resource, Default)]
@@ -71,7 +71,7 @@ pub struct Thumbnails {
     /// Asked for and not yet decoded, oldest first — so a scroll that runs past
     /// a row does not leave it ahead of the row somebody stopped on.
     wanted: Vec<(String, u32)>,
-    /// **What could not be decoded, so it is not asked for again.** Without it a
+    /// What could not be decoded, so it is not asked for again. Without it a
     /// texture the archives do not answer for is one archive miss per frame for
     /// as long as its row is on screen.
     failed: HashSet<(String, u32)>,
@@ -92,6 +92,16 @@ impl Thumbnails {
     /// frame it is drawn.
     pub fn want(&mut self, path: &str) {
         self.want_at(path, SIDE);
+    }
+
+    /// Forget every size of one path, decoded or failed, so the next request
+    /// decodes the file the path holds now. Called when the project writes a
+    /// texture at a path that may already have been drawn.
+    pub fn forget(&mut self, path: &str) {
+        let path = path.to_ascii_lowercase();
+        self.ready.retain(|(had, _), _| *had != path);
+        self.failed.retain(|(had, _)| *had != path);
+        self.wanted.retain(|(had, _)| *had != path);
     }
 
     /// …and at any size.
@@ -139,7 +149,7 @@ fn decode(
             continue;
         };
         let handle = images.add(image_of(rgba, *side));
-        // **A strong handle**, so egui owns it and the asset lives as long as
+        // A strong handle, so egui owns it and the asset lives as long as
         // the cache does. A weak one would leave the id naming an image nothing
         // holds, which draws as whatever the atlas has there now.
         let id = contexts.add_image(EguiTextureHandle::Strong(handle));
@@ -149,7 +159,7 @@ fn decode(
 
 /// One BLP as `side` by `side` RGBA.
 ///
-/// **The smallest level that is still big enough**, which for a 256x256 tileset
+/// The smallest level that is still big enough, which for a 256x256 tileset
 /// at [`SIDE`] is the 32x32 one the file already carries. Only a texture whose
 /// chain stops above the wanted size is resampled, and then by a box filter
 /// down to it — the same filter `alpha_atlas_mips` uses and for the same
@@ -268,7 +278,7 @@ mod tests {
         assert_eq!(&out[right..right + 4], &[200, 210, 220, 255], "the right");
     }
 
-    /// **A path that will not decode is asked for once.** Without that, a
+    /// A path that will not decode is asked for once. Without that, a
     /// texture the archives do not answer for is an archive miss every frame for
     /// as long as its row is on screen.
     #[test]

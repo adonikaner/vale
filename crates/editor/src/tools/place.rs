@@ -1,85 +1,87 @@
-//! Putting a new thing in the world: a model on the cursor, and a click.
+//! Placing a new doodad or building: a model on the cursor, placed with a click.
 //!
-//! ## One tool for two lists, because it is one gesture
+//! ## One tool for doodads and buildings
 //!
 //! A doodad and a building are different records in different lists with
-//! different rules — see [`super::doodads`] and [`super::wmos`], which is where
-//! those differences live. **Placing one is the same act either way**: choose a
-//! model, see it where it would go, click. So the arming, the preview, the turn
-//! and the scale are here once, and only the twenty lines that write the record
-//! know which list they are writing to.
+//! different rules. Those differences live in [`super::doodads`] and
+//! [`super::wmos`]. Placing either takes the same steps: choose a model, see
+//! it where it would go, click. So the arming, the preview, the turn and the
+//! scale are implemented here once, and only the twenty lines that write the
+//! record know which list they write to.
 //!
 //! ## The preview is the model, drawn translucent
 //!
-//! A marker or a box would be cheaper and would answer the wrong question. What
-//! a person placing scenery needs to know is whether *this tree* sits right on
-//! *this slope* — its size against the ground, its trunk against the rock behind
-//! it — and none of that survives being reduced to an outline.
+//! A marker or a box would be cheaper, but it does not show what a person
+//! placing scenery needs to see: whether this tree sits right on this slope,
+//! its size against the ground, its trunk against the rock behind it. An
+//! outline loses all of that.
 //!
-//! It costs nothing to do properly because both halves already exist:
-//! `ModelCache::lookup` and `WmoCache::lookup` hand back the same batches the
-//! world is drawn from, and `Materials::with_opacity` is the client's own
-//! translucency — the one that dresses a stealthed rogue and a spirit at the
-//! graveyard. It even carries the awkward half: an opaque batch cannot blend at
-//! all, because the blend mode is in the pipeline key, so it is forced to mode 2
-//! and its real mode stashed. A ghost written here would have got that wrong.
+//! Drawing the real model costs nothing extra because both parts already
+//! exist. `ModelCache::lookup` and `WmoCache::lookup` return the same batches
+//! the world is drawn from, and `Materials::with_opacity` is the client's own
+//! translucency, the one used for a stealthed rogue and a spirit at the
+//! graveyard. It also handles opaque batches: an opaque batch cannot blend,
+//! because the blend mode is in the pipeline key, so it is forced to mode 2
+//! and its real mode is stored. A ghost material written in this file would
+//! have to repeat that.
 //!
-//! `render::ships` is the precedent for the spawn — a building's batches under an
-//! entity whose transform is written every frame, with no `MODF` row behind it.
+//! `render::ships` is the precedent for the spawn: a building's batches under
+//! an entity whose transform is written every frame, with no `MODF` row behind
+//! it.
 //!
-//! ## The ghost is not a placement and must not look like one
+//! ## The ghost carries no placement marker
 //!
-//! Its batches carry **no** `Doodad` and no `WmoPart`, which is what keeps
-//! every other tool blind to it: the doodad pick rays against `Doodad` boxes, the
-//! WMO pick against `WmoPart`, the reconcilers walk both. A ghost wearing either
-//! marker would be selectable, movable and — once `rehome` started enforcing one
-//! row per id — a candidate for being collapsed into a real placement.
+//! Its batches carry no `Doodad` and no `WmoPart`, so no other tool sees it:
+//! the doodad pick casts rays against `Doodad` boxes, the WMO pick against
+//! `WmoPart`, and the reconcilers walk both. A ghost with either marker would
+//! be selectable and movable, and, once `rehome` started enforcing one row per
+//! id, a candidate for being collapsed into a real placement.
 //!
-//! ## Duplicating is arming, not copying
+//! ## Duplicate arms this tool instead of copying
 //!
-//! "Duplicate" does not drop a second copy on top of the first, which is a thing
-//! you then have to find and drag off. It arms *this* tool with the selected
-//! placement's model, rotation and scale, so the copy is on the cursor and lands
-//! where it is wanted. One gesture, and it is the gesture already learnt.
+//! "Duplicate" does not drop a second copy on top of the first, which the user
+//! would then have to find and drag off. It arms this tool with the selected
+//! placement's model, rotation and scale, so the copy is on the cursor and
+//! lands where the user clicks. Duplicating uses the same gesture as placing.
 //!
-//! ## A model path is resolved where it enters, and that is [`Placing::arm`]
+//! ## Model paths are resolved in [`Placing::arm`]
 //!
-//! The two ways a path gets here do not agree about what a model is called.
-//! The picker's come out of the archives' own listing and are `.m2` — measured:
-//! `vale catalogue` reports 5,816 `.m2` under `World\` and not one `.mdx`.
-//! **A duplicate's comes out of the tile's `MMDX`, and `MMDX` is `.mdx`**, which
-//! is the pre-1.0 extension no archive holds. Every reader in this project swaps
-//! it — `vale_assets::world::m2::model_path` is the one statement of that —
-//! and this tool was the one that did not.
+//! The two ways a path reaches this tool do not agree on the model's
+//! extension. The picker's paths come from the archives' own listing and are
+//! `.m2`: `vale catalogue` reports 5,816 `.m2` under `World\` and no `.mdx`. A
+//! duplicate's path comes from the tile's `MMDX`, and `MMDX` holds `.mdx`, the
+//! pre-1.0 extension no archive holds. Every reader in this project swaps it,
+//! and `vale_assets::world::m2::model_path` is the one implementation of the
+//! swap. This tool did not swap it.
 //!
-//! What that looked like is worth keeping, because nothing anywhere reported it.
-//! `ModelCache` failed the path, so the preview never appeared; `resolve_doodads`
-//! failed it too and dropped the placement, so the click drew nothing; and the
-//! record written into the file was perfectly good, so the moment anything made
-//! the tile be read again — a drag, an undo, a playtest — every copy appeared at
-//! once. It was reported as *"when duplicating, the preview does not show, nor do
-//! the duplicated placements, until you move something in the world"*, which is
-//! that sequence exactly.
+//! Nothing reported the failure. `ModelCache` failed the path, so the preview
+//! never appeared; `resolve_doodads` failed it too and dropped the placement,
+//! so the click drew nothing; and the record written into the file was valid,
+//! so when anything caused the tile to be read again (a drag, an undo, a
+//! playtest) every copy appeared at once. The bug report read "when
+//! duplicating, the preview does not show, nor do the duplicated placements,
+//! until you move something in the world", which matches that sequence.
 //!
-//! So [`Placing::arm`] resolves, and it is the only door in. Per kind, because
-//! the swap is the *model* rule: a `.wmo` is already what the archive holds, and
-//! putting one through `model_path` would ask for `stormwind.wmo.m2`.
+//! So [`Placing::arm`] resolves the path, and it is the only entry point. The
+//! swap depends on the kind because it is the model rule: a `.wmo` path is
+//! already what the archive holds, and passing one through `model_path` would
+//! ask for `stormwind.wmo.m2`.
 //!
-//! ## Scattering: every drop is different, inside stated bounds
+//! ## Scattering: each drop is rolled inside stated bounds
 //!
 //! A forest placed one identical tree at a time looks stamped, and turning and
-//! sizing each one by hand is the slow half of placing. With [`Scatter`] on,
-//! every drop **rolls the next one**: a fresh turn about up, a size drawn
-//! between two bounds, and a tilt off the vertical up to a stated angle — the
-//! three numbers `MDDF` carries and the ghost shows. The roll happens after
-//! the click, so what is on the cursor is always what the next click writes,
-//! and **Roll now** re-draws it without placing anything. A building takes the
-//! turn only: `MODF` has no scale, and a tilted building is a mistake nine
-//! times in ten.
+//! sizing each tree by hand is slow. With [`Scatter`] on, every drop rolls the
+//! next one: a new turn about up, a size drawn between two bounds, and a tilt
+//! off the vertical up to a stated angle. These are the three values `MDDF`
+//! carries and the ghost shows. The roll happens after the click, so the model
+//! on the cursor is always what the next click writes, and the "Roll now"
+//! button re-draws it without placing anything. A building takes the turn
+//! only: `MODF` has no scale, and a tilted building is a mistake nine times in
+//! ten.
 //!
-//! The randomness is a 64-bit xorshift of this file's own, seeded from the
-//! clock on first use. A dependency for three numbers a second is not worth
-//! the tree it would pull in, and nothing here needs to be reproducible.
+//! The random numbers come from a 64-bit xorshift in this file, seeded from
+//! the clock on first use. Three numbers a second do not justify a dependency
+//! and the crates it would pull in, and nothing here needs to be reproducible.
 
 use crate::pick::Cursor;
 use crate::session::EditSession;
@@ -99,11 +101,10 @@ use bevy::prelude::*;
 
 /// How opaque the preview is.
 ///
-/// Low enough to read as "not there yet" against any ground, high enough to
-/// judge the model's silhouette and its colour. A ghost at 0.2 is a smudge and
-/// one at 0.8 is indistinguishable from a placement that has already landed,
-/// which is the failure that matters — a person needs to know whether they have
-/// clicked.
+/// Low enough to read as not yet placed against any ground, high enough to
+/// judge the model's silhouette and colour. At 0.2 the ghost is too faint to
+/// judge. At 0.8 it cannot be told apart from a placed model, and the user
+/// needs to see whether they have clicked.
 const GHOST: f32 = 0.45;
 
 /// Degrees a turn key turns the ghost, and the factor shift applies.
@@ -118,7 +119,7 @@ pub enum Kind {
 }
 
 impl Kind {
-    /// What the archives call one of these.
+    /// The file extensions the archives use for this kind.
     fn extensions(self) -> &'static [&'static str] {
         match self {
             Kind::Doodad => &[".m2", ".mdx"],
@@ -129,11 +130,11 @@ impl Kind {
 
 /// Which half of a placement tool's panel is showing.
 ///
-/// **A mode and not a second tool.** Choosing a model and moving one already
-/// placed are the same subject — the same list, the same records, the same
-/// panel — and a person switches between them constantly while scattering
-/// scenery. A separate rail entry would put a click between every tree and the
-/// nudge that straightens it.
+/// This is a mode of one tool, not a second tool. Choosing a model and moving
+/// a placed one use the same list, the same records and the same panel, and a
+/// person switches between them constantly while scattering scenery. A
+/// separate rail entry would add a click between placing each tree and
+/// adjusting it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
     /// Pick what is there, move it, turn it.
@@ -143,10 +144,10 @@ pub enum Mode {
     Place,
 }
 
-/// The three, as a list a panel can offer.
+/// The two modes, as a list for the panel.
 pub const MODES: [(&str, Mode); 2] = [("Select", Mode::Select), ("Place", Mode::Place)];
 
-/// How the next drop is rolled — see the module comment.
+/// How the next drop is rolled. See the module comment.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Scatter {
     /// Whether anything is rolled at all.
@@ -175,18 +176,18 @@ impl Default for Scatter {
 #[derive(Resource)]
 pub struct Placing {
     pub mode: Mode,
-    /// The model on the cursor, or `None` — which is the tool switched off and
-    /// is the state it spends nearly all of its time in.
+    /// The model on the cursor, or `None` when the tool is disarmed, which is
+    /// its usual state.
     pub path: Option<String>,
     pub kind: Kind,
-    /// Degrees about the world's up, which is the one axis worth having before a
-    /// placement lands: the other two are the gizmo's job afterwards.
+    /// Degrees about the world's up axis. This is the only axis set before a
+    /// placement lands; the gizmo sets the other two afterwards.
     pub turn: f32,
-    /// …and the other two, in degrees about the world's x and y, which only
-    /// [`Scatter`] writes: a lean off the vertical.
+    /// Degrees about the world's x and y axes: a lean off the vertical. Only
+    /// [`Scatter`] writes it.
     pub tilt: [f32; 2],
-    /// **Whether a drop leans onto the slope under the cursor** instead of
-    /// taking the roll's lean. Doodads only; a building is never leaned. See
+    /// Whether a drop leans onto the slope under the cursor instead of taking
+    /// the roll's lean. Doodads only; a building is never leaned. See
     /// `vale_assets::world::adt::lean_to_normal`, and [`Self::lean`], where
     /// the answer for this frame is kept.
     pub align: bool,
@@ -200,25 +201,28 @@ pub struct Placing {
     pub scatter: Scatter,
     /// The roll's state; zero until first used.
     seed: u64,
-    /// Every model path the archives name, per kind, read once and lazily.
+    /// Every model path the archives and the project name, per kind, read
+    /// lazily and again when the project's files change.
     pub doodads: Vec<String>,
     pub wmos: Vec<String>,
+    /// The `EditSession::files_revision` the two lists were read at, by kind.
+    catalogue_for: [Option<u64>; 2],
     /// What the panel's search box holds, kept per kind so switching between
     /// them does not lose it.
     pub search: String,
-    /// **Which folder the picker is showing**, one per kind, as a lower-case
-    /// path prefix ending in a separator.
+    /// Which folder the picker is showing, one per kind, as a lower-case path
+    /// prefix ending in a separator.
     ///
     /// One per kind because the two catalogues do not share a shape: a doodad
     /// is anywhere under `World\` and a building is always under `World\wmo\`,
-    /// so a single field would drop somebody at the root every time they
-    /// switched tool. Kept across a switch for the same reason [`Self::search`]
-    /// is — the list is being used to find one thing, and going back to the top
-    /// is the one thing nobody wants.
+    /// so a single field would reset the picker to the root on every tool
+    /// switch. It is kept across a switch for the same reason as
+    /// [`Self::search`]: the user is looking for one model, and a reset to the
+    /// top loses their place.
     folders: [String; 2],
-    /// **A model that will not load, said out loud.** A preview that is simply
-    /// absent is indistinguishable from one that has not arrived yet, and the
-    /// two want different things done about them.
+    /// The path of a model that failed to load, so the panel can report it.
+    /// A missing preview looks the same as one still loading, and the two need
+    /// different responses.
     pub trouble: Option<String>,
     /// The preview entity and what it is showing, so that changing the chosen
     /// model rebuilds it and re-choosing the same one does not.
@@ -236,18 +240,20 @@ impl Default for Placing {
             tilt: [0.0; 2],
             align: false,
             lean: [0.0; 2],
-            // **One, not zero.** A derived default would arm the tool at a scale
-            // of nothing, which places a doodad the file says is there and the
-            // renderer draws at no size — visible as "the click did nothing".
+            // One, not zero. A derived default would arm the tool at scale
+            // zero, which writes a doodad into the file that the renderer
+            // draws at no size, so the click appears to do nothing.
             scale: 1.0,
             scatter: Scatter::default(),
             seed: 0,
             doodads: Vec::new(),
             wmos: Vec::new(),
+            catalogue_for: [None; 2],
             search: String::new(),
-            // **The buildings start one level in.** Every `.wmo` in the game
-            // is under `World\wmo\`, so the root would be one folder with
-            // everything in it and a click nobody can avoid.
+            // The building picker starts one level in. Every `.wmo` in the
+            // game is under `World\wmo\`, so at the root the picker would
+            // show one folder holding everything, and every user would have
+            // to click into it first.
             folders: [ROOT.to_string(), format!("{ROOT}wmo{SEP}")],
             trouble: None,
             ghost: None,
@@ -259,8 +265,8 @@ impl Default for Placing {
 impl Placing {
     /// Whether a click in the world would place something.
     ///
-    /// **Asked by both picks**, which decline while it is true — see the module
-    /// comment: a click that places must not also select.
+    /// Both picks check this and ignore the click while it is true, because a
+    /// click that places must not also select. See the module comment.
     pub fn armed(&self) -> bool {
         self.path.is_some()
     }
@@ -268,12 +274,12 @@ impl Placing {
     /// Arm with a model, at a rotation and scale, and show the half of the panel
     /// that is about placing.
     ///
-    /// The one entry point, used by the picker and by *Duplicate* — see the
-    /// module comment on why duplicating arms rather than copies.
+    /// The one entry point, used by the picker and by "Duplicate". See the
+    /// module comment on why duplicating arms the tool instead of copying.
     pub fn arm(&mut self, kind: Kind, path: String, turn: f32, scale: f32) {
         self.kind = kind;
-        // **Resolved here and nowhere else** — see the module comment, where
-        // what an unresolved `.mdx` looked like is written down.
+        // The path is resolved here and nowhere else. The module comment
+        // describes what an unresolved `.mdx` caused.
         self.path = Some(match kind {
             Kind::Doodad => vale_assets::world::m2::model_path(&path),
             Kind::Wmo => path,
@@ -286,7 +292,7 @@ impl Placing {
     }
 
     /// Draw the next turn, size and tilt inside [`Scatter`]'s bounds, if it
-    /// is on. Called after every drop and by **Roll now**.
+    /// is on. Called after every drop and by the "Roll now" button.
     pub fn roll(&mut self) {
         if !self.scatter.on {
             return;
@@ -316,7 +322,7 @@ impl Placing {
         }
     }
 
-    /// …and put it away, which is what `Escape` and a tool change do.
+    /// Clear the model on the cursor. `Escape` and a tool change call this.
     pub fn disarm(&mut self) {
         self.path = None;
         self.trouble = None;
@@ -335,9 +341,9 @@ impl Placing {
         &self.folders[kind as usize]
     }
 
-    /// …and go somewhere else in it. A prefix with no trailing separator is
-    /// given one, so that a folder cannot also match one whose name it is a
-    /// prefix of.
+    /// Set the folder the picker shows for a kind. A prefix with no trailing
+    /// separator is given one, so that a folder cannot also match one whose
+    /// name it is a prefix of.
     pub fn open_folder(&mut self, kind: Kind, prefix: &str) {
         let mut prefix = prefix.to_ascii_lowercase();
         if !prefix.is_empty() && !prefix.ends_with(SEP) {
@@ -369,15 +375,15 @@ fn unit(seed: &mut u64) -> f32 {
 }
 
 /// The archives' own path separator, which is the one the picker's folders are
-/// cut on. A backslash, and named so that it reads as a separator rather than as
-/// an escape in the middle of a condition.
+/// cut on. A backslash, given a name so that it reads as a separator and not as
+/// an escape inside a condition.
 pub const SEP: char = '\\';
 
 /// Where the picker starts, and what its breadcrumb calls `World`.
 ///
-/// Everything either catalogue holds is under it — both come from
-/// `list_prefix("World\")` — so a level above it would be one folder with
-/// everything in it.
+/// Everything either catalogue holds is under it, since both are read from
+/// `EditSession::listed` with the prefix `World\`, so a level above it would
+/// be one folder with everything in it.
 pub const ROOT: &str = "world\\";
 
 pub struct PlaceToolPlugin;
@@ -390,9 +396,9 @@ impl Plugin for PlaceToolPlugin {
             (read_catalogue, aim, ground_lean, follow, commit)
                 .chain()
                 .after(crate::pick::aim)
-                // **Before both picks**, which is what keeps the click that
-                // places from also selecting whatever is behind it. Stated
-                // because nothing would report it.
+                // Before both picks, so the click that places does not also
+                // select whatever is behind it. A wrong order would produce
+                // no error, so the order is stated here.
                 .before(crate::tools::doodads::select)
                 .before(crate::tools::wmos::select),
         );
@@ -401,10 +407,10 @@ impl Plugin for PlaceToolPlugin {
 
 /// `--place` — open on the picker, and arm what it named.
 ///
-/// **Once, on the first frame the tool is one that places.** It is the only way
-/// a scripted run reaches this half of the panel at all: the mode is a click on
-/// a segmented control and the model is a click on a row, and neither is
-/// something `--shot` can do. See [`crate::Args::place`], where the argument is.
+/// Runs once, on the first frame the active tool is a placing tool. It is the
+/// only way a scripted run reaches this half of the panel: the mode is set by
+/// a click on a segmented control and the model by a click on a row, and
+/// `--shot` can do neither. See [`crate::Args::place`], where the argument is.
 fn scripted(
     mut placing: ResMut<Placing>,
     args: Res<crate::Args>,
@@ -429,10 +435,10 @@ fn scripted(
     *done = true;
     match asked {
         Some(path) => {
-            // …and the picker opens on the model's own folder, which is where
-            // the next one is most likely to be — and is what a shot of the
-            // picker's rows needs, since the root is seventeen folders and
-            // no models.
+            // The picker opens on the model's own folder, where the next
+            // model is most likely to be. A shot of the picker's rows also
+            // needs this, because the root holds seventeen folders and no
+            // models.
             placing.open_folder(kind, &Placing::folder_of(&path));
             placing.arm(kind, path, 0.0, 1.0);
         }
@@ -444,52 +450,61 @@ fn scripted(
     }
 }
 
-/// The preview, on the root **and on every batch of it**.
+/// Marks the preview, on the root and on every batch of it.
 ///
-/// On the batches because that is what the bounds walk needs to find, and the
-/// root has no mesh of its own; on the root because that is what carries the
-/// transform. Nothing else in this crate names it, which is the point — see the
-/// module comment on why a ghost must not wear `Doodad` or `WmoPart`.
+/// The batches carry it because the bounds walk looks for it and the root has
+/// no mesh of its own; the root carries it because the root holds the
+/// transform. Nothing else in this crate names it. See the module comment on
+/// why a ghost must not carry `Doodad` or `WmoPart`.
 #[derive(Component)]
 struct Ghost;
 
-/// Read the model lists, once each, the first time one is wanted.
+/// Read a model list the first time it is wanted, and again after the
+/// project's files change.
 ///
-/// Lazily for the reason the tileset list is: it walks the listing of nineteen
-/// archives, and a session that never places anything should not pay for it.
-fn read_catalogue(mut placing: ResMut<Placing>, tool: Res<Tool>, assets: Res<GameAssets>) {
+/// It is read lazily, like the tileset list, because it walks the listing of
+/// nineteen archives and a session that never places anything should not pay
+/// for that.
+fn read_catalogue(
+    mut placing: ResMut<Placing>,
+    tool: Res<Tool>,
+    assets: Res<GameAssets>,
+    session: Option<Res<crate::session::EditSession>>,
+) {
     let kind = match *tool {
         Tool::Doodads => Kind::Doodad,
         Tool::Wmos => Kind::Wmo,
         _ => return,
     };
-    if !placing.catalogue(kind).is_empty() {
+    let Some(session) = session else { return };
+    // Read again when the project's files change, so a model the project
+    // adds is offered. See `EditSession::listed`.
+    let at = match kind {
+        Kind::Doodad => 0,
+        Kind::Wmo => 1,
+    };
+    if placing.catalogue_for[at] == Some(session.files_revision) && !placing.catalogue(kind).is_empty() {
         return;
     }
-    let found = assets.with_archive(|chain| Ok(chain.list_prefix("World\\")));
-    let mut found: Vec<String> = match found {
-        Ok(found) => found
-            .into_iter()
-            .filter(|path| kind.extensions().iter().any(|end| path.ends_with(end)))
-            // **A `.wmo` that ends in `_NNN` is a group, not a building.** A
-            // city is one root and three hundred of those, and offering them
-            // would bury the thing somebody is looking for under its own rooms.
-            .filter(|path| kind != Kind::Wmo || !is_group(path))
-            // …and through the same swap [`Placing::arm`] makes, so the two
-            // doors into this tool agree whatever the listing happens to hold.
-            // Today it holds no `.mdx` at all — `vale catalogue` — so this
-            // changes nothing; a patch archive that added one would otherwise
-            // put an unopenable row in the list.
-            .map(|path| match kind {
-                Kind::Doodad => vale_assets::world::m2::model_path(&path),
-                Kind::Wmo => path,
-            })
-            .collect(),
-        Err(e) => {
-            warn!("the model list could not be read: {e}");
-            Vec::new()
-        }
-    };
+    placing.catalogue_for[at] = Some(session.files_revision);
+    let mut found: Vec<String> = session
+        .listed(&assets, "World\\")
+        .into_iter()
+        .filter(|path| kind.extensions().iter().any(|end| path.ends_with(end)))
+        // A `.wmo` that ends in `_NNN` is a group, not a building. A city is
+        // one root and three hundred of those, and offering them would bury
+        // the building under its own rooms.
+        .filter(|path| kind != Kind::Wmo || !is_group(path))
+        // Apply the same swap [`Placing::arm`] makes, so the two ways into
+        // this tool agree whatever the listing holds. The archives hold
+        // no `.mdx` (`vale catalogue`), so this changes nothing for them; a
+        // patch archive or a project file that added one would otherwise put
+        // an unopenable row in the list.
+        .map(|path| match kind {
+            Kind::Doodad => vale_assets::world::m2::model_path(&path),
+            Kind::Wmo => path,
+        })
+        .collect();
     found.sort();
     found.dedup();
     // A marker, so a failed read is not retried every frame for the rest of the
@@ -527,9 +542,9 @@ fn aim(
     viewport: Res<crate::ui::Viewport>,
     windows: Query<&Window>,
 ) {
-    // **Disarmed by anything that changes the subject.** A model left on the
-    // cursor after switching to the terrain brush is a click away from being
-    // placed by somebody who thinks they are painting.
+    // Disarm when the tool changes or editing stops. A model left on the
+    // cursor after a switch to the terrain brush would be placed by the next
+    // click of somebody who thinks they are painting.
     if !matches!(*tool, Tool::Doodads | Tool::Wmos) || !state.editing() {
         placing.disarm();
         return;
@@ -557,8 +572,8 @@ fn aim(
     if keys.just_pressed(KeyCode::Period) {
         placing.turn = (placing.turn + TURN * far).rem_euclid(360.0);
     }
-    // The wheel scales, under control, which is the gesture both brushes use for
-    // their own size. A building has no scale to change.
+    // The wheel with Control held scales the model, the same gesture both
+    // brushes use for their own size. A building has no scale to change.
     let in_world = crate::ui::over_the_world(&viewport, &wants, &windows);
     if in_world
         && placing.kind == Kind::Doodad
@@ -588,10 +603,9 @@ fn follow(
     // Nothing armed, or nowhere to stand: the preview goes away rather than
     // hanging in the air where the pointer last met the world.
     //
-    // The surface and not the ground — see [`crate::pick`] — so a lamp dropped
-    // on a bridge or a crate on a dock stands on it. What is still the
-    // *ground's* is the lean, because that is the terrain's slope by definition:
-    // see [`ground_lean`].
+    // The surface and not the ground (see [`crate::pick`]), so a lamp dropped
+    // on a bridge or a crate on a dock stands on it. The lean still comes from
+    // the ground, because it is the terrain's slope: see [`ground_lean`].
     let (Some(path), Some(at)) = (placing.path.clone(), cursor.surface) else {
         if let Some(ghost) = placing.ghost.take() {
             commands.entity(ghost).despawn();
@@ -605,10 +619,10 @@ fn follow(
             commands.entity(ghost).despawn();
         }
         placing.showing = None;
-        // **Asked every frame until it is `Ready`.** Both caches load on a task
-        // and answer `Loading` meanwhile, exactly as the world's own placements
-        // are loaded — so the preview appears a moment after a model is chosen,
-        // which is the same moment the world would have taken.
+        // The cache is asked every frame until it answers `Ready`. Both caches
+        // load on a task and answer `Loading` meanwhile, the same way the
+        // world's own placements load, so the preview appears as soon after a
+        // model is chosen as the world would draw it.
         let (draws, failed) = match placing.kind {
             Kind::Doodad => match models.lookup(&path) {
                 Lookup::Ready(assets) => (Some(assets.draws.clone()), false),
@@ -621,11 +635,10 @@ fn follow(
                 _ => (None, false),
             },
         };
-        // **A model that will not load says so.** Without this the tool is
-        // armed, the cursor shows nothing, and a click writes a record for a
-        // file the archives do not hold — which is the shape of the `.mdx` bug
-        // in the module comment and is worth being unable to have silently
-        // twice.
+        // Record a model that fails to load. Without this the tool is armed,
+        // the cursor shows nothing, and a click writes a record for a file the
+        // archives do not hold. That is how the `.mdx` bug in the module
+        // comment behaved, and this makes a repeat of it visible.
         placing.trouble = failed.then(|| path.clone());
         let Some(draws) = draws else { return };
 
@@ -633,8 +646,8 @@ fn follow(
             .spawn((Ghost, Transform::default(), Visibility::default()))
             .id();
         for draw in &draws {
-            // The client's own translucency, which also handles the half a ghost
-            // written here would have got wrong — see the module comment.
+            // The client's own translucency, which also handles opaque
+            // batches. See the module comment.
             let material = materials
                 .with_opacity(&draw.material, GHOST)
                 .unwrap_or_else(|| draw.material.clone());
@@ -673,18 +686,18 @@ impl Placing {
     }
 }
 
-/// **Read the slope under the cursor** into [`Placing::lean`], at the current
-/// turn, on every frame the tool is armed. Its own system because [`follow`]
-/// has the caches and not the session, and the lean is the session's ground.
+/// Read the slope under the cursor into [`Placing::lean`], at the current
+/// turn, on every frame the tool is armed. It is a separate system because
+/// [`follow`] has the caches and not the session, and the lean comes from the
+/// session's ground.
 ///
-/// **It reads `Cursor::ground` where [`follow`] reads `Cursor::surface`**, and
-/// the two are deliberately different. Where a model *stands* is whatever is
-/// under the pointer; the lean is the **terrain's** slope, which is the only
-/// slope there is a number for — a hull answers a height, not a normal. So a
-/// doodad dropped on a roof with [`Placing::align`] on stands on the roof and
-/// leans with the hillside under it. That is wrong and it is visible; the
-/// setting exists for scattering rocks on a hillside, which is where it is
-/// right.
+/// It reads `Cursor::ground` where [`follow`] reads `Cursor::surface`, on
+/// purpose. Where a model stands is whatever is under the pointer. The lean is
+/// the terrain's slope, which is the only slope with a known normal: a hull
+/// gives a height, not a normal. So a doodad dropped on a roof with
+/// [`Placing::align`] on stands on the roof and leans with the hillside under
+/// it. That result is wrong and visible; the setting is meant for scattering
+/// rocks on a hillside, where it is right.
 fn ground_lean(
     mut placing: ResMut<Placing>,
     session: Option<Res<EditSession>>,
@@ -709,10 +722,10 @@ fn ground_lean(
 
 /// Where the preview stands, and where the record will say it stands.
 ///
-/// **One function, used by both**, so that what is previewed is what is placed.
-/// It goes through `placement_matrix` like everything else rather than composing
-/// a rotation here, because that is the one statement of the `MDDF` frame — the
-/// 180° term included.
+/// Both use this one function, so the preview matches the placement. It goes
+/// through `placement_matrix` like everything else instead of composing a
+/// rotation here, because `placement_matrix` is the one implementation of the
+/// `MDDF` frame, including the 180° term.
 fn transform_of(kind: Kind, at: Vec3, turn: f32, tilt: [f32; 2], scale: f32) -> Transform {
     let rotation =
         vale_assets::world::adt::placement_euler_from_world(world_angles(kind, turn, tilt));
@@ -767,10 +780,10 @@ fn commit(
         return;
     }
 
-    // **An id from the minted range and not "the largest plus one"** — see
-    // `vale_edit::adt::place::MINTED_BASE`. A tool can only see the tiles it
-    // has open, and one id naming two objects is now destructive rather than
-    // merely untidy.
+    // Take an id from the minted range, not the largest existing id plus one.
+    // See `vale_edit::adt::place::MINTED_BASE`. A tool only sees the tiles it
+    // has open, and one id naming two objects now loses data instead of only
+    // being untidy.
     let unique_id = session
         .tiles
         .values()
@@ -810,11 +823,11 @@ fn commit(
             tile.add_doodad(record, radius)
         }
         Kind::Wmo => {
-            // **The box comes from the preview**, which is the only thing that
-            // knows how big this building is — a `MODF` row carries its own box
-            // and a brand new row has to be given one. It is the same union
-            // `wmos::refit` takes, and for the same reason: the mover reads this
-            // box before the `.wmo` has loaded.
+            // The box comes from the preview, the only thing that knows the
+            // building's size. A `MODF` row carries its own box, so a new row
+            // must be given one. It is the same union `wmos::refit` takes, for
+            // the same reason: the mover reads this box before the `.wmo` has
+            // loaded.
             let (lower, upper) = ghost_bounds(&parts).unwrap_or((position, position));
             let record = Building {
                 name_id: tile.name_building(&path),
@@ -842,22 +855,23 @@ fn commit(
     session.publish(coord);
     session.status = format!("placed {leaf} in tile {},{}", coord.0, coord.1);
 
-    // **Handed to the pass that spawns placements, not left to a re-read.**
+    // Hand the new placement to the pass that spawns placements instead of
+    // re-reading the tile.
     //
-    // Adding a row changes the tile's lists, and every other edit that does that
-    // asks for the tile again — which since `terrain::swap` is invisible but is
-    // still a third of a second. That is the wrong trade *here*, because placing
-    // is a repeated gesture: scattering a copse would be click, click, click,
-    // nothing, nothing, then three trees at once.
+    // Adding a row changes the tile's lists, and every other edit that does
+    // that requests the tile again. Since `terrain::swap` the re-read is
+    // invisible, but it still takes a third of a second. Placing is repeated
+    // quickly, so with a re-read three fast clicks would show nothing for a
+    // moment and then three trees at once.
     //
-    // Nothing is lost by spawning it directly. `PendingDoodads` and
-    // `PendingWmos` are the same lists the tile loader fills, drained by the
-    // same passes, so what appears is what a re-read would have produced —
-    // including its collision hull, its lamps and a `Doodad`/`WmoPart` marker,
-    // which is what makes the thing just placed immediately selectable.
+    // Spawning it directly loses nothing. `PendingDoodads` and `PendingWmos`
+    // are the same lists the tile loader fills, drained by the same passes, so
+    // the result is what a re-read would produce, including the collision
+    // hull, the lamps and a `Doodad`/`WmoPart` marker. The marker makes the new
+    // placement selectable immediately.
     //
-    // A tile that is not on screen has no lists to push to, and then the file is
-    // already right and whatever streams it next draws it.
+    // A tile that is not on screen has no lists to push to. Its file is
+    // already correct, and whatever streams it next draws the placement.
     let placed = PlacedModel {
         path: path.clone(),
         unique_id,
@@ -883,7 +897,7 @@ fn commit(
             // `MCSH` under the origin and only the loader has the decoded chunks
             // to read it from. It picks the per-instance sun scale, so a doodad
             // placed under a tree is lit as though it were in the open until the
-            // tile is next read — which is a shade, not a wrong picture.
+            // tile is next read. Only the shading is off; the model is correct.
             Kind::Doodad => doodads
                 .outdoor
                 .push(PlacedDoodad::on_ground(placed.clone(), false)),
@@ -891,10 +905,9 @@ fn commit(
         }
     }
 
-    // **Selected, so the gizmo is already on it.** Placing something and then
-    // having to find it again to turn it is two gestures where one will do; the
-    // index is what `add_*` just answered and `resync` keeps it honest from the
-    // next frame.
+    // Select the new placement, so the gizmo is already on it and the user
+    // does not have to find it again to turn it. The index is what `add_*`
+    // returned, and `resync` keeps it correct from the next frame.
     match kind {
         Kind::Doodad => {
             wmos.only(None);
@@ -930,21 +943,21 @@ fn commit(
         }
     }
 
-    // **It stays armed.** Scattering is the common case — a copse of trees, a
-    // row of crates — and disarming after every click would be one round trip to
-    // the panel per tree. `Escape` is how it stops, and switching subject does
-    // it too: see [`aim`].
+    // The tool stays armed. Placing many copies is the common case, such as a
+    // copse of trees or a row of crates, and disarming after every click would
+    // need one trip to the panel per tree. `Escape` disarms it, and so does a
+    // tool change: see [`aim`].
     //
-    // …and the next drop is rolled now, so the ghost shows what the next click
-    // writes. Nothing changes with scatter off.
+    // The next drop is rolled now, so the ghost shows what the next click
+    // writes. With scatter off this changes nothing.
     placing.roll();
 }
 
 /// The preview's own footprint, for the `MCRF` references a new doodad needs.
 ///
 /// An `MDDF` row says nothing about how big the model is, which is what
-/// `add_doodad`'s `radius` is a stand-in for — and the preview is the one thing
-/// in the room that knows.
+/// `add_doodad`'s `radius` is a stand-in for, and the preview is the only
+/// thing that knows the model's size.
 fn ghost_radius(parts: &Query<(&GlobalTransform, &Aabb), With<Ghost>>) -> f32 {
     match ghost_bounds(parts) {
         Some((lower, upper)) => {
@@ -995,7 +1008,7 @@ fn ghost_bounds(
     Some((low, high))
 }
 
-/// The last part of a path, which is the only part that names anything.
+/// The last component of a path: the file name.
 pub fn leaf(path: &str) -> &str {
     path.rsplit(['\\', '/']).next().unwrap_or(path)
 }
@@ -1004,9 +1017,9 @@ pub fn leaf(path: &str) -> &str {
 mod tests {
     use super::*;
 
-    /// **A building's root is offered and its rooms are not.** `stormwind.wmo`
-    /// is one root and some three hundred group files, and listing those would
-    /// bury every building in the game under its own corridors.
+    /// A building's root is offered and its group files are not.
+    /// `stormwind.wmo` is one root and some three hundred group files, and
+    /// listing the groups would bury every building under its own rooms.
     #[test]
     fn a_wmo_group_is_not_a_building() {
         assert!(!is_group(
@@ -1016,21 +1029,20 @@ mod tests {
             "world\\wmo\\azeroth\\buildings\\stormwind\\stormwind_042.wmo"
         ));
         assert!(is_group("world\\wmo\\a\\b_000.wmo"));
-        // A name that merely ends in digits is not a group — the underscore and
-        // exactly three digits are what says so.
+        // A name that only ends in digits is not a group. A group name ends in
+        // an underscore and exactly three digits.
         assert!(!is_group("world\\wmo\\a\\tower42.wmo"));
         assert!(!is_group("world\\wmo\\a\\b_42.wmo"));
         assert!(!is_group("world\\wmo\\a\\b_0000.wmo"));
     }
 
-    /// **A path is resolved on the way in, whichever door it came through.**
+    /// A path is resolved when the tool is armed, whichever way it came in.
     ///
-    /// The picker's paths are the archives' own and are `.m2`; a *duplicate*'s
-    /// is the tile's `MMDX` string and is `.mdx`, which no archive holds. Arming
-    /// the second one gave no preview, drew no placement, and then produced
-    /// every copy at once the moment anything read the tile again — see the
-    /// module comment. This is the one line that has to hold for that not to
-    /// come back.
+    /// The picker's paths are the archives' own and are `.m2`; a duplicate's
+    /// path is the tile's `MMDX` string and is `.mdx`, which no archive holds.
+    /// Arming an `.mdx` path gave no preview, drew no placement, and then
+    /// produced every copy at once when anything read the tile again. See the
+    /// module comment. This test guards against that bug returning.
     #[test]
     fn an_armed_path_is_what_the_archives_hold() {
         let mut placing = Placing::default();
@@ -1045,13 +1057,13 @@ mod tests {
             Some(r"World\Azeroth\Elwynn\PassiveDoodads\ElwynnTree\ElwynnTreeCanopy04.m2")
         );
 
-        // …and `.m2` is left exactly as it is, so the picker's own rows are
-        // untouched.
+        // An `.m2` path is left unchanged, so the picker's own rows are not
+        // affected.
         placing.arm(Kind::Doodad, r"world\critter\rat\rat.m2".into(), 0.0, 1.0);
         assert_eq!(placing.path.as_deref(), Some(r"world\critter\rat\rat.m2"));
 
-        // **A building is not a model and must not take the swap**, which would
-        // ask the archives for `stormwind.wmo.m2`.
+        // A building path does not take the model swap, which would ask the
+        // archives for `stormwind.wmo.m2`.
         let building = r"world\wmo\azeroth\buildings\stormwind\stormwind.wmo";
         placing.arm(Kind::Wmo, building.into(), 0.0, 1.0);
         assert_eq!(placing.path.as_deref(), Some(building));
@@ -1061,8 +1073,8 @@ mod tests {
     /// kinds keep their own.
     ///
     /// The separator matters: without it one folder's prefix also matches a
-    /// folder whose name it begins, which is a listing with a second folder's
-    /// contents mixed into it.
+    /// folder whose name it begins, and the listing mixes in the second
+    /// folder's contents.
     #[test]
     fn the_picker_keeps_a_folder_per_kind() {
         let mut placing = Placing::default();
@@ -1071,7 +1083,7 @@ mod tests {
 
         placing.open_folder(Kind::Doodad, r"World\Azeroth");
         assert_eq!(placing.folder(Kind::Doodad), r"world\azeroth\");
-        // …and the other kind is where it was.
+        // The other kind's folder is unchanged.
         assert_eq!(placing.folder(Kind::Wmo), r"world\wmo\");
 
         assert_eq!(
@@ -1081,8 +1093,7 @@ mod tests {
         assert_eq!(Placing::folder_of("rat.m2"), ROOT);
     }
 
-    /// The preview stands where the record will say it stands, which is the one
-    /// property that makes a preview worth having.
+    /// The preview stands where the record will say it stands.
     #[test]
     fn the_preview_and_the_record_agree() {
         let at = Vec3::new(-9450.0, -50.0, 60.0);
@@ -1090,7 +1101,7 @@ mod tests {
         let drawn = transform_of(Kind::Doodad, at, turn, [0.0; 2], 1.0);
 
         // What `commit` writes, put back through the renderer's own placement
-        // matrix — the route a real placement takes on the frame after.
+        // matrix, the route a real placement takes on the next frame.
         let position = vale_assets::world::adt::placement_from_world(at.to_array());
         let rotation = vale_assets::world::adt::placement_euler_from_world([0.0, 0.0, turn]);
         let world = vale_assets::world::adt::placement_to_world(position);
@@ -1101,14 +1112,14 @@ mod tests {
         assert!(drawn.rotation.angle_between(placed.rotation) < 1e-3);
     }
 
-    /// …and a building ignores the scale, because `MODF` has nowhere to put one.
+    /// A building ignores the scale, because `MODF` has no scale field.
     #[test]
     fn a_building_is_never_scaled() {
         let at = Vec3::new(0.0, 0.0, 0.0);
         let one = transform_of(Kind::Wmo, at, 0.0, [0.0; 2], 1.0);
         let big = transform_of(Kind::Wmo, at, 0.0, [0.0; 2], 8.0);
         assert!((one.scale - big.scale).length() < 1e-4);
-        // …and never leaned, whatever the roll says.
+        // A building is never leaned, whatever the roll says.
         assert_eq!(world_angles(Kind::Wmo, 30.0, [10.0, 5.0]), [0.0, 0.0, 30.0]);
         assert_eq!(
             world_angles(Kind::Doodad, 30.0, [10.0, 5.0]),

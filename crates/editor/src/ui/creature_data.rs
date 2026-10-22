@@ -49,6 +49,11 @@ pub fn draw(ui: &mut egui::Ui, mut subject: Subject<'_>) {
 
 /// The left column.
 fn list(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
+    // Templates and Displays, the workspace's two parts. The shell switches
+    // after the frame is drawn.
+    if let Some(part) = super::rail::parts(ui, Tool::CreatureData) {
+        subject.creatures.switch_to = Some(part);
+    }
     if !listing::head(ui, "Creatures", &subject.creatures.listed) {
         return;
     }
@@ -265,7 +270,9 @@ pub fn inspector(ui: &mut egui::Ui, mut subject: Subject<'_>) {
     match super::creatures::worn(subject, known.display_id) {
         Some(worn) => {
             let key = subject.portraits.want_large_worn(&worn);
-            super::inspector::preview_pane(ui, subject.portraits, &key);
+            // As wide as the inspector, as the item workspace's preview is.
+            let side = ui.available_width();
+            super::inspector::preview_pane_at(ui, subject.portraits, &key, side);
         }
         None => theme::note(
             ui,

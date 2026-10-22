@@ -31,6 +31,11 @@ pub fn draw(ui: &mut egui::Ui, mut subject: Subject<'_>) {
 
 /// The left column.
 fn list(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
+    // Templates and Displays, the workspace's two parts. The shell switches
+    // after the frame is drawn.
+    if let Some(part) = super::rail::parts(ui, Tool::GameObjectData) {
+        subject.objects.switch_to = Some(part);
+    }
     if !listing::head(ui, "Game Objects", &subject.objects.listed) {
         return;
     }
@@ -237,7 +242,11 @@ pub fn inspector(ui: &mut egui::Ui, mut subject: Subject<'_>) {
     };
     ui.label(egui::RichText::new(known.label()).strong().size(14.0));
     match subject.objects.model_of(subject.assets, known.display_id) {
-        Some(path) => super::inspector::preview_pane(ui, subject.portraits, &path),
+        // As wide as the inspector; see `ui::creature_data`.
+        Some(path) => {
+            let side = ui.available_width();
+            super::inspector::preview_pane_at(ui, subject.portraits, &path, side)
+        }
         None => theme::note(
             ui,
             "displayId is 0 or has no GameObjectDisplayInfo.dbc row. The editor draws a spawn \

@@ -301,6 +301,18 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
                 now,
             },
         ),
+        // The Assets workspace's third part: the chosen file, drawn. See
+        // `super::assets`.
+        Tool::Assets => super::assets::inspector(
+            ui,
+            super::assets::Work {
+                session,
+                assets: &mut editing.assets,
+                game: assets,
+                thumbnails: &mut editing.thumbnails,
+                portraits: &mut editing.portraits,
+            },
+        ),
         // The Creatures and Game Objects workspaces' third part: the open
         // template's model, a summary, and the windows for its other tables.
         // See `super::creature_data` and `super::gameobject_data`.
@@ -344,7 +356,13 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
         // itself is in the middle, where the viewport would be; see
         // `super::data`. This follows the shell's rule that the inspector
         // shows the selection.
-        Tool::Spells | Tool::ItemSets | Tool::Tables | Tool::Zones => table(
+        Tool::Spells
+        | Tool::ItemSets
+        | Tool::Tables
+        | Tool::Zones
+        | Tool::CreatureDisplays
+        | Tool::ObjectDisplays
+        | Tool::ItemDisplays => table(
             ui,
             super::data::Workspace {
                 tool,
@@ -2586,6 +2604,10 @@ fn table(ui: &mut egui::Ui, mut work: super::data::Workspace<'_>) {
     if unsaved && theme::primary(ui, "Save table").clicked() {
         session.save_table(&name);
     }
+    ui.add_space(4.0);
+
+    // A display table's open row, drawn.
+    super::data::display_preview(ui, &mut work);
     ui.add_space(4.0);
 
     super::data::references(ui, &mut work);

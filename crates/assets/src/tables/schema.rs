@@ -34,9 +34,10 @@
 //!
 //! ## Enum names come from the server because the client ships none
 //!
-//! `SpellEffectNames.dbc` and `SpellAuraNames.dbc` are zero bytes long in
-//! 1.12.1. [`super::spellnames`] takes its names from the server's enums for
-//! that reason.
+//! 1.12.1's `patch.MPQ` deletes `SpellEffectNames.dbc` and
+//! `SpellAuraNames.dbc`, so the patched client reads neither.
+//! [`super::spellnames`] takes its names from the server's enums for that
+//! reason.
 
 use super::spellbits as bits;
 use super::spellnames::{SPELL_AURAS, SPELL_EFFECTS};
@@ -234,6 +235,10 @@ pub fn for_table(name: &str) -> Option<&'static Schema> {
 /// character reports standing in; and `WorldSafeLocs`, the places a spirit
 /// appears. The last two refer to `Map`, and `Map` refers to `AreaTable` and
 /// `LoadingScreens`.
+///
+/// The display group: what a creature, a game object and an item look like.
+/// `CreatureDisplayInfo` refers to `CreatureModelData` and
+/// `CreatureDisplayInfoExtra`, which refers to `ItemDisplayInfo` ten times.
 pub const ALL: &[&Schema] = &[
     &SPELL,
     &SPELL_VISUAL,
@@ -268,11 +273,17 @@ pub const ALL: &[&Schema] = &[
     &MAP,
     &AREA_TRIGGER,
     &WORLD_SAFE_LOCS,
+    &CREATURE_DISPLAY_INFO,
+    &CREATURE_DISPLAY_INFO_EXTRA,
+    &CREATURE_MODEL_DATA,
+    &GAME_OBJECT_DISPLAY_INFO,
+    &ITEM_DISPLAY_INFO,
 ];
 
 /// Every file in 1.12.1's `DBFilesClient\`, by bare name: 158 of them, four
-/// of which are zero bytes long and hold no table (`CharacterCreateCameras`,
-/// `SoundCharacterMacroLines`, `SpellAuraNames`, `SpellEffectNames`).
+/// of which `patch.MPQ` deletes, so the patched client reads no table from
+/// them (`CharacterCreateCameras`, `SoundCharacterMacroLines`,
+/// `SpellAuraNames`, `SpellEffectNames`). See `archive::DELETE_MARKER`.
 ///
 /// The archives list their files in lower case, and a table is opened, saved
 /// and looked up by its name, so one spelling has to be the name. This is the
@@ -2542,9 +2553,212 @@ pub const WORLD_SAFE_LOCS: Schema = Schema {
     ],
 };
 
+/// `CreatureDisplayInfo.dbc`: 10,534 rows of 12 fields. What a creature looks
+/// like: a model, a scale, and up to three skins.
+///
+/// The model, extra-info and skin indices are [`super::dbc`]'s
+/// `display_fields`, the sound column its `npc_sound_id`. The names follow
+/// wowdev.wiki's layout for 1.12, and every column's values agree with it over
+/// the whole table: field 9 holds only -1 and 0 to 4, field 10 only 0 to 3.
+pub const CREATURE_DISPLAY_INFO: Schema = Schema {
+    table: "CreatureDisplayInfo",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(1, "ModelId", Kind::Reference("CreatureModelData"), "The model the skins are painted on."),
+        ca(2, "SoundId", Kind::Reference("CreatureSoundData"), "273 of the 10,534 shipped rows set it."),
+        ca(
+            3,
+            "ExtendedDisplayInfoId",
+            Kind::Reference("CreatureDisplayInfoExtra"),
+            "A character-model creature's race, gender, face, hair, worn items and baked \
+             skin. Read in place of TextureVariation1 when that is empty.",
+        ),
+        ca(4, "Scale", Kind::Float, "Multiplied by the model's own ModelScale."),
+        ca(5, "Alpha", Kind::Int, "Opacity, 0 to 255."),
+        ca(
+            6,
+            "TextureVariation1",
+            Kind::Text,
+            "A skin: a file name without its folder or .blp, in the folder of the model's \
+             path. The model's main skin.",
+        ),
+        ca(7, "TextureVariation2", Kind::Text, "A second skin, in the same folder."),
+        ca(8, "TextureVariation3", Kind::Text, "A third skin, in the same folder."),
+        ca(9, "SizeClass", Kind::Signed, "-1, or 0 to 4, in the shipped rows. Not read by this project."),
+        ca(10, "BloodId", Kind::Int, "0 to 3 in the shipped rows; 36 rows set it. Not read by this project."),
+        ca(11, "NpcSoundId", Kind::Reference("NPCSounds"), "The greeting and farewell sounds."),
+    ],
+    sections: &[
+        Section { name: "Model", fields: &[0, 1, 4, 5, 9] },
+        Section { name: "Skins", fields: &[6, 7, 8, 3] },
+        Section { name: "Sound and blood", fields: &[2, 11, 10] },
+    ],
+};
+
+/// `CreatureDisplayInfoExtra.dbc`: 6,939 rows of 19 fields. The appearance
+/// of a creature drawn on a character model, and the skin the game baked from
+/// it. The indices are [`super::dbc`]'s `display_fields`; the ten items are in
+/// [`super::dbc::DisplayTables::EQUIPPED_SLOTS`]' order.
+pub const CREATURE_DISPLAY_INFO_EXTRA: Schema = Schema {
+    table: "CreatureDisplayInfoExtra",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        c(1, "Race", Kind::Reference("ChrRaces")),
+        ca(2, "Gender", Kind::Enum(&[(0, "Male"), (1, "Female")]), "0 or 1 in every shipped row."),
+        c(3, "Skin", Kind::Int),
+        c(4, "Face", Kind::Int),
+        c(5, "HairStyle", Kind::Int),
+        c(6, "HairColour", Kind::Int),
+        c(7, "FacialHair", Kind::Int),
+        c(8, "ItemHead", Kind::Reference("ItemDisplayInfo")),
+        c(9, "ItemShoulders", Kind::Reference("ItemDisplayInfo")),
+        c(10, "ItemShirt", Kind::Reference("ItemDisplayInfo")),
+        c(11, "ItemChest", Kind::Reference("ItemDisplayInfo")),
+        c(12, "ItemWaist", Kind::Reference("ItemDisplayInfo")),
+        c(13, "ItemLegs", Kind::Reference("ItemDisplayInfo")),
+        c(14, "ItemFeet", Kind::Reference("ItemDisplayInfo")),
+        c(15, "ItemWrists", Kind::Reference("ItemDisplayInfo")),
+        c(16, "ItemHands", Kind::Reference("ItemDisplayInfo")),
+        c(17, "ItemTabard", Kind::Reference("ItemDisplayInfo")),
+        ca(
+            18,
+            "BakeName",
+            Kind::Text,
+            "The baked skin, a file in Textures\\BakedNpcTextures\\. The game ships the \
+             bake; a changed face, hair or item is not seen until the skin is baked again.",
+        ),
+    ],
+    sections: &[
+        Section { name: "Body", fields: &[0, 1, 2, 3, 4, 5, 6, 7, 18] },
+        Section { name: "Worn items", fields: &[8, 9, 10, 11, 12, 13, 14, 15, 16, 17] },
+    ],
+};
+
+/// `CreatureModelData.dbc`: 430 rows of 16 fields. A creature model and how
+/// the game treats it. The path and scale indices are [`super::dbc`]'s
+/// `display_fields`. The other names follow wowdev.wiki's layout for 1.12,
+/// and the values agree with it: fields 7 to 9 and 14 to 15 are floats, field
+/// 10 is zero in every row.
+pub const CREATURE_MODEL_DATA: Schema = Schema {
+    table: "CreatureModelData",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(1, "Flags", Kind::Flags(&[]), "Nine values, up to 11, in the shipped rows. No source names the bits."),
+        ca(2, "ModelName", Kind::Text, "The model's path. A .mdx name is read as the .m2 beside it."),
+        ca(3, "SizeClass", Kind::Int, "0 to 4 in the shipped rows."),
+        ca(4, "ModelScale", Kind::Float, "Multiplied by each display's Scale."),
+        ca(5, "BloodId", Kind::Signed, "-1, 1, 2 or 3 in the shipped rows."),
+        ca(6, "FootprintTextureId", Kind::Signed, "-1, or 0 to 7, in the shipped rows."),
+        c(7, "FootprintLength", Kind::Float),
+        c(8, "FootprintWidth", Kind::Float),
+        c(9, "FootprintParticleScale", Kind::Float),
+        ca(10, "FoleyMaterialId", Kind::Int, "Zero in every shipped row."),
+        c(11, "FootstepShakeSize", Kind::Int),
+        c(12, "DeathThudShakeSize", Kind::Int),
+        c(13, "SoundId", Kind::Reference("CreatureSoundData")),
+        ca(14, "CollisionWidth", Kind::Float, "Yards."),
+        ca(15, "CollisionHeight", Kind::Float, "Yards."),
+    ],
+    sections: &[
+        Section { name: "Model", fields: &[0, 2, 4, 3, 1, 14, 15] },
+        Section { name: "Footprints and sound", fields: &[13, 5, 6, 7, 8, 9, 10, 11, 12] },
+    ],
+};
+
+/// `GameObjectDisplayInfo.dbc`: 1,638 rows of 12 fields. A game object's
+/// model and its ten sounds. The path index is [`super::dbc`]'s
+/// `display_fields`; the ten sounds follow wowdev.wiki's layout for 1.12.
+pub const GAME_OBJECT_DISPLAY_INFO: Schema = Schema {
+    table: "GameObjectDisplayInfo",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(
+            1,
+            "ModelName",
+            Kind::Text,
+            "The model's path. A .mdx name is read as the .m2 beside it; a few rows name a \
+             .wmo.",
+        ),
+        c(2, "Sound1", Kind::Reference("SoundEntries")),
+        c(3, "Sound2", Kind::Reference("SoundEntries")),
+        c(4, "Sound3", Kind::Reference("SoundEntries")),
+        c(5, "Sound4", Kind::Reference("SoundEntries")),
+        c(6, "Sound5", Kind::Reference("SoundEntries")),
+        c(7, "Sound6", Kind::Reference("SoundEntries")),
+        c(8, "Sound7", Kind::Reference("SoundEntries")),
+        c(9, "Sound8", Kind::Reference("SoundEntries")),
+        c(10, "Sound9", Kind::Reference("SoundEntries")),
+        c(11, "Sound10", Kind::Reference("SoundEntries")),
+    ],
+    sections: &[
+        Section { name: "Model", fields: &[0, 1] },
+        Section { name: "Sounds", fields: &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11] },
+    ],
+};
+
+/// `ItemDisplayInfo.dbc`: 29,604 rows of 23 fields. What an item looks like
+/// in the bag, in the hand and on the body. The indices are
+/// [`super::item`]'s `fields`, each with its measurement there.
+pub const ITEM_DISPLAY_INFO: Schema = Schema {
+    table: "ItemDisplayInfo",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(1, "ModelName1", Kind::Text, "A model the item hangs on the wearer: a weapon, a shoulder, a helm."),
+        ca(2, "ModelName2", Kind::Text, "The second model: the other shoulder."),
+        ca(3, "ModelTexture1", Kind::Text, "ModelName1's skin, without its folder or .blp."),
+        ca(4, "ModelTexture2", Kind::Text, "ModelName2's skin."),
+        ca(5, "InventoryIcon", Kind::Text, "The bag icon, a file in Interface\\Icons\\ without .blp."),
+        ca(6, "GeosetGroup1", Kind::Int, "A variant of the wearer's own geometry; the slot decides which."),
+        c(7, "GeosetGroup2", Kind::Int),
+        c(8, "GeosetGroup3", Kind::Int),
+        ca(9, "Flags", Kind::Flags(&[]), "No source names the bits."),
+        ca(10, "SpellVisualId", Kind::Reference("SpellVisual"), "The glow a weapon carries. Not read by this project."),
+        ca(11, "GroupSoundIndex", Kind::Reference("ItemGroupSounds"), "The sounds of picking it up and putting it down."),
+        ca(12, "HelmetGeosetVis1", Kind::Reference("HelmetGeosetVisData"), "What a helm hides on a male wearer."),
+        ca(13, "HelmetGeosetVis2", Kind::Reference("HelmetGeosetVisData"), "What a helm hides on a female wearer."),
+        ca(14, "TextureArmUpper", Kind::Text, "A body texture, a file in Item\\TextureComponents\\ArmUpperTexture\\."),
+        c(15, "TextureArmLower", Kind::Text),
+        c(16, "TextureHand", Kind::Text),
+        c(17, "TextureTorsoUpper", Kind::Text),
+        c(18, "TextureTorsoLower", Kind::Text),
+        c(19, "TextureLegUpper", Kind::Text),
+        c(20, "TextureLegLower", Kind::Text),
+        c(21, "TextureFoot", Kind::Text),
+        ca(22, "ItemVisual", Kind::Reference("ItemVisuals"), "The effects an enchanted weapon shows."),
+    ],
+    sections: &[
+        Section { name: "Icon and models", fields: &[0, 5, 1, 3, 2, 4] },
+        Section { name: "On the body", fields: &[14, 15, 16, 17, 18, 19, 20, 21, 6, 7, 8, 12, 13] },
+        Section { name: "Effects and sound", fields: &[22, 10, 11, 9] },
+    ],
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The five display schemas are the widths their files are (`vale dbc`
+    /// over the 1.12.1 archives), number their columns in order, and put each
+    /// field in exactly one section.
+    #[test]
+    fn the_display_schemas_are_their_files_widths() {
+        for (schema, width) in [
+            (&CREATURE_DISPLAY_INFO, 12),
+            (&CREATURE_DISPLAY_INFO_EXTRA, 19),
+            (&CREATURE_MODEL_DATA, 16),
+            (&GAME_OBJECT_DISPLAY_INFO, 12),
+            (&ITEM_DISPLAY_INFO, 23),
+        ] {
+            assert_eq!(schema.columns.len(), width, "{}", schema.table);
+            for (n, column) in schema.columns.iter().enumerate() {
+                assert_eq!(column.field, n, "{}.{}", schema.table, column.name);
+            }
+            let mut drawn: Vec<usize> = schema.sections.iter().flat_map(|s| s.fields.iter().copied()).collect();
+            drawn.sort_unstable();
+            assert_eq!(drawn, (0..width).collect::<Vec<_>>(), "{}", schema.table);
+            assert!(for_table(schema.table).is_some(), "{} is in ALL", schema.table);
+        }
+    }
 
     /// The three place schemas are the width their files are, put each field in
     /// exactly one section, and name the fields their modules read.
@@ -2937,7 +3151,13 @@ mod tests {
         // These are referenced deliberately without a schema of their own.
         // Each opens as numbered fields, which is better than a reference the
         // browser refuses to follow.
-        const UNDESCRIBED: [&str; 10] = [
+        const UNDESCRIBED: [&str; 16] = [
+            "ChrRaces",
+            "CreatureSoundData",
+            "HelmetGeosetVisData",
+            "ItemGroupSounds",
+            "ItemVisuals",
+            "NPCSounds",
             "Faction",
             "LiquidType",
             "LoadingScreens",

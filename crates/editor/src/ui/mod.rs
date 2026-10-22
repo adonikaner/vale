@@ -82,6 +82,11 @@
 //!               and place, and its teleport, inn and quest rows
 //! graveyards.rs the graveyard tool's panel: the selected safe place, its
 //!               facing, and the zones it serves
+//! appearance.rs what the display tables' rows look like, for their pickers
+//!               and the inspector, and the texture browser their texture
+//!               fields open
+//! assets.rs     the Assets workspace: the project's own files, what each is,
+//!               and the Import Texture dialog any form can open
 //! bands.rs      the form for a light's bands, the one table no other row
 //!               references: a light's eighteen colours and six numbers over
 //!               the day, each drawn as the day it produces rather than as
@@ -174,6 +179,8 @@
 //! every tool. [`Viewport::holds`] is the one function that decides whether a
 //! pointer position is over the world.
 
+pub mod appearance;
+pub mod assets;
 pub mod bands;
 pub mod behaviour;
 pub mod conditions;
@@ -442,6 +449,9 @@ pub struct Editing<'w> {
     pub(crate) gossip: ResMut<'w, crate::tools::gossip::Gossip>,
     /// The condition window's state. See [`crate::tools::conditions`].
     pub(crate) conditions: ResMut<'w, crate::tools::conditions::Conditions>,
+    /// The Assets workspace's state and the Import Texture dialog's. See
+    /// [`crate::tools::assets`].
+    pub(crate) assets: ResMut<'w, crate::tools::assets::Assets>,
     /// The time of day the world is showing. Read-only here: the view bar
     /// sets the hour, and the panels read it so a band's day strip can mark
     /// the viewport's current hour on itself.
@@ -892,6 +902,21 @@ fn draw(
                     );
                     return;
                 }
+                // The Assets workspace: the project's own files. See
+                // `ui::assets`.
+                if *tool == Tool::Assets {
+                    assets::draw(
+                        ui,
+                        assets::Work {
+                            session,
+                            assets: &mut editing.assets,
+                            game: &assets,
+                            thumbnails: &mut editing.thumbnails,
+                            portraits: &mut editing.portraits,
+                        },
+                    );
+                    return;
+                }
                 // The Creatures and Game Objects workspaces, over the
                 // creature and game object tools' own state. See
                 // `ui::creature_data` and `ui::gameobject_data`.
@@ -1108,6 +1133,13 @@ fn draw(
     // panel. Its area is added to the floating list with the other areas at
     // the end of this function.
     context::draw(&ctx, session, &mut editing, &assets, viewport.zoom, time.elapsed_secs_f64());
+    // The Import Texture dialog, under any tool: the Assets workspace opens it
+    // and so does a form's skin field. It covers the window while it is open,
+    // so a press on it is not a press on the ground.
+    if editing.assets.import.is_some() {
+        viewport.floating.push(ctx.content_rect());
+    }
+    assets::import_dialog(&ctx, &mut editing.assets, session, &assets);
 
     // The creature template's own window, drawn on the root context like the
     // map window: a window inside a panel is clipped to the panel, and this
@@ -1632,6 +1664,32 @@ fn draw(
         *tool = Tool::Areas;
         viewing.rail.follow(Tool::Areas);
         session.status = format!("area {id} set as the brush area");
+    }
+    // A texture the texture browser asked to import: the Import Texture
+    // dialog, opened in the folder the field's file is found in, for the
+    // field that asked.
+    if let Some((folder, target)) = editing.browser.import_texture.take() {
+        editing.assets.ask = Some(crate::tools::assets::Ask::Choose {
+            folder,
+            name: None,
+            for_field: Some(target),
+        });
+    }
+    // …and once it is written, the field is set to its name. A field whose
+    // table has been closed since is left.
+    if let Some((target, name)) = editing.assets.imported_for.take() {
+        if session.table(&target.table).is_some() {
+            crate::tools::tables::set_text(
+                session,
+                &target.table,
+                target.record,
+                target.field,
+                &name,
+                "Edit Texture",
+                time.elapsed_secs_f64(),
+            );
+            editing.browser.forget_buffers();
+        }
     }
     // A part of a workspace chosen on the strip at the head of its list.
     let part = editing.items.switch_to.take().or_else(|| editing.browser.switch_to.take());
