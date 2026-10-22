@@ -9,7 +9,7 @@
 //! optional description of the bit, empty where there is none.
 //!
 //! A name for a bit no 1.12 spell sets costs nothing. A bit with no name
-//! is a real gap and the editor draws it as its number.
+//! is a real gap and a caller that displays the mask shows it as its number.
 
 /// `Spell.dbc`'s `Attributes`.
 ///

@@ -115,10 +115,12 @@ fn track(
         return;
     };
     let (emblem, rank) = {
-        let guild = host.guild().borrow();
+        let guild = crate::lua::panels::guild::held(&host);
+        let guild = guild.borrow();
         (guild.own_emblem(), guild.rank())
     };
-    let mut board = host.tabard().borrow_mut();
+    let tabard = crate::lua::panels::tabard::held(&host);
+    let mut board = tabard.borrow_mut();
     board.guild = emblem;
     board.rank = rank;
     board.money = inventory.money;
@@ -146,7 +148,7 @@ fn apply_answers(
     for answer in answers.read() {
         match *answer {
             TabardAnswer::Vendor(npc) => {
-                host.tabard().borrow_mut().vendor = Some(npc);
+                crate::lua::panels::tabard::held(&host).borrow_mut().vendor = Some(npc);
                 window.0 = Some(npc);
                 open.write(OpenTabardFrame);
             }
@@ -156,10 +158,10 @@ fn apply_answers(
                 if let Some(key) = emblem_result::message(result) {
                     say.key(key);
                 }
-                host.tabard().borrow_mut().pending = false;
+                crate::lua::panels::tabard::held(&host).borrow_mut().pending = false;
                 if result == emblem_result::SUCCESS {
                     // The new emblem is the guild's query answer.
-                    let guild = host.guild().borrow().guild_id();
+                    let guild = crate::lua::panels::guild::held(&host).borrow().guild_id();
                     if let (true, Some(active)) = (guild != 0, session.active.as_ref()) {
                         active.live.guild(GuildVerb::Query(guild));
                     }
@@ -196,16 +198,16 @@ fn act(
     mut closed: MessageWriter<CloseTabardFrame>,
     mut pending: MessageWriter<TabardSavePending>,
 ) {
-    let Some(mut host) = host else { return };
+    let Some(host) = host else { return };
     // The window was closed by `walk_away`.
-    if window.guid().is_none() && host.tabard().borrow().vendor.is_some() {
-        host.tabard().borrow_mut().vendor = None;
+    if window.guid().is_none() && crate::lua::panels::tabard::held(&host).borrow().vendor.is_some() {
+        crate::lua::panels::tabard::held(&host).borrow_mut().vendor = None;
     }
-    for press in host.take_tabard_presses() {
+    for press in crate::lua::panels::tabard::take(&host) {
         match press {
             Press::Refuse(key) => say.key(key),
             Press::Close => {
-                host.tabard().borrow_mut().vendor = None;
+                crate::lua::panels::tabard::held(&host).borrow_mut().vendor = None;
                 if window.close() {
                     closed.write(CloseTabardFrame);
                 }
@@ -213,7 +215,7 @@ fn act(
             Press::Save(emblem) => {
                 let (Some(npc), Some(active)) = (window.guid(), session.active.as_ref()) else {
                     // Nothing was sent, so nothing is waiting for an answer.
-                    host.tabard().borrow_mut().pending = false;
+                    crate::lua::panels::tabard::held(&host).borrow_mut().pending = false;
                     continue;
                 };
                 active.live.guild(GuildVerb::SaveEmblem { npc, emblem });
@@ -232,7 +234,7 @@ fn preview(
 ) {
     let design = host
         .filter(|_| window.guid().is_some())
-        .map(|host| host.tabard().borrow().design);
+        .map(|host| crate::lua::panels::tabard::held(&host).borrow().design);
     if shown.0 != design {
         shown.0 = design;
     }

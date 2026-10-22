@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/repos/vale-wt-client/**)",
+      "Bash(CARGO_TARGET_DIR=C:/repos/vale/target timeout 1800 cargo check --workspace --all-targets)",
+      "Bash(CARGO_TARGET_DIR=C:/repos/vale/target cargo check --workspace --all-targets)"
+    ]
+  }
+}

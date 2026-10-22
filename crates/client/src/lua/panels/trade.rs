@@ -35,6 +35,7 @@
 //! 0), so there is nothing to add.
 
 use super::super::api::Answers;
+use crate::lua::host::LuaHost;
 
 /// **The reads this module registers**, for the count that measures the gap.
 pub const READS: [&str; 6] = [
@@ -201,7 +202,8 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 
 pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::trade::TradePress>>>;
 
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     use crate::interface::trade::TradePress as P;
     let globals = lua.globals();
 
@@ -239,6 +241,12 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
     Ok(())
 }
 
+/// Take and clear the trade window's presses. See
+/// [`crate::interface::trade`].
+pub fn take(host: &LuaHost) -> Vec<crate::interface::trade::TradePress> {
+    super::taken(host)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -256,7 +264,8 @@ mod tests {
         use crate::interface::trade::TradePress as P;
         let lua = mlua::Lua::new();
         let queue: super::Queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        super::register(&lua, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        super::register(&lua).expect("registers");
         lua.load(
             r#"InitiateTrade("target"); BeginTrade(); ClickTradeButton(3); SetTradeMoney(1234);
                ClickTargetTradeButton(2); AddTradeMoney(); AcceptTrade(); CancelTradeAccept();

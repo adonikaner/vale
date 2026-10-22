@@ -62,6 +62,7 @@ use std::rc::Rc;
 use vale_protocol::play::group::MAX_RAID_MEMBERS;
 
 use super::super::api::{Answers, Live};
+use crate::lua::host::LuaHost;
 use crate::interface::api::UnitId;
 use crate::interface::raid::RaidSlot;
 
@@ -153,7 +154,8 @@ pub struct RaidRow {
 }
 
 /// Register the nine writes. Unscoped — they record.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     let globals = lua.globals();
 
     macro_rules! push {
@@ -210,6 +212,12 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
         }
     });
     Ok(())
+}
+
+/// Take and clear the raid requests. One
+/// caller, [`crate::interface::raid`].
+pub fn take(host: &LuaHost) -> Vec<RaidRequest> {
+    super::taken(host)
 }
 
 /// Register the reads into the scope, beside [`super::super::api::install`]'s.
@@ -306,18 +314,18 @@ fn flag(set: bool) -> mlua::Value {
 /// **What the interface may ask about the raid.**
 pub trait RaidAnswers {
     /// `GetNumRaidMembers()` — everybody including us, **0 for a party**.
-    fn raid_count(&self) -> usize;
+    fn raid_count(&self) -> usize { 0 }
     /// `GetRaidRosterInfo(index)` — one row, one-based, `None` for a slot
     /// nobody occupies **and for every index while this is a party**.
-    fn raid_roster_info(&self, index: usize) -> Option<RaidRow>;
+    fn raid_roster_info(&self, _index: usize) -> Option<RaidRow> { None }
     /// `GetRaidRosterSelection()`.
-    fn raid_roster_selection(&self) -> usize;
+    fn raid_roster_selection(&self) -> usize { 0 }
     /// `IsRaidLeader()`.
-    fn is_raid_leader(&self) -> bool;
+    fn is_raid_leader(&self) -> bool { false }
     /// `IsRaidOfficer()` — assistant **or** leader.
-    fn is_raid_officer(&self) -> bool;
+    fn is_raid_officer(&self) -> bool { false }
     /// `UnitInRaid(unit)`, and `UnitPlayerOrPetInRaid(unit)` when `or_pet`.
-    fn unit_in_raid(&self, token: &str, or_pet: bool) -> bool;
+    fn unit_in_raid(&self, _token: &str, _or_pet: bool) -> bool { false }
 }
 
 impl RaidAnswers for Live<'_, '_, '_> {
@@ -513,7 +521,7 @@ pub const WATCHED: [UnitId; MAX_RAID_MEMBERS] = {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lua::api::tests::Stub;
+    use crate::lua::api::stub::Stub;
     use crate::lua::host::LuaHost;
 
     /// **A party answers nothing to every raid read**, which is what keeps the
@@ -573,7 +581,7 @@ mod tests {
     /// them.
     #[test]
     fn the_nine_verbs_record_what_was_asked() {
-        let mut host = LuaHost::new().expect("the interpreter starts");
+        let host = LuaHost::new().expect("the interpreter starts");
         let world = Stub::default();
         host.run(&world, |lua| {
             lua.load(
@@ -587,7 +595,7 @@ mod tests {
         })
         .expect("the body runs");
         assert_eq!(
-            host.take_raid_verbs(),
+            crate::lua::panels::raid::take(&host),
             vec![
                 RaidRequest::Convert,
                 RaidRequest::Select(4),
@@ -603,6 +611,6 @@ mod tests {
                 RaidRequest::AnswerReadyCheck(false),
             ]
         );
-        assert!(host.take_raid_verbs().is_empty(), "the queue empties");
+        assert!(crate::lua::panels::raid::take(&host).is_empty(), "the queue empties");
     }
 }

@@ -63,6 +63,7 @@ use vale_assets::interface::addons::{self, Addon, Reason};
 use super::super::widgets::frames;
 use super::super::xml;
 use crate::interface::events::EventArg;
+use crate::lua::host::LuaHost;
 
 /// A reader over the archive chain and the loose folder, kept for
 /// `LoadAddOn`. See `crate::assets::GameAssets::reader`.
@@ -453,7 +454,8 @@ pub(in crate::lua) fn load_with(
 }
 
 /// Register all sixteen. Unscoped — see the module comment.
-pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let held: &Held = &super::stored(lua);
     let globals = lua.globals();
 
     let get = Rc::clone(held);
@@ -672,6 +674,12 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held) -> mlua::Result<()>
     Ok(())
 }
 
+/// The addon board. Seeded by
+/// `crate::settings::addons` and read by [`crate::lua::host::LuaHost::load_interface`].
+pub fn held(host: &LuaHost) -> Held {
+    super::stored(host.state())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -695,7 +703,8 @@ mod tests {
     fn seeded() -> (mlua::Lua, Held) {
         let lua = mlua::Lua::new();
         let held: Held = Rc::default();
-        register(&lua, &held).unwrap();
+        lua.set_app_data(std::rc::Rc::clone(&held));
+        register(&lua).unwrap();
         held.borrow_mut().seed(
             vec![shipped("Blizzard_TrainerUI")],
             vec![addon("pfUI", &[]), addon("ShaguDPS", &["pfUI"]), Addon { load_on_demand: true, ..addon("Later", &[]) }],
@@ -785,7 +794,8 @@ mod tests {
     fn load_addon_loads_and_raises_addon_loaded() {
         let lua = mlua::Lua::new();
         let held: Held = Rc::default();
-        register(&lua, &held).unwrap();
+        lua.set_app_data(std::rc::Rc::clone(&held));
+        register(&lua).unwrap();
         let mine = Addon::from_toc(
             "Mine",
             &vale_assets::interface::toc::Toc::parse(b"## Interface: 11200

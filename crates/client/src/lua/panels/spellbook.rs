@@ -233,7 +233,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 
 #[cfg(test)]
 mod tests {
-    use crate::lua::api::tests::{eval, Stub};
+    use crate::lua::api::stub::{eval, Stub};
 
     /// A book with a General tab and a Fire tab — the smallest thing that has an
     /// offset worth adding.
@@ -368,25 +368,25 @@ pub trait SpellbookAnswers {
     // [`vale_assets::tables::book`].
 
     /// `GetNumSpellTabs`.
-    fn num_spell_tabs(&self) -> usize;
+    fn num_spell_tabs(&self) -> usize { 0 }
     /// `GetSpellTabInfo(i)` — `(name, texture, offset, count)`, with the name
     /// already resolved through `GlobalStrings.lua` for the General tab.
-    fn spell_tab_info(&self, index: usize) -> Option<SpellTab>;
+    fn spell_tab_info(&self, _index: usize) -> Option<SpellTab> { None }
     /// `GetSpellName(id)` — `(name, rank)`. The rank is the *sub*-name the panel
     /// draws under it, and is `""` rather than `nil` for a spell with none,
     /// because `SpellButton_UpdateButton` compares it against `""`.
-    fn spell_name(&self, index: usize) -> Option<(String, String)>;
-    fn spell_texture(&self, index: usize) -> Option<String>;
+    fn spell_name(&self, _index: usize) -> Option<(String, String)> { None }
+    fn spell_texture(&self, _index: usize) -> Option<String> { None }
     /// `(start, duration, enable)`, in [`Answers::now`]'s base — the same triple
     /// [`Answers::action_cooldown`] answers, because it is the same clocks.
-    fn spell_cooldown(&self, index: usize) -> (f64, f64, bool);
-    fn spell_passive(&self, index: usize) -> bool;
+    fn spell_cooldown(&self, _index: usize) -> (f64, f64, bool) { Default::default() }
+    fn spell_passive(&self, _index: usize) -> bool { false }
     /// `IsCurrentCast` — whether *this* row is the spell going out right now,
     /// which is what puts the pressed border on a spell button.
-    fn spell_is_current_cast(&self, index: usize) -> bool;
+    fn spell_is_current_cast(&self, _index: usize) -> bool { false }
     /// `GameTooltip:SetSpell` — the same shape a bar slot's tooltip is composed
     /// from, so the two plates cannot disagree.
-    fn spell_tooltip(&self, index: usize) -> Option<api::SpellTip>;
+    fn spell_tooltip(&self, _index: usize) -> Option<api::SpellTip> { None }
 }
 
 impl SpellbookAnswers for super::super::api::Live<'_, '_, '_> {

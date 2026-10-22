@@ -68,6 +68,7 @@
 //! for the frame or two before that.
 
 use super::super::api::Answers;
+use crate::lua::host::LuaHost;
 
 /// **The reads this module registers**, for the count that measures the gap.
 ///
@@ -102,26 +103,26 @@ pub struct StableLine {
 /// **What the stable panel may ask.**
 pub trait StableAnswers {
     /// `GetNumStableSlots()` — slots **bought**, 0..2.
-    fn stable_slots(&self) -> u32;
+    fn stable_slots(&self) -> u32 { 0 }
     /// `GetNumStablePets()` — rows the packet carried, the current pet
     /// included.
-    fn stable_pets(&self) -> u32;
+    fn stable_pets(&self) -> u32 { 0 }
     /// `GetSelectedStablePet()` — **-1 when nothing is picked**, which is the
     /// value `PetStable_Update`'s own first branch tests for.
-    fn selected_stable_pet(&self) -> i32;
+    fn selected_stable_pet(&self) -> i32 { 0 }
     /// `GetStablePetInfo(i)` — `None` for an empty stall, which the panel draws
     /// as `EMPTY_STABLE_SLOT`.
-    fn stable_pet_info(&self, panel_slot: u8) -> Option<StableLine>;
+    fn stable_pet_info(&self, _panel_slot: u8) -> Option<StableLine> { None }
     /// `GetStablePetFoodTypes(i)` — a **vararg**, joined by `BuildListString`.
-    fn stable_pet_food_types(&self, panel_slot: u8) -> Vec<String>;
+    fn stable_pet_food_types(&self, _panel_slot: u8) -> Vec<String> { Vec::new() }
     /// `GetNextStableSlotCost()` — copper, and `0` once every slot is bought.
-    fn next_stable_slot_cost(&self) -> u32;
+    fn next_stable_slot_cost(&self) -> u32 { 0 }
     /// Which subject `SetPetStablePaperdoll` should point a frame at, if any.
     ///
     /// A **unit token** for the pet that is out and a
     /// [`crate::render::paperdoll::DISPLAY_ID_PREFIX`] id for a stabled one,
     /// which has no token to be named by — see the module note.
-    fn stable_paperdoll_unit(&self) -> Option<String>;
+    fn stable_paperdoll_unit(&self) -> Option<String> { None }
 }
 
 impl StableAnswers for super::super::api::Live<'_, '_, '_> {
@@ -210,7 +211,7 @@ impl super::super::api::Live<'_, '_, '_> {
     /// query would re-queue it from inside a Lua call every time the panel
     /// redrew.
     fn stable_family_id(&self, entry: u32) -> Option<u32> {
-        let world = self.world.as_ref()?;
+        let world = self.live?.world();
         let world = world.lock().ok()?;
         let family = world.creatures.get(&entry)?.pet_family;
         (family != 0).then_some(family)
@@ -231,7 +232,7 @@ impl super::super::api::Live<'_, '_, '_> {
     /// which draws an empty rectangle for a frame or two rather than the wrong
     /// creature.
     fn stable_display_id(&self, entry: u32) -> Option<u32> {
-        let world = self.world.as_ref()?;
+        let world = self.live?.world();
         let world = world.lock().ok()?;
         let display = world.creatures.get(&entry)?.display_id;
         (display != 0).then_some(display)
@@ -315,7 +316,8 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::stable::StablePress>>>;
 
 /// Register the four writes. Unscoped — they record.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     use crate::interface::stable::StablePress as P;
     let globals = lua.globals();
     let slot = |n: Option<i64>| -> Option<u8> { u8::try_from(n?).ok() };
@@ -348,6 +350,11 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
     push!("BuyStableSlot", Option<i64>, |_a| Some(P::BuySlot));
     push!("ClosePetStables", Option<i64>, |_a| Some(P::Close));
     Ok(())
+}
+
+/// Take and clear the stable's presses. See [`crate::interface::stable`].
+pub fn take(host: &LuaHost) -> Vec<crate::interface::stable::StablePress> {
+    super::taken(host)
 }
 
 #[cfg(test)]

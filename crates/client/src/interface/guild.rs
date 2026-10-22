@@ -103,10 +103,11 @@ fn supply_tables(
     assets: Res<crate::assets::GameAssets>,
 ) {
     let Some(host) = host else { return };
-    if host.guild().borrow().strings.is_some() {
+    if crate::lua::panels::guild::held(&host).borrow().strings.is_some() {
         return;
     }
-    let mut board = host.guild().borrow_mut();
+    let guild = crate::lua::panels::guild::held(&host);
+    let mut board = guild.borrow_mut();
     board.strings = Some(assets.strings());
     // Without either table a member's class and zone draw as `UNKNOWN`.
     if let Ok(tables) = assets.display_tables() {
@@ -153,7 +154,7 @@ fn track_membership(
         own.0 = None;
     }
     let (guild, rank) = membership.unwrap_or((0, 0));
-    host.guild().borrow_mut().set_membership(guild, rank);
+    crate::lua::panels::guild::held(&host).borrow_mut().set_membership(guild, rank);
 }
 
 /// Fold the server's seven answers into the board, the chat frame and the
@@ -173,7 +174,8 @@ fn apply_answers(
         answers.clear();
         return;
     };
-    let mut board = host.guild().borrow_mut();
+    let guild = crate::lua::panels::guild::held(&host);
+    let mut board = guild.borrow_mut();
     let string = |board: &crate::lua::panels::guild::Guild, key: &str| -> Option<String> {
         board.strings.as_ref()?.get(key).map(str::to_string)
     };
@@ -320,7 +322,8 @@ fn announce(
         *last = None;
         return;
     };
-    let board = host.guild().borrow();
+    let guild = crate::lua::panels::guild::held(&host);
+    let board = guild.borrow();
     let now = (board.roster_version, board.membership_version);
     let Some(before) = std::mem::replace(&mut *last, Some(now)) else {
         return;
@@ -336,10 +339,10 @@ fn announce(
 /// Send the requests the interface queued, and a query for each guild whose
 /// name was asked for and is not held.
 fn send_verbs(host: Option<NonSendMut<crate::lua::host::LuaHost>>, session: Res<Session>) {
-    let Some(mut host) = host else { return };
-    let mut verbs = host.take_guild_verbs();
+    let Some(host) = host else { return };
+    let mut verbs = crate::lua::panels::guild::take(&host);
     verbs.extend(
-        host.guild()
+        crate::lua::panels::guild::held(&host)
             .borrow_mut()
             .take_wanted()
             .into_iter()

@@ -31,7 +31,7 @@
 //! egui pass would exceed Bevy's limit of sixteen system parameters and would
 //! give the interface two places that enter the interpreter in one frame. The
 //! result comes back on the next frame through
-//! [`crate::lua::host::ScriptLog`].
+//! [`crate::lua::load::ScriptLog`].
 //!
 //! [`command_line`] is the text field alone. The console tab ([`super::log`])
 //! draws it under the client's log, and this tab draws it over the list of

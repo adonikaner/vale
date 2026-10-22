@@ -2194,7 +2194,7 @@ fn trim_number(x: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lua::api::tests::Stub;
+    use crate::lua::api::stub::Stub;
 
     fn state() -> mlua::Lua {
         let lua = mlua::Lua::new();

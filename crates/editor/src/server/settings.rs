@@ -19,7 +19,7 @@
 //! ```
 //!
 //! **The conf path and the tools folder are facts about this machine.**
-//! [`crate::bookmarks`] and [`crate::favourites`] keep the editor's own
+//! [`crate::prefs::bookmarks`] and [`crate::prefs::favourites`] keep the editor's own
 //! per-machine lists beside the projects for the reason they give: a project's
 //! files are published into a patch archive, and where *this machine's* server
 //! lives is not a thing to carry into somebody else's project. One
@@ -90,7 +90,7 @@ pub struct ServerSettings {
     /// differ in is what it takes for an applied row to be *live* — a reload,
     /// or a restart — and that is said on each block of the Server panel. See
     /// [`crate::server::save`], which is the whole of what a save does to the
-    /// database, and [`crate::ui::sync`], which is the panel.
+    /// database, and [`crate::ui::shell::sync`], which is the panel.
     pub apply_on_save: bool,
     /// **Whether a playtest runs with the query-answer cache turned off.**
     ///

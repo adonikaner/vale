@@ -12,7 +12,7 @@
 //! A value that names a row the project also claims is drawn with the
 //! project's claim over it: a creature this project creates is called what
 //! the project calls it, whatever the database says or does not say. See
-//! `crate::tools::quests::Quests::holder` and `Quests::item`.
+//! `crate::subjects::quests::Quests::holder` and `Quests::item`.
 //!
 //! ## Why
 //!
@@ -100,7 +100,7 @@ pub fn claimed(edits: &Edits, table: &str, entry: u32, column: &str) -> Option<S
             Some((patch, row.columns.get(column)?))
         })
         .max_by_key(|(patch, _)| *patch)
-        .map(|(_, value)| crate::tools::items::unquote(value))
+        .map(|(_, value)| crate::subjects::items::unquote(value))
 }
 
 /// The creatures that name a shared row through one `creature_template`

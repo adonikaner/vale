@@ -90,7 +90,7 @@ impl Plugin for InterfaceScalePlugin {
 /// stand.
 fn follow(
     cvars: Res<CVars>,
-    loaded: Res<crate::lua::host::LoadWanted>,
+    loaded: Res<crate::lua::load::LoadWanted>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut scale: ResMut<InterfaceScale>,
 ) {

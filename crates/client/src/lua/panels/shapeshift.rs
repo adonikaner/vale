@@ -30,13 +30,13 @@ pub const READS: [&str; 3] = [
 /// What the interface may ask about the stance bar.
 pub trait ShapeshiftAnswers {
     /// `GetNumShapeshiftForms()`: how many buttons the bar has.
-    fn shapeshift_form_count(&self) -> usize;
+    fn shapeshift_form_count(&self) -> usize { 0 }
 
     /// `GetShapeshiftFormInfo(i)` -> `(texture, name, isActive, isCastable)`.
     ///
     /// `None` for an index past the end, which answers four nils; that is the
     /// case in which `ShapeshiftBar_UpdateState` hides the button.
-    fn shapeshift_form_info(&self, index: usize) -> Option<ShapeshiftInfo>;
+    fn shapeshift_form_info(&self, _index: usize) -> Option<ShapeshiftInfo> { None }
 
     /// `GetShapeshiftFormCooldown(i)` -> `(start, duration, enable)`, in
     /// [`Answers::now`]'s base.
@@ -44,7 +44,7 @@ pub trait ShapeshiftAnswers {
     /// `(0, 0, 1)` for an index past the end, not three zeroes: the 1.12.1
     /// client answers `1` for `enable` there, and `CooldownFrame_SetTimer` is
     /// called with the answer unconditionally.
-    fn shapeshift_form_cooldown(&self, index: usize) -> (f64, f64, u32);
+    fn shapeshift_form_cooldown(&self, _index: usize) -> (f64, f64, u32) { Default::default() }
 }
 
 /// One button, as `GetShapeshiftFormInfo` answers for it.

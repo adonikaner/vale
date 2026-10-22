@@ -369,7 +369,7 @@ fn sun_sheen(world_normal: vec3<f32>, world_position: vec3<f32>, halo: vec3<f32>
     // camera's forward axis, so the direction to the viewer is the camera's
     // back axis (the third column of `world_from_view`). Using the camera's
     // position there gives a direction that depends on where the camera sits
-    // rather than on the view. The editor's top-down map view is orthographic.
+    // rather than on the view. A host app's top-down map view is orthographic.
     let orthographic = view.clip_from_view[3].w == 1.0;
     var to_eye = normalize(view.world_position.xyz - world_position);
     if orthographic {

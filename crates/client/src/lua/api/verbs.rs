@@ -462,7 +462,7 @@ pub(in crate::lua) fn register(
     verb!("ForceQuit", (), |_ignored| Some(Binding::ForceQuit));
     // `ReloadUI()` rebuilds the interface from scratch without leaving the
     // world. It is recorded like every other write here. The rebuild is
-    // [`crate::lua::host::reload_interface`], which cannot run inside this
+    // [`crate::lua::load::reload_interface`], which cannot run inside this
     // call because the Lua state being discarded is the one running the call.
     //
     // Nothing in `Interface\FrameXML\` calls it (5875 binds no key to it and

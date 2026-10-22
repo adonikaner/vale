@@ -400,7 +400,7 @@ fn dxt5_alpha(data: &[u8], src: usize, texel: usize) -> u8 {
 /// raw file in 58,247 (`vale blps`).
 ///
 /// [`encode`] writes the other shapes, for imported textures. There is no
-/// palettized encoder and no DXT5 writer: nothing in the editor needs the
+/// palettized encoder and no DXT5 writer: no caller of [`encode`] needs the
 /// first, and the shipped archives hold no DXT5 file.
 ///
 /// ## The encoder is a bounding box

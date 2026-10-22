@@ -44,6 +44,7 @@
 //! produces now resolves to something. See [`super::super::api::stubs`].
 
 use super::super::api::Answers;
+use crate::lua::host::LuaHost;
 
 /// **The reads this module registers**, for the count that measures the gap.
 pub const READS: [&str; 4] = [
@@ -148,7 +149,8 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::bank::BankPress>>>;
 
 /// Register the two writes. Unscoped — they record.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     use crate::interface::bank::BankPress as P;
     let globals = lua.globals();
     for (name, press) in [("PurchaseSlot", P::PurchaseSlot), ("CloseBankFrame", P::Close)] {
@@ -160,6 +162,11 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
         globals.set(name, f)?;
     }
     Ok(())
+}
+
+/// Take and clear the bank's presses. See [`crate::interface::bank`].
+pub fn take(host: &LuaHost) -> Vec<crate::interface::bank::BankPress> {
+    super::taken(host)
 }
 
 #[cfg(test)]

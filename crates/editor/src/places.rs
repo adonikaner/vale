@@ -1,4 +1,5 @@
-//! Somewhere to go: the zones of a map, and where the middle of each one is.
+//! Somewhere to go: the maps the archives name, the zones of a map, and where
+//! the middle of each one is.
 //!
 //! ## The join
 //!
@@ -24,6 +25,7 @@
 //! zone's centre in any stronger sense.
 
 use vale_client::assets::GameAssets;
+use crate::session::EditSession;
 use bevy::prelude::*;
 
 /// One place the camera can be sent.
@@ -91,6 +93,53 @@ impl Places {
 pub fn middle_of_tile(x: u32, y: u32) -> Vec2 {
     let at = vale_assets::world::terrain::tile_centre(x, y);
     Vec2::new(at[0], at[1])
+}
+
+/// `Map.dbc`'s id-to-directory table, in [`order_maps`]'s order.
+///
+/// Read here rather than hardcoded for the reason
+/// `vale_assets::tables::dbc::map_directories` gives: a custom map is a row
+/// in that table and nothing else, so reading it means a map somebody added
+/// appears in the editor's list without a line of code.
+pub(crate) fn map_directories(assets: &GameAssets) -> Vec<(u32, String)> {
+    let table = assets.with_archive(|chain| {
+        let bytes = chain
+            .read(&vale_assets::tables::dbc::dbc_path("Map"))
+            .map_err(|e| e.to_string())?;
+        vale_assets::tables::dbc::map_directories(&bytes).map_err(|e| e.to_string())
+    });
+    let mut maps: Vec<(u32, String)> = match table {
+        Ok(table) => table.into_iter().collect(),
+        Err(e) => {
+            error!("Map.dbc: {e}");
+            Vec::new()
+        }
+    };
+    order_maps(&mut maps);
+    maps
+}
+
+/// The order every map list in the editor is shown in: by id, lowest first.
+pub(crate) fn order_maps(maps: &mut [(u32, String)]) {
+    maps.sort_by_key(|&(id, _)| id);
+}
+
+/// Keep [`crate::places::Places`] in step with the map being edited.
+///
+/// The join it holds is over two parsed DBCs and a few hundred rows, which is
+/// nothing to do once and not something to do every frame. The map id decides
+/// when to rebuild: it changes when the panel's drop-down does and at no other
+/// time.
+pub(crate) fn follow_the_map(
+    session: Option<Res<EditSession>>,
+    assets: Res<GameAssets>,
+    mut places: ResMut<crate::places::Places>,
+) {
+    let Some(session) = session else { return };
+    if places.map_id == session.map_id && !places.zones.is_empty() {
+        return;
+    }
+    *places = crate::places::Places::of(&assets, session.map_id);
 }
 
 #[cfg(test)]

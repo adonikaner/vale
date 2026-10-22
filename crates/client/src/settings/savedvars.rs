@@ -40,7 +40,7 @@
 //!   applies a name's value when the name is registered, so the result is the
 //!   same whichever of the file and the directory comes first.
 //! * The values are applied once per interpreter, not once per session.
-//!   `lua::host::unload_interface` replaces the whole `LuaHost` at both ends
+//!   `lua::load::unload_interface` replaces the whole `LuaHost` at both ends
 //!   of a session. A flag kept in this module was set by the login screen's
 //!   interpreter and never cleared for the world's, so the world's interpreter
 //!   was never given the file. The flag is
@@ -129,13 +129,13 @@ impl Plugin for SavedVariablesPlugin {
         // ordered against the same teardown for the same reason.
         .add_systems(
             Update,
-            save_on_logout.before(crate::lua::host::unload_interface),
+            save_on_logout.before(crate::lua::load::unload_interface),
         )
         // The same write before `ReloadUI()` replaces the interpreter; see
         // [`save_on_reload`].
         .add_systems(
             Update,
-            save_on_reload.before(crate::lua::host::reload_interface),
+            save_on_reload.before(crate::lua::load::reload_interface),
         )
         // In `Last`, like the settings file. See [`super::cvars::save`].
         .add_systems(Last, save);
@@ -262,8 +262,7 @@ fn apply(
         saved.character = character;
         saved.character_addons_read.clear();
     }
-    let wanted: Vec<(String, bool, bool)> = host
-        .addons()
+    let wanted: Vec<(String, bool, bool)> = crate::lua::panels::addons::held(&host)
         .borrow()
         .all()
         .iter()
@@ -314,7 +313,7 @@ fn save(
 /// Write the file when leaving the world, while the registered globals still
 /// exist.
 ///
-/// `lua::host::unload_interface` replaces the whole `LuaHost` on
+/// `lua::load::unload_interface` replaces the whole `LuaHost` on
 /// `PLAYER_LEAVING_WORLD`, and every `RegisterForSave`d name is on it. A
 /// client that wrote only at `AppExit` wrote nothing for the usual way a
 /// session ends (log out, go to the character list, close the window), and
@@ -338,7 +337,7 @@ fn save_on_logout(
 }
 
 /// Write the file before a `ReloadUI()`, which replaces the interpreter and
-/// leaves the world running; see [`crate::lua::host::reload_interface`].
+/// leaves the world running; see [`crate::lua::load::reload_interface`].
 ///
 /// An addon's changed setting is held in a Lua global until something writes
 /// it. pfUI's first-run wizard ends with

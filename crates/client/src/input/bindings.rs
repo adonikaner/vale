@@ -338,7 +338,7 @@ pub enum Binding {
     /// for the server.
     ForceQuit,
     /// `ReloadUI()`: discard the interface and load it again without leaving
-    /// the world. [`crate::lua::host::reload_interface`] performs the reload.
+    /// the world. [`crate::lua::load::reload_interface`] performs the reload.
     ///
     /// No key, like the four above it, and no packet: this is the one verb in
     /// the enum the server never hears about. It is a variant rather than a
@@ -1176,9 +1176,9 @@ fn dispatch(
     // fired. A binding's body may call `SetBinding` (the key-bindings panel
     // does so after one keypress), and a `RefCell` still borrowed here would
     // panic instead of rebinding. Cloning the live table to avoid the borrow
-    // would copy 152 `String` pairs on every frame with key activity. The `Rc` is taken out of the host because `fire`
+    // would copy 152 `String` pairs on every frame with key activity. The `Rc` is taken from the state's app data because `fire`
     // takes `&mut self`.
-    let board = std::rc::Rc::clone(host.keybindings());
+    let board = crate::lua::panels::keybindings::held(&host);
     let edges = {
         let keys_table = board.borrow();
         edges(keys_table.live(), &keys, &mut held)

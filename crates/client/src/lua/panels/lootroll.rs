@@ -39,6 +39,7 @@
 //! has a roll.
 
 use super::super::api::Answers;
+use crate::lua::host::LuaHost;
 
 /// One roll, as the four things `GetLootRollItemInfo` answers that are not the
 /// constant.
@@ -125,7 +126,8 @@ fn roll_id(id: Option<i64>) -> Option<u32> {
 
 /// **The two writes**, registered unscoped because they record — see
 /// [`super::super::api::verbs`], which is where the argument is.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     let globals = lua.globals();
 
     // **`RollOnLoot(id, rollType)` — the three buttons.** `LootFrame.xml` wires
@@ -159,6 +161,12 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
     Ok(())
 }
 
+/// Take and clear the loot roll choices.
+/// One caller, [`crate::interface::lootroll`].
+pub fn take(host: &LuaHost) -> Vec<crate::interface::lootroll::RollPress> {
+    super::taken(host)
+}
+
 /// The queue the two writes push onto.
 pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::lootroll::RollPress>>>;
 
@@ -168,11 +176,11 @@ pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::lootroll::
 /// [`super::loot::LootAnswers`], where the argument for the split is.
 pub trait LootRollAnswers {
     /// `GetLootRollItemInfo(id)`, minus the constant count.
-    fn loot_roll_item(&self, id: u32) -> Option<RollItem>;
+    fn loot_roll_item(&self, _id: u32) -> Option<RollItem> { None }
     /// `GetLootRollItemLink(id)`. `None` until the template lands.
-    fn loot_roll_link(&self, id: u32) -> Option<String>;
+    fn loot_roll_link(&self, _id: u32) -> Option<String> { None }
     /// `GetLootRollTimeLeft(id)` — **milliseconds, and it may be negative**.
-    fn loot_roll_time_left(&self, id: u32) -> Option<f64>;
+    fn loot_roll_time_left(&self, _id: u32) -> Option<f64> { None }
 }
 
 impl LootRollAnswers for super::super::api::Live<'_, '_, '_> {
@@ -214,7 +222,7 @@ impl LootRollAnswers for super::super::api::Live<'_, '_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lua::api::tests::{eval, Stub};
+    use crate::lua::api::stub::{eval, Stub};
     use vale_protocol::play::lootroll::RollVote;
 
     /// **Five answers, and the third of them is the constant** — a roll's packet
@@ -272,7 +280,8 @@ mod tests {
     fn the_first_roll_of_a_session_has_id_zero() {
         let lua = mlua::Lua::new();
         let queue: Queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        register(&lua, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         lua.load("RollOnLoot(0, 1)").exec().expect("the chunk runs");
         assert_eq!(
             *queue.borrow(),
@@ -290,7 +299,8 @@ mod tests {
     fn confirm_is_the_same_press_with_the_question_already_answered() {
         let lua = mlua::Lua::new();
         let queue: Queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        register(&lua, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         lua.load(
             "RollOnLoot(3, 0); RollOnLoot(3, 2); ConfirmLootRoll(3, 1); \
              RollOnLoot(3, 7); RollOnLoot(3); RollOnLoot(nil, 1)",

@@ -190,7 +190,7 @@ fn run(
     mut queue: ResMut<ServerQueue>,
     session: Option<ResMut<EditSession>>,
     mut reloads: ResMut<Reloads>,
-    mut standings: ResMut<crate::ui::sync::Standings>,
+    mut standings: ResMut<crate::ui::shell::sync::Standings>,
 ) {
     if let Some((_, live, task)) = queue.running.as_mut() {
         let Some(finish) = block_on(future::poll_once(task)) else {

@@ -2,112 +2,22 @@
 //! drawn over it.
 //!
 //! ```text
-//! theme.rs      the palette, the style, and the widgets built on them
-//! topbar.rs     the top bar: the Project menu and Save, the Server button,
-//!               the Map menu, the workspace control and the playtest button
-//! popout.rs     the pop-out window: a workspace in an OS window of its own,
-//!               drawn with the same functions as the main window's middle
-//! popover.rs    the five forms the top bar opens: where to go, which account
-//!               to log in as, which project, where the server is, and what
-//!               a publish writes
-//! rail.rs       the subject list: what the editor edits now and what it will
-//!               edit
-//! inspector.rs  the panel beside the viewport: the chosen tool's controls
-//! members.rs    a group selection's members as a folded list, in which one
-//!               can be made the primary or taken out
-//! context.rs    the right-click menu over the viewport: each world tool's
-//!               one-click operations on what was clicked
-//! thumbnails.rs the pictures the inspector draws in a list, decoded a few per
-//!               frame
-//! data.rs       the workspace a table is edited in, which replaces the
-//!               viewport rather than sitting beside it: the browser, the
-//!               schema-driven form, and the rows a row references
-//! storyboard.rs the one view of a row that is not a form: a spell's visual
-//!               chain as its sequence of phases
-//! creatures.rs  the form for the server's creature rows: one spawn, the
-//!               creature_template behind it, and which of the two an edit
-//!               changes. It is separate from data.rs's browser because a DBC
-//!               row is an index into a fixed-width record and a server row is
-//!               a keyed map of text
-//! gameobjects.rs the same form for a game object: one spawn, the
-//!               gameobject_template behind it, the 24 data columns under the
-//!               names the row's type gives them, and a lock resolved through
-//!               the client's Lock.dbc
-//! items.rs      the workspace item_template is edited in: that form, a
-//!               browser, and a third part in the inspector: a picture of what
-//!               the display id a row names looks like, and the grid of every
-//!               appearance it is chosen from
-//! quests.rs     the workspace quest_template is edited in: the list, a form
-//!               whose objectives and rewards are lines rather than numbered
-//!               columns, the quest as the log would show it, who gives and
-//!               takes it, and the window the creature tool opens on one
-//!               creature's quests
-//! creature_data.rs the Creatures workspace: every creature_template row as
-//!               a list, the open row in the template window's form, and its
-//!               model and other tables in the inspector
-//! gameobject_data.rs the Game Objects workspace: the same for
-//!               gameobject_template
-//! listing.rs    the parts of those two workspaces that are the same: the
-//!               docked list, its search box, and the form's head
-//! behaviour.rs  the three windows a creature's behaviour is edited in: its
-//!               events, the spell list its template names, and one script,
-//!               with every parameter named by the event's type, the row's
-//!               command or the target
-//! loot.rs       the window a loot set is edited in, opened from a selected
-//!               creature, a selected game object or the open item: its rows
-//!               by group, each drawn as the server reads it, and the
-//!               reference sets they name, followed and edited in place
-//! services.rs   the Vendor and Trainer windows of a selected creature: its
-//!               own list and its template's, each row drawn as the server
-//!               reads it, with the reasons it would skip one
-//! gossip.rs     the gossip window: a creature's menu, what it says and the
-//!               options it offers, each leading to the next menu
-//! conditions.rs the condition window: one row of `conditions`, its values
-//!               named by its type, opened from any form that names one
-//! rowform.rs    the widgets all of those forms are built from: how a column
-//!               of each type is drawn, and what typing into one produces. The
-//!               form itself stays with its subject
-//! reference.rs  a column that names a row of another table, as the creature
-//!               and game object forms draw it: the picker button, the name
-//!               the number resolves to, and the link that opens the row
-//! displays.rs   the dialog a creature's or a game object's display id is
-//!               chosen in: a paged grid of rendered models, searched by
-//!               model path, with a large preview
-//! waypoints.rs  the window one creature's path is edited in: its points as a
-//!               list, beside the same points drawn on the ground. The list
-//!               and the world share one selection, so they always agree on
-//!               which point is chosen
-//! flightpaths.rs the flight path tool's panel: the selected node and its
-//!               paths, the selected path and its points, and what a click on
-//!               the ground is armed to make
-//! triggers.rs   the area trigger tool's panel: the selected trigger's shape
-//!               and place, and its teleport, inn and quest rows
-//! graveyards.rs the graveyard tool's panel: the selected safe place, its
-//!               facing, and the zones it serves
-//! appearance.rs what the display tables' rows look like, for their pickers
-//!               and the inspector, and the texture browser their texture
-//!               fields open
-//! assets.rs     the Assets workspace: the project's own files, what each is,
-//!               and the Import Texture dialog any form can open
-//! bands.rs      the form for a light's bands, the one table no other row
-//!               references: a light's eighteen colours and six numbers over
-//!               the day, each drawn as the day it produces rather than as
-//!               sixteen pairs of numbers
-//! lab.rs        the attachment lab's card and pane: an effect's model on a
-//!               body, with the handles that move it
-//! hovercard.rs  the card beside the pointer that names the creature or game
-//!               object under it: a title and four or five attributes
-//! servicemarks.rs the icons over a creature's head that say what it offers,
-//!               drawn in the viewport under the creature tool
-//! mapview.rs    the map from above: which tiles exist, and which are selected
-//! viewbar.rs    every toggle that changes what the viewport shows
-//! icons.rs      the toolbar icons compiled into the editor (none yet)
-//! status.rs     the status line at the bottom
-//! sync.rs       what this project has changed on the server: one block per
-//!               subject, the same four verbs for each. Drawn inside the top
-//!               bar's Server… popover, which holds every server operation
-//! manifest.rs   the open project's files and what each one changes, drawn in
-//!               the project dialog
+//! shell/        the docked regions around the viewport and what they open:
+//!               the top bar and its forms, the rail, the view bar, the status
+//!               line, the pop-out window, the right-click menu, the hover
+//!               card, the server marks and the sync view
+//! widgets/      the theme and the pieces the forms and lists are built from
+//! tools/        the inspector, and the panels and windows of the pointer
+//!               tools, at the same paths as their state in `crate::tools`
+//! subjects/     the windows and workspaces of the server-row subjects, at the
+//!               same paths as their state in `crate::subjects`
+//! tables/       the workspace a client table is edited in, the spell
+//!               storyboard and what a display row looks like
+//! preview/      the attachment lab's card and pane
+//! map/          the map from above
+//! import/       the Assets workspace
+//! workspace.rs  the workspace a tool puts in the middle of a window, drawn
+//!               the same in the main window and a pop-out window
 //! ```
 //!
 //! ## Layout: four docked regions
@@ -142,7 +52,7 @@
 //! never what is being edited. Turning the doodads off touches no file and
 //! adds nothing to the undo stack. It is a strip of its own rather than a
 //! section of the inspector because the inspector is about the selection, and
-//! these switches apply whatever is selected. See [`viewbar`].
+//! these switches apply whatever is selected. See [`shell::viewbar`].
 //!
 //! ## Why the panels are built inside a root `Ui`
 //!
@@ -181,48 +91,15 @@
 //! every tool. [`Viewport::holds`] is the one function that decides whether a
 //! pointer position is over the world.
 
-pub mod appearance;
-pub mod assets;
-pub mod bands;
-pub mod behaviour;
-pub mod conditions;
-pub mod context;
-pub mod creature_data;
-pub mod creatures;
-pub mod data;
-pub mod displays;
-pub mod flightpaths;
-pub mod gameobject_data;
-pub mod gameobjects;
-pub mod gossip;
-pub mod graveyards;
-pub mod hovercard;
-pub mod icons;
-pub mod inspector;
-pub mod items;
-pub mod lab;
-pub mod listing;
-pub mod loot;
-pub mod manifest;
-pub mod mapview;
-pub mod members;
-pub mod popout;
-pub mod popover;
-pub mod quests;
-pub mod rail;
-pub mod reference;
-pub mod rowform;
-pub mod servicemarks;
-pub mod services;
-pub mod status;
-pub mod storyboard;
-pub mod sync;
-pub mod theme;
-pub mod thumbnails;
-pub mod topbar;
-pub mod triggers;
-pub mod viewbar;
-pub mod waypoints;
+pub mod import;
+pub mod map;
+pub mod preview;
+pub mod shell;
+pub mod subjects;
+pub mod tables;
+pub mod tools;
+pub mod widgets;
+pub mod workspace;
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
@@ -232,14 +109,16 @@ use crate::camera::EditorCamera;
 use crate::pick::Cursor;
 use crate::playtest::{Login, Playtest};
 use crate::session::EditSession;
-use crate::tools::doodads::Selection;
-use crate::tools::gizmo::Gizmo;
-use crate::tools::terrain::Terrain;
-use crate::tools::textures::Textures;
+use crate::tools::placements::doodads::Selection;
+use crate::tools::placements::gizmo::Gizmo;
+use crate::tools::ground::terrain::Terrain;
+use crate::tools::ground::textures::Textures;
 use crate::tools::Tool;
 use vale_client::assets::GameAssets;
 use vale_client::glue::autologin::AutoLogin;
 use vale_client::render::focus::WorldFocus;
+use subjects::windows::subject_windows;
+use workspace::{workspace, Bench};
 
 /// The part of the window the chrome leaves for the world, in window points.
 ///
@@ -248,7 +127,7 @@ use vale_client::render::focus::WorldFocus;
 /// a window or a modal floats over that rectangle and shrinks nothing, so its
 /// rectangle is listed separately; without that, a press on a popover's
 /// password box is a press on the ground behind it, the same fault the docked
-/// panels had. [`popover`] and the windows return their rectangles for this
+/// panels had. [`shell::popover`] and the windows return their rectangles for this
 /// purpose, and [`areas_over_the_world`] adds every other egui area at the end
 /// of the pass.
 ///
@@ -358,8 +237,8 @@ pub struct Playing<'w> {
     /// [`vale_client::world::session::QueryCaches`].
     caches: ResMut<'w, vale_client::world::session::QueryCaches>,
     /// The last known state of each server subject, which the Server panel
-    /// draws and does not recompute every frame. See [`sync::Standings`].
-    standings: ResMut<'w, sync::Standings>,
+    /// draws and does not recompute every frame. See [`shell::sync::Standings`].
+    standings: ResMut<'w, shell::sync::Standings>,
     /// The database writes waiting and running, which the Server panel queues
     /// and the toast in the corner reports. See [`crate::server::queue`].
     queue: ResMut<'w, crate::server::queue::ServerQueue>,
@@ -370,91 +249,91 @@ pub struct Playing<'w> {
 
 /// The resources the inspector edits, as one parameter, for the same reason
 /// as [`Playing`]: the shell reached the parameter limit again when a second
-/// brush and a gizmo were added. They are exactly what [`inspector::draw`]
+/// brush and a gizmo were added. They are exactly what [`tools::draw`]
 /// takes, and nothing else in this file touches any of them.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct Editing<'w> {
     pub(crate) terrain: ResMut<'w, Terrain>,
-    pub(crate) grading: ResMut<'w, crate::tools::grade::Grading>,
-    pub(crate) road: ResMut<'w, crate::tools::road::RoadTool>,
+    pub(crate) grading: ResMut<'w, crate::tools::ground::grade::Grading>,
+    pub(crate) road: ResMut<'w, crate::tools::ground::road::RoadTool>,
     pub(crate) measuring: ResMut<'w, crate::tools::measure::Measuring>,
-    pub(crate) shading: ResMut<'w, crate::tools::shading::Shading>,
+    pub(crate) shading: ResMut<'w, crate::tools::ground::shading::Shading>,
     pub(crate) textures: ResMut<'w, Textures>,
     pub(crate) selection: ResMut<'w, Selection>,
     /// The doodad and WMO tools' drag state. Each panel uses it for one
     /// message: that a group change made in the panel's fields needs its
     /// members settled and, for buildings, their boxes re-fitted.
-    pub(crate) doodad_held: ResMut<'w, crate::tools::doodads::Held>,
-    pub(crate) wmos: ResMut<'w, crate::tools::wmos::Selection>,
-    pub(crate) wmo_held: ResMut<'w, crate::tools::wmos::Held>,
+    pub(crate) doodad_held: ResMut<'w, crate::tools::placements::doodads::Held>,
+    pub(crate) wmos: ResMut<'w, crate::tools::placements::wmos::Selection>,
+    pub(crate) wmo_held: ResMut<'w, crate::tools::placements::wmos::Held>,
     pub(crate) gizmo: ResMut<'w, Gizmo>,
-    pub(crate) holes: Res<'w, crate::tools::holes::Holes>,
-    pub(crate) areas: ResMut<'w, crate::tools::areas::Areas>,
-    /// The chunk tool's selection. See [`crate::tools::chunks`].
-    pub(crate) chunks: ResMut<'w, crate::tools::chunks::Chunks>,
-    pub(crate) water: ResMut<'w, crate::tools::water::Water>,
-    pub(crate) sweep: ResMut<'w, crate::tools::sweep::Sweep>,
-    pub(crate) thumbnails: ResMut<'w, thumbnails::Thumbnails>,
+    pub(crate) holes: Res<'w, crate::tools::ground::holes::Holes>,
+    pub(crate) areas: ResMut<'w, crate::tools::ground::areas::Areas>,
+    /// The chunk tool's selection. See [`crate::tools::ground::chunks`].
+    pub(crate) chunks: ResMut<'w, crate::tools::ground::chunks::Chunks>,
+    pub(crate) water: ResMut<'w, crate::tools::ground::water::Water>,
+    pub(crate) sweep: ResMut<'w, crate::map::sweep::Sweep>,
+    pub(crate) thumbnails: ResMut<'w, widgets::thumbnails::Thumbnails>,
     /// The pictures of models, which are rendered rather than decoded (see
-    /// [`crate::portraits`]), and the two lists a picker keeps beside its
+    /// [`crate::preview::portraits`]), and the two lists a picker keeps beside its
     /// folders.
-    pub(crate) portraits: ResMut<'w, crate::portraits::Portraits>,
-    pub(crate) favourites: ResMut<'w, crate::favourites::Favourites>,
+    pub(crate) portraits: ResMut<'w, crate::preview::portraits::Portraits>,
+    pub(crate) favourites: ResMut<'w, crate::prefs::favourites::Favourites>,
     /// The camera's named places, for the go-to popover.
-    pub(crate) bookmarks: ResMut<'w, crate::bookmarks::Bookmarks>,
-    pub(crate) placing: ResMut<'w, crate::tools::place::Placing>,
-    pub(crate) tiles: ResMut<'w, crate::tools::tiles::Tiles>,
-    pub(crate) mapview: ResMut<'w, mapview::MapView>,
-    pub(crate) browser: ResMut<'w, crate::tools::tables::Browser>,
+    pub(crate) bookmarks: ResMut<'w, crate::prefs::bookmarks::Bookmarks>,
+    pub(crate) placing: ResMut<'w, crate::tools::placements::place::Placing>,
+    pub(crate) tiles: ResMut<'w, crate::map::tiles::Tiles>,
+    pub(crate) mapview: ResMut<'w, map::mapview::MapView>,
+    pub(crate) browser: ResMut<'w, crate::tables::browser::Browser>,
     /// The world half of the lights subject: which light is chosen, where they
-    /// all are, and a pending fly-to. See [`crate::tools::lights`].
-    pub(crate) lights: ResMut<'w, crate::tools::lights::Lights>,
+    /// all are, and a pending fly-to. See [`crate::tools::places::lights`].
+    pub(crate) lights: ResMut<'w, crate::tools::places::lights::Lights>,
     /// The flight path subject: the nodes and paths on the map and what is
-    /// selected. See [`crate::tools::flightpaths`].
-    pub(crate) flightpaths: ResMut<'w, crate::tools::flightpaths::Flightpaths>,
+    /// selected. See [`crate::tools::places::flightpaths`].
+    pub(crate) flightpaths: ResMut<'w, crate::tools::places::flightpaths::Flightpaths>,
     /// The area trigger subject: the triggers on the map, what is selected,
-    /// and the server rows read for them. See [`crate::tools::triggers`].
-    pub(crate) triggers: ResMut<'w, crate::tools::triggers::Triggers>,
+    /// and the server rows read for them. See [`crate::tools::places::triggers`].
+    pub(crate) triggers: ResMut<'w, crate::tools::places::triggers::Triggers>,
     /// The safe place (graveyard) subject's state, which has the same shape
     /// as the area trigger subject's. See
-    /// [`crate::tools::graveyards`].
-    pub(crate) graveyards: ResMut<'w, crate::tools::graveyards::Graveyards>,
+    /// [`crate::tools::places::graveyards`].
+    pub(crate) graveyards: ResMut<'w, crate::tools::places::graveyards::Graveyards>,
     /// The world half of the creature subject: the map's spawns, which is
-    /// selected, and the two rows behind it. See [`crate::tools::creatures`].
-    pub(crate) creatures: ResMut<'w, crate::tools::creatures::Creatures>,
+    /// selected, and the two rows behind it. See [`crate::tools::spawns::creatures`].
+    pub(crate) creatures: ResMut<'w, crate::tools::spawns::creatures::Creatures>,
     /// Where each near creature's service icons go this frame. Read-only
-    /// here; see [`servicemarks`].
-    pub(crate) service_marks: Res<'w, crate::tools::creatures::ServiceMarks>,
+    /// here; see [`shell::servicemarks`].
+    pub(crate) service_marks: Res<'w, crate::tools::spawns::creatures::ServiceMarks>,
     /// The game-object subject's state, which has the same shape. See
-    /// [`crate::tools::gameobjects`].
-    pub(crate) objects: ResMut<'w, crate::tools::gameobjects::GameObjects>,
+    /// [`crate::tools::spawns::gameobjects`].
+    pub(crate) objects: ResMut<'w, crate::tools::spawns::gameobjects::GameObjects>,
     /// The waypoint mode over the creature subject: whose path is open, which
-    /// point is chosen. See [`crate::tools::waypoints`].
-    pub(crate) waypoints: ResMut<'w, crate::tools::waypoints::Waypoints>,
+    /// point is chosen. See [`crate::tools::spawns::waypoints`].
+    pub(crate) waypoints: ResMut<'w, crate::tools::spawns::waypoints::Waypoints>,
     /// The item workspace's state: the table, which row is open, and what the
-    /// appearance it names looks like. See [`crate::tools::items`].
-    pub(crate) items: ResMut<'w, crate::tools::items::Items>,
+    /// appearance it names looks like. See [`crate::subjects::items`].
+    pub(crate) items: ResMut<'w, crate::subjects::items::Items>,
     /// The quest workspace's state: the table, the relations, which quest is
-    /// open. See [`crate::tools::quests`].
-    pub(crate) quests: ResMut<'w, crate::tools::quests::Quests>,
+    /// open. See [`crate::subjects::quests`].
+    pub(crate) quests: ResMut<'w, crate::subjects::quests::Quests>,
     /// The loot window's state: which sets the selection names, and what each
-    /// holds. See [`crate::tools::loot`].
-    pub(crate) loot: ResMut<'w, crate::tools::loot::Loot>,
+    /// holds. See [`crate::subjects::loot`].
+    pub(crate) loot: ResMut<'w, crate::subjects::loot::Loot>,
     /// The behaviour windows' state: the creature they are about, and what
     /// its events, its spell list and one script hold. See
-    /// [`crate::tools::behaviour`].
-    pub(crate) behaviour: ResMut<'w, crate::tools::behaviour::Behaviour>,
+    /// [`crate::subjects::behaviour`].
+    pub(crate) behaviour: ResMut<'w, crate::subjects::behaviour::Behaviour>,
     /// The Vendor and Trainer windows' state: the creature they are about,
-    /// and what its lists hold. See [`crate::tools::services`].
-    pub(crate) services: ResMut<'w, crate::tools::services::Services>,
+    /// and what its lists hold. See [`crate::subjects::services`].
+    pub(crate) services: ResMut<'w, crate::subjects::services::Services>,
     /// The gossip window's state: the creature it is about and the menus it
-    /// has read. See [`crate::tools::gossip`].
-    pub(crate) gossip: ResMut<'w, crate::tools::gossip::Gossip>,
-    /// The condition window's state. See [`crate::tools::conditions`].
-    pub(crate) conditions: ResMut<'w, crate::tools::conditions::Conditions>,
+    /// has read. See [`crate::subjects::gossip`].
+    pub(crate) gossip: ResMut<'w, crate::subjects::gossip::Gossip>,
+    /// The condition window's state. See [`crate::subjects::conditions`].
+    pub(crate) conditions: ResMut<'w, crate::subjects::conditions::Conditions>,
     /// The Assets workspace's state and the Import Texture dialog's. See
-    /// [`crate::tools::assets`].
-    pub(crate) assets: ResMut<'w, crate::tools::assets::Assets>,
+    /// [`crate::import::assets`].
+    pub(crate) assets: ResMut<'w, crate::import::assets::Assets>,
     /// The pop-out window: the workspace in it, and what a panel asked of it.
     /// See [`crate::popout`].
     pub(crate) popout: ResMut<'w, crate::popout::Popout>,
@@ -462,20 +341,20 @@ pub struct Editing<'w> {
     /// sets the hour, and the panels read it so a band's day strip can mark
     /// the viewport's current hour on itself.
     pub(crate) clock: Res<'w, vale_client::render::sky::WorldClock>,
-    pub(crate) storyboard: ResMut<'w, storyboard::Storyboard>,
-    pub(crate) stage: ResMut<'w, crate::stage::Stage>,
-    pub(crate) lab: ResMut<'w, crate::lab::Lab>,
-    /// What is typed into the project popover; see [`topbar::Projects`]. It
+    pub(crate) storyboard: ResMut<'w, tables::storyboard::Storyboard>,
+    pub(crate) stage: ResMut<'w, crate::preview::stage::Stage>,
+    pub(crate) lab: ResMut<'w, crate::preview::lab::Lab>,
+    /// What is typed into the project popover; see [`shell::topbar::Projects`]. It
     /// is in the bundle rather than a parameter of its own because this system
     /// is at Bevy's limit of sixteen parameters.
-    pub(crate) projects: ResMut<'w, topbar::Projects>,
+    pub(crate) projects: ResMut<'w, shell::topbar::Projects>,
     /// The command line, for the two flags that open something a press would
     /// otherwise have to open: `--projects` here, `--row` in the browser.
-    pub(crate) args: Res<'w, crate::Args>,
-    /// The right-click menu over the viewport. See [`context`].
+    pub(crate) args: Res<'w, crate::args::Args>,
+    /// The right-click menu over the viewport. See [`shell::context`].
     pub(crate) menu: ResMut<'w, crate::context::ContextMenu>,
     /// What the doodad and WMO tools have copied, for the menu's Paste here.
-    pub(crate) clipboard: Res<'w, crate::tools::group::Clipboard>,
+    pub(crate) clipboard: Res<'w, crate::tools::placements::group::Clipboard>,
     /// The drawing tablet settings and the pen's state, for the section the
     /// three painting brushes show. See [`crate::tablet`].
     pub(crate) tablet: ResMut<'w, crate::tablet::Tablet>,
@@ -486,7 +365,7 @@ pub struct Editing<'w> {
 ///
 /// A bundle of its own for the same reason as [`Playing`] and [`Editing`]:
 /// this shell is at Bevy's sixteen-parameter limit. These six are what
-/// [`viewbar::draw`] takes, and nothing else in this file touches them.
+/// [`shell::viewbar::draw`] takes, and nothing else in this file touches them.
 ///
 /// Two of the six exist only in a `diagnostics` build. `DebugOverlay` is
 /// gated in the client together with the debug window that was its only
@@ -511,32 +390,32 @@ pub struct Viewing<'w> {
     /// The top-down map view, which the view bar's MAP button switches. See
     /// [`crate::camera::TopDown`].
     top_down: ResMut<'w, crate::camera::TopDown>,
-    icons: Res<'w, icons::Icons>,
+    icons: Res<'w, shell::icons::Icons>,
     /// Which world tool the World part of the top bar returns to. See
-    /// [`rail::Rail`].
-    rail: ResMut<'w, rail::Rail>,
+    /// [`shell::rail::Rail`].
+    rail: ResMut<'w, shell::rail::Rail>,
 }
 
 pub struct PanelPlugin;
 
 impl Plugin for PanelPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<mapview::MapView>()
-            .init_resource::<topbar::GoTo>()
-            .init_resource::<topbar::Projects>()
-            .init_resource::<popover::Popovers>()
-            .init_resource::<sync::Standings>()
+        app.init_resource::<map::mapview::MapView>()
+            .init_resource::<shell::topbar::GoTo>()
+            .init_resource::<shell::topbar::Projects>()
+            .init_resource::<shell::popover::Popovers>()
+            .init_resource::<shell::sync::Standings>()
             .init_resource::<Viewport>()
-            .init_resource::<rail::Rail>()
-            .add_plugins((thumbnails::ThumbnailPlugin, icons::IconPlugin))
+            .init_resource::<shell::rail::Rail>()
+            .add_plugins((widgets::thumbnails::ThumbnailPlugin, shell::icons::IconPlugin))
             .add_systems(EguiPrimaryContextPass, draw)
             // One pass per pop-out window slot; see `crate::popout`.
-            .add_systems(crate::popout::PopoutPass(0), popout::draw::<0>)
-            .add_systems(crate::popout::PopoutPass(1), popout::draw::<1>)
-            .add_systems(crate::popout::PopoutPass(2), popout::draw::<2>)
-            .add_systems(crate::popout::PopoutPass(3), popout::draw::<3>)
-            .add_systems(crate::popout::PopoutPass(4), popout::draw::<4>)
-            .add_systems(crate::popout::PopoutPass(5), popout::draw::<5>);
+            .add_systems(crate::popout::PopoutPass(0), shell::popout::draw::<0>)
+            .add_systems(crate::popout::PopoutPass(1), shell::popout::draw::<1>)
+            .add_systems(crate::popout::PopoutPass(2), shell::popout::draw::<2>)
+            .add_systems(crate::popout::PopoutPass(3), shell::popout::draw::<3>)
+            .add_systems(crate::popout::PopoutPass(4), shell::popout::draw::<4>)
+            .add_systems(crate::popout::PopoutPass(5), shell::popout::draw::<5>);
     }
 }
 
@@ -556,23 +435,23 @@ fn draw(
     assets: Res<GameAssets>,
     mut playing: Playing,
     places: Res<crate::places::Places>,
-    mut go_to: ResMut<topbar::GoTo>,
-    mut popovers: ResMut<popover::Popovers>,
+    mut go_to: ResMut<shell::topbar::GoTo>,
+    mut popovers: ResMut<shell::popover::Popovers>,
     mut viewport: ResMut<Viewport>,
     mut viewing: Viewing,
-    background: crate::tools::tiles::Background,
+    background: crate::map::tiles::Background,
 ) -> Result {
     let Some(session) = session.as_mut() else {
         return Ok(());
     };
     let ctx = contexts.ctx_mut()?.clone();
-    theme::install(&ctx);
+    widgets::theme::install(&ctx);
     viewport.zoom = ctx.zoom_factor();
     // A dialog several windows draw opens here when this is the window last
     // used. See [`dialog_home`].
     mark_dialog_owner(&ctx, editing.popout.last_focused.is_none());
     // The two lists kept beside the project folders, read once per install.
-    // See `crate::favourites` for where they are stored and why.
+    // See `crate::prefs::favourites` for where they are stored and why.
     if let Some(dir) = session.project.root.parent() {
         editing.favourites.load_from(dir);
         editing.bookmarks.load_from(dir);
@@ -615,7 +494,7 @@ fn draw(
 
     // `--projects`, once. The popover is opened here rather than at startup
     // because its anchor is the button's rectangle, which does not exist until
-    // the bar has been drawn once. See `popover::Popover::show`.
+    // the bar has been drawn once. See `shell::popover::Popover::show`.
     if editing.args.projects && !editing.projects.shown_once {
         editing.projects.shown_once = true;
         popovers.project.show();
@@ -629,7 +508,7 @@ fn draw(
                     .unwrap_or_default(),
             };
             editing.projects.confirming =
-                Some(topbar::Doomed::new(name.to_string(), clear, &held));
+                Some(shell::topbar::Doomed::new(name.to_string(), clear, &held));
         }
     }
     // `--server`, once, for the same reason.
@@ -639,15 +518,15 @@ fn draw(
     }
 
     egui::Panel::top("editor-top")
-        .frame(bar(theme::PANEL))
+        .frame(bar(widgets::theme::PANEL))
         .show(&mut root, |ui| {
-            topbar::draw(
+            shell::topbar::draw(
                 ui,
                 session,
                 &mut camera,
                 &mut popovers,
                 &assets,
-                &mut topbar::Session {
+                &mut shell::topbar::Session {
                     state: &mut playing.state,
                     client: &mut playing.client,
                     login: &playing.login,
@@ -660,7 +539,7 @@ fn draw(
                 },
                 &mut editing.mapview.open,
                 &mut editing.tiles.new_map,
-                &mut topbar::Subjects {
+                &mut shell::topbar::Subjects {
                     tool: &mut tool,
                     rail: &mut viewing.rail,
                     popped: editing.popout.tools().collect(),
@@ -704,7 +583,7 @@ fn draw(
     let scripted = {
         #[cfg(feature = "diagnostics")]
         {
-            viewbar::scripted(
+            shell::viewbar::scripted(
                 &edited_world,
                 &baseline,
                 &edited_overlay,
@@ -715,7 +594,7 @@ fn draw(
         }
         #[cfg(not(feature = "diagnostics"))]
         {
-            viewbar::scripted(
+            shell::viewbar::scripted(
                 &edited_world,
                 &baseline,
                 viewing.navmesh.on,
@@ -725,9 +604,9 @@ fn draw(
         }
     };
     egui::Panel::bottom("editor-status")
-        .frame(bar(theme::SHELL))
+        .frame(bar(widgets::theme::SHELL))
         .show(&mut root, |ui| {
-            status::draw(
+            shell::status::draw(
                 ui, session, &cursor, &focus, &camera, &scripted, &working, in_world,
             );
         });
@@ -736,11 +615,11 @@ fn draw(
     let mut map_view = viewing.top_down.on;
     let mut flight = camera.movement == crate::camera::Movement::Flight;
     egui::Panel::bottom("editor-view")
-        .frame(bar(theme::PANEL))
+        .frame(bar(widgets::theme::PANEL))
         .show(&mut root, |ui| {
-            viewbar::draw(
+            shell::viewbar::draw(
                 ui,
-                &mut viewbar::Bar {
+                &mut shell::viewbar::Bar {
                     world: &mut edited_world,
                     frame: &mut edited_frame,
                     #[cfg(feature = "diagnostics")]
@@ -789,13 +668,13 @@ fn draw(
     // click, and the width goes to the workspace's list and form instead.
     if !in_world && !tool.covers_viewport() {
         egui::Panel::left("editor-rail")
-            .exact_size(theme::RAIL_WIDTH)
-            .frame(side(theme::SHELL))
+            .exact_size(widgets::theme::RAIL_WIDTH)
+            .frame(side(widgets::theme::SHELL))
             .show(&mut root, |ui| {
                 // The last argument is whether a world database is reachable.
                 // A tool whose rows are in vmangos' database is greyed without
-                // one; see [`rail::draw`].
-                rail::draw(
+                // one; see [`shell::rail::draw`].
+                shell::rail::draw(
                     ui,
                     &mut tool,
                     &mut viewing.rail,
@@ -830,16 +709,16 @@ fn draw(
     // name, and a row of five named choices in one control. The default width
     // suits most panels and the drag handle is for those two.
     egui::Panel::right("editor-inspector")
-        .default_size(theme::INSPECTOR_WIDTH)
-        .min_size(theme::INSPECTOR_MIN)
-        .max_size(theme::INSPECTOR_MAX)
+        .default_size(widgets::theme::INSPECTOR_WIDTH)
+        .min_size(widgets::theme::INSPECTOR_MIN)
+        .max_size(widgets::theme::INSPECTOR_MAX)
         .resizable(true)
-        .frame(side(theme::PANEL))
+        .frame(side(widgets::theme::PANEL))
         .show(&mut root, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                inspector::draw(
+                tools::draw(
                     ui,
-                    inspector::Subject {
+                    tools::Subject {
                         tool: *tool,
                         session,
                         tables: tables.as_deref(),
@@ -878,7 +757,7 @@ fn draw(
     // A light and a flight path do not take the middle: each is picked and
     // dragged in the viewport, so its form is in the inspector with every
     // other selection's numbers and the world keeps the middle.
-    // `inspector::draw` handles that, so nothing is needed for either here.
+    // `tools::draw` handles that, so nothing is needed for either here.
     // Taken out of the bundle before the workspace borrows the rest of it.
     let showing_hour = editing.clock.half_minutes;
     let covers = tool.covers_viewport();
@@ -890,7 +769,7 @@ fn draw(
         // The central panel has no fill because the storyboard's preview is a
         // hole that shows the world, and a panel background would paint over
         // it. Each docked panel inside carries its own fill, and the fields
-        // view paints the area it covers itself. See `data::draw`.
+        // view paints the area it covers itself. See `tables::draw`.
         egui::CentralPanel::default_margins()
             .frame(egui::Frame::NONE)
             .show(&mut root, |ui| {
@@ -951,8 +830,8 @@ fn draw(
     });
     // The icons over the creatures' heads, painted into the viewport before
     // anything floats over it. The list is empty under every tool but the
-    // creature tool. See [`servicemarks`].
-    servicemarks::draw(
+    // creature tool. See [`shell::servicemarks`].
+    shell::servicemarks::draw(
         &ctx,
         viewport.rect.unwrap_or(egui::Rect::NOTHING),
         &editing.service_marks.0,
@@ -974,7 +853,7 @@ fn draw(
     // panel, so without it a click inside it is a click on the ground behind.
     let camera_tile = vale_assets::tile_for_position(focus.position.x, focus.position.y);
     let minimaps = assets.minimap_tiles();
-    let (map_rect, asked) = mapview::draw(
+    let (map_rect, asked) = map::mapview::draw(
         &ctx,
         &mut editing.mapview,
         session,
@@ -989,7 +868,7 @@ fn draw(
         editing.tiles.asked = asked;
     }
 
-    viewport.floating = popover::draw(
+    viewport.floating = shell::popover::draw(
         &ctx,
         &mut popovers,
         &mut camera,
@@ -1011,12 +890,12 @@ fn draw(
     // Select and Measure over the viewport's corner. Drawn only while the
     // viewport is the world's, which excludes a workspace and a playtest.
     let world_rect = viewport.rect.unwrap_or(egui::Rect::NOTHING);
-    let corner = rail::pointer(&ctx, world_rect, &mut tool, &mut viewing.rail, &viewing.icons);
+    let corner = shell::rail::pointer(&ctx, world_rect, &mut tool, &mut viewing.rail, &viewing.icons);
     viewport.floating.extend(corner);
     // The right-click menu, on the root context so it is not clipped to a
     // panel. Its area is added to the floating list with the other areas at
     // the end of this function.
-    context::draw(&ctx, session, &mut editing, &assets, viewport.zoom, time.elapsed_secs_f64());
+    shell::context::draw(&ctx, session, &mut editing, &assets, viewport.zoom, time.elapsed_secs_f64());
     // The Import Texture dialog, under any tool: the Assets workspace opens it
     // and so does a form's skin field. It covers the window while it is open,
     // so a press on it is not a press on the ground.
@@ -1026,7 +905,7 @@ fn draw(
         if editing.assets.import.is_some() {
             viewport.floating.push(ctx.content_rect());
         }
-        assets::import_dialog(&ctx, &mut editing.assets, session, &assets);
+        import::assets::import_dialog(&ctx, &mut editing.assets, session, &assets);
     }
 
     // The creature template's own window, drawn on the root context like the
@@ -1039,9 +918,9 @@ fn draw(
     // Its open flag is kept, so the window reappears when the tool is chosen
     // again.
     if *tool == Tool::Creatures {
-        let template = creatures::template_window(
+        let template = tools::spawns::creatures::template_window(
             &ctx,
-            &mut creatures::Subject {
+            &mut tools::spawns::creatures::Subject {
                 session,
                 creatures: &mut editing.creatures,
                 waypoints: &mut editing.waypoints,
@@ -1064,9 +943,9 @@ fn draw(
     // The game object template's window, the same window for
     // gameobject_template.
     if *tool == Tool::GameObjects {
-        let template = gameobjects::template_window(
+        let template = tools::spawns::gameobjects::template_window(
             &ctx,
-            &mut gameobjects::Subject {
+            &mut tools::spawns::gameobjects::Subject {
                 session,
                 objects: &mut editing.objects,
                 quests: &mut editing.quests,
@@ -1143,8 +1022,8 @@ fn draw(
     // workspace, or make a zone or a sub-area and put it on the brush. The
     // table is opened here, since the panel has no archives to open it from.
     if let Some(ask) = editing.areas.ask.take() {
-        use crate::tools::areas::Ask;
-        use crate::tools::tables::{self, area};
+        use crate::tools::ground::areas::Ask;
+        use crate::tables::{self, zones::area};
         match (session.open_table(&assets, area::TABLE), ask) {
             (false, _) => session.status = "AreaTable could not be opened".to_string(),
             (true, Ask::Edit(id)) => {
@@ -1155,10 +1034,10 @@ fn draw(
             }
             (true, made) => {
                 let record = match made {
-                    Ask::NewSubArea(of) => tables::add_sub_area(session, of),
+                    Ask::NewSubArea(of) => tables::zones::add_sub_area(session, of),
                     _ => {
                         let map = session.map_id;
-                        tables::add_zone(session, map)
+                        tables::zones::add_zone(session, map)
                     }
                 };
                 let id = record.and_then(|record| session.table(area::TABLE)?.u32_at(record, 0));
@@ -1186,7 +1065,7 @@ fn draw(
     // dialog, opened in the folder the field's file is found in, for the
     // field that asked.
     if let Some((folder, target)) = editing.browser.import_texture.take() {
-        editing.assets.ask = Some(crate::tools::assets::Ask::Choose {
+        editing.assets.ask = Some(crate::import::assets::Ask::Choose {
             folder,
             name: None,
             for_field: Some(target),
@@ -1195,8 +1074,8 @@ fn draw(
     // The texture tool's Import Ground Texture: the dialog, for a ground
     // texture…
     if std::mem::take(&mut editing.textures.import_asked) {
-        editing.assets.ask = Some(crate::tools::assets::Ask::Choose {
-            folder: crate::tools::assets::GROUND_FOLDER.to_string(),
+        editing.assets.ask = Some(crate::import::assets::Ask::Choose {
+            folder: crate::import::assets::GROUND_FOLDER.to_string(),
             name: None,
             for_field: None,
         });
@@ -1205,12 +1084,12 @@ fn draw(
     // takes it, opened in its folder. The catalogue lists it once it reads the
     // project's files again.
     if let Some((vpath, purpose)) = editing.assets.imported.take() {
-        if purpose == crate::tools::assets::Purpose::Ground && *tool == Tool::Textures {
+        if purpose == crate::import::assets::Purpose::Ground && *tool == Tool::Textures {
             let path = vpath.to_ascii_lowercase();
             editing.textures.brush.effect_id = 0;
             editing.textures.folder = match path.rfind('\\') {
                 Some(at) => path[..=at].to_string(),
-                None => crate::tools::textures::ROOT.to_string(),
+                None => crate::tools::ground::textures::ROOT.to_string(),
             };
             editing.textures.search.clear();
             editing.textures.brush.texture = path;
@@ -1220,7 +1099,7 @@ fn draw(
     // table has been closed since is left.
     if let Some((target, name)) = editing.assets.imported_for.take() {
         if session.table(&target.table).is_some() {
-            crate::tools::tables::set_text(
+            crate::tables::fields::set_text(
                 session,
                 &target.table,
                 target.record,
@@ -1257,9 +1136,9 @@ fn draw(
     // rectangle joins the floating list, so a click inside it is not also a
     // click on the ground behind it. This matters most here, because the
     // waypoint tool acts on clicks on the ground.
-    let path_window = waypoints::window(
+    let path_window = tools::spawns::waypoints::window(
         &ctx,
-        &mut waypoints::Subject {
+        &mut tools::spawns::waypoints::Subject {
             session,
             waypoints: &mut editing.waypoints,
             now: time.elapsed_secs_f64(),
@@ -1268,8 +1147,8 @@ fn draw(
     viewport.floating.extend(path_window);
 
     // The hover card beside the pointer, naming the creature or game object
-    // under it. See [`hovercard`].
-    hovercard::draw(
+    // under it. See [`shell::hovercard`].
+    shell::hovercard::draw(
         &ctx,
         *tool,
         &editing.creatures,
@@ -1283,8 +1162,8 @@ fn draw(
     editing.popout.redirect(&mut tool, viewing.rail.last_world);
 
     // The toast that says the world database is being read or written, drawn
-    // last so it is over everything. See [`status::sync_toast`].
-    status::sync_toast(&ctx, &playing.queue, bars_top, time.elapsed_secs_f64());
+    // last so it is over everything. See [`shell::status::sync_toast`].
+    shell::status::sync_toast(&ctx, &playing.queue, bars_top, time.elapsed_secs_f64());
 
     // Every window, modal and area drawn this pass, including the ones a
     // window opens from inside itself, such as the display picker and the
@@ -1292,603 +1171,6 @@ fn draw(
     viewport.floating.extend(areas_over_the_world(&ctx));
 
     Ok(())
-}
-
-/// What a workspace is drawn from, borrowed from the shell's bundles. Both
-/// windows draw a workspace with it: the main window's middle and the
-/// pop-out window ([`popout`]).
-pub(super) struct Bench<'a, 'e, 'p> {
-    pub(super) session: &'a mut EditSession,
-    pub(super) editing: &'a mut Editing<'e>,
-    pub(super) playing: &'a mut Playing<'p>,
-    pub(super) popovers: &'a mut popover::Popovers,
-    pub(super) assets: &'a GameAssets,
-    pub(super) now: f64,
-    /// The view bar's wireframe and particle switches, for the data
-    /// workspace's model view; `None` where the window has no view bar.
-    pub(super) wireframe: Option<&'a mut bool>,
-    pub(super) particles: Option<&'a mut bool>,
-    /// The hour the world shows, in half-minutes past midnight.
-    pub(super) hour: u32,
-    /// A tool a panel asks to switch to, applied by the caller after
-    /// everything is drawn.
-    pub(super) switch_to: &'a mut Option<Tool>,
-}
-
-/// The workspace of `tool`, filling `ui`.
-pub(super) fn workspace(ui: &mut egui::Ui, tool: Tool, bench: Bench<'_, '_, '_>) {
-    let Bench {
-        session,
-        editing,
-        playing,
-        popovers,
-        assets,
-        now,
-        wireframe,
-        particles,
-        hour,
-        switch_to,
-    } = bench;
-    // Two workspaces take the middle, and they are separate
-    // panels: a spell's row references a chain of other rows, and
-    // an item's row references one display id that cannot be read
-    // as text. See `ui::items`, whose third part, the appearance
-    // in the inspector, exists for that difference.
-    if tool == Tool::Items {
-        items::draw(
-            ui,
-            items::Workspace {
-                session,
-                items: &mut editing.items,
-                assets: &assets,
-                thumbnails: &mut editing.thumbnails,
-                portraits: &mut editing.portraits,
-                quests: &mut editing.quests,
-                loot: &mut editing.loot,
-                server: &playing.server,
-                server_panel: &mut popovers.server,
-                reloads: &mut playing.reloads,
-                patch: crate::tools::creatures::server_patch(&playing.server),
-                now,
-            },
-        );
-        return;
-    }
-    // The Assets workspace: the project's own files. See
-    // `ui::assets`.
-    if tool == Tool::Assets {
-        assets::draw(
-            ui,
-            assets::Work {
-                session,
-                assets: &mut editing.assets,
-                game: &assets,
-                thumbnails: &mut editing.thumbnails,
-                portraits: &mut editing.portraits,
-            },
-        );
-        return;
-    }
-    // The Creatures and Game Objects workspaces, over the
-    // creature and game object tools' own state. See
-    // `ui::creature_data` and `ui::gameobject_data`.
-    if tool == Tool::CreatureData {
-        creature_data::draw(
-            ui,
-            creatures::Subject {
-                session,
-                creatures: &mut editing.creatures,
-                waypoints: &mut editing.waypoints,
-                quests: &mut editing.quests,
-                loot: &mut editing.loot,
-                behaviour: &mut editing.behaviour,
-                services: &mut editing.services,
-                gossip: &mut editing.gossip,
-                server: &playing.server,
-                server_panel: &mut popovers.server,
-                assets: &assets,
-                portraits: &mut editing.portraits,
-                thumbnails: &mut editing.thumbnails,
-                now,
-                gizmo: None,
-            },
-        );
-        return;
-    }
-    if tool == Tool::GameObjectData {
-        gameobject_data::draw(
-            ui,
-            gameobjects::Subject {
-                session,
-                objects: &mut editing.objects,
-                quests: &mut editing.quests,
-                loot: &mut editing.loot,
-                server: &playing.server,
-                server_panel: &mut popovers.server,
-                assets: &assets,
-                portraits: &mut editing.portraits,
-                thumbnails: &mut editing.thumbnails,
-                now,
-                gizmo: None,
-            },
-        );
-        return;
-    }
-    // The quest workspace has the item workspace's shape with a
-    // different third part. See `ui::quests`.
-    if tool == Tool::Quests {
-        quests::draw(
-            ui,
-            quests::Workspace {
-                session,
-                quests: &mut editing.quests,
-                items: &mut editing.items,
-                assets: &assets,
-                thumbnails: &mut editing.thumbnails,
-                now,
-            },
-            quests::Shell {
-                reloads: &mut playing.reloads,
-                server_panel: &mut popovers.server,
-                patch: crate::tools::creatures::server_patch(&playing.server),
-                switch_to,
-            },
-        );
-        return;
-    }
-    data::draw(
-        ui,
-        data::Workspace {
-            tool,
-            session,
-            browser: &mut editing.browser,
-            assets: &assets,
-            thumbnails: &mut editing.thumbnails,
-            portraits: &mut editing.portraits,
-            favourites: &mut editing.favourites,
-            now,
-            // The model view's foot toggles the same two the view
-            // bar does, on the same edited copies, where the window
-            // has a view bar.
-            wireframe,
-            particles,
-            lights: Some(&mut editing.lights),
-            // The item names and the item picker need the
-            // database; without one an item column is its
-            // number.
-            quests: playing
-                .server
-                .resolve()
-                .is_some()
-                .then_some(&mut editing.quests),
-            hour,
-        },
-        &mut editing.storyboard,
-        &mut editing.stage,
-        &mut editing.lab,
-    );
-    // The reference picker, which an item column of a client
-    // table opens: the quest form's dialog, writing into the
-    // table's field.
-    quests::picker(
-        ui.ctx(),
-        session,
-        &mut editing.quests,
-        &assets,
-        &mut editing.thumbnails,
-        None,
-        now,
-    );
-}
-
-/// The windows that follow the subject of `tool`: the quest window of a
-/// creature or a game object, the loot window of either or of an item, and a
-/// creature's behaviour, vendor, trainer and gossip windows, with the
-/// condition window any of them opens. Drawn on `ctx`, the window the
-/// subject's workspace or tool is in. Answers their rectangles.
-pub(super) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Bench<'_, '_, '_>) -> Vec<egui::Rect> {
-    let Bench {
-        session,
-        editing,
-        assets,
-        now,
-        switch_to,
-        ..
-    } = bench;
-    let mut floating = Vec::new();
-    // The creature or game object the windows below are about: the selected
-    // spawn's template under the rail tool, and the open row under the
-    // Creatures or Game Objects workspace. See [`Focus`].
-    let creature_focus = Focus::creature(tool, &editing.creatures, &session.server_edits);
-    let object_focus = Focus::object(tool, &editing.objects, &session.server_edits);
-
-    // The quest window of a creature or a game object, on the root context
-    // for the same reason. It follows the selection as the template window
-    // does: it shows the chosen holder's quests, so selecting another holder
-    // shows that one's. It is drawn only under the creature and game object
-    // tools and their workspaces; elsewhere the same rows are edited
-    // in the quest workspace.
-    let holder = match (&creature_focus, &object_focus) {
-        (Some(focus), _) => Some((
-            crate::tools::quests::Holder::Creature,
-            focus.entry,
-            focus.label.clone(),
-            quests::HolderIs::Creature {
-                npc_flags: focus.npc_flags,
-                template_key: focus.template_key.clone(),
-            },
-        )),
-        (None, Some(focus)) => Some((
-            crate::tools::quests::Holder::Object,
-            focus.entry,
-            focus.label.clone(),
-            quests::HolderIs::Object {
-                kind: focus.object.as_ref().map(|known| known.kind).unwrap_or(0),
-                template_key: focus.template_key.clone(),
-            },
-        )),
-        (None, None) => None,
-    };
-    if let Some((kind, entry, label, is)) = holder {
-        if editing.quests.window_for.is_some() {
-            editing.quests.window_for = Some((kind, entry, label));
-        }
-        let quest_window = quests::holder_window(
-            ctx,
-            quests::HolderQuests {
-                session,
-                quests: &mut editing.quests,
-                assets: &assets,
-                is,
-                switch_to,
-                thumbnails: &mut editing.thumbnails,
-                now,
-            },
-        );
-        floating.extend(quest_window);
-    }
-    // The loot window of a creature, a game object or an item, on the root
-    // context for the same reason, following the selection as the quest
-    // window does. Its subject is rebuilt here every frame it is open, from
-    // the selection with the project's edits applied, so a `loot_id` typed
-    // into the template form changes the tab on the next frame. See
-    // [`crate::tools::loot::Window`].
-    let mut fixes: Vec<Option<loot::Fix>> = Vec::new();
-    let described = match tool {
-        Tool::Creatures | Tool::CreatureData => creature_focus.as_ref().map(|spawn| {
-                let key = spawn.template_key.clone();
-                let template = editing
-                    .creatures
-                    .template
-                    .as_ref()
-                    .filter(|held| held.entry == spawn.entry);
-                let column = |name: &str| -> Option<u32> {
-                    use vale_mangos::creature::RowValue;
-                    session
-                        .server_edits
-                        .get(vale_mangos::creature::TEMPLATE, &key, name)
-                        .and_then(|value| value.trim().parse::<i64>().ok())
-                        .or_else(|| template?.row.integer(name))
-                        .map(|value| value.max(0) as u32)
-                };
-                let sets = match template {
-                    None => Vec::new(),
-                    Some(_) => {
-                        let mut sets = Vec::new();
-                        for (table, name) in [
-                            (vale_mangos::loot::CREATURE, "loot_id"),
-                            (vale_mangos::loot::PICKPOCKETING, "pickpocket_loot_id"),
-                            (vale_mangos::loot::SKINNING, "skinning_loot_id"),
-                        ] {
-                            let entry = column(name).unwrap_or(0);
-                            sets.push(crate::tools::loot::Set::new(table, entry));
-                            fixes.push((entry == 0).then(|| loot::Fix {
-                                table: vale_mangos::creature::TEMPLATE,
-                                key: key.clone(),
-                                column: name,
-                                value: spawn.entry.to_string(),
-                                label: format!("Set {name} to {}", spawn.entry),
-                                about: format!(
-                                    "Write creature_template.{name} = {}, the convention \
-                                     the shipped rows follow. This is a creature edit: \
-                                     apply it from the Creatures block of the Server \
-                                     panel, then restart the server.",
-                                    spawn.entry
-                                ),
-                                gesture: "Edit creature",
-                            }));
-                        }
-                        sets
-                    }
-                };
-                crate::tools::loot::Window {
-                    title: spawn.label.clone(),
-                    about: match template {
-                        Some(_) => format!(
-                            "creature_template entry {}: every spawn of this creature drops this loot.",
-                            spawn.entry
-                        ),
-                        None => "reading the creature_template row\u{2026}".to_string(),
-                    },
-                    sets,
-                }
-            }),
-        Tool::GameObjects | Tool::GameObjectData => object_focus.as_ref().map(|spawn| {
-                let key = spawn.template_key.clone();
-                let known = spawn.object.as_ref();
-                let looted = known.is_some_and(|known| known.is_looted());
-                let entry = known.and_then(|known| known.loot()).unwrap_or(0);
-                if looted {
-                    fixes.push((entry == 0).then(|| loot::Fix {
-                        table: vale_mangos::gameobject::TEMPLATE,
-                        key: key.clone(),
-                        column: "data1",
-                        value: spawn.entry.to_string(),
-                        label: format!("Set lootId to {}", spawn.entry),
-                        about: format!(
-                            "Write gameobject_template.data1 = {}, the convention the \
-                             shipped rows follow. This is a game object edit: apply it from \
-                             the Objects block of the Server panel, then restart the \
-                             server.",
-                            spawn.entry
-                        ),
-                        gesture: "Edit game object",
-                    }));
-                }
-                crate::tools::loot::Window {
-                    title: spawn.label.clone(),
-                    about: match (known, looted) {
-                        (None, _) => "No gameobject_template row at this content patch.".to_string(),
-                        (Some(known), false) => format!(
-                            "type is {}, which has no loot: the server reads lootId only for \
-                             chests and fishing holes.",
-                            known.type_word()
-                        ),
-                        (Some(_), true) => format!(
-                            "gameobject_template entry {}: every spawn of this object contains this loot.",
-                            spawn.entry
-                        ),
-                    },
-                    sets: match looted {
-                        true => vec![crate::tools::loot::Set::new(vale_mangos::loot::GAMEOBJECT, entry)],
-                        false => Vec::new(),
-                    },
-                }
-            }),
-        Tool::Items => editing.items.open_item(&session.server_edits).map(|known| {
-            use vale_mangos::item::RowValue;
-            let key = known.key();
-            let disenchant = session
-                .server_edits
-                .get(vale_mangos::item::TEMPLATE, &key, "disenchant_id")
-                .and_then(|value| value.trim().parse::<i64>().ok())
-                .or_else(|| {
-                    editing
-                        .items
-                        .row
-                        .as_ref()
-                        .filter(|held| held.entry == known.entry)
-                        .and_then(|held| held.row.integer("disenchant_id"))
-                })
-                .map(|value| value.max(0) as u32);
-            // `ITEM_FLAG_LOOTABLE`, the bit `LoadLootTemplates_Item` reads.
-            const LOOTABLE: u32 = 0x4;
-            fixes.push((known.flags & LOOTABLE == 0).then(|| loot::Fix {
-                table: vale_mangos::item::TEMPLATE,
-                key: key.clone(),
-                column: "flags",
-                value: (known.flags | LOOTABLE).to_string(),
-                label: "Set LOOTABLE".to_string(),
-                about: "Add LOOTABLE (0x4) to item_template.flags. With this flag the client \
-                        offers to open the item and the server reads this loot set. This is \
-                        an item edit: apply it from the Items block of the Server panel; it \
-                        is live after .reload item_template."
-                    .to_string(),
-                gesture: "Edit item",
-            }));
-            fixes.push(None);
-            let mut sets = vec![crate::tools::loot::Set::new(vale_mangos::loot::ITEM, known.entry)];
-            match disenchant {
-                Some(disenchant) => {
-                    sets.push(crate::tools::loot::Set::new(vale_mangos::loot::DISENCHANT, disenchant));
-                }
-                None => {
-                    fixes.pop();
-                }
-            }
-            crate::tools::loot::Window {
-                title: known.label(),
-                about: match known.flags & LOOTABLE == 0 {
-                    true => format!(
-                        "item_template entry {}: flags has no LOOTABLE bit, so the server \
-                         reads no item_loot_template for it and the client will not open it.",
-                        known.entry
-                    ),
-                    false => format!("item_template entry {}: opening the item gives this loot.", known.entry),
-                },
-                sets,
-            }
-        }),
-        _ => None,
-    };
-    editing.loot.window = described;
-    let loot_window = loot::window(
-        ctx,
-        loot::Subject {
-            session,
-            loot: &mut editing.loot,
-            quests: &mut editing.quests,
-            items: &mut editing.items,
-            assets: &assets,
-            thumbnails: &mut editing.thumbnails,
-            fixes,
-            now,
-        },
-    );
-    floating.extend(loot_window);
-
-    // The behaviour windows of a creature, on the root context for the same
-    // reason. Their subject is rebuilt each frame from the selection with the
-    // project's edits over it, so `ai_name` or `spell_list_id` typed into the
-    // template form changes the window on the next frame. Drawn under the
-    // creature tool only; the windows keep their open flags across tools.
-    editing.behaviour.about = match tool {
-        Tool::Creatures | Tool::CreatureData => creature_focus.as_ref().map(|spawn| {
-                let key = spawn.template_key.clone();
-                let template = editing
-                    .creatures
-                    .template
-                    .as_ref()
-                    .filter(|held| held.entry == spawn.entry);
-                let column = |name: &str| -> String {
-                    use vale_mangos::creature::RowValue;
-                    session
-                        .server_edits
-                        .get(vale_mangos::creature::TEMPLATE, &key, name)
-                        .map(|value| super::ui::rowform::unquote(value))
-                        .or_else(|| template.and_then(|held| held.row.text(name).map(str::to_string)))
-                        .unwrap_or_default()
-                };
-                crate::tools::behaviour::About {
-                    entry: spawn.entry,
-                    label: spawn.label.clone(),
-                    template_key: key.clone(),
-                    spell_list_id: column("spell_list_id").trim().parse().unwrap_or(0),
-                    ai_name: column("ai_name"),
-                }
-            }),
-        _ => None,
-    };
-    // The Vendor and Trainer windows of a creature, on the same terms: the
-    // subject is rebuilt each frame from the selection with the project's
-    // edits over the template row, so a `vendor_id`, a `trainer_id` or
-    // `npc_flags` typed into the template form changes the window on the next
-    // frame.
-    editing.services.about = match tool {
-        Tool::Creatures | Tool::CreatureData => creature_focus.as_ref().and_then(|spawn| {
-                let key = spawn.template_key.clone();
-                let template = editing
-                    .creatures
-                    .template
-                    .as_ref()
-                    .filter(|held| held.entry == spawn.entry)?;
-                let column = |name: &str| -> u32 {
-                    use vale_mangos::creature::RowValue;
-                    session
-                        .server_edits
-                        .get(vale_mangos::creature::TEMPLATE, &key, name)
-                        .and_then(|value| value.trim().parse::<i64>().ok())
-                        .or_else(|| template.row.integer(name))
-                        .map_or(0, |value| value.max(0) as u32)
-                };
-                Some(crate::tools::services::About {
-                    entry: spawn.entry,
-                    label: spawn.label.clone(),
-                    template_key: key.clone(),
-                    npc_flags: column("npc_flags"),
-                    vendor_id: column("vendor_id"),
-                    trainer_id: column("trainer_id"),
-                    trainer_type: column("trainer_type"),
-                    trainer_class: column("trainer_class"),
-                    trainer_race: column("trainer_race"),
-                    trainer_spell: column("trainer_spell"),
-                })
-            }),
-        _ => None,
-    };
-    // The gossip window follows the selected creature on the same terms, and
-    // stays open on a menu opened by number under any tool. The texts it
-    // shows are read by the behaviour tool, which holds `broadcast_text`.
-    editing.gossip.about = match tool {
-        Tool::Creatures | Tool::CreatureData => editing.services.about.as_ref().map(|services| {
-            let template = editing
-                .creatures
-                .template
-                .as_ref()
-                .filter(|held| held.entry == services.entry);
-            let gossip_menu_id = {
-                use vale_mangos::creature::RowValue;
-                session
-                    .server_edits
-                    .get(vale_mangos::creature::TEMPLATE, &services.template_key, "gossip_menu_id")
-                    .and_then(|value| value.trim().parse::<i64>().ok())
-                    .or_else(|| template.and_then(|held| held.row.integer("gossip_menu_id")))
-                    .map_or(0, |value| value.max(0) as u32)
-            };
-            crate::tools::gossip::About {
-                entry: services.entry,
-                label: services.label.clone(),
-                template_key: services.template_key.clone(),
-                gossip_menu_id,
-                npc_flags: services.npc_flags,
-                at: creature_focus.as_ref().and_then(|focus| focus.at),
-            }
-        }),
-        _ => None,
-    };
-    editing.behaviour.other_texts = match editing.gossip.open {
-        true => editing.gossip.broadcast_texts(&session.server_edits),
-        false => Vec::new(),
-    };
-    editing.behaviour.numbering_texts = editing.gossip.open || editing.gossip.numbering;
-    gossip::make_pending(session, &mut editing.gossip, &mut editing.behaviour, now);
-    let gossip_window = gossip::window(
-        ctx,
-        gossip::Subject {
-            session,
-            gossip: &mut editing.gossip,
-            behaviour: &mut editing.behaviour,
-            quests: &mut editing.quests,
-            now,
-        },
-    );
-    floating.extend(gossip_window);
-    let condition_window = conditions::window(
-        ctx,
-        conditions::Subject {
-            session,
-            conditions: &mut editing.conditions,
-            quests: &mut editing.quests,
-            assets: &assets,
-            thumbnails: &mut editing.thumbnails,
-            now,
-        },
-    );
-    floating.extend(condition_window);
-    if matches!(tool, Tool::Creatures | Tool::CreatureData) {
-        let service_windows = services::windows(
-            ctx,
-            services::Subject {
-                session,
-                services: &mut editing.services,
-                quests: &mut editing.quests,
-                items: &mut editing.items,
-                assets: &assets,
-                thumbnails: &mut editing.thumbnails,
-                now,
-            },
-        );
-        floating.extend(service_windows);
-    }
-    // The script window also opens from a trigger's script id, and from the
-    // gossip window's script columns under any tool.
-    if matches!(tool, Tool::Creatures | Tool::CreatureData | Tool::Triggers)
-        || editing.gossip.open
-    {
-        let behaviour_windows = behaviour::windows(
-            ctx,
-            behaviour::Subject {
-                session,
-                behaviour: &mut editing.behaviour,
-                quests: &mut editing.quests,
-                assets: &assets,
-                thumbnails: &mut editing.thumbnails,
-                now,
-            },
-        );
-        floating.extend(behaviour_windows);
-    }
-    floating
 }
 
 /// The key in a window's egui memory that says whether it was the window last
@@ -1956,7 +1238,7 @@ fn areas_over_the_world(ctx: &egui::Context) -> Vec<egui::Rect> {
 fn bar(fill: egui::Color32) -> Frame {
     Frame::default()
         .fill(fill)
-        .stroke(Stroke::new(1.0, theme::LINE))
+        .stroke(Stroke::new(1.0, widgets::theme::LINE))
         .inner_margin(Margin::symmetric(8, 5))
 }
 
@@ -1964,84 +1246,8 @@ fn bar(fill: egui::Color32) -> Frame {
 fn side(fill: egui::Color32) -> Frame {
     Frame::default()
         .fill(fill)
-        .stroke(Stroke::new(1.0, theme::LINE))
+        .stroke(Stroke::new(1.0, widgets::theme::LINE))
         .inner_margin(Margin::symmetric(8, 4))
-}
-
-/// The creature or game object template the windows that follow a selection
-/// (quests, loot, events, spells, gossip, vendor, trainer) are about.
-///
-/// Under the creature and game object tools it is the selected spawn's
-/// template; under the Creatures and Game Objects workspaces it is the
-/// open row. The windows'
-/// subjects are built from this, so each window works the same from either.
-struct Focus {
-    entry: u32,
-    label: String,
-    template_key: vale_mangos::row::Key,
-    /// `npc_flags`, for the creature's quest and service windows.
-    npc_flags: u32,
-    /// Where the spawn stands, for the gossip window. `None` for a template
-    /// opened in the workspace.
-    at: Option<[f32; 2]>,
-    /// The game object's brief row, for the quest window's type check and the
-    /// loot window's loot column. `None` for a creature, and for a spawn
-    /// whose template row is missing.
-    object: Option<crate::tools::gameobjects::Known>,
-}
-
-impl Focus {
-    fn creature(
-        tool: Tool,
-        creatures: &crate::tools::creatures::Creatures,
-        edits: &vale_mangos::row::Edits,
-    ) -> Option<Self> {
-        match tool {
-            Tool::Creatures => creatures.chosen_edited(Some(edits)).map(|spawn| Focus {
-                entry: spawn.entry,
-                label: spawn.label(),
-                template_key: spawn.template_key(),
-                npc_flags: spawn.npc_flags,
-                at: Some([spawn.at.x, spawn.at.y]),
-                object: None,
-            }),
-            Tool::CreatureData => creatures.listed.open_row(edits).map(|known| Focus {
-                entry: known.entry,
-                label: known.label(),
-                template_key: known.key(),
-                npc_flags: known.npc_flags,
-                at: None,
-                object: None,
-            }),
-            _ => None,
-        }
-    }
-
-    fn object(
-        tool: Tool,
-        objects: &crate::tools::gameobjects::GameObjects,
-        edits: &vale_mangos::row::Edits,
-    ) -> Option<Self> {
-        match tool {
-            Tool::GameObjects => objects.chosen_edited(Some(edits)).map(|spawn| Focus {
-                entry: spawn.entry,
-                label: spawn.label(),
-                template_key: spawn.template_key(),
-                npc_flags: 0,
-                at: Some([spawn.at.x, spawn.at.y]),
-                object: spawn.known.clone(),
-            }),
-            Tool::GameObjectData => objects.listed.open_row(edits).map(|known| Focus {
-                entry: known.entry,
-                label: known.label(),
-                template_key: known.key(),
-                npc_flags: 0,
-                at: None,
-                object: Some(known),
-            }),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -2224,8 +1430,8 @@ fn playtest_bar(
         .resizable(false)
         .frame(
             Frame::default()
-                .fill(theme::SHELL)
-                .stroke(Stroke::new(1.0, theme::LINE))
+                .fill(widgets::theme::SHELL)
+                .stroke(Stroke::new(1.0, widgets::theme::LINE))
                 .corner_radius(CornerRadius::same(4))
                 .inner_margin(Margin::symmetric(10, 5)),
         )
@@ -2234,16 +1440,16 @@ fn playtest_bar(
             ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new("PLAYTEST")
-                        .color(theme::GOOD)
-                        .size(theme::SMALL),
+                        .color(widgets::theme::GOOD)
+                        .size(widgets::theme::SMALL),
                 );
                 ui.label(
                     egui::RichText::new(match *state {
                         Playtest::Playing => "in the world",
                         _ => "logging in",
                     })
-                    .size(theme::SMALL)
-                    .color(theme::INK_FAINT),
+                    .size(widgets::theme::SMALL)
+                    .color(widgets::theme::INK_FAINT),
                 );
                 // The panels are reachable from a button as well as a key,
                 // because a function reachable only from a shortcut is not

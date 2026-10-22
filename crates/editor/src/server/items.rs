@@ -27,7 +27,7 @@
 //! cannot.
 //!
 //! An item change is applied from the Server panel, or by a save when the
-//! switch is on, through [`crate::server::save`] and [`crate::ui::sync`]. Every
+//! switch is on, through [`crate::server::save`] and [`crate::ui::shell::sync`]. Every
 //! other subject here uses the same two entry points.
 //!
 //! [`apply`] asks for that reload itself. The request is kept when the apply
@@ -223,7 +223,7 @@ pub fn plan_from(edits: &vale_mangos::row::Edits) -> Plan {
             };
             // A key column is what the `WHERE` names and is never a column of
             // an edit. An item's entry is changed by re-keying its claim (see
-            // `crate::tools::items::Items::rekey`), and a store written before
+            // `crate::subjects::items::Items::rekey`), and a store written before
             // that held the move as a column is read back as a re-key. A key
             // column here was therefore typed into the store by hand.
             if !known.editable() {
@@ -688,17 +688,17 @@ impl OnTheServer {
 }
 
 /// Runs `--apply-items` and `--revert-items`, the command-line forms of the
-/// workspace's two buttons. See [`crate::Args::apply_items`].
+/// workspace's two buttons. See [`crate::args::Args::apply_items`].
 ///
 /// Fires once, on the first frame there is a session to read the project out
 /// of, and after any scripted edit has landed. A flag that fired repeatedly
 /// would re-apply after every save.
 pub fn on_the_command_line(
-    args: Res<crate::Args>,
+    args: Res<crate::args::Args>,
     session: Option<ResMut<EditSession>>,
     server: Res<super::settings::ServerSettings>,
     mut reloads: ResMut<super::reload::Reloads>,
-    items: Res<crate::tools::items::Items>,
+    items: Res<crate::subjects::items::Items>,
     mut done: Local<bool>,
 ) {
     if *done || !(args.apply_items || args.revert_items) {

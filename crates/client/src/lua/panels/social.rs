@@ -83,6 +83,7 @@ use vale_assets::tables::area::Areas;
 use vale_assets::tables::charcreate::CharCreate;
 use vale_protocol::play::social::{Friend, WhoRow};
 use vale_protocol::socket::session::SocialVerb;
+use crate::lua::host::LuaHost;
 
 /// The **unscoped reads and writes** this file registers, sorted — the same list
 /// [`super::super::api::READS`] is for the scoped ones.
@@ -435,7 +436,9 @@ pub type Held = Rc<RefCell<Social>>;
 pub type Queue = Rc<RefCell<Vec<SocialVerb>>>;
 
 /// Register all eighteen. Unscoped — see the module comment.
-pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let held: &Held = &super::stored(lua);
+    let queue: &Queue = &super::stored(lua);
     let globals = lua.globals();
 
     let get = Rc::clone(held);
@@ -700,6 +703,18 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held, queue: &Queue) -> m
     Ok(())
 }
 
+/// The social panel's board.
+/// One caller, [`crate::interface::social`], which writes the server's
+/// answers into it and reads what the panel asked for.
+pub fn held(host: &LuaHost) -> Held {
+    super::stored(host.state())
+}
+
+/// Take and clear the social panel's six verbs that send a packet.
+pub fn take(host: &LuaHost) -> Vec<vale_protocol::socket::session::SocialVerb> {
+    super::taken(host)
+}
+
 /// A one-based row of the ignore list, as a free function so that
 /// [`guid_of`] can take the two lists' lookups the same way.
 fn ignore_guid_at(board: &Social, index: usize) -> Option<u64> {
@@ -905,7 +920,9 @@ mod tests {
         let held: Held = Rc::new(RefCell::new(board()));
         let queue: Queue = Rc::new(RefCell::new(Vec::new()));
         let lua = mlua::Lua::new();
-        register(&lua, &held, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&held));
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         (held, queue, lua)
     }
 
@@ -922,7 +939,7 @@ mod tests {
             .filter_map(Result::ok)
             .map(|(name, _)| name)
             .collect();
-        register(&lua, &Rc::default(), &Rc::new(RefCell::new(Vec::new()))).expect("registers");
+        register(&lua).expect("registers");
         let after: std::collections::BTreeSet<String> = lua
             .globals()
             .pairs::<String, mlua::Value>()

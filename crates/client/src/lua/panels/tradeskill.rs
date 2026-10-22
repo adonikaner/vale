@@ -114,40 +114,42 @@ pub const READS: [&str; 25] = [
 pub trait TradeSkillAnswers {
     /// `GetTradeSkillLine` — `None` while no window is open, which draws the
     /// title empty exactly as the reference's `line 0` path does.
-    fn trade_line(&self) -> Option<(String, u32, u32)>;
-    fn trade_rows(&self) -> usize;
-    fn trade_row(&self, index: usize) -> Option<TradeRow>;
-    fn trade_first(&self) -> usize;
-    fn trade_selection(&self) -> usize;
-    fn trade_select(&self, index: usize);
+    fn trade_line(&self) -> Option<(String, u32, u32)> { None }
+    fn trade_rows(&self) -> usize { 0 }
+    fn trade_row(&self, _index: usize) -> Option<TradeRow> { None }
+    fn trade_first(&self) -> usize { 0 }
+    fn trade_selection(&self) -> usize { 0 }
+    fn trade_select(&self, _index: usize) {}
     /// The collapses — index 0 is all of them.
-    fn trade_set_expanded(&self, index: usize, expanded: bool);
-    fn trade_icon(&self, index: usize) -> Option<String>;
+    fn trade_set_expanded(&self, _index: usize, _expanded: bool) {}
+    fn trade_icon(&self, _index: usize) -> Option<String> { None }
     /// Seconds remaining on the recipe's own cooldown, `None` for ready —
     /// which is the nil `TradeSkillFrame_SetSelection` branches on.
-    fn trade_cooldown(&self, index: usize) -> Option<f64>;
-    fn trade_num_made(&self, index: usize) -> (i32, i32);
-    fn trade_num_reagents(&self, index: usize) -> usize;
+    fn trade_cooldown(&self, _index: usize) -> Option<f64> { None }
+    fn trade_num_made(&self, _index: usize) -> (i32, i32) { Default::default() }
+    fn trade_num_reagents(&self, _index: usize) -> usize { 0 }
     /// `(name, texture, need, have)` — the first two `None` while the item
     /// template is a round trip away, which hides the button exactly as the
     /// reference's cold cache does.
-    fn trade_reagent(&self, index: usize, reagent: usize)
-        -> Option<(Option<String>, Option<String>, u32, u32)>;
-    fn trade_reagent_link(&self, index: usize, reagent: usize) -> Option<String>;
-    fn trade_item_link(&self, index: usize) -> Option<String>;
+    fn trade_reagent(&self, _index: usize, _reagent: usize)
+        -> Option<(Option<String>, Option<String>, u32, u32)> {
+        None
+    }
+    fn trade_reagent_link(&self, _index: usize, _reagent: usize) -> Option<String> { None }
+    fn trade_item_link(&self, _index: usize) -> Option<String> { None }
     /// `(name, have)` pairs for the Requires line.
-    fn trade_tools(&self, index: usize) -> Vec<(String, bool)>;
-    fn trade_repeat_count(&self) -> u32;
-    fn trade_subclasses(&self) -> Vec<String>;
-    fn trade_subclass_filter(&self, index: usize) -> bool;
-    fn trade_set_subclass_filter(&self, index: usize, on: bool, exclusive: bool);
+    fn trade_tools(&self, _index: usize) -> Vec<(String, bool)> { Vec::new() }
+    fn trade_repeat_count(&self) -> u32 { 0 }
+    fn trade_subclasses(&self) -> Vec<String> { Vec::new() }
+    fn trade_subclass_filter(&self, _index: usize) -> bool { false }
+    fn trade_set_subclass_filter(&self, _index: usize, _on: bool, _exclusive: bool) {}
     /// The row's spell and its numAvailable, for `DoTradeSkill`'s clamp.
-    fn trade_recipe(&self, index: usize) -> Option<(u32, u32)>;
-    fn trade_close(&self);
+    fn trade_recipe(&self, _index: usize) -> Option<(u32, u32)> { None }
+    fn trade_close(&self) {}
     /// The entry `GameTooltip:SetTradeSkillItem` plates — the created item,
     /// or with a reagent index that reagent. `None` conceals, which is also
     /// what an enchant's created-nothing answers.
-    fn trade_tip_item(&self, index: usize, reagent: Option<usize>) -> Option<u32>;
+    fn trade_tip_item(&self, _index: usize, _reagent: Option<usize>) -> Option<u32> { None }
 }
 
 /// Register all twenty-five into the scope.

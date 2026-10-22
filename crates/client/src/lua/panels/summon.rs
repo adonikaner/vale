@@ -37,10 +37,9 @@ impl SummonAnswers for super::super::api::Live<'_, '_, '_> {
         let Some(guid) = self.summon.summoner() else {
             return String::new();
         };
-        self.world
-            .as_ref()
-            .and_then(|world| {
-                world
+        self.live
+            .and_then(|live| {
+                live.world()
                     .lock()
                     .ok()
                     .and_then(|world| world.players.get(&guid).map(|player| player.name.clone()))

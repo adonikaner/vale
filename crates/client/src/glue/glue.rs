@@ -246,8 +246,8 @@ fn apply(
     mut selected: MessageWriter<crate::interface::events::UpdateSelectedCharacter>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    let Some(mut host) = host else { return };
-    for request in host.take_glue_requests() {
+    let Some(host) = host else { return };
+    for request in crate::lua::panels::glue::take(&host) {
         match request {
             GlueRequest::Login { account, password } => {
                 // The typed account replaces the one the folder seeded, for
@@ -459,7 +459,7 @@ fn plinth_for(row: &vale_protocol::socket::world::CharListEntry) -> Plinth {
 /// `directory` keeps the record correct across a logout. The events are
 /// delivered to whichever interface is loaded at the time, and leaving the
 /// world discards the whole Lua state and loads the other directory into a new
-/// one; see `crate::lua::host::unload_interface`. A record of what was told
+/// one; see `crate::lua::load::unload_interface`. A record of what was told
 /// applies only to the interface that received it. Once that interface has been
 /// replaced, the record would suppress an announcement the new interface needs.
 #[derive(Default)]

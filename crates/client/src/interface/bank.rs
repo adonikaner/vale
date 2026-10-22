@@ -152,8 +152,8 @@ fn presses(
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
     mut out: MessageWriter<BankPress>,
 ) {
-    let Some(mut host) = host else { return };
-    for press in host.take_bank_presses() {
+    let Some(host) = host else { return };
+    for press in crate::lua::panels::bank::take(&host) {
         out.write(press);
     }
 }

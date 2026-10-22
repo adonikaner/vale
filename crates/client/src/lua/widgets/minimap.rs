@@ -368,7 +368,7 @@ pub(super) fn widget(frame: &mlua::Table) -> Option<MinimapWidget> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lua::api::tests::Stub;
+    use crate::lua::api::stub::Stub;
     use crate::lua::host::LuaHost;
 
     /// Runs the calls `Minimap_ZoomInClick` makes, including the comparison

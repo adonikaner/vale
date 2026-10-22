@@ -21,7 +21,7 @@
 //! Every write goes through the session under one gesture, so the move and
 //! everything that followed it are one entry on the undo stack.
 
-use crate::session::{EditSession, Gesture};
+use crate::session::{EditSession, rows::Gesture};
 use vale_mangos::row::{Edits, Key, Reference, RowEdit};
 
 /// **Re-key one row's claim and make the project's own references follow.**

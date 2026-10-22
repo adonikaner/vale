@@ -108,7 +108,8 @@ fn say_lines(
             }
             NoticeAnswer::ZoneUnderAttack { area } => {
                 let Some(host) = host.as_deref() else { continue };
-                let board = host.channels().borrow();
+                let channels = crate::lua::panels::channels::held(&host);
+                let board = channels.borrow();
                 let Some(areas) = board.areas.clone() else { continue };
                 // An area the table does not carry shows nothing.
                 let (Some(zone), Some(row)) =
@@ -126,7 +127,8 @@ fn say_lines(
             }
             NoticeAnswer::DefenseMessage { zone, text } => {
                 let Some(host) = host.as_deref() else { continue };
-                let board = host.channels().borrow();
+                let channels = crate::lua::panels::channels::held(&host);
+                let board = channels.borrow();
                 // The packet's zone, or its parent when the table has one.
                 let zone = board
                     .areas

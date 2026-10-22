@@ -59,9 +59,9 @@ use crate::world::session::Session;
 /// `LiveSession::take_events`.
 ///
 /// The same shape — and the same reason — as `PlayerEvent::LevelUp` reaching
-/// [`super::action::drain_events`]: that queue has exactly one reader, so
-/// anything else that wants the news is handed it as a message rather than
-/// draining the queue a second time and stealing half of it.
+/// [`crate::world::incoming::drain_events`]: that queue has exactly one
+/// reader, so anything else that wants the news is handed it as a message
+/// rather than draining the queue a second time and stealing half of it.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct LogoutAnswer(pub Logout);
 

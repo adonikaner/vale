@@ -67,7 +67,7 @@ impl Plugin for CharCreatePlugin {
 /// interface.
 ///
 /// Per *interface* rather than once at startup because
-/// `crate::lua::host::unload_interface` replaces the whole host — board included
+/// `crate::lua::load::unload_interface` replaces the whole host — board included
 /// — every time the directory swaps, and a client that logs out and back to the
 /// character screen would otherwise find a create screen with no races on it.
 /// The parse behind [`crate::assets::GameAssets::char_create`] is cached, so the
@@ -76,14 +76,14 @@ fn supply_tables(
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
     assets: Res<crate::assets::GameAssets>,
 ) {
-    let Some(mut host) = host else { return };
+    let Some(host) = host else { return };
     // Only while the glue is the loaded directory: `Interface\FrameXML\` calls
     // none of these names, and opening the archives to answer a question nobody
     // is asking is what the lazy banks exist to avoid.
-    if host.directory() != Some(crate::lua::host::Directory::Glue) || host.char_create_ready() {
+    if host.directory() != Some(crate::lua::host::Directory::Glue) || crate::lua::panels::charcreate::ready(&host) {
         return;
     }
-    host.set_char_create_tables(assets.char_create());
+    crate::lua::panels::charcreate::set_tables(&host, assets.char_create());
 }
 
 /// **Do what Accept asked**, which is one packet and one round trip.
@@ -95,10 +95,10 @@ fn apply(
     mut list: MessageWriter<crate::interface::events::CharacterListUpdate>,
     mut selected: MessageWriter<crate::interface::events::UpdateSelectedCharacter>,
 ) {
-    let Some(mut host) = host else { return };
-    for request in host.take_create_requests() {
+    let Some(host) = host else { return };
+    for request in crate::lua::panels::charcreate::take(&host) {
         let CreateRequest::Create(name) = request;
-        let choice = host.char_create_choice();
+        let choice = crate::lua::panels::charcreate::choice(&host);
         // **Cleared before the attempt**, and that is not tidiness:
         // `glue::glue::watch_dialog` raises its box on a *change* of
         // `Session::error`, so a second Accept refused the same way as the first
@@ -175,7 +175,7 @@ fn stand_on_plinth(
         }
         return;
     }
-    let choice = host.char_create_choice();
+    let choice = crate::lua::panels::charcreate::choice(&host);
     let mut weapons: [vale_assets::tables::item::Weapon; 3] = Default::default();
     let mut equipment = Vec::new();
     for piece in choice.outfit.iter().filter(|p| !p.is_ranged()) {

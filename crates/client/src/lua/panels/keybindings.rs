@@ -63,6 +63,7 @@ use std::sync::Arc;
 
 use vale_assets::interface::bindings::{BindingRow, Bindings};
 use vale_assets::interface::keys;
+use crate::lua::host::LuaHost;
 
 /// The **unscoped reads and writes** this file registers, sorted — the same
 /// list [`super::super::api::READS`] is for the scoped ones.
@@ -135,7 +136,7 @@ pub struct Keys {
     /// **Has anything filled the three saved sets yet?**
     ///
     /// The flag exists because the board does not outlive a session: logging
-    /// out replaces the whole `LuaHost` (`lua::host::unload_interface`), so the
+    /// out replaces the whole `LuaHost` (`lua::load::unload_interface`), so the
     /// next login gets a *fresh* board with three empty sets. A one-shot kept
     /// on the ECS side instead — which is what this had — never fires again,
     /// and the second character of a session logs in with **every key
@@ -323,7 +324,8 @@ impl Keys {
 pub type Held = Rc<RefCell<Keys>>;
 
 /// Register all eight. Unscoped — see the module comment.
-pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let held: &Held = &super::stored(lua);
     let globals = lua.globals();
 
     let get = Rc::clone(held);
@@ -494,6 +496,16 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held) -> mlua::Result<()>
     Ok(())
 }
 
+/// The key table.
+///
+/// Two callers: `crate::input::bindings`, which reads the live set to turn
+/// a keystroke into a binding name, and `crate::settings::keybindings`,
+/// which fills the saved sets from the two files at login and writes them
+/// back at logout.
+pub fn held(host: &LuaHost) -> Held {
+    super::stored(host.state())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,7 +526,8 @@ mod tests {
         held.borrow_mut()
             .set_declarations(Arc::new(Bindings::parse(SAMPLE)));
         let lua = mlua::Lua::new();
-        register(&lua, &held).expect("the eight register");
+        lua.set_app_data(std::rc::Rc::clone(&held));
+        register(&lua).expect("the eight register");
         (held, lua)
     }
 
@@ -720,9 +733,9 @@ mod tests {
     /// installed by the host.
     #[test]
     fn run_binding_runs_the_declarations_body_on_the_edge_it_is_given() {
-        use crate::lua::api::tests::Stub;
+        use crate::lua::api::stub::Stub;
         let host = crate::lua::host::LuaHost::new().expect("the interpreter starts");
-        host.keybindings()
+        crate::lua::panels::keybindings::held(&host)
             .borrow_mut()
             .set_declarations(Arc::new(Bindings::parse(SAMPLE)));
         let world = Stub::default();
@@ -803,7 +816,8 @@ mod tests {
     fn no_declarations_is_an_empty_list() {
         let held: Held = Rc::default();
         let lua = mlua::Lua::new();
-        register(&lua, &held).unwrap();
+        lua.set_app_data(std::rc::Rc::clone(&held));
+        register(&lua).unwrap();
         assert_eq!(lua.load("return GetNumBindings()").eval::<usize>().unwrap(), 0);
         assert!(lua
             .load("return GetBinding(1)")

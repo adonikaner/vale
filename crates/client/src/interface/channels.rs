@@ -40,21 +40,22 @@
 //! ## The first notices arrive before there is a chat frame
 //!
 //! The joins go out the moment the world is entered, and the interface
-//! loads about a second later; a `CHAT_MSG_CHANNEL_NOTICE` raised into an
-//! interface that is not there yet expires, which is why the first version
-//! of this showed no `Joined Channel` lines at all. The lines are held on
-//! the same rule `chat::route` holds the server's own login burst, and
-//! delivered in order once the frame directory is up.
+//! loads about a second later. A `CHAT_MSG_CHANNEL_NOTICE` raised before
+//! the interface has loaded expires, and no `Joined Channel` line is shown.
+//! The lines are therefore held by the same rule `chat::route` uses for the
+//! server's own login burst, and delivered in order once the frame
+//! directory is up.
 //!
 //! ## A notice about a person carries a guid
 //!
 //! The interface wants a name in `arg2`, and a channel member need not be
-//! anywhere near: the name comes from the object manager's players table
-//! when it has it, and is asked for through the same door the friends list
-//! uses (`want_social_guid`, which puts the guid on the next
-//! `CMSG_NAME_QUERY` round) when it does not. A notice waiting on a name is
-//! held for [`NAME_PATIENCE`] seconds and then raised with the name blank
-//! rather than dropped.
+//! anywhere near. The name comes from the object manager's players table
+//! when it has it. When it does not, the guid is queued on the same name
+//! query the friends list uses (`LiveSession::want_social_guid`, which puts
+//! the guid on the next `CMSG_NAME_QUERY` round); the names are read under
+//! the world lock and the misses are queued after it is released. A notice
+//! waiting on a name is held for [`NAME_PATIENCE`] seconds and then raised
+//! with the name blank rather than dropped.
 //!
 //! ## What the file keeps, and what is written back
 //!
@@ -152,7 +153,8 @@ fn load_cache(
     let account = config.0.account_for([Some(active.account.as_str())]);
     files.path = chatcache::path(&account, &active.realm, &world.character).map(|path| config.0.path(path));
     files.text = files.path.as_ref().and_then(|path| std::fs::read_to_string(path).ok());
-    let mut board = host.channels().borrow_mut();
+    let channels = crate::lua::panels::channels::held(&host);
+    let mut board = channels.borrow_mut();
     match &files.text {
         Some(text) => {
             let cache = chatcache::parse(text);
@@ -191,13 +193,14 @@ fn supply_tables(
     assets: Res<crate::assets::GameAssets>,
 ) {
     let Some(host) = host else { return };
-    if host.channels().borrow().table.is_some() {
+    if crate::lua::panels::channels::held(&host).borrow().table.is_some() {
         return;
     }
     let Ok(tables) = assets.display_tables() else {
         return;
     };
-    let mut board = host.channels().borrow_mut();
+    let channels = crate::lua::panels::channels::held(&host);
+    let mut board = channels.borrow_mut();
     board.table = tables.chat_channels().cloned().map(std::sync::Arc::new);
     board.areas = tables.areas().cloned().map(std::sync::Arc::new);
 }
@@ -226,12 +229,13 @@ fn auto_join(
     if !status.in_world || !files.loaded || place.area == 0 {
         return;
     }
-    let mut board = host.channels().borrow_mut();
+    let channels = crate::lua::panels::channels::held(&host);
+    let mut board = channels.borrow_mut();
     if board.table.is_none() {
         return;
     }
-    // The guild, off the character's own field — zero for none — read
-    // every time the area moves, which is as often as it can matter.
+    // The guild id from the character's own field (zero for none), read
+    // each time the area changes, which is the only time it is used.
     let in_guild = active
         .live
         .world()
@@ -316,15 +320,17 @@ fn apply_answers(
     };
     let listening = host.directory() == Some(crate::lua::host::Directory::Frame);
     let now = time.elapsed_secs();
-    let mut board = host.channels().borrow_mut();
+    let channels = crate::lua::panels::channels::held(&host);
+    let mut board = channels.borrow_mut();
     let arrived: Vec<Waiting> = answers
         .read()
         .map(|answer| Waiting { answer: answer.clone(), since: now })
         .collect();
     let queue: Vec<Waiting> = std::mem::take(&mut *waiting).into_iter().chain(arrived).collect();
-    // The names, through the world lock — taken once for the whole batch.
-    let world = session.active.as_ref().map(|active| active.live.world());
-    let mut names = Names { world: world.map(|world| &**world), asked: Vec::new() };
+    // The names are read through the world lock, one lock per name; the
+    // guids with no name are queued once the batch is decided.
+    let live = session.active.as_ref().map(|active| &active.live);
+    let mut names = Names { live, asked: Vec::new() };
     let mut lines = Vec::new();
     for item in queue {
         let patient = now - item.since < NAME_PATIENCE;
@@ -346,7 +352,7 @@ fn apply_answers(
 /// The names of the people a notice is about, and the guids it had to ask
 /// for.
 struct Names<'a> {
-    world: Option<&'a std::sync::Mutex<vale_protocol::state::objects::ObjectManager>>,
+    live: Option<&'a vale_protocol::socket::session::LiveSession>,
     asked: Vec<u64>,
 }
 
@@ -358,8 +364,8 @@ impl Names<'_> {
             return Some(String::new());
         }
         let known = self
-            .world
-            .and_then(|world| world.lock().ok())
+            .live
+            .and_then(|live| live.world().lock().ok())
             .and_then(|world| world.players.get(&guid).map(|info| info.name.clone()));
         if known.is_none() {
             self.asked.push(guid);
@@ -367,13 +373,11 @@ impl Names<'_> {
         known
     }
 
+    /// Queue every guid [`Self::of`] could not name for the next name query.
     fn ask(&mut self) {
-        if self.asked.is_empty() {
-            return;
-        }
-        if let Some(Ok(mut world)) = self.world.map(|world| world.lock()) {
+        if let Some(live) = self.live {
             for guid in self.asked.drain(..) {
-                world.want_social_guid(guid);
+                live.want_social_guid(guid);
             }
         }
     }
@@ -535,7 +539,8 @@ fn list_locally(
     mut chat: MessageWriter<ChatMessageReceived>,
 ) {
     let Some(host) = host else { return };
-    let mut board = host.channels().borrow_mut();
+    let channels = crate::lua::panels::channels::held(&host);
+    let mut board = channels.borrow_mut();
     if !board.list_wanted {
         return;
     }
@@ -551,8 +556,8 @@ fn list_locally(
 }
 
 fn send_verbs(host: Option<NonSendMut<crate::lua::host::LuaHost>>, session: Res<Session>) {
-    let Some(mut host) = host else { return };
-    let verbs = host.take_channel_verbs();
+    let Some(host) = host else { return };
+    let verbs = crate::lua::panels::channels::take(&host);
     if verbs.is_empty() {
         return;
     }
@@ -594,7 +599,8 @@ fn write_back(files: &ChatCacheFile, host: &crate::lua::host::LuaHost) {
     let (Some(path), Some(text)) = (files.path.as_ref(), files.text.as_ref()) else {
         return;
     };
-    let mut board = host.channels().borrow_mut();
+    let channels = crate::lua::panels::channels::held(&host);
+    let mut board = channels.borrow_mut();
     let mask = board.mask();
     let customs = board.custom_channels();
     drop(board);
@@ -642,8 +648,8 @@ mod tests {
     }
 
     /// Walking from Elwynn into Stormwind: General and LocalDefense change
-    /// name and keep their slots, Trade appears. Walking out again: Trade
-    /// is left for real.
+    /// name and keep their slots, and Trade is joined. Walking out again:
+    /// Trade is left and its slot freed.
     #[test]
     fn a_zone_change_is_a_leave_and_a_join_per_row_that_changed() {
         let mut board = board();
@@ -675,7 +681,7 @@ mod tests {
         board.joined_channel("Trade - City", 0);
         let held = board.zone_slots();
         assert!(zone_change(&mut board, &held, &wanted).is_empty());
-        // Leaving the city: Trade goes, for real.
+        // Leaving the city: Trade is left.
         let wanted = vec![want(1, "General - Stormwind City"), want(22, "LocalDefense - Stormwind City")];
         let held = board.zone_slots();
         assert_eq!(zone_change(&mut board, &held, &wanted), vec![ChannelVerb::Leave("Trade - City".into())]);
@@ -685,7 +691,7 @@ mod tests {
     #[test]
     fn a_you_joined_is_a_numbered_notice_and_a_change_when_it_replaces_the_row() {
         let mut board = board();
-        let mut names = Names { world: None, asked: Vec::new() };
+        let mut names = Names { live: None, asked: Vec::new() };
         let notify = ChannelNotify {
             notice: Notice::YouJoined,
             channel: "General - Elwynn Forest".into(),
@@ -719,7 +725,8 @@ mod tests {
         let lines = notice_lines(&mut board, &joined, &mut names, true).expect("decided");
         assert_eq!(lines[0].text, "YOU_CHANGED");
         assert_eq!(lines[0].channel, "1. General - Dun Morogh");
-        // …and a real leave says so and frees the slot.
+        // A leave on a slot that is not switching raises YOU_LEFT and frees
+        // the slot.
         let left = ChannelNotify { notice: Notice::YouLeft, channel: "General - Dun Morogh".into(), tail: NoticeTail::None };
         let lines = notice_lines(&mut board, &left, &mut names, true).expect("decided");
         assert_eq!(lines[0].text, "YOU_LEFT");
@@ -730,7 +737,7 @@ mod tests {
     fn a_notice_about_a_stranger_waits_for_the_name_and_then_gives_up() {
         let mut board = board();
         board.joined_channel("World", 0);
-        let mut names = Names { world: None, asked: Vec::new() };
+        let mut names = Names { live: None, asked: Vec::new() };
         let kicked = ChannelNotify {
             notice: Notice::PlayerKicked,
             channel: "World".into(),

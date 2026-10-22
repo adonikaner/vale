@@ -196,7 +196,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 
 #[cfg(test)]
 mod tests {
-    use crate::lua::api::tests::{eval, Stub};
+    use crate::lua::api::stub::{eval, Stub};
 
     /// The whole sheet's arithmetic in one line each, against a stub block —
     /// what matters here is the **arity and the order**, since every one of

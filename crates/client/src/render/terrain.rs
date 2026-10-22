@@ -899,7 +899,7 @@ const DESPAWNS_PER_FRAME: usize = 1;
 /// Take a tile out of the world now and despawn it later.
 ///
 /// A tile is a hierarchy of thousands of entities: its ground groups, water,
-/// foliage, doodads and buildings. A jump in the editor drops a 7x7 block, and
+/// foliage, doodads and buildings. A camera jump drops a 7x7 block, and
 /// despawning all of it in one frame was up to 75 ms of command application on
 /// the main thread (`request_tiles`' commands, in a per-system census of a
 /// five-stop `--tour`). Here the tile loses its [`TerrainTile`] component,
@@ -940,13 +940,14 @@ struct RetiredAssets {
 /// Take a despawning tile's own ground meshes and alpha atlas out of
 /// `Assets`, when they have a main-world copy.
 ///
-/// Under [`LiveEdits`] both keep their data in the main world (the editor
-/// writes into them), so despawning a tile left Bevy's `Assets::track_assets`
-/// to free them on the main thread in `PreUpdate`. A jump in the editor drops
-/// a 7x7 block at once, and that was a frame of up to 160 ms: every
-/// `track_assets` system holds the asset server's lock while it frees, so the
-/// others queue behind it. Taken out here, the handle drops later find nothing
-/// to free, and the data is freed on the task pool by [`drop_in_background`].
+/// Under [`LiveEdits`] both keep their data in the main world (a caller that
+/// rewrites a tile writes into them), so despawning a tile left Bevy's
+/// `Assets::track_assets` to free them on the main thread in `PreUpdate`. A
+/// camera jump drops a 7x7 block at once, and that was a frame of up to
+/// 160 ms: every `track_assets` system holds the asset server's lock while it
+/// frees, so the others queue behind it. Taken out here, the handle drops
+/// later find nothing to free, and the data is freed on the task pool by
+/// [`drop_in_background`].
 ///
 /// Only assets the tile owns alone are taken: the ground groups (one mesh
 /// each) and the atlas. Tileset textures are shared through a cache and have

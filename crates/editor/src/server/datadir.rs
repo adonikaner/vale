@@ -3,7 +3,7 @@
 //! callers. The dev-time buttons write the live `DataDir`, so a playtest walks
 //! on the edit after a server restart: *Regenerate changed tiles* on the
 //! Server panel, *Server files* on the map window, and `--regenerate`. A
-//! publish writes a patch folder; see [`super::patch`].
+//! publish writes a patch folder; see [`super::publish::patch`].
 //!
 //! ## Which tiles
 //!
@@ -201,7 +201,7 @@ impl TileReader {
             project: project.clone(),
             chains: assets.chains(),
             gamedata_dir: assets.gamedata_dir.clone(),
-            maps: crate::session::map_directories(assets),
+            maps: crate::places::map_directories(assets),
         }
     }
 
@@ -476,7 +476,7 @@ impl Staging {
     fn build(project: &Project, gamedata_dir: &str) -> Result<Staging, String> {
         let data_dir = std::path::absolute(gamedata_dir).map_err(|e| e.to_string())?;
         let into = project
-            .path_for(super::patch::STAGE)
+            .path_for(super::publish::patch::STAGE)
             .ok_or_else(|| "the staging folder is outside the project folder".to_string())?;
         let _ = std::fs::remove_dir_all(&into);
         let as_name = vale_edit::project::next_patch_name(&data_dir)
@@ -820,7 +820,7 @@ pub(super) fn repair_project_wdts(session: &mut EditSession) {
 /// `--regenerate`: the Server panel's *Regenerate changed tiles*, from a
 /// command line. Fires once, on the first frame there is a session.
 pub fn on_the_command_line(
-    args: Res<crate::Args>,
+    args: Res<crate::args::Args>,
     session: Option<ResMut<EditSession>>,
     assets: Res<GameAssets>,
     server: Res<super::settings::ServerSettings>,

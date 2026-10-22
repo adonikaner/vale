@@ -59,6 +59,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use vale_assets::tables::charcreate::CharCreate;
+use crate::lua::host::LuaHost;
 
 /// The globals this file registers, sorted. It serves the same purpose as
 /// [`super::glue::WRITES`] does for the two screens before this one.
@@ -275,7 +276,9 @@ pub enum CreateRequest {
 pub type Queue = Rc<RefCell<Vec<CreateRequest>>>;
 
 /// Register every function in this file. Unscoped: see the module comment.
-pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let board: &Held = &super::stored(lua);
+    let queue: &Queue = &super::stored(lua);
     let globals = lua.globals();
 
     /// Both list getters return a flat `(name, fileString)` sequence whose
@@ -555,6 +558,80 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, board: &Held, queue: &Queue) -> 
     Ok(())
 }
 
+/// What the character-create screen has chosen, copied out of the Lua state
+/// once a frame. See [`choice`].
+///
+/// Holds the values the packet and the renderer use: `race` and `class` are
+/// `ChrRaces` and `ChrClasses` ids and `gender` is `PLAYER_BYTES`' 0 and 1. The
+/// interface uses different numbering; this module converts between the
+/// two.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CharCreateChoice {
+    pub race: u8,
+    pub class: u8,
+    pub gender: u8,
+    /// Skin, face, hair style, hair colour, facial hair — `PLAYER_BYTES` order,
+    /// which is `CMSG_CHAR_CREATE`'s.
+    pub appearance: [u8; 5],
+    /// The same appearance as the type `vale_assets::look::dress` takes, so the
+    /// model on the screen is dressed by the same call the world uses.
+    pub look: vale_assets::look::character::Appearance,
+    /// The items the model wears: on this screen, the class's starting outfit.
+    /// See [`vale_assets::tables::charcreate::CharCreate::outfit`].
+    pub outfit: Vec<vale_assets::tables::charcreate::OutfitPiece>,
+}
+
+/// The board, from the state's app data. See [`super::stored`].
+fn held(host: &LuaHost) -> Held {
+    super::stored(host.state())
+}
+
+/// Take and clear the character-create screen's Accept presses. One caller,
+/// [`crate::glue::charcreate`].
+pub fn take(host: &LuaHost) -> Vec<CreateRequest> {
+    super::taken(host)
+}
+
+/// Give the character-create screen the tables it chooses from.
+///
+/// Called once when `Interface\GlueXML\` loads, because that is the first
+/// moment there is both an archive chain and a Lua state; the host itself
+/// is built before either. Until then every read on that screen returns an
+/// empty list, which draws a create screen with no buttons rather than one
+/// with wrong buttons.
+pub fn set_tables(
+    host: &LuaHost,
+    tables: std::sync::Arc<vale_assets::tables::charcreate::CharCreate>,
+) {
+    held(host).borrow_mut().tables = Some(tables);
+}
+
+/// Whether it already has them, so the supplying system asks the archives
+/// once per interface rather than once per frame.
+pub fn ready(host: &LuaHost) -> bool {
+    held(host).borrow().tables.is_some()
+}
+
+/// What the create screen has chosen, for the preview model and for the
+/// packet.
+///
+/// `(race id, class id, gender, appearance)` plus the composed
+/// [`vale_assets::look::character::Appearance`], copied out rather than
+/// borrowed: the caller is a Bevy system and this is a `RefCell` the Lua
+/// state can re-enter.
+pub fn choice(host: &LuaHost) -> CharCreateChoice {
+    let board = held(host);
+    let board = board.borrow();
+    CharCreateChoice {
+        race: board.race_id(),
+        class: board.class_id(),
+        gender: board.gender,
+        appearance: board.appearance(),
+        look: board.look(),
+        outfit: board.outfit(),
+    }
+}
+
 /// The frame the two facing functions act on. `CharacterCreate` is the
 /// `<ModelFFX>` itself: line 60 of `CharacterCreate_OnLoad` is
 /// `SetCharCustomizeFrame("CharacterCreate")`.
@@ -663,7 +740,9 @@ mod tests {
 
     fn state(board: &Held, queue: &Queue) -> mlua::Lua {
         let lua = mlua::Lua::new();
-        register(&lua, board, queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(board));
+        lua.set_app_data(std::rc::Rc::clone(queue));
+        register(&lua).expect("registers");
         lua
     }
 
@@ -855,7 +934,9 @@ mod tests {
             .filter_map(Result::ok)
             .map(|(name, _)| name)
             .collect();
-        register(&lua, &board(), &queue()).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&board()));
+        lua.set_app_data(std::rc::Rc::clone(&queue()));
+        register(&lua).expect("registers");
         let after: std::collections::BTreeSet<String> = lua
             .globals()
             .pairs::<String, mlua::Value>()

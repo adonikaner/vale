@@ -280,8 +280,8 @@ fn apply_requests(
     mut state: ResMut<WorldMapState>,
     mut map_update: MessageWriter<WorldMapUpdate>,
 ) {
-    let Some(mut host) = host else { return };
-    let requests = host.take_map_requests();
+    let Some(host) = host else { return };
+    let requests = crate::lua::panels::worldmap::take(&host);
     if requests.is_empty() {
         return;
     }

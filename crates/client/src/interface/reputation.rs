@@ -106,7 +106,7 @@ fn supply_tables(
     assets: Res<crate::assets::GameAssets>,
 ) {
     let Some(host) = host else { return };
-    if host.reputation().borrow().factions.is_some() {
+    if crate::lua::panels::reputation::held(&host).borrow().factions.is_some() {
         return;
     }
     let Ok(tables) = assets.display_tables() else {
@@ -118,7 +118,8 @@ fn supply_tables(
     let Some(factions) = tables.reputation() else {
         return;
     };
-    let mut board = host.reputation().borrow_mut();
+    let reputation = crate::lua::panels::reputation::held(&host);
+    let mut board = reputation.borrow_mut();
     board.factions = Some(std::sync::Arc::new(factions.clone()));
     board.strings = Some(assets.strings());
 }
@@ -135,7 +136,8 @@ fn apply_answers(
         answers.clear();
         return;
     };
-    let mut board = host.reputation().borrow_mut();
+    let reputation = crate::lua::panels::reputation::held(&host);
+    let mut board = reputation.borrow_mut();
     for answer in answers.read() {
         match answer {
             // **Recorded, not applied.** The base reputation a slot carries is
@@ -243,7 +245,8 @@ fn publish_standing(
         }
         return;
     };
-    let board = host.reputation().borrow();
+    let reputation = crate::lua::panels::reputation::held(&host);
+    let board = reputation.borrow();
     if std::mem::replace(&mut *last, Some(board.version)) == Some(board.version) {
         return;
     }
@@ -260,7 +263,7 @@ fn watch_field(host: Option<NonSendMut<crate::lua::host::LuaHost>>, units: Units
     let Some(watched) = units.watched_faction(UnitId::Player) else {
         return;
     };
-    host.reputation().borrow_mut().watched(watched);
+    crate::lua::panels::reputation::held(&host).borrow_mut().watched(watched);
 }
 
 /// **Raise `UPDATE_FACTION` when the board says something moved** — see the
@@ -277,7 +280,7 @@ fn announce(
         *last = None;
         return;
     };
-    let version = host.reputation().borrow().version;
+    let version = crate::lua::panels::reputation::held(&host).borrow().version;
     if std::mem::replace(&mut *last, Some(version)) != Some(version) {
         changed.write(UpdateFaction);
     }
@@ -286,8 +289,8 @@ fn announce(
 /// Send the three the panel owes. None is acknowledged; see
 /// [`vale_protocol::socket::session::ReputationVerb`].
 fn send_verbs(host: Option<NonSendMut<crate::lua::host::LuaHost>>, session: Res<Session>) {
-    let Some(mut host) = host else { return };
-    let verbs = host.take_reputation_verbs();
+    let Some(host) = host else { return };
+    let verbs = crate::lua::panels::reputation::take(&host);
     if verbs.is_empty() {
         return;
     }

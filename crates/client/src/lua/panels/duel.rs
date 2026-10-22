@@ -11,11 +11,14 @@
 //! two carry a string and a binding is `Copy`. Drained by
 //! [`crate::interface::duel`], which is where each is explained.
 
+use crate::lua::host::LuaHost;
+
 /// The queue the writes push onto.
 pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::duel::DuelPress>>>;
 
 /// Register the four writes. Unscoped — they record.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     use crate::interface::duel::DuelPress as P;
     let globals = lua.globals();
 
@@ -40,4 +43,9 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
     push!("AcceptDuel", Option<i64>, |_a| Some(P::Accept));
     push!("CancelDuel", Option<i64>, |_a| Some(P::Cancel));
     Ok(())
+}
+
+/// Take and clear the duel's presses. See [`crate::interface::duel`].
+pub fn take(host: &LuaHost) -> Vec<crate::interface::duel::DuelPress> {
+    super::taken(host)
 }

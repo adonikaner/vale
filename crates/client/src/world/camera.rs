@@ -1068,7 +1068,7 @@ pub fn place(rig: Res<CameraRig>, mut camera: Query<&mut Transform, With<WorldCa
 /// straight down or straight up is parallel to +Y, which leaves the roll
 /// undefined, so the top of the picture is then the horizontal direction the
 /// rig faces: from the eye's side of the focus toward the other, along the
-/// yaw. The client's own pitch never reaches vertical; the editor's top-down
+/// yaw. The client's own pitch never reaches vertical; a host app's top-down
 /// map view does, with a yaw of pi so that north is at the top.
 fn view_up(rig: &CameraRig, eye: Vec3, target: Vec3) -> Vec3 {
     let vertical = (target - eye).normalize_or_zero().y.abs() > 0.999;

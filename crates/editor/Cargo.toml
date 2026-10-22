@@ -44,13 +44,13 @@ vale-mangos.workspace = true
 bevy.workspace = true
 bevy_egui.workspace = true
 # A tile's height map and blend map, written and read as PNG files. See
-# `src/tools/images.rs`. The version the CLI already uses for its own pictures.
+# `src/import/images.rs`. The version the CLI already uses for its own pictures.
 png = "0.18"
 # A new tile's minimap picture is named by its MD5, as the shipped ones are, in
-# the index `src/tools/tiles.rs` writes. The version already in the tree.
+# the index `src/map/tiles.rs` writes. The version already in the tree.
 md-5 = "0.10"
 # The system's own open and save dialogs, for choosing a picture to import or
-# where to write one. See `src/tools/images.rs`.
+# where to write one. See `src/import/images.rs`.
 rfd = "0.15"
 
 # The process's working set, for `--tour`: one call into `psapi`; the
@@ -81,7 +81,7 @@ diagnostics = ["vale-client/diagnostics"]
 # Per-system run times printed at the end of a `--tour`. See the client's
 # feature of the same name.
 span-census = ["diagnostics", "vale-client/span-census"]
-# **The size-class census on the heap** — `src/heap.rs`, printed by `--tour`.
+# **The size-class census on the heap** — `src/instruments/heap.rs`, printed by `--tour`.
 # Off by default and deliberately not part of `diagnostics`: it is a
 # `#[global_allocator]`, so it is two relaxed atomics on every allocation the
 # process makes rather than a number read once a frame, and that cost has not

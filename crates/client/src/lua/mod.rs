@@ -2,6 +2,8 @@
 //!
 //! ```text
 //! host.rs      the interpreter: which libraries 1.12 opens, and the one way in
+//! load.rs      the interpreter's lifecycle in the app: loading, reloading and
+//!              unloading the interface, and `--script`
 //! dialect.rs   the one Lua 5.0 construct Lua 5.1 does not compile
 //! xml.rs       what is loaded into the interpreter: `Interface\FrameXML\`, all
 //!              175 files, and `Interface\GlueXML\` before there is a world
@@ -86,6 +88,7 @@
 pub mod audit;
 pub mod dialect;
 pub mod host;
+pub mod load;
 pub mod manifest;
 pub mod scoped;
 pub mod xml;
@@ -106,7 +109,7 @@ pub struct LuaPlugins;
 impl Plugin for LuaPlugins {
     fn build(&self, app: &mut App) {
         app.add_plugins((
-            host::HostPlugin,
+            load::HostPlugin,
             api::events::EventsPlugin,
             api::mouse::MousePlugin,
             api::keyboard::KeyboardPlugin,

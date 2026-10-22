@@ -143,8 +143,8 @@ use std::collections::HashMap;
 /// size, and so does any value that is not finite; both give 1.0.
 ///
 /// It is a function rather than a line inside the parser because two places
-/// read the column: the chain below, and an editor that shows the number in the
-/// file. Both must agree on what the file means; otherwise the editor shows
+/// read the column: the chain below, and a caller that shows the number in the
+/// file. Both must agree on what the file means; otherwise that caller shows
 /// "x0.00" beside a model that is visible in the game.
 pub fn effect_scale(raw: Option<f32>) -> f32 {
     raw.filter(|scale| scale.is_finite() && *scale > 0.0)
@@ -736,10 +736,10 @@ pub const EFFECT_POINTS: [(usize, u32); 6] = fields::EFFECTS;
 
 /// Every column index this module measured, public.
 ///
-/// [`crate::tables::schema`] also reads these tables, to describe them to an
-/// editor. The indices are shared so that there is one reading of the layout,
-/// not two. `schema`'s own test asserts every column it names against the
-/// constants here.
+/// [`crate::tables::schema`] also reads these tables, to describe them to a
+/// caller that displays or edits rows. The indices are shared so that there
+/// is one reading of the layout, not two. `schema`'s own test asserts every
+/// column it names against the constants here.
 pub mod fields {
     /// `Spell.dbc` field 115, `SpellVisualID`.
     ///

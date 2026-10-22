@@ -102,7 +102,7 @@ pub const REVERT_VPATH: &str = "sql\\revert.sql";
 /// `(DBC name, the table it becomes)`.
 ///
 /// Every other DBC the server reads, it reads as a file in `DataDir\5875\dbc\`, and
-/// a publish copies it there; see `super::release::copy_server_dbcs`.
+/// a publish copies it there; see `super::publish::release::copy_server_dbcs`.
 pub const MAPPED: [(&str, &str); 5] = [
     ("Spell", spell::TABLE),
     ("TaxiNodes", taxi::TABLE),
@@ -1030,13 +1030,13 @@ impl Undo {
 }
 
 /// `--revert`: the popover's Put back button, run from the command line. See
-/// [`crate::Args::revert`].
+/// [`crate::args::Args::revert`].
 ///
 /// Runs once, on the first frame that has a session to read the project from,
 /// and never again. A flag that ran on every frame would put the server back
 /// after every save that had just applied something.
 pub fn on_the_command_line(
-    args: Res<crate::Args>,
+    args: Res<crate::args::Args>,
     session: Option<ResMut<EditSession>>,
     server: Res<crate::server::settings::ServerSettings>,
     mut done: Local<bool>,

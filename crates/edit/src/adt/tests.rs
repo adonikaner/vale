@@ -391,7 +391,7 @@ fn shading_a_chunk_round_trips_and_clearing_it_undoes_the_file() {
 #[test]
 fn a_shading_stroke_darkens_what_is_under_it() {
     use crate::adt::colours;
-    use crate::ops::{Shade, Shading, Working};
+    use crate::ops::{shade::{Shade, Shading}, paint::Working};
 
     let Some((path, bytes)) = real_tiles().into_iter().next() else {
         return;
@@ -844,7 +844,7 @@ fn one_placement_reads_the_same_as_the_whole_list() {
 /// A placement moved to another tile comes out of one file and into the
 /// other, keeping its id, and both files survive the write.
 ///
-/// This is the file half of `vale_ide::tools::rehome`, and the reason it
+/// This is the file half of `vale_ide::tools::placements::rehome`, and the reason it
 /// exists is a rule in the renderer: the tile containing a placement's origin
 /// is the tile that draws it, because a model touching two tiles is listed in
 /// both with one `unique_id` and exactly one of them has to claim it. So a
@@ -1332,7 +1332,7 @@ fn a_pool_survives_being_read_out_and_written_back() {
 #[test]
 fn a_sloped_river_falls_between_its_ends_and_its_depth_follows_the_bed() {
     use crate::adt::liquid;
-    use crate::ops::{WaterAction, WaterBrush};
+    use crate::ops::water::{WaterAction, WaterBrush};
     use vale_assets::world::adt::{cell_square, CHUNK_SIZE};
     let Some((_, bytes)) = real_tiles().into_iter().next() else {
         return;
@@ -1398,7 +1398,7 @@ fn a_sloped_river_falls_between_its_ends_and_its_depth_follows_the_bed() {
 #[test]
 fn a_painted_pool_lands_where_the_brush_was_and_nowhere_else() {
     use crate::adt::liquid;
-    use crate::ops::WaterBrush;
+    use crate::ops::water::WaterBrush;
     use vale_assets::world::adt::cell_at;
 
     for (path, bytes) in real_tiles() {
@@ -1422,7 +1422,7 @@ fn a_painted_pool_lands_where_the_brush_was_and_nowhere_else() {
             cell_flags: liquid::FISHABLE,
             slope: None,
         };
-        let done = brush.stroke(&mut flooded, at, crate::ops::WaterAction::Flood, |_, _| Some(100.0));
+        let done = brush.stroke(&mut flooded, at, crate::ops::water::WaterAction::Flood, |_, _| Some(100.0));
         assert_eq!(done.cells, 1, "{path}: one cell, not {}", done.cells);
         assert_eq!(done.edits.len(), 1, "{path}");
 
@@ -1449,7 +1449,7 @@ fn a_painted_pool_lands_where_the_brush_was_and_nowhere_else() {
 
         // Drying it again puts the chunk back exactly as it was.
         let mut dried = flooded.clone();
-        let done = brush.stroke(&mut dried, at, crate::ops::WaterAction::Drain, |_, _| None);
+        let done = brush.stroke(&mut dried, at, crate::ops::water::WaterAction::Drain, |_, _| None);
         assert_eq!(done.cells, 1, "{path}");
         assert_eq!(dried.write(), bytes, "{path}: drying did not restore the tile");
     }

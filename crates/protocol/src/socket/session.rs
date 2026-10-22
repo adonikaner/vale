@@ -282,18 +282,17 @@ const READ_SLICE: Duration = Duration::from_millis(12);
 /// `CheckSpeedHack` accepts: the server allows less distance than time, never
 /// more.
 ///
-/// This constant previously clamped the world clock as well, which caused a
-/// cumulative desync. Everything the server moves (every spline, and so every
-/// creature in view) was advanced by the same clamped number, so each stall
-/// over a quarter of a second left each of them permanently that far behind
-/// the server's position. A chasing creature's error is corrected by its next
-/// `SMSG_MONSTER_MOVE`; a patrolling guard on a cyclic spline is never
-/// corrected, because a cyclic path is sent once (see
-/// [`crate::state::movement::Spline::cyclic`]). The losses add up over a
-/// session (a login burst alone is several seconds), and the creature is drawn
-/// yards from where it is fighting. The world clock now takes the whole
-/// elapsed time and only the mover is clamped; see [`SessionLoop::step_ms`]
-/// and [`SessionStatus::stalls`].
+/// Only the mover is clamped; the world clock takes the whole elapsed time
+/// (see [`SessionLoop::step_ms`] and [`SessionStatus::stalls`]). Clamping the
+/// world clock as well causes a cumulative desync. Everything the server moves
+/// (every spline, and so every creature in view) is then advanced by the same
+/// clamped number, so each stall over a quarter of a second leaves each of
+/// them permanently that far behind the server's position. A chasing
+/// creature's error is corrected by its next `SMSG_MONSTER_MOVE`; a patrolling
+/// guard on a cyclic spline is never corrected, because a cyclic path is sent
+/// once (see [`crate::state::movement::Spline::cyclic`]). The losses add up
+/// over a session (a login burst alone is several seconds), and the creature
+/// is drawn yards from where it is fighting.
 const MAX_STEP: Duration = Duration::from_millis(250);
 
 /// The most world time one tick advances after a stall, however long the
@@ -324,13 +323,14 @@ const HEARTBEAT: Duration = Duration::from_millis(400);
 /// Minimum gap between updates sent because the facing changed, so that
 /// holding a turn key does not send one packet per tick.
 ///
-/// The value is 100 ms, reduced from 250, because this interval paces turning
-/// while running as well as while standing (see [`SessionLoop::tick_movement`]).
-/// While running it bounds how far the server's straight-line extrapolation
-/// diverges from the arc actually walked. A quarter of a second of a 180°/s
-/// turn at a run is 45° of unreported heading; a tenth is 18°, which keeps the
-/// separation inside `CheckSpeedHack`'s 10% allowance. The 1.12.1 client also
-/// sends ten packets a second while turning.
+/// The value is 100 ms rather than 250, because this interval paces turning
+/// while running as well as while standing (see
+/// [`SessionLoop::tick_movement`]). While running it bounds how far the
+/// server's straight-line extrapolation diverges from the arc actually walked.
+/// A quarter of a second of a 180°/s turn at a run is 45° of unreported
+/// heading; a tenth is 18°, which keeps the separation inside
+/// `CheckSpeedHack`'s 10% allowance. The 1.12.1 client also sends ten packets
+/// a second while turning.
 const FACING_INTERVAL: Duration = Duration::from_millis(100);
 
 /// `CMSG_PING` interval. The ping detects a dead link early; without it a
@@ -585,8 +585,8 @@ pub enum SocialVerb {
 }
 
 /// The twenty-one requests the guild tab, the guild slash commands, the
-/// guild popups and the tabard designer send to the socket. See [`crate::play::guild`], which has the
-/// layouts.
+/// guild popups and the tabard designer send to the socket. See
+/// [`crate::play::guild`], which has the layouts.
 ///
 /// A member is named by name in every request that is about one, because the
 /// server looks the member up by name.
@@ -1097,25 +1097,35 @@ pub enum Command {
     SummonResponse { summoner: u64 },
     /// `/played`: `CMSG_PLAYED_TIME`, with no body.
     RequestPlayedTime,
-    /// `/roll`: `MSG_RANDOM_ROLL` with the range. See [`crate::play::randomroll`].
+    /// `/roll`: `MSG_RANDOM_ROLL` with the range. See
+    /// [`crate::play::randomroll`].
     RandomRoll { min: u32, max: u32 },
-    /// A click on the minimap: `MSG_MINIMAP_PING` with the world position. See [`crate::play::minimap`].
+    /// A click on the minimap: `MSG_MINIMAP_PING` with the world position. See
+    /// [`crate::play::minimap`].
     MinimapPing { x: f32, y: f32 },
-    /// Place raid target icon `icon` (0..8) on `guid`, or clear it with guid 0: `MSG_RAID_TARGET_UPDATE`. See [`crate::play::raidtarget`].
+    /// Place raid target icon `icon` (0..8) on `guid`, or clear it with guid 0:
+    /// `MSG_RAID_TARGET_UPDATE`. See [`crate::play::raidtarget`].
     RaidTargetSet { icon: u8, guid: u64 },
-    /// Ask for the group's raid target icons: `MSG_RAID_TARGET_UPDATE` with `0xFF`.
+    /// Ask for the group's raid target icons: `MSG_RAID_TARGET_UPDATE` with
+    /// `0xFF`.
     RaidTargetList,
-    /// Share a quest with the group: `CMSG_PUSHQUESTTOPARTY`. See [`crate::play::questshare`].
+    /// Share a quest with the group: `CMSG_PUSHQUESTTOPARTY`. See
+    /// [`crate::play::questshare`].
     PushQuest { quest_id: u32 },
-    /// Take the party quest another member accepted: `CMSG_QUEST_CONFIRM_ACCEPT`.
+    /// Take the party quest another member accepted:
+    /// `CMSG_QUEST_CONFIRM_ACCEPT`.
     QuestConfirmAccept { quest_id: u32 },
-    /// Answer a shared quest's page: `MSG_QUEST_PUSH_RESULT` to the sharer, which the client sends with `Declined` when the page is closed.
+    /// Answer a shared quest's page: `MSG_QUEST_PUSH_RESULT` to the sharer,
+    /// which the client sends with `Declined` when the page is closed.
     QuestPushResult { sharer: u64, result: crate::play::questshare::PushResult },
-    /// Mark tutorial `id` (1-based) as seen: `CMSG_TUTORIAL_FLAG`. See [`crate::play::tutorial`].
+    /// Mark tutorial `id` (1-based) as seen: `CMSG_TUTORIAL_FLAG`. See
+    /// [`crate::play::tutorial`].
     TutorialFlag { id: u32 },
-    /// Mark every tutorial as seen, turning the tips off: `CMSG_TUTORIAL_CLEAR`, with no body.
+    /// Mark every tutorial as seen, turning the tips off:
+    /// `CMSG_TUTORIAL_CLEAR`, with no body.
     TutorialClear,
-    /// Mark no tutorial as seen, turning the tips on: `CMSG_TUTORIAL_RESET`, with no body.
+    /// Mark no tutorial as seen, turning the tips on: `CMSG_TUTORIAL_RESET`,
+    /// with no body.
     TutorialReset,
     /// Flip `PLAYER_FLAGS_HIDE_HELM` (`helm`) or `PLAYER_FLAGS_HIDE_CLOAK`:
     /// `CMSG_TOGGLE_HELM` or `CMSG_TOGGLE_CLOAK`, with no body. The server
@@ -1331,11 +1341,11 @@ pub struct SessionStatus {
     pub movement_sent: u64,
     /// `SMSG_FORCE_*_SPEED_CHANGE` packets recorded and acknowledged.
     ///
-    /// This loop previously intercepted these, acknowledged them, and dropped
-    /// them, so a speed change for another unit never reached the world state
-    /// and that player was still dead-reckoned at the old speed. Seeing these
-    /// is not an error; the count shows whether the path has run, which a unit
-    /// test can check and which a live session had no way to show before.
+    /// Each is acknowledged and also folded into the world state. A loop that
+    /// acknowledged and dropped them would leave a speed change for another
+    /// unit out of the world state, and that player would be dead-reckoned at
+    /// the old speed. Seeing these is not an error; the count shows in a live
+    /// session whether the path has run, as a unit test can show in a test.
     pub speed_changes: u32,
     /// The twelve speed opcodes for units this client does not control:
     /// `MSG_MOVE_SET_*_SPEED` and `SMSG_SPLINE_SET_*`.
@@ -1343,9 +1353,8 @@ pub struct SessionStatus {
     /// These matter most in a live session, because the forced family is sent
     /// only for one character and this family is sent for every mount, sprint,
     /// daze and enrage in view. Zero in a session where anyone mounted means
-    /// the family is being dropped. Before this counter existed, all twelve
-    /// went to the unhandled bucket, and other players' characters slid back
-    /// and forth twice a second.
+    /// the family is being dropped. When all twelve go to the unhandled
+    /// bucket, other players' characters slide back and forth twice a second.
     pub speed_broadcasts: u32,
     /// The twelve `SMSG_SPLINE_MOVE_*` opcodes, for units no player is moving.
     ///
@@ -1561,6 +1570,58 @@ impl LiveSession {
         &self.world
     }
 
+    /// Ask for an item's template on the next query pass. Takes the world
+    /// lock; see [`ObjectManager::want_item`]. An entry already known, already
+    /// refused or already queued does nothing, so a caller need not check.
+    pub fn want_item(&self, entry: u32) {
+        lock(&self.world).want_item(entry);
+    }
+
+    /// [`Self::want_item`] for several entries under one lock, for a caller
+    /// that has a list: a vendor's stock, a recipe list's reagents.
+    pub fn want_items(&self, entries: impl IntoIterator<Item = u32>) {
+        let mut world = lock(&self.world);
+        for entry in entries {
+            world.want_item(entry);
+        }
+    }
+
+    /// Ask for a creature's template on the next query pass. Takes the world
+    /// lock; see [`ObjectManager::want_creature`].
+    pub fn want_creature(&self, entry: u32) {
+        lock(&self.world).want_creature(entry);
+    }
+
+    /// Ask for a game object's template on the next query pass. Takes the
+    /// world lock; see [`ObjectManager::want_gameobject`].
+    pub fn want_gameobject(&self, entry: u32) {
+        lock(&self.world).want_gameobject(entry);
+    }
+
+    /// Ask for a player's name on the next query pass. Takes the world lock;
+    /// see [`ObjectManager::want_social_guid`].
+    pub fn want_social_guid(&self, guid: u64) {
+        lock(&self.world).want_social_guid(guid);
+    }
+
+    /// Replace the friends list whose names the query pass asks for. Takes
+    /// the world lock; see [`ObjectManager::note_social_friends`].
+    pub fn note_social_friends(&self, guids: Vec<u64>) {
+        lock(&self.world).note_social_friends(guids);
+    }
+
+    /// Replace the ignore list whose names the query pass asks for. Takes the
+    /// world lock; see [`ObjectManager::note_social_ignores`].
+    pub fn note_social_ignores(&self, guids: Vec<u64>) {
+        lock(&self.world).note_social_ignores(guids);
+    }
+
+    /// Ask every quest giver for its status again. Takes the world lock; see
+    /// [`ObjectManager::requery_quest_status`].
+    pub fn requery_quest_status(&self) {
+        lock(&self.world).requery_quest_status();
+    }
+
     pub fn status(&self) -> SessionStatus {
         lock(&self.status).clone()
     }
@@ -1657,9 +1718,9 @@ impl LiveSession {
     /// locally, but cancelling does change local state.
     ///
     /// The server sends no reply to `CMSG_CANCEL_CAST`, so the local change is
-    /// the only one. Without it, pressing Escape during a Fireball cleared the
-    /// cast bar and left the character in the wind-up pose until its timer ran
-    /// out. See [`ObjectManager::apply_cast_cancelled`].
+    /// the only one. Without it, pressing Escape during a Fireball clears the
+    /// cast bar and leaves the character in the wind-up pose until its timer
+    /// runs out. See [`ObjectManager::apply_cast_cancelled`].
     pub fn cancel_cast(&self, spell_id: u32) {
         {
             let mut world = lock(&self.world);
@@ -2214,8 +2275,8 @@ struct SessionLoop {
     ///
     /// Held as one value rather than as separate fields because the packet
     /// handlers need exactly this state. See [`crate::socket::handler`], which
-    /// holds the teleport and speed-change handling that was previously a
-    /// second dispatch in this file.
+    /// holds the teleport and speed-change handling; this file has no second
+    /// dispatch.
     local: LocalState,
     /// Replies the last packet queued, reused rather than reallocated.
     replies: Replies,
@@ -2401,9 +2462,9 @@ impl SessionLoop {
             // Drained after the socket and immediately before the step is
             // timed, so every key change stamped before the step's end is in
             // this step. Drained before `read_socket`, a change made while the
-            // socket was being read (up to `READ_SLICE`) fell into the next
-            // step and was applied at its start, later than the renderer's
-            // prediction applied it, which drew a snap back on the next
+            // socket is being read (up to `READ_SLICE`) falls into the next
+            // step and is applied at its start, later than the renderer's
+            // prediction applies it, which draws a snap back on the next
             // reading.
             if matches!(self.drain_commands(), Flow::Stop) {
                 break;
@@ -2454,26 +2515,27 @@ impl SessionLoop {
 
         // The mover is corrected, not replaced.
         //
-        // The code previously did `self.local.mover = Mover::new(position,
-        // speeds)`, because everything before this point was estimated from
-        // the character-list entry. But the burst above is handled, not only
-        // read: `read_socket` runs the full dispatch for a `READ_SLICE` window,
-        // so anything the server sent while waiting for the self object has
-        // already been applied to this mover, and that can include a ride.
+        // Everything before this point was estimated from the character-list
+        // entry, which suggests replacing the mover with
+        // `Mover::new(position, speeds)`. But the burst above is handled, not
+        // only read: `read_socket` runs the full dispatch for a `READ_SLICE`
+        // window, so anything the server sent while waiting for the self
+        // object has already been applied to this mover, and that can include
+        // a ride.
         //
         // `Player::ContinueTaxiFlight` runs at the end of `HandlePlayerLogin`,
         // after `Map::Add`, so logging in mid-flight puts an
         // `SMSG_MONSTER_MOVE` naming the player's guid in the same burst as the
         // create block that ends this loop, usually in the same read. A new
-        // `Mover` discarded both parts of the ride: the spline, so the
-        // character never flew, and `finished_ride`, so the
-        // `CMSG_MOVE_SPLINE_DONE` the server was waiting for was never sent.
+        // `Mover` discards both parts of the ride: the spline, so the
+        // character never flies, and `finished_ride`, so the
+        // `CMSG_MOVE_SPLINE_DONE` the server is waiting for is never sent.
         //
-        // The missing `CMSG_MOVE_SPLINE_DONE` made the fault permanent.
+        // The missing `CMSG_MOVE_SPLINE_DONE` makes the fault permanent.
         // `MoveSplineInit::Launch` sets `SetSplineDonePending(true)` and
         // `HandleMovementOpcodes` discards every movement packet while it is
-        // set, so the character walked around locally for the rest of the
-        // session while the server kept them on a gryphon at the last known
+        // set, so the character walks around locally for the rest of the
+        // session while the server keeps them on a gryphon at the last known
         // waypoint.
         self.local.mover.resync(position);
         self.local.mover.speeds = speeds;
@@ -2991,7 +3053,7 @@ impl SessionLoop {
                 // it was some seconds ago, with every position, animation and
                 // counter on screen consistent but late. A busy realm can
                 // cause this and a localhost server does not, which matches
-                // the desync reports this counter was added for.
+                // the desync reports this counter exists to explain.
                 //
                 // It over-counts one case: a slice that ran to the deadline
                 // and would have found the socket empty on its next read. The
@@ -3042,12 +3104,12 @@ impl SessionLoop {
     /// things: it publishes to the status, and it detects that a packet
     /// relocated the player.
     ///
-    /// An earlier version held a second dispatch here. It intercepted seven
-    /// opcodes and returned early, because the shared `apply_packet` took only
-    /// an `ObjectManager` and could neither answer the server nor move the
-    /// local player. With two dispatches, `SMSG_PONG` was handled in both
-    /// places, `stats.packets` was counted by hand in each branch, and a speed
-    /// change for another unit was acknowledged and then dropped.
+    /// There is no second dispatch here. A dispatch in this function that
+    /// intercepted seven opcodes and returned early (needed while
+    /// `apply_packet` took only an `ObjectManager` and could neither answer
+    /// the server nor move the local player) handled `SMSG_PONG` in both
+    /// places, counted `stats.packets` by hand in each branch, and
+    /// acknowledged a speed change for another unit and then dropped it.
     ///
     /// The replies are sent after the world lock is released, the same rule
     /// `resolve_names` follows: a socket write under that lock makes every
@@ -3098,7 +3160,7 @@ impl SessionLoop {
             // across on a boat has already used part of `PLATFORM_HOLD`
             // waiting for the server's teleport, and the far side then needs
             // the whole hold again for the deck's create block, its query and
-            // its `.wmo` staging. Measuring both waits on one clock put
+            // its `.wmo` staging. Measuring both waits on one clock puts
             // characters in the sea at Theramore. After a teleport the deck is
             // a different placement, so the hold starts again. See
             // [`platform_under`].
@@ -3127,7 +3189,7 @@ impl SessionLoop {
         // advanced by it and the renderer's interpolator keys on it, and both
         // assume world time and real time run at the same rate; see
         // [`SessionStatus::world_ms`] and the renderer's `world::motion`.
-        // Clamping it broke that assumption without any error; the visible
+        // Clamping it breaks that assumption without any error; the visible
         // effect is described at [`MAX_STEP`].
         let step = split_step(&mut self.carry_ms, elapsed);
         self.world_ms += u64::from(step.world_ms);
@@ -3234,8 +3296,8 @@ impl SessionLoop {
         // A character standing on a moving platform must first be moved by the
         // platform's movement, so that their own stride starts where the deck
         // has put them. Done afterwards, it is a correction rather than a ride.
-        // On the Deeprun Tram, whose car travels 2,482 yards, that was the
-        // reported bug: the floor moved away and the character stayed behind.
+        // On the Deeprun Tram, whose car travels 2,482 yards, the floor then
+        // moves away and the character stays behind.
         //
         // The transport filter is here rather than in the world, because
         // `UPDATEFLAG_TRANSPORT` is the only data that marks an object as
@@ -3594,14 +3656,13 @@ impl SessionLoop {
     ///
     /// ## A new entry is queried on the next tick
     ///
-    /// This function previously ran only on [`QUERY_INTERVAL`], which put an
-    /// average of one second, and at worst two, between the moment a name was
-    /// needed and the moment the query was sent. That was the cause of vendors
-    /// being slow to show their goods: `SMSG_LIST_INVENTORY` names no item,
-    /// the merchant panel queues every entry the item cache cannot answer, and
-    /// then nothing was sent for up to two seconds, before a round trip that
-    /// takes a few milliseconds against a local server (measured at 40
-    /// templates in 156 ms).
+    /// Run only on [`QUERY_INTERVAL`], this function puts an average of one
+    /// second, and at worst two, between the moment a name is needed and the
+    /// moment the query is sent. A vendor is then slow to show its goods:
+    /// `SMSG_LIST_INVENTORY` names no item, the merchant panel queues every
+    /// entry the item cache cannot answer, and then nothing is sent for up to
+    /// two seconds, before a round trip that takes a few milliseconds against
+    /// a local server (measured at 40 templates in 156 ms).
     ///
     /// The pass is therefore split in two. New entries, which this session has
     /// never queried, are sent on the tick they appear, so the delay is
@@ -3610,10 +3671,10 @@ impl SessionLoop {
     /// query has no acknowledgement, so an answer that never arrives must be
     /// requested again.
     ///
-    /// The `asked_*` sets make the split possible, and they also fix a second
-    /// fault: without them, every unresolved entry was re-sent every two
-    /// seconds until it resolved, so a vendor with twenty unknown items sent
-    /// twenty packets every two seconds until the answers arrived. The sets
+    /// The `asked_*` sets make the split possible, and they also prevent a
+    /// second fault: without them, every unresolved entry is re-sent every two
+    /// seconds until it resolves, so a vendor with twenty unknown items sends
+    /// twenty packets every two seconds until the answers arrive. The sets
     /// last for the session and are never pruned; they are bounded in the same
     /// way as [`ObjectManager::wanted_items`], by the number of distinct
     /// entries one character meets.
@@ -3781,7 +3842,7 @@ impl SessionLoop {
         // and this loop has the only clock that is monotonic and is the one the
         // world's positions were advanced by. A reader advancing it from its
         // own frame timer would be a second, independent clock, which is the
-        // fault `world_ms` was introduced to avoid.
+        // fault `world_ms` exists to avoid.
         let (game_time, weather, attacking, spellbook_version) = {
             let world = lock(&self.world);
             (
@@ -3991,8 +4052,8 @@ pub(crate) struct Underfoot {
 ///   arriving.
 ///
 /// In both cases there is no floor either. Keeping the passenger aboard while
-/// returning the sea bed as the height made the character fall off the deck
-/// they were still recorded as standing on. Both cases last as long as the
+/// returning the sea bed as the height makes the character fall off the deck
+/// they are still recorded as standing on. Both cases last as long as the
 /// object manager still knows the deck as a transport, and are bounded by
 /// [`PLATFORM_HOLD`] only after that. A deck that never returns is removed by
 /// the server's out-of-range block, and a deck that is only elsewhere must not
@@ -4348,8 +4409,8 @@ mod tests {
         assert!(worth_asking(&mut asked, 858, false));
     }
 
-    /// The latency gained by the split: a new query previously waited up to
-    /// [`QUERY_INTERVAL`] and now waits up to one [`TICK`].
+    /// The latency gained by the split: without it a new query waits up to
+    /// [`QUERY_INTERVAL`]; with it, up to one [`TICK`].
     #[test]
     fn the_beat_is_far_longer_than_a_tick() {
         assert!(QUERY_INTERVAL > TICK * 40);
@@ -4374,7 +4435,7 @@ mod tests {
     }
 
     /// A stall produces two different step lengths. Giving both clocks the
-    /// clamped one caused a cumulative desync.
+    /// clamped one causes a cumulative desync.
     ///
     /// The character walks off a stall over several steps rather than in one
     /// stride, and clamping errs short: the server's `CheckSpeedHack` allows

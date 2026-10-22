@@ -24,6 +24,7 @@ use vale_protocol::play::inspect::InspectHonor;
 
 use super::super::api::Answers;
 use crate::interface::inspect::InspectPress;
+use crate::lua::host::LuaHost;
 
 pub type Queue = Rc<RefCell<Vec<InspectPress>>>;
 
@@ -73,9 +74,9 @@ impl InspectAnswers for super::super::api::Live<'_, '_, '_> {
 /// The three verbs, which need nothing from the world at the call. The queue
 /// is also kept in the interpreter's app data, where `CanInspect`, a scoped
 /// read, finds it to queue its refusal line.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     let globals = lua.globals();
-    lua.set_app_data(Rc::clone(queue));
     let push = |name: &str, press: fn(Option<String>) -> Option<InspectPress>| -> mlua::Result<()> {
         let queue = Rc::clone(queue);
         let f = lua.create_function(move |_, token: Option<String>| {
@@ -92,6 +93,12 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
     push("ClearInspectPlayer", |_| Some(InspectPress::Clear))?;
     push("RequestInspectHonorData", |_| Some(InspectPress::RequestHonor))?;
     Ok(())
+}
+
+/// Take and clear the inspect window's presses. See
+/// [`crate::interface::inspect`].
+pub fn take(host: &LuaHost) -> Vec<crate::interface::inspect::InspectPress> {
+    super::taken(host)
 }
 
 pub(in crate::lua) fn install<'scope, 'env: 'scope>(

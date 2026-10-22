@@ -1,11 +1,10 @@
-//! **The stable window** — what a stable master is holding, and the four verbs
-//! that move a pet in or out of it.
+//! The stable window: the pets a stable master holds, and the four verbs that
+//! move a pet in or out of it.
 //!
-//! The client's half of [`vale_protocol::play::stable`]. The split every
-//! panel in this directory keeps: the *rule* is
-//! [`vale_assets::tables::pet`] — the family's name and icon, the diet, the
-//! loyalty label and the slot's price, none of which needs a session — and what
-//! is left here is the three things that do.
+//! The client side of [`vale_protocol::play::stable`]. As in every panel in
+//! this directory, the rules are in [`vale_assets::tables::pet`] (the family's
+//! name and icon, the diet, the loyalty label and the slot's price, none of
+//! which needs a session), and this file holds the three parts that need one.
 //!
 //! ```text
 //! what is stabled   MSG_LIST_STABLED_PETS, which arrives whole and is replaced whole
@@ -14,27 +13,27 @@
 //! what a press does the four verbs, and the one byte that answers all of them
 //! ```
 //!
-//! ## The packet says nothing about what a pet *is*
+//! ## The list packet does not carry a pet's family
 //!
 //! A row is a pet number, a creature entry, a level, a name and a loyalty
-//! level. The panel wants the **family** ("Wolf"), the **icon**
-//! (`Ability_Hunter_Pet_Wolf`) and the **diet** — all three of which hang off
+//! level. The panel shows the family ("Wolf"), the icon
+//! (`Ability_Hunter_Pet_Wolf`) and the diet, all three from
 //! `CreatureFamily.dbc`, and the only route from an entry to a family id is
-//! `SMSG_CREATURE_QUERY_RESPONSE`. So the list arriving starts a round trip per
+//! `SMSG_CREATURE_QUERY_RESPONSE`. The list therefore starts one query per
 //! distinct entry, and [`resolve`] raises `PET_STABLE_UPDATE` again when the
-//! last of them lands.
+//! last answer arrives.
 //!
-//! **That second raise is the whole of why this is a system rather than a
-//! read.** `PetStable_Update` runs once per event and caches nothing; a family
-//! that arrives a round trip after the panel drew is a stall labelled with a
-//! level and no species, for as long as the window stays open. It is the same
-//! shape as [`super::trainer::relayout`], which re-lays the training window
-//! when the character's race finally arrives.
+//! That second raise is why the resolution is a system and not a read.
+//! `PetStable_Update` runs once per event and caches nothing, so a family that
+//! arrives a round trip after the panel drew would leave the stall labelled
+//! with a level and no species for as long as the window stays open.
+//! [`super::trainer::relayout`] does the same for the training window when the
+//! character's race arrives.
 //!
-//! ## `ClickStablePet` picks between three different packets
+//! ## `ClickStablePet` chooses between three packets
 //!
-//! The interface has one verb for "put this pet in that slot" and the wire has
-//! four, so the choice is the client's:
+//! The interface has one verb for "put this pet in that slot" and the protocol
+//! has four, so the client chooses:
 //!
 //! ```text
 //! slot 0, no pet out          nothing — the current slot is already selected
@@ -43,25 +42,26 @@
 //! slot 1..2, a pet out        CMSG_STABLE_SWAP_PET exchange them
 //! ```
 //!
-//! and the fork is `HandleUnstablePet`'s own first test — it refuses outright
-//! while a pet is summoned, and `HandleStableSwapPet` is the verb for that
-//! case. Sending the wrong one of the two is a `STABLE_ERR_STABLE` and a window
-//! that does not change, which is indistinguishable from being out of range.
+//! The choice follows vmangos' `HandleUnstablePet`, whose first test refuses
+//! while a pet is summoned; `HandleStableSwapPet` is the verb for that case.
+//! The wrong one of the two gets `STABLE_ERR_STABLE` and the window does not
+//! change, which looks the same as being out of range.
 //!
-//! ## The selection is the client's and the server never hears about it
+//! ## The selection is local
 //!
-//! `GetSelectedStablePet()` is a panel state: which stall is ticked. It starts
-//! at **-1**, which is the value `PetStable_Update` tests on its own first line
-//! before choosing one, and it is reset when a fresh list arrives — a swap
-//! moves every pet, so a selection kept across one points at whoever is in that
-//! stall now.
+//! `GetSelectedStablePet()` is panel state: which stall is ticked. The server
+//! is never told. It starts at -1, the value `PetStable_Update` tests on its
+//! first line before choosing one, and it is reset when a new list arrives: a
+//! swap moves every pet, so a selection kept across one would point at
+//! whichever pet is in that stall now.
 //!
-//! ## Walking away closes it, on the client's own tape
+//! ## Closing the window
 //!
-//! There is no stable-close opcode and the server never says the conversation
-//! ended, exactly as [`super::gossip`] states for all three of its windows.
+//! There is no stable-close opcode, and the server does not say when the
+//! conversation ended, as [`super::gossip`] states for its three windows.
 //! `ClosePetStables()` is a local clear and a `PET_STABLE_CLOSED`, and
-//! [`super::gossip::out_of_range`] takes this window down with the others.
+//! [`super::gossip::out_of_range`] closes this window with the others when the
+//! character walks away.
 
 use bevy::prelude::*;
 use std::collections::HashSet;
@@ -79,22 +79,22 @@ use crate::world::session::Session;
 pub enum StableAnswer {
     /// `MSG_LIST_STABLED_PETS`.
     List(Box<StableList>),
-    /// `SMSG_STABLE_RESULT` — the answer to all four verbs, which is why the
-    /// window re-asks rather than guessing what changed.
+    /// `SMSG_STABLE_RESULT`: the answer to all four verbs. It does not say
+    /// what changed, so the window asks for the list again.
     Result(Option<StableResult>),
 }
 
 /// A press the interface made.
 #[derive(Message, Debug, Clone, PartialEq, Eq)]
 pub enum StablePress {
-    /// `ClickStablePet(id)` — the slot the panel is asking for, 0-based.
+    /// `ClickStablePet(id)`: the slot the panel asks for, 0-based.
     Click(u8),
-    /// `PickupStablePet(id)` — the drag off a stall, which the reference sends
-    /// the *same* three packets for. See [`act`].
+    /// `PickupStablePet(id)`: a drag off a stall, which sends the same three
+    /// packets as a click. See [`act`].
     Pickup(u8),
     /// `BuyStableSlot()`.
     BuySlot,
-    /// `ClosePetStables()` — local, like the gossip close.
+    /// `ClosePetStables()`: local, like the gossip close.
     Close,
 }
 
@@ -104,16 +104,16 @@ pub struct StableWindow {
     open: Option<Open>,
 }
 
-/// What is on screen: the packet as it arrived, plus the two things the packet
-/// does not carry.
+/// The open window: the list packet as it arrived, and the two values the
+/// packet does not carry.
 struct Open {
     /// The stable master. Every verb names it again.
     npc: u64,
     list: StableList,
     /// Which stall is ticked, or -1. See the module note.
     selected: i8,
-    /// Entries whose `SMSG_CREATURE_QUERY_RESPONSE` has not landed yet — the
-    /// set [`resolve`] watches empty out.
+    /// Entries whose `SMSG_CREATURE_QUERY_RESPONSE` has not arrived yet. The
+    /// set [`resolve`] empties.
     unresolved: HashSet<u32>,
 }
 
@@ -126,8 +126,8 @@ impl StableWindow {
         Some(self.open.as_ref()?.npc)
     }
 
-    /// `GetNumStableSlots()` — slots **bought**, which is what decides how many
-    /// stalls the panel enables.
+    /// `GetNumStableSlots()`: the slots bought, which decide how many stalls
+    /// the panel enables.
     pub fn slots(&self) -> u8 {
         self.open.as_ref().map_or(0, |open| open.list.slots)
     }
@@ -137,8 +137,8 @@ impl StableWindow {
         self.open.as_ref().map_or(0, |open| open.list.count())
     }
 
-    /// `GetSelectedStablePet()` — **-1 when nothing is picked**, which is the
-    /// value the panel's own first branch tests for.
+    /// `GetSelectedStablePet()`: -1 when nothing is picked, the value the
+    /// panel's first branch tests for.
     pub fn selected(&self) -> i8 {
         self.open.as_ref().map_or(-1, |open| open.selected)
     }
@@ -148,9 +148,8 @@ impl StableWindow {
         self.open.as_ref()?.list.pet(panel_slot)
     }
 
-    /// Take the window down, answering whether one was up — the door
-    /// [`super::gossip::out_of_range`] calls, like the trainer's and the
-    /// vendor's.
+    /// Close the window and return whether one was open. Called by
+    /// [`super::gossip::out_of_range`], as the trainer's and the vendor's are.
     pub(crate) fn close(&mut self) -> bool {
         self.open.take().is_some()
     }
@@ -185,9 +184,9 @@ fn announce(
     for answer in answers.read() {
         match answer {
             StableAnswer::List(list) => {
-                // **A fresh list resets the selection**, which is the module
-                // note's reason: a swap moves every pet, and a slot index kept
-                // across one names whoever is in that stall now.
+                // A new list resets the selection: a swap moves every pet, and
+                // a slot index kept across one names whichever pet is in that
+                // stall now. See the module note.
                 let first = !window.is_open();
                 let unresolved = list.pets.iter().map(|pet| pet.entry).collect();
                 window.open = Some(Open {
@@ -203,9 +202,9 @@ fn announce(
                 updated.write(PetStableUpdate);
                 paperdoll.write(PetStableUpdatePaperdoll);
             }
-            // **Any success re-asks**, because the byte does not say what
-            // changed — see the module note. A refusal says its sentence, if it
-            // has one, and leaves the window alone.
+            // Any success asks for the list again, because the result byte does
+            // not say what changed. A refusal shows its message, if it has one,
+            // and leaves the window unchanged.
             StableAnswer::Result(result) => {
                 let Some(result) = result else { continue };
                 if let Some(key) = result.key() {
@@ -223,27 +222,25 @@ fn announce(
     }
 }
 
-/// **Ask for every creature template the list named**, so the stalls can be
-/// labelled with a species rather than a level.
+/// Queue a creature template query for every entry the list named, so the
+/// stalls can be labelled with a species. `LiveSession::want_creature` takes
+/// the world lock and skips an entry the session already knows.
 fn ask_for_templates(session: &Session, window: &StableWindow) {
     let (Some(open), Some(active)) = (window.open.as_ref(), session.active.as_ref()) else {
         return;
     };
-    let Ok(mut world) = active.live.world().lock() else {
-        return;
-    };
     for entry in &open.unresolved {
-        world.want_creature(*entry);
+        active.live.want_creature(*entry);
     }
 }
 
-/// **Raise `PET_STABLE_UPDATE` again when the families land.**
+/// Raise `PET_STABLE_UPDATE` again when the families arrive.
 ///
-/// See the module note: `PetStable_Update` runs once per event and caches
-/// nothing, so a family that arrives after the panel drew would never be shown.
-/// Costs one lock and a small set walk per frame *only while a query is
-/// outstanding* — the set is emptied by the answers and the system returns on
-/// its first line thereafter.
+/// `PetStable_Update` runs once per event and caches nothing, so a family that
+/// arrives after the panel drew would not be shown otherwise (see the module
+/// note). The system takes one lock and walks a small set per frame only while
+/// a query is outstanding; once the answers empty the set, it returns on its
+/// first line.
 fn resolve(
     mut window: ResMut<StableWindow>,
     session: Res<Session>,
@@ -273,13 +270,14 @@ fn presses(
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
     mut out: MessageWriter<StablePress>,
 ) {
-    let Some(mut host) = host else { return };
-    for press in host.take_stable_presses() {
+    let Some(host) = host else { return };
+    for press in crate::lua::panels::stable::take(&host) {
         out.write(press);
     }
 }
 
-/// …and act on it: three verbs that leave, and one close that does not.
+/// Act on each press: three verbs that send a packet, and a close that does
+/// not.
 fn act(
     mut presses: MessageReader<StablePress>,
     mut window: ResMut<StableWindow>,
@@ -291,18 +289,18 @@ fn act(
 ) {
     for press in presses.read() {
         match press {
-            // **A drag off a stall is the same three packets as a click**, and
-            // `PetStableSlotTemplate`'s own `OnReceiveDrag` says so: it calls
-            // `ClickStablePet(this:GetID())` and nothing else. The reference
-            // has no cursor state for a pet, so `PickupStablePet` is the click
-            // by another name.
+            // A drag off a stall sends the same three packets as a click:
+            // `PetStableSlotTemplate`'s `OnReceiveDrag` calls
+            // `ClickStablePet(this:GetID())` and nothing else. The 1.12.1
+            // client has no cursor state for a pet, so `PickupStablePet` acts
+            // as a click.
             StablePress::Click(slot) | StablePress::Pickup(slot) => {
                 let Some(open) = window.open.as_mut() else {
                     continue;
                 };
                 let has_pet = units.exists(super::api::UnitId::Pet);
                 let verb = verb_for(open, *slot, has_pet);
-                // The tick moves whatever the wire does — the reference's own
+                // The tick moves whatever is sent: the 1.12.1 client's
                 // `ClickStablePet` returns true and the panel redraws.
                 open.selected = i8::try_from(*slot).unwrap_or(-1);
                 if let (Some(verb), Some(active)) = (verb, session.active.as_ref()) {
@@ -326,15 +324,15 @@ fn act(
     }
 }
 
-/// **Which of the three packets a click on `slot` is**, or none.
+/// Which of the three packets a click on `slot` sends, or none.
 ///
-/// Pulled out of [`act`] because it is the one decision in this file that is a
-/// rule rather than plumbing, and it is the one a live session is most likely
-/// to disagree with. The table is in the module note.
+/// Separate from [`act`] because it is the one rule in this file, and the
+/// part a live session is most likely to disagree with. The table is in the
+/// module note.
 fn verb_for(open: &Open, slot: u8, has_pet: bool) -> Option<NpcVerb> {
     if slot == 0 {
         // The current stall. With a pet out, the click puts it away; with none
-        // out there is nothing to do — the pet is already "in" slot 0.
+        // out there is nothing to do, because the pet is already in slot 0.
         return has_pet.then_some(NpcVerb::StablePet(open.npc));
     }
     let pet_number = open.list.pet(slot)?.pet_number;
@@ -377,9 +375,9 @@ mod tests {
         }
     }
 
-    /// **The whole fork, both ways.** `HandleUnstablePet` refuses while a pet
-    /// is summoned and `HandleStableSwapPet` is the verb for that case, so
-    /// getting this wrong is a window that silently does not change.
+    /// Every branch of the choice. `HandleUnstablePet` refuses while a pet is
+    /// summoned and `HandleStableSwapPet` is the verb for that case; the wrong
+    /// verb leaves the window unchanged with no message.
     #[test]
     fn a_click_picks_its_packet_from_the_slot_and_whether_a_pet_is_out() {
         // wire slot 2 is panel slot 1, wire 3 is panel 2.
@@ -400,8 +398,8 @@ mod tests {
         );
     }
 
-    /// An empty stall sends nothing at all, whichever way round the pet is —
-    /// there is no pet number to name.
+    /// An empty stall sends nothing, with or without a pet out: there is no pet
+    /// number to name.
     #[test]
     fn an_empty_stall_sends_nothing() {
         let open = window(2, &[(7, 1)]);
@@ -410,7 +408,7 @@ mod tests {
         assert_eq!(verb_for(&open, 2, true), None);
     }
 
-    /// The window's own defaults are the ones `PetStable_Update` branches on
+    /// The closed window answers the values `PetStable_Update` branches on
     /// before anything has arrived: no slots, no pets, and a selection of -1.
     #[test]
     fn a_shut_window_answers_the_values_the_panel_tests_for() {

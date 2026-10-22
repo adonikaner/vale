@@ -61,7 +61,9 @@ use crate::playtest::Playtest;
 use vale_client::world::camera::CameraRig;
 use crate::tablet::Pointer;
 use bevy::input::mouse::AccumulatedMouseScroll;
+use crate::session::EditSession;
 use bevy::prelude::*;
+use vale_client::render::focus::WorldFocus;
 
 /// Where the editor is looking, and how fast it moves.
 #[derive(Resource, Debug, Clone)]
@@ -89,7 +91,7 @@ pub struct EditorCamera {
     /// Set by every jump and by the start position, because both of those name a
     /// place on the map and not a height, and the tile they land on is not parsed
     /// for several frames afterwards. Cleared by
-    /// `crate::session::drop_to_the_ground` the moment it can answer, so flying
+    /// `crate::camera::drop_to_the_ground` the moment it can answer, so flying
     /// below the ground afterwards is allowed: a camera pinned to the terrain
     /// could not get under a bridge to look at its underside.
     pub wants_the_ground: bool,
@@ -520,7 +522,7 @@ fn click_slop(motion: &Pointer) -> f32 {
 /// at the picture's scale, so the ground under the pointer stays under it. The keys move along
 /// the compass at a speed proportional to the span, so crossing the picture
 /// takes the same time at every zoom. The wheel sets the span. The focus is
-/// asked onto the ground every frame, which `session::drop_to_the_ground`
+/// asked onto the ground every frame, which `drop_to_the_ground`
 /// answers wherever the ground under it is open; over a hole, or past the open
 /// tiles, it keeps its last height.
 #[allow(clippy::too_many_arguments)]
@@ -606,6 +608,74 @@ fn drive(camera: Res<EditorCamera>, top: Res<TopDown>, mut rig: ResMut<CameraRig
     // `distance`, not `reach`: `reach` is the output of `collide`, which
     // recomputes it from `distance` later in the frame. See the module comment.
     rig.distance = camera.distance;
+}
+
+/// Drop the camera onto the ground it is over, once the ground arrives.
+///
+/// A start position, and every jump, is two numbers: the third has to come from
+/// the terrain, which is not parsed until several frames after the camera gets
+/// there. Until then the focus keeps whatever height it had, which after a jump
+/// across a continent is as likely to be inside a mountain as above it.
+///
+/// It answers once per request rather than every frame — see
+/// [`crate::camera::EditorCamera::wants_the_ground`] — so flying below the ground
+/// afterwards is allowed.
+pub(crate) fn drop_to_the_ground(
+    session: Option<Res<EditSession>>,
+    mut camera: ResMut<crate::camera::EditorCamera>,
+) {
+    if !camera.wants_the_ground {
+        return;
+    }
+    let Some(session) = session else { return };
+    let coord = vale_assets::tile_for_position(camera.target.x, camera.target.y);
+    let Some(tile) = session.tiles.get(&coord) else {
+        return;
+    };
+    if let Some(ground) =
+        vale_edit::adt::heights::height_at(tile, camera.target.x, camera.target.y)
+    {
+        camera.target.z = ground;
+        camera.wants_the_ground = false;
+    }
+}
+
+/// Point the streaming passes at the editor's camera while there is no session.
+///
+/// The client's own writer owns the focus whenever a character is logged in, so
+/// this is a no-op during a playtest — which is the behaviour that is wanted:
+/// what streams while there is a character is what the character can see.
+/// It reads [`crate::camera::EditorCamera`] and not `CameraRig`. The rig has
+/// three writers — `world::camera::orbit`, `world::camera::collide` and the
+/// editor's own `camera::drive` — and nothing orders this against any of them,
+/// so reading it would take whichever value the frame happened to leave there.
+/// The editor's camera has one writer, which is what makes the ordering
+/// unnecessary rather than merely unstated.
+pub(crate) fn follow_the_camera(
+    session: Res<vale_client::world::session::Session>,
+    camera: Res<crate::camera::EditorCamera>,
+    editing: Option<Res<EditSession>>,
+    state: Res<crate::playtest::Playtest>,
+    mut focus: ResMut<WorldFocus>,
+) {
+    // Not while a playtest is logging in either, which is the case
+    // `session.active` alone cannot see. `crate::playtest::stand_the_world_down`
+    // takes the editor's nine tiles off the screen for the login screen, and a
+    // focus still pointing at the editor's camera would stream all nine of them
+    // straight back in behind the backdrop.
+    if session.active.is_some() || !state.editing() {
+        return;
+    }
+    let Some(editing) = editing else {
+        return;
+    };
+    let at = camera.target;
+    // Guarded on the value having moved, because `ResMut`'s `DerefMut` marks the
+    // resource changed whether or not it did, and the light chain keys on it.
+    let wanted = WorldFocus::at(editing.map_id, editing.map.clone(), at);
+    if !focus.same_place(&wanted, 0.05) || focus.map_name != wanted.map_name {
+        *focus = wanted;
+    }
 }
 
 #[cfg(test)]

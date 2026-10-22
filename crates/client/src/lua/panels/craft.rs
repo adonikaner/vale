@@ -87,32 +87,34 @@ pub const READS: [&str; 18] = [
 
 /// What the craft window answers the interface.
 pub trait CraftAnswers {
-    fn craft_name(&self) -> Option<String>;
+    fn craft_name(&self) -> Option<String> { None }
     /// The `GlobalStrings.lua` key on the create button.
-    fn craft_button_token(&self) -> String;
+    fn craft_button_token(&self) -> String { String::new() }
     /// `None` for every kind but Enchanting — the client's own `kind == 3`.
-    fn craft_display_line(&self) -> Option<(String, u32, u32)>;
-    fn craft_rows(&self) -> usize;
-    fn craft_row(&self, index: usize) -> Option<CraftLine>;
-    fn craft_selection(&self) -> usize;
-    fn craft_select(&self, index: usize);
-    fn craft_set_expanded(&self, index: usize, expanded: bool);
-    fn craft_icon(&self, index: usize) -> Option<String>;
-    fn craft_description(&self, index: usize) -> Option<String>;
-    fn craft_num_reagents(&self, index: usize) -> usize;
-    fn craft_reagent(&self, index: usize, reagent: usize)
-        -> Option<(Option<String>, Option<String>, u32, u32)>;
-    fn craft_reagent_link(&self, index: usize, reagent: usize) -> Option<String>;
+    fn craft_display_line(&self) -> Option<(String, u32, u32)> { None }
+    fn craft_rows(&self) -> usize { 0 }
+    fn craft_row(&self, _index: usize) -> Option<CraftLine> { None }
+    fn craft_selection(&self) -> usize { 0 }
+    fn craft_select(&self, _index: usize) {}
+    fn craft_set_expanded(&self, _index: usize, _expanded: bool) {}
+    fn craft_icon(&self, _index: usize) -> Option<String> { None }
+    fn craft_description(&self, _index: usize) -> Option<String> { None }
+    fn craft_num_reagents(&self, _index: usize) -> usize { 0 }
+    fn craft_reagent(&self, _index: usize, _reagent: usize)
+        -> Option<(Option<String>, Option<String>, u32, u32)> {
+        None
+    }
+    fn craft_reagent_link(&self, _index: usize, _reagent: usize) -> Option<String> { None }
     /// `(name, have)` pairs — for an enchant, the runed rod against the bags.
-    fn craft_focus(&self, index: usize) -> Vec<(String, bool)>;
+    fn craft_focus(&self, _index: usize) -> Vec<(String, bool)> { Vec::new() }
     /// The row's spell, for `DoCraft`.
-    fn craft_recipe(&self, index: usize) -> Option<u32>;
-    fn craft_close(&self);
+    fn craft_recipe(&self, _index: usize) -> Option<u32> { None }
+    fn craft_close(&self) {}
     /// The reagent entry `GameTooltip:SetCraftItem` plates.
-    fn craft_tip_item(&self, index: usize, reagent: usize) -> Option<u32>;
+    fn craft_tip_item(&self, _index: usize, _reagent: usize) -> Option<u32> { None }
     /// …and the spell plate `GameTooltip:SetCraftSpell` shows for the recipe
     /// itself, on the book's own [`crate::interface::api::SpellTip`] shape.
-    fn craft_spell_tip(&self, index: usize) -> Option<crate::interface::api::SpellTip>;
+    fn craft_spell_tip(&self, _index: usize) -> Option<crate::interface::api::SpellTip> { None }
 }
 
 /// Register all seventeen into the scope.

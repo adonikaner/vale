@@ -623,11 +623,11 @@ impl OnTheServer {
 /// Runs `--apply-quests` and `--revert-quests`, the command-line forms of the
 /// Server panel's two buttons. Fires once, after any scripted edit has landed.
 pub fn on_the_command_line(
-    args: Res<crate::Args>,
+    args: Res<crate::args::Args>,
     session: Option<ResMut<EditSession>>,
     server: Res<super::settings::ServerSettings>,
     mut reloads: ResMut<super::reload::Reloads>,
-    quests: Res<crate::tools::quests::Quests>,
+    quests: Res<crate::subjects::quests::Quests>,
     mut done: Local<bool>,
 ) {
     if *done || !(args.apply_quests || args.revert_quests) {

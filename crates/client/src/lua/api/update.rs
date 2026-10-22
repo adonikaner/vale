@@ -493,7 +493,7 @@ pub(in crate::lua) fn tick(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lua::api::tests::Stub;
+    use crate::lua::api::stub::Stub;
 
     fn host() -> LuaHost {
         LuaHost::new().expect("the interpreter starts")

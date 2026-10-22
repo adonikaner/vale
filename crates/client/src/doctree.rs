@@ -1,13 +1,10 @@
-//! **The check that a directory's own module tree is the truth.**
+//! The check that every directory's header lists the modules in it.
 //!
-//! Every directory in this crate opens its `mod.rs` with a ```` ```text ```` block
-//! listing what is in it and what each file is for. That block is the first
-//! thing anyone reads on entering a subject, and the argument for keeping
-//! those trees on the directories was that **a hand-kept tree goes stale
-//! silently, and stale is worse than absent.**
-//!
-//! Then all three of them went stale, by the same mechanism and in the same
-//! direction — a module was added and the tree above it was not touched:
+//! Every directory in the workspace opens its `mod.rs` with a ```` ```text ````
+//! block that lists what is in it and what each file is for. A hand-kept list
+//! goes stale when a module is added and the list is not edited, and a stale
+//! list reads as a directory without the missing modules. Three lists had
+//! drifted this way before this check existed:
 //!
 //! ```text
 //! game/mod.rs     15 listed, 28 declared
@@ -15,49 +12,45 @@
 //! render/mod.rs   17 listed, 25 declared
 //! ```
 //!
-//! Thirteen, fourteen and eight missing. Not wrong entries — *absent* ones, so
-//! nothing read false; the tree simply stopped mentioning half the directory,
-//! which for a reader is indistinguishable from the directory not having it.
+//! The declarations are in the same file as the list, so the check derives the
+//! declared side from the file and asserts that the list covers it. The five
+//! transcribed arrays in [`vale_api`] are checked the same way.
 //!
-//! This is the same failure as the five transcribed arrays in [`vale_api`],
-//! one layer up in the stack of things nothing checks, and it takes the same
-//! fix: derive one side and assert. Here the derivation is trivial — the
-//! declarations are in the same file, twenty lines below the tree.
-//!
-//! ## What counts
+//! ## What counts as a module
 //!
 //! A `mod name;` (with a semicolon) is a file or a directory and must appear in
-//! the tree. An inline `mod name { … }` is not — `render`'s `shader` and every
-//! `#[cfg(test)] mod tests` are inline, and a reader looking for the shape of
-//! the directory is not looking for those.
+//! the list. An inline `mod name { … }` need not: `render`'s `shader` and every
+//! `#[cfg(test)] mod tests` are inline. A `mod tests;` in its own file is not
+//! required either.
 //!
-//! An entry appears as `name.rs` at the start of a doc line, or as `name/` for a
-//! module that is a directory. The tree may say *more* than the declarations —
-//! `render` lists `shaders/`, which is a folder of WGSL and not a Rust module —
-//! so the assertion is one-directional: everything declared is listed.
+//! An entry is `name.rs` at the start of a doc line, or `name/` for a module
+//! that is a directory. The list may name more than is declared: `render`
+//! lists `shaders/`, a folder of WGSL that is not a Rust module. The assertion
+//! is therefore one-directional: everything declared is listed.
 //!
-//! ## It walks the workspace rather than naming the files
+//! ## One module layout
 //!
-//! It used to `include_str!` a list of seven, which was fine for seven and
-//! became the thing this file is *about* the moment the repo grew directories:
-//! a check that has to be edited whenever a subject is added is a check that
-//! goes stale exactly the way the trees did. So it reads
-//! `crates/*/src/**/mod.rs` off disk at test time — a real directory cannot be
-//! forgotten — and `crates/*/src/{lib.rs,main.rs}` for the roots, which were a
-//! hand-kept list for exactly one round longer than the directories were.
+//! A directory module is `foo/mod.rs`. The other layout Rust accepts, `foo.rs`
+//! beside a `foo/` directory, is refused: the list check reads only `mod.rs`
+//! files and crate roots, so a header in `foo.rs` would go unchecked. Two
+//! headers in that layout had drifted (`edit`'s `ops` and `protocol`'s
+//! `socket::handler`, five children each, none listed).
+//! [`one_module_layout`] fails on any `foo.rs` that has a sibling `foo/`.
 //!
-//! Reading the tree at test time rather than at compile time also reaches the
-//! other crates without a path trick: `vale-assets`' `lib.rs` had drifted
-//! furthest of all (25 listed against 51 declared) and is one file in another
-//! crate, and the two ways to reach it in source were both worse — exporting
-//! this parser would put test scaffolding in a library's public API for ever,
-//! and copying it would be a second implementation of the rule this whole file
-//! is about.
+//! ## The walk reads the workspace from disk
 //!
-//! The coupling to the layout is real and deliberately loud: **move a crate and
-//! this test fails**, naming the root it could not find.
+//! The test reads `crates/*/src/**/mod.rs` and `crates/*/src/{lib.rs,main.rs}`
+//! at test time instead of naming the files, so a new directory or crate is
+//! checked without editing this file. Reading at test time also reaches the
+//! other crates without exporting this parser from a library or copying it;
+//! `vale-assets`' `lib.rs` had drifted furthest (25 listed, 51 declared).
+//!
+//! The check depends on the workspace layout: if a crate moves, the test fails
+//! and names the root it could not find.
 
 #![cfg(test)]
+
+use std::path::{Path, PathBuf};
 
 /// The modules a `mod.rs` declares as files: `mod name;`, not `mod name { }`.
 fn declared(src: &str) -> Vec<&str> {
@@ -77,9 +70,9 @@ fn declared(src: &str) -> Vec<&str> {
 
 /// The module names the doc tree at the top of the file mentions.
 ///
-/// Taken from the whole doc comment rather than only the fenced block: two of
-/// these files carry a second, grouped list further down, and a name explained
-/// anywhere in the header is a name the reader has been told about.
+/// Read from the whole doc comment rather than only the fenced block: two of
+/// these files carry a second, grouped list further down, and a name described
+/// anywhere in the header counts as listed.
 fn listed(src: &str) -> Vec<&str> {
     src.lines()
         .map_while(|line| line.strip_prefix("//!"))
@@ -100,21 +93,20 @@ fn check(path: &str, src: &str) {
     assert!(
         missing.is_empty(),
         "{path}: the module tree at the top of the file does not mention {missing:?} — \
-         add a line for each, or the first thing a reader sees is a directory \
-         with half of it missing",
+         add a line for each",
     );
 }
 
 /// The workspace's `crates/` directory, from this crate's own manifest.
-fn crates_dir() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+fn crates_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("crates/client has a parent")
         .to_path_buf()
 }
 
-/// Every `mod.rs` under `crates/*/src`, in a stable order.
-fn module_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+/// Every file under `root`, in a stable order.
+fn files_under(root: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -125,7 +117,7 @@ fn module_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.file_name().is_some_and(|name| name == "mod.rs") {
+            } else {
                 found.push(path);
             }
         }
@@ -134,32 +126,54 @@ fn module_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     found
 }
 
-/// Every crate root under `crates/*/src`, in a stable order.
-///
-/// **Discovered rather than named**, on the same argument as [`module_files`] —
-/// and on one more. The list used to be six string literals, which meant this
-/// file, in the *client*, named every other crate in the workspace by path.
-/// That is a check whose reach is a hand-kept list: a crate added without a line
-/// in it is a crate nothing checks, which is exactly the failure the whole file
-/// is about, and it also made the client's own source mention crates it neither
-/// builds nor depends on.
-///
-/// A root with no `mod name;` in it passes trivially, so sweeping in the crates
-/// that carry no tree costs nothing and needs no exception.
-fn crate_roots(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+/// Every `mod.rs` under `root`, in a stable order.
+fn module_files(root: &Path) -> Vec<PathBuf> {
+    files_under(root)
+        .into_iter()
+        .filter(|path| path.file_name().is_some_and(|name| name == "mod.rs"))
+        .collect()
+}
+
+/// Every `foo.rs` under `root` that has a sibling directory `foo/`.
+fn split_modules(root: &Path) -> Vec<PathBuf> {
+    files_under(root)
+        .into_iter()
+        .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+        .filter(|path| path.with_extension("").is_dir())
+        .collect()
+}
+
+/// Every `crates/*/src` directory, in a stable order.
+fn source_dirs(root: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return Vec::new();
     };
+    let mut found: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path().join("src"))
+        .filter(|src| src.is_dir())
+        .collect();
+    found.sort();
+    found
+}
+
+/// Every crate root under `crates/*/src`, in a stable order.
+///
+/// Discovered rather than named, for the same reason as [`module_files`]: a
+/// crate added without a line in a hand-kept list would go unchecked, and the
+/// list would make the client's source name crates it does not depend on. A
+/// root with no `mod name;` in it passes trivially, so the crates that carry no
+/// tree need no exception.
+fn crate_roots(root: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
-    for entry in entries.flatten() {
+    for src in source_dirs(root) {
         for name in ["lib.rs", "main.rs"] {
-            let path = entry.path().join("src").join(name);
+            let path = src.join(name);
             if path.is_file() {
                 found.push(path);
             }
         }
     }
-    found.sort();
     found
 }
 
@@ -169,9 +183,9 @@ fn crate_roots(root: &std::path::Path) -> Vec<std::path::PathBuf> {
 fn every_directory_describes_what_is_in_it() {
     let crates = crates_dir();
     let roots = crate_roots(&crates);
-    // The two walks are asserted separately below, because a `crates/` this
-    // could not read at all would make both of them empty and every assertion
-    // in the test vacuous.
+    // The two walks are asserted separately below: a `crates/` that could not
+    // be read would leave both empty, and every assertion in the loop would
+    // pass without checking anything.
     let mut checked = 0;
     for path in roots.iter().chain(&module_files(&crates)) {
         let src = std::fs::read_to_string(path)
@@ -179,8 +193,6 @@ fn every_directory_describes_what_is_in_it() {
         check(&path.display().to_string(), &src);
         checked += 1;
     }
-    // A walk that finds nothing passes every assertion in it, which is the one
-    // way this check can report success while checking nothing at all.
     assert!(
         roots.len() >= 4,
         "only {} crate roots under {} — the walk is looking in the wrong place",
@@ -194,12 +206,31 @@ fn every_directory_describes_what_is_in_it() {
     );
 }
 
+/// No module under `crates/*/src` is a `foo.rs` beside a `foo/` directory.
+#[test]
+fn one_module_layout() {
+    let crates = crates_dir();
+    let sources = source_dirs(&crates);
+    assert!(
+        sources.len() >= 4,
+        "only {} src directories under {} — the walk is looking in the wrong place",
+        sources.len(),
+        crates.display()
+    );
+    let split: Vec<PathBuf> = sources.iter().flat_map(|src| split_modules(src)).collect();
+    assert!(
+        split.is_empty(),
+        "{split:?}: a module file beside a directory of the same name — move it to \
+         that directory's mod.rs and list its children in the header",
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// The parser reads a declaration and not an inline module, and takes the
-    /// tree from the header — the two distinctions the check rests on.
+    /// tree from the header.
     #[test]
     fn a_file_module_is_declared_and_an_inline_one_is_not() {
         let src = "//! ```text\n//! one.rs  a thing\n//! sub/    a folder\n//! ```\n\
@@ -209,10 +240,26 @@ mod tests {
         check("probe", src);
     }
 
-    /// …and a module added without a line for it is what fails.
+    /// A module declared without a line in the header fails the check.
     #[test]
     #[should_panic(expected = "does not mention [\"two\"]")]
     fn an_undescribed_module_fails() {
         check("probe", "//! ```text\n//! one.rs  a thing\n//! ```\npub mod one;\npub mod two;\n");
+    }
+
+    /// A `foo.rs` beside `foo/` is found, and a `foo/mod.rs` is not.
+    #[test]
+    fn a_file_beside_its_directory_is_found() {
+        let root = std::env::temp_dir().join(format!("vale-doctree-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("split")).unwrap();
+        std::fs::create_dir_all(root.join("whole")).unwrap();
+        std::fs::write(root.join("split.rs"), "mod child;\n").unwrap();
+        std::fs::write(root.join("split").join("child.rs"), "").unwrap();
+        std::fs::write(root.join("whole").join("mod.rs"), "mod child;\n").unwrap();
+        std::fs::write(root.join("whole").join("child.rs"), "").unwrap();
+        let found = split_modules(&root);
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(found, vec![root.join("split.rs")]);
     }
 }

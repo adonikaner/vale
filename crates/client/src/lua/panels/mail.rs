@@ -61,6 +61,7 @@
 //! ordinary letter — the words are still there, the arithmetic panel is not.
 
 use super::super::api::{one_or_nil, Answers};
+use crate::lua::host::LuaHost;
 
 /// One row of the inbox, as `GetInboxHeaderInfo` answers it.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -392,7 +393,8 @@ fn copper_of(n: Option<i64>) -> u32 {
 pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::mail::MailPress>>>;
 
 /// Register the ten writes. Unscoped — they record.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     use crate::interface::mail::MailPress as P;
     let globals = lua.globals();
 
@@ -436,6 +438,11 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
     Ok(())
 }
 
+/// Take and clear the mail window's presses. See [`crate::interface::mail`].
+pub fn take(host: &LuaHost) -> Vec<crate::interface::mail::MailPress> {
+    super::taken(host)
+}
+
 /// **What the interface may ask about the mailbox.**
 ///
 /// Here rather than in [`super::super::api`] for the reason every other panel's
@@ -450,49 +457,49 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
 /// [`crate::interface::mail::Mailbox::letter`].
 pub trait MailAnswers {
     /// `GetInboxNumItems()`.
-    fn mail_count(&self) -> usize;
+    fn mail_count(&self) -> usize { 0 }
     /// One row of the inbox, or `None` past the end.
-    fn mail_row(&self, row: usize) -> Option<InboxRow>;
+    fn mail_row(&self, _row: usize) -> Option<InboxRow> { None }
     /// `GetInboxText(i)`'s first three answers.
-    fn mail_text(&self, row: usize) -> InboxText;
+    fn mail_text(&self, _row: usize) -> InboxText { Default::default() }
     /// **…and its side effect** — see [`install`]: the reference sends the text
     /// query and the mark-as-read from inside that read.
-    fn mail_open(&self, row: usize);
+    fn mail_open(&self, _row: usize) {}
     /// `GetInboxItem(i)` — the parcel, or `None` for a letter with none.
-    fn mail_item(&self, row: usize) -> Option<MailItemLine>;
+    fn mail_item(&self, _row: usize) -> Option<MailItemLine> { None }
     /// `InboxItemCanDelete(i)` — the *word on the button*, not a permission.
-    fn mail_can_delete(&self, row: usize) -> bool;
+    fn mail_can_delete(&self, _row: usize) -> bool { false }
     /// `HasNewMail()`.
-    fn mail_has_new(&self) -> bool;
+    fn mail_has_new(&self) -> bool { false }
     /// `GetNumStationeries()` / `GetStationeryInfo(i)` — which of the five rows
     /// this character is offered; see
     /// [`vale_assets::tables::stationery::MailTables::offered`].
-    fn mail_stationery(&self) -> Vec<StationeryLine>;
+    fn mail_stationery(&self) -> Vec<StationeryLine> { Vec::new() }
     /// `GetSelectedStationeryTexture()` — the background stem.
-    fn mail_selected_stationery(&self) -> Option<String>;
+    fn mail_selected_stationery(&self) -> Option<String> { None }
     /// `SelectStationery(i)` — **a write, and it takes effect at once**; by the
     /// row's own id rather than by its position.
-    fn mail_select_stationery(&self, id: u32);
+    fn mail_select_stationery(&self, _id: u32) {}
     /// `GetSendMailItem()`.
-    fn mail_send_item(&self) -> Option<MailItemLine>;
+    fn mail_send_item(&self) -> Option<MailItemLine> { None }
     /// `GetSendMailPrice()` — 30 copper plus the paper.
-    fn mail_send_price(&self) -> u32;
+    fn mail_send_price(&self) -> u32 { 0 }
     /// `GetSendMailMoney()` / `GetSendMailCOD()`.
-    fn mail_send_money(&self) -> u32;
-    fn mail_send_cod(&self) -> u32;
+    fn mail_send_money(&self) -> u32 { 0 }
+    fn mail_send_cod(&self) -> u32 { 0 }
     /// `SetSendMailMoney(n)` — **a write whose answer decides whether the letter
     /// is sent**; `false` is "you do not have that much".
-    fn mail_set_money(&self, copper: u32) -> bool;
+    fn mail_set_money(&self, _copper: u32) -> bool { false }
     /// `SetSendMailCOD(n)` — a write, and one that silently does nothing when
     /// there is no parcel to collect on.
-    fn mail_set_cod(&self, copper: u32);
+    fn mail_set_cod(&self, _copper: u32) {}
     /// `GameTooltip:SetInboxItem(i)` — the **entry** of the parcel in one
     /// letter, for the plate. By entry rather than by link because 1.12 ships
     /// no `GetInboxItemLink`, which is the same asymmetry the buyback tab has.
-    fn mail_item_entry(&self, row: usize) -> Option<u32>;
+    fn mail_item_entry(&self, _row: usize) -> Option<u32> { None }
     /// …and `GameTooltip:SetSendMailItem()`, which takes no argument because
     /// there is only ever one thing attached.
-    fn mail_send_entry(&self) -> Option<u32>;
+    fn mail_send_entry(&self) -> Option<u32> { None }
 }
 
 impl MailAnswers for super::super::api::Live<'_, '_, '_> {
@@ -704,7 +711,7 @@ impl super::super::api::Live<'_, '_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lua::api::tests::{eval, Stub};
+    use crate::lua::api::stub::{eval, Stub};
 
     /// One-based in, and everything else is nothing.
     #[test]

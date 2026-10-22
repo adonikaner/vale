@@ -865,17 +865,17 @@ fn remove(project: &Project, vpath: &str) {
 }
 
 /// `--apply-creatures` and `--revert-creatures`, which are the panel's two
-/// buttons with nobody at the keyboard. See [`crate::Args::apply_creatures`].
+/// buttons with nobody at the keyboard. See [`crate::args::Args::apply_creatures`].
 ///
 /// Fires once, on the first frame there is a session to read the project out
 /// of. A flag that fired repeatedly would re-apply after every save.
 pub fn on_the_command_line(
-    args: Res<crate::Args>,
+    args: Res<crate::args::Args>,
     session: Option<ResMut<EditSession>>,
     server: Res<super::settings::ServerSettings>,
     mut reloads: ResMut<super::reload::Reloads>,
-    waypoints: Res<crate::tools::waypoints::Waypoints>,
-    creatures: Res<crate::tools::creatures::Creatures>,
+    waypoints: Res<crate::tools::spawns::waypoints::Waypoints>,
+    creatures: Res<crate::tools::spawns::creatures::Creatures>,
     mut done: Local<bool>,
 ) {
     if *done || !(args.apply_creatures || args.revert_creatures) {
@@ -885,7 +885,7 @@ pub fn on_the_command_line(
     // is a session; `--waypoint-add` fires when two queries have come back,
     // `--spawn-add` when three have and `--template-new` when the map read
     // has, several seconds later. Without this the apply ran against an empty
-    // store and said so. See `tools::waypoints::Waypoints::scripted_done` and
+    // store and said so. See `tools::spawns::waypoints::Waypoints::scripted_done` and
     // the two counterparts on the creature tool.
     if !waypoints.scripted_done
         || !creatures.scripted_done

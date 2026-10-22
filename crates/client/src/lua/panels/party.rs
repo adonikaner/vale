@@ -51,6 +51,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::super::api::Answers;
+use crate::lua::host::LuaHost;
 use crate::interface::api::UnitId;
 
 /// **The guid behind a `party<n>` token**, out of the roster rather than out of
@@ -113,7 +114,8 @@ pub enum PartyRequest {
 pub type Queue = Rc<RefCell<Vec<PartyRequest>>>;
 
 /// Register the six writes. Unscoped — they record.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     let globals = lua.globals();
 
     macro_rules! push {
@@ -150,6 +152,12 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
     push!("DeclineGroup", (), |_a| PartyRequest::Decline);
     push!("LeaveParty", (), |_a| PartyRequest::Leave);
     Ok(())
+}
+
+/// Take and clear the party requests. One
+/// caller, [`crate::interface::party`].
+pub fn take(host: &LuaHost) -> Vec<PartyRequest> {
+    super::taken(host)
 }
 
 /// Register the reads into the scope, beside [`super::super::api::install`]'s.
@@ -240,11 +248,11 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 /// a read's four pieces live in the file its subject is named after.
 pub trait PartyAnswers {
     /// `GetNumPartyMembers()` — everybody but us, so 0..4.
-    fn party_count(&self) -> usize;
+    fn party_count(&self) -> usize { 0 }
     /// `GetPartyMember(i)` — whether `party<i>` names somebody, one-based.
-    fn party_member_exists(&self, index: usize) -> bool;
+    fn party_member_exists(&self, _index: usize) -> bool { false }
     /// `GetPartyLeaderIndex()` — **0 when we lead**, and 0 with no party.
-    fn party_leader_index(&self) -> usize;
+    fn party_leader_index(&self) -> usize { 0 }
     /// **`CanShowResetInstances()`** — may the self menu offer to reset?
     ///
     /// **A simplification, stated.** The reference checks four conditions: a
@@ -259,15 +267,15 @@ pub trait PartyAnswers {
     /// the player able to press it and be answered by the server — the same
     /// judgement `is_usable_action` makes for the same reason. A reset the
     /// server refuses costs a packet and a line of text.
-    fn can_show_reset_instances(&self) -> bool;
+    fn can_show_reset_instances(&self) -> bool { false }
 
     /// `UnitIsPartyLeader(unit)`.
-    fn unit_is_party_leader(&self, token: &str) -> bool;
+    fn unit_is_party_leader(&self, _token: &str) -> bool { false }
     /// `GetLootMethod()`'s word, and the master looter's **party index** when
     /// there is one — `None` for every method but master loot.
-    fn loot_method(&self) -> (String, Option<usize>);
+    fn loot_method(&self) -> (String, Option<usize>) { Default::default() }
     /// `GetLootThreshold()` — the item quality the rule applies from.
-    fn loot_threshold(&self) -> u32;
+    fn loot_threshold(&self) -> u32 { 0 }
 }
 
 impl PartyAnswers for super::super::api::Live<'_, '_, '_> {
@@ -338,7 +346,7 @@ impl PartyAnswers for super::super::api::Live<'_, '_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lua::api::tests::Stub;
+    use crate::lua::api::stub::Stub;
     use crate::lua::host::LuaHost;
 
     /// **`PartyMemberFrame_UpdateMember`'s own first three lines, run for
@@ -397,7 +405,7 @@ mod tests {
     /// **The six writes record**, and a name goes through as it was typed.
     #[test]
     fn the_six_verbs_record_what_was_asked() {
-        let mut host = LuaHost::new().expect("the interpreter starts");
+        let host = LuaHost::new().expect("the interpreter starts");
         let world = Stub::default();
         host.run(&world, |lua| {
             lua.load(
@@ -410,7 +418,7 @@ mod tests {
         })
         .expect("the body runs");
         assert_eq!(
-            host.take_party_verbs(),
+            crate::lua::panels::party::take(&host),
             vec![
                 PartyRequest::Invite("Bram".to_string()),
                 PartyRequest::Accept,
@@ -423,6 +431,6 @@ mod tests {
             ]
         );
         // …and the queue empties, so a second frame sends nothing again.
-        assert!(host.take_party_verbs().is_empty());
+        assert!(crate::lua::panels::party::take(&host).is_empty());
     }
 }

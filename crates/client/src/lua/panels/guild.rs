@@ -72,6 +72,7 @@ use vale_protocol::play::guild::{presence, rights, GuildQuery, Member, Roster};
 use vale_protocol::socket::session::GuildVerb;
 
 use super::super::api::Answers;
+use crate::lua::host::LuaHost;
 
 /// The unscoped functions this file registers, sorted. Checked against
 /// [`register`] by `every_verb_is_registered`.
@@ -143,7 +144,7 @@ impl GuildAnswers for super::super::api::Live<'_, '_, '_> {
         if unit.kind != vale_protocol::state::update::ObjectType::Player {
             return None;
         }
-        let world = self.world.as_ref()?;
+        let world = self.live?.world();
         let world = world.lock().unwrap_or_else(|e| e.into_inner());
         let object = world.get(unit.guid)?;
         let guild = object.field(player::GUILDID).filter(|id| *id != 0)?;
@@ -474,9 +475,10 @@ fn trimmed(name: Option<String>) -> Option<String> {
 
 /// Register the forty-four unscoped functions. The board is also kept in the
 /// interpreter's app data, where the scoped `GetGuildInfo` finds it.
-pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let held: &Held = &super::stored(lua);
+    let queue: &Queue = &super::stored(lua);
     let globals = lua.globals();
-    lua.set_app_data(Rc::clone(held));
 
     // A read of the board that answers 1 or nil.
     let flag = |name: &str, test: fn(&Guild) -> bool| -> mlua::Result<()> {
@@ -818,6 +820,18 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held, queue: &Queue) -> m
     Ok(())
 }
 
+/// The guild board. One caller,
+/// [`crate::interface::guild`], which writes the server's answers into
+/// it.
+pub fn held(host: &LuaHost) -> Held {
+    super::stored(host.state())
+}
+
+/// Take and clear the guild requests that send a packet.
+pub fn take(host: &LuaHost) -> Vec<vale_protocol::socket::session::GuildVerb> {
+    super::taken(host)
+}
+
 /// `GetGuildInfo(unit)`: the guild's name, the unit's rank name and its rank
 /// index. Nothing for a unit in no guild. For a guild whose name has not
 /// arrived the two names are nil. See the module note.
@@ -879,7 +893,9 @@ mod tests {
         let lua = mlua::Lua::new();
         let held: Held = Rc::default();
         let queue: Queue = Rc::new(RefCell::new(Vec::new()));
-        register(&lua, &held, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&held));
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         {
             let mut board = held.borrow_mut();
             board.set_membership(7, 1);
@@ -920,7 +936,7 @@ mod tests {
         };
         let lua = mlua::Lua::new();
         let before = names(&lua);
-        register(&lua, &Rc::default(), &Rc::new(RefCell::new(Vec::new()))).expect("registers");
+        register(&lua).expect("registers");
         let added: std::collections::BTreeSet<String> =
             names(&lua).difference(&before).cloned().collect();
         let listed: std::collections::BTreeSet<String> =

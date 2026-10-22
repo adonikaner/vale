@@ -490,13 +490,13 @@ fn report(reloads: Res<Reloads>, session: Option<ResMut<EditSession>>) {
 }
 
 /// `--reload <table>[,<table>…]`, which is the only way this is reached without
-/// a person — see [`crate::Args::reload`].
+/// a person — see [`crate::args::Args::reload`].
 ///
 /// It fires once, on the first frame a playtest is in the world, and then never
 /// again: the flag is a check that the wire works, not a thing to repeat every
 /// time a session comes back.
 fn on_the_command_line(
-    args: Res<crate::Args>,
+    args: Res<crate::args::Args>,
     client: Res<Session>,
     mut reloads: ResMut<Reloads>,
     mut done: Local<bool>,

@@ -47,7 +47,7 @@ use super::events::{GossipClosed, GossipShow};
 use crate::world::session::Session;
 
 /// One of the three menu packets, handed on from
-/// [`super::action::drain_events`]. The vendor family is
+/// [`crate::world::incoming::drain_events`]. The vendor family is
 /// [`super::merchant::MerchantAnswer`]'s.
 #[derive(Message, Debug, Clone)]
 pub enum GossipAnswer {
@@ -192,8 +192,8 @@ fn presses(
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
     mut out: MessageWriter<GossipPress>,
 ) {
-    let Some(mut host) = host else { return };
-    for press in host.take_gossip_presses() {
+    let Some(host) = host else { return };
+    for press in crate::lua::panels::gossip::take(&host) {
         out.write(press);
     }
 }

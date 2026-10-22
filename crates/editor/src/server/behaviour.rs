@@ -576,11 +576,11 @@ impl OnTheServer {
 /// buttons with nobody at the keyboard. Fires once, after any scripted edit
 /// has landed.
 pub fn on_the_command_line(
-    args: Res<crate::Args>,
+    args: Res<crate::args::Args>,
     session: Option<ResMut<EditSession>>,
     server: Res<super::settings::ServerSettings>,
     mut reloads: ResMut<super::reload::Reloads>,
-    behaviour: Res<crate::tools::behaviour::Behaviour>,
+    behaviour: Res<crate::subjects::behaviour::Behaviour>,
     mut done: Local<bool>,
 ) {
     if *done || !(args.apply_behaviour || args.revert_behaviour) {

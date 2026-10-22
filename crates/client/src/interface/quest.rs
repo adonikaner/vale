@@ -788,12 +788,9 @@ fn follow_log(
     // The quest marks over every head may now be stale. No packet says so,
     // because `SMSG_QUESTGIVER_STATUS` is only sent as a reply, so a change to
     // the log is the trigger, and [`ask_status`] sends the queries on the next
-    // frame. See `ObjectManager::requery_quest_status` for the reason.
-    {
-        let world = active.live.world();
-        let mut world = world.lock().unwrap_or_else(|e| e.into_inner());
-        world.requery_quest_status();
-    }
+    // frame. `LiveSession::requery_quest_status` takes the world lock itself;
+    // see `ObjectManager::requery_quest_status` for the reason.
+    active.live.requery_quest_status();
 }
 
 /// The quest ids that are in the new log and were not in the old one, in the
@@ -829,7 +826,8 @@ fn newly_added(previous: &[QuestSlot], fresh: &[QuestSlot]) -> Vec<u32> {
 /// `None`, and that answer must not read as "never asked".
 ///
 /// The second trigger is the log: [`follow_log`] calls
-/// `ObjectManager::requery_quest_status`, which clears the asked set. No packet
+/// `LiveSession::requery_quest_status`, which clears the object manager's
+/// asked set (`ObjectManager::requery_quest_status`). No packet
 /// announces a mark changing, so a client that asked only on first sight kept
 /// the mark that was true when the unit streamed in: a gold `!` still over the
 /// giver the quest was just taken from, and no mark over the NPC who takes it
@@ -1053,10 +1051,12 @@ fn objective_progress(
         Some(text) => text,
         None => {
             let active = session.active.as_ref()?;
-            let mut world = active.live.world().lock().ok()?;
-            let found = match object {
-                true => world.gameobjects.get(&entry).map(|info| info.name.clone()),
-                false => world.creatures.get(&entry).map(|info| info.name.clone()),
+            let found = {
+                let world = active.live.world().lock().ok()?;
+                match object {
+                    true => world.gameobjects.get(&entry).map(|info| info.name.clone()),
+                    false => world.creatures.get(&entry).map(|info| info.name.clone()),
+                }
             };
             match found {
                 Some(name) => name,
@@ -1064,8 +1064,8 @@ fn objective_progress(
                     // Queue the query the log's rows use, and show nothing
                     // this time.
                     match object {
-                        true => world.want_gameobject(entry),
-                        false => world.want_creature(entry),
+                        true => active.live.want_gameobject(entry),
+                        false => active.live.want_creature(entry),
                     }
                     return None;
                 }
@@ -1125,17 +1125,15 @@ fn item_progress(quests: &Quests, entry: u32, added: u32, have: u32) -> Option<(
 
 /// An item's name from the session's template cache, or `None` while the query
 /// is in flight. Every other name in this client has the same one-round-trip
-/// gap. The entry is queried here so the next pickup has the name.
+/// gap. A missing entry is queued here, after the read lock is released, so
+/// the next pickup has the name.
 fn item_name(entry: u32, session: &Session) -> Option<String> {
     let active = session.active.as_ref()?;
-    let mut world = active.live.world().lock().ok()?;
-    match world.items.get(&entry) {
-        Some(info) => Some(info.name.clone()),
-        None => {
-            world.want_item(entry);
-            None
-        }
+    let known = active.live.world().lock().ok()?.items.get(&entry).map(|info| info.name.clone());
+    if known.is_none() {
+        active.live.want_item(entry);
     }
+    known
 }
 
 /// Raise `UNIT_QUEST_LOG_CHANGED` when the carried count of an item objective
@@ -1243,8 +1241,8 @@ fn presses(
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
     mut out: MessageWriter<QuestPress>,
 ) {
-    let Some(mut host) = host else { return };
-    for press in host.take_quest_presses() {
+    let Some(host) = host else { return };
+    for press in crate::lua::panels::quest::take(&host) {
         out.write(press);
     }
 }

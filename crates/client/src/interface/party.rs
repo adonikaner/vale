@@ -364,7 +364,8 @@ pub struct StatsChange {
 }
 
 /// What the session thread said about the party, forwarded by
-/// [`super::action::drain_events`] on the same terms as every other subject's.
+/// [`crate::world::incoming::drain_events`] on the same terms as every
+/// other subject's.
 #[derive(Message, Debug, Clone)]
 pub enum PartyAnswer {
     Invited(String),
@@ -587,8 +588,8 @@ fn send_verbs(
     session: Res<Session>,
     mut party: ResMut<Party>,
 ) {
-    let Some(mut host) = host else { return };
-    let verbs = host.take_party_verbs();
+    let Some(host) = host else { return };
+    let verbs = crate::lua::panels::party::take(&host);
     if verbs.is_empty() {
         return;
     }

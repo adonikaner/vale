@@ -129,9 +129,10 @@ fn track(
     player: Query<&WorldEntity, With<crate::world::session::LocalPlayer>>,
 ) {
     let Some(host) = host else { return };
-    let in_guild = host.guild().borrow().guild_id() != 0;
+    let in_guild = crate::lua::panels::guild::held(&host).borrow().guild_id() != 0;
     let own = player.single().map_or(0, |me| me.guid);
-    let mut board = host.petition().borrow_mut();
+    let petition = crate::lua::panels::petition::held(&host);
+    let mut board = petition.borrow_mut();
     board.own_guid = own;
     board.in_guild = in_guild;
 }
@@ -159,13 +160,14 @@ fn apply_answers(
         return;
     };
     let ignored = |guid: u64| {
-        host.social()
+        crate::lua::panels::social::held(&host)
             .borrow()
             .ignores
             .iter()
             .any(|(ignored, _)| *ignored == guid)
     };
-    let mut board = host.petition().borrow_mut();
+    let petition = crate::lua::panels::petition::held(&host);
+    let mut board = petition.borrow_mut();
     for answer in answers.read() {
         match answer {
             PetitionAnswer::ShowList(list) => {
@@ -307,7 +309,8 @@ fn resolve(
         shown.0 = false;
         return;
     };
-    let mut board = host.petition().borrow_mut();
+    let petition = crate::lua::panels::petition::held(&host);
+    let mut board = petition.borrow_mut();
     let missing: Vec<u64> = board
         .named_guids()
         .into_iter()
@@ -354,12 +357,13 @@ fn act(
     mut registrar_closed: MessageWriter<GuildRegistrarClosed>,
     mut closed: MessageWriter<PetitionClosed>,
 ) {
-    let Some(mut host) = host else { return };
-    let presses = host.take_petition_presses();
+    let Some(host) = host else { return };
+    let presses = crate::lua::panels::petition::take(&host);
     if presses.is_empty() {
         return;
     }
-    let mut board = host.petition().borrow_mut();
+    let petition = crate::lua::panels::petition::held(&host);
+    let mut board = petition.borrow_mut();
     let send = |verb: PetitionVerb| {
         if let Some(active) = session.active.as_ref() {
             active.live.petition(verb);
@@ -467,8 +471,8 @@ fn walk_away(
 /// [`walk_away`] clears.
 fn mirror(host: Option<NonSendMut<crate::lua::host::LuaHost>>, registrar: Res<RegistrarWindow>) {
     let Some(host) = host else { return };
-    if registrar.guid().is_none() && host.petition().borrow().registrar.is_some() {
-        host.petition().borrow_mut().registrar = None;
+    if registrar.guid().is_none() && crate::lua::panels::petition::held(&host).borrow().registrar.is_some() {
+        crate::lua::panels::petition::held(&host).borrow_mut().registrar = None;
     }
 }
 

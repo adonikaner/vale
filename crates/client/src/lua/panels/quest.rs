@@ -52,6 +52,7 @@ use super::super::api::{one_or_nil, Answers};
 // The unit-token surface these answers read the world through — imported
 // here now that the subject's own answers live beside its registration.
 use crate::interface::api;
+use crate::lua::host::LuaHost;
 
 /// One line of a quest's rewards, as `GetQuestItemInfo` answers it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -535,7 +536,8 @@ impl Which {
 pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::quest::QuestPress>>>;
 
 /// Register the eight writes. Unscoped — they record.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     use crate::interface::quest::QuestPress as P;
     let globals = lua.globals();
 
@@ -571,10 +573,16 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
     Ok(())
 }
 
+/// Take and clear the quest panel's presses.
+/// One caller, [`crate::interface::quest`].
+pub fn take(host: &LuaHost) -> Vec<crate::interface::quest::QuestPress> {
+    super::taken(host)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lua::api::tests::{eval, Stub};
+    use crate::lua::api::stub::{eval, Stub};
 
     /// **The word decides the array.** Three packets, three arrays, one
     /// function — and a host that answered the wrong one draws the right number
@@ -672,7 +680,8 @@ mod tests {
         use crate::interface::quest::QuestPress as P;
         let lua = mlua::Lua::new();
         let queue: Queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        register(&lua, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         let value: mlua::Value = lua
             .load(
                 r#"SelectAvailableQuest(2);
@@ -731,60 +740,64 @@ pub trait QuestAnswers {
     // converted beside the send.
 
     /// `GetGreetingText()`.
-    fn quest_greeting_text(&self) -> String;
+    fn quest_greeting_text(&self) -> String { String::new() }
     /// How many quests the giver has on offer (`false`) or wants back (`true`).
-    fn quest_offers(&self, active: bool) -> usize;
+    fn quest_offers(&self, _active: bool) -> usize { 0 }
     /// `GetAvailableTitle(n)` / `GetActiveTitle(n)` — the title, plus a level
     /// the questgiver panel ignores and the gossip pair uses.
     ///
     /// **Which half a quest is in is [`crate::interface::quest::is_active_offer`]'s**,
     /// and it is exactly icons 3 and 4 — not the `>= 4` the `DIALOG_STATUS`
     /// enum invites.
-    fn quest_offer_title(&self, active: bool, index: Option<usize>) -> (String, u32);
+    fn quest_offer_title(&self, _active: bool, _index: Option<usize>) -> (String, u32) {
+        Default::default()
+    }
     /// One of the five texts a page can be asked for.
-    fn quest_page_text(&self, page: super::quest::Page) -> String;
+    fn quest_page_text(&self, _page: super::quest::Page) -> String { String::new() }
     /// One of the three item arrays — see [`super::quest::Which`].
-    fn quest_items(&self, which: super::quest::Which) -> Vec<super::quest::RewardLine>;
+    fn quest_items(&self, _which: super::quest::Which) -> Vec<super::quest::RewardLine> {
+        Vec::new()
+    }
     /// `GetRewardMoney()` or `GetQuestMoneyToGet()`.
-    fn quest_money(&self, required: bool) -> u32;
+    fn quest_money(&self, _required: bool) -> u32 { 0 }
     /// `GetRewardSpell()` — **not a spell id**; see
     /// [`super::quest::RewardSpell`], which is where the reason lives.
-    fn quest_reward_spell(&self) -> Option<super::quest::RewardSpell>;
+    fn quest_reward_spell(&self) -> Option<super::quest::RewardSpell> { None }
     /// …and the same three answers about the *selected log row*.
-    fn quest_log_reward_spell(&self) -> Option<super::quest::RewardSpell>;
+    fn quest_log_reward_spell(&self) -> Option<super::quest::RewardSpell> { None }
     /// `IsQuestCompletable()` — whether the Continue button is live.
-    fn quest_completable(&self) -> bool;
+    fn quest_completable(&self) -> bool { false }
     /// `GetNumQuestLogEntries()`' first answer — rows, **headings included**.
-    fn quest_log_rows(&self) -> usize;
+    fn quest_log_rows(&self) -> usize { 0 }
     /// …and its second, which is quests alone.
-    fn quest_log_quest_rows(&self) -> usize;
+    fn quest_log_quest_rows(&self) -> usize { 0 }
     /// `SelectQuestLogEntry(n)` — **a write, and it takes effect at once**;
     /// see [`crate::interface::quest::Quests::selected`].
-    fn select_log_row(&self, row: usize);
+    fn select_log_row(&self, _row: usize) {}
     /// `GetQuestLogSelection()` — one-based, 0 for nothing.
-    fn quest_log_selection(&self) -> usize;
+    fn quest_log_selection(&self) -> usize { 0 }
     /// `GetQuestLogQuestText()` — `(details, objectives)`.
-    fn quest_log_text(&self) -> (String, String);
+    fn quest_log_text(&self) -> (String, String) { Default::default() }
     /// The objective lines of a log row, or of the selected one for 0.
-    fn quest_log_objectives(&self, row: usize) -> Vec<super::quest::ObjectiveLine>;
+    fn quest_log_objectives(&self, _row: usize) -> Vec<super::quest::ObjectiveLine> { Vec::new() }
     /// The selected quest's rewards: its choices (`true`) or what it gives
     /// outright (`false`).
-    fn quest_log_items(&self, choices: bool) -> Vec<super::quest::RewardLine>;
+    fn quest_log_items(&self, _choices: bool) -> Vec<super::quest::RewardLine> { Vec::new() }
     /// `GameTooltip:SetQuestRewardSpell()` (`false`) and its log twin (`true`) —
     /// the *plate* behind the same spell [`Answers::quest_reward_spell`] names,
     /// which is a different question from the icon and the heading.
-    fn quest_reward_spell_tip(&self, from_log: bool) -> Option<api::SpellTip>;
+    fn quest_reward_spell_tip(&self, _from_log: bool) -> Option<api::SpellTip> { None }
     /// `GetQuestLogRewardMoney()` (`false`) or `GetQuestLogRequiredMoney()`
     /// (`true`) — **one signed field seen from both ends**; see the
     /// implementation, where vmangos' `GetRewOrReqMoney` is.
-    fn quest_log_money(&self, required: bool) -> u32;
+    fn quest_log_money(&self, _required: bool) -> u32 { 0 }
     /// `IsCurrentQuestFailed()` — the selected row's `QUEST_STATE_FAIL`.
-    fn quest_log_failed(&self) -> bool;
+    fn quest_log_failed(&self) -> bool { false }
     /// `GetQuestLogTimeLeft()` — seconds, or `None` for a quest with no clock,
     /// which is nearly all of them and is the interface's own test.
-    fn quest_log_time_left(&self) -> Option<u32>;
+    fn quest_log_time_left(&self) -> Option<u32> { None }
     /// One row of the log, one-based.
-    fn quest_log_row(&self, row: usize) -> Option<super::quest::LogRow>;
+    fn quest_log_row(&self, _row: usize) -> Option<super::quest::LogRow> { None }
 
     // --- the tracker ---
     //
@@ -796,31 +809,31 @@ pub trait QuestAnswers {
     /// `SetAbandonQuest()` — **a write, and it takes effect at once**; latch
     /// the selected quest as the one the confirmation popup is about. See
     /// [`crate::interface::quest::Quests::abandon`].
-    fn quest_set_abandon(&self);
+    fn quest_set_abandon(&self) {}
     /// `GetAbandonQuestName()` — the latched quest's title.
-    fn quest_abandon_name(&self) -> Option<String>;
+    fn quest_abandon_name(&self) -> Option<String> { None }
     /// `GetAbandonQuestItems()` — the items abandoning it would destroy, joined
     /// with `", "`, or `None` when there are none. See the implementation,
     /// which follows the client arm for arm.
-    fn quest_abandon_items(&self) -> Option<String>;
+    fn quest_abandon_items(&self) -> Option<String> { None }
 
     /// `CollapseQuestHeader(row)` / `ExpandQuestHeader(row)` — **a write, and
     /// it takes effect at once**; `0` is every heading. See
     /// [`crate::interface::quest::Display`], which is where the one-click lag
     /// this shape avoids is written out.
-    fn quest_set_collapsed(&self, row: usize, collapsed: bool);
+    fn quest_set_collapsed(&self, _row: usize, _collapsed: bool) {}
 
     /// `GetNumQuestWatches()`.
-    fn quest_watch_count(&self) -> usize;
+    fn quest_watch_count(&self) -> usize { 0 }
     /// `IsQuestWatched(row)`.
-    fn quest_is_watched(&self, row: usize) -> bool;
+    fn quest_is_watched(&self, _row: usize) -> bool { false }
     /// `GetQuestIndexForWatch(i)` — the row the `i`th tracked quest is on now,
     /// or `None` for one that has left the log.
-    fn quest_watch_row(&self, watch: usize) -> Option<usize>;
+    fn quest_watch_row(&self, _watch: usize) -> Option<usize> { None }
     /// `AddQuestWatch(row)` / `RemoveQuestWatch(row)` — **writes, and they take
     /// effect at once**.
-    fn quest_add_watch(&self, row: usize);
-    fn quest_remove_watch(&self, row: usize);
+    fn quest_add_watch(&self, _row: usize) {}
+    fn quest_remove_watch(&self, _row: usize) {}
 }
 
 impl QuestAnswers for super::super::api::Live<'_, '_, '_> {

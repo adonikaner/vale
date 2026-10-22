@@ -160,7 +160,7 @@ pub fn run() {
         .insert_resource(HoverProbe(args.hover))
         .insert_resource(Relogin::new(args.relogin))
         .insert_resource(args.window)
-        .insert_resource(lua::host::StartupScript::new(args.script));
+        .insert_resource(lua::load::StartupScript::new(args.script));
     // `--panel` is the only way a scripted run can see the debug window; see
     // [`args::Args::panel`]. These insertions are behind the `diagnostics` feature,
     // which owns the window, so in a build without it `--panel` is accepted

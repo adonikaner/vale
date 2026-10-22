@@ -16,7 +16,7 @@
 //! `vale_mangos::vendor::Ware::check` and `vale_mangos::trainer::Lesson::check`.
 //! The checks that need the item table, the spell tables or the rest of the
 //! list are the window's, which refuses to add such a row; see
-//! `crate::tools::services`.
+//! `crate::subjects::services`.
 //!
 //! ## Live on a reload, removals included
 //!
@@ -555,11 +555,11 @@ impl OnTheServer {
 /// `--apply-services` and `--revert-services`: the Server panel's two buttons
 /// with nobody at the keyboard. Fires once, after any scripted edit has landed.
 pub fn on_the_command_line(
-    args: Res<crate::Args>,
+    args: Res<crate::args::Args>,
     session: Option<ResMut<EditSession>>,
     server: Res<super::settings::ServerSettings>,
     mut reloads: ResMut<super::reload::Reloads>,
-    services: Res<crate::tools::services::Services>,
+    services: Res<crate::subjects::services::Services>,
     mut done: Local<bool>,
 ) {
     if *done || !(args.apply_services || args.revert_services) {

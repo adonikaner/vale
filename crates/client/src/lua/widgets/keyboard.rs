@@ -339,7 +339,7 @@ pub(in crate::lua) fn deliver(
 mod tests {
     use super::*;
 
-    use crate::lua::api::tests::Stub;
+    use crate::lua::api::stub::Stub;
     use crate::lua::host::LuaHost;
 
     /// **The three script names are the loader's second rule**, and the census

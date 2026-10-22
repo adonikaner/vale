@@ -40,6 +40,7 @@
 //! it at all.
 
 use vale_assets::tables::talent::TalentTree;
+use crate::lua::host::LuaHost;
 
 /// The **scoped reads**, sorted — see [`super`] for what "scoped" buys, and
 /// [`super::super::api`]'s own test, which asserts this against what the scope
@@ -89,17 +90,19 @@ pub struct TalentPrereq {
 
 /// What the panel may ask the world.
 pub trait TalentAnswers {
-    fn num_talent_tabs(&self) -> usize;
-    fn talent_tab_info(&self, tab: usize) -> Option<TalentTab>;
-    fn num_talents(&self, tab: usize) -> usize;
-    fn talent_info(&self, tab: usize, index: usize) -> Option<TalentInfo>;
-    fn talent_prereqs(&self, tab: usize, index: usize) -> Vec<TalentPrereq>;
+    fn num_talent_tabs(&self) -> usize { 0 }
+    fn talent_tab_info(&self, _tab: usize) -> Option<TalentTab> { None }
+    fn num_talents(&self, _tab: usize) -> usize { 0 }
+    fn talent_info(&self, _tab: usize, _index: usize) -> Option<TalentInfo> { None }
+    fn talent_prereqs(&self, _tab: usize, _index: usize) -> Vec<TalentPrereq> { Vec::new() }
     /// **The plate a talent button hovers with** — `GameTooltip:SetTalent`.
     ///
     /// Composed from the *held* rank's spell rather than rank 1's, which is what
     /// makes the numbers in it move as points go in; see
     /// [`vale_assets::tables::talent::TalentRow::face_spell`].
-    fn talent_tooltip(&self, tab: usize, index: usize) -> Option<crate::interface::api::SpellTip>;
+    fn talent_tooltip(&self, _tab: usize, _index: usize) -> Option<crate::interface::api::SpellTip> {
+        None
+    }
 }
 
 impl TalentAnswers for super::super::api::Live<'_, '_, '_> {
@@ -276,7 +279,8 @@ pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<(usize, usize)>>>;
 /// the button carries; the client's own gate is "not already maxed" and it is
 /// applied where the tree is, in
 /// [`vale_assets::tables::talent::TalentTree::learn`].
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     let queue = std::rc::Rc::clone(queue);
     lua.globals().set(
         "LearnTalent",
@@ -287,6 +291,12 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
             Ok(())
         })?,
     )
+}
+
+/// Take and clear the talent panel's presses, as `(tab, index)` pairs the
+/// ECS resolves against the tree. See [`crate::interface::talents`].
+pub fn take(host: &LuaHost) -> Vec<(usize, usize)> {
+    super::taken(host)
 }
 
 /// **The tree the reads answer from**, and the counters beside it.

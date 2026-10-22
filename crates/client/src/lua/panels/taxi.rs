@@ -40,6 +40,7 @@
 //! map id of the open window.
 
 use super::super::api::Answers;
+use crate::lua::host::LuaHost;
 
 /// The reads this module registers, for the check that counts the C functions
 /// the interface calls and this client does not register.
@@ -180,7 +181,8 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::taxi::TaxiPress>>>;
 
 /// Register the three writes. Unscoped — they record.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     use crate::interface::taxi::TaxiPress as P;
     let globals = lua.globals();
     macro_rules! push {
@@ -209,10 +211,15 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
     Ok(())
 }
 
+/// Take and clear the flight map's presses. See [`crate::interface::taxi`].
+pub fn take(host: &LuaHost) -> Vec<crate::interface::taxi::TaxiPress> {
+    super::taken(host)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lua::api::tests::{eval, Stub};
+    use crate::lua::api::stub::{eval, Stub};
 
     /// The whole read surface against the stub board, in the shapes the frame
     /// uses them in.
@@ -275,7 +282,7 @@ mod tests {
     /// handed, by object or by name, like every other region write.
     ///
     /// The test builds its own state rather than using [`eval`], because it is
-    /// the one read in this file that needs the object model: `api::tests::eval`
+    /// the one read in this file that needs the object model: `api::stub::eval`
     /// installs the reads onto a bare state, and `CreateFrame` is not one of
     /// them.
     #[test]
@@ -304,7 +311,8 @@ mod tests {
         use crate::interface::taxi::TaxiPress as P;
         let lua = mlua::Lua::new();
         let queue: Queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        register(&lua, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         lua.load("TaxiNodeSetCurrent(3); TakeTaxiNode(3); TakeTaxiNode(0); CloseTaxiMap()")
             .exec()
             .expect("the chunk runs");
@@ -321,16 +329,16 @@ mod tests {
 /// directory. [`super::super::api::Answers`] combines them all.
 pub trait TaxiAnswers {
     /// `NumTaxiNodes()` — how many buttons the frame needs.
-    fn taxi_nodes(&self) -> usize;
+    fn taxi_nodes(&self) -> usize { 0 }
     /// Everything about one drawn node, one-based.
-    fn taxi_node(&self, row: usize) -> Option<TaxiNodeLine>;
+    fn taxi_node(&self, _row: usize) -> Option<TaxiNodeLine> { None }
     /// The endpoints of one hop of a node's route, both one-based, each in
     /// `0..1` across the map art.
-    fn taxi_hop(&self, row: usize, hop: usize) -> Option<([f32; 2], [f32; 2])>;
+    fn taxi_hop(&self, _row: usize, _hop: usize) -> Option<([f32; 2], [f32; 2])> { None }
     /// The file `SetTaxiMap` paints; `None` with no window open.
-    fn taxi_map_art(&self) -> Option<String>;
+    fn taxi_map_art(&self) -> Option<String> { None }
     /// `UnitOnTaxi(unit)`: whether this unit is flying on a flight path.
-    fn unit_on_taxi(&self, token: &str) -> bool;
+    fn unit_on_taxi(&self, _token: &str) -> bool { false }
 }
 
 impl TaxiAnswers for super::super::api::Live<'_, '_, '_> {

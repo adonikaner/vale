@@ -52,7 +52,8 @@ use super::events::{TaximapClosed, TaximapOpened};
 use crate::assets::GameAssets;
 use crate::world::session::{LocalPlayer, Session, WorldEntity};
 
-/// One of the four taxi packets, handed on from [`super::action::drain_events`].
+/// One of the four taxi packets, handed on from
+/// [`crate::world::incoming::drain_events`].
 #[derive(Message, Debug, Clone)]
 pub enum TaxiAnswer {
     /// `SMSG_SHOWTAXINODES` — the map.
@@ -332,8 +333,8 @@ fn lay_out(assets: &GameAssets, menu: &TaxiMenu, template: Option<u32>) -> Optio
 
 /// Drain what the interface pressed.
 fn presses(host: Option<NonSendMut<crate::lua::host::LuaHost>>, mut out: MessageWriter<TaxiPress>) {
-    let Some(mut host) = host else { return };
-    for press in host.take_taxi_presses() {
+    let Some(host) = host else { return };
+    for press in crate::lua::panels::taxi::take(&host) {
         out.write(press);
     }
 }

@@ -60,7 +60,7 @@ use vale_assets::world::terrain::tile_for_position;
 use vale_client::render::axes::to_bevy;
 use vale_client::render::focus::WorldFocus;
 use vale_mangos::datadir::Tile;
-use vale_mangos::navmesh::{self, NavTile, Surface};
+use vale_mangos::datadir::navmesh::{self, NavTile, Surface};
 
 use crate::server::settings::ServerSettings;
 

@@ -158,7 +158,7 @@ impl Grade {
 
     /// **Write this grade into one tile**, returning what it changed.
     ///
-    /// The counterpart of [`super::Brush::stroke`], and it owes the same three
+    /// The counterpart of [`super::brush::Brush::stroke`], and it owes the same three
     /// things: world heights in and out, one [`super::Edit::Heights`] per chunk
     /// that moved, and the shading recomputed and recorded beside them — see
     /// [`super::reshade`].

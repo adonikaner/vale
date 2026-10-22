@@ -13,10 +13,10 @@
 //!
 //! ```text
 //! Doodads, WMOs   the placement under the pointer, locked or not
-//!                 (`tools::doodads::select`, `tools::wmos::select`)
+//!                 (`tools::placements::doodads::select`, `tools::placements::wmos::select`)
 //! Creatures,      the spawn under the pointer, as the tool's hover found it
-//! Objects         (`tools::creatures::menu_target`,
-//!                 `tools::gameobjects::menu_target`)
+//! Objects         (`tools::spawns::creatures::menu_target`,
+//!                 `tools::spawns::gameobjects::menu_target`)
 //! every tool      the ground under the pointer: its position, tile and chunk
 //!                 (`crate::pick::Cursor`)
 //! ```
@@ -27,7 +27,7 @@
 //! on a member of a group keeps the group. A locked placement is not selected;
 //! its menu offers to unlock it.
 //!
-//! The menus themselves are drawn by `crate::ui::context`, which has the same
+//! The menus themselves are drawn by `crate::ui::shell::context`, which has the same
 //! access to the session and the tools as the inspector, and each item calls
 //! the operation the matching panel button calls.
 
@@ -89,17 +89,17 @@ pub struct ContextMenu {
 /// An operation a menu item hands to the system that answers its key.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Request {
-    /// `Ctrl+C` for the doodad or WMO selection (`tools::group::clipboard`).
+    /// `Ctrl+C` for the doodad or WMO selection (`tools::placements::group::clipboard`).
     Copy,
     /// `Ctrl+V` at a point in the world, which is where the menu was opened
     /// rather than where the pointer is when the item is pressed.
     Paste(Vec3),
-    /// `Ctrl+D` over a group (`tools::group::clipboard`), or for the selected
-    /// creature or game object spawn (`tools::spawn::keys`).
+    /// `Ctrl+D` over a group (`tools::placements::group::clipboard`), or for the selected
+    /// creature or game object spawn (`tools::spawns::spawn::keys`).
     Duplicate,
-    /// `Delete` for the doodad or WMO selection (`tools::doodads::remove`,
-    /// `tools::wmos::remove`), or for the creature or game object selection
-    /// (`tools::spawn::keys`).
+    /// `Delete` for the doodad or WMO selection (`tools::placements::doodads::remove`,
+    /// `tools::placements::wmos::remove`), or for the creature or game object selection
+    /// (`tools::spawns::spawn::keys`).
     Delete,
 }
 
@@ -132,10 +132,10 @@ impl Plugin for ContextMenuPlugin {
             open
                 // After the four pickers that answer for objects, which run
                 // after the pointer's pick.
-                .after(crate::tools::doodads::select)
-                .after(crate::tools::wmos::select)
-                .after(crate::tools::creatures::menu_target)
-                .after(crate::tools::gameobjects::menu_target)
+                .after(crate::tools::placements::doodads::select)
+                .after(crate::tools::placements::wmos::select)
+                .after(crate::tools::spawns::creatures::menu_target)
+                .after(crate::tools::spawns::gameobjects::menu_target)
                 .after(crate::pick::aim),
         );
     }
@@ -147,7 +147,7 @@ fn open(
     tool: Res<Tool>,
     cursor: Res<Cursor>,
     state: Res<crate::playtest::Playtest>,
-    mut chunks: ResMut<crate::tools::chunks::Chunks>,
+    mut chunks: ResMut<crate::tools::ground::chunks::Chunks>,
 ) {
     if !state.editing() {
         menu.pending = None;
@@ -172,7 +172,7 @@ fn open(
     // outside it selects that chunk alone.
     if *tool == Tool::Chunks {
         if let (Some(coord), Some(chunk)) = (cursor.tile, cursor.chunk) {
-            let cell = crate::tools::chunks::Cell::of(coord, ((chunk % 16) as u32, (chunk / 16) as u32));
+            let cell = crate::tools::ground::chunks::Cell::of(coord, ((chunk % 16) as u32, (chunk / 16) as u32));
             if !chunks.selected.contains(&cell) {
                 chunks.select([cell]);
             }

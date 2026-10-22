@@ -70,6 +70,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::super::api::{one_or_nil, Answers};
+use crate::lua::host::LuaHost;
 
 /// The scoped reads this file registers, sorted. It serves the same purpose as
 /// [`super::super::api::READS`] does for the rest of the client.
@@ -263,7 +264,8 @@ pub struct CharacterRow {
 }
 
 /// Register the writes and the constants. Unscoped: none of them borrows.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &GlueQueue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &GlueQueue = &super::stored(lua);
     let globals = lua.globals();
 
     macro_rules! push {
@@ -515,6 +517,12 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &GlueQueue) -> mlua::Resu
     Ok(())
 }
 
+/// Take and clear the login and character-select screens' requests. See
+/// [`super::glue`]. One caller, [`crate::glue::glue`].
+pub fn take(host: &LuaHost) -> Vec<GlueRequest> {
+    super::taken(host)
+}
+
 /// Register the reads into the scope, beside [`super::super::api::install`]'s.
 pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     lua: &mlua::Lua,
@@ -630,7 +638,8 @@ mod tests {
     fn queued(chunk: &str) -> Vec<GlueRequest> {
         let lua = mlua::Lua::new();
         let queue: GlueQueue = Rc::new(RefCell::new(Vec::new()));
-        register(&lua, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         lua.load(chunk).exec().expect("the chunk runs");
         let taken = queue.borrow().clone();
         taken
@@ -686,7 +695,8 @@ mod tests {
     fn the_version_line_is_the_build_the_handshake_claims() {
         let lua = mlua::Lua::new();
         let queue: GlueQueue = Rc::new(RefCell::new(Vec::new()));
-        register(&lua, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         let line: String = lua
             .load(
                 r#"local t, b, v, i, d = GetBuildInfo();
@@ -703,7 +713,8 @@ mod tests {
     fn the_agreements_are_accepted_so_the_login_box_is_the_visible_branch() {
         let lua = mlua::Lua::new();
         let queue: GlueQueue = Rc::new(RefCell::new(Vec::new()));
-        register(&lua, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         let shown: bool = lua
             .load(
                 "return (EULAAccepted() and TOSAccepted()
@@ -732,7 +743,8 @@ mod tests {
             .map(|(name, _)| name)
             .collect();
         let queue: GlueQueue = Rc::new(RefCell::new(Vec::new()));
-        register(&lua, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         let after: std::collections::BTreeSet<String> = lua
             .globals()
             .pairs::<String, mlua::Value>()
@@ -769,7 +781,8 @@ mod tests {
         let lua = mlua::Lua::new();
         crate::lua::widgets::frames::install(&lua).expect("the object model");
         let queue: GlueQueue = Rc::new(RefCell::new(Vec::new()));
-        register(&lua, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         // The lines from the two `OnLoad`s, then the calls `SetBackgroundModel`
         // makes.
         lua.load(
@@ -839,21 +852,21 @@ pub trait GlueAnswers {
 
     /// `GetNumCharacters()`: how many rows the character list has; 0 before
     /// the handshake and 0 in the world.
-    fn character_count(&self) -> usize;
+    fn character_count(&self) -> usize { 0 }
     /// `GetCharacterInfo(i)`, one-based. `None` for a row the client does not
     /// have, which becomes the single nil the interface tests for.
-    fn character_row(&self, index: usize) -> Option<super::glue::CharacterRow>;
+    fn character_row(&self, _index: usize) -> Option<super::glue::CharacterRow> { None }
     /// `GetServerName()`: `(name, isPVP, isRP)`. A `None` name hides the realm
     /// label rather than drawing an empty one.
-    fn realm(&self) -> (Option<String>, bool, bool);
+    fn realm(&self) -> (Option<String>, bool, bool) { Default::default() }
     /// `IsConnectedToServer()`: whether the handshake socket is still open.
     /// This decides whether character select asks the server for the list or
     /// draws the list it has with `(Server Down)` on it.
-    fn connected(&self) -> bool;
+    fn connected(&self) -> bool { false }
     /// `GetSavedAccountName()`: the account box's initial text. `""` rather
     /// than nil: `AccountLogin_OnShow` compares it against `""` to decide which
     /// of the two boxes gets the focus, and nil raises an error on that line.
-    fn saved_account_name(&self) -> String;
+    fn saved_account_name(&self) -> String { String::new() }
 }
 
 impl GlueAnswers for super::super::api::Live<'_, '_, '_> {

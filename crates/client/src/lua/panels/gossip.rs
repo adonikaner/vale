@@ -18,6 +18,7 @@
 //! client's own eleven-entry table (`vale_protocol::play::gossip::ICON_WORDS`).
 
 use super::super::api::Answers;
+use crate::lua::host::LuaHost;
 
 /// **The reads this module registers**, for the count that measures the gap.
 pub const READS: [&str; 4] = [
@@ -75,7 +76,8 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::gossip::GossipPress>>>;
 
 /// Register the four writes. Unscoped — they record.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     use crate::interface::gossip::GossipPress as P;
     let globals = lua.globals();
     macro_rules! push {
@@ -99,10 +101,16 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
     Ok(())
 }
 
+/// Take and clear the gossip window's presses. This and
+/// [`super::merchant::take`] have one caller each.
+pub fn take(host: &LuaHost) -> Vec<crate::interface::gossip::GossipPress> {
+    super::taken(host)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lua::api::tests::{eval, Stub};
+    use crate::lua::api::stub::{eval, Stub};
 
     /// **Flattened pairs, walked two at a time** — the shape
     /// `GossipFrameOptionsUpdate`'s own `for i=1, arg.n, 2` requires. A table
@@ -136,7 +144,8 @@ mod tests {
         use crate::interface::gossip::GossipPress as P;
         let lua = mlua::Lua::new();
         let queue: Queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        register(&lua, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         lua.load(
             "SelectGossipOption(2); SelectGossipAvailableQuest(1); \
              SelectGossipActiveQuest(1); SelectGossipOption(0); CloseGossip()",
@@ -173,12 +182,12 @@ pub trait GossipAnswers {
 
     /// `GetGossipText()` — resolved through the text cache; see
     /// [`crate::interface::gossip::GossipWindow::text`].
-    fn gossip_text(&self) -> String;
+    fn gossip_text(&self) -> String { String::new() }
     /// `GetGossipOptions()` — `(text, icon word)` per line.
-    fn gossip_options(&self) -> Vec<(String, &'static str)>;
+    fn gossip_options(&self) -> Vec<(String, &'static str)> { Vec::new() }
     /// `GetGossipAvailableQuests()` / `GetGossipActiveQuests()` —
     /// `(title, level)` per quest in the asked-for half.
-    fn gossip_quests(&self, active: bool) -> Vec<(String, u32)>;
+    fn gossip_quests(&self, _active: bool) -> Vec<(String, u32)> { Vec::new() }
 }
 
 impl GossipAnswers for super::super::api::Live<'_, '_, '_> {

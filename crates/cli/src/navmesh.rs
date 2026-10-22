@@ -15,7 +15,7 @@
 //! which is the file the server reads it from. Read-only.
 //!
 //! The one-tile form checks the axis conversion in
-//! `vale_mangos::navmesh`: the middle of the tile's box, converted to world
+//! `vale_mangos::datadir::navmesh`: the middle of the tile's box, converted to world
 //! axes, must fall on the terrain tile whose number is in the file name. A
 //! reader that swapped two axes places the box on a different tile, or off the
 //! map.
@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use vale_assets::world::terrain::tile_for_position;
 use vale_config::Config;
 use vale_mangos::datadir::{self, Tile};
-use vale_mangos::navmesh::{self, NavTile, Surface};
+use vale_mangos::datadir::navmesh::{self, NavTile, Surface};
 
 use crate::common::open_assets;
 

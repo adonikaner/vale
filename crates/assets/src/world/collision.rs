@@ -2868,10 +2868,10 @@ mod tests {
     }
 
     /// The same id inserted again is the same placement placed again, and
-    /// the new hull stands in for the old one rather than being ignored. The
-    /// editor re-reads a tile after a move and mints an undone placement's
-    /// id again; either left the old hull in place and the new position
-    /// without one.
+    /// the new hull stands in for the old one rather than being ignored. A
+    /// caller that rewrote a tile re-reads it after a move, and mints an undone
+    /// placement's id again; either left the old hull in place and the new
+    /// position without one.
     #[test]
     fn a_second_insert_of_the_same_id_replaces_the_hull() {
         let world = CollisionWorld::new();

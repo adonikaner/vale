@@ -343,8 +343,8 @@ fn presses(
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
     mut out: MessageWriter<TradePress>,
 ) {
-    let Some(mut host) = host else { return };
-    for press in host.take_trade_presses() {
+    let Some(host) = host else { return };
+    for press in crate::lua::panels::trade::take(&host) {
         out.write(press);
     }
 }

@@ -446,7 +446,7 @@ mod tests {
     /// is what stops the sound panel from looping.
     #[test]
     fn the_mirror_takes_the_writes_and_gates_the_event() {
-        use crate::lua::api::tests::Stub;
+        use crate::lua::api::stub::Stub;
         let mut app = App::new();
         crate::interface::events::register(&mut app);
         app.init_resource::<CVars>()

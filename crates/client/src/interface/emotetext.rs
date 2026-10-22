@@ -1,15 +1,15 @@
-//! **Text emotes**: `/dance` typed here goes out as `CMSG_TEXT_EMOTE`, and
-//! everybody's `SMSG_TEXT_EMOTE` becomes the sentence and the voice line.
+//! Text emotes: `/dance` typed here goes out as `CMSG_TEXT_EMOTE`, and
+//! every `SMSG_TEXT_EMOTE` received becomes a chat sentence and a voice line.
 //!
-//! The animation is not this module's: the server answers a text emote
-//! with an `SMSG_EMOTE` of its own, which `world::entities` already plays.
-//! What was missing was the *words* — `Corwin dances.`, `Bob waves at
-//! you.` — and the shout a `/charge` makes, both of which the client
-//! composes for itself out of `EmotesText.dbc`, `EmotesTextData.dbc` and
-//! `EmotesTextSound.dbc` (`assets::tables::emotetext`, which states the
-//! column rule and what was measured).
+//! This module does not play the animation: the server answers a text emote
+//! with an `SMSG_EMOTE` of its own, which `world::entities` plays. This
+//! module produces the sentence (`Corwin dances.`, `Bob waves at you.`) and
+//! the voice line (the shout a `/charge` makes). The client composes both
+//! from `EmotesText.dbc`, `EmotesTextData.dbc` and `EmotesTextSound.dbc`
+//! (`assets::tables::emotetext`, which states the column rule and what was
+//! measured).
 //!
-//! ## The way out
+//! ## Sending an emote
 //!
 //! `ChatFrame.lua` turns `/dance` into `DoEmote("DANCE", rest)` through its
 //! own `EMOTEn_CMDm` and `EMOTEn_TOKEN` globals, and the emote menu calls
@@ -20,17 +20,19 @@
 //! known. A token the table does not have is dropped, which is what the
 //! reference does with `/foo`.
 //!
-//! ## The way in
+//! ## Receiving an emote
 //!
-//! The packet carries the speaker's guid and the *target's* name. The
-//! speaker's name and gender come from the players table, asked for through
-//! the same door the friends list uses when it does not have them
-//! ([`NAME_PATIENCE`], as the channel notices); the sentence is chosen by
-//! who is speaking to whom, and lands as `CHAT_MSG_TEXT_EMOTE` with the
-//! sentence in `arg1`, which `ChatFrame_OnEvent` prints as it is. The
-//! voice line is looked up by the speaker's race and gender and played
-//! where they stand, through the mixer the greetings use; a speaker out of
-//! view has no position and makes no sound.
+//! The packet carries the speaker's guid and the target's name. The
+//! speaker's name and gender come from the players table. When it does not
+//! have them, the guid is queued on the name query the friends list uses
+//! (`LiveSession::want_social_guid`, after the world lock is released) and
+//! the line waits up to [`NAME_PATIENCE`], as the channel notices do. The
+//! sentence is chosen by who is speaking to whom, and is raised as
+//! `CHAT_MSG_TEXT_EMOTE` with the sentence in `arg1`, which
+//! `ChatFrame_OnEvent` prints as it is. The voice line is looked up by the
+//! speaker's race and gender and played where they stand, through the mixer
+//! the greetings use; a speaker out of view has no position and makes no
+//! sound.
 
 use bevy::prelude::*;
 
@@ -142,14 +144,15 @@ fn apply_answers(
         return;
     };
     let me = status.character.clone();
-    let Ok(mut world) = active.live.world().lock() else {
+    let Ok(world) = active.live.world().lock() else {
         return;
     };
+    let mut unnamed = Vec::new();
     for item in queue {
         let patient = now - item.since < NAME_PATIENCE;
         let emote = &item.emote;
-        // The speaker: the character, somebody named, or somebody still
-        // being asked about.
+        // The speaker is the character, a player whose name is known, or a
+        // player whose name has been asked for and not yet answered.
         let (speaker, race_gender) = if world.player_guid == Some(emote.sender) {
             let own = placed
                 .iter()
@@ -163,7 +166,7 @@ fn apply_answers(
                     (info.race, info.gender),
                 ),
                 None if patient => {
-                    world.want_social_guid(emote.sender);
+                    unnamed.push(emote.sender);
                     waiting.push(item);
                     continue;
                 }
@@ -190,8 +193,8 @@ fn apply_answers(
                 ..Default::default()
             });
         }
-        // The voice line, on the speaker — a child of their entity, so it
-        // goes where they go.
+        // The voice line plays as a child of the speaker's entity, so it
+        // moves with them.
         let (race, gender) = race_gender;
         if let Some(sound) = texts.sound(emote.text_emote, race, gender) {
             if let Some((id, _, at)) = placed.iter().find(|(_, entity, _)| entity.guid == emote.sender) {
@@ -199,6 +202,12 @@ fn apply_answers(
                 voices.play(&bank, sound, Place::On(id, at.translation));
             }
         }
+    }
+    // The speakers with no name yet are queued for a name query once the
+    // read lock is released.
+    drop(world);
+    for guid in unnamed {
+        active.live.want_social_guid(guid);
     }
 }
 

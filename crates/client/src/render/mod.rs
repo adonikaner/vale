@@ -41,6 +41,8 @@
 //! night.rs      a deep volumetric night the game does not have, applied as a
 //!               grade over the sky's result. Its shader, `shaders/night.wgsl`,
 //!               is kept apart from the others, which all describe the game
+//! building_lights.rs the omni lights a building states (MOLT), applied to
+//!               the units and game objects near it
 //! lamps.rs      light from additive emitters (a torch, a brazier, a spell
 //!               landing) on the world around them
 //! stars.rs      the star field, which does not move

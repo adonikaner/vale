@@ -32,7 +32,8 @@ use super::messages::UiStrings;
 use vale_protocol::play::timers::{MirrorTimer, MirrorTimerStart as Started};
 use bevy::prelude::*;
 
-/// One of the three packets, handed on from [`super::action::drain_events`].
+/// One of the three packets, handed on from
+/// [`crate::world::incoming::drain_events`].
 ///
 /// A message rather than a second drain of the session queue, for the reason
 /// [`super::logout::LogoutAnswer`] is one: the queue has exactly one reader and

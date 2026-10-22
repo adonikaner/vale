@@ -119,8 +119,8 @@ fn answers(
 
 /// Drain the Lua host's queue into messages.
 fn presses(host: Option<NonSendMut<crate::lua::host::LuaHost>>, mut out: MessageWriter<InspectPress>) {
-    let Some(mut host) = host else { return };
-    for press in host.take_inspect_presses() {
+    let Some(host) = host else { return };
+    for press in crate::lua::panels::inspect::take(&host) {
         out.write(press);
     }
 }

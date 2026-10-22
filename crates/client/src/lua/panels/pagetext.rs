@@ -34,6 +34,7 @@
 //! the art for them does not exist.
 
 use super::super::api::Answers;
+use crate::lua::host::LuaHost;
 
 /// **The reads this module registers**, for the count that measures the gap.
 pub const READS: [&str; 6] = [
@@ -141,7 +142,8 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::pagetext::PagePress>>>;
 
 /// Register the three writes. Unscoped — they record.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     use crate::interface::pagetext::PagePress as P;
     let globals = lua.globals();
     for (name, press) in [
@@ -157,6 +159,12 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
         globals.set(name, f)?;
     }
     Ok(())
+}
+
+/// Take and clear the page window's presses. See
+/// [`crate::interface::pagetext`].
+pub fn take(host: &LuaHost) -> Vec<crate::interface::pagetext::PagePress> {
+    super::taken(host)
 }
 
 #[cfg(test)]

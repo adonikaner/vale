@@ -1,66 +1,58 @@
-//! **The shop** — the vendor window, buying, and the right-click that sells.
+//! The vendor window: buying, buyback, repair, and the right-click that sells.
 //!
-//! The client's half of [`vale_protocol::play::gossip`]'s vendor side. One window
-//! at a time, on the server's own model, and the two-phase fill every panel of
-//! items has: `SMSG_LIST_INVENTORY` carries entries and display ids, the
-//! *names* need `CMSG_ITEM_QUERY_SINGLE`, and `MERCHANT_UPDATE` is raised as
-//! the templates land so `MerchantFrame_Update` re-reads.
+//! The client side of [`vale_protocol::play::gossip`]'s vendor packets. One
+//! window is open at a time, as on the server. The window fills in two steps,
+//! as every panel of items does: `SMSG_LIST_INVENTORY` carries entries and
+//! display ids, the names need `CMSG_ITEM_QUERY_SINGLE`, and `MERCHANT_UPDATE`
+//! is raised as the templates arrive so `MerchantFrame_Update` reads again.
 //!
-//! ## Selling is a right-click in the bags, and it is not a new gesture
+//! ## Selling is the ordinary right-click in the bags
 //!
-//! 1.12 has no sell button: with a merchant window open, the ordinary
-//! right-click on a bag slot **sells the stack** instead of using it —
-//! `UseContainerItem`'s own body, one branch earlier. That is why the sell
-//! lives in [`super::items`]'s use path rather than here: the click is that
-//! module's, and what changes while the shop is open is only which packet
-//! leaves. `CMSG_SELL_ITEM` takes the item object's *guid* and a count of 0,
-//! which the server reads as the whole stack.
+//! 1.12 has no sell button. With a merchant window open, a right-click on a
+//! bag slot (`UseContainerItem`) sells the stack instead of using it. The sell
+//! is therefore in [`super::items`]'s use path rather than here: the click
+//! belongs to that module, and an open vendor changes only which packet is
+//! sent. `CMSG_SELL_ITEM` takes the item object's guid and a count of 0, which
+//! the server reads as the whole stack.
 //!
-//! ## What a refusal says is the game's own line
+//! ## Refusal messages
 //!
 //! `SMSG_BUY_FAILED` and `SMSG_SELL_ITEM` each carry a reason byte, and each
-//! reason that has a `GlobalStrings.lua` key says it through the error frame:
+//! reason with a `GlobalStrings.lua` key shows it in the error frame:
 //! `ERR_NOT_ENOUGH_MONEY`, `ERR_VENDOR_SOLD_OUT`, `ERR_VENDOR_TOO_FAR`,
 //! `ERR_VENDOR_HATES_YOU`, `ERR_VENDOR_NOT_INTERESTED`, `ERR_ITEM_MAX_COUNT`.
-//! **The mapping from byte to key is a reading**, stated as one — the codes are
-//! vmangos' enums and the sentences fit them exactly, but the client's own
-//! dispatch was not followed. A code with no plausible key says nothing, which
-//! is the rule every refusal in this client follows.
+//! The mapping from byte to key is inferred: the codes are vmangos' enums and
+//! the messages match them, but the 1.12.1 client's own mapping was not
+//! checked. A code with no matching key shows nothing, as every refusal in
+//! this client does.
 //!
-//! ## …and what a *successful* purchase says, which is where the sound is
+//! ## The purchase line and the sounds
 //!
-//! **There is no vendor sound in 5875.** `PlaySound` appears three times in the
-//! whole of `MerchantFrame.xml` — the window opening, the window closing, and
-//! `ITEM_REPAIR` on the repair button — and nothing in the C side plays one for
-//! a buy or a sell either: the sounds the client plays by name are the loot
-//! coin, the cursor, four tutorial and invite chimes, and repair.
+//! There is no vendor sound in 5875. `PlaySound` appears three times in
+//! `MerchantFrame.xml` (the window opening, the window closing, and
+//! `ITEM_REPAIR` on the repair button), and the 1.12.1 client plays no sound
+//! of its own for a buy or a sell: the sounds it plays by name are the loot
+//! coin, the cursor, four tutorial and invite sounds, and repair.
 //!
-//! What a purchase makes is the **message table's**: `ERR_RECEIVE_ITEM_S` is
-//! record 38, surface *chat*, sound `ITEMGENERICSOUND` — so "You receive item:
-//! [Linen Cloth]" in the chat frame with a tick under it, which is the noise a
-//! player hears when they buy something. It is raised here rather than off
-//! `SMSG_ITEM_PUSH_RESULT`, which is the opcode the real client learns from and
-//! which this one does not read yet. The consequence: loot, quest rewards,
-//! mail and trade get no such line, and a purchase gets one whether or not the
-//! bag had room.
+//! A purchase produces a line from the message table: `ERR_RECEIVE_ITEM_S` is
+//! record 38, surface chat, sound `ITEMGENERICSOUND`, so "You receive item:
+//! [Linen Cloth]" appears in the chat frame with a click. The line is raised by
+//! [`crate::interface::received`] from `SMSG_ITEM_PUSH_RESULT`, which the
+//! server sends for a purchase and for every other way an item enters a bag.
 //!
-//! **Neither half of a trade has a sound of its own, and the sound a player
-//! hears is the purse's.** `BuyMerchantItem` goes straight to its packet, and
-//! `UseContainerItem`'s sell branch sends `CMSG_SELL_ITEM` and then locks the
-//! item and raises `ITEM_LOCK_CHANGED`. No sound in either; the one sound in
-//! `UseContainerItem` is `ITEM_REPAIR`, on the repair-cursor branch.
+//! Neither a purchase nor a sale has a sound of its own; the sound a player
+//! hears is the coin sound. `BuyMerchantItem` sends its packet and nothing
+//! else, and `UseContainerItem`'s sell branch sends `CMSG_SELL_ITEM`, locks
+//! the item and raises `ITEM_LOCK_CHANGED`. The one sound in
+//! `UseContainerItem` is `ITEM_REPAIR`, in repair mode.
 //!
-//! What makes the noise is one level down and is not about vendors at all:
-//! the player object watches its own `PLAYER_FIELD_COINAGE` and the callback
-//! plays `LOOTWINDOWCOINSOUND` **unconditionally** before raising
-//! `PLAYER_MONEY`. So a sale, a purchase, a buyback, a repair, a trainer's fee
-//! and coins out of a corpse all make the same sound, because they are all the
-//! same event. See [`crate::sound::items`], which owns it — this module writes
-//! no sound and needs none.
-//!
-//! This paragraph used to describe an invented per-trade foley off
-//! `ItemGroupSounds.dbc`. The table reading was right and the event was wrong;
-//! the table is now played where the reference plays it, on the cursor.
+//! The coin sound is not specific to vendors. When the player's
+//! `PLAYER_FIELD_COINAGE` changes, the 1.12.1 client plays
+//! `LOOTWINDOWCOINSOUND` unconditionally before raising `PLAYER_MONEY`. A
+//! sale, a purchase, a buyback, a repair, a trainer's fee and coins from a
+//! corpse therefore all make the same sound. [`crate::sound::items`] plays it;
+//! this module plays no sound. `ItemGroupSounds.dbc` is played on the cursor,
+//! as the 1.12.1 client plays it, and not per trade.
 
 use bevy::prelude::*;
 
@@ -71,11 +63,11 @@ use super::events::{MerchantClosed, MerchantShow, MerchantUpdate};
 use crate::world::session::Session;
 
 /// One of the four vendor packets, handed on from
-/// [`super::action::drain_events`].
+/// [`crate::world::incoming::drain_events`].
 #[derive(Message, Debug, Clone)]
 pub enum MerchantAnswer {
     Show(Box<VendorList>),
-    /// `SMSG_BUY_ITEM` — a purchase went through; a slot's stock moved.
+    /// `SMSG_BUY_ITEM`: a purchase went through and a slot's stock changed.
     Sold { slot: u32, left: Option<u32> },
     BuyFailed {
         entry: u32,
@@ -91,29 +83,28 @@ pub enum MerchantAnswer {
 #[derive(Resource, Default)]
 pub struct MerchantWindow {
     vendor: Option<VendorList>,
-    /// What this vendor's own `UNIT_NPC_FLAGS` says about repairing — see
-    /// [`price_repairs`], which is the only writer.
+    /// What this vendor's `UNIT_NPC_FLAGS` says about repairing, and the
+    /// current quote. [`price_repairs`] is the only writer.
     repair: Repairs,
 }
 
-/// **The armourer's half of a vendor**, which is three numbers the interface
-/// asks for and one latch it sets.
+/// The repair state of a vendor: three values the interface reads and one
+/// flag it sets.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Repairs {
-    /// `CanMerchantRepair()` — `UNIT_NPC_FLAGS & 0x4000` on the open vendor.
-    /// **A property of the NPC and not of the packet**: `SMSG_LIST_INVENTORY`
-    /// says nothing about repairing, so this is read off the unit in the world.
+    /// `CanMerchantRepair()`: `UNIT_NPC_FLAGS & 0x4000` on the open vendor.
+    /// `SMSG_LIST_INVENTORY` says nothing about repairing, so this is read from
+    /// the unit in the world.
     pub can_repair: bool,
     /// The sum over everything a repair-all would touch, in copper.
     pub cost: u32,
-    /// …and whether every item in that walk could be priced — the second half
-    /// of what `GetRepairAllCost` answers. See
+    /// Whether every item in that sum could be priced, the second value
+    /// `GetRepairAllCost` returns. See
     /// [`vale_assets::tables::repair::RepairCosts::total`].
     pub priced: bool,
-    /// **`InRepairMode()`** — the client's own latch, set by
-    /// `ShowRepairCursor()` and cleared by `HideRepairCursor()`. Nothing on the
-    /// wire has any opinion about it: it decides only what the *next click* on
-    /// a bag slot means.
+    /// `InRepairMode()`: a local flag, set by `ShowRepairCursor()` and cleared
+    /// by `HideRepairCursor()`. No packet carries it; it decides only what the
+    /// next click on a bag slot does.
     pub mode: bool,
 }
 
@@ -126,8 +117,8 @@ impl MerchantWindow {
         Some(self.vendor.as_ref()?.guid)
     }
 
-    /// Whether a bag right-click sells rather than uses — see the module note
-    /// and [`super::items`], the one reader.
+    /// Whether a bag right-click sells rather than uses. See the module note;
+    /// [`super::items`] is the one reader.
     pub fn is_open(&self) -> bool {
         self.vendor.is_some()
     }
@@ -136,14 +127,14 @@ impl MerchantWindow {
         self.vendor.as_ref().map_or(0, |v| v.items.len())
     }
 
-    /// The armourer's three answers and its latch — see [`Repairs`].
+    /// The repair values and the repair-mode flag; see [`Repairs`].
     pub fn repairs(&self) -> Repairs {
         self.repair
     }
 
-    /// Take the vendor down, answering whether one was up — the walk-away
-    /// close's door; see [`super::gossip::out_of_range`], the one caller
-    /// outside this module.
+    /// Close the vendor window and return whether one was open. Called when
+    /// the character walks away, by [`super::gossip::out_of_range`], the one
+    /// caller outside this module.
     pub(crate) fn close(&mut self) -> bool {
         self.vendor.take().is_some()
     }
@@ -158,9 +149,9 @@ impl Plugin for MerchantPlugin {
             .init_resource::<MerchantWindow>()
             .add_systems(
                 Update,
-                // **`price_repairs` last**, so a quote is taken after the frame's
-                // buying and selling rather than before it: the bag it walks is
-                // the one the player is looking at.
+                // `price_repairs` runs last, so the quote is taken after the
+                // frame's buying and selling: the bags it walks are the ones the
+                // player sees.
                 (announce, templates_landed, presses, act, price_repairs)
                     .chain()
                     .in_set(super::GameSet),
@@ -171,25 +162,25 @@ impl Plugin for MerchantPlugin {
 /// A press the interface made.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MerchantPress {
-    /// `BuyMerchantItem(index [, quantity])` — one-based row, and the quantity
-    /// is a number of **purchases**, defaulting to one. A purchase of a row
-    /// whose `buy_count` is 5 yields five items; see [`act`], which carries what
-    /// reading it as an item count cost.
+    /// `BuyMerchantItem(index [, quantity])`: a one-based row, and a number of
+    /// purchases, defaulting to one. One purchase of a row whose `buy_count` is
+    /// 5 yields five items; see [`act`] for the effect of reading the quantity
+    /// as an item count.
     Buy { row: usize, quantity: Option<u8> },
-    /// `BuybackItem(row)` — a **one-based row of the compacted buyback list**,
-    /// which [`act`] crosses into the wire's own 69-based slot. Not the same
-    /// number: see there.
+    /// `BuybackItem(row)`: a one-based row of the compacted buyback list, which
+    /// [`act`] converts to the protocol's 69-based slot. The two numbers differ;
+    /// see there.
     Buyback(usize),
-    /// `CloseMerchant()` — local, like the gossip close: no opcode exists.
+    /// `CloseMerchant()`: local, like the gossip close; no opcode exists.
     Close,
-    /// `RepairAllItems()` — `CMSG_REPAIR_ITEM` with a **zero** item guid, which
-    /// is the wire's own "all of them".
+    /// `RepairAllItems()`: `CMSG_REPAIR_ITEM` with a zero item guid, which the
+    /// server reads as every item.
     RepairAll,
-    /// …and one item, which is what a click with the repair cursor up means.
-    /// By the container coordinates the interface uses, since that is what a
-    /// bag button knows about itself.
+    /// Repair one item: a click on a bag slot in repair mode. Given in the
+    /// container coordinates the interface uses, which are what a bag button
+    /// knows about itself.
     RepairItem { bag: i32, slot: usize },
-    /// `ShowRepairCursor()` / `HideRepairCursor()` — the latch behind
+    /// `ShowRepairCursor()` / `HideRepairCursor()`: the flag behind
     /// `InRepairMode()`, and nothing else.
     RepairMode(bool),
 }
@@ -206,16 +197,12 @@ fn announce(
     for answer in answers.read() {
         match answer {
             MerchantAnswer::Show(vendor) => {
-                // **The names are a round trip behind** — queue every entry the
-                // item cache cannot name yet, exactly as a bag fill does.
+                // The names arrive one round trip later. Every entry is queued
+                // for a template query, as a bag fill does;
+                // `LiveSession::want_items` takes the world lock once and
+                // `want_item` skips an entry the session already knows.
                 if let Some(active) = session.active.as_ref() {
-                    let world = active.live.world();
-                    let mut world = world.lock().unwrap_or_else(|e| e.into_inner());
-                    for item in &vendor.items {
-                        if !world.items.contains_key(&item.entry) {
-                            world.want_item(item.entry);
-                        }
-                    }
+                    active.live.want_items(vendor.items.iter().map(|item| item.entry));
                 }
                 window.vendor = Some((**vendor).clone());
                 shown.write(MerchantShow);
@@ -228,14 +215,12 @@ fn announce(
                     item.available = *left;
                 }
                 updated.write(MerchantUpdate);
-                // **This packet says the stock moved, and nothing else.** The
-                // line a purchase makes — "You receive item: [x]." — is raised
-                // off `SMSG_ITEM_PUSH_RESULT`, which the server sends for the
-                // same purchase and for every other way an item enters a bag.
-                // It used to be raised here as `ERR_RECEIVE_ITEM_S` because
-                // `SMSG_BUY_ITEM` was the only thing this client read; saying
-                // it in both places would say it twice. See
-                // [`crate::interface::received`].
+                // This packet says only that the stock changed. The purchase
+                // line, "You receive item: [x].", is raised from
+                // `SMSG_ITEM_PUSH_RESULT`, which the server sends for the same
+                // purchase and for every other way an item enters a bag.
+                // Raising `ERR_RECEIVE_ITEM_S` here as well would print it
+                // twice. See [`crate::interface::received`].
             }
             MerchantAnswer::BuyFailed { reason, .. } => {
                 if let Some(key) = buy_key(*reason) {
@@ -251,7 +236,8 @@ fn announce(
     }
 }
 
-/// The reading the module note states: reason byte -> `GlobalStrings` key.
+/// The inferred mapping from the module note: reason byte -> `GlobalStrings`
+/// key.
 fn buy_key(reason: Option<BuyFailure>) -> Option<&'static str> {
     Some(match reason? {
         BuyFailure::NotEnoughMoney => "ERR_NOT_ENOUGH_MONEY",
@@ -272,10 +258,10 @@ fn sell_key(reason: Option<SellFailure>) -> Option<&'static str> {
     })
 }
 
-/// **Redraw as the names arrive.** The item cache is [`super::items`]'s and it
-/// announces template arrivals through [`Res::is_changed`] on the inventory —
-/// coarse, and deliberately so: `MERCHANT_UPDATE` is a re-read of at most ten
-/// rows, and a finer signal would be a second wiring for the same news.
+/// Redraw as the names arrive. The item cache belongs to [`super::items`],
+/// which signals template arrivals through [`Res::is_changed`] on the
+/// inventory. The signal is coarse: `MERCHANT_UPDATE` re-reads at most ten
+/// rows, and a finer signal would be a second path for the same information.
 fn templates_landed(
     window: Res<MerchantWindow>,
     inventory: Res<super::items::Inventory>,
@@ -291,13 +277,13 @@ fn presses(
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
     mut out: MessageWriter<MerchantPress>,
 ) {
-    let Some(mut host) = host else { return };
-    for press in host.take_merchant_presses() {
+    let Some(host) = host else { return };
+    for press in crate::lua::panels::merchant::take(&host) {
         out.write(press);
     }
 }
 
-/// …and send it.
+/// Send each press.
 fn act(
     mut presses: MessageReader<MerchantPress>,
     mut window: ResMut<MerchantWindow>,
@@ -321,39 +307,34 @@ fn act(
                 active.live.npc(NpcVerb::Buy {
                     vendor: window.guid().expect("a row implies a vendor"),
                     entry: item.entry,
-                    // **One *purchase*, not one item — and the difference is a
-                    // factor of `buy_count`.** `BuyItemFromVendor` hands over
+                    // A number of purchases, not items; the two differ by a
+                    // factor of `buy_count`. vmangos' `BuyItemFromVendor` gives
                     // `pProto->BuyCount * count` items and charges
-                    // `pProto->BuyPrice * count`, so the wire's `count` is how
-                    // many times to buy the row rather than how many items to
-                    // end up with. This used to send `buy_count`, which for
-                    // Refreshing Spring Water — a stack of 5 for 25 copper —
-                    // bought **25 waters for 1s 25c**, five times the goods at
-                    // five times the price, and did the same to every stacking
-                    // item in the game.
+                    // `pProto->BuyPrice * count`, so `count` is how many times
+                    // to buy the row. Sending `buy_count` here bought 25
+                    // Refreshing Spring Water (a stack of 5 for 25 copper) for
+                    // 1s 25c, five times the goods at five times the price, and
+                    // did the same for every stacking item.
                     //
-                    // 1 is the client's own default too, not merely the
-                    // arithmetic's: `BuyMerchantItem` defaults the count to 1
-                    // and only overwrites it if the Lua
-                    // passed a second argument, which a plain click does not
+                    // 1 is also the 1.12.1 client's default: `BuyMerchantItem`
+                    // uses a count of 1 unless the Lua passed a second
+                    // argument, which a plain click does not
                     // (`MerchantFrame.lua`: `BuyMerchantItem(this:GetID())`).
                     count: purchases(*quantity),
                 });
             }
             MerchantPress::Buyback(row) => {
                 let Some(vendor) = window.guid() else { continue };
-                // **The row is a position in the compacted list and the wire
-                // wants the slot**, and the two are not the same number.
+                // The row is a position in the compacted list and the packet
+                // takes the slot; the two are different numbers.
                 //
-                // This used to be `69 + (row - 1)`, which is what the
-                // arithmetic looks like while the twelve slots fill in order —
-                // and it is right until they are full. From then on the server
-                // replaces the *oldest* slot rather than the last
-                // (`Player::AddItemToBuyBackSlot`), so slot 69 can hold the
-                // newest sale while the list draws it twelfth: the click buys
-                // back a different item from the one under the pointer, with no
-                // error anywhere. The client's own `BuybackItem` indexes the
-                // same sorted list this reads.
+                // `69 + (row - 1)` is correct only while the twelve slots fill
+                // in order. Once they are full the server replaces the oldest
+                // slot rather than the last (`Player::AddItemToBuyBackSlot`), so
+                // slot 69 can hold the newest sale while the list draws it
+                // twelfth, and that formula buys back a different item from the
+                // one under the pointer with no error. The 1.12.1 client's
+                // `BuybackItem` indexes the same sorted list this reads.
                 let Some(slot) = row
                     .checked_sub(1)
                     .and_then(|i| inventory.carried.buyback.get(i))
@@ -369,19 +350,19 @@ fn act(
                 if window.vendor.take().is_some() {
                     closed.write(MerchantClosed);
                 }
-                // **The cursor does not survive the window.** The reference's
-                // repair mode is a property of having an armourer open, and a
-                // latch left set would make the next bag click try to repair at
-                // a vendor that is no longer there.
+                // Repair mode ends with the window. In the 1.12.1 client it
+                // exists only while a vendor that repairs is open, and a flag
+                // left set would make the next bag click try to repair at a
+                // vendor that is no longer there.
                 window.repair = Repairs::default();
             }
             MerchantPress::RepairAll => {
                 let Some(vendor) = window.guid() else { continue };
-                // **No local refusal.** The press path elsewhere in this client
-                // checks what it can before the socket, but every input to a
-                // repair refusal is the server's: the money is charged against
-                // its own arithmetic, not the quote on the tooltip, and the
-                // range is its own too. So this sends and lets it decide.
+                // No local refusal. Other presses in this client check what they
+                // can before sending, but every input to a repair refusal is the
+                // server's: the money is charged by its own arithmetic, not the
+                // tooltip's quote, and the range check is its own. The request
+                // is sent and the server decides.
                 active.live.npc(NpcVerb::Repair { vendor, item: 0 });
             }
             MerchantPress::RepairItem { bag, slot } => {
@@ -394,8 +375,8 @@ fn act(
                 else {
                     continue;
                 };
-                // The wire wants the item **object's** guid, which is what makes
-                // one stack distinguishable from an identical one.
+                // The packet takes the item object's guid, which distinguishes
+                // one stack from an identical one.
                 active.live.npc(NpcVerb::Repair {
                     vendor,
                     item: item.guid,
@@ -406,18 +387,17 @@ fn act(
     }
 }
 
-/// **What a repair-all would cost**, kept up to date while a vendor is open.
+/// What a repair-all would cost, kept up to date while a vendor is open.
 ///
-/// Computed here rather than answered on demand for the reason every cached
-/// answer in this directory is: `GetRepairAllCost` is called from a tooltip's
-/// `OnEnter`, inside a scoped Lua call that holds a borrow of the world, and a
-/// walk of two DBCs over forty slots does not belong on a hover. It is cheap and
-/// rare — a vendor opening, or the inventory changing while one is open.
+/// Computed here rather than on demand, as every cached answer in this
+/// directory is: `GetRepairAllCost` is called from a tooltip's `OnEnter`,
+/// inside a scoped Lua call that holds a borrow of the world, and a walk of two
+/// DBCs over forty slots should not run on a hover. Here it runs only when a
+/// vendor opens or the inventory changes while one is open.
 ///
-/// The `can_repair` half is the answer to a different question and comes from a
-/// different place: the *unit*, whose `UNIT_NPC_FLAGS` carry `0x4000`.
-/// `SMSG_LIST_INVENTORY` does not say, so a client that inferred it from the
-/// window would put a repair button on every vendor in the game.
+/// `can_repair` comes from the unit, whose `UNIT_NPC_FLAGS` carry `0x4000`.
+/// `SMSG_LIST_INVENTORY` does not say, and inferring it from the window would
+/// put a repair button on every vendor.
 fn price_repairs(
     mut window: ResMut<MerchantWindow>,
     inventory: Res<super::items::Inventory>,
@@ -448,10 +428,9 @@ fn price_repairs(
                     subclass: template.subclass,
                 })
             });
-            // **An item whose template has not landed is not priced**, and the
-            // walk says so through `priced` rather than by leaving it out
-            // silently — a bag filling on a cold cache would otherwise quote a
-            // confident zero for one round trip.
+            // An item whose template has not arrived is not priced, and `priced`
+            // says so rather than the item being left out: otherwise a bag
+            // filling on a cold cache would quote zero for one round trip.
             let named = inventory
                 .carried
                 .repairable()
@@ -474,13 +453,13 @@ fn price_repairs(
     }
 }
 
-/// **How many purchases `BuyMerchantItem` asks for**, which is one unless the
-/// stack-split box said otherwise.
+/// How many purchases `BuyMerchantItem` asks for: one, unless the stack-split
+/// box gave a number.
 ///
-/// A named function rather than an `unwrap_or` inside [`act`] because the number
-/// it produces is the one the reported bug got wrong, and the unit it is in —
-/// purchases, not items — is invisible at the call site. See
-/// [`vale_protocol::play::gossip::buy_item_body`] for the server's half.
+/// A named function rather than an `unwrap_or` inside [`act`] because this is
+/// the number the reported bug got wrong, and its unit (purchases, not items)
+/// is not visible at the call site. See
+/// [`vale_protocol::play::gossip::buy_item_body`] for the packet.
 fn purchases(quantity: Option<u8>) -> u8 {
     quantity.unwrap_or(1)
 }
@@ -489,14 +468,13 @@ fn purchases(quantity: Option<u8>) -> u8 {
 mod tests {
     use super::*;
 
-    /// **The reported bug, in its own numbers.**
+    /// The reported bug, with its numbers.
     ///
     /// Refreshing Spring Water is sold as a stack of five for 25 copper, so the
     /// row carries `buy_count = 5` and `price = 25`. A plain click must buy one
-    /// stack: five waters for 25 copper. Sending the item count instead — which
-    /// is what this did — asks for five *purchases*, and the server's
-    /// `BuyCount * count` and `BuyPrice * count` turn that into 25 waters for
-    /// 1s 25c, five times over on both sides at once.
+    /// stack: five waters for 25 copper. Sending the item count instead asks
+    /// for five purchases, and the server's `BuyCount * count` and
+    /// `BuyPrice * count` turn that into 25 waters for 1s 25c.
     #[test]
     fn a_plain_click_buys_one_stack_rather_than_one_stack_per_item() {
         let (buy_count, price) = (5u32, 25u32);
@@ -505,12 +483,12 @@ mod tests {
         // The server's own two lines, applied to what would go on the wire.
         assert_eq!(buy_count * count, 5, "five waters");
         assert_eq!(price * count, 25, "for twenty-five copper");
-        // …and what the bug did, kept as the thing being guarded against.
+        // What the bug did, kept as the case being guarded against.
         let wrong = buy_count;
         assert_eq!((buy_count * wrong, price * wrong), (25, 125));
     }
 
-    /// The split box still gets to ask for more — in purchases.
+    /// The split box can ask for more, also in purchases.
     #[test]
     fn the_split_box_asks_in_purchases_too() {
         assert_eq!(purchases(Some(4)), 4);

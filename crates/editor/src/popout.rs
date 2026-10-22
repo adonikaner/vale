@@ -24,7 +24,7 @@
 //! Two world tools share state with a workspace, and each pair is settled
 //! where it is read. The creature tool and the Creatures workspace hold one
 //! template row: with both in use the workspace follows the world's
-//! selection, so they show the same row (`tools::creatures::fetch_rows`; game
+//! selection, so they show the same row (`tools::spawns::creatures::fetch_rows`; game
 //! objects alike). The table browser is used by the Lights, Flight Paths,
 //! Triggers and Graveyards tools as well as the table workspaces: the main
 //! window's tool has it while it is one of those, and the window says so in
@@ -47,7 +47,7 @@
 //! Each is a Bevy `Window` with a 2D camera that draws nothing but egui, in
 //! one of [`SLOTS`] slots. bevy_egui runs each window's egui pass as a
 //! schedule of its own, so each slot has its pass ([`PopoutPass`]) with
-//! `ui::popout::draw` for that slot in it. There are as many slots as groups.
+//! `ui::shell::popout::draw` for that slot in it. There are as many slots as groups.
 //! Closing a window, or its Dock, puts its workspace in the main window when
 //! the main window is on the world, and otherwise just closes it; the
 //! workspace's state stays. A playtest docks them all as it starts, since the
@@ -103,7 +103,7 @@ impl Group {
 }
 
 /// A window's egui pass, one per slot. Its system runs once per frame, with
-/// that window's own context. See `ui::popout::draw`.
+/// that window's own context. See `ui::shell::popout::draw`.
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PopoutPass(pub usize);
 
@@ -321,7 +321,7 @@ fn follow(
     mut commands: Commands,
     mut popout: ResMut<Popout>,
     mut tool: ResMut<Tool>,
-    rail: Res<crate::ui::rail::Rail>,
+    rail: Res<crate::ui::shell::rail::Rail>,
     state: Res<crate::playtest::Playtest>,
     mut windows: Query<&mut Window, With<PopoutWindow>>,
     primary: Query<&Window, (With<PrimaryWindow>, Without<PopoutWindow>)>,
@@ -481,9 +481,9 @@ fn open(commands: &mut Commands, popout: &mut Popout, workspace: Tool) {
 }
 
 /// `--pop-out`: the workspace the editor opens on goes to a window, once there
-/// is a session to draw it from. See `crate::Args::pop_out`.
+/// is a session to draw it from. See `crate::args::Args::pop_out`.
 fn on_the_command_line(
-    args: Res<crate::Args>,
+    args: Res<crate::args::Args>,
     mut popout: ResMut<Popout>,
     tool: Res<Tool>,
     session: Option<Res<crate::session::EditSession>>,
@@ -501,7 +501,7 @@ fn on_the_command_line(
     }
 }
 
-/// The open windows, by slot, for a picture of each. See `crate::shot`.
+/// The open windows, by slot, for a picture of each. See `crate::instruments::shot`.
 pub fn windows(popout: &Popout) -> Vec<(usize, Entity)> {
     (0..SLOTS)
         .filter_map(|slot| popout.slots[slot].as_ref().map(|held| (slot, held.window)))

@@ -9,7 +9,7 @@
 //! like this one says so.
 
 use crate::adt::{heights, AdtFile};
-use crate::ops::{Brush, Edit, Falloff, Mode, Shape};
+use crate::ops::{brush::{Brush, Falloff, Mode, Shape}, Edit};
 use vale_assets::world::adt::{ALPHA_LEN, ALPHA_SIDE};
 
 /// The tile these run on, and where on it.
@@ -311,7 +311,7 @@ fn a_stroke_on_a_tile_border_edits_one_side_of_it() {
 #[test]
 fn a_paint_stroke_lands_where_the_pointer_is() {
     use crate::adt::alpha;
-    use crate::ops::PaintBrush;
+    use crate::ops::paint::PaintBrush;
     use vale_assets::world::adt::ALPHA_SIDE;
 
     let Some(mut tile) = tile() else { return };
@@ -336,7 +336,7 @@ fn a_paint_stroke_lands_where_the_pointer_is() {
     };
     // Four seconds of stroke, a tenth of a second at a time, which is what a
     // held button produces.
-    let mut working = crate::ops::Working::default();
+    let mut working = crate::ops::paint::Working::default();
     for _ in 0..40 {
         brush.stroke(&mut tile, &mut working, at, 0.1);
     }
@@ -374,7 +374,7 @@ fn a_paint_stroke_lands_where_the_pointer_is() {
     // **A second stroke gets a second working copy**, which is what `Working`
     // being a stroke's own state means: the first one's texels are the file's
     // now, and carrying them over would paint from where the last stroke was.
-    let mut working = crate::ops::Working::default();
+    let mut working = crate::ops::paint::Working::default();
     for _ in 0..40 {
         scrub.stroke(&mut tile, &mut working, at, 0.1);
     }
@@ -397,7 +397,7 @@ fn a_paint_stroke_lands_where_the_pointer_is() {
 #[test]
 fn a_paint_stroke_inverts() {
     use crate::adt::alpha;
-    use crate::ops::PaintBrush;
+    use crate::ops::paint::PaintBrush;
 
     let Some(tile) = tile() else { return };
     let before = tile.clone();
@@ -419,7 +419,7 @@ fn a_paint_stroke_inverts() {
         ..PaintBrush::default()
     };
     // The first step is the one that adds the layer; the rest only move texels.
-    let mut working = crate::ops::Working::default();
+    let mut working = crate::ops::paint::Working::default();
     let first = brush.stroke(&mut tile, &mut working, at, 0.1);
     assert!(first.full.is_empty(), "the chunk was chosen because it has room");
     assert!(
@@ -557,7 +557,7 @@ fn a_move_of_an_index_the_tile_does_not_have_is_declined() {
 #[test]
 fn a_full_chunk_refuses_a_fifth_texture_and_reports_it() {
     use crate::adt::alpha;
-    use crate::ops::PaintBrush;
+    use crate::ops::paint::PaintBrush;
 
     let Some(mut tile) = tile() else { return };
     let full = (0..tile.chunks.len())
@@ -579,7 +579,7 @@ fn a_full_chunk_refuses_a_fifth_texture_and_reports_it() {
         effect_id: 0,
         ..PaintBrush::default()
     };
-    let mut working = crate::ops::Working::default();
+    let mut working = crate::ops::paint::Working::default();
     let painted = brush.stroke(&mut tile, &mut working, at, 0.1);
     assert_eq!(painted.full, vec![full], "the full chunk is named");
     assert!(
@@ -602,7 +602,7 @@ fn a_full_chunk_refuses_a_fifth_texture_and_reports_it() {
     let mut paint = alpha::paint(tile.chunk(full).unwrap());
     assert!(paint.remove_layer(paint.len() - 1));
     alpha::set_paint(tile.chunk_mut(full).unwrap(), &paint);
-    let painted = brush.stroke(&mut tile, &mut crate::ops::Working::default(), at, 0.1);
+    let painted = brush.stroke(&mut tile, &mut crate::ops::paint::Working::default(), at, 0.1);
     assert!(painted.full.is_empty(), "the slot is free now");
     assert!(painted.edits.iter().any(|e| e.painted() == Some(full)));
 }
@@ -622,7 +622,7 @@ fn a_full_chunk_refuses_a_fifth_texture_and_reports_it() {
 #[test]
 fn strength_decides_how_fast_a_stroke_paints() {
     use crate::adt::alpha;
-    use crate::ops::{PaintBrush, Working};
+    use crate::ops::paint::{PaintBrush, Working};
     use vale_assets::world::adt::ALPHA_SIDE;
 
     let Some(base) = tile() else { return };
@@ -674,7 +674,7 @@ fn strength_decides_how_fast_a_stroke_paints() {
 #[test]
 fn a_weak_brush_still_reaches_opaque_if_it_is_held() {
     use crate::adt::alpha;
-    use crate::ops::{PaintBrush, Working};
+    use crate::ops::paint::{PaintBrush, Working};
     use vale_assets::world::adt::ALPHA_SIDE;
 
     let Some(mut tile) = tile() else { return };
@@ -720,7 +720,7 @@ fn a_weak_brush_still_reaches_opaque_if_it_is_held() {
 fn a_chunk_with_no_textures_takes_the_first_one_as_its_base() {
     use crate::adt::alpha;
     use crate::adt::AdtFile;
-    use crate::ops::{PaintBrush, Working};
+    use crate::ops::paint::{PaintBrush, Working};
 
     // A tile from the map that has them. Skipped on a machine with no archives,
     // like every other check here.
@@ -804,7 +804,7 @@ fn a_chunk_with_no_textures_takes_the_first_one_as_its_base() {
 #[test]
 fn an_area_brush_always_takes_the_chunk_under_the_pointer() {
     use vale_assets::world::adt::CHUNK_SIZE;
-    use crate::ops::AreaBrush;
+    use crate::ops::area::AreaBrush;
 
     let Some(tile) = tile() else { return };
     {
@@ -1017,26 +1017,26 @@ fn a_renamed_path_is_undone_byte_for_byte() {
 }
 
 /// A brush for the tests below: eight yards, strong, on `texture`.
-fn paint_brush(texture: &str) -> crate::ops::PaintBrush {
-    crate::ops::PaintBrush {
+fn paint_brush(texture: &str) -> crate::ops::paint::PaintBrush {
+    crate::ops::paint::PaintBrush {
         radius: 8.0,
         strength: 4.0,
         texture: texture.into(),
-        ..crate::ops::PaintBrush::default()
+        ..crate::ops::paint::PaintBrush::default()
     }
 }
 
 /// Hold `brush` at the middle of chunk `which` for `seconds`.
 fn hold(
     tile: &mut AdtFile,
-    brush: &crate::ops::PaintBrush,
+    brush: &crate::ops::paint::PaintBrush,
     which: usize,
     seconds: f32,
-) -> crate::ops::Painted {
+) -> crate::ops::paint::Painted {
     let origin = tile.chunk(which).expect("a chunk").head().position();
     let at = [origin[0] - 16.0, origin[1] - 16.0];
-    let mut working = crate::ops::Working::default();
-    let mut all = crate::ops::Painted::default();
+    let mut working = crate::ops::paint::Working::default();
+    let mut all = crate::ops::paint::Painted::default();
     for _ in 0..(seconds * 10.0) as usize {
         let step = brush.stroke(tile, &mut working, at, 0.1);
         all.edits.extend(step.edits);
@@ -1064,7 +1064,7 @@ fn a_stroke_converges_on_its_opacity_from_either_side() {
     let Some(which) = room_for_a_layer(&tile) else {
         return;
     };
-    let half = crate::ops::PaintBrush {
+    let half = crate::ops::paint::PaintBrush {
         opacity: 0.5,
         ..paint_brush("Tileset\\Generic\\Black.blp")
     };
@@ -1096,7 +1096,7 @@ fn a_held_stroke_stays_inside_its_footprint() {
     };
     // Its own falloff and core, so the band it checks does not move with the
     // defaults.
-    let brush = crate::ops::PaintBrush {
+    let brush = crate::ops::paint::PaintBrush {
         falloff: Falloff::Smooth,
         core: 0.35,
         ..paint_brush("Tileset\\Generic\\Black.blp")
@@ -1127,7 +1127,7 @@ fn an_eraser_takes_a_texture_away_and_never_adds_one() {
         return;
     };
     let was = alpha::paint(tile.chunk(which).unwrap());
-    let eraser = crate::ops::PaintBrush {
+    let eraser = crate::ops::paint::PaintBrush {
         erase: true,
         ..paint_brush("Tileset\\Generic\\Black.blp")
     };
@@ -1144,7 +1144,7 @@ fn an_eraser_takes_a_texture_away_and_never_adds_one() {
 
     // The base has no blend map, and an eraser on it says so.
     let base = tile.texture_names()[was.layers[0].texture_id as usize].clone();
-    let on_base = crate::ops::PaintBrush {
+    let on_base = crate::ops::paint::PaintBrush {
         erase: true,
         ..paint_brush(&base)
     };
@@ -1163,7 +1163,7 @@ fn a_stroke_confined_to_existing_layers_adds_none() {
         return;
     };
     let was = alpha::paint(tile.chunk(which).unwrap());
-    let confined = crate::ops::PaintBrush {
+    let confined = crate::ops::paint::PaintBrush {
         existing_only: true,
         ..paint_brush("Tileset\\Generic\\Black.blp")
     };
@@ -1182,7 +1182,7 @@ fn a_sparse_stroke_paints_patches() {
     let Some(which) = room_for_a_layer(&tile) else {
         return;
     };
-    let sparse = crate::ops::PaintBrush {
+    let sparse = crate::ops::paint::PaintBrush {
         density: 0.5,
         falloff: Falloff::Flat,
         ..paint_brush("Tileset\\Generic\\Black.blp")
@@ -1203,9 +1203,9 @@ fn a_sparse_stroke_paints_patches() {
     }
     assert!(painted > 16, "some of it is painted: {painted}");
     assert!(bare > 16, "and some of it is not: {bare}");
-    assert_eq!(crate::ops::speckle(1.0, 2.0, 2.0), crate::ops::speckle(1.0, 2.0, 2.0));
+    assert_eq!(crate::ops::paint::speckle(1.0, 2.0, 2.0), crate::ops::paint::speckle(1.0, 2.0, 2.0));
     for step in 0..50 {
-        let value = crate::ops::speckle(step as f32 * 0.52, 3.0, 2.0);
+        let value = crate::ops::paint::speckle(step as f32 * 0.52, 3.0, 2.0);
         assert!((0.0..=1.0).contains(&value));
     }
 }
@@ -1229,7 +1229,7 @@ fn a_full_chunk_gives_up_a_layer_that_shows_nothing() {
         if !alpha::paint(tile.chunk(which).unwrap()).has_room() {
             break;
         }
-        let brush = crate::ops::PaintBrush {
+        let brush = crate::ops::paint::PaintBrush {
             radius: 1.0,
             ..paint_brush(dot)
         };
@@ -1242,7 +1242,7 @@ fn a_full_chunk_gives_up_a_layer_that_shows_nothing() {
     let refused = hold(&mut tile, &fifth, which, 0.5);
     assert!(refused.full.contains(&which) && refused.edits.is_empty());
 
-    let reusing = crate::ops::PaintBrush {
+    let reusing = crate::ops::paint::PaintBrush {
         reuse_hidden: true,
         ..fifth
     };
@@ -1416,7 +1416,7 @@ fn a_blend_map_reads_back_as_the_tile_it_came_from() {
 #[test]
 fn a_flatten_can_be_told_to_fill_or_to_cut() {
     use crate::adt::heights;
-    use crate::ops::Only;
+    use crate::ops::brush::Only;
     let Some(tile) = tile() else { return };
     let origin = tile.chunk(70).unwrap().head().position();
     let at = [origin[0] - 16.0, origin[1] - 16.0];

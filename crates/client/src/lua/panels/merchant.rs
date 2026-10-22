@@ -30,6 +30,7 @@
 //! draws blank for the one round trip it lasts, exactly as a bag slot does.
 
 use super::super::api::{one_or_nil, Answers};
+use crate::lua::host::LuaHost;
 
 /// One row, as `GetMerchantItemInfo` answers it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -223,7 +224,8 @@ pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::merchant::
 /// than stubbed: it is a write into a subsystem this client has (the cursor),
 /// and a no-op would swallow the drag and report success. The cost is one
 /// named `--audit --clicks` failure.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     use crate::interface::merchant::MerchantPress as P;
     let globals = lua.globals();
     macro_rules! push {
@@ -261,10 +263,15 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
     Ok(())
 }
 
+
+pub fn take(host: &LuaHost) -> Vec<crate::interface::merchant::MerchantPress> {
+    super::taken(host)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lua::api::tests::{eval, Stub};
+    use crate::lua::api::stub::{eval, Stub};
 
     /// The six answers of a row, and the two sentinels: `-1` stock is
     /// unlimited, and a row past the end is an empty line rather than a raise.
@@ -344,7 +351,8 @@ mod tests {
         use crate::interface::merchant::MerchantPress as P;
         let lua = mlua::Lua::new();
         let queue: Queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        register(&lua, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         lua.load("BuyMerchantItem(2); BuyMerchantItem(1, 5); BuybackItem(3); CloseMerchant()")
             .exec()
             .expect("the chunk runs");
@@ -374,27 +382,27 @@ mod tests {
 /// `&dyn Answers` still resolves every one of them.
 pub trait MerchantAnswers {
     /// `GetMerchantNumItems()`.
-    fn merchant_rows(&self) -> usize;
+    fn merchant_rows(&self) -> usize { 0 }
     /// One row, one-based, or `None` past the end.
-    fn merchant_item(&self, row: usize) -> Option<super::merchant::MerchantLine>;
+    fn merchant_item(&self, _row: usize) -> Option<super::merchant::MerchantLine> { None }
     /// `GetMerchantItemLink(i)` — `None` for a row whose template is in flight.
-    fn merchant_item_link(&self, row: usize) -> Option<String>;
+    fn merchant_item_link(&self, _row: usize) -> Option<String> { None }
     /// `GetMerchantItemMaxStack(i)`.
-    fn merchant_max_stack(&self, row: usize) -> u32;
+    fn merchant_max_stack(&self, _row: usize) -> u32 { 0 }
     /// `GetNumBuybackItems()` — how many of the twelve slots are occupied.
-    fn buyback_rows(&self) -> usize;
+    fn buyback_rows(&self) -> usize { 0 }
     /// One buyback row, one-based over the **sorted, compacted** list, or
     /// `None` past the end. Reuses [`MerchantLine`] because the interface reads
     /// the same six values off both tabs with the same locals.
-    fn buyback_item(&self, row: usize) -> Option<super::merchant::MerchantLine>;
+    fn buyback_item(&self, _row: usize) -> Option<super::merchant::MerchantLine> { None }
     /// …and the item entry behind that row, which is what
     /// `GameTooltip:SetBuybackItem(i)` needs. Its own accessor rather than a
     /// link, because 1.12 has no `GetBuybackItemLink` for the plate to reuse.
-    fn buyback_entry(&self, row: usize) -> Option<u32>;
+    fn buyback_entry(&self, _row: usize) -> Option<u32> { None }
     /// **The armourer's three**: `CanMerchantRepair`, `GetRepairAllCost` and
     /// `InRepairMode`, which are one struct because they are one question asked
     /// three ways — see [`crate::interface::merchant::Repairs`].
-    fn repairs(&self) -> crate::interface::merchant::Repairs;
+    fn repairs(&self) -> crate::interface::merchant::Repairs { Default::default() }
 }
 
 impl MerchantAnswers for super::super::api::Live<'_, '_, '_> {

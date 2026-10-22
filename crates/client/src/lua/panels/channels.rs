@@ -42,6 +42,7 @@ use std::sync::Arc;
 use vale_assets::tables::area::Areas;
 use vale_assets::tables::channels::{flags, joined_bit, ChatChannels, ZoneChannel};
 use vale_protocol::socket::session::ChannelVerb;
+use crate::lua::host::LuaHost;
 
 /// The globals this panel answers — the chat frame's own list, from
 /// `ChatFrame.lua`'s slash commands and `ChatEdit_*`.
@@ -331,7 +332,9 @@ fn wire_name(board: &Channels, key: &str) -> String {
         .unwrap_or_else(|| key.trim().to_string())
 }
 
-pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let held: &Held = &super::stored(lua);
+    let queue: &Queue = &super::stored(lua);
     let globals = lua.globals();
 
     // `JoinChannelByName(name, password, chatFrameId)` -> `zoneChannel, name`.
@@ -582,6 +585,18 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held, queue: &Queue) -> m
         })?,
     )?;
     Ok(())
+}
+
+/// The chat channels' board.
+/// Two callers: [`crate::interface::channels`], which fills it, and
+/// [`crate::interface::chat`], which numbers a channel line from it.
+pub fn held(host: &LuaHost) -> Held {
+    super::stored(host.state())
+}
+
+/// Take and clear the channel verbs the chat frame queued.
+pub fn take(host: &LuaHost) -> Vec<vale_protocol::socket::session::ChannelVerb> {
+    super::taken(host)
 }
 
 #[cfg(test)]

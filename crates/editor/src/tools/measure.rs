@@ -174,7 +174,7 @@ pub fn probe(session: &EditSession, at: Vec3, ground_hit: Option<Vec3>) -> Probe
         chunk,
         area: open.zip(chunk).and_then(|(t, c)| area::area(t, c)),
         slope: open.and_then(|t| heights::normal_at(t, at.x, at.y)).map(slope_of),
-        water: chunk.and_then(|c| super::water::surface_at(session, tile, c, at.x, at.y)),
+        water: chunk.and_then(|c| super::ground::water::surface_at(session, tile, c, at.x, at.y)),
         hole,
         impassable: open.zip(chunk).is_some_and(|(t, c)| impass::impassable(t, c)),
     }
@@ -293,7 +293,7 @@ const POLE: f32 = 2.0;
 fn scripted(
     mut measuring: ResMut<Measuring>,
     mut session: Option<ResMut<EditSession>>,
-    args: Res<crate::Args>,
+    args: Res<crate::args::Args>,
     mut done: Local<bool>,
 ) {
     let (Some(points), Some(session)) = (args.measure.as_ref(), session.as_mut()) else {

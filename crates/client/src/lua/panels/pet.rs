@@ -59,28 +59,28 @@ pub const READS: [&str; 16] = [
 /// **What the interface may ask about the pet.**
 pub trait PetAnswers {
     /// `HasPetUI()` -> `(hasPetUI, isHunterPet)`, each `1` or nil.
-    fn has_pet_ui(&self) -> (bool, bool);
+    fn has_pet_ui(&self) -> (bool, bool) { Default::default() }
     /// `PetCanBeAbandoned()` — a released pet, not a dismissed one.
-    fn pet_can_be_abandoned(&self) -> bool;
+    fn pet_can_be_abandoned(&self) -> bool { false }
     /// `PetCanBeRenamed()`.
-    fn pet_can_be_renamed(&self) -> bool;
+    fn pet_can_be_renamed(&self) -> bool { false }
 
     /// **`PetHasActionBar()`** — whether the pet bar's guid is non-zero.
     ///
     /// So it is the *bar's* guid rather than the `pet` token's, which is what
     /// makes the dismissal work: `SMSG_PET_SPELLS` with eight zero bytes takes
     /// the bar down while the creature is still in view.
-    fn pet_has_action_bar(&self) -> bool;
+    fn pet_has_action_bar(&self) -> bool { false }
 
     /// **`GetPetActionInfo(i)`** — seven values, and two shapes. See
     /// [`crate::interface::pet`], which is where the whole rule is.
     ///
     /// `None` for a slot with nothing in it, which the panel reads as a hidden
     /// button.
-    fn pet_action_info(&self, slot: usize) -> Option<crate::interface::pet::PetSlot>;
+    fn pet_action_info(&self, _slot: usize) -> Option<crate::interface::pet::PetSlot> { None }
 
     /// `GetPetActionCooldown(i)` -> `(start, duration, enable)`.
-    fn pet_action_cooldown(&self, slot: usize) -> (f64, f64, u32);
+    fn pet_action_cooldown(&self, _slot: usize) -> (f64, f64, u32) { Default::default() }
 
     /// **`GameTooltip:SetPetAction(i)`** — the spell plate for the spell in
     /// slot `i`, or `None` for a slot holding nothing.
@@ -99,14 +99,14 @@ pub trait PetAnswers {
     /// that plate out of `tooltipName` and the binding text itself; the
     /// reference would hand a token's action id (0..3) to the same spell
     /// lookup and draw nothing, which is what `None` here is.
-    fn pet_action_tooltip(&self, slot: usize) -> Option<crate::interface::api::SpellTip>;
+    fn pet_action_tooltip(&self, _slot: usize) -> Option<crate::interface::api::SpellTip> { None }
 
     /// **`GetPetActionsUsable()`** — whether the bar may be pressed at all.
     ///
     /// The inverse of `SMSG_PET_SPELLS`' `0x8` flag: a pet that is feared,
     /// charmed away or otherwise not taking orders. `PetActionBar_Update`
     /// desaturates every icon on a nil.
-    fn pet_actions_usable(&self) -> bool;
+    fn pet_actions_usable(&self) -> bool { false }
 
     /// **`IsPetAttackActive(i)`** — is *this* slot the attack command, and is
     /// the pet already carrying it out?
@@ -114,7 +114,7 @@ pub trait PetAnswers {
     /// `PetActionButton_OnClick`'s first branch: a press on an attack button
     /// that is already active is a `PetStopAttack()` rather than a second
     /// attack. So it is both tests at once, not "is the pet attacking".
-    fn is_pet_attack_active(&self, slot: usize) -> bool;
+    fn is_pet_attack_active(&self, _slot: usize) -> bool { false }
 
     /// **`GetPetHappiness()`** -> `(happiness, damagePercentage, loyaltyRate)`.
     ///
@@ -122,41 +122,41 @@ pub trait PetAnswers {
     /// `PetFrame_SetHappiness` hides the icon on. See
     /// [`vale_assets::tables::pet::PetTables::happiness`], where the whole
     /// rule is.
-    fn pet_happiness(&self) -> Option<(u32, f32, f32)>;
+    fn pet_happiness(&self) -> Option<(u32, f32, f32)> { None }
 
     /// **`GetPetLoyalty()`** — the level's name out of `PetLoyalty.dbc`, or
     /// `None` for a pet with no loyalty level yet.
-    fn pet_loyalty(&self) -> Option<String>;
+    fn pet_loyalty(&self) -> Option<String> { None }
 
     /// **`GetPetExperience()`** -> `(current, nextLevel)`. Two zeroes rather
     /// than nil for a pet that has none: `PetExpBar_Update` feeds both straight
     /// into `SetMinMaxValues`.
-    fn pet_experience(&self) -> (u32, u32);
+    fn pet_experience(&self) -> (u32, u32) { Default::default() }
 
     /// **`GetPetTrainingPoints()`** -> `(total, spent)`, and the order is the
     /// client's rather than the field's — see
     /// [`vale_protocol::state::objects::Entity::pet_stats`].
-    fn pet_training_points(&self) -> (u32, u32);
+    fn pet_training_points(&self) -> (u32, u32) { Default::default() }
 
     /// **`GetPetIcon()`** — `CreatureFamily.dbc`'s own path, whole.
-    fn pet_icon(&self) -> Option<String>;
+    fn pet_icon(&self) -> Option<String> { None }
 
     /// **`GetPetFoodTypes()`** — every food name the family's mask carries, in
     /// the food table's order. `PetStable.lua` guards on the first being
     /// non-nil and then `BuildListString`s the lot.
-    fn pet_food_types(&self) -> Vec<String>;
+    fn pet_food_types(&self) -> Vec<String> { Vec::new() }
 
     /// **`UnitCreatureFamily(unit)`** — and it is about *any* unit rather than
     /// about the pet, which is why it is here rather than beside `UnitName`:
     /// the table it reads is the pet family table and nothing else uses it.
-    fn creature_family(&self, unit: crate::interface::api::UnitId) -> Option<String>;
+    fn creature_family(&self, _unit: crate::interface::api::UnitId) -> Option<String> { None }
 
     /// **`HasPetSpells()`** -> `(numSpells, petToken)`.
     ///
     /// The pet *spellbook* rather than the bar — what `SpellBookFrame`'s pet
     /// tab lists. Two returns: how many, and the unit token to draw the page
     /// against, which in 1.12 is the literal `"PET"`.
-    fn has_pet_spells(&self) -> Option<(u32, &'static str)>;
+    fn has_pet_spells(&self) -> Option<(u32, &'static str)> { None }
 }
 
 impl PetAnswers for super::super::api::Live<'_, '_, '_> {

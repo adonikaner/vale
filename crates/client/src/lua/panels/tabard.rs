@@ -56,6 +56,7 @@ use std::rc::Rc;
 use mlua::ObjectLike;
 use vale_assets::look::emblem;
 use vale_protocol::play::guild::{Emblem, EMBLEM_COST, EMBLEM_COUNTS};
+use crate::lua::host::LuaHost;
 
 /// The unscoped functions this file registers, sorted.
 pub const VERBS: [&str; 2] = ["CloseTabardCreation", "GetTabardCreationCost"];
@@ -197,7 +198,9 @@ struct Shared {
 }
 
 /// Register the two functions, and keep the board where the methods find it.
-pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let held: &Held = &super::stored(lua);
+    let queue: &Queue = &super::stored(lua);
     let globals = lua.globals();
     lua.set_app_data(Shared {
         held: Rc::clone(held),
@@ -217,6 +220,17 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held, queue: &Queue) -> m
         })?,
     )?;
     Ok(())
+}
+
+/// The tabard designer's board.
+/// One caller, [`crate::interface::tabard`].
+pub fn held(host: &LuaHost) -> Held {
+    super::stored(host.state())
+}
+
+/// Take and clear what the tabard designer pressed.
+pub fn take(host: &LuaHost) -> Vec<Press> {
+    super::taken(host)
 }
 
 /// Install the ten methods on the widget method table. Every widget kind
@@ -392,7 +406,9 @@ mod tests {
         let lua = mlua::Lua::new();
         let held: Held = Rc::default();
         let queue: Queue = Rc::new(RefCell::new(Vec::new()));
-        register(&lua, &held, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&held));
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         let methods = lua.create_table().expect("table");
         install_methods(&lua, &methods).expect("installs");
         lua.globals().set("M", methods).expect("set");

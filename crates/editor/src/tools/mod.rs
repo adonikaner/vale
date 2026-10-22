@@ -1,132 +1,28 @@
 //! What the pointer does when a button is held.
 //!
 //! ```text
-//! terrain.rs     the height brush: raise, lower, flatten, smooth
-//! grade.rs       a ramp between two points, which the height brush cannot make
-//! shading.rs     the colour painted onto the terrain's vertices: MCCV
-//! textures.rs    the texture layers the terrain is painted with, and their
-//!                blend maps
-//! holes.rs       where the terrain is not drawn: the sixteen bits per chunk
-//! areas.rs       which place in the world a chunk is: one AreaTable id per
-//!                chunk
-//! chunks.rs      a selection of map chunks, by click and by a block dragged on
-//!                the ground, and the area, flag, hole and texture operations
-//!                that write one value to every chunk in it
-//! water.rs       the water standing on the terrain: MCLQ, and the flags that
-//!                declare it
-//! doodads.rs     the placed models (MDDF): select, move, turn, scale, remove
-//! wmos.rs        the placed buildings, which are MODF and a different list
-//! rehome.rs      what moving a doodad or a building past a tile border means
-//! sweep.rs       a find-and-replace over every tile of the map: the paths in
-//!                MTEX, MMDX and MWMO, most of which are not open. Not a
-//!                pointer tool, because the subject is the map rather than a
-//!                place on it
-//! place.rs       putting a new doodad or building in the world
-//! tables.rs      the client's own tables: which row is open, and what an edit
-//!                to a field is. Not a pointer tool either: a table has no
-//!                place in the world, so the workspace replaces the viewport
-//! creatures.rs   the server's `creature` spawns on the map: each drawn where
-//!                it stands, picked, moved, edited together with the
-//!                `creature_template` behind it, created and removed. The
-//!                first subject here whose document is a database row, and
-//!                the first where an edit can remove a row; game objects,
-//!                items and quests remove rows the same way
-//! gameobjects.rs the same for `gameobject` and `gameobject_template`: a chest,
-//!                a door, a vein, a mailbox. It works as the creature tool
-//!                does over the next table, with no path and with a facing
-//!                that is three columns
-//! items.rs       `item_template`, which has no place in the world: what an
-//!                item is, what it does and what it looks like. A workspace
-//!                like the one for tables.rs, over the server's rows rather
-//!                than a DBC, and the one server subject a `.reload` makes live
-//! quests.rs      `quest_template` with the four relation tables beside it:
-//!                what a quest asks for, says and gives, and who hands it out.
-//!                A workspace of the same kind, and the list the creature
-//!                tool's Quests window reads from the other direction
-//! creature_data.rs   the Creatures workspace: every `creature_template` row
-//!                as a list, read once and searched in memory, edited with the
-//!                creature tool's own form and state
-//! gameobject_data.rs the Game Objects workspace: the same for
-//!                `gameobject_template`, over the game object tool's state
-//! listing.rs     a server table read whole and searched in memory: the list
-//!                the two workspaces above draw, written once over any row type
-//! assets.rs      the Assets workspace: the textures and models the project
-//!                adds to the archives, and a picture turned into a BLP file
-//!                the 1.12.1 client reads
-//! loot.rs        the nine loot tables. No workspace and no rail entry: a set
-//!                is reached from the creature, the object or the item whose
-//!                column names it, in a window that follows the selection.
-//!                What a set holds, read one set at a time, and what an edit
-//!                to a row of it is
-//! services.rs    what a creature sells and teaches: npc_vendor, npc_trainer
-//!                and their template tables, in two windows that follow the
-//!                selection. Both lists of a kind read together, and what an
-//!                edit to a row is, refused where the server would skip it
-//! displays.rs    the display id picker's state: a creature's or a game
-//!                object's model chosen from CreatureDisplayInfo or
-//!                GameObjectDisplayInfo by picture, searched by model path.
-//!                Not a pointer tool: a dialog over the creature and game
-//!                object forms
-//! behaviour.rs   what a creature does: its `creature_ai_events` rows, the
-//!                `creature_spells` list its template names, and the scripts
-//!                either runs. No workspace and no rail entry: two windows
-//!                opened from a selected creature and a third from either.
-//!                Events and lists are rows of the store; a script is
-//!                replaced whole, since its rows have no key
-//! gossip.rs      what a creature says when spoken to: `gossip_menu`, the
-//!                `gossip_menu_option` choices under it and the `npc_text`
-//!                each menu row shows, read for the menus one creature leads
-//!                to, and what an edit to each is
-//! conditions.rs  the `conditions` table, read whole, and what an edit to a
-//!                condition is. Any form whose column names a condition opens
-//!                the window on it
-//! waypoints.rs   the path a creature walks: `creature_movement`, drawn over
-//!                the ground, its points picked, dragged, added and removed. A
-//!                mode of the creature tool rather than an entry on the rail,
-//!                because a path has no existence apart from its creature
-//! flightpaths.rs the flight paths: TaxiNodes, TaxiPath and TaxiPathNode,
-//!                drawn on the map, their nodes and points picked, dragged,
-//!                added and removed. Client tables whose rows are places, so
-//!                the tool keeps the viewport, as lights.rs does
-//! lights.rs      Light.dbc's spheres, drawn on the map, picked with the
-//!                pointer, flown to and made. A client table whose row is also a
-//!                position, so, like flightpaths.rs, it is a DBC tool that
-//!                keeps the viewport
-//! triggers.rs    AreaTrigger.dbc's spheres and boxes on the map, picked,
-//!                dragged, made and removed, and the server rows that say what
-//!                each does: a teleport, an inn, a quest objective
-//! graveyards.rs  WorldSafeLocs.dbc's places on the map, where a released
-//!                spirit appears, and the server rows that link each to the
-//!                zones it serves and give its facing
-//! maps.rs        a new map: its Map.dbc row, a WDT with no tiles in the
-//!                project, and its map_template row with a dungeon's parent
-//!                and ghost entrance. Not a pointer tool: the
-//!                map window drives it
-//! tiles.rs       the tile itself: making ground where there was none, and the
-//!                shadow bake and minimap picture that no other edit keeps in
-//!                step. Not a pointer tool: the map window drives it
-//! images.rs      a tile's heights and texture blends as PNG files, exported
-//!                and imported from the map window: the folder, the file
-//!                names, the encoding, and the one undo entry an import is
+//! ground/        the tools that edit the terrain itself: heights, grades,
+//!                roads, shading, textures, holes, areas, chunks and water
+//! placements/    the placed models and buildings, and the handles, groups and
+//!                tile moves the placement tools share
+//! spawns/        the server's creature and game object spawns, their
+//!                waypoint paths, and the handles a spawn is moved by
+//! places/        the client-table rows that are places on the map: lights,
+//!                flight paths, area triggers and graveyards
 //! measure.rs     a pointer tool that changes nothing and reports what is at a
 //!                point, and the distance and facing between two points
 //! guides.rs      what is drawn on the ground to read it by, under every
 //!                tool: the chunk and tile grid, the ground that is too steep,
 //!                contour lines and the texture count per chunk. Switches on
 //!                the view bar; nothing here edits
-//! gizmo.rs       the handles a selected placement is moved and turned by
-//! group.rs       a selection of more than one placement: the rules the four
-//!                placement tools share, the rectangle a drag on empty ground
-//!                draws, turning a group about one point, and the clipboard
-//! spawn.rs       the handles and keys for a selected creature or game-object
-//!                spawn, which has a position and a facing and no other angle:
-//!                the reader and writer the handles use, and the keys that
-//!                move, turn, remove and duplicate it
+//! shortcuts.rs   the keys that work whichever tool is chosen: undo, redo,
+//!                save, the playtest, and the shell over one
+//! modes.rs       the number row, which selects the chosen tool's modes
 //! ```
 //!
 //! ## The four steps every tool follows
 //!
-//! [`Tool`] says which tool has the left button. Every tool in this directory
+//! [`Tool`] says which tool has the left button. Every tool under this directory
 //! follows the same four steps, stated here once rather than in each file:
 //!
 //! ```text
@@ -139,7 +35,7 @@
 //! The third step differs between height edits and placement edits, because
 //! they move different things. A height edit moves vertices in a mesh already
 //! on the GPU; a placement edit moves the transform of an entity that is
-//! already spawned. Neither reads the tile again. [`terrain::remesh`] is the
+//! already spawned. Neither reads the tile again. [`ground::terrain::remesh`] is the
 //! fallback for a tile the live path could not reach, not the normal path.
 //!
 //! ## Where tiles are opened
@@ -148,60 +44,28 @@
 //! around the focus (7x7 by default) on the task pool, and puts each in the
 //! session when it is ready. It is not part of the terrain tool: the doodad
 //! pick reads the same `AdtFile` to find which `MDDF` entry was clicked, so
-//! the function sits here, shared by both.
+//! the function is in `crate::map::open`, shared by both, and [`ToolPlugin`]
+//! runs it.
 
-pub mod areas;
-pub mod assets;
-pub mod behaviour;
-pub mod chunks;
-pub mod conditions;
-pub mod creature_data;
-pub mod creatures;
-pub mod displays;
-pub mod doodads;
-pub mod flightpaths;
-pub mod gameobject_data;
-pub mod gameobjects;
-pub mod gizmo;
-pub mod gossip;
-pub mod grade;
-pub mod graveyards;
+pub mod ground;
 pub mod guides;
-pub mod group;
-pub mod holes;
-pub mod images;
-pub mod items;
-pub mod lights;
-pub mod listing;
-pub mod loot;
-pub mod maps;
 pub mod measure;
-pub mod place;
-pub mod quests;
-pub mod rehome;
-pub mod road;
-pub mod services;
-pub mod shading;
-pub mod spawn;
-pub mod sweep;
-pub mod tables;
-pub mod terrain;
-pub mod textures;
-pub mod tiles;
-pub mod triggers;
-pub mod water;
-pub mod waypoints;
-pub mod wmos;
+pub(crate) mod modes;
+pub mod places;
+pub mod placements;
+pub(crate) mod shortcuts;
+pub mod spawns;
 
+use crate::map::open::{close_tiles, open_tiles, Opening};
 use crate::session::EditSession;
-use vale_client::assets::GameAssets;
 use bevy::prelude::*;
+use modes::modes;
 
 /// Which tool the pointer is holding.
 ///
 /// The camera, the pick and the panels are the same whichever tool is chosen;
 /// the tool decides only what a left-drag in the viewport does. The list is
-/// expected to grow; [`crate::ui::rail`] names the tools
+/// expected to grow; [`crate::ui::shell::rail`] names the tools
 /// that do not exist yet.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tool {
@@ -211,50 +75,50 @@ pub enum Tool {
     /// What is at a clicked point, and the distance and facing between two —
     /// see [`measure`]. Changes nothing.
     Measure,
-    /// The height brush. What it does to the ground is [`terrain::Terrain`].
+    /// The height brush. What it does to the ground is [`ground::terrain::Terrain`].
     Terrain,
     /// A ramp between two points, which the height brush cannot make — see
-    /// [`grade`]. Two clicks and a button rather than a stroke.
+    /// [`ground::grade`]. Two clicks and a button rather than a stroke.
     Grade,
     /// A road along a run of points: the ground graded along it and its
-    /// textures painted — see [`road`].
+    /// textures painted — see [`ground::road`].
     Road,
     /// The shading brush: the colour painted onto the terrain's vertices —
-    /// see [`shading`].
+    /// see [`ground::shading`].
     Shading,
-    /// The texture brush — see [`textures`].
+    /// The texture brush — see [`ground::textures`].
     Textures,
-    /// Where the terrain is cut away entirely — see [`holes`].
+    /// Where the terrain is cut away entirely — see [`ground::holes`].
     Holes,
-    /// Which place in the world each chunk is — see [`areas`].
+    /// Which place in the world each chunk is — see [`ground::areas`].
     Areas,
     /// A selection of chunks, and one value written to all of them — see
-    /// [`chunks`].
+    /// [`ground::chunks`].
     Chunks,
-    /// The water standing on the terrain — see [`water`].
+    /// The water standing on the terrain — see [`ground::water`].
     Water,
-    /// The placed models standing on the terrain — see [`doodads`].
+    /// The placed models standing on the terrain — see [`placements::doodads`].
     Doodads,
-    /// The placed buildings, which are a different list — see [`wmos`].
+    /// The placed buildings, which are a different list — see [`placements::wmos`].
     Wmos,
-    /// `Spell.dbc` and every table it points at — see [`tables`].
+    /// `Spell.dbc` and every table it points at — see [`crate::tables`].
     ///
     /// The first entry of the rail's Data group, and the first subject whose
     /// document is not the world: the workspace replaces the viewport rather
     /// than drawing over it.
     Spells,
     /// `Light.dbc` and its chain: the sun, the fill, the sky dome, the fog and
-    /// the water's colour, per map and per zone — see [`tables`].
+    /// the water's colour, per map and per zone — see [`crate::tables`].
     ///
     /// A `Light` row is both a table row and a place: it is a sphere at a
     /// position on the open map, so the workspace sits beside the viewport
     /// rather than replacing it. See [`Tool::covers_viewport`].
     ///
     /// For the same reason it is on the rail's World half with the doodads
-    /// rather than in the Data group beside Spells. See [`crate::ui::rail`].
+    /// rather than in the Data group beside Spells. See [`crate::ui::shell::rail`].
     Lights,
     /// The server's creatures: where each one stands, and what it is — see
-    /// [`creatures`].
+    /// [`spawns::creatures`].
     ///
     /// The first subject whose document is a row in vmangos' database rather
     /// than a file. It keeps the viewport for the same reason as `Lights`: a
@@ -263,17 +127,17 @@ pub enum Tool {
     ///
     /// The tool needs a database connection. With none, the tool opens, says
     /// so and lists nothing — see [`crate::server::settings`], and
-    /// [`crate::ui::rail`], which greys the row rather than hiding it.
+    /// [`crate::ui::shell::rail`], which greys the row rather than hiding it.
     Creatures,
     /// The server's game objects (chests, doors, veins, mailboxes): where each
-    /// one stands, and what it is — see [`gameobjects`].
+    /// one stands, and what it is — see [`spawns::gameobjects`].
     ///
     /// The same as [`Tool::Creatures`] over the next table: it keeps the
     /// viewport, needs a connection and is disabled during a playtest on the
     /// same terms.
     GameObjects,
     /// The server's items: what each one is, what it does and what it looks
-    /// like — see [`items`].
+    /// like — see [`crate::subjects::items`].
     ///
     /// A row in vmangos' database like [`Tool::Creatures`], and a workspace
     /// like [`Tool::Spells`]: an item has no place in the world, so the
@@ -283,7 +147,7 @@ pub enum Tool {
     /// `Tool::Quests` does — see [`Tool::survives_playtest`].
     Items,
     /// `ItemSet.dbc`: which items make up a set, and the bonuses it grants at
-    /// how many pieces — see [`tables`].
+    /// how many pieces — see [`crate::tables`].
     ///
     /// A DBC table, edited in the table browser, and a part of the Items
     /// workspace: the top bar shows Items for both and a strip at the head of
@@ -291,7 +155,7 @@ pub enum Tool {
     /// it needs no database; the item names beside its item columns do.
     ItemSets,
     /// The server's quests: what each asks for, says and gives, and who hands
-    /// it out — see [`quests`].
+    /// it out — see [`crate::subjects::quests`].
     ///
     /// A row in vmangos' database and a workspace, as [`Tool::Items`] is. It
     /// survives a playtest for the same reason: `LoadQuests` and the relation
@@ -300,7 +164,7 @@ pub enum Tool {
     Quests,
     /// The Creatures workspace: every `creature_template` row as a list,
     /// searched by name, subname or entry, and edited in the middle of the
-    /// screen — see [`creature_data`].
+    /// screen — see [`crate::subjects::creature_data`].
     ///
     /// The same row the creature tool's template window edits, reached by
     /// name rather than by clicking a spawn. A template has no place in the
@@ -308,7 +172,7 @@ pub enum Tool {
     /// playtest, because the server reads `creature_template` at startup.
     CreatureData,
     /// The Game Objects workspace: every `gameobject_template` row, on
-    /// [`Tool::CreatureData`]'s terms — see [`gameobject_data`].
+    /// [`Tool::CreatureData`]'s terms — see [`crate::subjects::gameobject_data`].
     GameObjectData,
     /// `CreatureDisplayInfo.dbc` with `CreatureDisplayInfoExtra` and
     /// `CreatureModelData` as two more tabs: what a creature looks like. A
@@ -321,11 +185,11 @@ pub enum Tool {
     /// part of the Items workspace.
     ItemDisplays,
     /// The files the project adds to the archives: imported textures, baked
-    /// models and the rest — see [`assets`]. A workspace, since a file has no
+    /// models and the rest — see [`crate::import::assets`]. A workspace, since a file has no
     /// place in the world; it has no table, because its subject is the
     /// project folder.
     Assets,
-    /// A find-and-replace over every tile of the map — see [`sweep`].
+    /// A find-and-replace over every tile of the map — see [`crate::map::sweep`].
     ///
     /// The second subject whose document is not a place: it edits the map's
     /// tiles, most of which are not open and none of which the pointer can
@@ -333,7 +197,7 @@ pub enum Tool {
     /// it.
     Sweep,
     /// The flight paths: `TaxiNodes.dbc`, `TaxiPath.dbc` and
-    /// `TaxiPathNode.dbc` — see [`flightpaths`].
+    /// `TaxiPathNode.dbc` — see [`places::flightpaths`].
     ///
     /// Client tables whose rows are places, as `Light` is: a node stands on the
     /// ground and a path's points are in the air over it, so they are picked
@@ -343,7 +207,7 @@ pub enum Tool {
     Flightpaths,
     /// `AreaTable.dbc`: the zones and the sub-areas inside them, what each
     /// is called and how the game treats a character standing in it — see
-    /// [`tables`].
+    /// [`crate::tables`].
     ///
     /// A DBC table edited in the table browser, and the row [`Tool::Areas`]
     /// paints onto the ground by id: this tool says what an area is, and that
@@ -351,7 +215,7 @@ pub enum Tool {
     /// at startup, so it is not available during a playtest.
     Zones,
     /// `AreaTrigger.dbc`: the spheres and boxes the client reports standing
-    /// in, and what the server does when it is told — see [`triggers`].
+    /// in, and what the server does when it is told — see [`places::triggers`].
     ///
     /// A client table whose rows are places, as `Light` is, so it keeps the
     /// viewport and puts its form in the inspector. The server half is three
@@ -359,12 +223,12 @@ pub enum Tool {
     /// set and leaves out when none is.
     Triggers,
     /// `WorldSafeLocs.dbc`: where a released spirit appears, and which zones
-    /// each place serves — see [`graveyards`].
+    /// each place serves — see [`places::graveyards`].
     ///
     /// On `Tool::Triggers`' terms: the places are a client table picked in the
     /// viewport, and the links to zones are rows of vmangos' database.
     Graveyards,
-    /// Any DBC table, by name — see [`tables`].
+    /// Any DBC table, by name — see [`crate::tables`].
     ///
     /// The workspace's list is the files of `DBFilesClient\`. Choosing one
     /// opens it in the browser the spell workspace uses: as named, typed
@@ -487,21 +351,21 @@ impl Tool {
     /// whether it works during a playtest is [`Tool::survives_playtest`]'s. A
     /// tool that edits a chain of tables answers
     /// with the first: `Tool::Flightpaths` answers `TaxiNodes`, not
-    /// `TaxiPath` or `TaxiPathNode`. See [`tables`].
+    /// `TaxiPath` or `TaxiPathNode`. See [`crate::tables`].
     pub fn table(self) -> Option<&'static str> {
         match self {
             Tool::Spells => Some("Spell"),
             Tool::Lights => Some("Light"),
             Tool::Flightpaths => Some("TaxiNodes"),
             Tool::ItemSets => Some("ItemSet"),
-            Tool::Zones => Some(tables::area::TABLE),
+            Tool::Zones => Some(crate::tables::zones::area::TABLE),
             Tool::Triggers => Some(vale_edit::dbc::places::TRIGGERS),
             Tool::Graveyards => Some(vale_edit::dbc::places::SAFE_LOCS),
             Tool::CreatureDisplays => Some("CreatureDisplayInfo"),
             Tool::ObjectDisplays => Some("GameObjectDisplayInfo"),
             Tool::ItemDisplays => Some("ItemDisplayInfo"),
             // No one table: the workspace starts on the list of them.
-            Tool::Tables => Some(tables::ANY),
+            Tool::Tables => Some(crate::tables::tabs::ANY),
             _ => None,
         }
     }
@@ -634,16 +498,16 @@ impl Tool {
     /// is not a tab and highlights none; the browser still navigates to it.
     pub fn tabs(self) -> &'static [(&'static str, &'static str)] {
         match self {
-            Tool::Spells => &tables::SPELL_TABS,
-            Tool::Lights => &tables::LIGHT_TABS,
-            Tool::Flightpaths => &tables::TAXI_TABS,
-            Tool::ItemSets => &tables::SET_TABS,
-            Tool::Zones => &tables::ZONE_TABS,
-            Tool::Triggers => &tables::TRIGGER_TABS,
-            Tool::Graveyards => &tables::SAFE_LOC_TABS,
-            Tool::CreatureDisplays => &tables::CREATURE_DISPLAY_TABS,
-            Tool::ObjectDisplays => &tables::OBJECT_DISPLAY_TABS,
-            Tool::ItemDisplays => &tables::ITEM_DISPLAY_TABS,
+            Tool::Spells => &crate::tables::tabs::SPELL_TABS,
+            Tool::Lights => &crate::tables::tabs::LIGHT_TABS,
+            Tool::Flightpaths => &crate::tables::tabs::TAXI_TABS,
+            Tool::ItemSets => &crate::tables::tabs::SET_TABS,
+            Tool::Zones => &crate::tables::tabs::ZONE_TABS,
+            Tool::Triggers => &crate::tables::tabs::TRIGGER_TABS,
+            Tool::Graveyards => &crate::tables::tabs::SAFE_LOC_TABS,
+            Tool::CreatureDisplays => &crate::tables::tabs::CREATURE_DISPLAY_TABS,
+            Tool::ObjectDisplays => &crate::tables::tabs::OBJECT_DISPLAY_TABS,
+            Tool::ItemDisplays => &crate::tables::tabs::ITEM_DISPLAY_TABS,
             _ => &[],
         }
     }
@@ -688,8 +552,8 @@ impl Tool {
     /// else.
     pub fn for_table(table: &str) -> Tool {
         let in_spells = table == "Spell"
-            || tables::SPELL_TABS.iter().any(|&(_, name)| name == table)
-            || tables::chain_for("Spell").contains(&table);
+            || crate::tables::tabs::SPELL_TABS.iter().any(|&(_, name)| name == table)
+            || crate::tables::tabs::chain_for("Spell").contains(&table);
         match table {
             "ItemSet" => Tool::ItemSets,
             "AreaTable" => Tool::Zones,
@@ -758,97 +622,6 @@ impl Tool {
     }
 }
 
-/// How many tiles are read and parsed on the task pool at once. Bevy's
-/// async-compute pool has four threads and the renderer's own tile loads share
-/// it, so two keeps the editor's reads from queueing the renderer's behind
-/// them.
-const OPEN_IN_FLIGHT: usize = 2;
-
-/// The tiles being read and parsed off the main thread for the session. See
-/// [`open_tiles`].
-#[derive(Resource, Default)]
-pub struct Opening {
-    tasks: Vec<OpeningTile>,
-    /// Claimed tiles that could not be read or parsed, by map, so they are
-    /// not asked for again every frame. The reason is in the status line.
-    failed: std::collections::HashSet<(String, (u32, u32))>,
-}
-
-/// One tile being read.
-struct OpeningTile {
-    coord: (u32, u32),
-    /// The map and the project it was asked for. A tile that lands after
-    /// either has changed is dropped.
-    map: String,
-    project: std::path::PathBuf,
-    task: bevy::tasks::Task<Result<vale_edit::adt::AdtFile, String>>,
-}
-
-impl Opening {
-    /// Whether a tile is being read.
-    pub fn is_opening(&self, coord: (u32, u32)) -> bool {
-        self.tasks.iter().any(|t| t.coord == coord)
-    }
-}
-
-/// Close the open tiles the focus has moved away from.
-///
-/// [`open_tiles`] parses every tile the block reaches. Without this system
-/// nothing closes one, so a session that jumps around a map holds every tile
-/// it has been near: two megabytes of parsed file each, forty-nine per stop.
-/// Memory climbed with every teleport and was only partly released. This
-/// system drops the
-/// tiles further than the reach plus one from the focus that nothing needs
-/// kept: not unsaved, not named by the history (undo writes into an open tile
-/// and skips a closed one), and not waiting on any of the session's live sets.
-///
-/// It keeps one ring past the reach, so a focus moving along a border does
-/// not close and re-parse the same row of tiles. Chained after `open_tiles`,
-/// and subject to the same two conditions.
-fn close_tiles(
-    mut session: Option<ResMut<EditSession>>,
-    focus: Res<vale_client::render::focus::WorldFocus>,
-    reach: Res<vale_client::render::terrain::TerrainReach>,
-    state: Res<crate::playtest::Playtest>,
-) {
-    let Some(session) = session.as_mut() else {
-        return;
-    };
-    if !focus.present || !state.editing() {
-        return;
-    }
-    // `VALE_KEEP_TILES=1` switches this off, so the memory growth it removes
-    // can be measured by comparing two `--tour` runs, one with the variable
-    // set and one without. The variable is read once.
-    static KEEP_EVERYTHING: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *KEEP_EVERYTHING.get_or_init(|| std::env::var_os("VALE_KEEP_TILES").is_some()) {
-        return;
-    }
-    let (cx, cy) = vale_assets::tile_for_position(focus.position.x, focus.position.y);
-    let keep = reach.tiles() + 1;
-    let far: Vec<(u32, u32)> = session
-        .tiles
-        .keys()
-        .copied()
-        .filter(|&(x, y)| {
-            (x as i32 - cx as i32).abs() > keep || (y as i32 - cy as i32).abs() > keep
-        })
-        .filter(|coord| !session.unsaved.contains(coord))
-        .filter(|coord| {
-            !session.stale.contains(coord)
-                && !session.restream.contains(coord)
-                && !session.dirty.contains_key(coord)
-                && !session.regrow.contains_key(coord)
-                && !session.moved.contains_key(coord)
-                && !session.moved_buildings.contains_key(coord)
-                && !session.repaint.contains_key(coord)
-        })
-        .collect();
-    for coord in far {
-        session.close(coord);
-    }
-}
-
 pub struct ToolPlugin;
 
 impl Plugin for ToolPlugin {
@@ -856,60 +629,60 @@ impl Plugin for ToolPlugin {
         app.init_resource::<Tool>()
             .init_resource::<Opening>()
             .add_systems(Update, (open_tiles, close_tiles, modes).chain())
-            .add_systems(Update, (maps::follow_map_table, maps::read_edited_map))
+            .add_systems(Update, (crate::map::maps::follow_map_table, crate::map::maps::read_edited_map))
             .add_systems(Update, release_held);
         app.add_plugins((
-            terrain::TerrainToolPlugin,
-            shading::ShadingToolPlugin,
-            textures::TextureToolPlugin,
-            holes::HoleToolPlugin,
-            areas::AreaToolPlugin,
-            lights::LightToolPlugin,
-            water::WaterToolPlugin,
-            doodads::DoodadToolPlugin,
-            wmos::WmoToolPlugin,
-            place::PlaceToolPlugin,
-            sweep::SweepPlugin,
-            gizmo::GizmoToolPlugin,
+            ground::terrain::TerrainToolPlugin,
+            ground::shading::ShadingToolPlugin,
+            ground::textures::TextureToolPlugin,
+            ground::holes::HoleToolPlugin,
+            ground::areas::AreaToolPlugin,
+            places::lights::LightToolPlugin,
+            ground::water::WaterToolPlugin,
+            placements::doodads::DoodadToolPlugin,
+            placements::wmos::WmoToolPlugin,
+            placements::place::PlaceToolPlugin,
+            crate::map::sweep::SweepPlugin,
+            placements::gizmo::GizmoToolPlugin,
             // The two point-and-apply terrain tools as one entry, which keeps
             // the tuple within what `add_plugins` accepts.
-            (grade::GradeToolPlugin, road::RoadToolPlugin),
-            tables::TableToolPlugin,
-            tiles::TilePlugin,
+            (ground::grade::GradeToolPlugin, ground::road::RoadToolPlugin),
+            crate::tables::TableToolPlugin,
+            crate::map::tiles::TilePlugin,
         ));
         // A second call, because `add_plugins` takes at most fifteen. The
         // first tuple is full; further tool plugins go in this one.
         app.add_plugins((
-            creatures::CreatureToolPlugin,
-            gameobjects::GameObjectToolPlugin,
-            waypoints::WaypointToolPlugin,
+            spawns::creatures::CreatureToolPlugin,
+            spawns::gameobjects::GameObjectToolPlugin,
+            spawns::waypoints::WaypointToolPlugin,
             // The item tool and the two workspaces' lists as one entry, which
             // keeps the tuple within what `add_plugins` accepts.
             (
-                items::ItemToolPlugin,
-                creature_data::CreatureDataPlugin,
-                gameobject_data::GameObjectDataPlugin,
-                assets::AssetsPlugin,
+                crate::subjects::items::ItemToolPlugin,
+                crate::subjects::creature_data::CreatureDataPlugin,
+                crate::subjects::gameobject_data::GameObjectDataPlugin,
+                crate::import::assets::AssetsPlugin,
             ),
-            quests::QuestToolPlugin,
-            loot::LootToolPlugin,
+            crate::subjects::quests::QuestToolPlugin,
+            crate::subjects::loot::LootToolPlugin,
             // Behaviour, conditions and gossip as one entry, which keeps the
             // tuple within what `add_plugins` accepts: three windows over the
             // server's rows that open from any form.
             (
-                behaviour::BehaviourToolPlugin,
-                conditions::ConditionToolPlugin,
-                gossip::GossipToolPlugin,
+                crate::subjects::behaviour::BehaviourToolPlugin,
+                crate::subjects::conditions::ConditionToolPlugin,
+                crate::subjects::gossip::GossipToolPlugin,
             ),
-            services::ServicesToolPlugin,
-            spawn::SpawnKeysPlugin,
-            group::GroupPlugin,
+            crate::subjects::services::ServicesToolPlugin,
+            spawns::spawn::SpawnKeysPlugin,
+            placements::group::GroupPlugin,
             measure::MeasureToolPlugin,
-            flightpaths::FlightpathToolPlugin,
+            places::flightpaths::FlightpathToolPlugin,
             // The two place tools as one entry, which keeps the tuple within
             // what `add_plugins` accepts.
-            (triggers::TriggerToolPlugin, graveyards::GraveyardToolPlugin),
-            chunks::ChunkToolPlugin,
+            (places::triggers::TriggerToolPlugin, places::graveyards::GraveyardToolPlugin),
+            ground::chunks::ChunkToolPlugin,
             guides::GuidesPlugin,
         ));
     }
@@ -930,267 +703,6 @@ fn release_held(mut session: Option<ResMut<EditSession>>, buttons: Res<ButtonInp
     }
 }
 
-/// Open the tiles around the focus: read and parse each on the task pool, and
-/// put it in the session when it is ready.
-///
-/// It opens the block that is drawn, not only the tile under the pointer,
-/// because the pointer cannot pick against a tile that is not open and a
-/// stroke near a tile border reaches into the next one. The block is
-/// `render::terrain::TerrainReach`'s own square, the same one the streamer
-/// puts on screen, so the editable area and the visible area are the same:
-/// otherwise a tool would refuse edits on drawn ground the person can see.
-///
-/// ## Off the main thread
-///
-/// A tile is a 10 to 35 ms archive read and a 5 to 10 ms parse. This used to
-/// open one tile a frame on the main thread, through the main archive chain
-/// and under its lock, so every frame of a block filling (49 tiles after a
-/// jump) was a long frame. The read is now on a chain borrowed from the pool
-/// with the editor's overlay set, as `render::terrain::read_tile`'s is, and
-/// the parse runs on the same task; the main thread only moves the finished
-/// `AdtFile` into the session.
-///
-/// Only the tiles the WDT claims are asked for, which is every tile the map
-/// has. A claimed tile that fails is remembered in [`Opening::failed`] and not
-/// asked for again on that map.
-///
-/// Tiles are asked for nearest first. A 3x3 reach does not need the ordering;
-/// a 7x7 reach does: until the tile under the pointer is open, the pointer
-/// reports no ground and the brush does nothing.
-fn open_tiles(
-    mut session: Option<ResMut<EditSession>>,
-    assets: Res<GameAssets>,
-    focus: Res<vale_client::render::focus::WorldFocus>,
-    reach: Res<vale_client::render::terrain::TerrainReach>,
-    state: Res<crate::playtest::Playtest>,
-    mut opening: ResMut<Opening>,
-) {
-    let Some(session) = session.as_mut() else {
-        return;
-    };
-    // The reads that have finished. Taken whether or not the focus is
-    // present, so a task never outlives the need for it by more than a frame.
-    let mut index = 0;
-    while index < opening.tasks.len() {
-        let done = bevy::tasks::block_on(bevy::tasks::futures_lite::future::poll_once(
-            &mut opening.tasks[index].task,
-        ));
-        let Some(result) = done else {
-            index += 1;
-            continue;
-        };
-        let pending = opening.tasks.swap_remove(index);
-        let current = pending.map == session.map && pending.project == session.project.root;
-        match result {
-            Ok(tile) if current => session.insert_opened(pending.coord, tile),
-            Ok(_) => {}
-            Err(why) => {
-                if current {
-                    session.status = why;
-                }
-                opening.failed.insert((pending.map, pending.coord));
-            }
-        }
-    }
-
-    // Not during a playtest. The focus follows the character then, so this
-    // would parse two megabytes a frame along the character's route, for
-    // tiles no tool may touch, and hold every one of them for the rest of the
-    // session.
-    if !focus.present || !state.editing() {
-        return;
-    }
-    // The claims are read for the open map when it opens; until they are,
-    // nothing is known to exist.
-    if session.claims_for != session.map {
-        return;
-    }
-    let (cx, cy) = vale_assets::tile_for_position(focus.position.x, focus.position.y);
-    let radius = reach.tiles();
-    let mut wanted: Vec<(i32, (u32, u32))> = Vec::new();
-    for dy in -radius..=radius {
-        for dx in -radius..=radius {
-            let (x, y) = (cx as i32 + dx, cy as i32 + dy);
-            if !(0..64).contains(&x) || !(0..64).contains(&y) {
-                continue;
-            }
-            let coord = (x as u32, y as u32);
-            if session.tiles.contains_key(&coord)
-                || !session.wdt_claims(coord)
-                || opening.is_opening(coord)
-                || opening.failed.contains(&(session.map.clone(), coord))
-            {
-                continue;
-            }
-            wanted.push((dx * dx + dy * dy, coord));
-        }
-    }
-    wanted.sort_unstable_by_key(|(distance, _)| *distance);
-    // `VALE_OPEN_INLINE=1`: the old path, one tile a frame read and parsed on
-    // this thread, kept as a measurement probe so the two can be compared in
-    // one binary with `--tour`.
-    static INLINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *INLINE.get_or_init(|| std::env::var_os("VALE_OPEN_INLINE").is_some()) {
-        if let Some((_, coord)) = wanted.first() {
-            if !session.open(&assets, *coord) {
-                opening.failed.insert((session.map.clone(), *coord));
-            }
-        }
-        return;
-    }
-    for (_, coord) in wanted {
-        if opening.tasks.len() >= OPEN_IN_FLIGHT {
-            return;
-        }
-        let chains = assets.chains();
-        let dir = assets.gamedata_dir.clone();
-        let overlay = assets.overlay();
-        let path = session.key(coord).vpath();
-        let task = bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
-            let mut chain = chains.take(&dir).map_err(|e| format!("{path}: {e}"))?;
-            chain.set_overlay(overlay);
-            let bytes = chain.read(&path).map_err(|e| format!("{path}: {e}"))?;
-            vale_edit::adt::AdtFile::parse(&bytes).map_err(|e| format!("{path}: {e}"))
-        });
-        opening.tasks.push(OpeningTile {
-            coord,
-            map: session.map.clone(),
-            project: session.project.root.clone(),
-            task,
-        });
-    }
-}
-
-/// Undo, redo, save, the playtest, and the shell over one.
-///
-/// Three of the six work during a playtest, each for its own reason. `Ctrl+P`
-/// ends the playtest. `Ctrl+E` opens and closes the editor's panels over it —
-/// see [`crate::playtest::ShellOpen`]. `Ctrl+S` writes the project and
-/// republishes, which makes an edit made during a playtest reach the running
-/// game without leaving it.
-///
-/// All of them check the game's own keyboard focus as well as egui's:
-/// `KeyboardFocus` says whether an edit box or an `enableKeyboard` frame took
-/// the keystroke. Without that check, a `Ctrl+P` typed into the chat line
-/// would end the session it was typed in.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn shortcuts(
-    mut session: Option<ResMut<EditSession>>,
-    mut state: ResMut<crate::playtest::Playtest>,
-    mut shell: ResMut<crate::playtest::ShellOpen>,
-    mut client: ResMut<vale_client::world::session::Session>,
-    login: Res<crate::playtest::Login>,
-    mut auto: ResMut<vale_client::glue::autologin::AutoLogin>,
-    keys: Res<ButtonInput<KeyCode>>,
-    typing: Res<vale_client::lua::api::keyboard::KeyboardFocus>,
-    wants: Res<bevy_egui::input::EguiWantsInput>,
-    mut tool: ResMut<Tool>,
-    assets: Res<vale_client::assets::GameAssets>,
-    doodads: Res<doodads::Selection>,
-    wmos: Res<wmos::Selection>,
-    mut placing: ResMut<place::Placing>,
-    // What a save and a playtest need to reach the server: the reload queue,
-    // where the database is, and whether the next session keeps its query
-    // answers. See [`crate::server::Reach`], which bundles them into one
-    // parameter because this system is at Bevy's limit of sixteen.
-    mut reach: crate::server::Reach,
-) {
-    let Some(session) = session.as_mut() else {
-        return;
-    };
-    if wants.wants_keyboard_input() || !keys.pressed(KeyCode::ControlLeft) {
-        return;
-    }
-    if keys.just_pressed(KeyCode::KeyP) && !typing.active {
-        match state.editing() {
-            true => crate::playtest::start(
-                &mut state,
-                session,
-                &assets,
-                &login,
-                &mut auto,
-                &mut reach.queue,
-                &reach.settings,
-                &mut reach.caches,
-            ),
-            false => crate::playtest::stop(&mut state, &mut client, &mut auto, session),
-        }
-        return;
-    }
-    // The shell over a playtest. This is the only shortcut here that does
-    // nothing while editing, because the panels are already drawn then.
-    if keys.just_pressed(KeyCode::KeyE) && !typing.active && state.playing() {
-        shell.0 = !shell.0;
-        if shell.0 {
-            *tool = open_on(*tool);
-        }
-        return;
-    }
-    // Save works both while editing and during a playtest. During a playtest
-    // it performs the whole reload: the write puts the edit in the project
-    // folder and [`crate::playtest::republish`] puts it where the running
-    // client reads it, so the next cast, the next entity and the next model
-    // are the edited ones.
-    if keys.just_pressed(KeyCode::KeyS) && !typing.active {
-        session.save_all();
-        session.save_all_tables();
-        // The server half of the same key press: every subject's SQL, and,
-        // when Apply on save is on, the statements run and the tables
-        // reloaded. See [`crate::server::save`], which holds the only list of
-        // subjects.
-        crate::server::save(session, &assets, &reach.settings, &mut reach.queue);
-        if state.playing() {
-            crate::playtest::republish(session, &assets);
-            session.status = "saved and republished to the playtest".to_string();
-        }
-        return;
-    }
-    if !state.editing() {
-        return;
-    }
-    // Undo and redo mark what they moved, exactly as a stroke does, so the
-    // ground and the placements follow them the same way.
-    if keys.just_pressed(KeyCode::KeyZ) {
-        session.undo(&assets);
-    }
-    if keys.just_pressed(KeyCode::KeyY) {
-        session.redo(&assets);
-    }
-    // Duplicate arms the placement tool rather than copying — see [`place`]
-    // for the reason. It is here rather than in either tool because it is one
-    // key doing one thing to whichever list is open.
-    //
-    // One placement only. A group cannot ride on the cursor as one model,
-    // so over several `Ctrl+D` is `group::clipboard`'s, which copies them in
-    // place a step to the north.
-    if keys.just_pressed(KeyCode::KeyD) {
-        let armed = match *tool {
-            Tool::Doodads if !doodads.also.is_empty() => None,
-            Tool::Wmos if !wmos.also.is_empty() => None,
-            Tool::Doodads => doodads.at.as_ref().map(|at| {
-                let turns =
-                    vale_assets::world::adt::placement_euler_to_world(at.record.rotation);
-                (
-                    place::Kind::Doodad,
-                    at.path.clone(),
-                    turns[2],
-                    f32::from(at.record.scale) / 1024.0,
-                )
-            }),
-            Tool::Wmos => wmos.at.as_ref().map(|at| {
-                let turns =
-                    vale_assets::world::adt::placement_euler_to_world(at.record.rotation);
-                (place::Kind::Wmo, at.path.clone(), turns[2], 1.0)
-            }),
-            _ => None,
-        };
-        if let Some((kind, path, turn, scale)) = armed {
-            placing.arm(kind, path, turn, scale);
-            session.status = format!("duplicating {}", place::leaf(&placing_path(&placing)));
-        }
-    }
-}
-
 /// Which subject the shell opens on over a playtest.
 ///
 /// The tools that keep the viewport cannot act during a playtest, because the
@@ -1203,11 +715,6 @@ pub(crate) fn open_on(tool: Tool) -> Tool {
         true => tool,
         false => Tool::Spells,
     }
-}
-
-/// The armed path, for the status line.
-fn placing_path(placing: &place::Placing) -> String {
-    placing.path.clone().unwrap_or_default()
 }
 
 /// Which brush setting the mouse wheel adjusts, chosen by a held modifier.
@@ -1228,7 +735,7 @@ pub enum Wheel {
     /// How strongly each application of the brush acts.
     Strength,
     /// How much of the radius is at full strength — the inner ring the preview
-    /// draws. See `vale_edit::ops::Falloff::over`.
+    /// draws. See `vale_edit::ops::brush::Falloff::over`.
     Core,
 }
 
@@ -1258,179 +765,6 @@ impl Wheel {
 /// Below 1, because a core of the whole radius is the same as
 /// [`Falloff::Flat`] and leaves the falloff no distance to run over.
 pub const CORE: std::ops::RangeInclusive<f32> = 0.0..=0.9;
-
-/// The number row selects the chosen tool's modes.
-///
-/// Every tool here has a small set of states a person switches between often
-/// (raise and lower, select and place), and each switch required moving the
-/// pointer to a segmented control. The digits are the one block of keys that
-/// nothing in this crate or in the game's own bindings used. Their meaning
-/// depends on the tool: `1` is Raise on the terrain brush and Select on the
-/// placements, because those are the first entry of each panel's first row.
-///
-/// `Tab` also works for the placements, because Select and Place is a pair
-/// people toggle between rather than choose from.
-///
-/// It is one system rather than a branch inside each tool so that the whole
-/// mapping is visible in one place: if a tool's keys did not follow the
-/// layout of its panel, they would have to be learnt separately.
-#[allow(clippy::too_many_arguments)]
-fn modes(
-    tool: Res<Tool>,
-    state: Res<crate::playtest::Playtest>,
-    keys: Res<ButtonInput<KeyCode>>,
-    typing: Res<vale_client::lua::api::keyboard::KeyboardFocus>,
-    wants: Res<bevy_egui::input::EguiWantsInput>,
-    mut terrain: ResMut<terrain::Terrain>,
-    mut shading: ResMut<shading::Shading>,
-    mut textures: ResMut<textures::Textures>,
-    mut placing: ResMut<place::Placing>,
-) {
-    if !state.editing() || wants.wants_keyboard_input() || typing.active {
-        return;
-    }
-    // `Ctrl` and `Alt` belong to other gestures: `Ctrl` is the
-    // undo/redo/save/playtest block and `Alt` turns a placement. `Shift` is
-    // free and selects the second row: a brush panel has more choices than
-    // there are digits, and a shifted digit is the common convention for that.
-    if keys.pressed(KeyCode::ControlLeft)
-        || keys.pressed(KeyCode::ControlRight)
-        || keys.pressed(KeyCode::AltLeft)
-        || keys.pressed(KeyCode::AltRight)
-    {
-        return;
-    }
-    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
-    // Ten, and `0` is the tenth: the row as it is laid out on the keyboard
-    // rather than as it is numbered.
-    let digit = [
-        KeyCode::Digit1,
-        KeyCode::Digit2,
-        KeyCode::Digit3,
-        KeyCode::Digit4,
-        KeyCode::Digit5,
-        KeyCode::Digit6,
-        KeyCode::Digit7,
-        KeyCode::Digit8,
-        KeyCode::Digit9,
-        KeyCode::Digit0,
-    ]
-    .iter()
-    .position(|&key| keys.just_pressed(key));
-
-    match *tool {
-        // No modes. A grade is two clicks and a button, so the number row has
-        // no modes to pick between. The same is true of the creature, object,
-        // item, quest and flight path tools: the number row picks a brush
-        // mode, and a row of a table has none.
-        Tool::Grade
-        | Tool::Road
-        | Tool::Creatures
-        | Tool::GameObjects
-        | Tool::Items
-        | Tool::ItemSets
-        | Tool::Quests
-        | Tool::CreatureData
-        | Tool::GameObjectData
-        | Tool::CreatureDisplays
-        | Tool::ObjectDisplays
-        | Tool::ItemDisplays
-        | Tool::Assets
-        | Tool::Tables
-        | Tool::Zones
-        | Tool::Triggers
-        | Tool::Graveyards
-        | Tool::Flightpaths => {}
-        Tool::Terrain => {
-            // Unshifted digits cover the two long rows; shifted digits cover
-            // the short one. 1..5 are the five modes, 6..0 the five falloffs,
-            // and `Shift`+1..3 the three shapes: the panel's own rows in the
-            // panel's own order, so the panel shows which key does what.
-            let Some(at) = digit else { return };
-            if shift {
-                if let Some(&(_, shape)) = terrain::SHAPES.get(at) {
-                    terrain.brush.shape = shape;
-                }
-            } else if let Some(&(_, mode)) = terrain::MODES.get(at) {
-                terrain.brush.mode = mode;
-            } else if let Some(&(_, falloff)) = terrain::FALLOFFS.get(at - terrain::MODES.len()) {
-                terrain.brush.falloff = falloff;
-            }
-        }
-        Tool::Shading => {
-            // Five modes and five falloffs, laid out exactly as the height
-            // brush's are and for the same reason: the two are the same three
-            // controls over the same vertices, so a key learnt on one is the key
-            // on the other.
-            let Some(at) = digit else { return };
-            if shift {
-                if let Some(&(_, shape)) = terrain::SHAPES.get(at) {
-                    shading.brush.shape = shape;
-                }
-            } else if let Some(&(_, mode)) = shading::MODES.get(at) {
-                shading.brush.mode = mode;
-            } else if let Some(&(_, falloff)) = terrain::FALLOFFS.get(at - shading::MODES.len()) {
-                shading.brush.falloff = falloff;
-            }
-        }
-        Tool::Textures => {
-            // The texture brush has no modes, so its unshifted digits are the
-            // falloffs — the panel's first row of choices — and `Shift` is the
-            // shapes, exactly as above.
-            let Some(at) = digit else { return };
-            match shift {
-                true => {
-                    if let Some(&(_, shape)) = textures::SHAPES.get(at) {
-                        textures.brush.shape = shape;
-                    }
-                }
-                false => {
-                    if let Some(&(_, falloff)) = textures::FALLOFFS.get(at) {
-                        textures.brush.falloff = falloff;
-                    }
-                }
-            }
-        }
-        Tool::Doodads | Tool::Wmos => {
-            // Two choices and no second row, so a shifted digit means nothing
-            // here rather than meaning the unshifted one.
-            if shift {
-                return;
-            }
-            let wanted = match digit {
-                Some(at) => place::MODES.get(at).map(|&(_, mode)| mode),
-                // `Tab` is the toggle rather than a third key, because these two
-                // are a pair rather than a list.
-                None if keys.just_pressed(KeyCode::Tab) => Some(match placing.mode {
-                    place::Mode::Select => place::Mode::Place,
-                    place::Mode::Place => place::Mode::Select,
-                }),
-                None => None,
-            };
-            if let Some(mode) = wanted {
-                placing.mode = mode;
-                // Switching to Select puts down whatever was on the cursor,
-                // which is what the panel's own switch does — see
-                // [`place::aim`], which would do it a frame later anyway.
-                if mode == place::Mode::Select {
-                    placing.disarm();
-                }
-            }
-        }
-        // These tools have no modes. In Spells the digits go to whichever
-        // text field has focus: a workspace has text fields, and a number row
-        // that meant something here would conflict with every one of them.
-        Tool::Areas
-        | Tool::Chunks
-        | Tool::Water
-        | Tool::Select
-        | Tool::Measure
-        | Tool::Holes
-        | Tool::Spells
-        | Tool::Lights
-        | Tool::Sweep => {}
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -1532,7 +866,7 @@ mod tests {
             };
             // The Tables workspace starts on no table and has no tab: its
             // list is the tables themselves.
-            if table == tables::ANY {
+            if table == crate::tables::tabs::ANY {
                 assert!(tabs.is_empty(), "{} has tabs", tool.name());
                 continue;
             }
@@ -1723,8 +1057,8 @@ mod tests {
         assert!(Tool::Zones.covers_viewport());
         // The skill tables are the spell workspace's second row of tabs.
         let tabs = Tool::Spells.tabs();
-        assert_eq!(tabs.len(), tables::TAB_ROW + 3);
-        assert_eq!(tabs[tables::TAB_ROW].1, "SkillLine");
+        assert_eq!(tabs.len(), crate::tables::tabs::TAB_ROW + 3);
+        assert_eq!(tabs[crate::tables::tabs::TAB_ROW].1, "SkillLine");
     }
 
 }

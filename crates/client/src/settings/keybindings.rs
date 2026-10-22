@@ -77,13 +77,13 @@ impl Plugin for KeybindingsPlugin {
             // [`save_on_logout`].
             .add_systems(
                 Update,
-                save_on_logout.before(crate::lua::host::unload_interface),
+                save_on_logout.before(crate::lua::load::unload_interface),
             )
             // The same write before `ReloadUI()` replaces the interpreter; see
-            // [`save_on_reload`] and `crate::lua::host::reload_interface`.
+            // [`save_on_reload`] and `crate::lua::load::reload_interface`.
             .add_systems(
                 Update,
-                save_on_reload.before(crate::lua::host::reload_interface),
+                save_on_reload.before(crate::lua::load::reload_interface),
             )
             // In `Last`, like both settings files: Bevy checks `AppExit` after
             // the whole schedule, so a system at the end sees the message in
@@ -108,7 +108,8 @@ fn load(
 ) {
     let Some(host) = host else { return };
     {
-        let board = host.keybindings().borrow();
+        let keybindings = crate::lua::panels::keybindings::held(&host);
+        let board = keybindings.borrow();
         // Wait for the binding declarations, which `set_bindings` stores. A
         // set loaded before them has no declarations to check its names
         // against, and the panel would draw an empty list for one frame.
@@ -117,7 +118,7 @@ fn load(
         }
         // The check is on the interpreter's binding store, not on this
         // resource. Logging out replaces the `LuaHost`
-        // (`lua::host::unload_interface`) and the store with it. A flag kept
+        // (`lua::load::unload_interface`) and the store with it. A flag kept
         // here was never cleared, so the second character of a session got
         // three empty sets: no key bindings, and a Reset To Default that reset
         // to nothing. A new store asks to be filled by construction; see
@@ -159,7 +160,7 @@ fn load(
         ),
     }
 
-    let held = host.keybindings();
+    let held = crate::lua::panels::keybindings::held(&host);
     let mut board = held.borrow_mut();
 
     // Set 0, from the archives. An archive chain without the file is not an
@@ -230,7 +231,7 @@ fn announce(
     mut raised: MessageWriter<crate::interface::events::UpdateBindings>,
 ) {
     let Some(host) = host else { return };
-    let version = host.keybindings().borrow().version;
+    let version = crate::lua::panels::keybindings::held(&host).borrow().version;
     if *seen == Some(version) {
         return;
     }
@@ -255,7 +256,7 @@ fn read(path: Option<&PathBuf>) -> Option<Vec<(String, String)>> {
 
 /// Write the files when leaving the world, while the saved sets still exist.
 ///
-/// `lua::host::unload_interface` replaces the whole `LuaHost` on
+/// `lua::load::unload_interface` replaces the whole `LuaHost` on
 /// `PLAYER_LEAVING_WORLD`, and the saved sets are on it. A client that wrote
 /// only at `AppExit` wrote none of a session's changes: by then the store was
 /// a new one holding three empty sets, and only [`write`]'s check for an empty
@@ -277,7 +278,7 @@ fn save_on_logout(
 }
 
 /// Write the files before a `ReloadUI()`, which replaces the same store without
-/// leaving the world; see [`crate::lua::host::reload_interface`]. A key an
+/// leaving the world; see [`crate::lua::load::reload_interface`]. A key an
 /// addon bound during the session exists only in the interpreter until this
 /// runs, and [`load`] reads the files back into the new interpreter.
 ///
@@ -315,7 +316,8 @@ fn save_on_reload(
 /// panel did not pass to `SaveBindings` is not written, here or by the 1.12.1
 /// client, so Cancel and closing the panel discard it.
 fn write_both(files: &BindingFiles, host: &crate::lua::host::LuaHost) {
-    let board = host.keybindings().borrow();
+    let keybindings = crate::lua::panels::keybindings::held(&host);
+    let board = keybindings.borrow();
     write(files.account.as_ref(), board.saved(ACCOUNT_SET));
     if board.current() == CHARACTER_SET {
         write(files.character.as_ref(), board.saved(CHARACTER_SET));
@@ -422,9 +424,7 @@ mod tests {
         assert_eq!(app.world().resource::<Messages<UpdateBindings>>().len(), 0);
 
         // The panel rebinds a key.
-        app.world_mut()
-            .non_send_mut::<crate::lua::host::LuaHost>()
-            .keybindings()
+        crate::lua::panels::keybindings::held(app.world().non_send::<crate::lua::host::LuaHost>())
             .borrow_mut()
             .seed(ACCOUNT_SET, vec![("W".into(), "MOVEFORWARD".into())]);
         app.update();

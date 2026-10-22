@@ -71,6 +71,7 @@ use super::super::api::{one_or_nil, to_boolean, Answers};
 // here now that the subject's own answers live beside its registration.
 use crate::interface::api;
 use vale_assets::tables::trainer::{self as rules, Describe, Plate};
+use crate::lua::host::LuaHost;
 
 /// One row, as the panel reads it — every accessor's answer in one shape, so
 /// the window is walked once per row rather than once per question.
@@ -292,7 +293,8 @@ pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::trainer::T
 ///
 /// **`SelectTrainerService` is not among them** — it is in [`install`], because
 /// it has to be visible before the call that made it returns.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     use crate::interface::trainer::TrainerPress as P;
     let globals = lua.globals();
     macro_rules! push {
@@ -362,6 +364,12 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
     Ok(())
 }
 
+/// Take and clear the trainer window's presses. See
+/// [`crate::interface::trainer`].
+pub fn take(host: &LuaHost) -> Vec<crate::interface::trainer::TrainerPress> {
+    super::taken(host)
+}
+
 /// **`0` is off and every other number is on** — the convention
 /// `ClassTrainerFrameFilterDropDown_OnClick` writes with (`setglobal("TRAINER_
 /// FILTER_"..…, 0)` then `SetTrainerServiceTypeFilter(this.value, 0)`), and the
@@ -378,7 +386,7 @@ fn number_is_on(value: &mlua::Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lua::api::tests::{eval, Stub};
+    use crate::lua::api::stub::{eval, Stub};
 
     /// The four answers of a row, the header's own word, and a row past the end
     /// answering a nil name rather than raising.
@@ -421,7 +429,8 @@ mod tests {
         use crate::interface::trainer::TrainerPress as P;
         let lua = mlua::Lua::new();
         let queue: Queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        register(&lua, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         lua.load(
             "BuyTrainerService(2); BuyTrainerService(); \
              CollapseTrainerSkillLine(0); ExpandTrainerSkillLine(1); \
@@ -465,24 +474,24 @@ pub trait TrainerAnswers {
 
     /// `GetNumTrainerServices()` — visible rows, headers included. 0 with no
     /// window open.
-    fn trainer_rows(&self) -> usize;
+    fn trainer_rows(&self) -> usize { 0 }
     /// One row, one-based, or `None` past the end — which
     /// `ClassTrainerFrame_Update` asks for on every one of its eleven buttons
     /// whether or not there is a row there.
-    fn trainer_line(&self, row: usize) -> Option<super::trainer::TrainerLine>;
+    fn trainer_line(&self, _row: usize) -> Option<super::trainer::TrainerLine> { None }
     /// `GetTrainerGreetingText()`.
-    fn trainer_greeting(&self) -> String;
+    fn trainer_greeting(&self) -> String { String::new() }
     /// `GetTrainerSelectionIndex()` — one-based, 0 for nothing selected. **May
     /// exceed [`Answers::trainer_rows`]**, which is what tells the panel its
     /// selection scrolled off; see `vale_assets::tables::trainer::Board::selection`.
-    fn trainer_selection(&self) -> usize;
+    fn trainer_selection(&self) -> usize { 0 }
     /// `SelectTrainerService(n)` — **a write, and it takes effect at once**; see
     /// [`vale_assets::tables::trainer::Board::select`], which carries the reason.
-    fn trainer_select(&self, row: usize);
+    fn trainer_select(&self, _row: usize) {}
     /// The selected service's plate — `GameTooltip:SetTrainerService(i)`, off
     /// the same [`crate::interface::api::spell_tip`] the bar and the book compose.
     /// Read only when [`Self::trainer_tooltip_item`] answers `None`.
-    fn trainer_tooltip(&self, row: usize) -> Option<api::SpellTip>;
+    fn trainer_tooltip(&self, _row: usize) -> Option<api::SpellTip> { None }
     /// The item `GameTooltip:SetTrainerService(i)` shows instead of a spell:
     /// the item a taught recipe creates. `None` means the spell plate. See
     /// [`vale_assets::tables::trainer::plate`].
@@ -490,11 +499,11 @@ pub trait TrainerAnswers {
         None
     }
     /// `IsTradeskillTrainer()` / `IsTalentTrainer()`.
-    fn trainer_is_tradeskill(&self) -> bool;
-    fn trainer_is_talent(&self) -> bool;
+    fn trainer_is_tradeskill(&self) -> bool { false }
+    fn trainer_is_talent(&self) -> bool { false }
     /// `GetTrainerServiceTypeFilter(word)` / `GetTrainerSkillLineFilter(i)`.
-    fn trainer_type_filter(&self, word: &str) -> bool;
-    fn trainer_line_filter(&self, group: usize) -> bool;
+    fn trainer_type_filter(&self, _word: &str) -> bool { false }
+    fn trainer_line_filter(&self, _group: usize) -> bool { false }
 }
 
 impl super::super::api::Live<'_, '_, '_> {

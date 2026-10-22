@@ -233,8 +233,8 @@ fn send_verbs(
     mut party: ResMut<Party>,
     units: Query<&crate::world::session::WorldEntity>,
 ) {
-    let Some(mut host) = host else { return };
-    let requests = host.take_raid_verbs();
+    let Some(host) = host else { return };
+    let requests = crate::lua::panels::raid::take(&host);
     if requests.is_empty() {
         return;
     }

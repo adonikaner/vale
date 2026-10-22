@@ -177,7 +177,7 @@ pub fn core(app: &mut App, gamedata_dir: String, config: vale_config::Config) {
     // A resource a plugin needs belongs with the plugin, not with the command
     // line that tunes it.
     app.insert_resource(crate::HoverProbe(None))
-        .insert_resource(lua::host::StartupScript::new(None));
+        .insert_resource(lua::load::StartupScript::new(None));
     app
         .insert_resource(assets::GameAssets::new(gamedata_dir).with_root(config.root.clone()))
         .insert_resource(session::ClientConfig(config))
@@ -215,7 +215,7 @@ pub fn core(app: &mut App, gamedata_dir: String, config: vale_config::Config) {
 /// 16 MiB budget, ground groups went undrawn until something re-specialised
 /// every mesh (a fog toggle, or the tile streaming in again): an entity whose
 /// mesh had not been uploaded when Bevy specialised it was skipped, and
-/// nothing asked again when the mesh arrived. Measured on a five-stop editor
+/// nothing asked again when the mesh arrived. Measured on a five-stop camera
 /// `--tour` (`span-census` build), the budget also changed little: the
 /// longest `prepare_assets<GpuImage>` was 35 ms with it and 36 ms without,
 /// because the cost is per texture rather than per byte. The terrain's own

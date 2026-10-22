@@ -150,7 +150,7 @@ pub fn set_all(chunk: &mut MapChunk, colours: &[Colour]) {
 
 /// **Is every vertex of this chunk still neutral?**
 ///
-/// What [`crate::ops::Shading`] asks before it leaves a region behind: a stroke
+/// What [`crate::ops::shade::Shading`] asks before it leaves a region behind: a stroke
 /// that has been undone back to nothing should take the chunk back to having no
 /// `MCCV`, and the only way to know is to look.
 pub fn is_neutral(chunk: &MapChunk) -> bool {

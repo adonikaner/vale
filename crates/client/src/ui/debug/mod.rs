@@ -275,9 +275,10 @@ impl Plugin for DebugPanelPlugin {
             .add_systems(bevy::app::Last, spans::sample)
             .add_systems(Startup, check_archives)
             // The input claim is not registered here and is not diagnostic:
-            // any egui drawn over the world has to make it, and the world
-            // editor's shell makes it during a playtest with no debug window
-            // open. It is `crate::ui::claim_input`, registered by `UiPlugins`.
+            // any egui drawn over the world has to make it, and a host that
+            // draws its own panels makes it during a playtest with no debug
+            // window open. It is `crate::ui::claim_input`, registered by
+            // `UiPlugins`.
             .add_systems(
                 Update,
                 (
@@ -423,8 +424,8 @@ pub struct Readout<'w, 's> {
     pub collision_drawn: Res<'w, crate::render::overlay::CollisionDrawn>,
     /// What the Lua console has run and what came back. Written by
     /// `lua::host::run_scripts` a frame after the chunk is queued.
-    pub script_log: ResMut<'w, crate::lua::host::ScriptLog>,
-    pub script_queue: ResMut<'w, crate::lua::host::StartupScript>,
+    pub script_log: ResMut<'w, crate::lua::load::ScriptLog>,
+    pub script_queue: ResMut<'w, crate::lua::load::StartupScript>,
 }
 
 /// The window.

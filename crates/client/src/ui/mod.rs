@@ -181,10 +181,10 @@ impl bevy::app::Plugin for UiPlugins {
 ///
 /// It was the debug window's, behind the `diagnostics` feature, when that
 /// window was the only egui drawn over a live world. A host that builds this
-/// app and draws panels of its own, such as the world editor's shell during a
-/// playtest, makes the same claim, and under `--no-default-features` nothing
-/// made it. `EguiPlugin` is registered unconditionally above, so the resource
-/// this reads always exists.
+/// app and draws panels of its own over a running world makes the same
+/// claim, and under `--no-default-features` nothing made it. `EguiPlugin` is
+/// registered unconditionally above, so the resource this reads always
+/// exists.
 fn claim_input(
     wants: Res<bevy_egui::input::EguiWantsInput>,
     mut keyboard: ResMut<crate::lua::api::keyboard::ExternalKeyboard>,

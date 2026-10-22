@@ -38,7 +38,7 @@
 //! ## What a playtest switches
 //!
 //! [`arrange`] writes four things and they are all derived from the state:
-//! `lua::host::InterfaceAwake` (whether the game's interface is loaded and
+//! `lua::load::InterfaceAwake` (whether the game's interface is loaded and
 //! running at all), `WorldTuning::interface` (its walk and its paint),
 //! `GlueScenes` (whether the login screen may put its own 3D scene on the
 //! camera) and `world::camera::PointerTaken` (whose the world's mouse gestures
@@ -98,7 +98,7 @@
 use crate::session::EditSession;
 use vale_client::assets::GameAssets;
 use vale_client::glue::autologin::AutoLogin;
-use vale_client::lua::host::InterfaceAwake;
+use vale_client::lua::load::InterfaceAwake;
 use vale_client::render::focus::WorldFocus;
 use vale_client::render::glue::GlueScenes;
 use vale_client::render::terrain::{LoadedTiles, TerrainTile};
@@ -228,7 +228,7 @@ impl Login {
 ///
 /// `Startup`, because both sources are fixed for the run — and the panel edits
 /// the resource afterwards rather than these.
-fn seed(mut login: ResMut<Login>, config: Res<ClientConfig>, args: Res<crate::Args>) {
+fn seed(mut login: ResMut<Login>, config: Res<ClientConfig>, args: Res<crate::args::Args>) {
     let config = &config.0;
     login.host = config.host.clone();
     login.account = config.account.clone();
@@ -288,7 +288,7 @@ impl Plugin for PlaytestPlugin {
 }
 
 /// `--playtest <seconds>[,<back>]`, which is the only way either edge is reached
-/// without a person — see [`crate::Args::playtest`].
+/// without a person — see [`crate::args::Args::playtest`].
 ///
 /// It presses the same two buttons the panel does, once each and then never
 /// again: a scripted run that has come back to editing must not be dragged into
@@ -296,7 +296,7 @@ impl Plugin for PlaytestPlugin {
 #[allow(clippy::too_many_arguments)]
 fn on_the_command_line(
     time: Res<Time>,
-    args: Res<crate::Args>,
+    args: Res<crate::args::Args>,
     assets: Res<GameAssets>,
     mut state: ResMut<Playtest>,
     mut session: Option<ResMut<EditSession>>,
@@ -389,7 +389,7 @@ fn follow_the_session(session: Res<Session>, mut state: ResMut<Playtest>) {
 /// contradict.
 fn arrange(
     state: Res<Playtest>,
-    args: Res<crate::Args>,
+    args: Res<crate::args::Args>,
     mut awake: ResMut<InterfaceAwake>,
     mut tuning: ResMut<WorldTuning>,
     mut glue: ResMut<GlueScenes>,
@@ -494,7 +494,7 @@ pub fn world_baseline(editing: bool) -> WorldTuning {
 /// Swap the view settings at each crossing — see the module comment.
 ///
 /// Written back only on a crossing and only when the value moved, for the
-/// reason on `crate::ui::viewbar::Bar`: `ResMut`'s `DerefMut` marks the
+/// reason on `crate::ui::shell::viewbar::Bar`: `ResMut`'s `DerefMut` marks the
 /// resource changed either way, and `render::tuning::switch` sweeps every
 /// batch in the world on that flag.
 fn keep_view_settings(
@@ -577,7 +577,7 @@ fn stand_the_world_down(
     }
     // Every frame of the login and not only its first, because the focus
     // is one bool away from a streamer that would fill the screen behind the
-    // backdrop again. `crate::session::follow_the_camera` stands down for the
+    // backdrop again. `crate::camera::follow_the_camera` stands down for the
     // same reason and says so; this is the value it would have written.
     if *state == Playtest::Entering && focus.present {
         focus.present = false;
@@ -596,10 +596,10 @@ fn stand_the_world_down(
 ///
 /// It is called at the two moments the world is rebuilt anyway, rather than on
 /// every edit: entering a playtest ([`start`]) and saving during one
-/// ([`crate::tools::shortcuts`]). That is one 16 MB write and one re-parse per
+/// ([`crate::tools::shortcuts::shortcuts`]). That is one 16 MB write and one re-parse per
 /// action, instead of both on every frame of a drag.
 ///
-/// It marks rather than rebuilds. `crate::session::forget_what_changed` runs
+/// It marks rather than rebuilds. `crate::session::republish::forget_what_changed` runs
 /// every frame and acts on the two flags set here, and what is standing keeps
 /// the handles it has: the next thing to ask reads the edited file. For a
 /// playtest that is the next cast, the next entity to come into view, and the
@@ -614,7 +614,7 @@ pub fn republish(session: &mut EditSession, assets: &GameAssets) {
         assets.forget_tables();
         // Also mark the bank that holds an `Arc` of that parse, which
         // `forget_tables` does not reach. See `DisplayCache::forget`, and
-        // `session::forget_what_changed`, which acts on this flag. Without
+        // `session::republish::forget_what_changed`, which acts on this flag. Without
         // it a playtest showed the tables as they were at the first entity of
         // the editor's own session, which for a storyboard is before any edit
         // was made.
@@ -871,7 +871,7 @@ mod tests {
             .init_resource::<PointerTaken>()
             .init_resource::<TerrainReach>()
             .init_resource::<ShellOpen>()
-            .insert_resource(crate::Args::default())
+            .insert_resource(crate::args::Args::default())
             .add_systems(Update, arrange);
         app.update();
         assert!(!app.world().resource::<InterfaceAwake>().0, "editing");
@@ -927,7 +927,7 @@ mod tests {
             .init_resource::<PointerTaken>()
             .init_resource::<TerrainReach>()
             .init_resource::<ShellOpen>()
-            .insert_resource(crate::Args::default())
+            .insert_resource(crate::args::Args::default())
             .add_systems(Update, arrange);
         app.update();
         assert!(
@@ -975,7 +975,7 @@ mod tests {
             .init_resource::<PointerTaken>()
             .init_resource::<TerrainReach>()
             .insert_resource(ShellOpen(true))
-            .insert_resource(crate::Args::default())
+            .insert_resource(crate::args::Args::default())
             .add_systems(Update, arrange);
         app.update();
         assert!(app.world().resource::<ShellOpen>().0);

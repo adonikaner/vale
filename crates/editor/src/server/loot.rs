@@ -545,11 +545,11 @@ impl OnTheServer {
 /// panel's two buttons do, for a scripted run. Fires once, after any scripted
 /// edit has landed.
 pub fn on_the_command_line(
-    args: Res<crate::Args>,
+    args: Res<crate::args::Args>,
     session: Option<ResMut<EditSession>>,
     server: Res<super::settings::ServerSettings>,
     mut reloads: ResMut<super::reload::Reloads>,
-    loot: Res<crate::tools::loot::Loot>,
+    loot: Res<crate::subjects::loot::Loot>,
     mut done: Local<bool>,
 ) {
     if *done || !(args.apply_loot || args.revert_loot) {

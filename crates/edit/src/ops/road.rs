@@ -36,7 +36,7 @@
 //! irregular ([`Painting::ragged`]) and the surface worn into patches
 //! ([`Surface::wear`]).
 
-use super::{reshade, wobble, Edit, Falloff, PaintBrush, Painted, Working};
+use super::{reshade, brush::{wobble, Falloff}, Edit, paint::{PaintBrush, Painted, Working}};
 use crate::adt::{heights, AdtFile};
 use vale_assets::world::adt::CHUNK_SIZE;
 

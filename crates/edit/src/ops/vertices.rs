@@ -10,7 +10,7 @@
 //!
 //! The same set can mask a brush instead: a stroke leaves every vertex in it
 //! where it is, or moves nothing else ([`Mask`], and
-//! [`super::Brush::stroke_masked`]).
+//! [`super::brush::Brush::stroke_masked`]).
 //!
 //! A set is also the editor's record of **locked** vertices: the ones no
 //! operation may move. [`Selected::hold`] takes the edits any operation has
@@ -28,7 +28,7 @@
 //! sides are the next tile's as well; a caller with several tiles open marks
 //! each of them with the same position.
 
-use super::{reshade, Edit, Shape};
+use super::{reshade, Edit, brush::Shape};
 use crate::adt::{heights, AdtFile};
 use std::collections::BTreeMap;
 use vale_assets::world::adt::CHUNK_SIZE;
@@ -173,7 +173,7 @@ impl Selected {
 
     /// Put every selected vertex on the plane through `pivot` with the slope
     /// `slope`, in yards of rise per yard along world x and y. See
-    /// [`super::Brush::tilted`] for a slope from an angle and a bearing.
+    /// [`super::brush::Brush::tilted`] for a slope from an angle and a bearing.
     pub fn tilt(&self, tile: &mut AdtFile, pivot: [f32; 3], slope: [f32; 2]) -> Vec<Edit> {
         self.plan(tile, |at| plane(pivot, slope, at)).write(tile)
     }
@@ -485,7 +485,7 @@ impl Plan {
 }
 
 /// How a brush stroke treats a selection. See
-/// [`super::Brush::stroke_masked`].
+/// [`super::brush::Brush::stroke_masked`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mask {
     /// The stroke moves the ground round the selection and not the selection.

@@ -206,8 +206,8 @@ fn presses(
     talents: Res<Talents>,
     session: Res<Session>,
 ) {
-    let Some(mut host) = host else { return };
-    let pressed = host.take_talent_presses();
+    let Some(host) = host else { return };
+    let pressed = crate::lua::panels::talent::take(&host);
     let Some(active) = session.active.as_ref() else {
         return;
     };

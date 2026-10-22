@@ -53,6 +53,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use vale_assets::tables::skills::{SkillEntry, SkillList, Skills};
+use crate::lua::host::LuaHost;
 
 /// The unscoped reads and writes this file registers, sorted.
 ///
@@ -129,7 +130,8 @@ impl Board {
 pub type Held = Rc<RefCell<Board>>;
 
 /// Register the panel's functions, all unscoped. See [`VERBS`].
-pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let held: &Held = &super::stored(lua);
     let globals = lua.globals();
 
     let get = Rc::clone(held);
@@ -269,6 +271,12 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held) -> mlua::Result<()>
     Ok(())
 }
 
+/// The skills panel's board. One
+/// caller, [`crate::interface::skills`].
+pub fn held(host: &LuaHost) -> Held {
+    super::stored(host.state())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,7 +296,8 @@ mod tests {
         board.refresh(1, 1, 60, &have);
         let held: Held = Rc::new(RefCell::new(board));
         let lua = mlua::Lua::new();
-        register(&lua, &held).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&held));
+        register(&lua).expect("registers");
         (held, lua)
     }
 
@@ -443,7 +452,8 @@ mod tests {
         board.refresh(1, 1, 60, &have);
         let held: Held = Rc::new(RefCell::new(board));
         let lua = mlua::Lua::new();
-        register(&lua, &held).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&held));
+        register(&lua).expect("registers");
         let names = r#"
             local out = {}
             for i = 1, GetNumSkillLines() do table.insert(out, (GetSkillLineInfo(i))) end
@@ -475,7 +485,8 @@ mod tests {
     fn an_empty_panel_is_what_a_missing_table_draws() {
         let held: Held = Rc::new(RefCell::new(Board::default()));
         let lua = mlua::Lua::new();
-        register(&lua, &held).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&held));
+        register(&lua).expect("registers");
         let count: usize = lua.load("return GetNumSkillLines()").eval().expect("runs");
         assert_eq!(count, 0);
         lua.load("SetSelectedSkill(1); CollapseSkillHeader(1)")

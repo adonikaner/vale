@@ -1929,6 +1929,11 @@ pub trait GameEvent {
     /// For example `"PLAYER_TARGET_CHANGED"`. Always upper snake case.
     const EVENT: &'static str;
 
+    /// Every name an instance of this type can be raised under, for
+    /// [`FIRED`]: [`Self::EVENT`] alone, except for the three types whose
+    /// [`Self::name`] depends on the instance.
+    const NAMES: &'static [&'static str] = &[Self::EVENT];
+
     /// `arg1`..`argN`, in the game's order. Most events have none.
     fn args(&self) -> Vec<EventArg> {
         Vec::new()
@@ -2830,6 +2835,19 @@ impl GameEvent for UnitPowerChanged {
     /// The most common of the ten; [`Self::name`] gives the name actually
     /// raised.
     const EVENT: &'static str = "UNIT_MANA";
+    const NAMES: &'static [&'static str] = &[
+        // The ten names one type is raised under; see `UnitPowerChanged::name`.
+        "UNIT_MANA",
+        "UNIT_MAXMANA",
+        "UNIT_RAGE",
+        "UNIT_MAXRAGE",
+        "UNIT_FOCUS",
+        "UNIT_MAXFOCUS",
+        "UNIT_ENERGY",
+        "UNIT_MAXENERGY",
+        "UNIT_HAPPINESS",
+        "UNIT_MAXHAPPINESS",
+    ];
     fn args(&self) -> Vec<EventArg> {
         vec![EventArg::Text(self.unit.token().to_string())]
     }
@@ -2856,6 +2874,19 @@ impl GameEvent for UnitPowerChanged {
 impl GameEvent for UnitStatsChanged {
     /// The first of the nine; [`Self::name`] gives the name actually raised.
     const EVENT: &'static str = "UNIT_STATS";
+    /// The nine names the character sheet registers; see
+    /// `PaperDollFrame_OnLoad` for the spelling.
+    const NAMES: &'static [&'static str] = &[
+        "UNIT_STATS",
+        "UNIT_RESISTANCES",
+        "UNIT_DAMAGE",
+        "UNIT_RANGEDDAMAGE",
+        "UNIT_ATTACK_SPEED",
+        "UNIT_ATTACK_POWER",
+        "UNIT_RANGED_ATTACK_POWER",
+        "UNIT_ATTACK",
+        "PLAYER_DAMAGE_DONE_MODS",
+    ];
     fn args(&self) -> Vec<EventArg> {
         vec![EventArg::Text(self.unit.token().to_string())]
     }
@@ -2883,6 +2914,95 @@ impl GameEvent for ChatMessageReceived {
     /// actually raised. Present because the trait requires it, and
     /// `CHAT_MSG_SAY` is a representative member of the set.
     const EVENT: &'static str = "CHAT_MSG_SAY";
+    const NAMES: &'static [&'static str] = &[
+        // The twenty-six names one type is raised under; see
+        // [`ChatMessageReceived`] and [`super::chat::event_name`], which maps the
+        // wire's kind byte to a name. Listed in the order `ChatFrame.lua`'s
+        // `ChatTypeGroup` declares its groups, and checked against that mapping by
+        // `every_kind_maps_to_an_event_the_client_lists_as_fired`.
+        "CHAT_MSG_SAY",
+        "CHAT_MSG_EMOTE",
+        "CHAT_MSG_TEXT_EMOTE",
+        "CHAT_MSG_YELL",
+        "CHAT_MSG_WHISPER",
+        "CHAT_MSG_WHISPER_INFORM",
+        "CHAT_MSG_PARTY",
+        "CHAT_MSG_RAID",
+        "CHAT_MSG_GUILD",
+        "CHAT_MSG_OFFICER",
+        "CHAT_MSG_MONSTER_SAY",
+        "CHAT_MSG_MONSTER_YELL",
+        "CHAT_MSG_MONSTER_EMOTE",
+        "CHAT_MSG_MONSTER_WHISPER",
+        "CHAT_MSG_CHANNEL",
+        "CHAT_MSG_CHANNEL_JOIN",
+        "CHAT_MSG_CHANNEL_LEAVE",
+        "CHAT_MSG_CHANNEL_LIST",
+        "CHAT_MSG_CHANNEL_NOTICE",
+        "CHAT_MSG_CHANNEL_NOTICE_USER",
+        "CHAT_MSG_SYSTEM",
+        "CHAT_MSG_AFK",
+        "CHAT_MSG_DND",
+        "CHAT_MSG_IGNORED",
+        "CHAT_MSG_SKILL",
+        "CHAT_MSG_LOOT",
+        // The forty-five names the combat log is raised under. They use the same
+        // mechanism from a different producer: `super::log` composes a sentence
+        // and writes a [`ChatMessageReceived`] under one of these, and
+        // `ChatFrame.lua` routes it through the same `ChatTypeGroup` table as the
+        // twenty-six above.
+        //
+        // Listed in chat type id order rather than alphabetically, because that is
+        // the order `vale_assets::interface::chattype::TYPES` holds them in and the
+        // order the six routing tables follow.
+        // `every_window_the_combat_log_can_route_to_is_listed_as_fired` keeps this
+        // block and those tables consistent.
+        "CHAT_MSG_COMBAT_SELF_HITS",
+        "CHAT_MSG_COMBAT_SELF_MISSES",
+        "CHAT_MSG_COMBAT_PET_HITS",
+        "CHAT_MSG_COMBAT_PET_MISSES",
+        "CHAT_MSG_COMBAT_PARTY_HITS",
+        "CHAT_MSG_COMBAT_PARTY_MISSES",
+        "CHAT_MSG_COMBAT_FRIENDLYPLAYER_HITS",
+        "CHAT_MSG_COMBAT_FRIENDLYPLAYER_MISSES",
+        "CHAT_MSG_COMBAT_HOSTILEPLAYER_HITS",
+        "CHAT_MSG_COMBAT_HOSTILEPLAYER_MISSES",
+        "CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS",
+        "CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES",
+        "CHAT_MSG_COMBAT_CREATURE_VS_PARTY_HITS",
+        "CHAT_MSG_COMBAT_CREATURE_VS_PARTY_MISSES",
+        "CHAT_MSG_COMBAT_CREATURE_VS_CREATURE_HITS",
+        "CHAT_MSG_COMBAT_CREATURE_VS_CREATURE_MISSES",
+        "CHAT_MSG_COMBAT_FRIENDLY_DEATH",
+        "CHAT_MSG_COMBAT_HOSTILE_DEATH",
+        "CHAT_MSG_COMBAT_XP_GAIN",
+        "CHAT_MSG_SPELL_SELF_DAMAGE",
+        "CHAT_MSG_SPELL_SELF_BUFF",
+        "CHAT_MSG_SPELL_PET_DAMAGE",
+        "CHAT_MSG_SPELL_PET_BUFF",
+        "CHAT_MSG_SPELL_PARTY_DAMAGE",
+        "CHAT_MSG_SPELL_PARTY_BUFF",
+        "CHAT_MSG_SPELL_FRIENDLYPLAYER_DAMAGE",
+        "CHAT_MSG_SPELL_FRIENDLYPLAYER_BUFF",
+        "CHAT_MSG_SPELL_HOSTILEPLAYER_DAMAGE",
+        "CHAT_MSG_SPELL_HOSTILEPLAYER_BUFF",
+        "CHAT_MSG_SPELL_CREATURE_VS_SELF_DAMAGE",
+        "CHAT_MSG_SPELL_CREATURE_VS_SELF_BUFF",
+        "CHAT_MSG_SPELL_CREATURE_VS_PARTY_DAMAGE",
+        "CHAT_MSG_SPELL_CREATURE_VS_PARTY_BUFF",
+        "CHAT_MSG_SPELL_CREATURE_VS_CREATURE_DAMAGE",
+        "CHAT_MSG_SPELL_CREATURE_VS_CREATURE_BUFF",
+        "CHAT_MSG_SPELL_PERIODIC_SELF_DAMAGE",
+        "CHAT_MSG_SPELL_PERIODIC_SELF_BUFFS",
+        "CHAT_MSG_SPELL_PERIODIC_PARTY_DAMAGE",
+        "CHAT_MSG_SPELL_PERIODIC_PARTY_BUFFS",
+        "CHAT_MSG_SPELL_PERIODIC_FRIENDLYPLAYER_DAMAGE",
+        "CHAT_MSG_SPELL_PERIODIC_FRIENDLYPLAYER_BUFFS",
+        "CHAT_MSG_SPELL_PERIODIC_HOSTILEPLAYER_DAMAGE",
+        "CHAT_MSG_SPELL_PERIODIC_HOSTILEPLAYER_BUFFS",
+        "CHAT_MSG_SPELL_PERIODIC_CREATURE_DAMAGE",
+        "CHAT_MSG_SPELL_PERIODIC_CREATURE_BUFFS",
+    ];
 
     fn name(&self) -> &'static str {
         self.event
@@ -2930,274 +3050,162 @@ impl GameEvent for UnitDisplaypowerChanged {
     }
 }
 
-/// Every event this client raises, as one reader.
+/// Declares every event the interface drains, in one list.
 ///
-/// A [`SystemParam`] rather than one parameter per event on the system that
-/// reads them all, and defined here rather than in [`crate::lua`] so that
-/// adding an event changes one file.
+/// Each `field: Type` line generates four things, in list order: a reader on
+/// [`GameEventReaders`], a read in [`GameEventReaders::drain`] at that
+/// position, the type's [`GameEvent::NAMES`] in [`FIRED`], and its
+/// `add_message` in [`register`]. The list order is therefore the drain order.
 ///
-/// Each reader has its own cursor, so this can be held alongside any other
-/// consumer without either missing messages. Other systems read some of these
-/// messages too: every module that resets its state on [`PlayerLeavingWorld`]
-/// has its own reader. The error messages have no other reader;
-/// `UIErrorsFrame` shows them. See `two_readers_each_see_every_message`.
-#[derive(SystemParam)]
-pub struct GameEventReaders<'w, 's> {
-    ui_error: MessageReader<'w, 's, UiErrorMessage>,
-    ui_info: MessageReader<'w, 's, UiInfoMessage>,
-    target_changed: MessageReader<'w, 's, PlayerTargetChanged>,
-    mouseover: MessageReader<'w, 's, MouseoverUnitChanged>,
-    slot_changed: MessageReader<'w, 's, ActionbarSlotChanged>,
-    page_changed: MessageReader<'w, 's, ActionbarPageChanged>,
-    bonus_changed: MessageReader<'w, 's, ActionbarBonusChanged>,
-    show_grid: MessageReader<'w, 's, ActionbarShowGrid>,
-    hide_grid: MessageReader<'w, 's, ActionbarHideGrid>,
-    delete_item: MessageReader<'w, 's, DeleteItemConfirm>,
-    cooldown: MessageReader<'w, 's, ActionbarUpdateCooldown>,
-    state: MessageReader<'w, 's, ActionbarUpdateState>,
-    usable: MessageReader<'w, 's, ActionbarUpdateUsable>,
-    autorepeat_start: MessageReader<'w, 's, StartAutorepeatSpell>,
-    autorepeat_stop: MessageReader<'w, 's, StopAutorepeatSpell>,
-    item_lock: MessageReader<'w, 's, ItemLockChanged>,
-    spells_changed: MessageReader<'w, 's, SpellsChanged>,
-    pet_bar: MessageReader<'w, 's, PetBarChanged>,
-    pet_bar_cooldown: MessageReader<'w, 's, PetBarCooldownChanged>,
-    pet_bar_show_grid: MessageReader<'w, 's, PetBarShowGrid>,
-    pet_bar_hide_grid: MessageReader<'w, 's, PetBarHideGrid>,
-    confirm_pet_unlearn: MessageReader<'w, 's, ConfirmPetUnlearn>,
-    shapeshift_forms: MessageReader<'w, 's, UpdateShapeshiftForms>,
-    pet_experience: MessageReader<'w, 's, UnitPetExperience>,
-    pet_training: MessageReader<'w, 's, UnitPetTrainingPoints>,
-    spell_cooldown: MessageReader<'w, 's, SpellUpdateCooldown>,
-    current_cast: MessageReader<'w, 's, CurrentSpellCastChanged>,
-    cast_start: MessageReader<'w, 's, SpellcastStart>,
-    cast_stop: MessageReader<'w, 's, SpellcastStop>,
-    cast_failed: MessageReader<'w, 's, SpellcastFailed>,
-    cast_interrupted: MessageReader<'w, 's, SpellcastInterrupted>,
-    cast_delayed: MessageReader<'w, 's, SpellcastDelayed>,
-    channel_start: MessageReader<'w, 's, SpellcastChannelStart>,
-    channel_update: MessageReader<'w, 's, SpellcastChannelUpdate>,
-    channel_stop: MessageReader<'w, 's, SpellcastChannelStop>,
-    enter_combat: MessageReader<'w, 's, PlayerEnterCombat>,
-    leave_combat: MessageReader<'w, 's, PlayerLeaveCombat>,
-    variables_loaded: MessageReader<'w, 's, VariablesLoaded>,
-    update_bindings: MessageReader<'w, 's, UpdateBindings>,
-    cvar_update: MessageReader<'w, 's, CVarUpdate>,
-    entering_world: MessageReader<'w, 's, PlayerEnteringWorld>,
-    zone_new_area: MessageReader<'w, 's, ZoneChangedNewArea>,
-    zone_changed: MessageReader<'w, 's, ZoneChanged>,
-    minimap_zone: MessageReader<'w, 's, MinimapZoneChanged>,
-    world_map_update: MessageReader<'w, 's, WorldMapUpdate>,
-    leaving_world: MessageReader<'w, 's, PlayerLeavingWorld>,
-    camping: MessageReader<'w, 's, PlayerCamping>,
-    quiting: MessageReader<'w, 's, PlayerQuiting>,
-    logout_cancel: MessageReader<'w, 's, LogoutCancel>,
-    player_dead: MessageReader<'w, 's, PlayerDead>,
-    player_alive: MessageReader<'w, 's, PlayerAlive>,
-    player_unghost: MessageReader<'w, 's, PlayerUnghost>,
-    corpse_in_range: MessageReader<'w, 's, CorpseInRange>,
-    corpse_out_of_range: MessageReader<'w, 's, CorpseOutOfRange>,
-    resurrect_request: MessageReader<'w, 's, ResurrectRequest>,
-    confirm_xp_loss: MessageReader<'w, 's, ConfirmXpLoss>,
-    trade_request: MessageReader<'w, 's, TradeRequest>,
-    trade_request_cancel: MessageReader<'w, 's, TradeRequestCancel>,
-    trade_show: MessageReader<'w, 's, TradeShow>,
-    trade_closed: MessageReader<'w, 's, TradeClosed>,
-    trade_update: MessageReader<'w, 's, TradeUpdate>,
-    trade_accept_update: MessageReader<'w, 's, TradeAcceptUpdate>,
-    trade_player_item_changed: MessageReader<'w, 's, TradePlayerItemChanged>,
-    trade_target_item_changed: MessageReader<'w, 's, TradeTargetItemChanged>,
-    trade_money_changed: MessageReader<'w, 's, TradeMoneyChanged>,
-    player_trade_money: MessageReader<'w, 's, PlayerTradeMoney>,
-    unit_health: MessageReader<'w, 's, UnitHealthChanged>,
-    unit_max_health: MessageReader<'w, 's, UnitMaxHealthChanged>,
-    unit_power: MessageReader<'w, 's, UnitPowerChanged>,
-    unit_displaypower: MessageReader<'w, 's, UnitDisplaypowerChanged>,
-    unit_name: MessageReader<'w, 's, UnitNameUpdate>,
-    unit_level: MessageReader<'w, 's, UnitLevelChanged>,
-    player_xp: MessageReader<'w, 's, PlayerXpUpdate>,
-    exhaustion: MessageReader<'w, 's, UpdateExhaustion>,
-    player_auras: MessageReader<'w, 's, PlayerAurasChanged>,
-    unit_aura: MessageReader<'w, 's, UnitAuraChanged>,
-    unit_pet: MessageReader<'w, 's, UnitPetChanged>,
-    unit_faction: MessageReader<'w, 's, UnitFactionChanged>,
-    level_up: MessageReader<'w, 's, PlayerLevelUp>,
-    unit_stats: MessageReader<'w, 's, UnitStatsChanged>,
-    bag_update: MessageReader<'w, 's, BagUpdate>,
-    unit_inventory: MessageReader<'w, 's, UnitInventoryChanged>,
-    unit_quest_log: MessageReader<'w, 's, UnitQuestLogChanged>,
-    player_money: MessageReader<'w, 's, PlayerMoney>,
-    chat: MessageReader<'w, 's, ChatMessageReceived>,
-    quest_greeting: MessageReader<'w, 's, QuestGreetingEvent>,
-    quest_detail: MessageReader<'w, 's, QuestDetail>,
-    quest_progress: MessageReader<'w, 's, QuestProgressEvent>,
-    quest_complete: MessageReader<'w, 's, QuestCompleteEvent>,
-    quest_finished: MessageReader<'w, 's, QuestFinished>,
-    quest_item: MessageReader<'w, 's, QuestItemUpdate>,
-    quest_log: MessageReader<'w, 's, QuestLogUpdate>,
-    gossip_show: MessageReader<'w, 's, GossipShow>,
-    gossip_closed: MessageReader<'w, 's, GossipClosed>,
-    confirm_binder: MessageReader<'w, 's, ConfirmBinder>,
-    duel_requested: MessageReader<'w, 's, DuelRequested>,
-    duel_out_of_bounds: MessageReader<'w, 's, DuelOutOfBounds>,
-    duel_in_bounds: MessageReader<'w, 's, DuelInBounds>,
-    duel_finished: MessageReader<'w, 's, DuelFinished>,
-    confirm_summon: MessageReader<'w, 's, ConfirmSummon>,
-    inspect_honor: MessageReader<'w, 's, InspectHonorUpdate>,
-    time_played: MessageReader<'w, 's, TimePlayedMsg>,
-    update_world_states: MessageReader<'w, 's, UpdateWorldStates>,
-    tutorial_trigger: MessageReader<'w, 's, TutorialTrigger>,
-    quest_accept_confirm: MessageReader<'w, 's, QuestAcceptConfirm>,
-    raid_target_update: MessageReader<'w, 's, RaidTargetUpdated>,
-    bag_update_cooldown: MessageReader<'w, 's, BagUpdateCooldown>,
-    item_text_begin: MessageReader<'w, 's, ItemTextBegin>,
-    item_text_ready: MessageReader<'w, 's, ItemTextReady>,
-    item_text_closed: MessageReader<'w, 's, ItemTextClosed>,
-    merchant_show: MessageReader<'w, 's, MerchantShow>,
-    merchant_update: MessageReader<'w, 's, MerchantUpdate>,
-    merchant_closed: MessageReader<'w, 's, MerchantClosed>,
-    update_faction: MessageReader<'w, 's, UpdateFaction>,
-    friend_list_show: MessageReader<'w, 's, FriendListShow>,
-    friend_list: MessageReader<'w, 's, FriendListUpdate>,
-    ignore_list: MessageReader<'w, 's, IgnoreListUpdate>,
-    who_list: MessageReader<'w, 's, WhoListUpdate>,
-    player_guild: MessageReader<'w, 's, PlayerGuildUpdate>,
-    guild_roster: MessageReader<'w, 's, GuildRosterUpdate>,
-    guild_motd: MessageReader<'w, 's, GuildMotd>,
-    guild_invite: MessageReader<'w, 's, GuildInviteRequest>,
-    petition_show: MessageReader<'w, 's, PetitionShow>,
-    petition_closed: MessageReader<'w, 's, PetitionClosed>,
-    guild_registrar_show: MessageReader<'w, 's, GuildRegistrarShow>,
-    guild_registrar_closed: MessageReader<'w, 's, GuildRegistrarClosed>,
-    open_tabard_frame: MessageReader<'w, 's, OpenTabardFrame>,
-    close_tabard_frame: MessageReader<'w, 's, CloseTabardFrame>,
-    tabard_cansave_changed: MessageReader<'w, 's, TabardCansaveChanged>,
-    tabard_save_pending: MessageReader<'w, 's, TabardSavePending>,
-    skill_lines: MessageReader<'w, 's, SkillLinesChanged>,
-    character_points: MessageReader<'w, 's, CharacterPointsChanged>,
-    party_members: MessageReader<'w, 's, PartyMembersChanged>,
-    raid_roster: MessageReader<'w, 's, RaidRosterUpdate>,
-    ready_check: MessageReader<'w, 's, ReadyCheck>,
-    party_leader: MessageReader<'w, 's, PartyLeaderChanged>,
-    party_loot: MessageReader<'w, 's, PartyLootMethodChanged>,
-    party_invite: MessageReader<'w, 's, PartyInviteRequest>,
-    trainer_show: MessageReader<'w, 's, TrainerShow>,
-    trainer_update: MessageReader<'w, 's, TrainerUpdate>,
-    trainer_closed: MessageReader<'w, 's, TrainerClosed>,
-    pet_stable_show: MessageReader<'w, 's, PetStableShow>,
-    pet_stable_update: MessageReader<'w, 's, PetStableUpdate>,
-    pet_stable_paperdoll: MessageReader<'w, 's, PetStableUpdatePaperdoll>,
-    pet_stable_closed: MessageReader<'w, 's, PetStableClosed>,
-    bankframe_opened: MessageReader<'w, 's, BankframeOpened>,
-    bankframe_closed: MessageReader<'w, 's, BankframeClosed>,
-    playerbankslots_changed: MessageReader<'w, 's, PlayerbankslotsChanged>,
-    playerbankbagslots_changed: MessageReader<'w, 's, PlayerbankbagslotsChanged>,
-    mail_show: MessageReader<'w, 's, MailShow>,
-    mail_closed: MessageReader<'w, 's, MailClosed>,
-    mail_inbox: MessageReader<'w, 's, MailInboxUpdate>,
-    mail_send_info: MessageReader<'w, 's, MailSendInfoUpdate>,
-    mail_sent: MessageReader<'w, 's, MailSendSuccess>,
-    mail_failed: MessageReader<'w, 's, MailFailed>,
-    mail_money: MessageReader<'w, 's, SendMailMoneyChanged>,
-    mail_cod: MessageReader<'w, 's, SendMailCodChanged>,
-    mail_close_item: MessageReader<'w, 's, CloseInboxItem>,
-    mail_pending: MessageReader<'w, 's, UpdatePendingMail>,
-    quest_watch: MessageReader<'w, 's, QuestWatchUpdate>,
-    tradeskill_show: MessageReader<'w, 's, TradeSkillShow>,
-    tradeskill_update: MessageReader<'w, 's, TradeSkillUpdate>,
-    tradeskill_close: MessageReader<'w, 's, TradeSkillClose>,
-    craft_show: MessageReader<'w, 's, CraftShow>,
-    craft_update: MessageReader<'w, 's, CraftUpdate>,
-    craft_close: MessageReader<'w, 's, CraftClose>,
-    tradeskill_recast: MessageReader<'w, 's, UpdateTradeskillRecast>,
-    taxi_opened: MessageReader<'w, 's, TaximapOpened>,
-    taxi_closed: MessageReader<'w, 's, TaximapClosed>,
-    loot_opened: MessageReader<'w, 's, LootOpened>,
-    loot_cleared: MessageReader<'w, 's, LootSlotCleared>,
-    loot_closed: MessageReader<'w, 's, LootClosed>,
-    roll_started: MessageReader<'w, 's, StartLootRoll>,
-    roll_cancelled: MessageReader<'w, 's, CancelLootRoll>,
-    roll_confirm: MessageReader<'w, 's, ConfirmLootRoll>,
-    mirror_start: MessageReader<'w, 's, MirrorTimerStart>,
-    mirror_stop: MessageReader<'w, 's, MirrorTimerStop>,
-    mirror_pause: MessageReader<'w, 's, MirrorTimerPause>,
-    // The GlueXML events. The end of [`GameEventReaders::drain`] gives the
-    // order they are taken in.
-    frames_loaded: MessageReader<'w, 's, FramesLoaded>,
-    addon_list: MessageReader<'w, 's, AddonListUpdate>,
-    glue_screen: MessageReader<'w, 's, SetGlueScreen>,
-    character_list: MessageReader<'w, 's, CharacterListUpdate>,
-    selected_character: MessageReader<'w, 's, UpdateSelectedCharacter>,
-    first_character: MessageReader<'w, 's, SelectFirstCharacter>,
-    disconnected: MessageReader<'w, 's, DisconnectedFromServer>,
-    close_dialog: MessageReader<'w, 's, CloseStatusDialog>,
-    open_dialog: MessageReader<'w, 's, OpenStatusDialog>,
+/// `not_drained` names the message types this module defines that carry no
+/// interface event; they are registered and nothing else.
+/// `raised_without_a_message` names the events the Lua host raises directly;
+/// they are in [`FIRED`] and nothing else.
+macro_rules! game_events {
+    (
+        drained { $( $field:ident: $ty:ty ),* $(,)? }
+        not_drained { $( $internal:ty ),* $(,)? }
+        raised_without_a_message { $( $raised:literal ),* $(,)? }
+    ) => {
+        /// Every event this client raises, as one reader.
+        ///
+        /// A [`SystemParam`] rather than one parameter per event on the system that
+        /// reads them all, and defined here rather than in [`crate::lua`] so that
+        /// adding an event changes one file.
+        ///
+        /// Each reader has its own cursor, so this can be held alongside any other
+        /// consumer without either missing messages. Other systems read some of these
+        /// messages too: every module that resets its state on [`PlayerLeavingWorld`]
+        /// has its own reader. The error messages have no other reader;
+        /// `UIErrorsFrame` shows them. See `two_readers_each_see_every_message`.
+        #[derive(SystemParam)]
+        pub struct GameEventReaders<'w, 's> {
+            $( $field: MessageReader<'w, 's, $ty>, )*
+        }
+
+        impl GameEventReaders<'_, '_> {
+            /// Everything written since this param last read, as `(name, args)`.
+            ///
+            /// The order between two different event types is set by this function,
+            /// not by when they were written. This is an approximation: the separate
+            /// message queues carry no shared sequence number, so there is nothing to
+            /// sort by. Within one type the order is the write order, which is the order
+            /// that matters: two `ACTIONBAR_SLOT_CHANGED` for the same slot must not
+            /// swap.
+            ///
+            /// The type order is the order of the `game_events!` list, which follows
+            /// the order the 1.12.1 client raises them in, as far as it is known:
+            /// events about the world first, then the action bar, then the cast.
+            pub fn drain(&mut self) -> Vec<(&'static str, Vec<EventArg>)> {
+                let mut out: Vec<(&'static str, Vec<EventArg>)> = Vec::new();
+                $(
+                    for message in self.$field.read() {
+                        // `name()`, not `EVENT`: `UNIT_MANA` and its nine siblings
+                        // are one type whose name is the power it carries.
+                        out.push((GameEvent::name(message), message.args()));
+                    }
+                )*
+                out
+            }
+        }
+
+        /// The groups [`FIRED`] is the concatenation of: each drained type's
+        /// names, then the names raised without a message.
+        const FIRED_GROUPS: &[&[&str]] = &[
+            $( <$ty as GameEvent>::NAMES, )*
+            &[ $( $raised ),* ],
+        ];
+
+        /// Every event name this client can raise, for the check that counts the
+        /// events the interface registers for but this client never raises.
+        ///
+        /// Derived from the `game_events!` list: each drained type's
+        /// [`GameEvent::NAMES`] in list order, then the names the Lua host raises
+        /// without a message type. It is compared with the set of names passed to
+        /// `RegisterEvent`.
+        pub const FIRED: [&str; name_count(FIRED_GROUPS)] = concatenated(FIRED_GROUPS);
+
+        /// Registers every message type in this module.
+        ///
+        /// A message type with no `add_message` produces no error and no warning;
+        /// the writer drops the message. The registrations come from the same list
+        /// as the readers, so a drained type cannot be left out.
+        /// `every_event_this_module_defines_is_registered` checks it.
+        pub(crate) fn register(app: &mut App) {
+            $( app.add_message::<$ty>(); )*
+            $( app.add_message::<$internal>(); )*
+        }
+    };
 }
 
-impl GameEventReaders<'_, '_> {
-    /// Everything written since this param last read, as `(name, args)`.
-    ///
-    /// The order between two different event types is set by this function,
-    /// not by when they were written. This is an approximation: the separate
-    /// message queues carry no shared sequence number, so there is nothing to
-    /// sort by. Within one type the order is the write order, which is the order
-    /// that matters: two `ACTIONBAR_SLOT_CHANGED` for the same slot must not
-    /// swap.
-    ///
-    /// The type order below follows the order the 1.12.1 client raises them in,
-    /// as far as it is known: events about the world first, then the action
-    /// bar, then the cast.
-    pub fn drain(&mut self) -> Vec<(&'static str, Vec<EventArg>)> {
-        let mut out: Vec<(&'static str, Vec<EventArg>)> = Vec::new();
-        // One macro call per type rather than a loop, because each `read` is a
-        // different concrete type; there is no trait object over a reader.
-        macro_rules! take {
-            ($field:ident, $ty:ty) => {
-                for message in self.$field.read() {
-                    // `name()`, not `EVENT`: `UNIT_MANA` and its nine siblings
-                    // are one type whose name is the power it carries.
-                    out.push((GameEvent::name(message), message.args()));
-                }
-            };
+/// The number of names in `groups`, which is [`FIRED`]'s length.
+const fn name_count(groups: &[&[&str]]) -> usize {
+    let mut count = 0;
+    let mut group = 0;
+    while group < groups.len() {
+        count += groups[group].len();
+        group += 1;
+    }
+    count
+}
+
+/// `groups` concatenated into one array, for [`FIRED`].
+const fn concatenated<const N: usize>(groups: &[&[&'static str]]) -> [&'static str; N] {
+    let mut out = [""; N];
+    let mut at = 0;
+    let mut group = 0;
+    while group < groups.len() {
+        let mut index = 0;
+        while index < groups[group].len() {
+            out[at] = groups[group][index];
+            at += 1;
+            index += 1;
         }
+        group += 1;
+    }
+    out
+}
+
+game_events! {
+    drained {
         // The combat pair comes before `ACTIONBAR_UPDATE_STATE`, which is the
         // order they are written in and the order the button needs. The flash
         // starts on the combat pair, and `ActionButton_StartFlash` ends in
         // `ActionButton_UpdateState`, so a checked border delivered first would
         // only be redrawn.
-        take!(enter_combat, PlayerEnterCombat);
-        take!(leave_combat, PlayerLeaveCombat);
+        enter_combat: PlayerEnterCombat,
+        leave_combat: PlayerLeaveCombat,
         // `VARIABLES_LOADED` comes before `PLAYER_ENTERING_WORLD`, the order the
         // client raises them in: saved variables are read at startup and the
         // world is entered afterwards. `UIOptionsFrame`'s two dropdowns
         // initialise on the first, and `PlayerFrame` fills itself on the second.
-        take!(variables_loaded, VariablesLoaded);
+        variables_loaded: VariablesLoaded,
         // A setting change is about the client rather than the world, so it is
         // taken beside `VARIABLES_LOADED`. The panels that watch a setting
         // redraw on it.
-        take!(cvar_update, CVarUpdate);
+        cvar_update: CVarUpdate,
         // A key binding change is also about the client rather than the world.
         // The one frame that listens redraws a label on it.
-        take!(update_bindings, UpdateBindings);
-        take!(entering_world, PlayerEnteringWorld);
+        update_bindings: UpdateBindings,
+        entering_world: PlayerEnteringWorld,
         // The location events, before anything that reads a location name.
         // `ZONE_CHANGED_NEW_AREA` is the coarse one, and `MINIMAP_ZONE_CHANGED`
         // is the one the minimap's title redraws on.
-        take!(zone_new_area, ZoneChangedNewArea);
-        take!(zone_changed, ZoneChanged);
-        take!(minimap_zone, MinimapZoneChanged);
-        take!(world_map_update, WorldMapUpdate);
+        zone_new_area: ZoneChangedNewArea,
+        zone_changed: ZoneChanged,
+        minimap_zone: MinimapZoneChanged,
+        world_map_update: WorldMapUpdate,
         // `PLAYER_LEAVING_WORLD` comes before anything the teardown discards.
         // The interface is told it is leaving while its frames still exist;
         // `lua::host` unloads FrameXML after this has been delivered.
-        take!(leaving_world, PlayerLeavingWorld);
+        leaving_world: PlayerLeavingWorld,
         // The three logout events, with the cancel last. A refusal raises
         // `LOGOUT_CANCEL` in the same drain that would otherwise have raised
         // `PLAYER_CAMPING`, and the popup must be closed after it is shown, not
         // before.
-        take!(camping, PlayerCamping);
-        take!(quiting, PlayerQuiting);
-        take!(logout_cancel, LogoutCancel);
+        camping: PlayerCamping,
+        quiting: PlayerQuiting,
+        logout_cancel: LogoutCancel,
         // The three death-state events, in the order the state passes through
         // them: dead, then released (which is what `PLAYER_ALIVE` means here),
         // then resurrected. The corpse-range pair comes after them, because the
@@ -3205,202 +3213,206 @@ impl GameEventReaders<'_, '_> {
         // resurrection offers come last: `StaticPopup_Show` refuses a
         // `whileDead` dialog unless the player is already dead, so the death
         // event must be delivered first.
-        take!(player_dead, PlayerDead);
-        take!(player_alive, PlayerAlive);
-        take!(player_unghost, PlayerUnghost);
-        take!(corpse_out_of_range, CorpseOutOfRange);
-        take!(corpse_in_range, CorpseInRange);
-        take!(resurrect_request, ResurrectRequest);
-        take!(confirm_xp_loss, ConfirmXpLoss);
-        take!(trade_request, TradeRequest);
-        take!(trade_request_cancel, TradeRequestCancel);
-        take!(trade_show, TradeShow);
-        take!(trade_closed, TradeClosed);
-        take!(trade_update, TradeUpdate);
-        take!(trade_accept_update, TradeAcceptUpdate);
-        take!(trade_player_item_changed, TradePlayerItemChanged);
-        take!(trade_target_item_changed, TradeTargetItemChanged);
-        take!(trade_money_changed, TradeMoneyChanged);
-        take!(player_trade_money, PlayerTradeMoney);
+        player_dead: PlayerDead,
+        player_alive: PlayerAlive,
+        player_unghost: PlayerUnghost,
+        corpse_out_of_range: CorpseOutOfRange,
+        corpse_in_range: CorpseInRange,
+        resurrect_request: ResurrectRequest,
+        confirm_xp_loss: ConfirmXpLoss,
+        trade_request: TradeRequest,
+        trade_request_cancel: TradeRequestCancel,
+        trade_show: TradeShow,
+        trade_closed: TradeClosed,
+        trade_update: TradeUpdate,
+        trade_accept_update: TradeAcceptUpdate,
+        trade_player_item_changed: TradePlayerItemChanged,
+        trade_target_item_changed: TradeTargetItemChanged,
+        trade_money_changed: TradeMoneyChanged,
+        player_trade_money: PlayerTradeMoney,
         // The quest log events before the dialog pages, and `QUEST_FINISHED`
         // last. A page opens on top of whatever the log shows, and
         // `QUEST_FINISHED` hides the panel, so a finish delivered before the
         // page that replaced it would hide a window that is about to be filled.
-        take!(quest_log, QuestLogUpdate);
-        take!(quest_item, QuestItemUpdate);
-        take!(quest_greeting, QuestGreetingEvent);
-        take!(quest_detail, QuestDetail);
-        take!(quest_progress, QuestProgressEvent);
-        take!(quest_complete, QuestCompleteEvent);
-        take!(quest_finished, QuestFinished);
+        quest_log: QuestLogUpdate,
+        quest_item: QuestItemUpdate,
+        quest_greeting: QuestGreetingEvent,
+        quest_detail: QuestDetail,
+        quest_progress: QuestProgressEvent,
+        quest_complete: QuestCompleteEvent,
+        quest_finished: QuestFinished,
         // The NPC windows' show events come before their close events (taken
         // further down), so a window replaced in one frame closes after its
         // replacement opened. `GossipFrame_OnEvent`'s `GOSSIP_CLOSED` branch
         // hides the frame unconditionally.
-        take!(gossip_show, GossipShow);
-        take!(merchant_show, MerchantShow);
-        take!(merchant_update, MerchantUpdate);
-        take!(update_faction, UpdateFaction);
+        gossip_show: GossipShow,
+        merchant_show: MerchantShow,
+        merchant_update: MerchantUpdate,
+        update_faction: UpdateFaction,
         // `FRIENDLIST_SHOW` comes before `FRIENDLIST_UPDATE`, which is the order
         // `FriendsFrame_OnEvent` needs. The first branch rebuilds the list and
         // also calls `FriendsFrame_Update`, so raising it after the plain update
         // would rebuild twice and select the tab a frame late.
-        take!(friend_list_show, FriendListShow);
-        take!(friend_list, FriendListUpdate);
-        take!(ignore_list, IgnoreListUpdate);
-        take!(who_list, WhoListUpdate);
+        friend_list_show: FriendListShow,
+        friend_list: FriendListUpdate,
+        ignore_list: IgnoreListUpdate,
+        who_list: WhoListUpdate,
         // The membership before the roster: `InGuildCheck` enables the
         // guild tab that the roster update then fills.
-        take!(player_guild, PlayerGuildUpdate);
-        take!(guild_roster, GuildRosterUpdate);
-        take!(guild_motd, GuildMotd);
-        take!(guild_invite, GuildInviteRequest);
+        player_guild: PlayerGuildUpdate,
+        guild_roster: GuildRosterUpdate,
+        guild_motd: GuildMotd,
+        guild_invite: GuildInviteRequest,
         // The charter, the registrar and the tabard designer. Each show
         // comes before its close, so a window opened and closed in one
         // frame ends closed.
-        take!(petition_show, PetitionShow);
-        take!(petition_closed, PetitionClosed);
-        take!(guild_registrar_show, GuildRegistrarShow);
-        take!(guild_registrar_closed, GuildRegistrarClosed);
-        take!(open_tabard_frame, OpenTabardFrame);
-        take!(close_tabard_frame, CloseTabardFrame);
-        take!(tabard_cansave_changed, TabardCansaveChanged);
-        take!(tabard_save_pending, TabardSavePending);
-        take!(skill_lines, SkillLinesChanged);
-        take!(character_points, CharacterPointsChanged);
+        petition_show: PetitionShow,
+        petition_closed: PetitionClosed,
+        guild_registrar_show: GuildRegistrarShow,
+        guild_registrar_closed: GuildRegistrarClosed,
+        open_tabard_frame: OpenTabardFrame,
+        close_tabard_frame: CloseTabardFrame,
+        tabard_cansave_changed: TabardCansaveChanged,
+        tabard_save_pending: TabardSavePending,
+        skill_lines: SkillLinesChanged,
+        character_points: CharacterPointsChanged,
         // The party events. Membership comes before the leader, because
         // `PartyMemberFrame_UpdateLeader` reads a frame the rebuild may have
         // just shown.
-        take!(party_members, PartyMembersChanged);
+        party_members: PartyMembersChanged,
         // The raid roster comes after the party's: `UIParent.lua` answers it by
         // deciding whether the party frames are shown, and it must read a
         // roster the line above has already applied.
-        take!(raid_roster, RaidRosterUpdate);
-        take!(ready_check, ReadyCheck);
-        take!(party_leader, PartyLeaderChanged);
-        take!(party_loot, PartyLootMethodChanged);
-        take!(party_invite, PartyInviteRequest);
-        take!(trainer_show, TrainerShow);
-        take!(trainer_update, TrainerUpdate);
+        raid_roster: RaidRosterUpdate,
+        ready_check: ReadyCheck,
+        party_leader: PartyLeaderChanged,
+        party_loot: PartyLootMethodChanged,
+        party_invite: PartyInviteRequest,
+        trainer_show: TrainerShow,
+        trainer_update: TrainerUpdate,
         // The two profession windows, with show events before close events as
         // above, and the show before the update, so a window that opened and
         // rebuilt in one frame fills after `UIParent.lua` has loaded its addon.
-        take!(tradeskill_show, TradeSkillShow);
-        take!(tradeskill_update, TradeSkillUpdate);
-        take!(craft_show, CraftShow);
-        take!(craft_update, CraftUpdate);
-        take!(tradeskill_recast, UpdateTradeskillRecast);
-        take!(gossip_closed, GossipClosed);
-        take!(confirm_binder, ConfirmBinder);
+        tradeskill_show: TradeSkillShow,
+        tradeskill_update: TradeSkillUpdate,
+        craft_show: CraftShow,
+        craft_update: CraftUpdate,
+        tradeskill_recast: UpdateTradeskillRecast,
+        gossip_closed: GossipClosed,
+        confirm_binder: ConfirmBinder,
         // The duel events: request, then bounds, then finish, which is the
         // order the popups are shown and hidden in. `DUEL_FINISHED` hides both
         // of the others, so raised first it would hide nothing.
-        take!(duel_requested, DuelRequested);
-        take!(duel_out_of_bounds, DuelOutOfBounds);
-        take!(duel_in_bounds, DuelInBounds);
-        take!(duel_finished, DuelFinished);
-        take!(confirm_summon, ConfirmSummon);
-        take!(inspect_honor, InspectHonorUpdate);
-        take!(time_played, TimePlayedMsg);
-        take!(update_world_states, UpdateWorldStates);
-        take!(tutorial_trigger, TutorialTrigger);
-        take!(quest_accept_confirm, QuestAcceptConfirm);
-        take!(raid_target_update, RaidTargetUpdated);
-        take!(bag_update_cooldown, BagUpdateCooldown);
+        duel_requested: DuelRequested,
+        duel_out_of_bounds: DuelOutOfBounds,
+        duel_in_bounds: DuelInBounds,
+        duel_finished: DuelFinished,
+        confirm_summon: ConfirmSummon,
+        inspect_honor: InspectHonorUpdate,
+        time_played: TimePlayedMsg,
+        update_world_states: UpdateWorldStates,
+        tutorial_trigger: TutorialTrigger,
+        quest_accept_confirm: QuestAcceptConfirm,
+        raid_target_update: RaidTargetUpdated,
+        bag_update_cooldown: BagUpdateCooldown,
         // The item text events: begin, then ready, then closed, the order the
         // panel expects. The first sets up the window, the second fills and
         // shows it, and the third hides it.
-        take!(item_text_begin, ItemTextBegin);
-        take!(item_text_ready, ItemTextReady);
-        take!(item_text_closed, ItemTextClosed);
-        take!(merchant_closed, MerchantClosed);
+        item_text_begin: ItemTextBegin,
+        item_text_ready: ItemTextReady,
+        item_text_closed: ItemTextClosed,
+        merchant_closed: MerchantClosed,
         // The mail window's events: show, then updates, then close, the order
         // the other panels in this list use. `MAIL_SHOW` shows the frame and
         // `MAIL_INBOX_UPDATE` fills it.
-        take!(mail_show, MailShow);
-        take!(mail_send_info, MailSendInfoUpdate);
-        take!(mail_money, SendMailMoneyChanged);
-        take!(mail_cod, SendMailCodChanged);
-        take!(mail_inbox, MailInboxUpdate);
-        take!(mail_sent, MailSendSuccess);
-        take!(mail_failed, MailFailed);
-        take!(mail_pending, UpdatePendingMail);
-        take!(mail_close_item, CloseInboxItem);
-        take!(quest_watch, QuestWatchUpdate);
+        mail_show: MailShow,
+        mail_send_info: MailSendInfoUpdate,
+        mail_money: SendMailMoneyChanged,
+        mail_cod: SendMailCodChanged,
+        mail_inbox: MailInboxUpdate,
+        mail_sent: MailSendSuccess,
+        mail_failed: MailFailed,
+        mail_pending: UpdatePendingMail,
+        mail_close_item: CloseInboxItem,
+        quest_watch: QuestWatchUpdate,
         // The stable's four events: show, update, paperdoll, close.
         // `PET_STABLE_SHOW` shows the frame and `PET_STABLE_UPDATE` fills it,
         // the same order as the mail window above.
-        take!(pet_stable_show, PetStableShow);
-        take!(pet_stable_update, PetStableUpdate);
-        take!(pet_stable_paperdoll, PetStableUpdatePaperdoll);
-        take!(pet_stable_closed, PetStableClosed);
+        pet_stable_show: PetStableShow,
+        pet_stable_update: PetStableUpdate,
+        pet_stable_paperdoll: PetStableUpdatePaperdoll,
+        pet_stable_closed: PetStableClosed,
         // The bank's four events: opened, then the two redraws, then closed.
         // The slot buttons also redraw on the open, so the order matters only
         // for a purchase that arrives in the same frame the window opened.
-        take!(bankframe_opened, BankframeOpened);
-        take!(playerbankslots_changed, PlayerbankslotsChanged);
-        take!(playerbankbagslots_changed, PlayerbankbagslotsChanged);
-        take!(bankframe_closed, BankframeClosed);
-        take!(trainer_closed, TrainerClosed);
-        take!(mail_closed, MailClosed);
-        take!(tradeskill_close, TradeSkillClose);
-        take!(craft_close, CraftClose);
-        take!(taxi_opened, TaximapOpened);
-        take!(taxi_closed, TaximapClosed);
+        bankframe_opened: BankframeOpened,
+        playerbankslots_changed: PlayerbankslotsChanged,
+        playerbankbagslots_changed: PlayerbankbagslotsChanged,
+        bankframe_closed: BankframeClosed,
+        trainer_closed: TrainerClosed,
+        mail_closed: MailClosed,
+        tradeskill_close: TradeSkillClose,
+        craft_close: CraftClose,
+        taxi_opened: TaximapOpened,
+        taxi_closed: TaximapClosed,
         // The loot window's three events: opened first, closed last, and the
         // slot clear between, because `LootFrame_OnEvent`'s branch for it
         // returns early unless the frame is already visible.
-        take!(loot_opened, LootOpened);
-        take!(loot_cleared, LootSlotCleared);
-        take!(loot_closed, LootClosed);
+        loot_opened: LootOpened,
+        loot_cleared: LootSlotCleared,
+        loot_closed: LootClosed,
         // The roll cancel comes before the roll start. A roll frame is freed and
         // then reused, and the four frames are chosen by `IsVisible()`. In the
         // other order, a fifth roll would find all four still shown and the
         // shipped Lua would drop it.
-        take!(roll_cancelled, CancelLootRoll);
-        take!(roll_started, StartLootRoll);
-        take!(roll_confirm, ConfirmLootRoll);
+        roll_cancelled: CancelLootRoll,
+        roll_started: StartLootRoll,
+        roll_confirm: ConfirmLootRoll,
         // The mirror timer stop comes before the start; this is the only order
         // that matters among the three. `MirrorTimer_Show` takes the first free
         // frame, so a bar being replaced must release its frame before the
         // replacement looks for one. Otherwise a breath bar restated while a
         // fatigue bar is shown takes the second frame, and the first keeps
         // drawing a stale bar permanently.
-        take!(mirror_stop, MirrorTimerStop);
-        take!(mirror_start, MirrorTimerStart);
-        take!(mirror_pause, MirrorTimerPause);
-        take!(ui_error, UiErrorMessage);
-        take!(ui_info, UiInfoMessage);
-        take!(target_changed, PlayerTargetChanged);
+        //
+        // `MirrorTimer.lua` registers two of the three, and `UIParent.lua`, the
+        // only file that calls `MirrorTimer_Show`, registers the start. See
+        // [`super::timers`].
+        mirror_stop: MirrorTimerStop,
+        mirror_start: MirrorTimerStart,
+        mirror_pause: MirrorTimerPause,
+        ui_error: UiErrorMessage,
+        ui_info: UiInfoMessage,
+        target_changed: PlayerTargetChanged,
         // `UPDATE_MOUSEOVER_UNIT` comes after the target change, and never
         // before the tooltip is filled. Its one handler recolours
         // `GameTooltipTextLeft1`, so the line must already hold this unit's
         // name; see [`MouseoverUnitChanged`].
-        take!(mouseover, MouseoverUnitChanged);
-        take!(unit_name, UnitNameUpdate);
-        take!(unit_level, UnitLevelChanged);
+        mouseover: MouseoverUnitChanged,
+        unit_name: UnitNameUpdate,
+        unit_level: UnitLevelChanged,
         // The two XP bar events, beside the level because a level-up changes
         // all three in one update block.
-        take!(player_xp, PlayerXpUpdate);
-        take!(exhaustion, UpdateExhaustion);
+        player_xp: PlayerXpUpdate,
+        exhaustion: UpdateExhaustion,
         // The level-up comes before the auras, because gaining a level applies
         // several auras, and the chat line about the level-up should come
         // before the aura icons change.
-        take!(level_up, PlayerLevelUp);
-        take!(player_auras, PlayerAurasChanged);
-        take!(unit_aura, UnitAuraChanged);
+        level_up: PlayerLevelUp,
+        player_auras: PlayerAurasChanged,
+        unit_aura: UnitAuraChanged,
         // `UNIT_PET` comes before the health and power events, because it shows
         // the frame whose bars those events update. A health event delivered
         // first reaches a hidden frame and is not repeated.
-        take!(unit_pet, UnitPetChanged);
-        take!(unit_faction, UnitFactionChanged);
-        take!(unit_health, UnitHealthChanged);
-        take!(unit_max_health, UnitMaxHealthChanged);
-        take!(unit_displaypower, UnitDisplaypowerChanged);
-        take!(unit_power, UnitPowerChanged);
+        unit_pet: UnitPetChanged,
+        unit_faction: UnitFactionChanged,
+        unit_health: UnitHealthChanged,
+        unit_max_health: UnitMaxHealthChanged,
+        unit_displaypower: UnitDisplaypowerChanged,
+        unit_power: UnitPowerChanged,
         // The character sheet's nine events, after health and power and before
         // the spellbook; they describe the same unit in more detail.
-        take!(unit_stats, UnitStatsChanged);
+        unit_stats: UnitStatsChanged,
         // `ITEM_LOCK_CHANGED` comes before the equipment and bag events, because
         // it is the earlier half of the same action: a pick-up raises only this
         // one, and the move it becomes raises the two below a round trip later.
@@ -3410,58 +3422,61 @@ impl GameEventReaders<'_, '_> {
         // The equipment event comes before the bag events, because moving an
         // item from a bag to an equipment slot raises both, and the paper doll's
         // `OnEvent` fills the slot that the bag frame then reports empty.
-        take!(item_lock, ItemLockChanged);
-        take!(unit_inventory, UnitInventoryChanged);
-        take!(unit_quest_log, UnitQuestLogChanged);
-        take!(bag_update, BagUpdate);
-        take!(player_money, PlayerMoney);
+        //
+        // These are the events the bags and the paper doll's item buttons
+        // update on.
+        item_lock: ItemLockChanged,
+        unit_inventory: UnitInventoryChanged,
+        unit_quest_log: UnitQuestLogChanged,
+        bag_update: BagUpdate,
+        player_money: PlayerMoney,
         // The spellbook comes before the action bar, because a slot's spell is a
         // row in the book. The client raises `SPELLS_CHANGED` when the set of
         // spells changed and `ACTIONBAR_SLOT_CHANGED` when a button's contents
         // changed, and at login the second depends on the first.
-        take!(spells_changed, SpellsChanged);
+        spells_changed: SpellsChanged,
         // The pet bar comes before its cooldowns, for the same reason the
         // action bar's slot event comes before its cooldown event below: the
         // cooldown handler indexes the slots the first event drew.
-        take!(pet_bar, PetBarChanged);
-        take!(pet_bar_cooldown, PetBarCooldownChanged);
+        pet_bar: PetBarChanged,
+        pet_bar_cooldown: PetBarCooldownChanged,
         // The pet grid events come after the pet bar update, as the action bar's
         // pair does: `PetActionBar_ShowGrid` shows buttons an update would hide,
         // so a show delivered first is undone by the update after it.
-        take!(pet_bar_show_grid, PetBarShowGrid);
-        take!(pet_bar_hide_grid, PetBarHideGrid);
-        take!(confirm_pet_unlearn, ConfirmPetUnlearn);
+        pet_bar_show_grid: PetBarShowGrid,
+        pet_bar_hide_grid: PetBarHideGrid,
+        confirm_pet_unlearn: ConfirmPetUnlearn,
         // The form list comes before the bonus bar, because a learned form can
         // change both, and `BonusActionBar_OnEvent` reads `GetBonusBarOffset()`
         // when the second arrives.
-        take!(shapeshift_forms, UpdateShapeshiftForms);
+        shapeshift_forms: UpdateShapeshiftForms,
         // The pet paper doll's two events, after the pet bar for the same reason
         // as the cooldowns: their handlers read what the bar's redraw set up.
-        take!(pet_experience, UnitPetExperience);
-        take!(pet_training, UnitPetTrainingPoints);
-        take!(slot_changed, ActionbarSlotChanged);
+        pet_experience: UnitPetExperience,
+        pet_training: UnitPetTrainingPoints,
+        slot_changed: ActionbarSlotChanged,
         // The page change restates what all twelve buttons hold rather than
         // changing any one of them.
-        take!(page_changed, ActionbarPageChanged);
-        take!(bonus_changed, ActionbarBonusChanged);
+        page_changed: ActionbarPageChanged,
+        bonus_changed: ActionbarBonusChanged,
         // The two grid events come after the slot events and are never
         // interleaved with them. `ActionButton_OnEvent` answers
         // `ACTIONBAR_SHOWGRID` by showing a button that `ACTIONBAR_SLOT_CHANGED`
         // would hide, so a show delivered first is undone by the update after
         // it.
-        take!(show_grid, ActionbarShowGrid);
-        take!(hide_grid, ActionbarHideGrid);
+        show_grid: ActionbarShowGrid,
+        hide_grid: ActionbarHideGrid,
         // `DELETE_ITEM_CONFIRM` comes after the grid events, because both arrive
         // together when a carried item is dropped on the world: the bar hides
         // its empty buttons and then the popup about the item is shown.
-        take!(delete_item, DeleteItemConfirm);
-        take!(state, ActionbarUpdateState);
-        take!(cooldown, ActionbarUpdateCooldown);
+        delete_item: DeleteItemConfirm,
+        state: ActionbarUpdateState,
+        cooldown: ActionbarUpdateCooldown,
         // `ACTIONBAR_UPDATE_USABLE` comes after the cooldown event, because
         // `ActionButton_OnEvent` answers both with the same pair of calls. The
         // order only decides which of the two is redundant when both arrive,
         // and a cast changes the cooldown first.
-        take!(usable, ActionbarUpdateUsable);
+        usable: ActionbarUpdateUsable,
         // The auto-repeat pair comes after `ACTIONBAR_UPDATE_STATE`; this is the
         // only order among these four that matters. Both arrive on the press
         // that starts Auto Shot. `ActionButton_UpdateState` re-reads
@@ -3469,21 +3484,21 @@ impl GameEventReaders<'_, '_> {
         // checked border, while the flash is a timer the flash event starts. A
         // stop delivered before the state change leaves the button flashing
         // while its state says it should not.
-        take!(autorepeat_start, StartAutorepeatSpell);
-        take!(autorepeat_stop, StopAutorepeatSpell);
-        take!(spell_cooldown, SpellUpdateCooldown);
-        take!(current_cast, CurrentSpellCastChanged);
-        take!(cast_start, SpellcastStart);
-        take!(cast_stop, SpellcastStop);
-        take!(cast_failed, SpellcastFailed);
-        take!(cast_interrupted, SpellcastInterrupted);
-        take!(cast_delayed, SpellcastDelayed);
-        take!(channel_start, SpellcastChannelStart);
-        take!(channel_update, SpellcastChannelUpdate);
-        take!(channel_stop, SpellcastChannelStop);
+        autorepeat_start: StartAutorepeatSpell,
+        autorepeat_stop: StopAutorepeatSpell,
+        spell_cooldown: SpellUpdateCooldown,
+        current_cast: CurrentSpellCastChanged,
+        cast_start: SpellcastStart,
+        cast_stop: SpellcastStop,
+        cast_failed: SpellcastFailed,
+        cast_interrupted: SpellcastInterrupted,
+        cast_delayed: SpellcastDelayed,
+        channel_start: SpellcastChannelStart,
+        channel_update: SpellcastChannelUpdate,
+        channel_stop: SpellcastChannelStop,
         // Chat comes last, so a line about an event is delivered after the event
         // itself, as in the 1.12.1 client's combat text.
-        take!(chat, ChatMessageReceived);
+        chat: ChatMessageReceived,
 
         // ---- GlueXML events, whose order among themselves matters ----
         //
@@ -3495,560 +3510,59 @@ impl GameEventReaders<'_, '_> {
         // than populate it. `DISCONNECTED_FROM_SERVER` comes last: it returns to
         // the login screen, and anything queued after it would be about a
         // character screen that has closed.
-        take!(frames_loaded, FramesLoaded);
-        take!(addon_list, AddonListUpdate);
-        take!(glue_screen, SetGlueScreen);
-        take!(character_list, CharacterListUpdate);
-        take!(first_character, SelectFirstCharacter);
-        take!(selected_character, UpdateSelectedCharacter);
-        take!(disconnected, DisconnectedFromServer);
+        //
+        // The GlueXML events are in [`FIRED`] for the same reason as the
+        // rest: `--audit --events` walks it and counts unraised events against it, and the
+        // GlueXML frames register through the same `RegisterEvent` as
+        // FrameXML's. `GlueParent_OnLoad` registers `FRAMES_LOADED` and
+        // `SET_GLUE_SCREEN`; `CharacterSelect_OnLoad` registers
+        // `CHARACTER_LIST_UPDATE`, `UPDATE_SELECTED_CHARACTER` and
+        // `SELECT_FIRST_CHARACTER`. Each is raised by [`crate::glue::glue`] on
+        // a session state change rather than on a timer.
+        frames_loaded: FramesLoaded,
+        addon_list: AddonListUpdate,
+        glue_screen: SetGlueScreen,
+        character_list: CharacterListUpdate,
+        first_character: SelectFirstCharacter,
+        selected_character: UpdateSelectedCharacter,
+        disconnected: DisconnectedFromServer,
         // The dialog events come last, with the close before the open. Both are
         // raised on the same session change (a failed logon closes the
         // "Connecting" dialog and opens the "Unable to connect" one), and
         // `GlueDialog_OnEvent`'s `CLOSE_STATUS_DIALOG` branch is an
         // unconditional `Hide()`, so the other order shows the failure for one
         // frame and then hides it.
-        take!(close_dialog, CloseStatusDialog);
-        take!(open_dialog, OpenStatusDialog);
-        out
+        //
+        // `GlueDialog_OnLoad` registers three events, of which this client
+        // raises these two. `UPDATE_STATUS_DIALOG` is the 1.12.1 client's
+        // progress line ("Authenticating", "Handshaking"), and this client has
+        // no source for it: its logon is one blocking call on the task pool
+        // with no intermediate states.
+        close_dialog: CloseStatusDialog,
+        open_dialog: OpenStatusDialog,
     }
-}
-
-/// Every event name this client can raise, for the check that counts the
-/// events the interface registers for but this client never raises.
-///
-/// A hand-written list rather than a derived one, like
-/// [`crate::lua::api::verbs::REGISTERED`], so that it can be compared with the
-/// set of names passed to `RegisterEvent`.
-pub const FIRED: [&str; 277] = [
-    PlayerDead::EVENT,
-    PlayerAlive::EVENT,
-    PlayerUnghost::EVENT,
-    CorpseInRange::EVENT,
-    CorpseOutOfRange::EVENT,
-    ResurrectRequest::EVENT,
-    ConfirmXpLoss::EVENT,
-    TradeRequest::EVENT,
-    TradeRequestCancel::EVENT,
-    TradeShow::EVENT,
-    TradeClosed::EVENT,
-    TradeUpdate::EVENT,
-    TradeAcceptUpdate::EVENT,
-    TradePlayerItemChanged::EVENT,
-    TradeTargetItemChanged::EVENT,
-    TradeMoneyChanged::EVENT,
-    PlayerTradeMoney::EVENT,
-    SpellsChanged::EVENT,
-    PetBarChanged::EVENT,
-    PetBarCooldownChanged::EVENT,
-    PetBarShowGrid::EVENT,
-    PetBarHideGrid::EVENT,
-    ConfirmPetUnlearn::EVENT,
-    UpdateShapeshiftForms::EVENT,
-    UnitPetExperience::EVENT,
-    UnitPetTrainingPoints::EVENT,
-    SpellUpdateCooldown::EVENT,
-    CurrentSpellCastChanged::EVENT,
-    UiErrorMessage::EVENT,
-    UiInfoMessage::EVENT,
-    PlayerTargetChanged::EVENT,
-    MouseoverUnitChanged::EVENT,
-    UnitNameUpdate::EVENT,
-    UnitLevelChanged::EVENT,
-    PlayerXpUpdate::EVENT,
-    UpdateExhaustion::EVENT,
-    PlayerAurasChanged::EVENT,
-    UnitAuraChanged::EVENT,
-    UnitPetChanged::EVENT,
-    UnitFactionChanged::EVENT,
-    PlayerLevelUp::EVENT,
-    ActionbarSlotChanged::EVENT,
-    ActionbarPageChanged::EVENT,
-    ActionbarBonusChanged::EVENT,
-    ActionbarShowGrid::EVENT,
-    ActionbarHideGrid::EVENT,
-    DeleteItemConfirm::EVENT,
-    ActionbarUpdateCooldown::EVENT,
-    ActionbarUpdateState::EVENT,
-    ActionbarUpdateUsable::EVENT,
-    StartAutorepeatSpell::EVENT,
-    StopAutorepeatSpell::EVENT,
-    SpellcastStart::EVENT,
-    SpellcastStop::EVENT,
-    SpellcastFailed::EVENT,
-    SpellcastInterrupted::EVENT,
-    SpellcastDelayed::EVENT,
-    SpellcastChannelStart::EVENT,
-    SpellcastChannelUpdate::EVENT,
-    SpellcastChannelStop::EVENT,
-    // The three mirror timer events; see [`super::timers`]. `MirrorTimer.lua`
-    // registers two of them, and `UIParent.lua`, the only file that calls
-    // `MirrorTimer_Show`, registers the start.
-    MirrorTimerStart::EVENT,
-    QuestGreetingEvent::EVENT,
-    QuestDetail::EVENT,
-    QuestProgressEvent::EVENT,
-    QuestCompleteEvent::EVENT,
-    QuestFinished::EVENT,
-    QuestItemUpdate::EVENT,
-    QuestLogUpdate::EVENT,
-    GossipShow::EVENT,
-    GossipClosed::EVENT,
-    ConfirmBinder::EVENT,
-    DuelRequested::EVENT,
-    DuelOutOfBounds::EVENT,
-    DuelInBounds::EVENT,
-    DuelFinished::EVENT,
-    ConfirmSummon::EVENT,
-    InspectHonorUpdate::EVENT,
-    TimePlayedMsg::EVENT,
-    UpdateWorldStates::EVENT,
-    TutorialTrigger::EVENT,
-    QuestAcceptConfirm::EVENT,
-    RaidTargetUpdated::EVENT,
-    BagUpdateCooldown::EVENT,
-    ItemTextBegin::EVENT,
-    ItemTextReady::EVENT,
-    ItemTextClosed::EVENT,
-    MerchantShow::EVENT,
-    MerchantUpdate::EVENT,
-    MerchantClosed::EVENT,
-    UpdateFaction::EVENT,
-    FriendListShow::EVENT,
-    FriendListUpdate::EVENT,
-    IgnoreListUpdate::EVENT,
-    WhoListUpdate::EVENT,
-    PlayerGuildUpdate::EVENT,
-    GuildRosterUpdate::EVENT,
-    GuildMotd::EVENT,
-    GuildInviteRequest::EVENT,
-    PetitionShow::EVENT,
-    PetitionClosed::EVENT,
-    GuildRegistrarShow::EVENT,
-    GuildRegistrarClosed::EVENT,
-    OpenTabardFrame::EVENT,
-    CloseTabardFrame::EVENT,
-    TabardCansaveChanged::EVENT,
-    TabardSavePending::EVENT,
-    SkillLinesChanged::EVENT,
-    CharacterPointsChanged::EVENT,
-    PartyMembersChanged::EVENT,
-    RaidRosterUpdate::EVENT,
-    ReadyCheck::EVENT,
-    PartyLeaderChanged::EVENT,
-    PartyLootMethodChanged::EVENT,
-    PartyInviteRequest::EVENT,
-    TrainerShow::EVENT,
-    TrainerUpdate::EVENT,
-    TrainerClosed::EVENT,
-    PetStableShow::EVENT,
-    PetStableUpdate::EVENT,
-    PetStableUpdatePaperdoll::EVENT,
-    PetStableClosed::EVENT,
-    BankframeOpened::EVENT,
-    BankframeClosed::EVENT,
-    PlayerbankslotsChanged::EVENT,
-    PlayerbankbagslotsChanged::EVENT,
-    MailShow::EVENT,
-    MailClosed::EVENT,
-    MailInboxUpdate::EVENT,
-    MailSendInfoUpdate::EVENT,
-    MailSendSuccess::EVENT,
-    MailFailed::EVENT,
-    SendMailMoneyChanged::EVENT,
-    SendMailCodChanged::EVENT,
-    CloseInboxItem::EVENT,
-    UpdatePendingMail::EVENT,
-    QuestWatchUpdate::EVENT,
-    TradeSkillShow::EVENT,
-    TradeSkillUpdate::EVENT,
-    TradeSkillClose::EVENT,
-    CraftShow::EVENT,
-    CraftUpdate::EVENT,
-    CraftClose::EVENT,
-    UpdateTradeskillRecast::EVENT,
-    TaximapOpened::EVENT,
-    TaximapClosed::EVENT,
-    LootOpened::EVENT,
-    LootSlotCleared::EVENT,
-    LootClosed::EVENT,
-    StartLootRoll::EVENT,
-    CancelLootRoll::EVENT,
-    ConfirmLootRoll::EVENT,
-    MirrorTimerStop::EVENT,
-    MirrorTimerPause::EVENT,
-    PlayerEnterCombat::EVENT,
-    PlayerLeaveCombat::EVENT,
-    VariablesLoaded::EVENT,
-    UpdateBindings::EVENT,
-    CVarUpdate::EVENT,
-    PlayerEnteringWorld::EVENT,
-    PlayerLeavingWorld::EVENT,
-    PlayerCamping::EVENT,
-    PlayerQuiting::EVENT,
-    LogoutCancel::EVENT,
-    ZoneChangedNewArea::EVENT,
-    ZoneChanged::EVENT,
-    MinimapZoneChanged::EVENT,
-    WorldMapUpdate::EVENT,
-    UnitHealthChanged::EVENT,
-    UnitMaxHealthChanged::EVENT,
-    UnitDisplaypowerChanged::EVENT,
-    // The nine names the character sheet registers, raised by one type; see
-    // `UnitStatsChanged::name`, and `PaperDollFrame_OnLoad` for the spelling.
-    // The other eight follow `PlayerMoney::EVENT` below.
-    UnitStatsChanged::EVENT,
-    // The events the bags and the paper doll's item buttons update on.
-    BagUpdate::EVENT,
-    UnitInventoryChanged::EVENT,
-    UnitQuestLogChanged::EVENT,
-    ItemLockChanged::EVENT,
-    PlayerMoney::EVENT,
-    "UNIT_RESISTANCES",
-    "UNIT_DAMAGE",
-    "UNIT_RANGEDDAMAGE",
-    "UNIT_ATTACK_SPEED",
-    "UNIT_ATTACK_POWER",
-    "UNIT_RANGED_ATTACK_POWER",
-    "UNIT_ATTACK",
-    "PLAYER_DAMAGE_DONE_MODS",
-    // The ten names one type is raised under; see `UnitPowerChanged::name`.
-    "UNIT_MANA",
-    "UNIT_MAXMANA",
-    "UNIT_RAGE",
-    "UNIT_MAXRAGE",
-    "UNIT_FOCUS",
-    "UNIT_MAXFOCUS",
-    "UNIT_ENERGY",
-    "UNIT_MAXENERGY",
-    "UNIT_HAPPINESS",
-    "UNIT_MAXHAPPINESS",
-    // Not a message type: the Lua host raises it once, at the end of
-    // `LuaHost::load_interface`, to say the chat windows now exist. The only
-    // code that applies a chat window's colour and alpha listens for it.
-    "UPDATE_CHAT_WINDOWS",
-    // Not a message type either: `lua::panels::addons::load_with` raises it
-    // with the addon's name as `arg1` after each addon's files and saved
-    // variables have run, at login and from `LoadAddOn`. Third-party addons
-    // initialise on it.
-    "ADDON_LOADED",
-    // Raised in the same way and from the same place as `UPDATE_CHAT_WINDOWS`,
-    // once per chat type: `(name, r, g, b)`. It is the only thing that writes
-    // `ChatTypeInfo[type].r/g/b`, so without it every chat line is white. The
-    // colours are the 1.12.1 client's defaults, in
-    // `super::chat::DEFAULT_COLOURS`.
-    "UPDATE_CHAT_COLOR",
-    // The twenty-six names one type is raised under; see
-    // [`ChatMessageReceived`] and [`super::chat::event_name`], which maps the
-    // wire's kind byte to a name. Listed in the order `ChatFrame.lua`'s
-    // `ChatTypeGroup` declares its groups, and checked against that mapping by
-    // `every_kind_maps_to_an_event_the_client_lists_as_fired`.
-    "CHAT_MSG_SAY",
-    "CHAT_MSG_EMOTE",
-    "CHAT_MSG_TEXT_EMOTE",
-    "CHAT_MSG_YELL",
-    "CHAT_MSG_WHISPER",
-    "CHAT_MSG_WHISPER_INFORM",
-    "CHAT_MSG_PARTY",
-    "CHAT_MSG_RAID",
-    "CHAT_MSG_GUILD",
-    "CHAT_MSG_OFFICER",
-    "CHAT_MSG_MONSTER_SAY",
-    "CHAT_MSG_MONSTER_YELL",
-    "CHAT_MSG_MONSTER_EMOTE",
-    "CHAT_MSG_MONSTER_WHISPER",
-    "CHAT_MSG_CHANNEL",
-    "CHAT_MSG_CHANNEL_JOIN",
-    "CHAT_MSG_CHANNEL_LEAVE",
-    "CHAT_MSG_CHANNEL_LIST",
-    "CHAT_MSG_CHANNEL_NOTICE",
-    "CHAT_MSG_CHANNEL_NOTICE_USER",
-    "CHAT_MSG_SYSTEM",
-    "CHAT_MSG_AFK",
-    "CHAT_MSG_DND",
-    "CHAT_MSG_IGNORED",
-    "CHAT_MSG_SKILL",
-    "CHAT_MSG_LOOT",
-    // The forty-five names the combat log is raised under. They use the same
-    // mechanism from a different producer: `super::log` composes a sentence
-    // and writes a [`ChatMessageReceived`] under one of these, and
-    // `ChatFrame.lua` routes it through the same `ChatTypeGroup` table as the
-    // twenty-six above.
-    //
-    // Listed in chat type id order rather than alphabetically, because that is
-    // the order `vale_assets::interface::chattype::TYPES` holds them in and the
-    // order the six routing tables follow.
-    // `every_window_the_combat_log_can_route_to_is_listed_as_fired` keeps this
-    // block and those tables consistent.
-    "CHAT_MSG_COMBAT_SELF_HITS",
-    "CHAT_MSG_COMBAT_SELF_MISSES",
-    "CHAT_MSG_COMBAT_PET_HITS",
-    "CHAT_MSG_COMBAT_PET_MISSES",
-    "CHAT_MSG_COMBAT_PARTY_HITS",
-    "CHAT_MSG_COMBAT_PARTY_MISSES",
-    "CHAT_MSG_COMBAT_FRIENDLYPLAYER_HITS",
-    "CHAT_MSG_COMBAT_FRIENDLYPLAYER_MISSES",
-    "CHAT_MSG_COMBAT_HOSTILEPLAYER_HITS",
-    "CHAT_MSG_COMBAT_HOSTILEPLAYER_MISSES",
-    "CHAT_MSG_COMBAT_CREATURE_VS_SELF_HITS",
-    "CHAT_MSG_COMBAT_CREATURE_VS_SELF_MISSES",
-    "CHAT_MSG_COMBAT_CREATURE_VS_PARTY_HITS",
-    "CHAT_MSG_COMBAT_CREATURE_VS_PARTY_MISSES",
-    "CHAT_MSG_COMBAT_CREATURE_VS_CREATURE_HITS",
-    "CHAT_MSG_COMBAT_CREATURE_VS_CREATURE_MISSES",
-    "CHAT_MSG_COMBAT_FRIENDLY_DEATH",
-    "CHAT_MSG_COMBAT_HOSTILE_DEATH",
-    "CHAT_MSG_COMBAT_XP_GAIN",
-    "CHAT_MSG_SPELL_SELF_DAMAGE",
-    "CHAT_MSG_SPELL_SELF_BUFF",
-    "CHAT_MSG_SPELL_PET_DAMAGE",
-    "CHAT_MSG_SPELL_PET_BUFF",
-    "CHAT_MSG_SPELL_PARTY_DAMAGE",
-    "CHAT_MSG_SPELL_PARTY_BUFF",
-    "CHAT_MSG_SPELL_FRIENDLYPLAYER_DAMAGE",
-    "CHAT_MSG_SPELL_FRIENDLYPLAYER_BUFF",
-    "CHAT_MSG_SPELL_HOSTILEPLAYER_DAMAGE",
-    "CHAT_MSG_SPELL_HOSTILEPLAYER_BUFF",
-    "CHAT_MSG_SPELL_CREATURE_VS_SELF_DAMAGE",
-    "CHAT_MSG_SPELL_CREATURE_VS_SELF_BUFF",
-    "CHAT_MSG_SPELL_CREATURE_VS_PARTY_DAMAGE",
-    "CHAT_MSG_SPELL_CREATURE_VS_PARTY_BUFF",
-    "CHAT_MSG_SPELL_CREATURE_VS_CREATURE_DAMAGE",
-    "CHAT_MSG_SPELL_CREATURE_VS_CREATURE_BUFF",
-    "CHAT_MSG_SPELL_PERIODIC_SELF_DAMAGE",
-    "CHAT_MSG_SPELL_PERIODIC_SELF_BUFFS",
-    "CHAT_MSG_SPELL_PERIODIC_PARTY_DAMAGE",
-    "CHAT_MSG_SPELL_PERIODIC_PARTY_BUFFS",
-    "CHAT_MSG_SPELL_PERIODIC_FRIENDLYPLAYER_DAMAGE",
-    "CHAT_MSG_SPELL_PERIODIC_FRIENDLYPLAYER_BUFFS",
-    "CHAT_MSG_SPELL_PERIODIC_HOSTILEPLAYER_DAMAGE",
-    "CHAT_MSG_SPELL_PERIODIC_HOSTILEPLAYER_BUFFS",
-    "CHAT_MSG_SPELL_PERIODIC_CREATURE_DAMAGE",
-    "CHAT_MSG_SPELL_PERIODIC_CREATURE_BUFFS",
-    // The `Interface\GlueXML\` events. They belong to a different directory and
-    // are listed here for the same reason as the rest: `--audit --events` walks
-    // [`FIRED`] and counts unraised events against it, and the GlueXML frames
-    // register through the same `RegisterEvent` as FrameXML's.
-    //
-    // `GlueParent_OnLoad` registers `FRAMES_LOADED` and `SET_GLUE_SCREEN`;
-    // `CharacterSelect_OnLoad` registers `CHARACTER_LIST_UPDATE`,
-    // `UPDATE_SELECTED_CHARACTER` and `SELECT_FIRST_CHARACTER`. Each is raised
-    // by [`crate::glue::glue`] on a session state change rather than on a
-    // timer.
-    FramesLoaded::EVENT,
-    AddonListUpdate::EVENT,
-    SetGlueScreen::EVENT,
-    CharacterListUpdate::EVENT,
-    UpdateSelectedCharacter::EVENT,
-    SelectFirstCharacter::EVENT,
-    DisconnectedFromServer::EVENT,
-    // `GlueDialog_OnLoad` registers three events, of which this client raises
-    // two. `UPDATE_STATUS_DIALOG` is the 1.12.1 client's progress line
-    // ("Authenticating", "Handshaking"), and this client has no source for it:
-    // its logon is one blocking call on the task pool with no intermediate
-    // states.
-    OpenStatusDialog::EVENT,
-    CloseStatusDialog::EVENT,
-];
-
-/// Registers every message type in this module.
-///
-/// A message type with no `add_message` produces no error and no warning; the
-/// writer drops the message. This list must therefore match the types above.
-/// `every_event_this_module_defines_is_registered` checks it.
-pub(crate) fn register(app: &mut App) {
-    app.add_message::<UiErrorMessage>()
-        .add_message::<UiInfoMessage>()
-        .add_message::<PlayerTargetChanged>()
-        .add_message::<MouseoverUnitChanged>()
-        .add_message::<ActionbarSlotChanged>()
-        .add_message::<ActionbarPageChanged>()
-        .add_message::<ActionbarBonusChanged>()
-        .add_message::<ActionbarShowGrid>()
-        .add_message::<ActionbarHideGrid>()
-        .add_message::<DeleteItemConfirm>()
-        .add_message::<ActionbarUpdateCooldown>()
-        .add_message::<ActionbarUpdateState>()
-        .add_message::<ActionbarUpdateUsable>()
-        .add_message::<StartAutorepeatSpell>()
-        .add_message::<StopAutorepeatSpell>()
-        .add_message::<ItemLockChanged>()
-        .add_message::<SpellsChanged>()
-        .add_message::<PetBarChanged>()
-        .add_message::<PetBarCooldownChanged>()
-        .add_message::<UnitPetExperience>()
-        .add_message::<UnitPetTrainingPoints>()
-        .add_message::<SpellUpdateCooldown>()
-        .add_message::<CurrentSpellCastChanged>()
-        .add_message::<SpellcastStart>()
-        .add_message::<SpellcastStop>()
-        .add_message::<SpellcastFailed>()
-        .add_message::<SpellcastInterrupted>()
-        .add_message::<SpellcastDelayed>()
-        .add_message::<SpellcastChannelStart>()
-        .add_message::<SpellcastChannelUpdate>()
-        .add_message::<SpellcastChannelStop>()
-        .add_message::<MirrorTimerStart>()
-        .add_message::<QuestGreetingEvent>()
-        .add_message::<QuestDetail>()
-        .add_message::<QuestProgressEvent>()
-        .add_message::<QuestCompleteEvent>()
-        .add_message::<QuestFinished>()
-        .add_message::<QuestItemUpdate>()
-        .add_message::<QuestLogUpdate>()
-        .add_message::<GossipShow>()
-        .add_message::<GossipClosed>()
-        .add_message::<ConfirmBinder>()
-        .add_message::<DuelRequested>()
-        .add_message::<DuelOutOfBounds>()
-        .add_message::<DuelInBounds>()
-        .add_message::<DuelFinished>()
-        .add_message::<ConfirmSummon>()
-        .add_message::<InspectHonorUpdate>()
-        .add_message::<TimePlayedMsg>()
-        .add_message::<UpdateWorldStates>()
-        .add_message::<TutorialTrigger>()
-        .add_message::<QuestAcceptConfirm>()
-        .add_message::<RaidTargetUpdated>()
-        .add_message::<BagUpdateCooldown>()
-        .add_message::<ItemTextBegin>()
-        .add_message::<ItemTextReady>()
-        .add_message::<ItemTextClosed>()
-        .add_message::<MerchantShow>()
-        .add_message::<MerchantUpdate>()
-        .add_message::<MerchantClosed>()
-        .add_message::<UpdateFaction>()
-        .add_message::<FriendListShow>()
-        .add_message::<FriendListUpdate>()
-        .add_message::<IgnoreListUpdate>()
-        .add_message::<WhoListUpdate>()
-        .add_message::<PlayerGuildUpdate>()
-        .add_message::<GuildRosterUpdate>()
-        .add_message::<GuildMotd>()
-        .add_message::<GuildInviteRequest>()
-        .add_message::<PetitionShow>()
-        .add_message::<PetitionClosed>()
-        .add_message::<GuildRegistrarShow>()
-        .add_message::<GuildRegistrarClosed>()
-        .add_message::<OpenTabardFrame>()
-        .add_message::<CloseTabardFrame>()
-        .add_message::<TabardCansaveChanged>()
-        .add_message::<TabardSavePending>()
-        .add_message::<SkillLinesChanged>()
-        .add_message::<CharacterPointsChanged>()
-        .add_message::<PartyMembersChanged>()
-        .add_message::<RaidRosterUpdate>()
-        .add_message::<ReadyCheck>()
-        .add_message::<PartyLeaderChanged>()
-        .add_message::<PartyLootMethodChanged>()
-        .add_message::<PartyInviteRequest>()
-        .add_message::<TrainerShow>()
-        .add_message::<TrainerUpdate>()
-        .add_message::<TrainerClosed>()
-        .add_message::<PetStableShow>()
-        .add_message::<PetStableUpdate>()
-        .add_message::<PetStableUpdatePaperdoll>()
-        .add_message::<PetStableClosed>()
-        .add_message::<BankframeOpened>()
-        .add_message::<BankframeClosed>()
-        .add_message::<PlayerbankslotsChanged>()
-        .add_message::<PlayerbankbagslotsChanged>()
-        .add_message::<MailShow>()
-        .add_message::<MailClosed>()
-        .add_message::<MailInboxUpdate>()
-        .add_message::<MailSendInfoUpdate>()
-        .add_message::<MailSendSuccess>()
-        .add_message::<MailFailed>()
-        .add_message::<SendMailMoneyChanged>()
-        .add_message::<SendMailCodChanged>()
-        .add_message::<CloseInboxItem>()
-        .add_message::<UpdatePendingMail>()
-        .add_message::<QuestWatchUpdate>()
-        .add_message::<TradeSkillShow>()
-        .add_message::<TradeSkillUpdate>()
-        .add_message::<TradeSkillClose>()
-        .add_message::<CraftShow>()
-        .add_message::<CraftUpdate>()
-        .add_message::<CraftClose>()
-        .add_message::<UpdateTradeskillRecast>()
-        .add_message::<TaximapOpened>()
-        .add_message::<TaximapClosed>()
-        .add_message::<LootOpened>()
-        .add_message::<LootSlotCleared>()
-        .add_message::<LootClosed>()
-        .add_message::<StartLootRoll>()
-        .add_message::<CancelLootRoll>()
-        .add_message::<ConfirmLootRoll>()
-        .add_message::<MirrorTimerStop>()
-        .add_message::<MirrorTimerPause>()
-        .add_message::<PlayerEnterCombat>()
-        .add_message::<PlayerLeaveCombat>()
-        .add_message::<VariablesLoaded>()
-        .add_message::<UpdateBindings>()
-        .add_message::<CVarUpdate>()
-        .add_message::<PlayerEnteringWorld>()
-        .add_message::<ZoneChangedNewArea>()
-        .add_message::<ZoneChanged>()
-        .add_message::<MinimapZoneChanged>()
-        .add_message::<WorldMapUpdate>()
-        .add_message::<PlayerLeavingWorld>()
-        .add_message::<PlayerCamping>()
-        .add_message::<PlayerQuiting>()
-        .add_message::<LogoutCancel>()
-        .add_message::<PlayerDead>()
-        .add_message::<PlayerAlive>()
-        .add_message::<PlayerUnghost>()
-        .add_message::<CorpseInRange>()
-        .add_message::<CorpseOutOfRange>()
-        .add_message::<ResurrectRequest>()
-        .add_message::<ConfirmXpLoss>()
-        .add_message::<TradeRequest>()
-        .add_message::<TradeRequestCancel>()
-        .add_message::<TradeShow>()
-        .add_message::<TradeClosed>()
-        .add_message::<TradeUpdate>()
-        .add_message::<TradeAcceptUpdate>()
-        .add_message::<TradePlayerItemChanged>()
-        .add_message::<TradeTargetItemChanged>()
-        .add_message::<TradeMoneyChanged>()
-        .add_message::<PlayerTradeMoney>()
-        .add_message::<UnitHealthChanged>()
-        .add_message::<UnitMaxHealthChanged>()
-        .add_message::<UnitPowerChanged>()
-        .add_message::<UnitDisplaypowerChanged>()
-        .add_message::<UnitNameUpdate>()
-        .add_message::<UnitLevelChanged>()
-        .add_message::<PlayerXpUpdate>()
-        .add_message::<UpdateExhaustion>()
-        .add_message::<PlayerAurasChanged>()
-        .add_message::<UnitAuraChanged>()
-        .add_message::<UnitPetChanged>()
-        .add_message::<UnitFactionChanged>()
-        .add_message::<PlayerLevelUp>()
-        .add_message::<SoundPushed>()
-        .add_message::<PetBarShowGrid>()
-        .add_message::<PetBarHideGrid>()
-        .add_message::<ConfirmPetUnlearn>()
-        .add_message::<UpdateShapeshiftForms>()
-        .add_message::<PetTalkHeard>()
-        .add_message::<PetDismissHeard>()
-        .add_message::<UnitStatsChanged>()
-        .add_message::<BagUpdate>()
-        .add_message::<UnitInventoryChanged>()
-        .add_message::<UnitQuestLogChanged>()
-        .add_message::<PlayerMoney>()
-        .add_message::<ChatMessageReceived>()
-        // The GlueXML events, which use the same mechanism before the world is
-        // entered.
-        .add_message::<FramesLoaded>()
-        .add_message::<AddonListUpdate>()
-        .add_message::<SetGlueScreen>()
-        .add_message::<CharacterListUpdate>()
-        .add_message::<UpdateSelectedCharacter>()
-        .add_message::<SelectFirstCharacter>()
-        .add_message::<DisconnectedFromServer>()
-        .add_message::<OpenStatusDialog>()
-        .add_message::<CloseStatusDialog>();
+    not_drained {
+        SoundPushed,
+        PetTalkHeard,
+        PetDismissHeard,
+    }
+    raised_without_a_message {
+        // The Lua host raises it once, at the end of
+        // `LuaHost::load_interface`, to say the chat windows now exist. The
+        // only code that applies a chat window's colour and alpha listens for
+        // it.
+        "UPDATE_CHAT_WINDOWS",
+        // `lua::panels::addons::load_with` raises it with the addon's name as
+        // `arg1` after each addon's files and saved variables have run, at
+        // login and from `LoadAddOn`. Third-party addons initialise on it.
+        "ADDON_LOADED",
+        // Raised in the same way and from the same place as
+        // `UPDATE_CHAT_WINDOWS`, once per chat type: `(name, r, g, b)`. It is
+        // the only thing that writes `ChatTypeInfo[type].r/g/b`, so without it
+        // every chat line is white. The colours are the 1.12.1 client's
+        // defaults, in `super::chat::DEFAULT_COLOURS`.
+        "UPDATE_CHAT_COLOR",
+    }
 }
 
 #[cfg(test)]
@@ -4056,10 +3570,11 @@ mod tests {
     use super::*;
     use bevy::ecs::message::Messages as MessageQueue;
 
+
     /// A message type that is not registered is discarded without an error.
     /// `MessageWriter::write` on an unregistered type does not panic and does
     /// not log, so the symptom is a frame that never updates. This test catches
-    /// a type added above without a line in [`register`].
+    /// a type added above without an entry in the `game_events!` list.
     #[test]
     fn every_event_this_module_defines_is_registered() {
         let mut app = App::new();
@@ -4194,12 +3709,13 @@ mod tests {
     }
 
     /// A message type that is never drained is lost without an error, as an
-    /// unregistered one is. [`register`] and [`GameEventReaders`] are two lists
-    /// of the same types, and a type can be added to one and not the other. The
-    /// nine stat events were once written, registered and listed in [`FIRED`]
-    /// but had no `take!`, so they were never delivered and nothing reported it.
+    /// unregistered one is. The nine stat events were once written, registered
+    /// and listed in [`FIRED`] but never drained, so they were never delivered
+    /// and nothing reported it. [`register`] and [`GameEventReaders`] are now
+    /// generated from the one `game_events!` list; this test checks that each
+    /// group also comes out of the drain under its own name.
     ///
-    /// One assertion per group rather than a count, so a missing `take!` is
+    /// One assertion per group rather than a count, so a missing group is
     /// named. The names are asserted too, because the name is all a
     /// `RegisterEvent` can match.
     #[test]
@@ -4279,8 +3795,8 @@ mod tests {
     /// `UPDATE_BINDINGS` reaches the drain. It is the only event that redraws an
     /// action button's grey hotkey label after a rebind.
     ///
-    /// The name can be wrong in four places: the message type, the reader on
-    /// [`GameEventReaders`], the `take!` line and [`FIRED`]. `ActionButton.lua`
+    /// The name can be wrong in two places: the message type's
+    /// [`GameEvent::EVENT`] and its entry in the `game_events!` list. `ActionButton.lua`
     /// is the only FrameXML frame that registers for it, so if it never arrives
     /// the bar keeps showing the old key and no error is reported.
     #[test]

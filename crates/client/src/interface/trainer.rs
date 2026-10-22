@@ -50,7 +50,8 @@ use super::events::{TrainerClosed, TrainerShow, TrainerUpdate};
 use crate::assets::GameAssets;
 use crate::world::session::{LocalPlayer, Session, WorldEntity};
 
-/// One of the three trainer packets, handed on from [`super::action::drain_events`].
+/// One of the three trainer packets, handed on from
+/// [`crate::world::incoming::drain_events`].
 #[derive(Message, Debug, Clone)]
 pub enum TrainerAnswer {
     Show(Box<TrainerList>),
@@ -387,8 +388,8 @@ fn presses(
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
     mut out: MessageWriter<TrainerPress>,
 ) {
-    let Some(mut host) = host else { return };
-    for press in host.take_trainer_presses() {
+    let Some(host) = host else { return };
+    for press in crate::lua::panels::trainer::take(&host) {
         out.write(press);
     }
 }

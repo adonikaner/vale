@@ -292,7 +292,7 @@ fn fragment(mesh_in: VertexOutput) -> @location(0) vec4<f32> {
     // `development` map and on nothing the shipped continents ship, so the
     // renderer's fallback — layer 0, which is the *tile's* first texture,
     // because a draw group with no textures has none of its own — was
-    // unobservable until an editor added a texture to the tile. Then every
+    // unobservable until a caller painted a texture onto the tile. Then every
     // blank chunk in the tile put on whatever had just been painted on one of
     // them, while its own `MCLY` was still empty and the panel still said
     // "0 of 4 textures".

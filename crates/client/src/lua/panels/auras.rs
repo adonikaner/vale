@@ -213,7 +213,7 @@ pub(in crate::lua) fn tooltip_lines(aura: &AuraInfo) -> (&str, &str) {
 
 #[cfg(test)]
 mod tests {
-    use crate::lua::api::tests::{eval, Stub};
+    use crate::lua::api::stub::{eval, Stub};
 
     /// A player carrying two buffs and a debuff, and a target carrying one of
     /// each — the smallest world that exercises both families.
@@ -318,15 +318,17 @@ pub trait AuraAnswers {
     // family answers a *handle* rather than a value.
 
     /// `GetPlayerBuff(index, filter)`'s handle — **`-1` for none**, never nil.
-    fn player_buff(&self, index: usize, filter: &str) -> i32;
+    fn player_buff(&self, _index: usize, _filter: &str) -> i32 { 0 }
     /// What a handle points at, or `None` for the `-1` the interface passes
     /// back in freely.
-    fn player_buff_at(&self, handle: i32) -> Option<super::auras::AuraInfo>;
+    fn player_buff_at(&self, _handle: i32) -> Option<super::auras::AuraInfo> { None }
     /// `UnitBuff` / `UnitDebuff` — the `index`-th aura of one half, **one-based
     /// per half**, or `None` past the end and for a unit this client keeps no
     /// list for.
-    fn unit_aura(&self, token: &str, index: usize, helpful: bool)
-        -> Option<super::auras::AuraInfo>;
+    fn unit_aura(&self, _token: &str, _index: usize, _helpful: bool)
+        -> Option<super::auras::AuraInfo> {
+        None
+    }
 }
 
 impl AuraAnswers for super::super::api::Live<'_, '_, '_> {

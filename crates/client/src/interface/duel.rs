@@ -219,8 +219,8 @@ fn count_down(
 
 /// Drain what the interface pressed.
 fn presses(host: Option<NonSendMut<crate::lua::host::LuaHost>>, mut out: MessageWriter<DuelPress>) {
-    let Some(mut host) = host else { return };
-    for press in host.take_duel_presses() {
+    let Some(host) = host else { return };
+    for press in crate::lua::panels::duel::take(&host) {
         out.write(press);
     }
 }

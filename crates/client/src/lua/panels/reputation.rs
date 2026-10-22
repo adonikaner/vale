@@ -53,6 +53,7 @@ use std::sync::Arc;
 
 use vale_assets::tables::reputation::{Factions, Reputation};
 use vale_protocol::socket::session::ReputationVerb;
+use crate::lua::host::LuaHost;
 
 /// The **unscoped reads and writes** this file registers, sorted — the same list
 /// [`super::super::api::READS`] is for the scoped ones.
@@ -213,7 +214,9 @@ pub type Held = Rc<RefCell<Standing>>;
 pub type Queue = Rc<RefCell<Vec<ReputationVerb>>>;
 
 /// Register all twelve. Unscoped — see the module comment.
-pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let held: &Held = &super::stored(lua);
+    let queue: &Queue = &super::stored(lua);
     let globals = lua.globals();
 
     /// A verb taking a one-based index and changing the board.
@@ -389,6 +392,19 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held, queue: &Queue) -> m
     Ok(())
 }
 
+/// The reputation panel's board. See
+/// [`super::reputation`]. One caller,
+/// [`crate::interface::reputation`], which writes the server's updates
+/// into it and reads the version back.
+pub fn held(host: &LuaHost) -> Held {
+    super::stored(host.state())
+}
+
+/// Take and clear the reputation panel's three verbs that send a packet.
+pub fn take(host: &LuaHost) -> Vec<vale_protocol::socket::session::ReputationVerb> {
+    super::taken(host)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,7 +425,9 @@ mod tests {
         let held: Held = Rc::new(RefCell::new(standing));
         let queue: Queue = Rc::new(RefCell::new(Vec::new()));
         let lua = mlua::Lua::new();
-        register(&lua, &held, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&held));
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         (held, queue, lua)
     }
 
@@ -552,7 +570,9 @@ mod tests {
         let held: Held = Rc::new(RefCell::new(Standing::default()));
         let queue: Queue = Rc::new(RefCell::new(Vec::new()));
         let lua = mlua::Lua::new();
-        register(&lua, &held, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&held));
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         let count: usize = lua.load("return GetNumFactions()").eval().expect("runs");
         assert_eq!(count, 0);
         lua.load("SetSelectedFaction(1); CollapseFactionHeader(1); FactionToggleAtWar(1)")

@@ -198,10 +198,10 @@ fn hand_egui_its_camera(mut settings: ResMut<bevy_egui::EguiGlobalSettings>) {
 /// the centre row, on top of everything, with no depth test. A light's
 /// falloff ring lies at world `z = 0` (Bevy `y = 0`) and runs to 2,648 yards,
 /// so a light near the origin drew that line; any other gizmo crossing the
-/// origin — a diagnostic overlay, one of the editor's gizmos — would too.
+/// origin — a diagnostic overlay, a gizmo drawn by a host app — would too.
 ///
-/// 31 is above every layer the portraits, the paper doll and the editor's
-/// stage hand out.
+/// 31 is above every layer the portraits, the paper doll and a host app's
+/// offscreen stage hand out.
 pub const PRESENT_LAYER: usize = 31;
 
 /// The camera the window sees: one quad of [`WorldFrame`], and the UI over it.
@@ -571,7 +571,7 @@ mod tests {
         let present = RenderLayers::layer(PRESENT_LAYER);
         assert!(!present.intersects(&RenderLayers::layer(0)));
         // …and it is not one of the layers the portraits, the paper doll and
-        // the editor's stage use, which start at 1 and count up.
+        // a host app's offscreen stage use, which start at 1 and count up.
         assert!(PRESENT_LAYER > 16);
     }
 }

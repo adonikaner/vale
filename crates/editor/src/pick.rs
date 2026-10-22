@@ -56,7 +56,7 @@
 //! **One thing it is not right about**, and it is the collision world's own
 //! limit rather than this module's: a doodad or building *moved* in this
 //! session keeps its hull where it was until the tile is read again — see
-//! `tools::wmos`, where that is written up. Placing on top of something just
+//! `tools::placements::wmos`, where that is written up. Placing on top of something just
 //! dragged aims at where it used to be.
 
 use crate::session::EditSession;

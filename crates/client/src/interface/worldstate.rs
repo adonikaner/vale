@@ -120,7 +120,8 @@ fn in_defense_channel(host: Option<&crate::lua::host::LuaHost>) -> bool {
     let Some(host) = host else {
         return false;
     };
-    let board = host.channels().borrow();
+    let channels = crate::lua::panels::channels::held(&host);
+    let board = channels.borrow();
     let Some(table) = board.table.as_ref() else {
         return false;
     };

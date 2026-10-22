@@ -77,7 +77,7 @@
 //!
 //! The brush rings are drawn solid and slightly lighter while a stroke is
 //! changing the ground, for a mouse as well as for a pen; see
-//! `tools::terrain::rings`. While the pen tip is on the tablet over the world,
+//! `tools::ground::terrain::rings`. While the pen tip is on the tablet over the world,
 //! and one of the two pressure settings is on, `meter` draws a bar beside the
 //! cursor that fills with the pressure and prints it as a percentage. With
 //! both settings off the pressure changes nothing, so no bar is drawn.
@@ -85,7 +85,7 @@
 //! ## Where the settings are written
 //!
 //! `Edit\tablet.txt`, beside the project folders, for the reason
-//! [`crate::favourites`] gives: the settings belong to the machine and the
+//! [`crate::prefs::favourites`] gives: the settings belong to the machine and the
 //! person, and a project's files are published into a patch archive. One
 //! `key value` pair per line.
 
@@ -97,7 +97,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 
-use crate::ui::theme;
+use crate::ui::widgets::theme;
 
 /// The file's name under `Edit\`.
 pub const FILE: &str = "tablet.txt";

@@ -370,7 +370,7 @@ pub fn bake(
 /// `watch` is called with the number of chunks finished, after each one. A bake
 /// is about a minute and there are 256 of them, so this is the difference
 /// between a window that has stopped answering and one that is visibly working
-/// — see `vale_ide::tools::tiles`, which runs it on a task pool and draws
+/// — see `vale_ide::map::tiles`, which runs it on a task pool and draws
 /// the count on the status line.
 ///
 /// It is a separate entry point rather than an `Option` on [`bake`] because

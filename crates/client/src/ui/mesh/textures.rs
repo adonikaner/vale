@@ -131,12 +131,12 @@ impl UiTextures {
 
     /// **Forget one minimap picture**, so the next draw reads its path again.
     ///
-    /// For a host that has changed the bytes the path reads back as — the
-    /// world editor redrawing a tile's picture. The cache is keyed by the
-    /// path the index names and kept for the life of the process, so without
-    /// this a picture redrawn after the first playtest was never seen again.
-    /// Matched without case, since the index and the writer spell the
-    /// directory differently.
+    /// For a host that has changed the bytes the path reads back as, such as
+    /// a caller that rewrote a tile and redrew its picture. The cache is
+    /// keyed by the path the index names and kept for the life of the process,
+    /// so without this a picture redrawn after the first playtest was never
+    /// seen again. Matched without case, since the index and the writer spell
+    /// the directory differently.
     pub fn forget_minimap(&mut self, path: &str) {
         self.minimap.retain(|key, _| !key.eq_ignore_ascii_case(path));
     }

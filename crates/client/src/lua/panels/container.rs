@@ -676,7 +676,7 @@ fn slot_of(answers: &dyn Answers, bag: Option<i64>, slot: Option<i64>) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lua::api::tests::{eval, Stub};
+    use crate::lua::api::stub::{eval, Stub};
 
     /// The link format, byte for byte, as the 1.12.1 client writes it. Every
     /// shift-click on an item puts this in the chat line.
@@ -895,52 +895,60 @@ pub trait ContainerAnswers {
 
     /// `GetContainerNumSlots(bag)`: 0 for a bag id with no bag, on which
     /// `ToggleBag` refuses to open.
-    fn container_num_slots(&self, bag: i32) -> usize;
+    fn container_num_slots(&self, _bag: i32) -> usize { 0 }
     /// `GetContainerItemInfo(bag, slot)`, one-based. `None` for an empty slot,
     /// which becomes five nils rather than one.
-    fn container_item(&self, bag: i32, slot: usize) -> Option<super::container::SlotContents>;
+    fn container_item(&self, _bag: i32, _slot: usize) -> Option<super::container::SlotContents> {
+        None
+    }
     /// The slot's `|Hitem:` link; `None` for an empty slot.
-    fn container_item_link(&self, bag: i32, slot: usize) -> Option<String>;
+    fn container_item_link(&self, _bag: i32, _slot: usize) -> Option<String> { None }
     /// `GetContainerItemCooldown(bag, slot)`: `(start, duration, enable)` in
     /// the time base of [`Answers::now`], computed as
     /// [`Answers::action_cooldown`] computes it, from the same three clocks.
     /// The idle triple for an empty slot or an item with no `ON_USE` spell.
-    fn container_item_cooldown(&self, bag: i32, slot: usize) -> (f64, f64, bool);
+    fn container_item_cooldown(&self, _bag: i32, _slot: usize) -> (f64, f64, bool) {
+        Default::default()
+    }
     /// The same for a worn slot, such as a trinket.
-    fn inventory_item_cooldown(&self, token: &str, id: u32) -> (f64, f64, bool);
+    fn inventory_item_cooldown(&self, _token: &str, _id: u32) -> (f64, f64, bool) {
+        Default::default()
+    }
     /// `GetBagName(bag)`. `None` for the backpack, which is not an item (see
     /// [`vale_protocol::play::items`]); on nil the interface uses its
     /// `BACKPACK_TOOLTIP` string.
-    fn bag_name(&self, bag: i32) -> Option<String>;
+    fn bag_name(&self, _bag: i32) -> Option<String> { None }
     /// The four `GetInventoryItem*` reads of one worn slot, in one answer:
     /// they are called in consecutive lines, and one lookup is cheaper and
     /// gives consistent values.
-    fn inventory_item(&self, token: &str, id: u32) -> Option<super::container::SlotContents>;
+    fn inventory_item(&self, _token: &str, _id: u32) -> Option<super::container::SlotContents> {
+        None
+    }
     /// `GetInventoryItemLink(unit, id)`.
-    fn inventory_item_link(&self, token: &str, id: u32) -> Option<String>;
+    fn inventory_item_link(&self, _token: &str, _id: u32) -> Option<String> { None }
     /// `GetInventorySlotInfo(name)`: `(id, empty art, checkRelic)` from
     /// `PaperDollItemFrame.dbc`. `None` for a name the table does not have.
-    fn inventory_slot_info(&self, name: &str) -> Option<(u32, String, bool)>;
+    fn inventory_slot_info(&self, _name: &str) -> Option<(u32, String, bool)> { None }
     /// `GetItemInfo`: `None` for an entry whose template has not arrived,
     /// which becomes nine nils, as the 1.12.1 client returns on a cold cache.
-    fn item_info(&self, entry: u32) -> Option<super::container::ItemDetails>;
+    fn item_info(&self, _entry: u32) -> Option<super::container::ItemDetails> { None }
     /// `GetItemCount(entry)`: summed over every container and the worn slots.
-    fn item_count(&self, entry: u32) -> u32;
+    fn item_count(&self, _entry: u32) -> u32 { 0 }
     /// `GetMoney()`, in copper.
-    fn money(&self) -> u32;
+    fn money(&self) -> u32 { 0 }
     /// `GetCoinIcon(copper)`: the full icon path for an amount. `None` before
     /// the archives are open, which draws no coin rather than a broken one.
-    fn coin_icon(&self, copper: u32) -> Option<String>;
+    fn coin_icon(&self, _copper: u32) -> Option<String> { None }
     /// `CursorHasItem()`: whether the cursor is carrying an item from the bags.
     /// The interface directory calls it in four places, all
     /// deciding whether a click on a bag button puts an item down or opens the
     /// bag, so a spell on the cursor returns nil here rather than 1; see
     /// [`crate::interface::cursor::Cursor::has_item`].
-    fn cursor_has_item(&self) -> bool;
+    fn cursor_has_item(&self) -> bool { false }
     /// `CursorHasSpell()`: whether the cursor is carrying a spell.
-    fn cursor_has_spell(&self) -> bool;
+    fn cursor_has_spell(&self) -> bool { false }
     /// The tooltip contents for `GameTooltip:SetBagItem(bag, slot)`.
-    fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<api::ItemTip>;
+    fn bag_item_tip(&self, _bag: i32, _slot: usize) -> Option<api::ItemTip> { None }
     /// The sell price an item tooltip shows while a merchant window is open,
     /// in copper: `Some(0)` for an item with no sell price ("No sell price"),
     /// `None` when no line is shown. See [`SoldItem`].
@@ -949,11 +957,11 @@ pub trait ContainerAnswers {
         None
     }
     /// The tooltip contents for `GameTooltip:SetInventoryItem(unit, id)`.
-    fn inventory_item_tip(&self, token: &str, id: u32) -> Option<api::ItemTip>;
+    fn inventory_item_tip(&self, _token: &str, _id: u32) -> Option<api::ItemTip> { None }
     /// The tooltip contents for `GameTooltip:SetHyperlink("item:…")`: the same
     /// as for a carried item but with no item instance, so no durability and
     /// never soulbound.
-    fn item_tip(&self, entry: u32) -> Option<api::ItemTip>;
+    fn item_tip(&self, _entry: u32) -> Option<api::ItemTip> { None }
     /// The same plate for a link that names a permanent enchantment and a
     /// random property (`item:<entry>:<enchant>:<random>:<seed>`): the suffix
     /// joins the name and the enchantments print as they would on the copy.

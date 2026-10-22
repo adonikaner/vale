@@ -9,7 +9,7 @@
 //! minimap.rs a tile's minimap picture, drawn from the tile
 //! flightmap.rs the row a map needs before the client opens its flight map,
 //!            and the picture drawn behind the nodes
-//! ops.rs     the edit operations: how each is applied, inverted and named
+//! ops/       the edit operations: how each is applied, inverted and named
 //! undo.rs    the undo stack, from which edits are undone and redone
 //! m2.rs      a rigid transform baked into a copy of a model, which is how 1.12
 //!            positions a spell effect: the tables carry no offset, so the

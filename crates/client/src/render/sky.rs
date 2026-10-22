@@ -141,10 +141,10 @@ pub struct Sky {
 /// position, which changes every frame the character moves. Crossing a cell
 /// moves every blended value by one step, and a skybox's opacity follows its
 /// light's weight, so a step is visible as a jump in the sky's brightness: at
-/// 4 yards a 70-yard falloff band (a light made with the editor's default
-/// radii) faded a skybox in 6% steps. At 1 yard the steps are under 1.5% in
-/// the narrowest bands, and a resolve still happens only a few times a second
-/// at a run.
+/// 4 yards a 70-yard falloff band (a light placed with the default radii of a
+/// host app that places lights) faded a skybox in 6% steps. At 1 yard the
+/// steps are under 1.5% in the narrowest bands, and a resolve still happens
+/// only a few times a second at a run.
 pub(crate) const RESOLVE_CELL: f32 = 1.0;
 
 /// Whether a skybox model is drawn at an opacity that hides the rest of the

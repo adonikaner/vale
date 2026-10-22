@@ -78,7 +78,7 @@ pub(in crate::lua) fn dispatch(
 mod tests {
     use super::*;
     use crate::interface::events::{PlayerTargetChanged, SpellcastStart, UiErrorMessage};
-    use crate::lua::api::tests::Stub;
+    use crate::lua::api::stub::Stub;
 
     /// A world with just enough in it to run this one system.
     fn app() -> App {

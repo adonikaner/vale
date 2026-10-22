@@ -57,7 +57,7 @@ fn supply_tables(
     assets: Res<crate::assets::GameAssets>,
 ) {
     let Some(host) = host else { return };
-    if host.skills().borrow().tables.is_some() {
+    if crate::lua::panels::skills::held(&host).borrow().tables.is_some() {
         return;
     }
     let Ok(tables) = assets.display_tables() else {
@@ -68,7 +68,7 @@ fn supply_tables(
     let Some(skills) = tables.skills() else {
         return;
     };
-    host.skills().borrow_mut().tables = Some(std::sync::Arc::new(skills.clone()));
+    crate::lua::panels::skills::held(&host).borrow_mut().tables = Some(std::sync::Arc::new(skills.clone()));
 }
 
 /// Turn the character's own block into the panel's list, when it has moved.
@@ -98,7 +98,7 @@ fn refresh(host: Option<NonSendMut<crate::lua::host::LuaHost>>, units: Units) {
         })
         .collect();
     let level = units.level(UnitId::Player).max(0) as u32;
-    host.skills()
+    crate::lua::panels::skills::held(&host)
         .borrow_mut()
         .refresh(race as u8, class as u8, level, &have);
 }
@@ -115,7 +115,7 @@ fn announce(
         *last = None;
         return;
     };
-    let version = host.skills().borrow().version;
+    let version = crate::lua::panels::skills::held(&host).borrow().version;
     if std::mem::replace(&mut *last, Some(version)) != Some(version) {
         changed.write(SkillLinesChanged);
     }

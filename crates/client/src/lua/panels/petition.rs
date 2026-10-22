@@ -50,6 +50,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use vale_protocol::play::petition::{CharterOffer, PetitionQuery, Signatures};
+use crate::lua::host::LuaHost;
 
 /// The functions this file registers, sorted. Checked against [`register`]
 /// by `every_verb_is_registered`.
@@ -202,7 +203,9 @@ pub type Held = Rc<RefCell<Charter>>;
 pub type Queue = Rc<RefCell<Vec<Press>>>;
 
 /// Register the thirteen functions.
-pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let held: &Held = &super::stored(lua);
+    let queue: &Queue = &super::stored(lua);
     let globals = lua.globals();
 
     // The registrar's price, which `GuildRegistrar_ShowPurchaseFrame` hands
@@ -343,6 +346,17 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, held: &Held, queue: &Queue) -> m
     Ok(())
 }
 
+/// The guild charter's board.
+/// One caller, [`crate::interface::petition`].
+pub fn held(host: &LuaHost) -> Held {
+    super::stored(host.state())
+}
+
+/// Take and clear what the registrar and petition windows pressed.
+pub fn take(host: &LuaHost) -> Vec<Press> {
+    super::taken(host)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,7 +365,9 @@ mod tests {
         let lua = mlua::Lua::new();
         let held: Held = Rc::default();
         let queue: Queue = Rc::new(RefCell::new(Vec::new()));
-        register(&lua, &held, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&held));
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         {
             let mut board = held.borrow_mut();
             board.own_guid = 0x10;
@@ -395,7 +411,7 @@ mod tests {
         };
         let lua = mlua::Lua::new();
         let before = names(&lua);
-        register(&lua, &Rc::default(), &Rc::new(RefCell::new(Vec::new()))).expect("registers");
+        register(&lua).expect("registers");
         let added: std::collections::BTreeSet<String> =
             names(&lua).difference(&before).cloned().collect();
         let listed: std::collections::BTreeSet<String> =

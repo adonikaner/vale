@@ -1277,7 +1277,7 @@ mod tests {
     /// last edit made unreachable: pressing Undo either did nothing or took
     /// back the edit before it, which was reported as a field that would not
     /// go back to what it had been. `EditSession::set_server_edit` ends its
-    /// gesture for exactly this reason, as `tables::set_fields` already did.
+    /// gesture for exactly this reason, as `tables::fields::set_fields` already did.
     #[test]
     fn one_edit_is_undoable_without_waiting_for_a_second() {
         let mut history = History::new();

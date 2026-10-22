@@ -62,23 +62,18 @@
 //! held.rs        what a project folder has in the database and the live
 //!                server, read from its revert files: the gate on Clear and
 //!                Delete, which remove that record
-//! release.rs     what a patch gives the server as rows: one migration in
-//!                vmangos' own form holding all of the project's rows, and the
-//!                DBCs the server reads as files
 //! datadir.rs     the server's tiles (maps, vmaps, mmaps), regenerated through
 //!                the four vmangos tools for the tiles a project changed.
 //!                Written into the live DataDir by the dev-time buttons and
 //!                into a patch folder by a publish
-//! patch.rs       the patch a publish makes: one folder holding the archive,
-//!                the DBCs, the migration, the server tiles, a README saying
-//!                where each goes and a manifest with a hash of each. A publish
-//!                changes nothing in this machine's install
+//! publish/       what a publish writes for a server: the patch folder, and
+//!                the rows and DBCs it gives the server
 //! ```
 //!
 //! ## How the subjects are written and applied
 //!
 //! The subjects are written differently and applied the same way. [`save`] is
-//! everything a save does to the server, and [`crate::ui::sync`] is everything
+//! everything a save does to the server, and [`crate::ui::shell::sync`] is everything
 //! a person can ask of it. Each writer here answers a plan, an apply and a
 //! revert, and neither of those two files knows anything about a subject beyond
 //! what the writer answers.
@@ -152,12 +147,11 @@ pub mod gameobjects;
 pub mod held;
 pub mod items;
 pub mod loot;
-pub mod patch;
 pub mod places;
+pub mod publish;
 pub mod queue;
 pub mod quests;
 pub mod reconcile;
-pub mod release;
 pub mod reload;
 pub mod services;
 pub mod rows;
@@ -280,7 +274,7 @@ fn save_files(session: &mut crate::session::EditSession, server: &settings::Serv
 /// writes go on, whether the session a playtest starts keeps its query
 /// answers, and the tile regeneration's progress. They are bundled because the
 /// system that holds them (`tools::shortcuts`, which is Ctrl+S and Ctrl+P) is
-/// at Bevy's limit of sixteen parameters; `ui::topbar::Session` is bundled for
+/// at Bevy's limit of sixteen parameters; `ui::shell::topbar::Session` is bundled for
 /// the same reason.
 #[derive(SystemParam)]
 pub struct Reach<'w> {
@@ -317,8 +311,8 @@ impl Plugin for ServerPlugin {
                     loot::on_the_command_line,
                     services::on_the_command_line,
                     behaviour::on_the_command_line,
-                    patch::on_the_command_line,
-                    release::migration_on_the_command_line,
+                    publish::patch::on_the_command_line,
+                    publish::release::migration_on_the_command_line,
                     datadir::on_the_command_line,
                 ),
             );

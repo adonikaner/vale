@@ -61,7 +61,7 @@ impl Plugin for AddonsPlugin {
             // `keybindings::save_on_logout` is ordered.
             .add_systems(
                 Update,
-                save_on_logout.before(crate::lua::host::unload_interface),
+                save_on_logout.before(crate::lua::load::unload_interface),
             )
             .add_systems(Last, save);
     }
@@ -80,7 +80,7 @@ pub fn seed(
     mut list_update: MessageWriter<crate::interface::events::AddonListUpdate>,
 ) {
     let Some(host) = host else { return };
-    let held = host.addons();
+    let held = crate::lua::panels::addons::held(&host);
     if !held.borrow().is_seeded() {
         let mut read = |path: &str| {
             assets
@@ -203,7 +203,8 @@ fn save_requested(
     host: Option<NonSend<LuaHost>>,
 ) {
     let Some(host) = host else { return };
-    let mut board = host.addons().borrow_mut();
+    let addons = crate::lua::panels::addons::held(&host);
+    let mut board = addons.borrow_mut();
     if !board.take_save_request() {
         return;
     }
@@ -228,7 +229,8 @@ fn write_active(
         return;
     }
     let account = config.account_for([Some(active.account.as_str())]);
-    let mut board = host.addons().borrow_mut();
+    let addons = crate::lua::panels::addons::held(&host);
+    let mut board = addons.borrow_mut();
     write_states(&board, config, &account, &active.realm, &world.character);
     board.mark_saved(&world.character);
 }

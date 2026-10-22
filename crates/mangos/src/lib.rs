@@ -75,12 +75,11 @@
 //!              vmangos' own `add_migration` file, stamped and applied once;
 //!              and the record a project keeps of what its last migration
 //!              contained, so the next one carries the change since
-//! datadir.rs   the part of the server's world that is files rather than rows:
+//! datadir/     the part of the server's world that is files rather than rows:
 //!              `DataDir`'s `maps`, `vmaps` and `mmaps`, one per tile, built
 //!              from the client's archives by the four vmangos tools; and
-//!              running those tools over the tiles a project changed
-//! navmesh.rs   an `mmaps` tile read as triangles in the world's axes, grouped
-//!              by what their flags mean to the server's path queries
+//!              running those tools over the tiles a project changed, and an
+//!              `mmaps` tile read as triangles
 //! ```
 //!
 //! ## How this crate relates to `vale-assets`
@@ -129,7 +128,6 @@ pub mod lists;
 pub mod loot;
 pub mod map;
 pub mod migration;
-pub mod navmesh;
 pub mod path;
 pub mod quest;
 pub mod row;

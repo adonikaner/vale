@@ -41,6 +41,7 @@
 //! and `SetText`.
 
 use super::super::api::{one_or_nil, Answers};
+use crate::lua::host::LuaHost;
 
 /// One row of the window, as the four things `GetLootSlotInfo` answers.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -223,7 +224,8 @@ fn loot_row(answers: &dyn Answers, row: Option<i64>) -> Option<LootRow> {
 ///
 /// `queue` is the same one every other loot press goes on;
 /// [`crate::interface::loot::TakeLoot`] is what it carries.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &Queue = &super::stored(lua);
     let globals = lua.globals();
 
     // **`LootSlot(row)` — take it.** Called by the `LootButton` widget's own
@@ -261,6 +263,12 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &Queue) -> mlua::Result<(
     };
     globals.set("CloseLoot", close)?;
     Ok(())
+}
+
+/// Take and clear the loot window's item takes. See
+/// [`super::loot`]. One caller, [`crate::interface::loot`].
+pub fn take(host: &LuaHost) -> Vec<crate::interface::loot::TakeLoot> {
+    super::taken(host)
 }
 
 /// The queue the two writes push onto.
@@ -316,7 +324,7 @@ pub(in crate::lua) fn clicked(lua: &mlua::Lua, object: &mlua::Table) -> mlua::Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lua::api::tests::{eval, Stub};
+    use crate::lua::api::stub::{eval, Stub};
 
     /// **The four answers of a row, and the two questions that tell a coin from
     /// an item.** `LootFrame_Update` reads all of them in one pass.
@@ -378,7 +386,8 @@ mod tests {
     fn the_two_writes_record_in_call_order() {
         let lua = mlua::Lua::new();
         let queue: Queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        register(&lua, &queue).expect("registers");
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("registers");
         let value: mlua::Value = lua
             .load("LootSlot(2); LootSlot(0); LootSlot(nil); CloseLoot(1); return CloseLoot()")
             .eval()
@@ -407,7 +416,8 @@ mod tests {
         let lua = mlua::Lua::new();
         crate::lua::widgets::frames::install(&lua).expect("the object model");
         let queue: Queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        register(&lua, &queue).expect("the two verbs");
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("the two verbs");
         lua.load(
             r#"
             loot = CreateFrame("LootButton", "LootButton1");
@@ -436,7 +446,8 @@ mod tests {
         let lua = mlua::Lua::new();
         crate::lua::widgets::frames::install(&lua).expect("the object model");
         let queue: Queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        register(&lua, &queue).expect("the two verbs");
+        lua.set_app_data(std::rc::Rc::clone(&queue));
+        register(&lua).expect("the two verbs");
         lua.load(
             r#"
             b = CreateFrame("LootButton", "LootButton1");
@@ -466,14 +477,14 @@ mod tests {
 pub trait LootAnswers {
 
     /// `GetNumLootItems()` — rows, coins included. 0 with no window open.
-    fn loot_rows(&self) -> usize;
+    fn loot_rows(&self) -> usize { 0 }
     /// One row, or `None` past the end — which the interface asks about
     /// constantly and must not raise on.
-    fn loot_slot(&self, row: usize) -> Option<super::loot::LootRow>;
+    fn loot_slot(&self, _row: usize) -> Option<super::loot::LootRow> { None }
     /// `GetLootSlotLink(row)`. `None` for the coin row, which has no item.
-    fn loot_slot_link(&self, row: usize) -> Option<String>;
+    fn loot_slot_link(&self, _row: usize) -> Option<String> { None }
     /// `IsFishingLoot()` — which portrait the window wears.
-    fn is_fishing_loot(&self) -> bool;
+    fn is_fishing_loot(&self) -> bool { false }
 }
 
 impl LootAnswers for super::super::api::Live<'_, '_, '_> {

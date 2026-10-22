@@ -192,7 +192,6 @@ impl Login {
 }
 
 impl super::panels::container::ContainerAnswers for Login {
-
     // --- the bags ---
     //
     // The character carries items, because an empty bag runs the least code.
@@ -302,12 +301,6 @@ impl super::panels::container::ContainerAnswers for Login {
         // code.
         12_345
     }
-    fn cursor_has_item(&self) -> bool {
-        false
-    }
-    fn cursor_has_spell(&self) -> bool {
-        false
-    }
     fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<crate::interface::api::ItemTip> {
         self.item_tip(Self::stack(bag, slot)?.0)
     }
@@ -334,7 +327,6 @@ impl super::panels::container::ContainerAnswers for Login {
 }
 
 impl super::panels::quest::QuestAnswers for Login {
-
     fn quest_greeting_text(&self) -> String {
         "Greetings, traveller.".to_string()
     }
@@ -395,11 +387,6 @@ impl super::panels::quest::QuestAnswers for Login {
             tradeskill: false,
         })
     }
-    /// The quest log's selected quest teaches no spell, so the log runs the
-    /// other branch.
-    fn quest_log_reward_spell(&self) -> Option<super::panels::quest::RewardSpell> {
-        None
-    }
     fn quest_completable(&self) -> bool {
         true
     }
@@ -412,19 +399,6 @@ impl super::panels::quest::QuestAnswers for Login {
     fn quest_log_quest_rows(&self) -> usize {
         2
     }
-    /// The probe's log has a fixed selection; a write is a no-op rather than
-    /// a panic, which keeps `QuestLog_SetSelection` running to its end.
-    fn select_log_row(&self, _row: usize) {}
-    /// A no-op for the same reason: the probe's log keeps its heading
-    /// expanded.
-    fn quest_set_collapsed(&self, _row: usize, _collapsed: bool) {}
-    /// The quest to abandon: this setter is a no-op, and the methods below
-    /// name a quest with items to destroy, so
-    /// `QuestLogFrameAbandonButton`'s `OnClick` takes the branch for a non-nil
-    /// `GetAbandonQuestItems()`; this is the only way `--audit --clicks`
-    /// reaches `ABANDON_QUEST_WITH_ITEMS`. The other popup is the `nil` branch,
-    /// reached by the probe's second quest, which has no items.
-    fn quest_set_abandon(&self) {}
     fn quest_abandon_name(&self) -> Option<String> {
         Some("A Probe's Errand".to_string())
     }
@@ -469,9 +443,6 @@ impl super::panels::quest::QuestAnswers for Login {
             false => super::panels::quest::Which::Reward,
         })
     }
-    fn quest_reward_spell_tip(&self, _from_log: bool) -> Option<crate::interface::api::SpellTip> {
-        None
-    }
     fn quest_log_money(&self, required: bool) -> u32 {
         // The probe's quest pays money rather than requiring it, which is the
         // branch the panel builds its reward row from.
@@ -479,9 +450,6 @@ impl super::panels::quest::QuestAnswers for Login {
             true => 0,
             false => 1500,
         }
-    }
-    fn quest_log_failed(&self) -> bool {
-        false
     }
     /// The probe's quest is timed, so `QuestLogTimerText` and the re-anchoring
     /// of the objectives under it run. An untimed quest skips that branch.
@@ -530,8 +498,6 @@ impl super::panels::quest::QuestAnswers for Login {
             _ => None,
         }
     }
-    fn quest_add_watch(&self, _row: usize) {}
-    fn quest_remove_watch(&self, _row: usize) {}
 }
 
 impl super::panels::gossip::GossipAnswers for Login {
@@ -688,12 +654,8 @@ impl super::panels::tradeskill::TradeSkillAnswers for Login {
     fn trade_select(&self, index: usize) {
         TRADE_SELECTED.with(|cell| cell.set(index));
     }
-    fn trade_set_expanded(&self, _index: usize, _expanded: bool) {}
     fn trade_icon(&self, _index: usize) -> Option<String> {
         Some(r"Interface\Icons\Trade_BlackSmithing".to_string())
-    }
-    fn trade_cooldown(&self, _index: usize) -> Option<f64> {
-        None
     }
     fn trade_num_made(&self, _index: usize) -> (i32, i32) {
         (1, 1)
@@ -715,12 +677,6 @@ impl super::panels::tradeskill::TradeSkillAnswers for Login {
             )
         })
     }
-    fn trade_reagent_link(&self, _index: usize, _reagent: usize) -> Option<String> {
-        None
-    }
-    fn trade_item_link(&self, _index: usize) -> Option<String> {
-        None
-    }
     fn trade_tools(&self, _index: usize) -> Vec<(String, bool)> {
         vec![("Anvil".to_string(), false)]
     }
@@ -733,13 +689,8 @@ impl super::panels::tradeskill::TradeSkillAnswers for Login {
     fn trade_subclass_filter(&self, _index: usize) -> bool {
         true
     }
-    fn trade_set_subclass_filter(&self, _index: usize, _on: bool, _exclusive: bool) {}
     fn trade_recipe(&self, index: usize) -> Option<(u32, u32)> {
         (index == 2).then_some((2661, 2))
-    }
-    fn trade_close(&self) {}
-    fn trade_tip_item(&self, _index: usize, _reagent: Option<usize>) -> Option<u32> {
-        None
     }
 }
 
@@ -772,8 +723,6 @@ impl super::panels::craft::CraftAnswers for Login {
     fn craft_selection(&self) -> usize {
         1
     }
-    fn craft_select(&self, _index: usize) {}
-    fn craft_set_expanded(&self, _index: usize, _expanded: bool) {}
     fn craft_icon(&self, _index: usize) -> Option<String> {
         Some(r"Interface\Icons\Trade_Engraving".to_string())
     }
@@ -797,21 +746,11 @@ impl super::panels::craft::CraftAnswers for Login {
             )
         })
     }
-    fn craft_reagent_link(&self, _index: usize, _reagent: usize) -> Option<String> {
-        None
-    }
     fn craft_focus(&self, _index: usize) -> Vec<(String, bool)> {
         vec![("Runed Copper Rod".to_string(), true)]
     }
     fn craft_recipe(&self, index: usize) -> Option<u32> {
         (index == 1).then_some(7418)
-    }
-    fn craft_close(&self) {}
-    fn craft_tip_item(&self, _index: usize, _reagent: usize) -> Option<u32> {
-        None
-    }
-    fn craft_spell_tip(&self, _index: usize) -> Option<crate::interface::api::SpellTip> {
-        None
     }
 }
 
@@ -866,7 +805,6 @@ impl super::panels::mail::MailAnswers for Login {
         }
     }
 
-    fn mail_open(&self, _row: usize) {}
 
     fn mail_item(&self, row: usize) -> Option<super::panels::mail::MailItemLine> {
         (row == 1).then(|| super::panels::mail::MailItemLine {
@@ -901,37 +839,22 @@ impl super::panels::mail::MailAnswers for Login {
         Some("STATIONERYTEST".to_string())
     }
 
-    fn mail_select_stationery(&self, _id: u32) {}
 
-    fn mail_send_item(&self) -> Option<super::panels::mail::MailItemLine> {
-        None
-    }
 
     fn mail_send_price(&self) -> u32 {
         vale_protocol::play::mail::POSTAGE
     }
 
-    fn mail_send_money(&self) -> u32 {
-        0
-    }
 
-    fn mail_send_cod(&self) -> u32 {
-        0
-    }
 
     fn mail_set_money(&self, _copper: u32) -> bool {
         true
     }
 
-    fn mail_set_cod(&self, _copper: u32) {}
 
     /// Linen Cloth, which is what the probe's first letter carries.
     fn mail_item_entry(&self, row: usize) -> Option<u32> {
         (row == 1).then_some(2589)
-    }
-
-    fn mail_send_entry(&self) -> Option<u32> {
-        None
     }
 }
 
@@ -970,11 +893,6 @@ impl super::panels::stable::StableAnswers for Login {
     }
     fn stable_pets(&self) -> u32 {
         2
-    }
-    /// The current stall, so `PetStable_Update` takes its `selectedPet == 0`
-    /// branch, which fills the level text and shows the model.
-    fn selected_stable_pet(&self) -> i32 {
-        0
     }
     fn stable_pet_info(&self, panel_slot: u8) -> Option<super::panels::stable::StableLine> {
         let line = |name: &str, level: u32, family: &str| super::panels::stable::StableLine {
@@ -1021,7 +939,6 @@ impl super::panels::stable::StableAnswers for Login {
 }
 
 impl super::panels::trainer::TrainerAnswers for Login {
-
     /// A two-line class trainer: one skill-line header and one available
     /// (green) spell under it. This is the smallest list that exercises both
     /// branches of `ClassTrainerFrame_Update`: the header's plus/minus texture,
@@ -1059,16 +976,6 @@ impl super::panels::trainer::TrainerAnswers for Login {
     }
     fn trainer_selection(&self) -> usize {
         2
-    }
-    fn trainer_select(&self, _row: usize) {}
-    fn trainer_tooltip(&self, _row: usize) -> Option<crate::interface::api::SpellTip> {
-        None
-    }
-    fn trainer_is_tradeskill(&self) -> bool {
-        false
-    }
-    fn trainer_is_talent(&self) -> bool {
-        false
     }
     /// The trainer window's default filter: available and unavailable shown,
     /// used hidden.
@@ -1113,13 +1020,9 @@ impl super::panels::taxi::TaxiAnswers for Login {
     fn taxi_map_art(&self) -> Option<String> {
         Some(vale_assets::tables::taxi::map_art(0))
     }
-    fn unit_on_taxi(&self, _token: &str) -> bool {
-        false
-    }
 }
 
 impl super::panels::loot::LootAnswers for Login {
-
     fn loot_rows(&self) -> usize {
         3
     }
@@ -1139,9 +1042,6 @@ impl super::panels::loot::LootAnswers for Login {
     fn loot_slot_link(&self, row: usize) -> Option<String> {
         let row = self.loot_slot(row).filter(|slot| !slot.is_coin)?;
         Some(super::panels::container::item_link(2589, row.quality, &row.name))
-    }
-    fn is_fishing_loot(&self) -> bool {
-        false
     }
 }
 
@@ -1255,9 +1155,6 @@ impl super::panels::pet::PetAnswers for Login {
         true
     }
 
-    fn is_pet_attack_active(&self, _slot: usize) -> bool {
-        false
-    }
 
     /// A hunter's pet, content and gaining loyalty. `PetFrame_SetHappiness`
     /// then runs past its early return and into all three of its branches; a
@@ -1410,9 +1307,6 @@ impl super::panels::raid::RaidAnswers for Login {
         })
     }
 
-    fn raid_roster_selection(&self) -> usize {
-        0
-    }
 
     fn is_raid_leader(&self) -> bool {
         raid_size() > 0
@@ -1457,7 +1351,6 @@ impl super::panels::party::PartyAnswers for Login {
 }
 
 impl super::panels::worldmap::MapAnswers for Login {
-
     // A world map open on a zone, which is the state after a login.
     //
     // `WorldMapFrame_Update` branches on `GetCurrentMapContinent() == 0` and
@@ -1532,11 +1425,6 @@ impl super::panels::worldmap::MapAnswers for Login {
         ]
     }
 
-    /// No corpse: the character is alive, which is the state the probes run in
-    /// and the one in which `WorldMapCorpse` is hidden.
-    fn corpse_map_position(&self) -> (f32, f32) {
-        (0.0, 0.0)
-    }
 
     /// Two landmarks, one of each kind: an `AreaPOI.dbc` row and the flag a
     /// guard's directions place. `WorldMap_CreatePOI` builds a button,
@@ -1715,7 +1603,6 @@ impl super::panels::talent::TalentAnswers for Login {
 }
 
 impl super::panels::spellbook::SpellbookAnswers for Login {
-
     // A spellbook with two tabs and four spells, the smallest that exercises
     // the panel's arithmetic. `SpellBookFrame_Update` asks about all eight
     // `MAX_SKILLLINE_TABS` whatever the character has, and
@@ -1747,9 +1634,6 @@ impl super::panels::spellbook::SpellbookAnswers for Login {
         // `SpellButton_UpdateButton`, which blackens the border and recolours
         // the label, runs at least once per run.
         index == Self::SPELLS.len()
-    }
-    fn spell_is_current_cast(&self, _: usize) -> bool {
-        false
     }
     fn spell_tooltip(&self, index: usize) -> Option<crate::interface::api::SpellTip> {
         let (name, rank) = Self::spell(index)?;
@@ -1808,11 +1692,6 @@ impl super::api::ActionAnswers for Login {
     fn has_action(&self, slot: u8) -> bool {
         (1..=72).contains(&slot)
     }
-    /// No form, so the main bar shows page 1, and slots 1 to 12 are the ones
-    /// `ActionButton_GetPagedID` asks about for it.
-    fn bonus_bar_offset(&self) -> u8 {
-        0
-    }
     /// All four extra action bars on, where a new account has none.
     ///
     /// These four bits control four whole frames. With them off, `--draw`
@@ -1843,16 +1722,6 @@ impl super::api::ActionAnswers for Login {
             reagents: Vec::new(),
         })
     }
-    // Every slot on the double's bar holds a spell; see the three item reads
-    // below.
-    fn action_item_tooltip(&self, _: u8) -> Option<crate::interface::api::ItemTip> {
-        None
-    }
-    // `None`, the live answer for any slot that is not a macro (see
-    // `interface::api::get_action_text`). The harness has no macros.
-    fn action_text(&self, _: u8) -> Option<String> {
-        None
-    }
     fn action_texture(&self, slot: u8) -> Option<String> {
         self.has_action(slot)
             .then(|| r"Interface\Icons\Spell_Fire_FlameBolt".to_string())
@@ -1862,19 +1731,6 @@ impl super::api::ActionAnswers for Login {
     }
     fn action_usable(&self, slot: u8) -> (bool, bool) {
         (self.has_action(slot), false)
-    }
-    fn is_attack_action(&self, _: u8) -> bool {
-        false
-    }
-    fn is_current_action(&self, _: u8) -> bool {
-        false
-    }
-    /// False, like `is_attack_action` above: the double is a character
-    /// standing still. A bar that reported auto-repeat would leave
-    /// `ActionButton_OnUpdate` flashing twelve buttons for the whole of every
-    /// probe.
-    fn is_auto_repeat_action(&self, _: u8) -> bool {
-        false
     }
     /// Every action has a range and its target is in range, which runs the
     /// most code. `ActionHasRange` true puts `RANGE_INDICATOR` in the hotkey
@@ -1888,38 +1744,9 @@ impl super::api::ActionAnswers for Login {
     fn is_action_in_range(&self, _: u8) -> Option<bool> {
         Some(true)
     }
-    // Every slot on the double's bar holds a spell, so these three give a
-    // spell slot's answers: no stack count under the icon, no green border
-    // round it. Item slots are covered by `interface::items`' tests, where an
-    // inventory can be built without a Lua state.
-    fn is_consumable_action(&self, _: u8) -> bool {
-        false
-    }
-    fn is_equipped_action(&self, _: u8) -> bool {
-        false
-    }
-    fn action_count(&self, _: u8) -> u32 {
-        0
-    }
-    // The spell targeting cursor is never active in a harness run, because
-    // nothing headless casts a spell. Every `if SpellIsTargeting()` in the
-    // directory takes the branch a player sees 99% of the time. The other
-    // branch is exercised in the world, where targeting mode exists.
-    fn spell_is_targeting(&self) -> bool {
-        false
-    }
-    fn spell_is_casting(&self) -> bool {
-        false
-    }
-    fn spell_can_target_unit(&self, _token: &str) -> bool {
-        false
-    }
 }
 
 impl super::api::UnitAnswers for Login {
-    fn now(&self) -> f64 {
-        0.0
-    }
     /// 18:15. The probe's clock then differs from both values `GameTime.lua`'s
     /// `OnLoad` seeds, and the night half of the day/night texture is
     /// selected.
@@ -2017,33 +1844,6 @@ impl super::api::UnitAnswers for Login {
     }
     fn unit_is_connected(&self, _: &str) -> bool {
         true
-    }
-    fn unit_is_dead(&self, _: &str) -> bool {
-        false
-    }
-    /// Alive and not a ghost. The audit's character is standing in the world;
-    /// a dead one would put `StaticPopup "DEATH"` over every panel the probes
-    /// then open.
-    fn unit_is_ghost(&self, _: &str) -> bool {
-        false
-    }
-    fn release_time_remaining(&self) -> i32 {
-        0
-    }
-    fn corpse_recovery_delay(&self) -> i32 {
-        0
-    }
-    fn resurrect_offerer(&self) -> Option<String> {
-        None
-    }
-    fn resurrect_has_sickness(&self) -> bool {
-        false
-    }
-    fn resurrect_has_timer(&self) -> bool {
-        false
-    }
-    fn unit_affecting_combat(&self, _: &str) -> bool {
-        false
     }
     /// A full stat block for the player, because the character sheet's
     /// `OnShow` divides by two of its numbers. The values are a level-60
@@ -2306,7 +2106,7 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
     // Read before the loader's closure takes the archive: `Assets::read` needs
     // `&mut`, and the two borrows cannot overlap.
     if glue {
-        host.set_char_create_tables(std::sync::Arc::new(
+        crate::lua::panels::charcreate::set_tables(&host, std::sync::Arc::new(
             vale_assets::tables::charcreate::CharCreate::load(|table| {
                 assets.read(&vale_assets::tables::dbc::dbc_path(table)).ok()
             }),
@@ -2328,7 +2128,8 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
             .and_then(|raw| vale_assets::tables::reputation::Factions::parse(&raw).ok());
         if let Some(factions) = factions {
             let wire = factions.default_states(HUMAN, MAGE);
-            let mut board = host.reputation().borrow_mut();
+            let reputation = crate::lua::panels::reputation::held(&host);
+            let mut board = reputation.borrow_mut();
             board.factions = Some(std::sync::Arc::new(factions));
             board.initialize(&wire);
             board.rebuild_if_ready(HUMAN, MAGE);
@@ -2372,7 +2173,8 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
                     modifier: 0,
                 })
                 .collect();
-            let mut board = host.skills().borrow_mut();
+            let held = crate::lua::panels::skills::held(&host);
+            let mut board = held.borrow_mut();
             board.tables = Some(std::sync::Arc::new(skills));
             board.refresh(HUMAN, MAGE, 60, &have);
         }
@@ -2388,7 +2190,8 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
     {
         use vale_protocol::play::guild::{presence, GuildQuery, Member, Roster};
         let ranks = ["Guild Master", "Officer", "Veteran", "Member", "Initiate"];
-        let mut board = host.guild().borrow_mut();
+        let guild = crate::lua::panels::guild::held(&host);
+        let mut board = guild.borrow_mut();
         board.set_membership(SEEDED_GUILD, 0);
         board.note_query(GuildQuery {
             id: SEEDED_GUILD,
@@ -2427,7 +2230,8 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
     // last check.
     {
         use vale_protocol::play::petition::{CharterOffer, PetitionQuery, Signatures};
-        let mut board = host.petition().borrow_mut();
+        let petition = crate::lua::panels::petition::held(&host);
+        let mut board = petition.borrow_mut();
         board.own_guid = 1;
         board.offer = Some(CharterOffer {
             index: 1,
@@ -2460,7 +2264,8 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
             },
             signed: false,
         });
-        let mut tabard = host.tabard().borrow_mut();
+        let tabard = crate::lua::panels::tabard::held(&host);
+        let mut tabard = tabard.borrow_mut();
         tabard.guild = Some(vale_protocol::play::guild::Emblem::default());
         tabard.money = vale_protocol::play::guild::EMBLEM_COST;
         tabard.initialize();
@@ -2492,7 +2297,8 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
                 .read(vale_assets::interface::bindings::DEFAULT_BINDINGS_WTF)
                 .unwrap_or_default(),
         );
-        let mut board = host.keybindings().borrow_mut();
+        let keybindings = crate::lua::panels::keybindings::held(&host);
+        let mut board = keybindings.borrow_mut();
         board.seed(crate::lua::panels::keybindings::DEFAULT_SET, defaults.clone());
         board.seed(crate::lua::panels::keybindings::ACCOUNT_SET, defaults);
         board.use_set(crate::lua::panels::keybindings::ACCOUNT_SET);
@@ -2513,7 +2319,8 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
             .collect();
         let names: Vec<&str> = folder.iter().map(|a| a.name.as_str()).collect();
         println!("  addons: {} shipped, {} in {root}\\Interface\\AddOns ({})", shipped.len(), folder.len(), names.join(" "));
-        let mut board = host.addons().borrow_mut();
+        let addons = crate::lua::panels::addons::held(&host);
+        let mut board = addons.borrow_mut();
         board.seed(shipped, folder);
         board.set_active(Some("Alden".to_string()));
         let shared = std::rc::Rc::clone(&assets);
@@ -2773,9 +2580,9 @@ fn type_a_line(host: &mut LuaHost, line: &str) {
     let said = host.take_said();
     // Channel commands go to a separate queue: `/join`, `/leave`,
     // `/chatlist <name>` and the moderation commands send no chat message.
-    let verbs = host.take_channel_verbs();
+    let verbs = crate::lua::panels::channels::take(&host);
     let emoted = host.take_emoted();
-    let listing = std::mem::take(&mut host.channels().borrow_mut().list_wanted);
+    let listing = std::mem::take(&mut crate::lua::panels::channels::held(&host).borrow_mut().list_wanted);
     if said.is_empty() && verbs.is_empty() && emoted.is_empty() && !listing {
         println!("    nothing was said");
     }
@@ -3058,7 +2865,7 @@ fn press_every_binding(host: &mut LuaHost) {
     // The live table's commands, deduplicated and in table order, so two runs
     // compare line by line and a command on two keys is pressed once.
     let mut commands: Vec<String> = Vec::new();
-    for (_, command) in host.keybindings().borrow().live() {
+    for (_, command) in crate::lua::panels::keybindings::held(&host).borrow().live() {
         if !commands.contains(command) {
             commands.push(command.clone());
         }
@@ -4182,12 +3989,6 @@ impl super::panels::container::ContainerAnswers for Ticking {
     }
     fn money(&self) -> u32 {
         Login.money()
-    }
-    fn cursor_has_item(&self) -> bool {
-        false
-    }
-    fn cursor_has_spell(&self) -> bool {
-        false
     }
     fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<crate::interface::api::ItemTip> {
         Login.bag_item_tip(bag, slot)

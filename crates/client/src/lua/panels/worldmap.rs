@@ -52,6 +52,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::super::api::Answers;
+use crate::lua::host::LuaHost;
 // The unit-token type these answers use to read the world, imported here
 // because this subject's answers are defined beside its registration.
 use crate::interface::api::UnitId;
@@ -159,7 +160,8 @@ pub type MapQueue = Rc<RefCell<Vec<MapRequest>>>;
 
 /// Register the four queued writes and the arrow functions. Unscoped: they
 /// record requests.
-pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &MapQueue) -> mlua::Result<()> {
+pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
+    let queue: &MapQueue = &super::stored(lua);
     let globals = lua.globals();
 
     macro_rules! push {
@@ -182,6 +184,12 @@ pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &MapQueue) -> mlua::Resul
         MapRequest::Click(args.0.unwrap_or(0.0), args.1.unwrap_or(0.0))
     });
     arrow(lua)
+}
+
+/// Take and clear the world map requests. See
+/// [`super::worldmap`]. One caller, [`crate::interface::worldmap`].
+pub fn take(host: &LuaHost) -> Vec<MapRequest> {
+    super::taken(host)
 }
 
 /// The name the arrow frame is created under. The interface directory does not
@@ -557,7 +565,7 @@ pub fn apply(view: MapView, request: MapRequest, zones: impl Fn(usize) -> usize)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lua::api::tests::Stub;
+    use crate::lua::api::stub::Stub;
     use crate::lua::host::LuaHost;
 
     /// `GetZonePVPInfo`'s three values as `Minimap_Update` tests them: the
@@ -777,29 +785,29 @@ pub trait MapAnswers {
     // are then what a client with no world returns.
 
     /// Which map the map panel shows.
-    fn current_map_view(&self) -> vale_assets::tables::worldmap::MapView;
+    fn current_map_view(&self) -> vale_assets::tables::worldmap::MapView { Default::default() }
     /// The art directory from `GetMapInfo()`. `None` on the cosmic map, which
     /// makes `WorldMapFrame_Update` fall back to "World".
-    fn map_directory(&self) -> Option<String>;
+    fn map_directory(&self) -> Option<String> { None }
     /// `GetMapContinents()`, in the 1.12.1 client's order.
-    fn map_continents(&self) -> Vec<String>;
+    fn map_continents(&self) -> Vec<String> { Vec::new() }
     /// `GetMapZones(i)`, one-based, as the interface passes it.
-    fn map_zones(&self, continent: usize) -> Vec<String>;
+    fn map_zones(&self, _continent: usize) -> Vec<String> { Vec::new() }
     /// `GetPlayerMapPosition(unit)`: `(0, 0)` for a unit that is not on the map
     /// being shown, the value the 1.12.1 client returns and the one on which
     /// the arrow is hidden.
-    fn player_map_position(&self, token: &str) -> (f32, f32);
+    fn player_map_position(&self, _token: &str) -> (f32, f32) { Default::default() }
     /// Which way the character is facing, in the server's radians; 0 for a
     /// client with no world.
     ///
     /// Only the map reads it, so it is here rather than beside the unit reads:
     /// `UpdateWorldMapArrowFrames` rotates the arrow, and with no world 0
     /// points it north, where no arrow is shown anyway.
-    fn player_facing(&self) -> f32;
+    fn player_facing(&self) -> f32 { 0.0 }
     /// `UpdateMapHighlight(x, y)`: what the pointer is over and the art to draw
     /// over it; `None` for open water. On a zone map the answer carries a name
     /// and no art: see [`super::worldmap::Highlight`].
-    fn map_highlight(&self, u: f32, v: f32) -> Option<super::worldmap::Highlight>;
+    fn map_highlight(&self, _u: f32, _v: f32) -> Option<super::worldmap::Highlight> { None }
     /// The explored overlays on the map being shown, in the order of
     /// `GetMapOverlayInfo`'s one-based index. Empty everywhere but a zone map,
     /// and empty on a zone the character has not visited.
@@ -808,23 +816,23 @@ pub trait MapAnswers {
     /// tables and a bitmask under a scoped borrow and the trait is `&dyn`. A
     /// zone has a few dozen rows and the panel asks once per `WORLD_MAP_UPDATE`,
     /// so the cost is a few kilobytes when the map is opened.
-    fn map_overlays(&self) -> Vec<super::worldmap::OverlayArt>;
+    fn map_overlays(&self) -> Vec<super::worldmap::OverlayArt> { Vec::new() }
     /// The landmark flags on that map: `AreaPOI.dbc` rows gated on
     /// exploration, plus the one `SMSG_GOSSIP_POI` the session is holding, in
     /// the order of `GetMapLandmarkInfo`'s one-based index.
     ///
     /// Owned for the same reason as [`Self::map_overlays`]. Empty for a client
     /// with no tables and for a map with no landmarks.
-    fn map_landmarks(&self) -> Vec<vale_assets::tables::areapoi::Landmark>;
+    fn map_landmarks(&self) -> Vec<vale_assets::tables::areapoi::Landmark> { Vec::new() }
     /// `GetCorpseMapPosition()`: `(0, 0)` for a living character, which hides
     /// `WorldMapCorpse`, and otherwise a fraction of the open map.
-    fn corpse_map_position(&self) -> (f32, f32);
+    fn corpse_map_position(&self) -> (f32, f32) { Default::default() }
     /// `GetZoneText()`: the zone the character is standing in; `""` before the
     /// character's area has been read.
-    fn zone_text(&self) -> String;
+    fn zone_text(&self) -> String { String::new() }
     /// `GetSubZoneText()`: empty in open country, which the minimap's second
     /// line depends on.
-    fn sub_zone_text(&self) -> String;
+    fn sub_zone_text(&self) -> String { String::new() }
     /// `GetZonePVPInfo()`: whose land the character stands on. See
     /// [`vale_assets::tables::territory`]. The default is no stance and no
     /// arena, which draws the zone name in the ordinary gold.

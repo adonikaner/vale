@@ -613,13 +613,13 @@ fn remove(project: &vale_edit::project::Project, vpath: &str) {
 /// panel's two buttons with nobody at the keyboard.
 ///
 /// Fires once, after any scripted placement or removal has landed. See
-/// `crate::tools::gameobjects::GameObjects::scripted_done`.
+/// `crate::tools::spawns::gameobjects::GameObjects::scripted_done`.
 pub fn on_the_command_line(
-    args: Res<crate::Args>,
+    args: Res<crate::args::Args>,
     session: Option<ResMut<EditSession>>,
     server: Res<super::settings::ServerSettings>,
     mut reloads: ResMut<super::reload::Reloads>,
-    objects: Res<crate::tools::gameobjects::GameObjects>,
+    objects: Res<crate::tools::spawns::gameobjects::GameObjects>,
     mut done: Local<bool>,
 ) {
     if *done || !(args.apply_gameobjects || args.revert_gameobjects) {
